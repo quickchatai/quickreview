@@ -358,6 +358,7 @@ qcr review             # review this branch against its base, with no daemon
 qcr review 123         # review a pull request (or pass its URL)
 qcr pi                 # pi with the plugin (/qcr-review /qcr-scan /qcr-setup) and /selfimprove
 qcr update             # update qcr with the package manager that installed it
+qcr plugin install --to claude   # /qcr:review, /qcr:scan and /qcr:setup in Claude Code
 qcr                    # the home: pi on your own login, with your repo's pull requests
 qcr tui                # the admin TUI
 ```

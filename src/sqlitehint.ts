@@ -9,7 +9,15 @@
 
 /** The verbs that run without the state database, each on its own route in
  * the bin's front door. The hint names them, and the routes fence walks them. */
-export const SQLITE_FREE_VERBS = ["review", "scan", "login", "pi", "version", "update"] as const;
+export const SQLITE_FREE_VERBS = [
+  "review",
+  "scan",
+  "login",
+  "pi",
+  "version",
+  "update",
+  "plugin",
+] as const;
 
 /** Is `err` the SQLite driver failing to load (the package missing, or its
  * native file missing or built for another Node)? A loader that wraps the

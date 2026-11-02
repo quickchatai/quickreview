@@ -140,6 +140,8 @@ describe("the bin's front door where the SQLite driver cannot load", () => {
     "QCR_CONFIG_HOME",
     "QCR_CONFIG",
     "QCR_NO_UPDATE_NOTICE",
+    "PATH",
+    "XDG_DATA_HOME",
   ];
   let out: string[];
   let err: string[];
@@ -209,6 +211,24 @@ describe("the bin's front door where the SQLite driver cannot load", () => {
     await runBin(["scan", "--sandbox", "nowhere"]);
     expect(process.exitCode).toBe(2);
     expect(out.join("\n")).toMatch(/^usage: qcr scan/);
+  });
+
+  // The installer loads the renderer from the package and asks each host on
+  // PATH; with none there, every host is skipped.
+  // MUTATION: import the state store from src/plugincli.ts — the driver
+  // throws on the way in and this fails.
+  it("qcr plugin answers", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+    process.env.PATH = join(dir, "no-hosts");
+    process.env.XDG_DATA_HOME = join(dir, "data");
+    await runBin(["plugin", "update", "--json"]);
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(err.join("\n")).not.toMatch(/state database|better-sqlite3/);
+    const payload = JSON.parse(out.join("\n")) as {
+      ok: boolean;
+      hosts: Array<{ outcome: string }>;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.hosts.map((h) => h.outcome)).toEqual(["skipped"]);
   });
 
   it("qcr login refuses a bad provider by itself", { timeout: HEAVY_TIMEOUT_MS }, async () => {

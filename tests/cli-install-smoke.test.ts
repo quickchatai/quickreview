@@ -11,7 +11,9 @@
 //   - `qcr version --json` and `qcr review --preview --json` work on the
 //     shipped defaults, with no config and no login;
 //   - nothing is written inside the install: every file the runs keep lands
-//     under the throwaway HOME.
+//     under the throwaway HOME;
+//   - `qcr plugin install --to claude` (a fake claude) points Claude Code at
+//     a render in the data home, which survives deleting the install.
 //
 // Offline: every dependency comes from the local npm cache (the one this
 // checkout's own install filled). A cache that lacks them skips the install
@@ -311,6 +313,63 @@ describe.skipIf(!BUILT)("the installed qcr, offline, with no config", () => {
     // MUTATION: keep the review's runs under the package root — this fails.
     expect([...snapshot(prefix).entries()].filter(([p, s]) => before.get(p) !== s)).toEqual([]);
     expect([...before.keys()].filter((p) => !existsSync(p))).toEqual([]);
+  });
+});
+
+describe.skipIf(!BUILT)("qcr plugin from the installed package", () => {
+  // The host plugin outlives the package it came from: `npx` caches are
+  // disposable, so Claude Code is pointed at a render in the data home, and
+  // deleting the installed package leaves that folder whole.
+  // MUTATION: render into the package's own plugins/ — the folder claude is
+  // given is inside the install, and this fails.
+  it("renders Claude Code's plugin into the data home, which survives deleting the install", (ctx) => {
+    if (installError !== null)
+      ctx.skip(`the offline install could not complete from the local npm cache: ${installError}`);
+    const qcr = join(prefix, "node_modules", ".bin", "qcr");
+    const fakeBin = join(SCRATCH, "fake-claude-bin");
+    const log = join(SCRATCH, "fake-claude.log");
+    mkdirSync(fakeBin, { recursive: true });
+    // a claude that records its argv: lists are empty, every other verb is ok
+    writeFileSync(
+      join(fakeBin, "claude"),
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$*" >> '${log}'`,
+        'case "$*" in *" list --json") echo "[]" ;; *) echo \'{"outcome":"ok","message":"ok"}\' ;; esac',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const before = snapshot(prefix);
+    const env = cleanEnv();
+    env.PATH = `${fakeBin}:${env.PATH ?? ""}`;
+    const r = spawnSync(qcr, ["plugin", "install", "--to", "claude", "--json"], {
+      cwd: home,
+      env,
+      encoding: "utf8",
+    });
+    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+    const row = (lastJson(r.stdout) as { hosts: Array<{ outcome: string; dir: string }> })
+      .hosts[0]!;
+    expect(row.outcome).toBe("installed");
+    const dataHome = join(home, ".local", "share", "qcr");
+    expect(row.dir).toBe(join(dataHome, "plugins", "claude", ROOT_PKG.version));
+    // the only folder claude was given is the render, and nothing landed in the install
+    const added = readFileSync(log, "utf8")
+      .split("\n")
+      .filter((l) => l.includes("marketplace add"));
+    expect(added).toEqual([`plugin marketplace add ${row.dir} --json`]);
+    expect([...snapshot(prefix).entries()].filter(([p, s]) => before.get(p) !== s)).toEqual([]);
+
+    rmSync(join(prefix, "node_modules"), { recursive: true, force: true });
+    for (const f of [
+      ".claude-plugin/marketplace.json",
+      "qcr/.claude-plugin/plugin.json",
+      "qcr/skills/review/SKILL.md",
+      "qcr/skills/scan/SKILL.md",
+      "qcr/skills/setup/SKILL.md",
+    ])
+      expect(existsSync(join(row.dir, f)), f).toBe(true);
   });
 });
 

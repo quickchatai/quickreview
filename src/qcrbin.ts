@@ -13,6 +13,8 @@
 //   qcr login [p]      pi's own /login in the pinned pi (src/npmverbs.ts)
 //   qcr pi [args]      the pinned pi with the qcr plugin and /selfimprove
 //   qcr update         the installing package manager updates qcr
+//   qcr plugin …       QuickReview installed into the coding-agent CLIs here
+//                      (src/plugincli.ts)
 //
 // `qcr --schema N review|scan|version …` is a host plugin's call: the verb
 // in contract N's JSON, or a refusal (src/schemaflag.ts), and no update
@@ -43,6 +45,7 @@ export const BIN_HELP = [
   "  qcr login [provider]    log in with pi's own /login, for the review sessions",
   "  qcr pi [args]           pi with the qcr plugin (/qcr-review, /qcr-scan, /qcr-setup) and /selfimprove",
   "  qcr update              update qcr with the package manager that installed it",
+  "  qcr plugin <subcommand> install /qcr:review into Claude Code (`qcr plugin --help`)",
   "  qcr version [--json]    this install's version, schemas and pi pin",
   "  qcr --schema N <verb>   review, scan or version as JSON in host-plugin contract N",
   "",
@@ -59,7 +62,7 @@ export type BinRoute =
   | { route: "help" }
   | { route: "pi"; args: string[] }
   | {
-      route: "version" | "update" | "login" | "review" | "scan";
+      route: "version" | "update" | "login" | "review" | "scan" | "plugin";
       args: string[];
       json: boolean;
       /** The host-plugin contract a `--schema N` run asked for. */
@@ -95,7 +98,8 @@ export function binRoute(argv: readonly string[]): BinRoute {
     cmd === "update" ||
     cmd === "login" ||
     cmd === "review" ||
-    cmd === "scan"
+    cmd === "scan" ||
+    cmd === "plugin"
   )
     return { route: cmd, args, json };
   return { route: "app", argv: [...argv] };
@@ -213,6 +217,11 @@ async function route(r: BinRoute): Promise<void> {
       // The image keeps its own `qcr update`: whatever the app's entry says.
       if (detectInstall(root, process.env).kind === "image") return appMain(["update"]);
       process.exitCode = cmdUpdate(r.args, npmVerbDeps(root));
+      return;
+    }
+    case "plugin": {
+      const { cmdPlugin, pluginDeps } = await import("./plugincli.js");
+      process.exitCode = await cmdPlugin(r.args, r.json, pluginDeps(await packageRoot()));
       return;
     }
     case "refused":
