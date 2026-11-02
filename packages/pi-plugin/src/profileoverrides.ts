@@ -17,7 +17,10 @@
 // replaces nothing and is reported); and the profile's own settings,
 // `profile.toml`, `heuristics.toml` and `addenda/*.md`, which the profile
 // loaders read (packages/pi-plugin/src/profiles.ts). A repo's `profile.toml` is cut down to
-// `ecosystem`, `[lenses]`, `[scan]`, `[posting]` and `[addenda]`.
+// `ecosystem`, `[lenses]`, `[scan]`, `[posting]` and `[addenda]`, so a repo
+// never sets `[security]`. The repo layer alone may also carry
+// `threat-model.md`, the repository's threat model (`repoThreatModel`), which
+// a security review reads over the install profile's.
 //
 // What no layer can reach: the bash-guard policy (extensions/), the secret
 // dirs, and the posting gate (`dry_run`, the MutationGate). None of them is a
@@ -45,6 +48,7 @@ import {
 import { join, relative, resolve, sep } from "node:path";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { findProfile } from "./profilelookup.js";
+import { PROFILE_THREAT_MODEL_FILE } from "./threatmodel.js";
 import { REPO_LAYER_NAME, resolveProfileChain, type ProfileLookup } from "./profiles.js";
 
 /** The directory in the repo that holds the repo profile. */
@@ -88,6 +92,13 @@ export interface OverrideSet {
   ignored: string[];
   /** The loaders' view of the same layers (packages/pi-plugin/src/profiles.ts). */
   lookup: ProfileLookup;
+  /** The repository's threat model, `.qcr/threat-model.md` as the BASE
+   * commit has it (so a PR, or a session's write in its worktree, can never
+   * feed its own round), bounded by the extraction's per-file cap; the
+   * reader (packages/pi-plugin/src/threatmodel.ts `parseThreatModel`) cuts
+   * it at `THREAT_MODEL_MAX_CHARS` with a marker. Null when the base has
+   * none, or only blank text. */
+  repoThreatModel: string | null;
 }
 
 const SHIPPED_DIRS = ["agents", "prompts"] as const;
@@ -177,7 +188,7 @@ export const REPO_TOML_KEYS: ReadonlySet<string> = new Set([
 const GUARDED_KEY = /^(dry_run|github|secrets?(_dir)?|guard|bash_guard|gate|posting_gate)$/i;
 
 const REPO_FILE_RE =
-  /^(?:profile\.toml|heuristics\.toml|(?:addenda|agents|prompts)\/[A-Za-z0-9][A-Za-z0-9._-]*\.md)$/;
+  /^(?:profile\.toml|heuristics\.toml|threat-model\.md|(?:addenda|agents|prompts)\/[A-Za-z0-9][A-Za-z0-9._-]*\.md)$/;
 
 const GIT_ENV = {
   ...process.env,
@@ -299,6 +310,7 @@ export function resolveOverrides(o: {
   const layers: OverrideLayer[] = [];
   const ignored: string[] = [];
   const lookup: ProfileLookup = { ...(o.lookup ?? {}) };
+  let repoThreatModel: string | null = null;
   if (o.repo) {
     const r = extractRepoProfile({
       gitDir: o.repo.gitDir,
@@ -309,6 +321,7 @@ export function resolveOverrides(o: {
     if (r.dir !== null) {
       layers.push({ origin: "repo", name: REPO_PROFILE_DIR, dir: r.dir });
       lookup.repoProfile = { dir: r.dir };
+      repoThreatModel = readThreatModel(join(r.dir, PROFILE_THREAT_MODEL_FILE));
     }
   }
   // A profile found nowhere is no named chain, as for the tuning loaders.
@@ -318,7 +331,7 @@ export function resolveOverrides(o: {
       ? []
       : resolveProfileChain(o.root, o.profile, o.lookup ?? {});
   for (const l of named) layers.push({ origin: "user", name: l.name, dir: l.dir });
-  const set: OverrideSet = { layers, ignored, lookup };
+  const set: OverrideSet = { layers, ignored, lookup, repoThreatModel };
   for (const layer of layers) {
     const over: string[] = [];
     for (const path of layerFiles(layer, over).keys())
@@ -330,6 +343,17 @@ export function resolveOverrides(o: {
   }
   set.ignored = capIgnored(ignored);
   return set;
+}
+
+/** The extracted threat model's text, or null when there is none or it is
+ * blank. The extraction wrote it, so an unreadable file is no file. */
+function readThreatModel(file: string): string | null {
+  try {
+    const text = readFileSync(file, "utf8");
+    return text.trim() === "" ? null : text;
+  } catch {
+    return null;
+  }
 }
 
 /** Whether any layer carries a file that replaces a shipped one. */

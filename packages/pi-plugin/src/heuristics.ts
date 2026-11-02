@@ -207,6 +207,15 @@ export interface HeuristicsExtension {
    * one is present. The loader compiles each probe to match ADDED lines
    * (`^\+.*(?:…)`, case-insensitive multiline). */
   addedLines: Partial<Record<string, RegExp[]>>;
+  /** lens → removed-line probes, tested the same way: the loader compiles
+   * each to match a REMOVED line and never the `--- a/<file>` header
+   * (`^-(?!--).*(?:…)`, case-insensitive multiline). A guard taken away is
+   * a signal no added line carries. Absent = none. */
+  removedLines?: Partial<Record<string, RegExp[]>>;
+  /** lens → added-line probes over configuration files only (the security
+   * triggers' `CONFIG_FILE_RE`: YAML, Terraform, Dockerfiles, workflows, SQL,
+   * …), compiled like `addedLines`. Absent = none. */
+  configLines?: Partial<Record<string, RegExp[]>>;
 }
 
 export const EMPTY_HEURISTICS: HeuristicsExtension = { paths: {}, addedLines: {} };

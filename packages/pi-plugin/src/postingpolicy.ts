@@ -14,6 +14,8 @@
 //   repeat_sites = false      # true (default): a finding may post at each site
 //   body = "verdict"          # full (default) | verdict (verdict line + one sentence)
 //   comment_style = "concise" # full (default) | concise (one claim, ≤3 sentences)
+//   security_max = 8          # security findings' own slots; 0 = none (default)
+//   scope = "security"        # all (default) | security (only security findings post)
 //
 // Inherited through `extends` like every scalar (per key, the nearest profile
 // that sets it wins — packages/pi-plugin/src/profiles.ts `loadProfilePosting`) and overlaid on the
@@ -46,6 +48,7 @@ export type NitsPolicy = "post" | "off";
 export type QuestionsPolicy = "post" | "blocking" | "off";
 export type BodyPolicy = "full" | "verdict";
 export type CommentStyle = "full" | "concise";
+export type PostingScope = "all" | "security";
 
 export interface PostingPolicy {
   /** Findings posted per round (inline + body together, one root cause
@@ -57,6 +60,15 @@ export interface PostingPolicy {
   repeat_sites: boolean;
   body: BodyPolicy;
   comment_style: CommentStyle;
+  /** Security findings' own posting slots, outside `max_comments`; 0 = no
+   * separate channel (security findings share the budget). Absent = 0
+   * (`postingSecurityMax`), so a policy written before the key still reads
+   * as it did. */
+  security_max?: number;
+  /** `security`: only security findings post, the rest are withheld (a
+   * security-only profile sets it); `all`: everything may post. Absent =
+   * `all` (`postingScope`). */
+  scope?: PostingScope;
 }
 
 /** Today's behaviour, key for key. */
@@ -69,7 +81,8 @@ export const DEFAULT_POSTING_POLICY: Readonly<PostingPolicy> = Object.freeze({
   comment_style: "full",
 });
 
-export const POSTING_KEYS = [
+/** The keys every resolved policy carries. */
+const BASE_POSTING_KEYS = [
   "max_comments",
   "nits",
   "questions",
@@ -77,6 +90,18 @@ export const POSTING_KEYS = [
   "body",
   "comment_style",
 ] as const;
+
+export const POSTING_KEYS = [...BASE_POSTING_KEYS, "security_max", "scope"] as const;
+
+/** A policy's security slots: `security_max`, absent = 0. */
+export function postingSecurityMax(p: PostingPolicy | undefined): number {
+  return p?.security_max ?? 0;
+}
+
+/** A policy's scope: `scope`, absent = `all`. */
+export function postingScope(p: PostingPolicy | undefined): PostingScope {
+  return p?.scope ?? "all";
+}
 
 /** A budget is a handful of comments, not a second inline cap (GitHub's is 50). */
 export const MAX_COMMENTS_LIMIT = 50;
@@ -151,6 +176,21 @@ export function parsePostingTable(where: string, raw: unknown): Partial<PostingP
       case "comment_style":
         out.comment_style = oneOf(at, key, value, ["full", "concise"] as const);
         break;
+      case "security_max":
+        if (
+          typeof value !== "number" ||
+          !Number.isInteger(value) ||
+          value < 0 ||
+          value > MAX_COMMENTS_LIMIT
+        )
+          throw new Error(
+            `${at} security_max must be a whole number from 0 (no separate channel) to ${MAX_COMMENTS_LIMIT} (got ${JSON.stringify(value)})`,
+          );
+        out.security_max = value;
+        break;
+      case "scope":
+        out.scope = oneOf(at, key, value, ["all", "security"] as const);
+        break;
       default:
         throw new Error(`${at} unknown key "${key}" — allowed: ${POSTING_KEYS.join(", ")}`);
     }
@@ -166,7 +206,11 @@ export function resolvePostingPolicy(partial: Partial<PostingPolicy>): PostingPo
 /** True when the policy changes nothing — absent counts as default. */
 export function isDefaultPosting(p: PostingPolicy | undefined): boolean {
   if (p === undefined) return true;
-  return POSTING_KEYS.every((k) => p[k] === DEFAULT_POSTING_POLICY[k]);
+  return (
+    BASE_POSTING_KEYS.every((k) => p[k] === DEFAULT_POSTING_POLICY[k]) &&
+    postingSecurityMax(p) === 0 &&
+    postingScope(p) === "all"
+  );
 }
 
 /** The config with the profile's posting policy overlaid. An all-default
