@@ -13,8 +13,9 @@
 // `<install>` is `$QCR_INSTALL`, default `default`. `$QCR_CONFIG` overrides
 // the config FILE outright (not the home). `HOME` must be in the env given:
 // the host resolves it.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   assertPathSegment,
   findProfile,
@@ -104,6 +105,21 @@ export function stateHome(env: InstallEnv): string {
   const override = homeOverride(env.QCR_STATE_HOME);
   if (override !== undefined) return override;
   return join(xdgBase(env.XDG_STATE_HOME, env, join(".local", "state")), "qcr", installName(env));
+}
+
+/** One repo's own scan state home, under the state home: the repo's
+ * directory name and a hash of its real path, so two repos never share a
+ * unit cut, a ledger or a findings store. */
+export function repoScanHome(env: InstallEnv, repo: string): string {
+  let real = repo;
+  try {
+    real = realpathSync(repo);
+  } catch {
+    // a path that cannot be resolved keys on its spelling
+  }
+  const name = basename(real).replace(/[^A-Za-z0-9._-]/g, "_") || "repo";
+  const hash = createHash("sha256").update(real).digest("hex").slice(0, 12);
+  return join(stateHome(env), "repos", `${name}-${hash}`);
 }
 
 /**

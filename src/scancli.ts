@@ -24,7 +24,7 @@ import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, sandboxRoot, type CompanionConfig } from "./config.js";
-import { stateHome } from "./install.js";
+import { repoScanHome, stateHome } from "./install.js";
 import {
   IN_SANDBOX_ENV,
   STARTED_FILE_ENV,
@@ -134,30 +134,50 @@ export function takeSandboxFlag(rest: readonly string[]): {
 
 // ---- assembly ------------------------------------------------------------------
 
-/** The env a host-side `qcr scan` assembles under: the reviewed checkout and
- * the tracker from `[companion]` when the env does not name them, so the CLI
- * reads the same repo the companion mounts. Inside a scan sandbox neither is
- * read — they are host paths — and the container's env decides. */
+/** The checkout `cwd` is in: git's toplevel, else `cwd` itself. */
+export function checkoutOf(cwd: string): string {
+  const r = spawnSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const top = r.status === 0 ? (r.stdout ?? "").trim() : "";
+  return top !== "" ? top : cwd;
+}
+
+/** The env a host-side `qcr scan` assembles under. The reviewed checkout is
+ * the env's, else `[companion] reviewed_repo_dir` (so the CLI reads the same
+ * repo the companion mounts), else the checkout the command runs in — a host
+ * plugin's `/qcr:scan` from inside the person's repo — and then the scan's
+ * state is that repo's own (`repoScanHome`, as the pi plugin keys it) unless
+ * QCR_STATE_HOME names one, so two repos never share a unit cut or a
+ * findings store. The tracker is the env's, else `[companion]`'s. Inside a
+ * scan sandbox none of that is read — they are host paths — and the
+ * container's env decides, `defaultRepo` when it names no checkout. */
 export function scanEnv(
   env: NodeJS.ProcessEnv,
   defaultRepo: string,
   companionOf: () => Pick<CompanionConfig, "reviewed_repo_dir" | "tracker_dir"> = () =>
     loadConfig().companion,
+  here: () => string = () => checkoutOf(process.cwd()),
 ): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env, QCR_ROOT: env.QCR_ROOT?.trim() || sandboxRoot() };
+  if (env[IN_SANDBOX_ENV]?.trim())
+    return { ...out, QCR_REVIEWED_REPO: env.QCR_REVIEWED_REPO?.trim() || defaultRepo };
   let companion: { reviewed_repo_dir: string; tracker_dir: string } | null = null;
-  if (!env[IN_SANDBOX_ENV]?.trim()) {
-    try {
-      companion = companionOf();
-    } catch {
-      // No readable config: the env and the defaults decide.
-    }
+  try {
+    companion = companionOf();
+  } catch {
+    // No readable config: the env and the checkout decide.
   }
-  const tracker = env.QCR_TRACKER_DIR?.trim() || companion?.tracker_dir || "";
+  const tracker = env.QCR_TRACKER_DIR?.trim() || companion?.tracker_dir?.trim() || "";
+  if (tracker) out.QCR_TRACKER_DIR = tracker;
+  const named = env.QCR_REVIEWED_REPO?.trim() || companion?.reviewed_repo_dir?.trim() || "";
+  if (named) return { ...out, QCR_REVIEWED_REPO: named };
+  const repo = here();
   return {
-    ...env,
-    QCR_ROOT: env.QCR_ROOT?.trim() || sandboxRoot(),
-    QCR_REVIEWED_REPO: env.QCR_REVIEWED_REPO?.trim() || companion?.reviewed_repo_dir || defaultRepo,
-    ...(tracker ? { QCR_TRACKER_DIR: tracker } : {}),
+    ...out,
+    QCR_REVIEWED_REPO: repo,
+    ...(env.QCR_STATE_HOME?.trim() ? {} : { QCR_STATE_HOME: repoScanHome(env, repo) }),
   };
 }
 
@@ -461,10 +481,9 @@ async function sandboxPorts(
     docker,
   });
   const appRoot = env.QCR_ROOT?.trim() || sandboxRoot();
-  // The checkout to mount: named by the env or `[companion]`, never the
-  // in-container default (a host path is what docker mounts).
-  const reviewedRepo =
-    process.env.QCR_REVIEWED_REPO?.trim() || cfg?.companion.reviewed_repo_dir || "";
+  // The checkout to mount: scanEnv's on the host (the env's, `[companion]`'s
+  // or the one the command runs in), a host path, which is what docker mounts.
+  const reviewedRepo = env.QCR_REVIEWED_REPO?.trim() ?? "";
   // The model stage 1 runs on (the profile may move its tier): the login
   // the doctor's probe needs.
   const model = (): string => {

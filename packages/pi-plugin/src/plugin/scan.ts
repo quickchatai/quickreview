@@ -24,11 +24,10 @@
 // The guided run, waited for, is also the app's /selfimprove's first half
 // (the app's src/selfimprove.ts): the scan, then the findings to the
 // person's agent.
-import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
-import { basename, join } from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { assetRoot } from "../assetroot.js";
-import { homeProfileLookup, loadOneShotConfig, stateHome } from "../homes.js";
+import { homeProfileLookup, loadOneShotConfig, repoScanHome, stateHome } from "../homes.js";
 import type { CoreConfig } from "../reviewconfig.js";
 import { scanConfigOf } from "../scan/scanagents.js";
 import { assembleScan, type AssembledScan } from "../scan/scanassemble.js";
@@ -137,20 +136,9 @@ export function parseScanCommand(
   return { kind: "guided", o };
 }
 
-/** This repo's own scan state home, under the person's qcr state home: the
- * repo's directory name and a hash of its real path, so two repos never share
- * a unit cut, a ledger or a findings store. */
-export function repoScanHome(env: NodeJS.ProcessEnv, cwd: string): string {
-  let real = cwd;
-  try {
-    real = realpathSync(cwd);
-  } catch {
-    // a cwd that cannot be resolved keys on its spelling
-  }
-  const name = basename(real).replace(/[^A-Za-z0-9._-]/g, "_") || "repo";
-  const hash = createHash("sha256").update(real).digest("hex").slice(0, 12);
-  return join(stateHome(env), "repos", `${name}-${hash}`);
-}
+/** This repo's own scan state home, under the person's qcr state home
+ * (homes.ts, which `qcr scan` on a host keys the same way). */
+export { repoScanHome };
 
 /** Where this repo's scan keeps its state: `QCR_STATE_HOME` when the person
  * set one, else the repo's own home under the qcr state home. */

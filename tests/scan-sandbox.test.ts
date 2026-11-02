@@ -12,6 +12,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   utimesSync,
@@ -53,7 +54,8 @@ import {
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
-import { scanEnv } from "../src/scancli.js";
+import { checkoutOf, scanEnv } from "../src/scancli.js";
+import { repoScanHome } from "../src/install.js";
 import {
   CompanionLifecycle,
   imageBuildProblem,
@@ -1088,6 +1090,53 @@ describe("the driver inside the sandbox", () => {
     }));
     expect(env.QCR_REVIEWED_REPO).toBe("/host/app");
     expect(env.QCR_TRACKER_DIR).toBe("/host/tracker");
+  });
+
+  // A host plugin's /qcr:scan runs `qcr scan` from inside the person's repo,
+  // on an npm install with no config: that checkout is the one scanned, and
+  // its state is its own.
+  // MUTATION: drop the `here()` fallback in scanEnv (back to defaultRepo) —
+  // this fails.
+  it("on a host with no config, or an empty [companion] reviewed_repo_dir, scans the checkout it runs in, with that repo's own state home", () => {
+    const repo = join(dir, "my-repo");
+    mkdirSync(join(repo, "src", "deep"), { recursive: true });
+    execFileSync("git", ["init", "-q", repo]);
+    const top = realpathSync(repo);
+    const host = { QCR_ROOT: "/r", HOME: dir, XDG_STATE_HOME: join(dir, "state") };
+    const noConfig = (): never => {
+      throw new Error("no config");
+    };
+    const here = (): string => checkoutOf(join(repo, "src", "deep"));
+    expect(here()).toBe(top);
+    for (const companionOf of [noConfig, () => ({ reviewed_repo_dir: "", tracker_dir: "" })]) {
+      const env = scanEnv(host, "/reviewed-repo", companionOf, here);
+      expect(env.QCR_REVIEWED_REPO).toBe(top);
+      expect(env.QCR_STATE_HOME).toBe(repoScanHome(host, top));
+      expect(env.QCR_STATE_HOME!.startsWith(join(dir, "state", "qcr", "default", "repos"))).toBe(
+        true,
+      );
+    }
+    // two repos never share a state home
+    const other = join(dir, "other-repo");
+    mkdirSync(other);
+    execFileSync("git", ["init", "-q", other]);
+    const otherEnv = scanEnv(host, "/reviewed-repo", noConfig, () => checkoutOf(other));
+    expect(otherEnv.QCR_STATE_HOME).not.toBe(repoScanHome(host, top));
+    // a state home the person named is kept
+    const named = scanEnv({ ...host, QCR_STATE_HOME: "/mine" }, "/reviewed-repo", noConfig, here);
+    expect(named.QCR_STATE_HOME).toBe("/mine");
+    // a checkout the env or the config names wins, over the global home
+    const set = scanEnv(
+      host,
+      "/reviewed-repo",
+      () => ({
+        reviewed_repo_dir: "/host/app",
+        tracker_dir: "",
+      }),
+      here,
+    );
+    expect(set.QCR_REVIEWED_REPO).toBe("/host/app");
+    expect(set.QCR_STATE_HOME).toBeUndefined();
   });
 
   it("writes its started outcome atomically, whole", () => {

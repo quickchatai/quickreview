@@ -11,8 +11,9 @@
 // into the package: a host loads the folder in place long after this run,
 // and an `npx` cache, the package an update replaces, are both disposable.
 // It then points the host there through the host's own non-interactive verb,
-// at user scope, or at the host's project scope with `--project`; a host
-// with no project scope is skipped with the reason, never given a user
+// at user scope, or for this repository only with `--project` (Claude
+// Code's local scope, the one host that has one the installer can write); a
+// host with no such scope is skipped with the reason, never given a user
 // install instead. Update
 // re-renders and re-points every host it finds QuickReview installed in;
 // uninstall removes it through the host's own verb. Both, and install, then
@@ -59,6 +60,16 @@
 //     elsewhere), so they run with that path as their cwd.
 //   - `claude plugin uninstall … -s <scope>` leaves the marketplace declared:
 //     `claude plugin marketplace remove quickreview-local` drops it.
+//   - The marketplace is declared in the installing person's user settings
+//     and points at their own data home, so a `-s project` install writes an
+//     `enabledPlugins` entry into the checked-in `.claude/settings.json` that
+//     no other clone can load (probed with 2.1.316: a second HOME given that
+//     file lists no plugin and no marketplace). `--project` is therefore
+//     Claude Code's `-s local`: `.claude/settings.local.json`, which git
+//     ignores, for this person in this repository only.
+//   - The Docker-based plugin of releases up to 1.3.2 is `qcr@quickreview`
+//     (marketplace `quickreview`). It is a separate plugin named `qcr`, so
+//     both answer `/qcr:review`; install and update say how to remove it.
 //   - Every verb takes `--json` and prints one result line (`outcome`,
 //     `message`, a `failureCode` on failure) and exits 0 or 1.
 //
@@ -179,6 +190,8 @@ export interface PluginRow {
   reload: string | null;
   /** The older renders this run deleted. */
   removed: string[];
+  /** What the person should know beyond the outcome, one sentence each. */
+  notes: string[];
 }
 
 export interface PluginDeps {
@@ -440,8 +453,18 @@ const row = (
   invoke: [],
   reload: null,
   removed: [],
+  notes: [],
   ...more,
 });
+
+/** The Docker-based Claude Code plugin of releases up to 1.3.2, and its
+ * marketplace: never touched, only named when it is still installed. */
+const LEGACY_CLAUDE_ID = "qcr@quickreview";
+const LEGACY_CLAUDE_MARKETPLACE = "quickreview";
+
+/** What a `--project` install into Claude Code tells the person. */
+const LOCAL_NOTE =
+  "Installed for you in this repository only (.claude/settings.local.json, which git ignores): the plugin loads from this machine's own render, so a teammate runs the same install in their clone.";
 
 /** Claude Code: a local marketplace pointed at the render, the plugin
  * installed from it (the module header has what the probe showed). */
@@ -455,21 +478,38 @@ function claudeInstaller(): HostInstaller {
     version: string | null;
     projectPath: string | null;
   }
-  /** QuickReview's installs, every scope; null when the list failed. A
-   * project install whose project is gone is not one: nothing loads it, and
-   * no verb can reach it from outside that project. */
-  const installs = (ctx: Ctx, exe: string): Entry[] | null => {
-    const list = askList(ctx, exe, ["plugin", "list", "--json"]);
-    if (list === null) return null;
-    return list
+  /** The installs of plugin `pluginId`, every scope, in `list` (`claude
+   * plugin list --json`). A project install whose project is gone is not
+   * one: nothing loads it, and no verb can reach it from outside that
+   * project. */
+  const entriesOf = (list: readonly unknown[], pluginId: string): Entry[] =>
+    list
       .filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null)
-      .filter((e) => e["id"] === id(ctx.render))
+      .filter((e) => e["id"] === pluginId)
       .map((e) => ({
         scope: typeof e["scope"] === "string" ? e["scope"] : "user",
         version: typeof e["version"] === "string" ? e["version"] : null,
         projectPath: typeof e["projectPath"] === "string" ? e["projectPath"] : null,
       }))
       .filter((e) => e.scope === "user" || e.projectPath === null || existsSync(e.projectPath));
+  /** QuickReview's installs and the Docker-era plugin's; null when the list
+   * failed. */
+  const installs = (ctx: Ctx, exe: string): { mine: Entry[]; legacy: Entry[] } | null => {
+    const list = askList(ctx, exe, ["plugin", "list", "--json"]);
+    if (list === null) return null;
+    return { mine: entriesOf(list, id(ctx.render)), legacy: entriesOf(list, LEGACY_CLAUDE_ID) };
+  };
+  /** How to remove the Docker-era plugin, when it is still installed. */
+  const legacyNotes = (legacy: readonly Entry[]): string[] => {
+    if (legacy.length === 0) return [];
+    const un = legacy.map((e) =>
+      e.scope === "user"
+        ? `\`claude plugin uninstall ${LEGACY_CLAUDE_ID}\``
+        : `\`claude plugin uninstall ${LEGACY_CLAUDE_ID} -s ${e.scope}\` (from ${e.projectPath ?? "its project"})`,
+    );
+    return [
+      `The Docker-based plugin of releases up to 1.3.2 (${LEGACY_CLAUDE_ID}) is still installed and answers the same commands: remove it with ${un.join(", ")}, then \`claude plugin marketplace remove ${LEGACY_CLAUDE_MARKETPLACE}\`.`,
+    ];
   };
   /** The folder the marketplace points at: null when it is not declared,
    * undefined when the list failed. */
@@ -495,9 +535,14 @@ function claudeInstaller(): HostInstaller {
     ...onPath("claude"),
     reload,
     noProject: null,
-    install(ctx, exe, scope) {
-      const before = installs(ctx, exe);
-      if (before === null) return row(host, "failed", "`claude plugin list --json` did not answer");
+    install(ctx, exe, asked) {
+      const listed = installs(ctx, exe);
+      if (listed === null) return row(host, "failed", "`claude plugin list --json` did not answer");
+      const before = listed.mine;
+      const notes = legacyNotes(listed.legacy);
+      // `--project` is this person in this repository: see the module header
+      const scope = asked === "project" ? "local" : "user";
+      if (scope === "local") notes.unshift(LOCAL_NOTE);
       const here = real(ctx.deps.cwd);
       const prior = before.find(
         (e) =>
@@ -523,14 +568,18 @@ function claudeInstaller(): HostInstaller {
         invoke: invokeOf(ctx, host),
         reload,
         removed: tidy(ctx, host, dir),
+        notes,
       });
     },
     update(ctx, exe) {
-      const found = installs(ctx, exe);
-      if (found === null) return row(host, "failed", "`claude plugin list --json` did not answer");
+      const listed = installs(ctx, exe);
+      if (listed === null) return row(host, "failed", "`claude plugin list --json` did not answer");
+      const found = listed.mine;
+      const notes = legacyNotes(listed.legacy);
       if (found.length === 0)
         return row(host, "skipped", "QuickReview is not installed here", {
           removed: tidy(ctx, host, referenced(ctx, exe)),
+          notes,
         });
       const dir = renderFor(ctx, host);
       const pointed = point(ctx, exe, dir);
@@ -550,11 +599,13 @@ function claudeInstaller(): HostInstaller {
         invoke: invokeOf(ctx, host),
         reload,
         removed: tidy(ctx, host, dir),
+        notes,
       });
     },
     uninstall(ctx, exe) {
-      const found = installs(ctx, exe);
-      if (found === null) return row(host, "failed", "`claude plugin list --json` did not answer");
+      const listed = installs(ctx, exe);
+      if (listed === null) return row(host, "failed", "`claude plugin list --json` did not answer");
+      const found = listed.mine;
       const said: string[] = [];
       for (const e of found) {
         const un = ask(ctx, exe, ["plugin", "uninstall", id(ctx.render), "-s", e.scope, "--json"], {
@@ -1323,6 +1374,7 @@ function summary(rows: readonly PluginRow[], label: (h: string) => string): stri
       );
     }
     if (r.reload !== null) out.push(`  To pick it up: ${r.reload}.`);
+    for (const n of r.notes) out.push(`  ${n}`);
   }
   return out;
 }

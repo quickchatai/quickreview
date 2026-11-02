@@ -193,11 +193,17 @@ describe("daemon topology", () => {
     // /login). The person's own terminal, never a scheduled agent; only the
     // package's bin imports qcrbin, and only qcrbin imports npmverbs (pinned
     // below). sqlitehint.ts only names the verbs that run without the state
-    // store, `pi` among them, and starts nothing.
+    // store, `pi` among them, and starts nothing: it is let through only
+    // while it has no way to start a process (no child_process, no piBin, no
+    // --no-session), so the verb list is excused and a spawn is not.
+    // MUTATION: add `import { spawnSync } from "node:child_process";` to
+    // src/sqlitehint.ts — this fails.
+    const verbListOnly = (f: string): boolean =>
+      f.endsWith("/src/sqlitehint.ts") &&
+      !/child_process|piBin|--no-session/.test(readFileSync(f, "utf8"));
     const allowedPaths = [
       "/src/qcrbin.ts",
       "/src/npmverbs.ts",
-      "/src/sqlitehint.ts",
       "/src/oneshot.ts",
       "/src/reviewcli.ts",
       "/src/opencli.ts",
@@ -212,6 +218,7 @@ describe("daemon topology", () => {
     const offenders = allSrcFiles()
       .filter((f) => !allowed.includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => !allowedPaths.some((p) => f.endsWith(p)))
+      .filter((f) => !verbListOnly(f))
       .filter((f) => /["'`]pi["'`]\s*,|piBin|--no-session/.test(readFileSync(f, "utf8")));
     expect(offenders).toEqual([]);
     // The case runner's allowance holds only while no daemon module can reach

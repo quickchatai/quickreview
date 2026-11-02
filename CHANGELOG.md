@@ -16,11 +16,15 @@ wrapper install it ran, and this repository's own marketplace. If you
 installed it, remove it, then install the new one:
 
 ```sh
-claude plugin uninstall qcr
+claude plugin uninstall qcr@quickreview
+claude plugin marketplace remove quickreview
 npx @quickchatai/quickreview plugin install --to claude
 ```
 
-`claude plugin marketplace remove quickreview` drops the old marketplace too.
+Name the old plugin in full: the new one is `qcr@quickreview-local`, and both
+answer `/qcr:review`. While the old one is installed, `qcr plugin install` and
+`qcr plugin update` say so. `qcr plugin install --project` installs into
+Claude Code for you in this repository only (`.claude/settings.local.json`).
 The release image's own `qcr` wrapper is unchanged.
 
 ## 1.3.2

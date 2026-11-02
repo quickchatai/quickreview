@@ -91,6 +91,11 @@ export function stateHome(env: InstallEnv = process.env): string {
   return core.stateHome(withHome(env));
 }
 
+/** One repo's own scan state home under the state home (core `repoScanHome`). */
+export function repoScanHome(env: InstallEnv, repo: string): string {
+  return core.repoScanHome(withHome(env), repo);
+}
+
 /**
  * `$XDG_DATA_HOME/qcr` (default `~/.local/share/qcr`): the files the App
  * renders for the coding-agent CLIs on this machine, which load them in place

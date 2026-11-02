@@ -8,7 +8,8 @@
 // a project scope's update and uninstall work only from inside that project.
 //
 // What it holds: the render lands in the data home at the running release,
-// the only folder any argv names; user and project scope; a re-install; an
+// the only folder any argv names; user scope, and `--project` as Claude
+// Code's local scope; the Docker-era plugin named for removal; a re-install; an
 // update that re-points every scope and deletes the older render; an
 // uninstall through Claude Code's own verbs; a failing claude; a claude not
 // on PATH; and the usage errors, which run nothing.
@@ -210,7 +211,7 @@ async function qcrJson(
 
 /** An older release installed as the installer would have left it: its
  * render, the marketplace on it, and installs at `scopes`. */
-function olderInstall(version: string, scopes: Array<"user" | "project">): string {
+function olderInstall(version: string, scopes: Array<"user" | "local">): string {
   const old = renderDir(version);
   writeRendered(claudeRender(version), old);
   const state: FakeState = {
@@ -219,7 +220,7 @@ function olderInstall(version: string, scopes: Array<"user" | "project">): strin
       id: ID,
       version,
       scope,
-      ...(scope === "project" ? { projectPath: project } : {}),
+      ...(scope === "local" ? { projectPath: project } : {}),
     })),
   };
   writeFileSync(process.env.FAKE_CLAUDE_STATE!, JSON.stringify(state));
@@ -257,7 +258,11 @@ describe("qcr plugin install --to claude", () => {
     expect(said).toContain("/reload-plugins");
   });
 
-  it("installs at the project scope with --project, from the project", async () => {
+  // The marketplace lives in the installer's own user settings and data
+  // home, so a checked-in `.claude/settings.json` entry would load in no
+  // other clone: --project is Claude Code's gitignored local scope.
+  // MUTATION: pass `-s project` for --project — this fails.
+  it("installs at the local scope with --project, from the project, and says it is this person's only", async () => {
     process.chdir(project);
     const { code, rows } = await qcrJson("plugin", "install", "--to", "claude", "--project");
     expect(code).toBe(0);
@@ -265,18 +270,48 @@ describe("qcr plugin install --to claude", () => {
       expect.objectContaining({
         host: "claude",
         outcome: "installed",
-        scopes: ["project"],
+        scopes: ["local"],
         version: VERSION,
         dir: renderDir(),
         invoke: ["/qcr:review", "/qcr:scan", "/qcr:setup"],
       }),
     ]);
+    expect(rows[0]!.notes.join(" ")).toContain(".claude/settings.local.json");
     const install = calls().find((c) => c.argv[1] === "install")!;
-    expect(install.argv).toEqual(["plugin", "install", ID, "-s", "project", "--json"]);
+    expect(install.argv).toEqual(["plugin", "install", ID, "-s", "local", "--json"]);
     expect(install.cwd).toBe(project);
     expect(fakeState().installs).toEqual([
-      { id: ID, version: VERSION, scope: "project", projectPath: project },
+      { id: ID, version: VERSION, scope: "local", projectPath: project },
     ]);
+    expect(await qcr("plugin", "install", "--to", "claude", "--project")).toBe(0);
+    expect(out.join("\n")).toMatch(/^Claude Code: installed at local scope, release /);
+    expect(out.join("\n")).toContain("a teammate runs the same install in their clone");
+  });
+
+  // MUTATION: return [] from legacyNotes — the old plugin goes unmentioned
+  // and this fails.
+  it("names the Docker-era qcr@quickreview for removal when it is still installed, and leaves it alone", async () => {
+    const legacy = { id: "qcr@quickreview", version: "1.3.2", scope: "user" };
+    writeFileSync(
+      process.env.FAKE_CLAUDE_STATE!,
+      JSON.stringify({ marketplace: null, installs: [legacy] }),
+    );
+    expect(await qcr("plugin", "install", "--to", "claude")).toBe(0);
+    const said = out.join("\n");
+    expect(said).toContain("`claude plugin uninstall qcr@quickreview`");
+    expect(said).toContain("`claude plugin marketplace remove quickreview`");
+    expect(argvs().filter((a) => a.includes("qcr@quickreview "))).toEqual([]);
+    expect(fakeState().installs).toContainEqual(legacy);
+
+    const { rows } = await qcrJson("plugin", "update");
+    expect(rows.find((r) => r.host === "claude")!.notes.join(" ")).toContain(
+      "claude plugin uninstall qcr@quickreview",
+    );
+  });
+
+  it("says nothing of the Docker-era plugin when it is not installed", async () => {
+    const { rows } = await qcrJson("plugin", "install", "--to", "claude");
+    expect(rows[0]!.notes).toEqual([]);
   });
 
   it("a re-install at the same release keeps the folder and changes nothing", async () => {
@@ -309,14 +344,14 @@ describe("qcr plugin update", () => {
   // MUTATION: keep every render in tidy (return before deleting) — the
   // older release's folder stays and this fails.
   it("re-renders at this release, re-points every scope from its own place, and tidies", async () => {
-    const old = olderInstall("1.0.0", ["user", "project"]);
+    const old = olderInstall("1.0.0", ["user", "local"]);
     const { code, rows } = await qcrJson("plugin", "update");
     expect(code).toBe(0);
     expect(rows.filter((r) => r.host === "claude")).toEqual([
       expect.objectContaining({
         host: "claude",
         outcome: "updated",
-        scopes: ["user", "project"],
+        scopes: ["user", "local"],
         version: VERSION,
         dir: renderDir(),
         removed: [old],
@@ -325,7 +360,7 @@ describe("qcr plugin update", () => {
     expect(fakeState().marketplace?.path).toBe(renderDir());
     expect(fakeState().installs.map((e) => e.version)).toEqual([VERSION, VERSION]);
     const project_ = calls().find(
-      (c) => c.argv.join(" ") === `plugin update ${ID} -s project --json`,
+      (c) => c.argv.join(" ") === `plugin update ${ID} -s local --json`,
     );
     expect(project_?.cwd).toBe(project);
     expect(existsSync(old)).toBe(false);
@@ -357,12 +392,12 @@ describe("qcr plugin uninstall --from claude", () => {
     const { code, rows } = await qcrJson("plugin", "uninstall", "--from", "claude");
     expect(code).toBe(0);
     expect(rows).toEqual([
-      expect.objectContaining({ host: "claude", outcome: "removed", scopes: ["user", "project"] }),
+      expect.objectContaining({ host: "claude", outcome: "removed", scopes: ["user", "local"] }),
     ]);
     const un = calls().filter((c) => c.argv[1] === "uninstall");
     expect(un.map((c) => [c.argv.join(" "), c.cwd])).toEqual([
       [`plugin uninstall ${ID} -s user --json`, dir],
-      [`plugin uninstall ${ID} -s project --json`, project],
+      [`plugin uninstall ${ID} -s local --json`, project],
     ]);
     expect(argvs()).toContain("plugin marketplace remove quickreview-local --json");
     expect(fakeState()).toEqual({ marketplace: null, installs: [] });

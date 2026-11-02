@@ -19,6 +19,8 @@ const COMMANDS = Object.keys(loadSource().commands);
 const invokes = (host: string): string[] => COMMANDS.map((c) => NAMES[host]![c]!.invoke);
 /** Every invoke-shaped spelling in `text`, in order. */
 const spelled = (text: string): string[] => text.match(/[/$]qcr[:-][a-z]+/g) ?? [];
+/** The Docker-era plugin's uninstall, by its whole id, on its own line. */
+const OLD_UNINSTALL = "claude plugin uninstall qcr@quickreview\n";
 const installOf = (host: string): RegExp => new RegExp(`plugin install --to ${host}(?![\\w-])`);
 
 describe("docs/plugin.md", () => {
@@ -47,8 +49,12 @@ describe("docs/plugin.md", () => {
     expect(PAGE).toContain("qcr plugin uninstall --from all");
   });
 
-  it("tells a user of the Docker-based plugin to uninstall it, then run the installer", () => {
-    const old = PAGE.indexOf("claude plugin uninstall qcr");
+  // Both plugins are named `qcr`, so a bare `claude plugin uninstall qcr`
+  // may pick the new one: the step names the old plugin's whole id.
+  // MUTATION: write `claude plugin uninstall qcr` in docs/plugin.md's
+  // migration block — this fails.
+  it("tells a user of the Docker-based plugin to uninstall it by its id, then run the installer", () => {
+    const old = PAGE.indexOf(OLD_UNINSTALL);
     const fresh = PAGE.indexOf("npx @quickchatai/quickreview plugin install --to claude", old);
     expect(old).toBeGreaterThanOrEqual(0);
     expect(fresh).toBeGreaterThan(old);
@@ -79,7 +85,7 @@ describe("the changelog", () => {
   it("carries the migration from the Docker-based plugin in its unreleased section", () => {
     const log = read("CHANGELOG.md");
     const unreleased = /^## Unreleased\n([\s\S]*?)(?=^## )/m.exec(log)?.[1] ?? "";
-    const old = unreleased.indexOf("claude plugin uninstall qcr");
+    const old = unreleased.indexOf(OLD_UNINSTALL);
     expect(old).toBeGreaterThanOrEqual(0);
     expect(
       unreleased.indexOf("npx @quickchatai/quickreview plugin install --to claude", old),

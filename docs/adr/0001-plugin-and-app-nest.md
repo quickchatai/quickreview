@@ -1,6 +1,6 @@
 ---
 status: accepted
-built: partly — the plugin side is built (FT-0666, FT-0667, FT-0668); the app's home is being built on the first-run-home map; of the amendment, the one skill source and its render for pi and every host are built (FT-0707), the installer and the move off Docker are being built (FT-0708 to FT-0711), and selfimprove as a core command is built with the selfimprove loop (FT-0699)
+built: partly — the plugin side is built (FT-0666, FT-0667, FT-0668); the app's home is being built on the first-run-home map; of the amendment, the one skill source with its render for pi and every host, the `qcr plugin` installer for all seven hosts, and the move off Docker are built (FT-0707 to FT-0711), and only selfimprove as a core command is still to come, with the selfimprove loop (FT-0699)
 ---
 
 # The plugin and the app nest: each works without the one outside it

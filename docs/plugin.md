@@ -20,7 +20,7 @@ With `qcr` installed (`npm i -g @quickchatai/quickreview`), it is the same verb:
 ```sh
 qcr plugin install --to <host>      # one host
 qcr plugin install --to all         # every host found on this machine
-qcr plugin install --to claude --project   # this repository only, where a host has a project scope
+qcr plugin install --to claude --project   # you, in this repository only (Claude Code)
 ```
 
 | Host        | Install                               | Then type                                | To pick it up                                                           |
@@ -35,8 +35,11 @@ qcr plugin install --to claude --project   # this repository only, where a host 
 
 The installer prints the same two lines for each host it installed into: what
 to type, and how to pick it up. A plugin is installed at user scope. Only
-Claude Code has a project scope the installer writes, so `--project` installs
-there and skips every other host with the reason.
+Claude Code has a narrower scope the installer writes, so `--project` installs
+there and skips every other host with the reason. It is Claude Code's local
+scope, `.claude/settings.local.json`, which git ignores: the plugin loads from
+the render in your own data home, so a setting checked in for the team would
+load in no other clone. Each teammate runs the same install in their clone.
 
 `--to all` finds a host by its executable on `PATH`, and Cursor also by
 `~/.cursor`. With no host found it exits 0 and says so. Every run prints one
@@ -63,12 +66,16 @@ marketplace, which installed the image's `qcr` wrapper through Docker. It is
 gone. If you installed it, remove it, then install the new one:
 
 ```sh
-claude plugin uninstall qcr
+claude plugin uninstall qcr@quickreview
+claude plugin marketplace remove quickreview
 npx @quickchatai/quickreview plugin install --to claude
 ```
 
-`claude plugin marketplace remove quickreview` then drops the old marketplace
-too. The release image's own `qcr` wrapper, which runs the bot and the home in
+The old plugin is `qcr@quickreview` and the new one `qcr@quickreview-local`.
+Both are named `qcr` and both answer `/qcr:review`, so name the old one in
+full: a bare `claude plugin uninstall qcr` may pick either. While the old one
+is still installed, `qcr plugin install` and `qcr plugin update` say so and
+print these commands; they never remove it themselves. The release image's own `qcr` wrapper, which runs the bot and the home in
 Docker, is unchanged ([host-wrapper.md](host-wrapper.md)).
 
 ## How a host plugin is made
@@ -118,7 +125,10 @@ A host body probes the installed `qcr` first (`qcr --schema 1 version`) and,
 on any nonzero exit or output that is not JSON, runs the exact release it was
 rendered from through `npx -y @quickchatai/quickreview@<version>`. A host scan
 runs with `--sandbox host`: in `qcr`'s own process, behind its read-only
-guard.
+guard. It scans the checkout the host runs in (git's toplevel of its
+directory) and keeps that repo's scan state in its own folder under the state
+home, unless `QCR_REVIEWED_REPO` or `[companion] reviewed_repo_dir` names
+another checkout.
 
 ## The schema check
 
