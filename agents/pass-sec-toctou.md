@@ -50,7 +50,7 @@ I/O or yield between check and write, the row is dead.
    or policy object that really decides — and the USE site, and what each
    **binds to**: row + version, the loaded object or a re-fetch by another
    key, the value the token was issued for or what is pending now, a session
-   field, a re-registrable name, a replica or the primary, a key or its
+   field, a re-registrable name, a read copy or the primary, a key or its
    version id, a branch or a SHA. Same immutable thing in one atomic step →
    dead.
 3. **What runs between**, from where the state is fixed: the check line
@@ -106,7 +106,7 @@ I/O or yield between check and write, the row is dead.
   module-level set) unless the repo pins one process for the whole service
   ("we run one worker" is not that); a TTL lock (`SET NX PX`, Redlock)
   around a section that can outlive the TTL with no fencing token checked at
-  the write; a session advisory lock behind transaction pooling; a replica
+  the write; a session advisory lock behind transaction pooling; a read-copy
   read as the check for a primary write; a self-invoked `@Transactional`; a
   row lock on SQLite; a bulk update past `@Version`; Node across an `await`;
   the GIL; a UI debounce.
@@ -165,7 +165,7 @@ open, a SHA pin). Anchor at the check or use in the diff, or at the removed
 serializer.
 
 **Plausible here** means only facts outside the repo are missing: an
-isolation level in an out-of-repo connection string, worker or replica
+isolation level in an out-of-repo connection string, worker or read-copy
 counts, runtime directory ownership, the schema of a table **whose
 migrations are not in the repo**. When the repo holds them, a missing
 constraint is evidence: confirm, do not ask.
