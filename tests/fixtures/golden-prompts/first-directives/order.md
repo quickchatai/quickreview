@@ -927,10 +927,8 @@ alone: a bare `below-bar` teaches nobody anything.
       "reachability": "routine",
       "kind": "security:idor",
       "evidence": "invoices.py:57 filters by request.org_id; nothing read shows the middleware sets it before this handler runs",
-      "disposition": "downgraded",
-      "word": "security-demoted",
-      "axis": "confidence",
-      "posted_as": "question",
+      "disposition": "doubted",
+      "word": "unverifiable",
       "security_outcome": "question",
       "reason": "Proof gap: is org_id always set before this handler? If not, any user reads another org's invoices."
     }

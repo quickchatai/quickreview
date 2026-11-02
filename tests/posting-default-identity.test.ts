@@ -226,9 +226,9 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 //
 // With `dedup_merge = false`, `coverage_check = false` and no posting policy:
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "1e2e3827aba82acce697ba91d0b127c8de2f24b1c3c0ab5b69b3fecdcb92983a",
-  "re-review": "ba4deaa9cba2f4fded0de2696313276aed092092e56041fae4ea7c4479e546de",
-  staleness: "776aca6c96c32a9b2472a3413d329980a8c3e3a90571cfe1111cae398f6409b1",
+  first: "f4ef394d58447861c19f24f599339461e9e9f28a7d6227309d08c55516774f86",
+  "re-review": "d11d31f2c9443b3bcc77dc9507da7b0a8cefe1e3f7cb915bce7f32ab387cd82b",
+  staleness: "9e6df0ed5651251e03bdd3231a198c2fb0238d3f60930cee2859e837b8dee286",
 };
 // The default orders: `[review] dedup_merge` on (step 4 carries the
 // `{{dedup_note}}` — group candidates with `cluster_findings` before the
@@ -237,23 +237,23 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // posting-policy note), and `[review] coverage_check` on (the fixture PR
 // changes source files, so step 2 ends with the `{{coverage_note}}`).
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "4621916b5153b6c7e2b17be6d3b5f2eac1807097dc35a13cc8178e5668e26e78",
-  "re-review": "9cb0a9ea4fbf068bd232892e20d6224fcb00472c77342b26d39aaf37176e2011",
-  staleness: "81bcc744b5f3ad18d23a2c7bc769c7cc439daadb00b2f8686609d41267707c23",
+  first: "1cdd4de1266ebc1970559ddf9e9548d545aec661c6f6ef2faf936c7c7e6feb53",
+  "re-review": "7f9a43bac641a61af4a5ee50523366249b540c36ca6d2d311da02912d1808755",
+  staleness: "37be3edd5a55a007ec6ac6b34b491af1d09c0871764b0640e6719784f909e678",
 };
 // `[review] coverage_check = false`: the default orders without the
 // `{{coverage_note}}`.
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "fb2abfbf0a8f61ff9300a9669d2c8f680ebac1f00a4957f3203d792ab7e0a387",
-  "re-review": "14ae4ea155030d7db3bb06a2720baa9159a6d7a41140ce10bbd9f22a7850cf78",
-  staleness: "c8a352efd25c2c33dd9cba62f3834cf8056d47ec811e83d0f3094b7f4e79c314",
+  first: "9f3ba65063eef42d743236351b90408785d1c49214b5edf6cdabc2b3112109cb",
+  "re-review": "b5ce47f30e604b16c9d336401741af1848e91b6da72716b13dda5256e50cadc4",
+  staleness: "fb4428568e96dfb54e93bd33b7067540b78b9f33b430828c2898f9530c44c315",
 };
 // `[review] render_outputs = false`, `dedup_merge = false`, `coverage_check =
 // false` and no posting policy: the orders without any of those levers.
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "042a9ee9a568ba7ab898a188aba47eef302e1ddea4eb26bd77180d2680273f20",
-  "re-review": "badf504412e9c214743b7923c2d247772c4d76bbe1194899d5b403483f7fdb77",
-  staleness: "a15696a48fe46485264e92aec5bc919e3a25c6f2c173d2001fb31f01e939f8e8",
+  first: "e4f6ee7ef9be265e323f0fbaa9dcb68ff6f8024164616ddaeadee1150f8e1843",
+  "re-review": "d09b44f9174066ea6b272edc3f8013135c96275fe5a4ae0feff50ce6c2f7c9df",
+  staleness: "44ef8d4c6aaa9d7e1b1a1e56b57853f0e149f048541a3e90ff75473533747cea",
 };
 // The default profile's built agents with `[review] dedup_merge = false` and no
 // posting policy. These hashes move only when an agent body, an addendum or the

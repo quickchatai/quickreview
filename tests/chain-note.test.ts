@@ -151,15 +151,20 @@ describe("the round templates", () => {
       );
   });
 
-  it("ask for posted_as on a downgraded entry that went out, and show one", () => {
+  it("ask for posted_as on a downgraded entry that went out, and show a security entry DOUBTED, never the fold's question", () => {
     for (const t of TEMPLATES) {
       const text = template(t);
       expect(text, t).toContain(
         "- `posted_as` on a `posted` entry **and on a `downgraded` entry that went out**",
       );
       expect(text, t).toContain("`security_outcome` and `hop_labels` are optional");
-      // The record example stays valid JSON and carries the security-demoted
-      // question with its tag.
+      // The record example stays valid JSON. Its security entry shows the
+      // default shape — an unproven candidate DOUBTED `unverifiable` — never
+      // the fold's `security-demoted` question, which only
+      // {{security_fold_note}} shows, so a round with the fold off is never
+      // taught to post one.
+      // MUTATION: restore the `security-demoted`/`posted_as: "question"` f3
+      // entry in prompts/round-first.md's record example — this fails.
       // The findings record is the example that carries comments_posted;
       // the verdict example before it is not JSON (`"APPROVE" | ...`).
       const example =
@@ -170,11 +175,12 @@ describe("the round templates", () => {
       const parsed = JSON.parse(
         example!.replace("{{n}}", "1").replace("{{round_no}}", "1").replace("{{head_sha}}", "x"),
       ) as { findings: Array<Record<string, unknown>> };
-      expect(parsed.findings.find((f) => f.word === "security-demoted")).toMatchObject({
-        disposition: "downgraded",
-        axis: "confidence",
-        posted_as: "question",
+      expect(parsed.findings.find((f) => f.word === "security-demoted"), t).toBeUndefined();
+      expect(parsed.findings.find((f) => f.lens === "pass-sec-access"), t).toMatchObject({
+        disposition: "doubted",
+        word: "unverifiable",
       });
+      expect(text, t).not.toMatch(/"word": "security-demoted"/);
     }
   });
 });
