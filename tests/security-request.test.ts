@@ -758,6 +758,7 @@ async function dispatchWith(
   store: StateStore,
   labels: string[],
   over: Partial<Config> = {},
+  deps: Partial<Parameters<typeof dispatchOnce>[0]> = {},
 ): Promise<RoundOrder> {
   const files: PrFileEntry[] = [
     { filename: "app/service.py", additions: 12, deletions: 1, status: "modified" },
@@ -778,7 +779,7 @@ async function dispatchWith(
     async inject() {},
     async archiveAndClose() {},
   };
-  await dispatchOnce({ cfg: { ...cfg, ...over }, store, adapter, hooks });
+  await dispatchOnce({ cfg: { ...cfg, ...over }, store, adapter, hooks, ...deps });
   expect(orders).toHaveLength(1);
   return orders[0]!;
 }
@@ -837,6 +838,91 @@ describe("dispatch plans the family from the request", () => {
       expect(familyRows(order)).toContain("pass-sec-access");
       expect(familyRows(order)).not.toContain("pass-sec-iam");
       expect(order.security_facts?.length ?? 0).toBeGreaterThan(0);
+    },
+  );
+});
+
+// The route inventory plans nothing and only a family row's task reads it:
+// a PR with no security signal reads nothing for it.
+describe("dispatch reads the route inventory only for a round with a family row", () => {
+  const counting = (): RepoGitReader & { reads: string[] } => {
+    const reads: string[] = [];
+    return {
+      reads,
+      listFiles: async () => [
+        { path: "app/service.py", size: 20 },
+        { path: "app/views.py", size: 40 },
+        { path: "api/handlers.py", size: 40 },
+      ],
+      readFile: async (_sha, path) => {
+        reads.push(path);
+        return path.endsWith("views.py")
+          ? '@app.route("/admin")\ndef admin():\n    return 1\n'
+          : "x = 1\n";
+      },
+    };
+  };
+  const tree = async () => ({
+    head_sha: "a".repeat(40),
+    base_ref: "master",
+    base_sha: "b".repeat(40),
+    merge_base: "b".repeat(40),
+  });
+
+  // MUTATION: compute every check in securityInputsFor (drop
+  // SECURITY_TRIGGER_CHECKS), or call sec.inventory() whatever the plan — the
+  // no-signal round reads the route files, and this fails.
+  it(
+    "no signal: no route file is read and the order carries no facts",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = new StateStore(":memory:");
+      tracked(store, 52, "queued", "sha52");
+      const reader = counting();
+      const order = await dispatchWith(
+        store,
+        [],
+        {},
+        {
+          securityGit: reader,
+          prepareWorktree: tree,
+        },
+      );
+      expect(familyRows(order)).toEqual([]);
+      // The threat model is read for every round; nothing else is.
+      expect(reader.reads).toEqual([".qcr/threat-model.md"]);
+      expect(order.security_facts).toBeUndefined();
+    },
+  );
+
+  it(
+    "a request: the inventory is read and reaches the order after the other facts",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = new StateStore(":memory:");
+      tracked(store, 52, "queued", "sha52");
+      store.recordReviewRequest({
+        pr: 52,
+        kind: "security",
+        source: "comment",
+        requested_by: "maya-dev",
+        comment_id: 11,
+      });
+      const reader = counting();
+      const order = await dispatchWith(
+        store,
+        [],
+        {},
+        {
+          securityGit: reader,
+          prepareWorktree: tree,
+        },
+      );
+      expect(familyRows(order).length).toBeGreaterThan(0);
+      expect(reader.reads).toContain("app/views.py");
+      const checks = (order.security_facts ?? []).map((f) => f.check);
+      expect(checks.at(-1)).toBe("route-inventory");
+      expect(checks.filter((c) => c === "route-inventory")).toHaveLength(1);
     },
   );
 });
@@ -1117,6 +1203,34 @@ describe("the repository reads", () => {
     expect(viaGit).toEqual(sync);
     expect(reader.reads.length).toBeGreaterThan(0);
     expect(viaGit.find((f) => f.check === "route-inventory")?.status).not.toBe("unknown");
+  });
+
+  // MUTATION: drop the `late()` checks in securityFactsAt — the reads go on
+  // past the deadline, and this fails.
+  it("past its deadline no read is issued, and a listed size spares the size read", async () => {
+    let clock = 0;
+    const reader = fake();
+    const sized: Array<number | undefined> = [];
+    const wrapped: RepoGitReader = {
+      listFiles: reader.listFiles,
+      readFile: async (sha, path, max, size) => {
+        sized.push(size);
+        clock = 10;
+        return reader.readFile(sha, path, max, size);
+      },
+    };
+    const facts = await securityFactsAt(
+      files,
+      wrapped,
+      { head: "H", base: "B" },
+      { deadline: 5, now: () => clock },
+    );
+    // the first chunk was issued before the deadline; nothing after it
+    expect(reader.reads.length).toBeLessThanOrEqual(8);
+    expect(reader.reads.length).toBeGreaterThan(0);
+    expect(facts.find((f) => f.check === "route-inventory")?.status).not.toBe("clear");
+    // a head read carries the size the listing gave
+    expect(sized.some((n) => typeof n === "number")).toBe(true);
   });
 
   it("no reader or no head is the diff-only checks; a failed listing is unknown, never clear", async () => {

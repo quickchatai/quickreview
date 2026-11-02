@@ -115,6 +115,8 @@ import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import {
   computeSecurityFacts,
+  SECURITY_TRIGGER_CHECKS,
+  type SecFactCheck,
   type SecurityFact,
 } from "@quickchatai/pi-quickreview/src/secfacts.js";
 import { resolveThreatModel } from "@quickchatai/pi-quickreview/src/threatmodel.js";
@@ -1039,9 +1041,13 @@ export const SECURITY_FACTS_BUDGET_MS = 15_000;
  * PR's recorded one or its label, as `resolveSecurityRequest` reads them.
  * When no security-family lens can run at all (every one switched off),
  * nothing is read from the repository. Otherwise: the repository's threat
- * model at the base commit, else the profile's, else none; the facts, bounded
- * by `SECURITY_FACTS_BUDGET_MS`; and earlier rounds' partial chains. Total —
- * a failed read is no threat model and `unknown` facts, never a failed round.
+ * model at the base commit, else the profile's, else none; the facts that
+ * can plan a lens (`SECURITY_TRIGGER_CHECKS`), bounded by
+ * `SECURITY_FACTS_BUDGET_MS`; and earlier rounds' partial chains. The route
+ * inventory plans nothing and only a family row's task reads it, so it is
+ * not read here: `inventory` reads it for a round whose plan has a family
+ * row, within what is left of the same budget. Total — a failed read is no
+ * threat model and `unknown` facts, never a failed round.
  */
 async function securityInputsFor(
   deps: DispatchDeps,
@@ -1054,6 +1060,7 @@ async function securityInputsFor(
   threatModel: NonNullable<PlanSecurityInputs["threatModel"]> | null;
   securityFacts: SecurityFact[];
   priorPartialChains: string[];
+  inventory: () => Promise<SecurityFact[]>;
 }> {
   const { cfg, store } = deps;
   const log = deps.log ?? (() => {});
@@ -1065,7 +1072,13 @@ async function securityInputsFor(
   });
   const request = securityRequest ? { securityRequest } : {};
   if (!SECURITY_FAMILY.some((lens) => lensEnabled(cfg.lenses, lens)))
-    return { ...request, threatModel: null, securityFacts: [], priorPartialChains: [] };
+    return {
+      ...request,
+      threatModel: null,
+      securityFacts: [],
+      priorPartialChains: [],
+      inventory: async () => [],
+    };
   let repoThreatModel: string | null = null;
   try {
     repoThreatModel = await readRepoThreatModel(deps.securityGit, tree?.base_sha ?? "");
@@ -1076,32 +1089,42 @@ async function securityInputsFor(
     readRepo: () => repoThreatModel,
     readProfile: () => deps.profileThreatModel ?? null,
   });
-  let securityFacts: SecurityFact[];
-  try {
-    const bounded = await withinBudget(
-      securityFactsAt(files, deps.securityGit, {
-        head: tree?.head_sha ?? "",
-        base: tree?.base_sha ?? "",
-      }),
-      SECURITY_FACTS_BUDGET_MS,
-    );
-    if (bounded.kind === "done") securityFacts = bounded.value;
-    else {
-      log(`dispatch: #${pr} security facts past ${SECURITY_FACTS_BUDGET_MS} ms — diff-only`);
+  const shas = { head: tree?.head_sha ?? "", base: tree?.base_sha ?? "" };
+  // One budget for every read the facts make; past it no read is issued, so
+  // nothing keeps reading behind a round that stopped waiting.
+  const deadline = Date.now() + SECURITY_FACTS_BUDGET_MS;
+  const bounded = async (
+    checks: readonly SecFactCheck[],
+    what: string,
+  ): Promise<SecurityFact[]> => {
+    try {
+      const done = await withinBudget(
+        securityFactsAt(files, deps.securityGit, shas, { checks, deadline }),
+        deadline - Date.now(),
+      );
+      if (done.kind === "done") return done.value;
+      log(`dispatch: #${pr} ${what} past ${SECURITY_FACTS_BUDGET_MS} ms — diff-only`);
       store.logEvent("security_facts_degraded", pr, {
         reason: "budget",
         budget_ms: SECURITY_FACTS_BUDGET_MS,
+        ...(what === "route inventory" ? { checks: [...checks] } : {}),
       });
-      securityFacts = computeSecurityFacts(files, null);
+    } catch (err) {
+      log(`dispatch: #${pr} ${what} failed — diff-only`, err);
     }
-  } catch (err) {
-    log(`dispatch: #${pr} security facts failed — diff-only`, err);
-    securityFacts = computeSecurityFacts(files, null);
-  }
+    return computeSecurityFacts(files, null, checks);
+  };
+  const securityFacts = await bounded(SECURITY_TRIGGER_CHECKS, "security facts");
   const priorPartialChains = partialChainLeads(
     store.partialChainFindings(pr, PRIOR_PARTIAL_CHAINS_MAX),
   );
-  return { ...request, threatModel, securityFacts, priorPartialChains };
+  return {
+    ...request,
+    threatModel,
+    securityFacts,
+    priorPartialChains,
+    inventory: () => bounded(["route-inventory"], "route inventory"),
+  };
 }
 
 /** What the round row records of a plan — the same projection on the
@@ -1893,6 +1916,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           log(`dispatch: #${row.number} dependency sources unavailable`, err);
         }
       }
+      // The route inventory: read only for a round whose plan has a
+      // security-family row, the one reader of it (securityOrderFields).
+      const inventory = [...passPolicy.pass_plan, ...(passPolicy.post_plan ?? [])].some((p) =>
+        SECURITY_FAMILY.includes(p.lens),
+      )
+        ? await sec.inventory()
+        : [];
       const built = buildRoundOrder({
         tree,
         plan: passPolicy,
@@ -1945,6 +1975,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         // sessions have (rule 9: `lens` / `lens_wave` on workers).
         ...(deps.hooks.lensRuntime ? { lensRuntime: deps.hooks.lensRuntime } : {}),
         ...planSecurity,
+        ...(inventory.length > 0 ? { securityInventory: () => inventory } : {}),
         ...(sec.priorPartialChains.length > 0
           ? { priorPartialChains: sec.priorPartialChains }
           : {}),

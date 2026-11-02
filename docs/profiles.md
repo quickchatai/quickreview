@@ -1021,7 +1021,12 @@ NetworkPolicy selecting nothing, and the route inventory — each `found`,
 `clear` or `unknown`. A fact the line parser cannot
 settle is `unknown`, never `clear`. Computing them is bounded (15 s); past
 it, or on an error, the round uses the diff alone and logs
-`security_facts_degraded`. The facts read the whole pull request; a
+`security_facts_degraded`. The route inventory plans nothing, so it is read
+only for a round whose plan has a security-family row, within what is left
+of the same budget: a pull request with no security signal reads nothing
+for it. The one-shot routes (`/qcr-review`, `qcr review`) compute the same
+facts over the reviewed commits in the local checkout, and read the
+repository's `.qcr/threat-model.md` at the base before the profile's copy. The facts read the whole pull request; a
 follow-up round plans only from those about a file its push touched, so a
 fact found once does not re-plan its lens on every later push.
 

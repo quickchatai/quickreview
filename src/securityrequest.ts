@@ -31,7 +31,9 @@
 import type { ExecFn } from "@quickchatai/pi-quickreview/src/execfn.js";
 import {
   computeSecurityFacts,
+  SEC_FACT_CHECKS,
   SECURITY_FACTS_MAX_FILES,
+  type SecFactCheck,
   type SecurityFact,
   type SecurityFactsIo,
 } from "@quickchatai/pi-quickreview/src/secfacts.js";
@@ -390,8 +392,14 @@ export interface RepoGitReader {
    * listing failed. */
   listFiles(sha: string): Promise<ReadonlyArray<{ path: string; size: number }> | null>;
   /** A file's text at `sha`; null when it is absent, not a regular file,
-   * over `maxBytes`, or unreadable. */
-  readFile(sha: string, path: string, maxBytes?: number): Promise<string | null>;
+   * over `maxBytes`, or unreadable. `knownSize`, the size `listFiles` gave
+   * for this regular file at this `sha`, spares the reader asking for it. */
+  readFile(
+    sha: string,
+    path: string,
+    maxBytes?: number,
+    knownSize?: number,
+  ): Promise<string | null>;
 }
 
 const SHA_RE = /^[0-9a-f]{7,64}$/i;
@@ -428,14 +436,19 @@ export function gitRepoReader(exec: ExecFn, gitDir: string): RepoGitReader {
         return null;
       }
     },
-    async readFile(sha, path, maxBytes = REPO_READ_MAX_BYTES) {
+    async readFile(sha, path, maxBytes = REPO_READ_MAX_BYTES, knownSize) {
       if (!SHA_RE.test(sha) || path === "" || path.includes("\0") || path.startsWith("/"))
         return null;
       const spec = `${sha}:${path}`;
       try {
         // A tree or a submodule has a size too; `cat-file blob` refuses it.
-        const size = await git(["cat-file", "-s", spec]);
-        if (size.code !== 0 || !(Number(size.stdout.trim()) <= maxBytes)) return null;
+        // A size the listing gave is a regular file's: one spawn, not two.
+        if (knownSize !== undefined) {
+          if (!(knownSize <= maxBytes)) return null;
+        } else {
+          const size = await git(["cat-file", "-s", spec]);
+          if (size.code !== 0 || !(Number(size.stdout.trim()) <= maxBytes)) return null;
+        }
         const blob = await git(["cat-file", "blob", spec]);
         return blob.code === 0 ? blob.stdout : null;
       } catch {
@@ -468,27 +481,38 @@ const FACT_READ_CONCURRENCY = 8;
  * read budget run out, when a read still missing answers null and its check
  * says `unknown`, never `clear`. With no reader or no head, only the two
  * diff-only checks run.
+ *
+ * `checks` limits the run to those checks (dispatch computes the ones that
+ * can plan a lens before the plan, and the route inventory only for a round
+ * that plans a family row). Past `deadline` (epoch ms) no read is issued:
+ * the facts are computed over what was read, the rest `unknown` — so a caller
+ * that stopped waiting leaves no reads running behind it.
  */
 export async function securityFactsAt(
   files: PrFileEntry[],
   reader: RepoGitReader | undefined,
   shas: { head: string; base: string },
+  opts: { checks?: readonly SecFactCheck[]; deadline?: number; now?: () => number } = {},
 ): Promise<SecurityFact[]> {
-  if (!reader || !shas.head) return computeSecurityFacts(files, null);
+  const checks = opts.checks ?? SEC_FACT_CHECKS;
+  const now = opts.now ?? Date.now;
+  const late = (): boolean => opts.deadline !== undefined && now() >= opts.deadline;
+  if (!reader || !shas.head) return computeSecurityFacts(files, null, checks);
   const listing = await reader.listFiles(shas.head);
   const headSizes = new Map((listing ?? []).map((f) => [f.path, f.size]));
   const cache = new Map<string, string | null>();
   let budget = FACT_READS_MAX;
   let facts: SecurityFact[] = [];
   for (let pass = 0; pass < FACT_PASSES; pass++) {
-    const missed = new Map<string, { sha: string; path: string }>();
+    const missed = new Map<string, { sha: string; path: string; size?: number }>();
     const read = (side: "head" | "base", path: string): string | null => {
       const key = `${side}\0${path}`;
       if (cache.has(key)) return cache.get(key)!;
       const sha = side === "head" ? shas.head : shas.base;
       if (!sha) return null;
       if (side === "head" && listing !== null && !headSizes.has(path)) return null;
-      missed.set(key, { sha, path });
+      const size = side === "head" ? headSizes.get(path) : undefined;
+      missed.set(key, { sha, path, ...(size !== undefined ? { size } : {}) });
       return null;
     };
     const io: SecurityFactsIo = {
@@ -496,13 +520,16 @@ export async function securityFactsAt(
       readBase: (p) => read("base", p),
       listHead: () => (listing === null ? null : listing.map((f) => f.path)),
     };
-    facts = computeSecurityFacts(files, io);
-    if (missed.size === 0 || budget <= 0 || pass === FACT_PASSES - 1) break;
+    facts = computeSecurityFacts(files, io, checks);
+    if (missed.size === 0 || budget <= 0 || pass === FACT_PASSES - 1 || late()) break;
     const todo = [...missed].slice(0, budget);
     budget -= todo.length;
     for (let i = 0; i < todo.length; i += FACT_READ_CONCURRENCY) {
+      if (late()) break;
       const chunk = todo.slice(i, i + FACT_READ_CONCURRENCY);
-      const texts = await Promise.all(chunk.map(([, r]) => reader.readFile(r.sha, r.path)));
+      const texts = await Promise.all(
+        chunk.map(([, r]) => reader.readFile(r.sha, r.path, undefined, r.size)),
+      );
       chunk.forEach(([key], j) => cache.set(key, texts[j] ?? null));
     }
   }
