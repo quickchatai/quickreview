@@ -769,7 +769,11 @@ export function threatModelCasePrompt(
       ? [inventory, ""]
       : ["No route inventory could be read: find the entry points yourself.", ""]),
     ...(revise.length > 0
-      ? ["The current model, to revise — keep what the code still shows, correct what it does not:", ...revise, ""]
+      ? [
+          "The current model, to revise — keep what the code still shows, correct what it does not:",
+          ...revise,
+          "",
+        ]
       : []),
     `Answer with a line \`${THREAT_MODEL_ANSWER} ${ctx.caseId} @${ctx.sha}\`, then the threat model as Markdown in these \`##\` sections, in this order: ${THREAT_MODEL_SECTIONS.join(", ")}. Every entry is one list item that starts with the backticked repo-relative path or glob it is about.`,
   ].join("\n");
@@ -789,7 +793,11 @@ export function parseThreatModelAnswer(
   let body = lines.slice(at + 1);
   while (body.length > 0 && body[0]!.trim() === "") body.shift();
   while (body.length > 0 && body[body.length - 1]!.trim() === "") body.pop();
-  if (body.length >= 2 && /^\s*(```|~~~)/.test(body[0]!) && /^\s*(```|~~~)\s*$/.test(body[body.length - 1]!))
+  if (
+    body.length >= 2 &&
+    /^\s*(```|~~~)/.test(body[0]!) &&
+    /^\s*(```|~~~)\s*$/.test(body[body.length - 1]!)
+  )
     body = body.slice(1, -1);
   const text = `${body.join("\n").trim()}\n`;
   const tm = parseThreatModel(text, "draft");
@@ -1585,9 +1593,7 @@ export class ScanRunner {
     const entryGlobs =
       threatModel === null
         ? []
-        : threatModel.entryPoints
-            .map(threatModelEntryGlob)
-            .filter((g): g is string => g !== null);
+        : threatModel.entryPoints.map(threatModelEntryGlob).filter((g): g is string => g !== null);
     const plan = planStage2({
       rows: request,
       cut: pre.cut,

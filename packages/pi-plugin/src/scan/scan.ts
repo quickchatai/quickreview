@@ -533,12 +533,7 @@ export function scanCasePrompt(
 
 /** The parts of a threat model a scan case may quote. */
 export type ThreatModelPart =
-  | "entryPoints"
-  | "controls"
-  | "sinks"
-  | "personas"
-  | "crownJewels"
-  | "network";
+  "entryPoints" | "controls" | "sinks" | "personas" | "crownJewels" | "network";
 
 const PART_TITLE: Readonly<Record<ThreatModelPart, string>> = {
   entryPoints: "Entry points",

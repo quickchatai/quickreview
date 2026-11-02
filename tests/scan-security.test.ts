@@ -23,7 +23,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, SCAN_DEFAULTS, type Config, type ScanConfig } from "../src/config.js";
 import { homeProfileLookup, type InstallEnv } from "../src/install.js";
 import type { CaseOutcome, CaseSpec } from "@quickchatai/pi-quickreview/src/scan/scanports.js";
-import { FindingsStore, type ReportedFinding } from "@quickchatai/pi-quickreview/src/scan/findings.js";
+import {
+  FindingsStore,
+  type ReportedFinding,
+} from "@quickchatai/pi-quickreview/src/scan/findings.js";
 import {
   isSecurityCandidate,
   kindAllowed,
@@ -335,7 +338,10 @@ describe("[scan] kinds drops a candidate of another kind, counted", () => {
     const r = rig({
       scan: { kinds: ["security"], validator: false },
       lens: (spec) =>
-        findingsOn(spec, [item(1, "security:sqli", "Interpolated SQL"), item(3, "bug", "Off by one")]),
+        findingsOn(spec, [
+          item(1, "security:sqli", "Interpolated SQL"),
+          item(3, "bug", "Off by one"),
+        ]),
     });
     const s = new ScanRunner(r.ports);
     await runStage1(s);
@@ -363,19 +369,27 @@ describe("[security] fold: a security candidate the skeptic could not settle is 
   it("doubtTier: unverifiable, unmentioned or an uncited principal class — only for security, only with fold", () => {
     const sec = { kind: "security-sqli" };
     const unverifiable = { word: "unverifiable", reason: "is the id an int?", class: null };
-    const uncited = { word: "refuted", reason: "only the operator writes it", class: "same-principal" };
+    const uncited = {
+      word: "refuted",
+      reason: "only the operator writes it",
+      class: "same-principal",
+    };
     const cited = {
       word: "refuted",
       reason: "the writer is the deploy script at deploy/seed.py:4",
       class: "same-principal",
     };
-    const refuted = { word: "refuted", reason: "guarded at app/b.py:3", class: "guarded-elsewhere" };
+    const refuted = {
+      word: "refuted",
+      reason: "guarded at app/b.py:3",
+      class: "guarded-elsewhere",
+    };
     expect(doubtTier(sec, "pass-scan", unverifiable, true)).toBe("needs-review");
     expect(doubtTier(sec, "pass-scan", null, true)).toBe("needs-review");
     expect(doubtTier(sec, "pass-scan", uncited, true)).toBe("needs-review");
-    expect(
-      doubtTier(sec, "pass-scan", { ...uncited, class: "contrived-concurrency" }, true),
-    ).toBe("needs-review");
+    expect(doubtTier(sec, "pass-scan", { ...uncited, class: "contrived-concurrency" }, true)).toBe(
+      "needs-review",
+    );
     expect(doubtTier(sec, "pass-scan", cited, true)).toBe("doubtful");
     expect(doubtTier(sec, "pass-scan", refuted, true)).toBe("doubtful");
     expect(doubtTier({ kind: "bug" }, "pass-scan", unverifiable, true)).toBe("doubtful");
@@ -465,7 +479,11 @@ describe("[security] fold: a security candidate the skeptic could not settle is 
       doubt: null,
       ...over,
     });
-    const gap = { word: "unverifiable", reason: "is the directory writable by a tenant?", class: null };
+    const gap = {
+      word: "unverifiable",
+      reason: "is the directory writable by a tenant?",
+      class: null,
+    };
     st.report([base("aa".repeat(32), { validity: "needs-review", doubt: gap })], {
       run: "r1",
       sha: "sha-r1",
@@ -520,7 +538,9 @@ describe("the exploit-chain lens runs per strategy in a scan", () => {
       planInput({
         rows: [chain("forward"), chain("backward")],
         covered: (lens) =>
-          lens === `${CHAIN_PASS}:forward` ? new Set(["api/routes.py\0b-api/routes.py"]) : new Set(),
+          lens === `${CHAIN_PASS}:forward`
+            ? new Set(["api/routes.py\0b-api/routes.py"])
+            : new Set(),
         price: (lens) => {
           priced.push(lens);
           return {
@@ -547,7 +567,7 @@ describe("a security floor knows its tree", () => {
     const files: Record<string, string> = {
       "infra/main.tf": 'resource "aws_security_group" "web" {\n  name = "web"\n}\n',
       "k8s/policy.yaml": "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\n",
-      "docker-compose.yml": "services:\n  web:\n    ports:\n      - \"80:80\"\n",
+      "docker-compose.yml": 'services:\n  web:\n    ports:\n      - "80:80"\n',
       "config/app.yaml": "debug: false\n",
       "app/a.py": "x = 1\n",
     };
@@ -655,7 +675,9 @@ describe("the threat model's hash is part of every plan key", () => {
   it("a stage-1 case quotes only the model's entries that name its files", async () => {
     const r = rig({ files: withModel(THREAT_MODEL) });
     await runStage1(new ScanRunner(r.ports));
-    const app = r.specs.find((x) => x.agent.startsWith("pass-scan--") && x.files.includes("app/a.py"))!;
+    const app = r.specs.find(
+      (x) => x.agent.startsWith("pass-scan--") && x.files.includes("app/a.py"),
+    )!;
     expect(app.prompt).toContain("the tenant filter on every query");
     expect(app.prompt).not.toContain("raw SQL");
     expect(app.prompt).toContain("never proof that a control is in force");
@@ -741,7 +763,9 @@ describe("stage 0 drafts the threat model when none exists", () => {
     const r2 = await s.start({ key: after.preview.key });
     if (!r2.ok) throw new Error(r2.errors.join("; "));
     await s.idle();
-    const app = r.specs.find((x) => x.agent.startsWith("pass-scan--") && x.files.includes("app/a.py"))!;
+    const app = r.specs.find(
+      (x) => x.agent.startsWith("pass-scan--") && x.files.includes("app/a.py"),
+    )!;
     expect(app.prompt).toContain("DRAFT threat model");
     expect(app.prompt).toContain("the tenant filter on every query");
   });

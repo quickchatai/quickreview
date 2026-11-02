@@ -71,7 +71,7 @@ export function isSecurityCommand(body: unknown, botLogin: string): boolean {
   if (typeof body !== "string") return false;
   const mention = botLogin.replace(/\[bot\]$/i, "").trim();
   if (mention === "") return false;
-  const first = (body.replace(/^﻿/, "").split(/\r?\n/, 1)[0] ?? "").trim();
+  const first = (body.replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0] ?? "").trim();
   return new RegExp(`^@${escapeRegExp(mention)}\\s+security(?:\\s+review)?\\s*$`, "i").test(first);
 }
 

@@ -689,7 +689,8 @@ function findingTitle(f: ScanFinding): string {
 const TIER_TITLE: Record<ValidityView, string> = {
   confirmed: "CONFIRMED — the skeptic traced a concrete scenario",
   likely: "LIKELY — a real mechanism, reachability not fully traced",
-  "needs-review": "NEEDS REVIEW — a security finding the skeptic could not settle; check its proof gap",
+  "needs-review":
+    "NEEDS REVIEW — a security finding the skeptic could not settle; check its proof gap",
   doubtful: "DOUBTFUL — refuted or class-matched; kept, not dropped",
   unknown: "UNKNOWN — no skeptic judged these",
 };
