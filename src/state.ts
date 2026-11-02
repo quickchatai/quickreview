@@ -6569,6 +6569,15 @@ export class StateStore {
     );
   }
 
+  /** When this daemon began tracking the PR, as far as the event log says:
+   * its first `pr_transition`. Undefined when none is logged. */
+  firstTrackedAt(pr: number): string | undefined {
+    const row = this.db
+      .prepare("SELECT ts FROM events WHERE kind = 'pr_transition' AND pr = ? ORDER BY id LIMIT 1")
+      .get(pr) as { ts: string } | undefined;
+    return row?.ts;
+  }
+
   /** Comment-capture sweep watermark: the sweep costs three GitHub
    * reads per PR, so reconcile skips a PR whose row has not moved since its
    * last clean sweep. Kept in the events table (kind = 'comment_sweep'), the

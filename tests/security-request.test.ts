@@ -31,6 +31,7 @@ import {
 } from "../src/github.js";
 import { reconcileOnce, type ReconcileAdapter } from "../src/reconcile.js";
 import { reviewNow } from "../src/reviewnow.js";
+import { applyEvent } from "../src/statemachine.js";
 import {
   applySecurityRequest,
   gitRepoReader,
@@ -614,6 +615,137 @@ describe("the reconcile pass reads the security label", () => {
       // A bot-authored PR records nothing on any pass, so no request loops.
       await run(store, [ref(8, [LABEL], "dependabot[bot]")]);
       expect(requests(store, 8)).toBe(0);
+    },
+  );
+});
+
+describe("the reconcile comment route hears only live commands", () => {
+  const T0 = new Date("2026-11-05T12:00:00Z");
+  const pr: PrRef = {
+    number: 42,
+    title: "PR 42",
+    author: "dana-op",
+    head_sha: "head42",
+    base_ref: "main",
+    updated_at: "2026-11-05T12:00:00Z",
+    state: "open",
+    draft: false,
+    merged: false,
+    labels: [],
+  };
+  const command = (id: number, created_at: string | null): IssueCommentFull => ({
+    id,
+    user: "maya-dev",
+    user_type: "User",
+    body: `${MENTION} security`,
+    created_at,
+    author_association: "MEMBER",
+  });
+  /** A PR this daemon begins tracking at T0 (its first transition logged
+   * then), reviewed at its head, then one reconcile pass over `comments`. */
+  const pass = async (comments: IssueCommentFull[]) => {
+    const now = () => T0;
+    const store = new StateStore(":memory:", now);
+    applyEvent(
+      store,
+      42,
+      { type: "track" },
+      { title: "PR 42", head_sha: "head42", author: "dana-op" },
+      { now },
+    );
+    store.recordReviewedHead(42, {
+      head_sha: "head42",
+      verdict: "APPROVE",
+      posted_event: "APPROVE",
+    });
+    const adapter: ReconcileAdapter = {
+      searchLabelTriggered: async () => [],
+      searchTeamTriggered: async () => [],
+      listOpenPrs: async () => [pr],
+      getPr: async () => pr,
+      listBotReviewComments: async () => [],
+      listReviewCommentsFull: async () => [],
+      listIssueComments: async () => comments,
+      listReviewsFull: async () => [],
+    };
+    const hooks = {
+      async dispatchRound() {},
+      async inject() {},
+      async archiveAndClose() {},
+    } as SessionHooks;
+    const ack = vi.fn();
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter,
+      hooks,
+      now,
+      ackSecurityRequest: ack,
+      log: () => {},
+    });
+    const ignored = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'review_request_ignored' AND pr = 42")
+      .all()
+      .map((r) => JSON.parse((r as { payload: string }).payload) as Record<string, unknown>);
+    return { store, ack, ignored };
+  };
+
+  // MUTATION: drop the `trackedAt` comparison from staleSecurityCommand — this
+  // fails: a days-old command on a freshly tracked PR asks again.
+  it(
+    "a command made days before the PR was first tracked is history: no row, no reply",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const { store, ack, ignored } = await pass([command(7101, "2026-11-01T09:00:00Z")]);
+      expect(ack).not.toHaveBeenCalled();
+      expect(store.reviewRequest(42, "security")).toBeUndefined();
+      expect(hasNewEvidence(store.reviewedHead(42), "head42")).toBe(false);
+      expect(ignored).toEqual([
+        expect.objectContaining({
+          comment_id: 7101,
+          reason: "stale-comment",
+          stale: "predates-tracking",
+        }),
+      ]);
+      // An unreadable age on a first sweep is history too.
+      const unknown = await pass([command(7102, null)]);
+      expect(unknown.store.reviewRequest(42, "security")).toBeUndefined();
+    },
+  );
+
+  // MUTATION: drop the acknowledgement check from staleSecurityCommand — this
+  // fails: a command the reviewer already answered is answered again.
+  it(
+    "a command the reviewer already acknowledged is history, however recent",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const { store, ack, ignored } = await pass([
+        command(7201, "2026-11-05T11:00:00Z"),
+        {
+          id: 7202,
+          user: BOT,
+          user_type: "Bot",
+          body: securityAckBody("maya-dev"),
+          created_at: "2026-11-05T11:01:00Z",
+        },
+      ]);
+      expect(ack).not.toHaveBeenCalled();
+      expect(store.reviewRequest(42, "security")).toBeUndefined();
+      expect(ignored).toEqual([
+        expect.objectContaining({ comment_id: 7201, stale: "acknowledged" }),
+      ]);
+    },
+  );
+
+  it(
+    "a command made within the grace before tracking is still heard, and acknowledged once",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const { store, ack, ignored } = await pass([command(7301, "2026-11-05T02:00:00Z")]);
+      expect(ack).toHaveBeenCalledOnce();
+      expect(store.reviewRequest(42, "security")).toMatchObject({ comment_id: 7301 });
+      expect(store.getPr(42)?.state).toBe("queued");
+      expect(ignored).toEqual([]);
     },
   );
 });

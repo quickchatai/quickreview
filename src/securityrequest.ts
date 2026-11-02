@@ -100,6 +100,51 @@ export function securityCommandDecision(
   return { ok: true };
 }
 
+/** How long before the PR's tracking began a command found on its first
+ * comment sweep is still taken as a live request: a polling install sees no
+ * comment on a PR it does not track, so a command made just before the PR
+ * was adopted is heard late rather than never. */
+export const SECURITY_COMMAND_HISTORY_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whether a command the reconcile comment sweep captured for the first time
+ * is history rather than a live request: the reason when it is, else null.
+ * Capturing a comment for the first time does not make it new — a fresh
+ * state database, or a PR first tracked long after the comment, sweeps the
+ * PR's whole history. Two facts tell history:
+ *
+ * - `acknowledged`: a later comment of the reviewer's own (`isOwn`) carries
+ *   the acknowledgement marker, so a request was recorded after this command
+ *   was made;
+ * - `predates-tracking`: on the PR's first sweep (`trackedAt`, when this
+ *   daemon began tracking it, is given then), a command made more than the
+ *   grace before that.
+ *
+ * A command whose age cannot be read on a first sweep is history too.
+ */
+export function staleSecurityCommand(
+  c: { id: number; created_at: string | null },
+  ctx: {
+    comments: ReadonlyArray<{ id: number; user: string; body: string }>;
+    isOwn: (user: string, body: string) => boolean;
+    trackedAt?: string;
+  },
+): "acknowledged" | "predates-tracking" | null {
+  if (
+    ctx.comments.some(
+      (d) => d.id > c.id && d.body.includes(SECURITY_ACK_MARKER) && ctx.isOwn(d.user, d.body),
+    )
+  )
+    return "acknowledged";
+  if (ctx.trackedAt !== undefined) {
+    const made = Date.parse(c.created_at ?? "");
+    const tracked = Date.parse(ctx.trackedAt);
+    if (Number.isFinite(tracked) && !(made >= tracked - SECURITY_COMMAND_HISTORY_GRACE_MS))
+      return "predates-tracking";
+  }
+  return null;
+}
+
 /** The acknowledgement of a fresh comment request. */
 export function securityAckBody(by: string): string {
   const who = by ? ` (asked by @${by})` : "";

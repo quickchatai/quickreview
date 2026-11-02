@@ -42,6 +42,7 @@ import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.
 import {
   applySecurityRequest,
   securityCommandDecision,
+  staleSecurityCommand,
   sweepSecurityRequests,
 } from "./securityrequest.js";
 
@@ -927,6 +928,10 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       const security = cfg.security ?? SECURITY_DEFAULTS;
       for (const local of candidates) {
         const n = local.number;
+        // A PR's first sweep captures its whole comment history: when this
+        // daemon began tracking it bounds which commands are still live.
+        const trackedAt =
+          store.lastCommentSweep(n) === undefined ? store.firstTrackedAt(n) : undefined;
         let rows: CapturedComment[];
         let reviewsFetched: ReviewFull[] = [];
         let inlineFetched: ReviewCommentFull[] = [];
@@ -983,6 +988,25 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
               comment_id: c.id,
               by: c.user,
               reason: decision.reason,
+            });
+            continue;
+          }
+          // Captured for the first time is not new: a fresh database, or a
+          // PR first tracked late, sweeps history, and an old command must
+          // not ask again or be acknowledged twice.
+          const stale = staleSecurityCommand(c, {
+            comments: topFetched,
+            isOwn: (user, body) => isOwnContent(cfg.github, user, body),
+            ...(trackedAt !== undefined ? { trackedAt } : {}),
+          });
+          if (stale !== null) {
+            store.logEvent("review_request_ignored", n, {
+              kind: "security",
+              source: "comment",
+              comment_id: c.id,
+              by: c.user,
+              reason: "stale-comment",
+              stale,
             });
             continue;
           }

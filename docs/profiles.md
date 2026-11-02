@@ -1052,9 +1052,15 @@ reviewed at its head is reviewed again. While it stands, every round of the
 PR plans the family; the label coming off withdraws a label request, and
 closing the PR drops any. A comment or operator request made while a label
 request stands takes the row over (a comment is acknowledged), so the label
-coming off no longer withdraws it. The reconcile poll applies a comment its webhook missed, records
-a label request no webhook brought, and serves a request that waited for a
-running round.
+coming off no longer withdraws it.
+
+The reconcile poll applies a comment its webhook missed, records a label
+request no webhook brought, and serves a request that waited for a running
+round. A command it captures for the first time is not taken as new when
+the reviewer already acknowledged a request after it, or when it was made
+more than a day before this daemon began tracking the PR (a fresh state
+database sweeps the PR's whole history); it is logged as ignored
+(`stale-comment`).
 
 ## Lens-selection heuristics — `heuristics.toml`
 
