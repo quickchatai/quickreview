@@ -31,7 +31,10 @@ import {
   type PostingReceipt,
 } from "../src/posting-receipt.js";
 import { withSecurityIncompleteLines, type PostOutcome } from "../src/postops.js";
-import { securityPassIncompleteLine } from "@quickchatai/pi-quickreview/src/templates.js";
+import {
+  SECURITY_PASSES_UNKNOWN_LINE,
+  securityPassIncompleteLine,
+} from "@quickchatai/pi-quickreview/src/templates.js";
 import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   BOT,
@@ -398,6 +401,107 @@ describe("post.review in dry-run", () => {
     expect((rec as { body: { body: string } }).body.body).toBe(
       `**Verdict** no findings.\n\n${line}\n\n${postingMarker(KEY)}`,
     );
+  });
+
+  // The security line never blocks, so it is not held to the required-pass
+  // rule's positive evidence: a family row never launched is named, and a
+  // round whose passes cannot be read says so instead of reading as complete.
+  describe("a security row with no failed execution", () => {
+    const secPlan: PassPlanEntry[] = [
+      {
+        lens: "pass-baseline",
+        agent: "pass-baseline--sol-high",
+        tier: "sol-high",
+        raisable_to: [],
+        required: true,
+      },
+      {
+        lens: "pass-sec-access",
+        agent: "pass-sec-access--sol-high",
+        tier: "sol-high",
+        raisable_to: [],
+      },
+    ];
+    const writeProgress = (roundNo: number) => {
+      mkdirSync(join(rig.root, "state", "round-progress"), { recursive: true });
+      writeFileSync(
+        join(rig.root, "state", "round-progress", `pr-${PR}.json`),
+        JSON.stringify({
+          version: 2,
+          pr: PR,
+          session: `pr-${PR}`,
+          run_started_at: "2026-10-15T10:00:00.000Z",
+          updated_at: "2026-10-15T10:00:03.000Z",
+          parent_status: "active",
+          command_id: "c",
+          command_sha256: "a".repeat(64),
+          command_accepted_at: "2026-10-15T10:00:00.000Z",
+          preparing_at: "2026-10-15T10:00:00.000Z",
+          first_lens_started_at: "2026-10-15T10:00:01.000Z",
+          fanout_started_at: "2026-10-15T10:00:01.000Z",
+          round_no: roundNo,
+          head_sha: HEAD,
+          last_activity_at: "2026-10-15T10:00:03.000Z",
+          last_activity: "x",
+          agents: [
+            {
+              execution_id: "call:pass-baseline#1",
+              agent: "pass-baseline--sol-high",
+              status: "completed",
+              duration_ms: 1,
+              tool_count: 0,
+              started_at: "2026-10-15T10:00:01.000Z",
+              finished_at: "2026-10-15T10:00:02.000Z",
+            },
+          ],
+        }),
+      );
+    };
+    const postBody = async (): Promise<string> => {
+      const body = rig.write(`pr-${PR}-round-1-review.md`, "**Verdict** no findings.");
+      const c = await rig.connect("c-round");
+      const out = await c.request<PostOutcome>(
+        "post.review",
+        { pr: PR, event: "COMMENT", body_file: body },
+        { pr: PR },
+      );
+      expect(out.status).toBe("dryrun");
+      const [rec] = dryrunRecords();
+      return (rec as { body: { body: string } }).body.body;
+    };
+    const kinds = () => rig.store.recentEvents(50).map((e) => e.kind);
+
+    // MUTATION: restore `failedRuns.length > 0 &&` in incompleteSecurityRows — fails.
+    it("names a planned family row the session never launched", async () => {
+      rig.store.startRound(PR, "first", ["pass-baseline", "pass-sec-access"], 30, {
+        pass_plan: secPlan,
+      });
+      writeProgress(1);
+      expect(await postBody()).toBe(
+        `**Verdict** no findings.\n\n${securityPassIncompleteLine("pass-sec-access")}\n\n${postingMarker(KEY)}`,
+      );
+      expect(kinds()).toContain("security_pass_incomplete");
+    });
+
+    // MUTATION: return `text` on `gaps.state === "unknown"` in withSecurityGaps — fails.
+    it.each([
+      ["no progress record", null],
+      ["another round's progress record", 2],
+    ])("says completion is unknown with %s", async (_what, roundNo) => {
+      rig.store.startRound(PR, "first", ["pass-baseline", "pass-sec-access"], 30, {
+        pass_plan: secPlan,
+      });
+      if (roundNo !== null) writeProgress(roundNo);
+      expect(await postBody()).toBe(
+        `**Verdict** no findings.\n\n${SECURITY_PASSES_UNKNOWN_LINE}\n\n${postingMarker(KEY)}`,
+      );
+      expect(kinds()).toContain("security_pass_unknown");
+    });
+
+    it("adds nothing on a plan with no family row, snapshot or not", async () => {
+      rig.store.startRound(PR, "first", ["pass-baseline"], 30, { pass_plan: [secPlan[0]!] });
+      expect(await postBody()).toBe(`**Verdict** no findings.\n\n${postingMarker(KEY)}`);
+    });
   });
 });
 

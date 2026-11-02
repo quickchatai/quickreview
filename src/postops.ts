@@ -68,7 +68,10 @@ import {
   requiredPassGap,
   type FailedSecurityRow,
 } from "./requiredpasses.js";
-import { securityPassIncompleteLine } from "@quickchatai/pi-quickreview/src/templates.js";
+import {
+  SECURITY_PASSES_UNKNOWN_LINE,
+  securityPassIncompleteLine,
+} from "@quickchatai/pi-quickreview/src/templates.js";
 import { snapshotMark } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import type { StateStore } from "./state.js";
 
@@ -347,7 +350,8 @@ function describeFailure(err: unknown): string {
 
 /**
  * A review body with the fail-closed line for every security-family row that
- * failed and never completed (templates.ts `securityPassIncompleteLine`):
+ * did not complete — failed, still running or never launched
+ * (templates.ts `securityPassIncompleteLine`):
  * a security pass that did not finish leaves its area unreviewed, and the
  * review says so — never silent, never blocking. A line the session already
  * wrote (the round prompt asks it for the same words) is not repeated, so
@@ -406,9 +410,11 @@ class PostOps {
 
   /**
    * The body with the fail-closed security lines (`withSecurityIncompleteLines`)
-   * over the round's recorded plan and its live snapshot. Unknown evidence —
-   * no snapshot, another round's — adds nothing and claims nothing: the body
-   * never says a security pass completed.
+   * over the round's recorded plan and its live snapshot: one per family row
+   * that did not complete. Unknown evidence — no snapshot, another round's —
+   * adds the one line saying so (`SECURITY_PASSES_UNKNOWN_LINE`), never
+   * silence, which a reader takes for "every security pass completed".
+   * Neither ever holds the post back.
    */
   private withSecurityGaps(pr: number, round: number, text: string): string {
     const row = this.d.store.roundsFor(pr).find((r) => r.round_no === round);
@@ -419,10 +425,19 @@ class PostOps {
       round,
       parsePlan(row.post_plan),
     );
-    if (gaps.state !== "known" || gaps.failed.length === 0) return text;
+    if (gaps.state === "unknown") {
+      this.d.store.logEvent("security_pass_unknown", pr, { round_no: round, reason: gaps.reason });
+      return text.includes(SECURITY_PASSES_UNKNOWN_LINE)
+        ? text
+        : `${text.trimEnd()}\n\n${SECURITY_PASSES_UNKNOWN_LINE}`;
+    }
+    if (gaps.failed.length === 0) return text;
     this.d.store.logEvent("security_pass_incomplete", pr, {
       round_no: round,
-      failed: gaps.failed.map((f) => (f.strategy ? `${f.lens}:${f.strategy}` : f.lens)),
+      failed: gaps.failed.map((f) => ({
+        row: f.strategy ? `${f.lens}:${f.strategy}` : f.lens,
+        why: f.why,
+      })),
     });
     return withSecurityIncompleteLines(text, gaps.failed);
   }

@@ -957,10 +957,14 @@ command = true          # config.toml only; "@<bot> security"
   slowest first) on every profile: `risk_passes` is the configured list
   joined with the family, and a tier pin on a family lens is refused.
 - **A family row is not required**, so a failed one never holds the round
-  back; it is named in the review body as a security pass that did not
-  complete (`securityPassIncompleteLine`, the `security_pass_incomplete`
-  event), never read as clean. The one required family row is the chain's
-  `delta`.
+  back; a row that did not complete — failed, still running at posting time,
+  or never launched (a `compose` row only once launched, since a round with
+  no leads skips it) — is named in the review body as a security pass that
+  did not complete (`securityPassIncompleteLine`, the
+  `security_pass_incomplete` event), never read as clean. When the round's
+  progress record cannot be read, the body says completion is unknown
+  (`SECURITY_PASSES_UNKNOWN_LINE`, the `security_pass_unknown` event). The
+  one required family row is the chain's `delta`.
 - **The exploit chain** (`pass-sec-exploit-chain`) is planned as one row per
   strategy, each naming its rule: `delta` (from the hop this change adds),
   `forward` and `backward` (from the threat model's entry points and crown

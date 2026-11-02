@@ -10,9 +10,10 @@
 //  - a strategy row (the exploit chain's required `delta`) is answered only by
 //    executions launched for its strategy, so a completed `forward` never
 //    covers a failed `delta`; a row with no strategy counts as before;
-//  - failedSecurityRows names the security-family rows that failed, required
-//    or not, and is UNKNOWN — never an empty list — without this round's
-//    snapshot;
+//  - failedSecurityRows names the security-family rows that did not complete
+//    (failed, still running, never launched; a post-discovery compose only
+//    once launched), required or not, and is UNKNOWN — never an empty list —
+//    without this round's snapshot;
 //  - the shell copy (scripts/required-passes.py) answers as the TypeScript
 //    one does over the same plan row and snapshot;
 //  - the posting route refuses before it queues or records anything;
@@ -411,6 +412,14 @@ describe("failedSecurityRows", () => {
     chainRow("forward"),
   ];
   const POST_PLAN: PassPlanEntry[] = [{ ...chainRow("compose"), stage: "post-discovery" }];
+  // Every family plan row of SEC_PLAN, completed — the background a test
+  // overrides one row of.
+  const done = (): LiveAgentProgress[] => [
+    agent("pass-sec-access", "completed"),
+    agent("pass-sec-injection", "completed"),
+    chainRun("delta", "completed"),
+    chainRun("forward", "completed"),
+  ];
 
   it("names the family rows that failed and never completed, required or not", () => {
     const result = failedSecurityRows(
@@ -428,9 +437,36 @@ describe("failedSecurityRows", () => {
     expect(result).toEqual({
       state: "known",
       failed: [
-        { lens: "pass-sec-injection", errors: ["x"] },
-        { lens: CHAIN, strategy: "forward", errors: [CHAIN_TIMEOUT] },
+        { lens: "pass-sec-injection", why: "failed", errors: ["x"] },
+        { lens: CHAIN, strategy: "forward", why: "failed", errors: [CHAIN_TIMEOUT] },
       ],
+    });
+  });
+
+  // The line never holds the post back, so it names a row with no failed
+  // execution too: one never launched, one still running at posting time.
+  // MUTATION: restore `failedRuns.length > 0 &&` to incompleteSecurityRows'
+  // test (the required-pass rule) — this fails.
+  it("names a row never launched and a row still running", () => {
+    const result = failedSecurityRows(
+      SEC_PLAN,
+      snapshot(3, [
+        agent("pass-sec-access", "running"),
+        chainRun("delta", "completed"),
+        chainRun("forward", "completed"),
+      ]),
+      3,
+    );
+    expect(result).toEqual({
+      state: "known",
+      failed: [
+        { lens: "pass-sec-access", why: "running", errors: [] },
+        { lens: "pass-sec-injection", why: "not-run", errors: [] },
+      ],
+    });
+    expect(failedSecurityRows(SEC_PLAN, snapshot(3, done()), 3)).toEqual({
+      state: "known",
+      failed: [],
     });
   });
 
@@ -440,12 +476,17 @@ describe("failedSecurityRows", () => {
   it("tells the chain's strategies apart", () => {
     const result = failedSecurityRows(
       SEC_PLAN,
-      snapshot(3, [chainRun("delta", "failed", CHAIN_TIMEOUT), chainRun("forward", "completed")]),
+      snapshot(3, [
+        agent("pass-sec-access", "completed"),
+        agent("pass-sec-injection", "completed"),
+        chainRun("delta", "failed", CHAIN_TIMEOUT),
+        chainRun("forward", "completed"),
+      ]),
       3,
     );
     expect(result).toEqual({
       state: "known",
-      failed: [{ lens: CHAIN, strategy: "delta", errors: [CHAIN_TIMEOUT] }],
+      failed: [{ lens: CHAIN, strategy: "delta", why: "failed", errors: [CHAIN_TIMEOUT] }],
     });
   });
 
@@ -456,19 +497,46 @@ describe("failedSecurityRows", () => {
         strategy: "compose",
       });
     expect(
-      failedSecurityRows(SEC_PLAN, snapshot(3, [compose("failed", "post")]), 3, POST_PLAN),
+      failedSecurityRows(
+        SEC_PLAN,
+        snapshot(3, [...done(), compose("failed", "post")]),
+        3,
+        POST_PLAN,
+      ),
     ).toEqual({
       state: "known",
-      failed: [{ lens: CHAIN, strategy: "compose", errors: ["boom"] }],
+      failed: [{ lens: CHAIN, strategy: "compose", why: "failed", errors: ["boom"] }],
     });
     expect(
       failedSecurityRows(
         SEC_PLAN,
-        snapshot(3, [compose("failed", "post"), compose("completed", "post")]),
+        snapshot(3, [...done(), compose("failed", "post"), compose("completed", "post")]),
         3,
         POST_PLAN,
       ),
     ).toEqual({ state: "known", failed: [] });
+    expect(
+      failedSecurityRows(
+        SEC_PLAN,
+        snapshot(3, [...done(), compose("running", "post")]),
+        3,
+        POST_PLAN,
+      ),
+    ).toEqual({
+      state: "known",
+      failed: [{ lens: CHAIN, strategy: "compose", why: "running", errors: [] }],
+    });
+  });
+
+  // The round prompt skips `compose` when the round has no security leads
+  // (`CHAIN-SKIPPED no leads`): a compose row never launched is no gap.
+  // MUTATION: drop the `phase === "post" && runs.length === 0` skip from
+  // incompleteSecurityRows — this fails.
+  it("says nothing of a compose row never launched — a round with no leads skips it", () => {
+    expect(failedSecurityRows(SEC_PLAN, snapshot(3, done()), 3, POST_PLAN)).toEqual({
+      state: "known",
+      failed: [],
+    });
   });
 
   it("is unknown, never an empty list, without this round's snapshot", () => {

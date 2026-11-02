@@ -289,9 +289,11 @@ Dispatch reads the threat model at the base commit and the security facts
 through read-only git (bounded; past the bound the round plans from the diff
 alone and logs `security_facts_degraded`) and hands both to the plan and the
 family's task files. A family row runs at the risk tier and is not required,
-except the exploit chain's `delta` row; a failed one is named in the posted
-review body as a security pass that did not complete
-(`security_pass_incomplete`). The chain's `compose` row is planned into
+except the exploit chain's `delta` row; one that failed, was still running
+or was never launched is named in the posted review body as a security pass
+that did not complete (`security_pass_incomplete`), and a round whose
+progress record cannot be read says completion is unknown
+(`security_pass_unknown`). The chain's `compose` row is planned into
 `post_plan`, written to `tasks-post/`, and launched by the session after the
 discovery wave, never with it. The round's record keeps those rows
 (`rounds.post_plan`, beside `pass_plan`), so a failed `compose` is named in

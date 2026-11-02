@@ -34,8 +34,11 @@
  * counts every execution of its lens, as before.
  *
  * `failedSecurityRows` reads the same evidence for the security family's
- * rows, required or not: the ones that failed and never completed are what
- * the review body names as not completed.
+ * rows, required or not, by a rule of its own: the line it feeds never holds
+ * the post back, so it can afford to name every row that did not complete —
+ * one that failed, one still running and one never launched — not only one
+ * with a failed execution. That is what the review body names as not
+ * completed.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -150,29 +153,66 @@ export function requiredPassGap(
   return missing.length > 0 ? { state: "missing", missing } : { state: "complete" };
 }
 
-/** A security-family row that failed and never completed. */
+/** A security-family row that did not complete. */
 export interface FailedSecurityRow {
   lens: string;
   strategy?: string;
+  /** Why: an execution failed and none completed (`failed`), one is still
+   * running at posting time (`running`), or none was launched (`not-run`). */
+  why: "failed" | "running" | "not-run";
   /** The failed executions' error texts. */
   errors: string[];
 }
 
 /** What the round's evidence says of its security-family rows: `known`
- * with the rows that failed and never completed (empty when none did, or the
+ * with the rows that did not complete (empty when every one did, or the
  * plan has no family row), or `unknown` when there are family rows and no
  * snapshot of this round to read — never an empty `known`, which would read
  * as "every security pass completed". */
 export type SecurityRowFailures =
   { state: "known"; failed: FailedSecurityRow[] } | { state: "unknown"; reason: string };
 
+/** The counted security rows that did not complete in one phase. A plan row
+ * did not complete when fewer of its executions completed than the plan has
+ * rows for it — failed, still running, or never launched. A post-discovery
+ * row (the chain's `compose`) counts only once launched: the round prompt
+ * skips it, legitimately, when the round has no security leads
+ * (`CHAIN-SKIPPED no leads`), and a clean round must not read as unfinished. */
+function incompleteSecurityRows(
+  progress: RoundProgressSnapshot,
+  obligations: ReadonlyMap<string, number>,
+  phase: "plan" | "post",
+): FailedSecurityRow[] {
+  const out: FailedSecurityRow[] = [];
+  for (const [key, rows] of obligations) {
+    const runs = runsFor(progress, key, phase);
+    if (runs.filter((a) => a.status === "completed").length >= rows) continue;
+    if (phase === "post" && runs.length === 0) continue;
+    const failedRuns = runs.filter((a) => a.status === "failed");
+    const { lens, strategy } = keyParts(key);
+    out.push({
+      lens,
+      ...(strategy !== undefined ? { strategy } : {}),
+      why:
+        failedRuns.length > 0
+          ? "failed"
+          : runs.some((a) => a.status === "running")
+            ? "running"
+            : "not-run",
+      errors: failedRuns.map((a) => a.error ?? "failed"),
+    });
+  }
+  return out;
+}
+
 /**
- * The security-family rows of a round that failed and never completed —
- * required or not (only the chain's `delta` is required; the others never
- * hold the post back, so the review body says which did not complete). The
- * rule is `requiredPassGap`'s, row by row and strategy by strategy, over the
- * plan's rows and the post-discovery rows (`post_plan`, launched from
- * `tasks-post`).
+ * The security-family rows of a round that did not complete — required or
+ * not (only the chain's `delta` is required; the others never hold the post
+ * back, so the review body says which did not complete) — row by row and
+ * strategy by strategy, over the plan's rows and the post-discovery rows
+ * (`post_plan`, launched from `tasks-post`). The rule is
+ * `incompleteSecurityRows`', not `requiredPassGap`'s: nothing here blocks,
+ * so a row with no failed execution is named too.
  */
 export function failedSecurityRows(
   plan: readonly PassPlanEntry[] | null,
@@ -193,13 +233,10 @@ export function failedSecurityRows(
     };
   return {
     state: "known",
-    failed: [...gapsOf(progress, planned, "plan"), ...gapsOf(progress, post, "post")].map(
-      ({ lens, strategy, errors }) => ({
-        lens,
-        ...(strategy !== undefined ? { strategy } : {}),
-        errors,
-      }),
-    ),
+    failed: [
+      ...incompleteSecurityRows(progress, planned, "plan"),
+      ...incompleteSecurityRows(progress, post, "post"),
+    ],
   };
 }
 

@@ -517,6 +517,13 @@ export function securityPassIncompleteLine(lens: string, strategy?: string): str
   return `Security pass \`${name}\` did not complete; its area is unreviewed this round.`;
 }
 
+/** The body line when the round planned security rows and no record of this
+ * round's passes can be read: whether they completed is unknown, and the
+ * body says so rather than read as if every one did. Informational — it
+ * never holds the post back. */
+export const SECURITY_PASSES_UNKNOWN_LINE =
+  "Whether every security pass completed this round is unknown (no progress record for this round).";
+
 /**
  * `{{chain_note}}`, at the end of step 2: "" unless the order carries the
  * chain's `compose` row (`chain_compose`) or reviews security alone
