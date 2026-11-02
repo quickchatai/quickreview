@@ -2900,11 +2900,16 @@ export class StateStore {
 
   /** The `partial-chain` records on a PR — exploit chains with more than
    * one unproven hop, never posted — newest round first, at most `limit`.
-   * The chain's `delta` row reads them as unconfirmed leads. */
+   * The chain's `delta` row reads them as unconfirmed leads. A partial chain
+   * is told by its kind (the lens judged it partial) or by the validator's
+   * DOUBTED word `partial-chain` on a chain the lens wrote `exploit-chain`,
+   * as secevidence.ts `isPartialChain` tells one; `security_outcome` has no
+   * column here. */
   partialChainFindings(pr: number, limit = 10): RoundFindingRow[] {
     return this.db
       .prepare(
-        `SELECT * FROM round_findings WHERE pr = ? AND kind LIKE 'partial-chain%'
+        `SELECT * FROM round_findings WHERE pr = ?
+          AND (kind LIKE 'partial-chain%' OR lower(trim(coalesce(word, ''))) = 'partial-chain')
           ORDER BY round_no DESC, id DESC LIMIT ?`,
       )
       .all(pr, Math.max(0, limit)) as RoundFindingRow[];
