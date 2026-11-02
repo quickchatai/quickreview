@@ -28,14 +28,15 @@ import {
   type ReportedFinding,
 } from "@quickchatai/pi-quickreview/src/scan/findings.js";
 import {
-  isSecurityCandidate,
   kindAllowed,
+  normalizeKind,
   scanCasePrompt,
   type TreeFile,
 } from "@quickchatai/pi-quickreview/src/scan/scan.js";
 import { scanConfigOf, scanSettings } from "@quickchatai/pi-quickreview/src/scan/scanagents.js";
 import { stateHomeFs } from "@quickchatai/pi-quickreview/src/scan/scanfs.js";
 import { renderStatus } from "@quickchatai/pi-quickreview/src/scan/scanrender.js";
+import { isSecurityFinding } from "@quickchatai/pi-quickreview/src/severity.js";
 import {
   doubtTier,
   parseThreatModelAnswer,
@@ -357,13 +358,15 @@ describe("[scan] kinds drops a candidate of another kind, counted", () => {
 // ---- needs-review ----------------------------------------------------------------------
 
 describe("[security] fold: a security candidate the skeptic could not settle is needs-review", () => {
-  it("isSecurityCandidate: a family lens, pass-security, or a security / chain kind", () => {
-    expect(isSecurityCandidate("bug", "pass-sec-access")).toBe(true);
-    expect(isSecurityCandidate("bug", "pass-security")).toBe(true);
-    expect(isSecurityCandidate("security-idor", "pass-scan")).toBe(true);
-    expect(isSecurityCandidate("exploit-chain", "pass-scan")).toBe(true);
-    expect(isSecurityCandidate("partial-chain", "pass-scan")).toBe(true);
-    expect(isSecurityCandidate("bug", "pass-scan")).toBe(false);
+  it("a scan candidate is a security candidate by the PR rule (severity.ts isSecurityFinding), its kind normalized", () => {
+    // A scan stores kinds through normalizeKind (`security:idor` → `security-idor`).
+    expect(isSecurityFinding(normalizeKind("bug"), "pass-sec-access")).toBe(true);
+    expect(isSecurityFinding(normalizeKind("bug"), "pass-security")).toBe(true);
+    expect(isSecurityFinding(normalizeKind("security:idor"), "pass-scan")).toBe(true);
+    expect(isSecurityFinding(normalizeKind("exploit-chain"), "pass-scan")).toBe(true);
+    expect(isSecurityFinding(normalizeKind("partial-chain"), "pass-scan")).toBe(true);
+    expect(isSecurityFinding(normalizeKind("bug"), "pass-scan")).toBe(false);
+    expect(isSecurityFinding(normalizeKind("securityish"), "pass-scan")).toBe(false);
   });
 
   it("doubtTier: unverifiable, unmentioned or an uncited principal class — only for security, only with fold", () => {

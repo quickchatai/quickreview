@@ -79,7 +79,8 @@
 //     counted, every candidate of another kind (scan.ts `kindAllowed`) — a
 //     security-only scan does not rest on prompt text alone.
 //   * With `[security] fold` on, the skeptic's verdict on a SECURITY
-//     candidate (scan.ts `isSecurityCandidate`) it could not settle — the
+//     candidate (severity.ts `isSecurityFinding`, the one rule PR rounds
+//     and the scan share) it could not settle — the
 //     word `unverifiable`, a `[same-principal]` or `[contrived-concurrency]`
 //     class whose reason cites no `path:line`, or no mention at all — is
 //     stored `needs-review`, its doubt kept as the proof gap, never
@@ -115,6 +116,7 @@ import { VALIDATE_PASS } from "../include.js";
 import type { LensTuningMap } from "../lenstuning.js";
 import { SECURITY_FAMILY } from "../passes.js";
 import { computeSecurityFacts, renderSecurityFacts } from "../secfacts.js";
+import { isSecurityFinding } from "../severity.js";
 import {
   parseThreatModel,
   REPO_THREAT_MODEL_PATH,
@@ -153,7 +155,6 @@ import {
   coverKey,
   evidenceQuotesAnchor,
   findingFingerprint,
-  isSecurityCandidate,
   kindAllowed,
   normalizeCode,
   parseScanAnswer,
@@ -607,7 +608,7 @@ export function doubtTier(
   doubt: Pick<FindingDoubt, "word" | "reason" | "class"> | null,
   fold: boolean,
 ): "needs-review" | "doubtful" {
-  if (!fold || !isSecurityCandidate(cand.kind, lens)) return "doubtful";
+  if (!fold || !isSecurityFinding(cand.kind, lens)) return "doubtful";
   if (doubt === null || doubt.word === "unverifiable") return "needs-review";
   const cls = doubt.class ?? null;
   if (cls !== null && CITED_CLASSES.includes(cls) && !scenarioIsAnchored(doubt.reason))

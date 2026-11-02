@@ -35,7 +35,7 @@ import {
   SCAN_PASS,
   VALIDATE_PASS,
 } from "../include.js";
-import { SCAN_DEEP_LENSES, SECURITY_FAMILY } from "../passes.js";
+import { SCAN_DEEP_LENSES } from "../passes.js";
 import { REACHABILITY_VALUES, reachabilityCappedSeverity, type Reachability } from "../severity.js";
 import { REPO_THREAT_MODEL_PATH, threatModelEntryGlob, type ThreatModel } from "../threatmodel.js";
 import { isMigrationFile } from "./facts.js";
@@ -608,20 +608,6 @@ export function kindAllowed(kind: string, kinds: readonly string[]): boolean {
     const want = normalizeKind(m);
     return k === want || k.startsWith(`${want}-`);
   });
-}
-
-/** The kinds that make a candidate a security candidate, as a prefix. */
-const SECURITY_KINDS = ["security", "exploit-chain", "partial-chain"] as const;
-
-/**
- * Whether a scan candidate is a security candidate — the rule the security
- * addenda bind by (include.ts `SECURITY_CANDIDATE`): a security-family lens
- * or `pass-security` raised it, or its kind begins `security`,
- * `exploit-chain` or `partial-chain`. Pure.
- */
-export function isSecurityCandidate(kind: string, lens: string): boolean {
-  if (lens === "pass-security" || SECURITY_FAMILY.includes(lens)) return true;
-  return kindAllowed(kind, SECURITY_KINDS);
 }
 
 /** One candidate as a validator reads it, in the findings grammar — the
