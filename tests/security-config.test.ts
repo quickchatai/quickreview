@@ -27,6 +27,8 @@ import {
   type CoreConfig,
 } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { ALL_PASSES, SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
+import { buildPassPlan } from "@quickchatai/pi-quickreview/src/planner.js";
+import { scanConfigOf } from "@quickchatai/pi-quickreview/src/scan/scanagents.js";
 import { buildAgents, VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
 import {
   alwaysPlannedLenses,
@@ -309,6 +311,58 @@ describe("only = true: a security-only review", () => {
     expect(lenses["pass-baseline"]).toEqual({ enabled: true });
     expect(lenses["pass-sec-llm"]).toEqual({ enabled: false });
     expect(lenses["pass-ui"]).toEqual({ emphasis: "forms", enabled: false });
+  });
+
+  /**
+   * MUTATION: read the repo-layered map as the explicit one (drop the
+   * `explicit` argument applyProfileOverlays passes, so `out[lens]?.enabled`
+   * decides) — this fails: the repo's enabled = true survives `only`.
+   */
+  it("a repository's .qcr/profile.toml cannot switch a non-security lens back on, or widen what posts", () => {
+    profile("seconly", "[security]\nonly = true\n");
+    const repoDir = join(dir, "repo-layer");
+    mkdirSync(repoDir, { recursive: true });
+    writeFileSync(
+      join(repoDir, "profile.toml"),
+      '[lenses.pass-baseline]\nenabled = true\n[lenses.pass-tests]\nenabled = true\n[posting]\nscope = "all"\n',
+    );
+    const cfg = applyProfileOverlays(root, under("seconly"), {
+      ...lookup(),
+      repoProfile: { dir: repoDir },
+    });
+    expect(cfg.security.only).toBe(true);
+    expect(cfg.lenses?.["pass-baseline"]?.enabled).toBe(false);
+    expect(cfg.lenses?.["pass-tests"]?.enabled).toBe(false);
+    expect(postingScope(cfg.posting)).toBe("security");
+    const p = buildPassPlan(cfg, [
+      {
+        filename: "app/totals.py",
+        additions: 1,
+        deletions: 0,
+        status: "modified",
+        patch: "@@ -1,1 +1,2 @@\n context\n+total = sum(rows)",
+      },
+    ]);
+    const planned = p.pass_plan.map((r) => r.lens);
+    for (const lens of ["pass-baseline", "pass-tests"]) {
+      expect(planned, lens).not.toContain(lens);
+      expect(p.addable_lenses, lens).not.toContain(lens);
+    }
+    // The same scan config resolves the same way.
+    expect(
+      scanConfigOf(under("seconly"), root, { ...lookup(), repoProfile: { dir: repoDir } }).lenses?.[
+        "pass-baseline"
+      ]?.enabled,
+    ).toBe(false);
+  });
+
+  it("a named profile extending the security profile may still switch a lens on on purpose", () => {
+    profile("seconly", "[security]\nonly = true\n");
+    profile("seconly-plus", 'extends = "seconly"\n[lenses.pass-baseline]\nenabled = true\n');
+    const cfg = applyProfileOverlays(root, under("seconly-plus"), lookup());
+    expect(cfg.security.only).toBe(true);
+    expect(cfg.lenses?.["pass-baseline"]?.enabled).toBe(true);
+    expect(cfg.lenses?.["pass-tests"]?.enabled).toBe(false);
   });
 
   it("config.toml's only = true does the same once the overlays run", () => {

@@ -988,7 +988,9 @@ command = true          # config.toml only; "@<bot> security"
   switched off through the same `enabled = false` a profile writes by hand
   (`pass-baseline`, `pass-bounds`, `pass-security`, the sweep, tests and the
   quality lenses included; a lens added later too), and posting is scoped to
-  security findings. A follow-up delta anchors on a family row
+  security findings. Only the named profile chain can switch one of those
+  lenses back on or widen the scope: a repository's `.qcr/profile.toml`
+  `[lenses.<pass>] enabled = true` or `[posting] scope` does not. A follow-up delta anchors on a family row
   (`anchor-unplanned` answers a full review without one), and two planned
   family rows plan the chain's `delta`.
 

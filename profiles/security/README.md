@@ -36,8 +36,9 @@ Everything else. `[security] only = true` switches off every lens outside
 the family and the validator: `pass-baseline`, `pass-bounds`, the general
 `pass-security`, the per-file sweep, behaviour-delta, `pass-tests`, the
 quality and style lenses and every content-triggered sub-lens. None of them
-is planned or addable. A lens added to the code later is off here too, with
-no edit to this profile.
+is planned or addable, and a repository's `.qcr/profile.toml` cannot switch
+one back on. A lens added to the code later is off here too, with no edit
+to this profile.
 
 So **an APPROVE from this profile means "no security finding"**. It does
 not mean the change is correct, tested or maintainable: nothing here looked.

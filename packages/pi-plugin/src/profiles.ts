@@ -694,16 +694,22 @@ function keptBySecurityOnly(lens: string): boolean {
  * honours `enabled` (the plan, the add list, the sweep, behaviour-delta)
  * drops it without knowing about `only`. A lens added to `ALL_PASSES` later
  * is covered with no edit. An explicit `enabled` the profile wrote is kept,
- * either way.
+ * either way — and `explicit` says which values count as written by the
+ * profile: the named chain's tuning alone, never the repository's
+ * `.qcr/profile.toml` (a repository cannot switch a non-security lens back
+ * on in a security-only review). It defaults to `lenses` itself, for a
+ * caller whose map has no repo layer in it.
  */
 export function securityOnlyLenses(
   lenses: Readonly<Record<string, LensTuning>> | undefined,
   passes: readonly string[] = ALL_PASSES,
+  explicit: Readonly<Record<string, LensTuning>> | undefined = lenses,
 ): Record<string, LensTuning> {
   const out: Record<string, LensTuning> = { ...(lenses ?? {}) };
   for (const lens of passes) {
-    if (keptBySecurityOnly(lens) || out[lens]?.enabled !== undefined) continue;
-    out[lens] = { ...out[lens], enabled: false };
+    if (keptBySecurityOnly(lens)) continue;
+    const written = explicit?.[lens]?.enabled;
+    out[lens] = { ...out[lens], enabled: written ?? false };
   }
   return out;
 }
@@ -719,7 +725,9 @@ export function securityOnlyLenses(
  *     lens is refused: a risk pass always runs at sol-high on its tier's
  *     model, and a profile that asked for both asked for something this
  *     cannot honour.
- * Run after the lens tuning is overlaid (it reads `cfg.lenses`).
+ * Run after the lens tuning is overlaid (it reads `cfg.lenses`). `explicit`
+ * is the named chain's own tuning, when `cfg.lenses` carries a repo layer
+ * (`securityOnlyLenses`).
  */
 export function applyProfileSecurity<
   C extends {
@@ -728,7 +736,12 @@ export function applyProfileSecurity<
     security?: SecurityConfig;
     models: Pick<ModelsConfig, "risk_passes" | "pass_tiers" | "pass_models">;
   },
->(cfg: C, overrides: Partial<SecurityConfig>, passes: readonly string[] = ALL_PASSES): C {
+>(
+  cfg: C,
+  overrides: Partial<SecurityConfig>,
+  passes: readonly string[] = ALL_PASSES,
+  explicit: Readonly<Record<string, LensTuning>> | undefined = cfg.lenses,
+): C {
   const security: SecurityConfig = { ...SECURITY_DEFAULTS, ...cfg.security, ...overrides };
   const risky = profileRiskLenses(cfg.lenses);
   for (const lens of risky) {
@@ -745,7 +758,7 @@ export function applyProfileSecurity<
   return {
     ...cfg,
     security,
-    ...(security.only ? { lenses: securityOnlyLenses(cfg.lenses, passes) } : {}),
+    ...(security.only ? { lenses: securityOnlyLenses(cfg.lenses, passes, explicit) } : {}),
     models: {
       ...cfg.models,
       risk_passes: [...new Set([...cfg.models.risk_passes, ...risky])],
@@ -760,7 +773,10 @@ export function applyProfileSecurity<
  * `cfg.posting` are the one resolved answer (the profile wins over
  * config.toml, the preset and the defaults). A security-only review posts
  * only security findings: `[posting] scope` becomes `security` unless the
- * profile chain sets it. The daemon's assembly, the one-shot review and the
+ * named profile chain sets it. What a security-only review keeps is the
+ * named chain's to say, never the repo layer's: a repository's
+ * `[lenses.<pass>] enabled = true` on a non-security lens, or its
+ * `[posting] scope`, cannot widen it. The daemon's assembly, the one-shot review and the
  * regression replay resolve through this one function, so each plans rounds
  * exactly as the daemon does.
  */
@@ -774,14 +790,17 @@ export function applyProfileOverlays<
   },
 >(root: string, cfg: C, lookup: ProfileLookup = {}): C {
   const profile = cfg.review.profile;
+  const named: ProfileLookup = { ...lookup, repoProfile: undefined };
   const secured = applyProfileSecurity(
     applyProfileTuning(cfg, loadProfileLensTuning(root, profile, lookup)),
     loadProfileSecurity(root, profile, lookup),
+    ALL_PASSES,
+    loadProfileLensTuning(root, profile, named),
   );
   const posting = loadProfilePosting(root, profile, lookup);
   return applyProfilePosting(
     secured,
-    secured.security?.only === true && posting.scope === undefined
+    secured.security?.only === true && loadProfilePosting(root, profile, named).scope === undefined
       ? { ...posting, scope: "security" }
       : posting,
   );

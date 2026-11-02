@@ -49,6 +49,7 @@ import {
   lensModelOverrides,
   lensTuningAddenda,
 } from "../lenstuning.js";
+import { ALL_PASSES } from "../passes.js";
 import type { CoreConfig } from "../reviewconfig.js";
 import { PASS_TIER_ORDER } from "../types.js";
 import {
@@ -82,7 +83,15 @@ export function scanConfigOf<C extends CoreConfig>(
 ): C {
   const profile = parsed.review.profile;
   const tuned = applyProfileTuning(parsed, loadProfileLensTuning(root, profile, lookup));
-  const secured = applyProfileSecurity(tuned, loadProfileSecurity(root, profile, lookup));
+  // A security-only scan keeps what the named chain says, never what a
+  // repository's .qcr/profile.toml switched back on (profiles.ts
+  // `securityOnlyLenses`).
+  const secured = applyProfileSecurity(
+    tuned,
+    loadProfileSecurity(root, profile, lookup),
+    ALL_PASSES,
+    loadProfileLensTuning(root, profile, { ...lookup, repoProfile: undefined }),
+  );
   return applyProfileScan(secured, loadProfileScan(root, profile, lookup));
 }
 
