@@ -260,7 +260,15 @@ final comparison has a judged review for all 185 PRs.
 **Qodo PR-Review-Bench (100 PRs)**
 
 - `qodo_prs`, `qodo_issues` — the 580 injected issues (MIT; 309 functional,
-  271 rule violations).
+  271 rule violations). `qodo_prs.base_commit` and `head_commit` are the real
+  GitHub commits: the PR's head and its merge-base, whose trees are the trees
+  our runs reviewed. The runs reviewed them as replay commits, the same trees
+  under a synthetic author, date and message so the reviewer could not read
+  the PR's history; those ids never existed on GitHub. The run files carry
+  them, and the case directories are named by the short replay head, so
+  `replay_base_commit` and `replay_head_commit` keep them for the join.
+  `repo_license` is per PR: the redis fork's licence changed between its PRs
+  (read from `LICENSE.txt` at each PR's head).
 - `qodo_reviews`, `qodo_verdicts` — the Qodo scorings of our runs
   (the frozen build, an earlier build of 2026-10-02, the same three harnesses,
   the fast option, the open-model runs) and Qodo's nine published vendor
@@ -378,7 +386,13 @@ Martian, Qodo and Elo judges are the ones named here.
   counts.
 - **Data anyone can regenerate:** the reviewed repositories' code (`repo.git`,
   `base/`, `head/`, `pr.diff`; refetch from the repo and commits in each case's
-  `meta.json`), the external benchmarks' cached data and harnesses (pinned:
+  `meta.json` for AACR-Bench, the `martian_prs` table for Martian; for Qodo and
+  SWE-PRBench the run files carry the harness's replay commit ids, made so the
+  reviewer could not read the PR's history and never on GitHub: the real
+  commits are in each case set's `leakproof` block, `source_head` and
+  `source_merge_base` in `bench/aacr/sets/<set>.json` of the repository, and
+  in `qodo_prs`, and the replayed trees equal those commits' trees), the
+  external benchmarks' cached data and harnesses (pinned:
   withmartian/code-review-benchmark@e616e84, Qodo/PR-Review-Bench@a73957c,
   foundry-ai/swe-prbench@b87f579), scratch directories, scheduler state and
   release build outputs.

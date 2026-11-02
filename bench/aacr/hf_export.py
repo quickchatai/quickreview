@@ -811,7 +811,7 @@ class Exporter:
                                "source_repo": p.get("source_repo"), "title": p.get("pr_title"),
                                "base_commit": c.get("base_commit"), "head_commit": c.get("head_commit"),
                                "language": c.get("language"), "goldens": len(p["golden_comments"]),
-                               **bench_repo_license(c.get("repo"))}))
+                               **bench_repo_license(c.get("repo"), c.get("pr"))}))
             for i, g in enumerate(p["golden_comments"]):
                 au = audit.get((u, i)) or {}
                 gold.append(self.S({
@@ -928,9 +928,9 @@ class Exporter:
         for c in qset:
             g = gt[c["pr_url"]]
             prs.append(self.S({"pr_url": c["pr_url"], "instance_id": c["instance_id"], "repo": c["repo"],
-                               "title": c.get("title"), "base_commit": c["base_commit"], "head_commit": c["head_commit"],
+                               "title": c.get("title"), **qodo_pr_commits(c),
                                "language": c.get("language"), "issues": len(g["issues"]),
-                               **bench_repo_license(c["repo"])}))
+                               **bench_repo_license(c["repo"], c.get("pr"))}))
             for i, x in enumerate(g["issues"]):
                 issues.append(self.S({"pr_url": c["pr_url"], "issue_index": i, "title": x.get("title"),
                                       "description": x.get("description"), "file_path": x.get("file_path"),
@@ -1146,7 +1146,8 @@ REPO_LICENSES.update({
 
 # The Martian and Qodo PRs' repositories (forks keep their upstream's licence): the upstream
 # project's declared licence, SPDX where one exists. Recorded from each upstream project's own
-# licence statement, not re-read at each PR's commit; `*_license_note` says what to check.
+# licence statement, not re-read at each PR's commit, except where BENCH_PR_LICENSES gives the PR's
+# own; `*_license_note` says what to check.
 BENCH_REPO_LICENSES = {
     "ai-code-review-evaluation/discourse-graphite": ("GPL-2.0-or-later", "fork of discourse/discourse"),
     "calcom/cal.com": ("AGPL-3.0-only", "source-available parts: the `ee` directories are under cal.com's commercial licence"),
@@ -1161,14 +1162,63 @@ BENCH_REPO_LICENSES = {
     "agentic-review-benchmarks/dify": ("LicenseRef-Dify-Open-Source", "fork of langgenius/dify: Apache-2.0 with additional conditions"),
     "agentic-review-benchmarks/firefox-ios": ("MPL-2.0", "fork of mozilla-mobile/firefox-ios"),
     "agentic-review-benchmarks/prefect": ("Apache-2.0", "fork of PrefectHQ/prefect"),
-    "agentic-review-benchmarks/redis": ("LicenseRef-redis", "fork of redis/redis: RSALv2 OR SSPLv1 (7.4 on), AGPL-3.0 added in 8.0; check the fork's LICENSE at the PR's commit"),
+    # the fork's licence changed between its PRs: no repository-wide licence, each PR's is in
+    # BENCH_PR_LICENSES (a PR missing there gets none, and the validation's licence check fails)
+    "agentic-review-benchmarks/redis": (None, "fork of redis/redis; the licence differs by PR"),
     "agentic-review-benchmarks/tauri": ("Apache-2.0 OR MIT", "fork of tauri-apps/tauri"),
 }
 
+# Per-PR licences, read from the repository's LICENSE file at each PR's head commit
+# (`qodo_prs.head_commit`); they override BENCH_REPO_LICENSES. RSALv2 has no SPDX id.
+_REDIS = "agentic-review-benchmarks/redis"
+_REDIS8 = ("LicenseRef-RSALv2 OR SSPL-1.0 OR AGPL-3.0-only",
+           "fork of redis/redis; read from LICENSE.txt at the PR's head commit: the Redis 8 tri-licence "
+           "(RSALv2, SSPLv1 or AGPLv3; code from 7.2 and earlier stays BSD-3-Clause)")
+_REDIS74 = ("LicenseRef-RSALv2 OR SSPL-1.0",
+            "fork of redis/redis; read from LICENSE.txt at the PR's head commit: the 7.4 dual licence "
+            "(RSALv2 or SSPLv1)")
+BENCH_PR_LICENSES = {**{(_REDIS, n): _REDIS8 for n in (1, 2, 3, 4, 5, 6, 7, 9)}, (_REDIS, 8): _REDIS74}
 
-def bench_repo_license(repo: str | None) -> dict:
-    lic, note = BENCH_REPO_LICENSES.get(repo or "", (None, "not recorded"))
+
+def bench_repo_license(repo: str | None, pr: int | None = None) -> dict:
+    lic, note = BENCH_PR_LICENSES.get((repo or "", pr)) or BENCH_REPO_LICENSES.get(repo or "", (None, "not recorded"))
     return {"repo_license": lic, "repo_license_note": note}
+
+
+def qodo_pr_commits(case: dict) -> dict:
+    """A Qodo case's commits as published: the real GitHub commits whose trees the run reviewed
+    (the head, and the merge-base the PR's change is taken against), and the harness's replay ids.
+
+    The case set's `base_commit` / `head_commit` are leak-proof replay commits (ext/gitmeta.py
+    leakproof_ids: the same trees under a synthetic author, date and message, so the reviewer could
+    not read the PR's history). They never existed on GitHub; the run files and case dir names
+    (`<repo>@<short replay head>`) carry them, so they stay, as `replay_*`, for the join."""
+    lp = case.get("leakproof") or {}
+    return {"base_commit": lp.get("source_merge_base"), "head_commit": lp.get("source_head"),
+            "replay_base_commit": case.get("base_commit"), "replay_head_commit": case.get("head_commit")}
+
+
+def replay_commit_problems(rows: list[dict], replay_ids: set[str]) -> int:
+    """Rows that publish a replay id as `base_commit` or `head_commit`, or miss a real or a replay
+    commit. `replay_ids` are every case set's replay ids (and each row's own replay columns count)."""
+    bad = 0
+    for r in rows:
+        real = (r.get("base_commit"), r.get("head_commit"))
+        replay = (r.get("replay_base_commit"), r.get("replay_head_commit"))
+        if not all(real) or not all(replay) or any(x in replay_ids or x in replay for x in real):
+            bad += 1
+    return bad
+
+
+def set_replay_ids() -> set[str]:
+    """The replay ids of every case set built leak-proof (a `leakproof` block)."""
+    out = set()
+    for f in glob.glob(os.path.join(HERE, "sets", "*.json")):
+        d = json.load(open(f))
+        for c in (d.get("cases") or []) if isinstance(d, dict) else []:
+            if isinstance(c, dict) and c.get("leakproof"):
+                out.update(x for x in (c.get("base_commit"), c.get("head_commit")) if x)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1537,6 +1587,9 @@ def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_r
     # licence, and every Martian golden its half (the set files fill the audit's gaps)
     for n in ("martian_prs", "qodo_prs"):
         check(f"{n}: every row names its repository's licence", sum(1 for r in t[n] if not r.get("repo_license")), 0)
+    # the card's statement: qodo_prs publishes the real GitHub commits, never a harness replay id
+    check("qodo_prs: base and head are real commits, none a replay id, none missing",
+          replay_commit_problems(t["qodo_prs"], set_replay_ids()), 0)
     check("martian_goldens: every golden has its half (audit_split)",
           sum(1 for r in t["martian_goldens"] if r.get("audit_split") not in ("test30", "tune20")), 0)
     used = collections.Counter(r["judgment_file"] for r in t["elo_judgments"] if r["plan"] == ELO_PLAN and r["used_in_ratings"])

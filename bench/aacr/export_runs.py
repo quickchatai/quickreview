@@ -1535,7 +1535,16 @@ Files left out of the shipped families:
 
 Also not here: the reviewed repositories' code (`repo.git`, the `base/` and
 `head/` file trees and the `pr.diff` of each case; refetch them from the
-repository and commits in each case's `meta.json`, as AACR-Bench does),
+repository and commits in each case's `meta.json`, as AACR-Bench does, and
+for Martian from the dataset's `martian_prs` table). For Qodo and SWE-PRBench
+cases the run files carry the harness's replay commit ids (`head_sha` in
+`outcome.json`, and the short replay head in each case directory's name):
+the same trees under a synthetic author, date and message, made so the
+reviewer could not read the PR's history, and never on GitHub. The real
+commits are in the case set's `leakproof` block (`source_head`,
+`source_merge_base` in `bench/aacr/sets/<set>.json` of the repository) and in
+the dataset's `qodo_prs` table, and the replayed trees equal those commits'
+trees. Also not here:
 `ext-cache/` and `ext-data/` (the external benchmarks' own data and
 harnesses, pinned: withmartian/code-review-benchmark@e616e84, Hugging Face
 Qodo/PR-Review-Bench@a73957c, foundry-ai/swe-prbench@b87f579 and

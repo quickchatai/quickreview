@@ -46,7 +46,11 @@
 //      extractions of vendor comments and the blind annotation's vendor
 //      candidates ship verbatim (third-party text, copied by the owner's ruling);
 //  20. the re-grep is a gate, verify_slim fails on what it finds, and a run
-//      suffix ships with its run only when it is a known one.
+//      suffix ships with its run only when it is a known one;
+//  21. `qodo_prs` publishes the real GitHub commits (the leak-proof block's
+//      merge-base and head), never a harness replay id, which it keeps in
+//      `replay_*`; and a repository whose licence changed between its PRs
+//      (the redis fork) gets each PR's own licence.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -266,6 +270,63 @@ describe("hf_export.qodo_effective", () => {
       ["a", "y", { tries: 1 }],
       ["b", "x", { error: "second" }],
     ]);
+  });
+});
+
+describe("hf_export: Qodo commits and per-PR licences", () => {
+  // MUTATION: in qodo_pr_commits, publish the case's base_commit/head_commit as base_commit/head_commit — this fails
+  // MUTATION: in replay_commit_problems, drop the `x in replay_ids` test — this fails
+  it("publishes the PR's real merge-base and head, keeps the replay ids apart, and counts a row that publishes one", () => {
+    const r = py(
+      "import os\n" +
+        "cases = json.load(open(os.path.join(h.HERE, 'sets', 'qodo-pr100.json')))['cases']\n" +
+        "rows = [h.qodo_pr_commits(c) for c in cases]\n" +
+        "ids = h.set_replay_ids()\n" +
+        "a, b = rows[0], rows[1]\n" +
+        "planted = [dict(a, head_commit=b['replay_head_commit']), dict(a, base_commit=None), dict(a)]\n" +
+        "print(json.dumps({'n': len(rows), 'ids': len(ids),\n" +
+        "  'real': sum(r['head_commit'] == c['leakproof']['source_head'] and r['base_commit'] == c['leakproof']['source_merge_base'] for r, c in zip(rows, cases)),\n" +
+        "  'replay': sum(r['replay_head_commit'] == c['head_commit'] and r['replay_base_commit'] == c['base_commit'] for r, c in zip(rows, cases)),\n" +
+        "  'published_replay': sum(r[k] in ids for r in rows for k in ('base_commit', 'head_commit')),\n" +
+        "  'problems': h.replay_commit_problems(rows, ids), 'planted': h.replay_commit_problems(planted, ids)}))",
+    ) as Record<string, number>;
+    expect(r.n).toBe(100);
+    expect(r.ids).toBeGreaterThanOrEqual(200);
+    expect(r.real).toBe(100);
+    expect(r.replay).toBe(100);
+    expect(r.published_replay).toBe(0);
+    expect(r.problems).toBe(0);
+    expect(r.planted).toBe(2);
+  });
+
+  // MUTATION: map redis PR 8 to _REDIS8 in BENCH_PR_LICENSES — this fails
+  // MUTATION: drop the BENCH_PR_LICENSES lookup from bench_repo_license — this fails
+  it("gives each redis PR the licence read at its head, and an unlisted redis PR none", () => {
+    const r = py(
+      "import os\n" +
+        "R = 'agentic-review-benchmarks/redis'\n" +
+        "cases = json.load(open(os.path.join(h.HERE, 'sets', 'qodo-pr100.json')))['cases']\n" +
+        "print(json.dumps({'redis': {n: h.bench_repo_license(R, n)['repo_license'] for n in range(1, 11)},\n" +
+        "  'note': h.bench_repo_license(R, 8)['repo_license_note'],\n" +
+        "  'cal': h.bench_repo_license('agentic-review-benchmarks/cal.com', 3)['repo_license'],\n" +
+        "  'unlicensed': [c['pr_url'] for c in cases if not h.bench_repo_license(c['repo'], c.get('pr'))['repo_license']]}))",
+    ) as { redis: Record<string, string | null>; note: string; cal: string; unlicensed: string[] };
+    const tri = "LicenseRef-RSALv2 OR SSPL-1.0 OR AGPL-3.0-only";
+    expect(r.redis).toEqual({
+      "1": tri,
+      "2": tri,
+      "3": tri,
+      "4": tri,
+      "5": tri,
+      "6": tri,
+      "7": tri,
+      "8": "LicenseRef-RSALv2 OR SSPL-1.0",
+      "9": tri,
+      "10": null,
+    });
+    expect(r.note).toContain("LICENSE.txt at the PR's head commit");
+    expect(r.cal).toBe("AGPL-3.0-only");
+    expect(r.unlicensed).toEqual([]);
   });
 });
 
