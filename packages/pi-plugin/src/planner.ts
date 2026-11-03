@@ -390,9 +390,18 @@ export function buildPassPlan(
         ? "sol-high"
         : (pins[lens] ?? (lens === INTENT_PASS ? "terra-med" : defaultTier)),
     );
+  // The sweep and behaviour-delta are planned as grouped rows of their own,
+  // so `plan = "always"` reaches them here, as their lever would: on a change
+  // that is not docs-only, whatever the `[review]` lever says. `enabled =
+  // false` and `skip_lenses` still win, as for every lens.
+  const groupedOn = (lens: string, lever: boolean): boolean =>
+    on(lens, lever || always.has(lens)) && !skip.has(lens);
+  // A grouped row only `always` planned says so after its own reason.
+  const alwaysOnly = (lens: string, lever: boolean): string =>
+    always.has(lens) && !on(lens, lever) ? `; ${ALWAYS_REASON}` : "";
   // The sweep's rows run at the cheapest tier unless pinned (`[models.pass_tiers]`)
   // or floored by the profile.
-  const sweepOn = on(SWEEP_PASS, cfg.review.sweep) && !skip.has(SWEEP_PASS);
+  const sweepOn = groupedOn(SWEEP_PASS, cfg.review.sweep);
   const sweepTier = flooredTier(cfg.lenses, SWEEP_PASS, pins[SWEEP_PASS] ?? "terra-med");
   // The validator runs at its own tier — never raised to match a lens,
   // pinned or not.
@@ -473,7 +482,7 @@ export function buildPassPlan(
         tier,
         raisable_to:
           pins[SWEEP_PASS] !== undefined && !isLight ? [] : raisableFrom(SWEEP_PASS, tier),
-        why: `every changed line of ${focus.length === 1 ? focus[0] : `${focus.length} changed files`}, read one by one${isLight ? " (tests, prose or config only: the light tier, [review] sweep_light_tier)" : ""}`,
+        why: `every changed line of ${focus.length === 1 ? focus[0] : `${focus.length} changed files`}, read one by one${isLight ? " (tests, prose or config only: the light tier, [review] sweep_light_tier)" : ""}${alwaysOnly(SWEEP_PASS, cfg.review.sweep)}`,
         focus,
       };
     });
@@ -483,7 +492,7 @@ export function buildPassPlan(
   // PR modifies or deletes code in, at the round's tier — comparing base and
   // head is reasoning, not attention. Appended, as the sweep's rows are.
   let behaviour_unread: string[] = [];
-  if (on(BEHAVIOUR_DELTA_PASS, cfg.review.behaviour_delta) && !skip.has(BEHAVIOUR_DELTA_PASS)) {
+  if (groupedOn(BEHAVIOUR_DELTA_PASS, cfg.review.behaviour_delta)) {
     const { groups, unread } = behaviourDeltaGroups(
       files,
       cfg.review.behaviour_delta_max_groups,
@@ -496,7 +505,7 @@ export function buildPassPlan(
       tier,
       raisable_to:
         pins[BEHAVIOUR_DELTA_PASS] !== undefined ? [] : raisableFrom(BEHAVIOUR_DELTA_PASS, tier),
-      why: `base behaviour is at risk in ${focus.length === 1 ? focus[0] : `${focus.length} files`}: removed or replaced guards, conditions, calls, returns or values, or existing code wrapped in a new branch`,
+      why: `base behaviour is at risk in ${focus.length === 1 ? focus[0] : `${focus.length} files`}: removed or replaced guards, conditions, calls, returns or values, or existing code wrapped in a new branch${alwaysOnly(BEHAVIOUR_DELTA_PASS, cfg.review.behaviour_delta)}`,
       focus,
     }));
     pass_plan.push(...rows);
@@ -1182,6 +1191,13 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
  *  - when a family row is planned: the threat model (its source, hash and
  *    fenced excerpt), the facts, and the earlier rounds' partial chains for
  *    the chain's `delta` row; and the request, whenever there is one.
+ *
+ * "Planned" counts every phase the round runs: the discovery rows, the
+ * post-discovery rows and a follow-up's owed sweep (`sweepPlan`, the whole
+ * PR's full plan). The sweep's task order is this order with the sweep plan
+ * (`sweepOrderOf`), so a family row that runs only in the sweep reads the
+ * same threat model and facts, and is validated at the same tier, as one in
+ * the delta plan.
  */
 function securityOrderFields(
   args: Pick<
@@ -1195,9 +1211,12 @@ function securityOrderFields(
   >,
   passPlan: readonly PassPlanEntry[],
   postPlan: PassPlanEntry[],
+  sweepPlan: readonly PassPlanEntry[],
 ): Partial<RoundOrder> {
   const security = args.cfg.security ?? SECURITY_DEFAULTS;
-  const familyPlanned = [...passPlan, ...postPlan].some((p) => SECURITY_FAMILY.includes(p.lens));
+  const familyPlanned = [...passPlan, ...postPlan, ...sweepPlan].some((p) =>
+    SECURITY_FAMILY.includes(p.lens),
+  );
   const validator = passPlan.find((p) => p.lens === VALIDATE_PASS);
   const raise =
     familyPlanned &&
@@ -1208,7 +1227,9 @@ function securityOrderFields(
     ? [...(args.securityFacts ?? []), ...(args.securityInventory?.() ?? [])]
     : [];
   const partial = args.priorPartialChains ?? [];
-  const delta = passPlan.some((p) => p.lens === CHAIN_PASS && p.strategy === "delta");
+  const delta = [...passPlan, ...sweepPlan].some(
+    (p) => p.lens === CHAIN_PASS && p.strategy === "delta",
+  );
   return {
     ...(postPlan.length > 0 ? { post_plan: postPlan } : {}),
     ...(postPlan.some((p) => p.lens === CHAIN_PASS && p.strategy === "compose")
@@ -1393,7 +1414,7 @@ export function buildRoundOrder(args: {
     ...((args.cfg.review?.validator_shards ?? 1) > 1
       ? { validator_shards: args.cfg.review.validator_shards }
       : {}),
-    ...securityOrderFields(args, pass_plan, post_plan ?? []),
+    ...securityOrderFields(args, pass_plan, post_plan ?? [], args.followUp?.sweepPlan ?? []),
     migration_gate: eco.migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
     ...(args.migrationCollisionsUndelivered && (args.migrationCollisions ?? []).length > 0

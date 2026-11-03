@@ -344,6 +344,50 @@ describe('[lenses.<pass>] plan = "always"', () => {
     expect(familyRows(p).length).toBeGreaterThan(0);
   });
 
+  // The sweep and behaviour-delta are planned as grouped rows of their own,
+  // outside the plan's union, so `always` must reach their builders.
+  // MUTATION: drop `|| always.has(lens)` from `groupedOn` in buildPassPlan —
+  // this fails.
+  it("plans the sweep and behaviour-delta with their levers off, never over enabled = false or skip_lenses", () => {
+    const leversOff: Config = {
+      ...fixture,
+      review: { ...fixture.review, sweep: false, behaviour_delta: false },
+    };
+    const modified = changed("app/totals.py", ["if not ok:", "    return None"], "-");
+    const off = plan(leversOff, [PLAIN, modified]);
+    expect(rows(off, "pass-sweep")).toEqual([]);
+    expect(rows(off, "pass-behaviour-delta")).toEqual([]);
+    const always = tuned(
+      { "pass-sweep": { plan: "always" }, "pass-behaviour-delta": { plan: "always" } },
+      leversOff,
+    );
+    const p = plan(always, [PLAIN, modified]);
+    expect(rows(p, "pass-sweep").length).toBeGreaterThan(0);
+    expect(rows(p, "pass-behaviour-delta").length).toBeGreaterThan(0);
+    for (const r of [...rows(p, "pass-sweep"), ...rows(p, "pass-behaviour-delta")])
+      expect(r.why).toMatch(/plan = "always"/);
+    // a docs-only change drops them, as it drops every `always` lens
+    const docs = plan(always, [README]);
+    expect(rows(docs, "pass-sweep")).toEqual([]);
+    expect(rows(docs, "pass-behaviour-delta")).toEqual([]);
+    // enabled = false and skip_lenses still win
+    const disabled = tuned(
+      {
+        "pass-sweep": { plan: "always", enabled: false },
+        "pass-behaviour-delta": { plan: "always", enabled: false },
+      },
+      leversOff,
+    );
+    expect(rows(plan(disabled, [PLAIN, modified]), "pass-sweep")).toEqual([]);
+    expect(rows(plan(disabled, [PLAIN, modified]), "pass-behaviour-delta")).toEqual([]);
+    const skipped: Config = {
+      ...always,
+      review: { ...always.review, skip_lenses: ["pass-sweep", "pass-behaviour-delta"] },
+    };
+    expect(rows(plan(skipped, [PLAIN, modified]), "pass-sweep")).toEqual([]);
+    expect(rows(plan(skipped, [PLAIN, modified]), "pass-behaviour-delta")).toEqual([]);
+  });
+
   it("never plans a lens the profile switched off", () => {
     const cfg = tuned({ "pass-sec-access": { plan: "always", enabled: false } });
     expect(rows(plan(cfg, [PLAIN]), "pass-sec-access")).toEqual([]);
@@ -647,6 +691,61 @@ describe("the round order's security fields", () => {
       expect(plain, k).not.toHaveProperty(k);
     expect(plain).not.toHaveProperty("prior_partial_chains");
   });
+
+  // A follow-up whose delta plans no family row can still owe the whole-PR
+  // sweep, whose full plan has them: those rows read the threat model and
+  // facts through the sweep's order (sweepOrderOf copies the order's fields)
+  // and are validated at the security tier like any other family row.
+  // MUTATION: drop `...sweepPlan` from `familyPlanned` in
+  // securityOrderFields — this fails.
+  it(
+    "carry the threat model, facts and validator raise for family rows only the owed sweep runs",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const threatModel = parseThreatModel("## Entry points\n- `app/api/**`\n", "repo");
+      const fact: SecurityFact = {
+        check: "route-inventory",
+        status: "unknown",
+        lens: "pass-sec-authn-coverage",
+        detail: "the repository could not be listed",
+      };
+      let inventoryReads = 0;
+      const sweepPlan = order(lowValidator, [UNGUARDED]).pass_plan;
+      expect(sweepPlan.some((r) => SECURITY_FAMILY.includes(r.lens))).toBe(true);
+      const deltaPlan = plan(lowValidator, [PLAIN]);
+      expect(familyRows(deltaPlan)).toEqual([]);
+      const o = order(lowValidator, [UNGUARDED, PLAIN], {
+        plan: deltaPlan,
+        threatModel,
+        securityInventory: () => {
+          inventoryReads++;
+          return [fact];
+        },
+        priorPartialChains: ["L1 app/views.py:3 → L2 app/repo.py:9 (two hops unproven)"],
+        followUp: {
+          delta: {
+            from_sha: "a".repeat(40),
+            tree: "t".repeat(40),
+            lines: 1,
+            files: [{ path: PLAIN.filename, status: "modified", ranges: [[1, 1]] }],
+            patch_file: "/wt/delta.patch",
+          },
+          deltaFiles: [PLAIN],
+          priorFindingsNote: "",
+          sweepPlan,
+        },
+      });
+      expect(o.security_validator_agent).toBe(`${VALIDATE_PASS}--sol-high`);
+      expect(o.threat_model).toEqual({ source: "repo", hash: threatModel.hash });
+      expect(o.security_facts).toEqual([fact]);
+      expect(inventoryReads).toBe(1);
+      expect(o.prior_partial_chains).toHaveLength(1);
+      const sweep = sweepOrderOf(o, sweepPlan);
+      expect(sweep.security_validator_agent).toBe(`${VALIDATE_PASS}--sol-high`);
+      expect(sweep.threat_model_excerpt).toContain("Threat model");
+      expect(sweep.security_facts).toEqual([fact]);
+    },
+  );
 
   it("name the request", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const o = order(fixture, [PLAIN], { securityRequest: REQUEST });

@@ -1942,10 +1942,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         }
       }
       // The route inventory: read only for a round whose plan has a
-      // security-family row, the one reader of it (securityOrderFields).
-      const inventory = [...passPolicy.pass_plan, ...(passPolicy.post_plan ?? [])].some((p) =>
-        SECURITY_FAMILY.includes(p.lens),
-      )
+      // security-family row — in any phase, the owed sweep's included — the
+      // one reader of it (securityOrderFields).
+      const inventory = [
+        ...passPolicy.pass_plan,
+        ...(passPolicy.post_plan ?? []),
+        ...(followUp && roundDelta ? (followUp.sweepPlan ?? []) : []),
+      ].some((p) => SECURITY_FAMILY.includes(p.lens))
         ? await sec.inventory()
         : [];
       const built = buildRoundOrder({
