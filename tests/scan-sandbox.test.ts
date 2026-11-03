@@ -54,8 +54,8 @@ import {
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
-import { checkoutOf, mountedCheckout, scanEnv } from "../src/scancli.js";
-import { repoScanHome } from "../src/install.js";
+import { checkoutOf, mountedCheckout, scanEnv, scanTranscriptsDir } from "../src/scancli.js";
+import { repoScanHome, stateHome } from "../src/install.js";
 import {
   CompanionLifecycle,
   imageBuildProblem,
@@ -1139,6 +1139,28 @@ describe("the driver inside the sandbox", () => {
     );
     expect(set.QCR_REVIEWED_REPO).toBe("/host/app");
     expect(set.QCR_STATE_HOME).toBeUndefined();
+  });
+
+  // `qcr open scan[:RUN]` reads the transcripts where the scan wrote them.
+  // MUTATION: return `join(stateHome(args[0]), SCAN_TRANSCRIPTS_DIR)` from
+  // scanTranscriptsDir (the global home) — this fails.
+  it("the scan transcripts dir follows the scan's state home: the checkout's own, else the global one", () => {
+    const repo = join(dir, "my-repo");
+    mkdirSync(repo);
+    execFileSync("git", ["init", "-q", repo]);
+    const top = realpathSync(repo);
+    const host = { QCR_ROOT: "/r", HOME: dir, XDG_STATE_HOME: join(dir, "state") };
+    const noConfig = (): never => {
+      throw new Error("no config");
+    };
+    expect(scanTranscriptsDir(host, "/reviewed-repo", noConfig, () => top)).toBe(
+      join(repoScanHome(host, top), "scan", "transcripts"),
+    );
+    // the companion's own repo keeps the shared, global home
+    const companion = () => ({ reviewed_repo_dir: top, tracker_dir: "" });
+    expect(scanTranscriptsDir(host, "/reviewed-repo", companion, () => top)).toBe(
+      join(stateHome(host), "scan", "transcripts"),
+    );
   });
 
   // An App user's config names the companion's repo; a /qcr:scan typed in

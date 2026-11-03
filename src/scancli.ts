@@ -40,7 +40,7 @@ import {
   prepareDriverLog,
 } from "./scandriverlog.js";
 import type { CloseFixedResult, ScanTriage } from "./setup/triage.js";
-import type { ScanRunner, ScanRun } from "./setup/scanrun.js";
+import { SCAN_TRANSCRIPTS_DIR, type ScanRunner, type ScanRun } from "./setup/scanrun.js";
 import type { UnitCutPort } from "@quickchatai/pi-quickreview/src/scan/unitcutstore.js";
 import {
   runScanVerb,
@@ -223,6 +223,14 @@ export function scanEnv(
   }
   if (configured) return { ...out, QCR_REVIEWED_REPO: configured };
   return own(cwd());
+}
+
+/** Where a `qcr scan` run from here keeps its transcripts: under the state
+ * home `scanEnv` chose (a checkout's own `repoScanHome` on the host), as
+ * scanassemble.ts writes them. `qcr open scan[:RUN]` reads this, never the
+ * global state home's. Takes `scanEnv`'s arguments. */
+export function scanTranscriptsDir(...args: Parameters<typeof scanEnv>): string {
+  return join(stateHome(scanEnv(...args)), SCAN_TRANSCRIPTS_DIR);
 }
 
 /** The checkout a docker scan sandbox mounts: the one `scanEnv` chose (a
