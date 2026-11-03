@@ -403,19 +403,24 @@ async function priceAndStart(
         return {
           ok: false,
           error:
-            'the scan was not started: [scan] threat_model drafts a threat model first (set it to "off" to scan without one)',
+            stage0.existing === null
+              ? 'the scan was not started: [scan] threat_model drafts a threat model first (set it to "off" to skip drafting and scan with no threat model)'
+              : 'the scan was not started: [scan] threat_model drafts a revised threat model first (set it to "off" to skip drafting; the scan still reads the existing model)',
         };
       const s0 = await scan.start({ key: stage0.key, sha: stage0.sha });
       if (!s0.ok) return { ok: false, error: s0.errors.join("; ") };
-      ui.status("QuickReview: drafting the threat model…");
-      const halt = (): void => void scan.stop();
-      host.shutdown.addEventListener("abort", halt, { once: true });
+      // Stage 0 is paid for like any stage: Esc, the session ending and a
+      // stop asked for from outside this pi stop it, as they stop the scan.
+      const stop = new AbortController();
+      const offEscape = ui.onEscape(() => stop.abort());
+      let ended: ScanStatus["run"];
       try {
-        await scan.idle();
+        ended = (await watchRun(host, ui, engine, stop.signal)).run;
       } finally {
-        host.shutdown.removeEventListener("abort", halt);
+        offEscape();
       }
-      const ended = scan.status().run;
+      if (stop.signal.aborted || host.shutdown.aborted)
+        return { ok: false, error: "the threat-model stage was stopped — nothing was scanned" };
       if (ended === null || ended.mode !== "threat-model" || ended.display !== "complete")
         return {
           ok: false,
@@ -456,14 +461,15 @@ async function priceAndStart(
   }
 }
 
-/** Wait for the run in flight to end, the status line ticking; `stop` (or the
- * session ending) stops it. The new findings, or why there are none. */
-async function followRun(
+/** Wait for the run in flight to end, the status line ticking: `stop`, the
+ * session ending, and a stop asked for from outside this pi (`qcr scan
+ * stop`, the TUI's tab) stop it. Its status at the end. */
+async function watchRun(
   host: PluginHost,
   ui: SessionUi,
   engine: RepoScan,
   stop?: AbortSignal,
-): Promise<GuidedScan> {
+): Promise<ScanStatus> {
   const { scan } = engine;
   const startedAt = Date.now();
   const halt = (): void => void scan.stop();
@@ -483,15 +489,25 @@ async function followRun(
   tick();
   const ticker = setInterval(tick, 1000);
   ticker.unref?.();
-  let s: ScanStatus;
   try {
     await scan.idle();
-    s = scan.status();
+    return scan.status();
   } finally {
     clearInterval(ticker);
     for (const sig of [stop, host.shutdown]) sig?.removeEventListener("abort", halt);
     ui.status(undefined);
   }
+}
+
+/** Wait for the run in flight to end (`watchRun`). The new findings, or why
+ * there are none. */
+async function followRun(
+  host: PluginHost,
+  ui: SessionUi,
+  engine: RepoScan,
+  stop?: AbortSignal,
+): Promise<GuidedScan> {
+  const s = await watchRun(host, ui, engine, stop);
   if (stop?.aborted || host.shutdown.aborted)
     return { ok: false, error: "the scan was stopped: what finished is in the ledger" };
   const run = s.run;

@@ -1248,6 +1248,7 @@ function fakeScan(
   host: { head: string },
   o: {
     hang?: boolean;
+    hangStage0?: boolean;
     hold?: Promise<void>;
     built?: (opts: Parameters<ScanCommandDeps["cases"]>[0]) => void;
   } = {},
@@ -1266,6 +1267,12 @@ function fakeScan(
           if (spec.agent.startsWith("pass-validate"))
             return { ok: true, output: "NONE\n", cost_usd: 0.01 };
           // Stage 0's lens: a threat model, in its sections.
+          if (spec.agent.startsWith("pass-sec-threat-model") && o.hangStage0)
+            return new Promise((done) =>
+              signal.addEventListener("abort", () => done({ ok: false, reason: "stopped" }), {
+                once: true,
+              }),
+            );
           if (spec.agent.startsWith("pass-sec-threat-model"))
             return {
               ok: true,
@@ -1373,6 +1380,40 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     ).toContain("DRAFT threat model");
     // never into the repository
     expect(existsSync(join(host.cwd, ".qcr"))).toBe(false);
+  });
+
+  // MUTATION: drop the Esc handler from priceAndStart's stage-0 wait — the
+  // drafting case never ends, the command never returns, and this fails.
+  it("Esc stops a threat-model draft in flight, and nothing is scanned", async () => {
+    const host = scanHost();
+    const config = join(host.home, "qcr-config.toml");
+    writeFileSync(
+      config,
+      readFileSync(join(ROOT, "config.example.toml"), "utf8").replace(
+        /^threat_model = "off"/m,
+        'threat_model = "auto"',
+      ),
+    );
+    const env = { ...host.env, QCR_CONFIG: config };
+    const ui = fakeUi();
+    const deps = fakeScan(host, { hangStage0: true });
+    const sessions = new ScanSessions();
+    await runScanCommand("units propose", { ...host, env }, ui, { sessions, deps });
+    await runScanCommand("units save", { ...host, env }, ui, { sessions, deps });
+    const command = runScanCommand("", { ...host, env }, ui, { sessions, deps }).then(
+      () => "returned",
+    );
+    for (let i = 0; i < 200 && !deps.agents.some((a) => a.startsWith("pass-sec-threat-model")); i++)
+      await new Promise((r) => setTimeout(r, 10));
+    expect(deps.agents.some((a) => a.startsWith("pass-sec-threat-model"))).toBe(true);
+    ui.escape();
+    const settled = await Promise.race([
+      command,
+      new Promise<string>((r) => setTimeout(() => r("still drafting"), 5_000)),
+    ]);
+    expect(settled).toBe("returned");
+    expect(ui.notes.at(-1)?.[1]).toMatch(/threat-model stage was stopped/);
+    expect(deps.agents.some((a) => a.startsWith("pass-scan"))).toBe(false);
   });
 
   it("starts nothing on a no, and nothing with nobody to confirm the price", async () => {
