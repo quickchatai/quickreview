@@ -58,12 +58,21 @@ export interface LiveResult {
   native?: { tool_count: number; last_text?: string; last_tool?: string };
   /** Dollars this child has spent so far. */
   cost_usd?: number;
+  /** The task-directory row a `lens_wave` slot runs (its phase, and its
+   * strategy on a lens that runs one row per strategy). A row the engine
+   * started at round start is named by no call's `executions`, so its slot is
+   * the only place the row reaches the progress snapshot. Absent on `lens`
+   * and on the native shape. */
+  phase?: LiveExecution["phase"];
+  strategy?: string;
 }
 
 /** A task a lens tool call launches, as the host resolved it at call start. */
 export interface LiveExecution {
   agent: string;
-  phase?: "plan" | "sweep" | "optional";
+  phase?: "plan" | "sweep" | "optional" | "post";
+  /** The row's strategy, from its task file's name (`NN-<agent>@<strategy>.md`). */
+  strategy?: string;
 }
 
 export interface LiveUsage {

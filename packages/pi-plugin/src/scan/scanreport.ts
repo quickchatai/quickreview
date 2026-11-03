@@ -41,10 +41,12 @@ export const SCAN_STOP_RESULT_FILE = "scan/stop-result.json";
 
 /** The skeptic's tier for a stored scan finding: `confirmed` (it traced a
  * concrete scenario), `likely` (a real mechanism, reachability not fully
- * traced), `doubtful` (refuted, class-matched, or anything it would have
- * killed — kept, never dropped). */
-export type Validity = "confirmed" | "likely" | "doubtful";
-export const VALIDITIES: readonly Validity[] = ["confirmed", "likely", "doubtful"];
+ * traced), `needs-review` (a security candidate the skeptic could not
+ * settle, under `[security] fold`: for a person to check, its doubt kept as
+ * the proof gap — scanrun.ts), `doubtful` (refuted, class-matched, or
+ * anything it would have killed — kept, never dropped). */
+export type Validity = "confirmed" | "likely" | "needs-review" | "doubtful";
+export const VALIDITIES: readonly Validity[] = ["confirmed", "likely", "needs-review", "doubtful"];
 /** A tier, or `unknown`: no skeptic judged it (the validator was off or
  * failed) or it was stored before tiers existed — never guessed. */
 export type ValidityView = Validity | "unknown";
@@ -67,6 +69,15 @@ export function validityOf(f: { validity?: Validity | null }): ValidityView {
     (VALIDITIES as readonly string[]).includes(f.validity)
     ? f.validity
     : "unknown";
+}
+
+/** Is a finding DOUBTED — the skeptic's doubt stands against it? A
+ * needs-review finding keeps its doubt as the proof gap a person checks, and
+ * is never counted, filtered or marked as doubted: the ONE rule the run's
+ * counts, the store's filter, the JSON, the portrait, the TUI and the ticket
+ * share. */
+export function isDoubted(f: { doubt?: unknown; validity?: Validity | null }): boolean {
+  return f.doubt !== null && f.doubt !== undefined && validityOf(f) !== "needs-review";
 }
 
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));

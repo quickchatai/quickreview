@@ -51,7 +51,7 @@ import {
 import { MEMORY_NOT_SET_UP, type ReviewMemoryPort, type RoundMemory } from "./memoryport.js";
 import type { ProfilePlace } from "./profilelookup.js";
 import type { ProfileLookup } from "./profiles.js";
-import { assemblePostReview, loadPostIdentity } from "./reviewpost.js";
+import { assemblePostReview, loadPostIdentity, securityRowsNotReturned } from "./reviewpost.js";
 import {
   fetchPrTarget,
   parsePrTarget,
@@ -73,6 +73,11 @@ import type { RoundSpec } from "./engine/round.js";
 import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
 import { AuthExpiring } from "./engine/auth.js";
 import type { Runtime } from "./engine/port.js";
+import type { SecurityRequest } from "./types.js";
+import { computeSecurityFacts, SECURITY_TRIGGER_CHECKS, type SecurityFact } from "./secfacts.js";
+import { localGitFactsIo, workTreeFactsIo } from "./secfactsgit.js";
+import { SECURITY_FAMILY } from "./passes.js";
+import { lensEnabled } from "./lenstuning.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
 import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
@@ -182,6 +187,12 @@ export interface ReviewOptions {
   ecosystem: Ecosystem;
   /** Where profiles are looked up before the asset tree's examples. */
   profileHomes?: readonly ProfilePlace[];
+  /** A security review asked for on this run (`/qcr-review --security`): the
+   * whole security family is planned, never a lens the profile switched off.
+   * Absent: the family rows come from the triggers and the profile alone.
+   * A run with a request reviews the whole target, as `full` does: an earlier
+   * review's state is neither shortcut nor delta base for it. */
+  securityRequest?: SecurityRequest;
   /** Builds the runtime that hosts one run's review session. Called once per
    * run, when the round is about to start (a preview, a refusal or an
    * unchanged head builds none), and the runtime is disposed when the run
@@ -656,7 +667,10 @@ async function runPipeline(
   // uncommitted edits on top and a diff keep none.
   // A run that posts to a PR reviews in full: the findings already on the PR
   // (the posted-findings skip) are its repeat protection, and an
-  // unchanged-head shortcut would also skip the post.
+  // unchanged-head shortcut would also skip the post. A security review asked
+  // for on this run reviews in full too: the earlier review it would build on
+  // ran no security family, so neither "nothing new" nor a follow-up over the
+  // change since it answers the request.
   const targetKey = prInfo
     ? prTargetKey(prInfo.repo, prInfo.number)
     : branchTargetKey(t.repo, t.branch);
@@ -666,7 +680,10 @@ async function runPipeline(
       ? null
       : (openReviewStoreIn(opts.storeDir, repoDir)?.statePath(targetKey) ?? null);
   const postsToPr = prInfo !== null && sends("pr");
-  const prev = opts.full || !keepsState || postsToPr ? null : loadState(statePath, targetKey);
+  const prev =
+    opts.full || opts.securityRequest !== undefined || !keepsState || postsToPr
+      ? null
+      : loadState(statePath, targetKey);
   const short = (sha: string): string => sha.slice(0, 7);
   const stillOpen = (s: ReviewState | null, before?: number): StillOpen[] =>
     openFindings(s)
@@ -779,6 +796,32 @@ async function runPipeline(
   const readFile = overrideReader(opts.root, overrides);
   const profileLookup = overrides.lookup;
   const profileArgs = { ...(readFile ? { readFile } : {}), profileLookup };
+  // What the security family reads beyond the files, as dispatch reads it:
+  // the repository's `.qcr/threat-model.md` at the base commit (read with
+  // the repo profile above; it wins over the profile's copy), and the
+  // deterministic facts over the reviewed commits — the ones that can plan a
+  // lens now, the route inventory only for a round that plans a family row.
+  // A diff has no commit to read, so only its diff-only checks run. Nothing
+  // is read when every family lens is off.
+  const repoThreatModel = overrides.repoThreatModel;
+  const familyOn = SECURITY_FAMILY.some((lens) => lensEnabled(cfg.lenses, lens));
+  // An uncommitted target's snapshot tree is not readable once resolved (its
+  // object store is gone): its head is the working tree it was taken from.
+  const factsIo =
+    kind === "diff"
+      ? null
+      : t.uncommitted !== undefined
+        ? workTreeFactsIo(gitDir, t.baseSha)
+        : localGitFactsIo(gitDir, { head: t.headSha, base: t.baseSha });
+  let inventory: readonly SecurityFact[] | undefined;
+  const securityArgs = familyOn
+    ? {
+        readRepoThreatModel: () => repoThreatModel,
+        securityFacts: computeSecurityFacts(t.files, factsIo, SECURITY_TRIGGER_CHECKS),
+        securityInventory: () =>
+          (inventory ??= computeSecurityFacts(t.files, factsIo, ["route-inventory"])),
+      }
+    : { readRepoThreatModel: () => repoThreatModel };
   const roundTarget = {
     repo: t.repo,
     number: prInfo?.number ?? 0,
@@ -807,6 +850,8 @@ async function runPipeline(
       files: t.files,
       issuedAt: new Date().toISOString(),
       ...profileArgs,
+      ...securityArgs,
+      ...(opts.securityRequest ? { securityRequest: opts.securityRequest } : {}),
     };
     let why = fallback;
     if (prev !== null && delta !== null) {
@@ -1214,6 +1259,9 @@ async function runPipeline(
       lenses,
       verdict,
       summary: typeof shot.outcome?.["summary"] === "string" ? shot.outcome["summary"] : null,
+      // The fail-closed security lines, from the plan and the passes that
+      // returned — the daemon's route reads its round progress instead.
+      security: securityRowsNotReturned(shot.prompts.passPlan, shot.outcome),
     });
     const postAs = loadPostIdentity(repoDir);
     if (post) {

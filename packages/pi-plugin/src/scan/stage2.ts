@@ -67,7 +67,27 @@
 // and covered at its depth: a standard reading never covers a deep row, and a
 // price measured at the other depth is borrowed only when nothing at the
 // row's own depth prices it as well — and the price says so (`across_depth`).
+//
+// The security family adds three rules:
+//
+//   * `[scan] lenses` IS AN ALLOWLIST. When it names lenses, a row (the
+//     floor's too) may run only those — and stage 1 may suggest only those
+//     (`stage2Lenses`, scanrun.ts). Empty, every deep lens the profile leaves
+//     on.
+//   * THE CHAIN LENS RUNS PER STRATEGY. A `pass-sec-exploit-chain` row names
+//     its `strategy`, `forward` or `backward` (`delta` and `compose` need a
+//     pull request); its coverage and price are the strategy's own
+//     (`rowLensKey`), so a forward reading never covers a backward one.
+//   * A SECURITY FLOOR KNOWS ITS TREE. When the floor holds a family lens,
+//     `pass-sec-infra` and the chain's forward and backward rows join it only
+//     when the tree shows network or IAM resources (`networkIamInventory`, or
+//     the threat model's network controls) — and the rows reading a threat
+//     model's entry-point files run first within each floor lens, so a budget
+//     reaches the doors before the rooms.
 import type { ScanDepth } from "../reviewconfig.js";
+import { CHAIN_PASS, SECURITY_FAMILY } from "../passes.js";
+import { SECURITY_FACTS_MAX_FILES } from "../secfacts.js";
+import type { ThreatModel } from "../threatmodel.js";
 import { globMatcher } from "../glob.js";
 import { isSweepSkipped, isTestFile } from "../heuristics.js";
 import { lensEnabled, flooredTier, type LensTuningMap } from "../lenstuning.js";
@@ -83,8 +103,11 @@ import {
   rangesCover,
   SCAN_DEEP_LENSES,
   stage1Exclusion,
+  threatModelSection,
   type FileRange,
   SCAN_PASS,
+  readingKey,
+  unscopedKey,
   type PromptContext,
   type ScanCaseFile,
   type ScanRate,
@@ -105,6 +128,12 @@ export const ROW_REASON_MAX = 300;
 /** The unit a file no unit of the cut owns is filed under. */
 export const NO_UNIT = "(no unit)";
 
+/** The strategies a scan runs the exploit-chain lens with: `delta` starts
+ * from a PR's hop and `compose` from a round's leads, so neither has a scan
+ * meaning. */
+export const SCAN_CHAIN_STRATEGIES = ["forward", "backward"] as const;
+export type ScanChainStrategy = (typeof SCAN_CHAIN_STRATEGIES)[number];
+
 /** What the companion proposes for one row. */
 export interface Stage2RowRequest {
   lens: string;
@@ -112,6 +141,16 @@ export interface Stage2RowRequest {
   /** Default: the lens's floor over `[scan] tier` (`sol-high` for a risk pass). */
   tier?: string;
   reason: string;
+  /** The exploit-chain lens only, and required there: where its search
+   * starts (`SCAN_CHAIN_STRATEGIES`). */
+  strategy?: string;
+}
+
+/** The lens a row's coverage and price are kept under in the ledger: the
+ * lens, or `<lens>:<strategy>` for a chain row, so each strategy covers and
+ * prices only itself. A finding is filed under the bare lens. */
+export function rowLensKey(lens: string, strategy?: string | null): string {
+  return strategy ? `${lens}:${strategy}` : lens;
 }
 
 export type PriceBasis = "measured" | "borrowed" | "learned" | "extrapolated";
@@ -183,13 +222,20 @@ export type PriceSettings = {
  * every reading, marked `across_depth`.
  */
 export function priceStage2Row(
-  entries: readonly LedgerEntry[],
+  ledger: readonly LedgerEntry[],
   cfg: PriceSettings,
   lens: string,
   tier: string,
   effort: string,
   depth?: ScanDepth,
 ): RowPrice | null {
+  // A `[scan] kinds`-filtered reading prices its lens like any other (a
+  // filtered stage 1 prices stage 1): what a row borrows is the lens's cost
+  // per line, not its focus (scan.ts `unscopedKey`).
+  const entries = ledger.map((e) => {
+    const lens = unscopedKey(e.lens);
+    return lens === e.lens ? e : { ...e, lens };
+  });
   const any = priceFrom(entries, cfg, lens, tier, effort);
   if (depth === undefined || any === null) return any;
   const same = priceFrom(
@@ -307,6 +353,8 @@ export interface Stage2Row {
   /** A deep proposal's floor row (`floor-<n>`), not one the companion asked
    * for. Absent on the companion's rows. */
   floor?: true;
+  /** The exploit-chain lens's strategy; absent on every other row. */
+  strategy?: ScanChainStrategy;
 }
 
 export interface Stage2PlanInput {
@@ -324,8 +372,12 @@ export interface Stage2PlanInput {
   riskPasses: readonly string[];
   /** `[scan] tier` — a row's default tier before the lens's floor. */
   defaultTier: PassTier;
-  /** `coverKey`s the ledger holds for `lens`. */
+  /** `coverKey`s the ledger holds for `lens` — a ledger key, its chain
+   * strategy and `[scan] kinds` scope in it (scan.ts `readingKey`). */
   covered: (lens: string) => ReadonlySet<string>;
+  /** `[scan] kinds`: the scope a row's coverage is read under (scan.ts
+   * `readingKey`). Absent or empty: every kind. */
+  kinds?: readonly string[];
   /** `path\0blob` → the ranges a still-incomplete reading by `lens` holds. */
   partial?: (lens: string) => ReadonlyMap<string, readonly { start: number; end: number }[]>;
   /** The price of a lens at a tier and effort, or null when nothing measured
@@ -339,14 +391,29 @@ export interface Stage2PlanInput {
   /** A folder proposal (scan.ts `scanPath`): a row names only files under
    * it, its tests are paired from under it, and the floor covers only it. */
   path?: string | null;
+  /** `[scan] lenses`: when non-empty, the only lenses a row may run. */
+  allow?: readonly string[];
+  /** What shows the tree holds network or IAM resources (a file and what
+   * it declares, or the threat model's network controls); empty or absent =
+   * none, and a security floor runs no infra or chain row. */
+  networkIam?: readonly string[];
+  /** A threat model's entry-point files: the floor rows reading one run
+   * first within their lens. Absent = no model. */
+  entryPoint?: (path: string) => boolean;
 }
 
 /** What a deep proposal's floor covered and left out. */
 export interface Stage2Floor {
-  /** The lenses it ran rows for, in `[scan] deep_lenses` order. */
+  /** The lenses it ran rows for, in `[scan] deep_lenses` order (a chain
+   * strategy as `rowLensKey` spells it), the security floor's additions
+   * last. */
   lenses: string[];
-  /** `[scan] deep_lenses` entries the profile switched off — no floor rows. */
+  /** `[scan] deep_lenses` entries the profile switched off or `[scan]
+   * lenses` leaves out — no floor rows. */
   skipped: string[];
+  /** The lenses a security floor added because the tree shows network or
+   * IAM resources, and what showed them (the first few). Absent: none. */
+  added?: { lenses: string[]; because: string[] };
   /** File × lens pairs left out because the ledger already holds a deep
    * reading of the file by the lens at this content. */
   covered: number;
@@ -394,9 +461,68 @@ export function lensTiers(
 }
 
 /** The deep lenses stage 2 may run on this repo: stage 1's suggestible set,
- * less every lens the profile switched off. */
-export function stage2Lenses(lenses: LensTuningMap | undefined): string[] {
-  return SCAN_DEEP_LENSES.filter((l) => lensEnabled(lenses, l, true));
+ * less every lens the profile switched off, and — when `[scan] lenses`
+ * (`allow`) names any — less every lens it does not name. */
+export function stage2Lenses(
+  lenses: LensTuningMap | undefined,
+  allow: readonly string[] = [],
+): string[] {
+  return SCAN_DEEP_LENSES.filter(
+    (l) => lensEnabled(lenses, l, true) && (allow.length === 0 || allow.includes(l)),
+  );
+}
+
+// ---- network and IAM resources ----------------------------------------------------
+
+/** Infrastructure files worth reading for network or IAM resources. */
+const INFRA_FILE_RE =
+  /(\.tf|\.tf\.json|\.hcl|\.ya?ml|\.json|\.template)$|(^|\/)(docker-)?compose[^/]*\.ya?ml$/i;
+/** A Terraform resource of a network or IAM type. */
+const TF_RESOURCE_RE =
+  /^\s*resource\s+"([a-z0-9_]*(?:security_group|firewall|iam|role|policy|network|vpc|subnet|lb|load_balancer|ingress|listener|gateway)[a-z0-9_]*)"/m;
+/** A Kubernetes object that exposes, isolates or grants. */
+const K8S_KIND_RE =
+  /^\s*kind:\s*(NetworkPolicy|Ingress|Service|Gateway|HTTPRoute|VirtualService|AuthorizationPolicy|Role|ClusterRole|RoleBinding|ClusterRoleBinding|ServiceAccount)\s*$/m;
+/** A CloudFormation network or IAM resource. */
+const CFN_TYPE_RE = /AWS::(EC2::SecurityGroup\w*|IAM::\w+|ElasticLoadBalancing\w*::\w+)/;
+/** A compose service publishing a port. */
+const COMPOSE_PORTS_RE = /^\s*ports:\s*(\[|$)/m;
+const COMPOSE_FILE_RE = /(^|\/)(docker-)?compose[^/]*\.ya?ml$/i;
+
+/**
+ * What in the tree declares network or IAM resources: Terraform resources of
+ * a network or IAM type, Kubernetes objects that expose, isolate or grant,
+ * CloudFormation security groups and IAM, compose services publishing a
+ * port — one `<path>: <what>` per file. Line parsers only; at most
+ * `SECURITY_FACTS_MAX_FILES` infrastructure files are read (`capped` says
+ * so). Pure over `textOf`.
+ */
+export function networkIamInventory(
+  paths: readonly string[],
+  textOf: (path: string) => string | null,
+  max = SECURITY_FACTS_MAX_FILES,
+): { found: string[]; capped: boolean } {
+  const candidates = paths.filter((p) => INFRA_FILE_RE.test(p) && !isTestFile(p)).sort();
+  const found: string[] = [];
+  for (const p of candidates.slice(0, max)) {
+    const text = textOf(p);
+    if (text === null) continue;
+    const tf = /\.(tf|hcl)$|\.tf\.json$/i.test(p) ? TF_RESOURCE_RE.exec(text) : null;
+    const k8s = /\.ya?ml$/i.test(p) ? K8S_KIND_RE.exec(text) : null;
+    const cfn = CFN_TYPE_RE.exec(text);
+    const ports = COMPOSE_FILE_RE.test(p) && COMPOSE_PORTS_RE.test(text);
+    const what = tf
+      ? `Terraform ${tf[1]}`
+      : k8s
+        ? `Kubernetes ${k8s[1]}`
+        : cfn
+          ? `CloudFormation ${cfn[1]}`
+          : ports
+            ? "a compose service publishing a port"
+            : null;
+    if (what !== null) found.push(`${p}: ${what}`);
+  }
+  return { found, capped: candidates.length > max };
 }
 
 // ---- pairing tests -------------------------------------------------------------
@@ -525,7 +651,8 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
   // What a folder proposal may read: the files under its folder.
   const inside = treePaths.filter((p) => underPath(p, input.path));
   const unitOf = unitOwner(input.cut, treePaths);
-  const allowed = stage2Lenses(input.lenses);
+  const allow = input.allow ?? [];
+  const allowed = stage2Lenses(input.lenses, allow);
   const seen = new Set<string>();
   const rows: Stage2Row[] = [];
 
@@ -538,6 +665,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
   const build = (spec: {
     id: string;
     lens: string;
+    strategy?: ScanChainStrategy;
     tier: PassTier;
     reason: string;
     sorted: readonly string[];
@@ -546,6 +674,10 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     floor: boolean;
   }): Stage2Row | string => {
     const { lens, sorted, lines } = spec;
+    // Coverage and price are the chain strategy's own; coverage is also
+    // the `[scan] kinds` scope's (scan.ts `readingKey`), price is not.
+    const key = rowLensKey(lens, spec.strategy);
+    const readKey = readingKey(lens, input.kinds ?? [], spec.strategy);
     let rowLines = sorted.reduce((n, p) => n + lines.get(p)!, 0);
     const oversize = oversized(sorted, lines);
     // Pair the tests, nearest first, while the case budget holds. A ranged
@@ -582,7 +714,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     let ranges: FileRange[] | undefined;
     if (oversize) {
       const p = sorted[0]!;
-      const done = input.partial?.(lens).get(coverKey(p, blobs.get(p)!)) ?? [];
+      const done = input.partial?.(readKey).get(coverKey(p, blobs.get(p)!)) ?? [];
       ranges = cutRanges(
         lines.get(p)!,
         input.budget.maxLines - pairedLines,
@@ -593,12 +725,12 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       rowLines += pairedLines;
     }
     const effort = lensEffort(input.lenses, lens);
-    const price = input.price(lens, spec.tier, effort);
+    const price = input.price(key, spec.tier, effort);
     if (price === null) {
       return `no measured price for any scan lens yet — run stage 1 (its calibration run prices the scan) before proposing stage 2`;
     }
     const files = sorted.map((p) => ({ path: p, blob: blobs.get(p)!, lines: lines.get(p)! }));
-    const cover = input.covered(lens);
+    const cover = input.covered(readKey);
     const all = [...files, ...tests];
     const isCovered =
       all.every((f) => cover.has(coverKey(f.path, f.blob))) ||
@@ -623,6 +755,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       price,
       status: isCovered ? "covered" : "run",
       ...(spec.floor ? { floor: true as const } : {}),
+      ...(spec.strategy ? { strategy: spec.strategy } : {}),
     };
   };
 
@@ -634,10 +767,25 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       return bad(`${SCAN_PASS} is stage 1's lens — a stage 2 row names a deep lens`);
     if (!allowed.includes(lens)) {
       return bad(
-        SCAN_DEEP_LENSES.includes(lens)
-          ? `${JSON.stringify(lens)} is switched off by this repo's profile`
-          : `${JSON.stringify(lens)} is not a deep lens a scan can run (one of: ${allowed.join(", ")})`,
+        !SCAN_DEEP_LENSES.includes(lens)
+          ? `${JSON.stringify(lens)} is not a deep lens a scan can run (one of: ${allowed.join(", ")})`
+          : allow.length > 0 && !allow.includes(lens)
+            ? `${JSON.stringify(lens)} is not in [scan] lenses (${allow.join(", ")})`
+            : `${JSON.stringify(lens)} is switched off by this repo's profile`,
       );
+    }
+    // The chain lens runs one strategy per row; no other lens has one.
+    const said = typeof req.strategy === "string" ? req.strategy.trim() : "";
+    let strategy: ScanChainStrategy | undefined;
+    if (lens === CHAIN_PASS) {
+      if (!(SCAN_CHAIN_STRATEGIES as readonly string[]).includes(said))
+        return bad(
+          `${CHAIN_PASS} needs a strategy — ${SCAN_CHAIN_STRATEGIES.join(" or ")} (delta and compose start from a pull request)` +
+            (said !== "" ? `, not ${JSON.stringify(said)}` : ""),
+        );
+      strategy = said as ScanChainStrategy;
+    } else if (said !== "") {
+      return bad(`a strategy is the exploit-chain lens's alone — ${lens} takes none`);
     }
     const reason = typeof req.reason === "string" ? req.reason.trim().replace(/\s+/g, " ") : "";
     if (reason === "") return bad("no reason — say in one line what the lens should chase");
@@ -687,8 +835,9 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     }
     if (problems.length > 0) return bad(problems.join("; "));
     const sorted = [...named].sort();
-    const dedupe = `${lens}\0${sorted.join("\0")}`;
-    if (seen.has(dedupe)) return bad(`the same ${lens} row as an earlier one`);
+    const dedupe = `${rowLensKey(lens, strategy)}\0${sorted.join("\0")}`;
+    if (seen.has(dedupe))
+      return bad(`the same ${rowLensKey(lens, strategy)} row as an earlier one`);
     seen.add(dedupe);
 
     const rowLines = sorted.reduce((n, p) => n + lines.get(p)!, 0);
@@ -704,7 +853,17 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
             : ""),
       );
     }
-    const row = build({ id, lens, tier, reason, sorted, lines, pair: true, floor: false });
+    const row = build({
+      id,
+      lens,
+      ...(strategy ? { strategy } : {}),
+      tier,
+      reason,
+      sorted,
+      lines,
+      pair: true,
+      floor: false,
+    });
     if (typeof row === "string") return bad(row);
     rows.push(row);
   });
@@ -712,9 +871,25 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
 
   let floor: Stage2Floor | null = null;
   if (input.floor !== undefined) {
+    const kept = input.floor.filter((l) => allowed.includes(l));
+    // A security floor adds infra and the chain's forward and backward rows
+    // where the tree has network or IAM resources for them to read.
+    const because = input.networkIam ?? [];
+    const added =
+      because.length > 0 && kept.some((l) => SECURITY_FAMILY.includes(l))
+        ? SECURITY_FLOOR_ADDS.filter((l) => allowed.includes(l) && !kept.includes(l))
+        : [];
+    // One floor entry per lens — per strategy for the chain lens.
+    const entries = [...kept, ...added].flatMap(
+      (lens): Array<{ lens: string; strategy?: ScanChainStrategy }> =>
+        lens === CHAIN_PASS
+          ? SCAN_CHAIN_STRATEGIES.map((strategy) => ({ lens, strategy }))
+          : [{ lens }],
+    );
     floor = {
-      lenses: input.floor.filter((l) => allowed.includes(l)),
+      lenses: entries.map((e) => rowLensKey(e.lens, e.strategy)),
       skipped: input.floor.filter((l) => !allowed.includes(l)),
+      ...(added.length > 0 ? { added: { lenses: added, because: because.slice(0, 5) } } : {}),
       covered: 0,
       named: 0,
     };
@@ -727,13 +902,18 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       if (n !== null) lines.set(p, n);
     }
     const owned = assign(input.cut, [...lines.keys()]).byUnit;
+    const entryPoint = input.entryPoint;
     let n = 0;
-    for (const lens of floor.lenses) {
+    for (const { lens, strategy } of entries) {
+      const key = rowLensKey(lens, strategy);
       const named = new Set(
-        rows.filter((r) => !r.floor && r.lens === lens).flatMap((r) => r.files.map((f) => f.path)),
+        rows
+          .filter((r) => !r.floor && rowLensKey(r.lens, r.strategy) === key)
+          .flatMap((r) => r.files.map((f) => f.path)),
       );
-      const cover = input.covered(lens);
+      const cover = input.covered(readingKey(lens, input.kinds ?? [], strategy));
       const tier = defaultRowTier(input, lens);
+      const lensRows: Stage2Row[] = [];
       for (const u of input.cut.units) {
         const files: string[] = [];
         for (const p of owned.get(u.name) ?? []) {
@@ -744,26 +924,36 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
         if (files.length === 0) continue;
         for (const chunk of splitUnit(u.name, files, (p) => lines.get(p)!, input.budget)) {
           const row = build({
-            id: `floor-${++n}`,
+            id: "",
             lens,
+            ...(strategy ? { strategy } : {}),
             tier,
-            reason: `deep floor: ${lens} over ${u.name}`,
+            reason: `deep floor: ${key} over ${u.name}`,
             sorted: [...chunk.files].sort(),
             lines,
             pair: false,
             floor: true,
           });
-          if (typeof row === "string") return { ok: false, errors: [`floor-${n}: ${row}`] };
-          rows.push(row);
+          if (typeof row === "string")
+            return { ok: false, errors: [`floor-${n + lensRows.length + 1}: ${row}`] };
+          lensRows.push(row);
         }
       }
+      // A threat model's entry points first, the cut's order kept otherwise.
+      const ranked = entryPoint
+        ? [
+            ...lensRows.filter((r) => r.files.some((f) => entryPoint(f.path))),
+            ...lensRows.filter((r) => !r.files.some((f) => entryPoint(f.path))),
+          ]
+        : lensRows;
+      for (const row of ranked) rows.push({ ...row, id: `floor-${++n}` });
     }
     if (rows.length === 0) {
       return {
         ok: false,
         errors: [
           floor.lenses.length === 0
-            ? `no row and no floor: every [scan] deep_lenses lens (${input.floor.join(", ")}) is switched off by this repo's profile`
+            ? `no row and no floor: every [scan] deep_lenses lens (${input.floor.join(", ")}) is switched off by this repo's profile or outside [scan] lenses`
             : floor.covered > 0
               ? "nothing left for the floor: the ledger already holds a deep reading of every file by every floor lens at this content"
               : `no row and no floor: stage 1 reads no file a unit of the cut owns${input.path ? ` under ${input.path}` : ""}`,
@@ -795,6 +985,10 @@ export function unitOwner(cut: UnitCut, paths: readonly string[]): (path: string
 }
 
 // ---- the prompt ----------------------------------------------------------------
+
+/** The lenses a security floor adds where the tree has network or IAM
+ * resources (the chain lens as its forward and backward rows). */
+export const SECURITY_FLOOR_ADDS: readonly string[] = ["pass-sec-infra", CHAIN_PASS];
 
 /** The cases one row runs as: the row itself, or — a row over a file too
  * big for one case — one per range, `<row>#<i>`, each the ranged file plus
@@ -864,24 +1058,48 @@ export function stage2Leads(
   return out;
 }
 
+/** What a strategy line tells the chain lens in a scan. */
+const STRATEGY_NOTE: Readonly<Record<ScanChainStrategy, string>> = {
+  forward:
+    "start from each persona at the entry points in these files and follow what each grant reaches, to a goal or a dead end",
+  backward:
+    "start from the goals these files hold (where authority is granted, the tenant key, secrets, code-exec sinks) and find every writer that reaches each, back to an entry point",
+};
+
+/** The threat model's parts a family lens's scan case quotes: the controls
+ * (what would defeat a finding) for every one, and the chain lens's
+ * starting points besides. */
+function threatModelParts(row: Pick<Stage2Row, "lens">): Parameters<typeof threatModelSection>[1] {
+  if (row.lens === CHAIN_PASS) return ["personas", "crownJewels", "entryPoints", "controls"];
+  return ["controls"];
+}
+
 /** The stage-2 task string for one row — or, for a ranged row, for the one
  * case whose `files` (from `stage2Cases`) are given. `leads` are what stage 1
- * pointed this lens at in the row's files (`stage2Leads`). */
+ * pointed this lens at in the row's files (`stage2Leads`). A chain row says
+ * its `Strategy:`; a security-family row quotes the threat model's controls
+ * (the chain's personas, crown jewels and entry points too) as claims to
+ * check, never proof — and nothing when there is no model. */
 export function stage2CasePrompt(
   row: Stage2Row,
   ctx: PromptContext,
   caseFiles?: readonly ScanCaseFile[],
   leads: readonly Stage2Lead[] = [],
+  threatModel: ThreatModel | null = null,
 ): string {
   const list = (fs: readonly ScanCaseFile[]): string =>
     fs.map((f) => focusLine(f, ctx.root)).join("\n");
   const code = caseFiles ? caseFiles.slice(0, row.files.length) : row.files;
+  const model = SECURITY_FAMILY.includes(row.lens)
+    ? threatModelSection(threatModel, threatModelParts(row))
+    : [];
   return [
     `SCAN CASE ${ctx.caseId} — stage 2, ${row.id}: ${row.lens}${row.units.length > 1 ? ` across units ${row.units.join(", ")}` : ` in unit ${row.units[0]}`}.`,
     `Scan sha: ${ctx.sha}`,
     `Tree root (the repository at the scan sha, read-only): ${ctx.root}`,
     TREE_PATHS_NOTE,
     "",
+    ...(row.strategy ? [`Strategy: ${row.strategy} — ${STRATEGY_NOTE[row.strategy]}.`, ""] : []),
     `Why this case: ${row.reason}`,
     ...(row.floor
       ? [
@@ -908,6 +1126,7 @@ export function stage2CasePrompt(
           list(row.tests),
         ]
       : []),
+    ...(model.length > 0 ? ["", ...model] : []),
     "",
     `Answer with the findings block headed \`FINDINGS ${row.lens} SCAN ${ctx.caseId} @${ctx.sha}\` (or NONE).`,
   ].join("\n");

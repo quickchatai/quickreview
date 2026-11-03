@@ -20,7 +20,7 @@ import {
 } from "./heuristics.js";
 import type { LensTuningMap } from "./lenstuning.js";
 import type { PostingPolicy } from "./postingpolicy.js";
-import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES, SCAN_DEEP_LENSES } from "./passes.js";
+import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES, SCAN_DEEP_LENSES, SECURITY_FAMILY } from "./passes.js";
 import { PASS_TIER_ORDER, type PassTier } from "./types.js";
 
 /** `[github] auth`: whose credential the daemon runs on. `app` (the default)
@@ -723,7 +723,12 @@ export interface ModelsConfig {
   conversation: string;
   /** PassTier → full model spec ("provider/model:thinking"). */
   tiers: Record<PassTier, string>;
-  /** Passes always run at sol-high, single variant, not raisable. */
+  /** Passes always run at sol-high, single variant, not raisable. Resolved
+   * once: config.toml's list (or the default) with the whole security family
+   * joined at parse (`withSecurityFamily`), and a profile's
+   * `[lenses.<pass>] risk = true` lenses joined by its overlay
+   * (packages/pi-plugin/src/profiles.ts `applyProfileSecurity`), so every
+   * consumer reads the one list. */
   risk_passes: string[];
   /** The tier pass-validate runs at — never raised to the round's highest
    * lens tier, because a validity veto is a `doubted` mark, not a deletion.
@@ -1065,11 +1070,32 @@ export interface ScanConfig {
   /** The deep floor's lenses, each a lens a scan may run
    * (`SCAN_DEEP_LENSES`); one the profile switched off is skipped. */
   deep_lenses: string[];
+  /** The lenses a scan may run at all, each in `SCAN_DEEP_LENSES`: a
+   * stage-2 row naming another is not run. Empty (the default) = every deep
+   * lens. */
+  lenses: string[];
+  /** The finding kinds a scan keeps, each a kind or a kind's prefix
+   * (`security` keeps `security:injection`): a candidate of another kind is
+   * dropped after parsing, counted. Empty (the default) = every kind. */
+  kinds: string[];
+  /** When the scan drafts a threat model first (stage 0): `auto` only when
+   * neither the repository's `.qcr/threat-model.md` nor the profile's
+   * `threat-model.md` exists (and no draft yet), `always` once per scanned
+   * sha, `off` never (and no draft is read). `off` by default — a scan
+   * outside the security profile, which sets `auto`, costs what it did. */
+  threat_model: ScanThreatModelMode;
 }
 
 /** How hard a scan looks — `[scan] depth`. */
 export const SCAN_DEPTHS = ["standard", "deep"] as const;
 export type ScanDepth = (typeof SCAN_DEPTHS)[number];
+
+/** When a scan drafts a threat model — `[scan] threat_model`. */
+export const SCAN_THREAT_MODEL_MODES = ["auto", "always", "off"] as const;
+export type ScanThreatModelMode = (typeof SCAN_THREAT_MODEL_MODES)[number];
+
+/** A finding kind as `[scan] kinds` names it: `security`, `security:injection`. */
+const KIND_RE = /^[a-z0-9][a-z0-9_-]*(?::[a-z0-9][a-z0-9_-]*)*$/;
 
 export const SCAN_DEFAULTS: ScanConfig = {
   effort: "low",
@@ -1084,6 +1110,9 @@ export const SCAN_DEFAULTS: ScanConfig = {
   unmeasured_rate_factor: 4,
   depth: "standard",
   deep_lenses: [...SCAN_DEEP_FLOOR_LENSES],
+  lenses: [],
+  kinds: [],
+  threat_model: "off",
 };
 
 /** The `[scan]` keys a repo profile may override — what is about THIS repo
@@ -1096,6 +1125,9 @@ export const SCAN_PROFILE_KEYS = [
   "exclude",
   "depth",
   "deep_lenses",
+  "lenses",
+  "kinds",
+  "threat_model",
 ] as const;
 
 /**
@@ -1171,6 +1203,38 @@ export function parseScanTable(
         out.deep_lenses = [...new Set(v as string[])];
         break;
       }
+      case "lenses": {
+        if (!Array.isArray(v))
+          fail(key, "must be an array of lens names ([] = every deep lens)", v);
+        for (const l of v as unknown[]) {
+          if (typeof l !== "string" || !SCAN_DEEP_LENSES.includes(l))
+            fail(
+              key,
+              `entry ${JSON.stringify(l)} is not a lens a scan can run (one of: ${SCAN_DEEP_LENSES.join(", ")})`,
+              v,
+            );
+        }
+        out.lenses = [...new Set(v as string[])];
+        break;
+      }
+      case "kinds": {
+        if (!Array.isArray(v)) fail(key, "must be an array of finding kinds ([] = every kind)", v);
+        for (const k of v as unknown[]) {
+          if (typeof k !== "string" || !KIND_RE.test(k))
+            fail(
+              key,
+              `entry ${JSON.stringify(k)} is not a finding kind (lower case, e.g. "security" or "security:injection")`,
+              v,
+            );
+        }
+        out.kinds = [...new Set(v as string[])];
+        break;
+      }
+      case "threat_model":
+        if (typeof v === "string" && (SCAN_THREAT_MODEL_MODES as readonly string[]).includes(v))
+          out.threat_model = v as ScanThreatModelMode;
+        else fail(key, `must be ${SCAN_THREAT_MODEL_MODES.map((m) => `"${m}"`).join(", ")}`, v);
+        break;
       default: {
         // The integer knobs.
         if (typeof v === "number" && Number.isInteger(v) && v >= 1) {
@@ -1199,6 +1263,108 @@ export function parseScan(raw: unknown): ScanConfig {
   return { ...SCAN_DEFAULTS, ...parseScanTable("config.toml", table) };
 }
 
+/** `[security] triggers`: which signals plan the security family on their
+ * own. `off`: none (a request or a profile's `plan = "always"` still does);
+ * `strong`: only the strong ones (a removed guard, interpolated SQL, a
+ * disabled signature check, …); `all`: the weak ones too. */
+export const SECURITY_TRIGGER_MODES = ["off", "strong", "all"] as const;
+export type SecurityTriggerMode = (typeof SECURITY_TRIGGER_MODES)[number];
+
+/**
+ * `[security]`: how the security family (packages/pi-plugin/src/passes.ts
+ * `SECURITY_FAMILY`) is planned and what a security-only review means.
+ * config.toml sets every key; a profile's `[security]` sets `triggers`,
+ * `only` and `fold` and wins over config.toml for them
+ * (packages/pi-plugin/src/profiles.ts `applyProfileSecurity`). `label` and
+ * `command` are the install's: they decide who may ask for a review, so no
+ * profile and no repository moves them.
+ */
+export interface SecurityConfig {
+  /** Which signals plan the family (`SECURITY_TRIGGER_MODES`). */
+  triggers: SecurityTriggerMode;
+  /** A security-only review: every lens outside the family and the
+   * validator is switched off (`enabled = false`), and what posts is scoped
+   * to security findings. An APPROVE then means "no security finding". */
+  only: boolean;
+  /** A security candidate the validator could not verify is posted as a
+   * question naming the proof gap (`security-demoted`) rather than doubted. */
+  fold: boolean;
+  /** The PR label that asks for a security review; "" = no label requests. */
+  label: string;
+  /** Whether `@<bot> security` from a collaborator asks for one. */
+  command: boolean;
+}
+
+export const SECURITY_DEFAULTS: SecurityConfig = {
+  triggers: "strong",
+  only: false,
+  fold: false,
+  label: "qcr:security",
+  command: true,
+};
+
+/** The `[security]` keys a profile may set. */
+export const SECURITY_PROFILE_KEYS = ["triggers", "only", "fold"] as const;
+
+/** GitHub refuses a label name longer than this. */
+const LABEL_MAX_CHARS = 50;
+
+/**
+ * Validate one `[security]` table — config.toml's (every key) or a profile's
+ * (`SECURITY_PROFILE_KEYS` only). Returns just the keys it set; an unknown
+ * key, a config.toml-only key in a profile, or a bad value throws naming
+ * `where`.
+ */
+export function parseSecurityTable(
+  where: string,
+  raw: unknown,
+  allowed: readonly string[] = Object.keys(SECURITY_DEFAULTS),
+): Partial<SecurityConfig> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`${where} [security] must be a table`);
+  }
+  const out: Partial<SecurityConfig> = {};
+  const fail = (key: string, what: string, v: unknown): never => {
+    throw new Error(`${where} [security] ${key} ${what} (got ${JSON.stringify(v)})`);
+  };
+  for (const [key, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!allowed.includes(key)) {
+      if (Object.hasOwn(SECURITY_DEFAULTS, key))
+        throw new Error(
+          `${where} [security] ${key} is config.toml only — it decides who may ask for a review, so a profile cannot set it`,
+        );
+      throw new Error(
+        `${where} [security] unknown key "${key}" — allowed here: ${allowed.join(", ")}`,
+      );
+    }
+    switch (key) {
+      case "triggers":
+        if (typeof v === "string" && (SECURITY_TRIGGER_MODES as readonly string[]).includes(v))
+          out.triggers = v as SecurityTriggerMode;
+        else fail(key, `must be ${SECURITY_TRIGGER_MODES.map((m) => `"${m}"`).join(", ")}`, v);
+        break;
+      case "only":
+      case "fold":
+      case "command":
+        if (typeof v === "boolean") out[key] = v;
+        else fail(key, "must be true or false", v);
+        break;
+      case "label":
+        if (typeof v === "string" && v.length <= LABEL_MAX_CHARS && !/[\r\n]/.test(v))
+          out.label = v.trim();
+        else
+          fail(key, `must be a label name of at most ${LABEL_MAX_CHARS} characters ("" = none)`, v);
+        break;
+    }
+  }
+  return out;
+}
+
+/** `[security]` from config.toml: the defaults, overlaid by what it sets. */
+export function parseSecurity(raw: unknown): SecurityConfig {
+  return { ...SECURITY_DEFAULTS, ...parseSecurityTable("config.toml", raw ?? {}) };
+}
+
 /** A key the table must have: its value, or a throw naming it. */
 export function req(obj: Record<string, unknown>, key: string): unknown {
   const v = obj[key];
@@ -1221,6 +1387,23 @@ export function configDeprecations(raw: Record<string, any>): string[] {
   return out;
 }
 
+/** `[models] risk_passes` as written, or the default: an array of pass names. */
+function parseRiskPasses(raw: unknown): string[] {
+  if (raw === undefined) return [...MODELS_TIER_DEFAULTS.risk_passes];
+  if (!Array.isArray(raw) || raw.some((p) => typeof p !== "string"))
+    throw new Error(
+      `config.toml [models] risk_passes must be an array of pass names (got ${JSON.stringify(raw)})`,
+    );
+  return raw as string[];
+}
+
+/** `passes` with every security-family lens joined, each name once, in
+ * order. The family always runs at the risk tier: a config that lists its
+ * own risk passes keeps them and gains the family, never loses it. */
+export function withSecurityFamily(passes: readonly string[]): string[] {
+  return [...new Set([...passes, ...SECURITY_FAMILY])];
+}
+
 export function parseModels(
   raw: Record<string, any>,
   presetEffort: ReviewEffort = "",
@@ -1235,7 +1418,7 @@ export function parseModels(
       ...MODELS_TIER_DEFAULTS.tiers,
       ...((raw.tiers ?? {}) as Partial<Record<PassTier, string>>),
     },
-    risk_passes: (raw.risk_passes ?? MODELS_TIER_DEFAULTS.risk_passes) as string[],
+    risk_passes: withSecurityFamily(parseRiskPasses(raw.risk_passes)),
     validate_tier: (raw.validate_tier ?? MODELS_TIER_DEFAULTS.validate_tier) as PassTier,
     small_diff_lines: Number(raw.small_diff_lines ?? MODELS_TIER_DEFAULTS.small_diff_lines),
     pricing: (raw.pricing ?? {}) as Record<string, ModelPricing>,
@@ -1291,6 +1474,10 @@ export function validateLensKnobs(cfg: Pick<CoreConfig, "review" | "models">): v
       throw new Error(
         "config.toml [models.pass_tiers] may not pin pass-validate — use [models] validate_tier",
       );
+    if (SECURITY_FAMILY.includes(pass))
+      throw new Error(
+        `config.toml [models.pass_tiers]: ${pass} is a security-family lens — the family always runs at the risk tier (sol-high), so it takes no pin`,
+      );
     if (risk.has(pass))
       throw new Error(
         `config.toml [models.pass_tiers]: ${pass} is a risk pass (always sol-high) — remove it from [models] risk_passes first`,
@@ -1310,7 +1497,7 @@ export function validateLensKnobs(cfg: Pick<CoreConfig, "review" | "models">): v
       throw new Error(
         "config.toml [models.pass_models] may not move pass-validate — the validator's model is its tier's",
       );
-    if (risk.has(pass))
+    if (risk.has(pass) || SECURITY_FAMILY.includes(pass))
       throw new Error(
         `config.toml [models.pass_models]: ${pass} is a risk pass — it always runs on the sol-high tier's model`,
       );
@@ -1371,6 +1558,10 @@ export interface CoreConfig {
    * table overrides the keys in `SCAN_PROFILE_KEYS` (`applyProfileScan`,
    * packages/pi-plugin/src/profiles.ts) — the profile wins, as for per-lens tuning. */
   scan: ScanConfig;
+  /** The security family's planning and the security-only review. The
+   * profile's `[security]` overrides `triggers`, `only` and `fold`
+   * (`applyProfileSecurity`, packages/pi-plugin/src/profiles.ts). */
+  security: SecurityConfig;
 }
 
 /** `[github]`: base_branch/clone_dir default so older configs keep parsing.
@@ -1607,6 +1798,7 @@ export function parseCoreConfig(
     escalation: parseEscalation((raw.escalation ?? {}) as Record<string, any>),
     owner: parseOwnerSection(raw),
     scan: parseScan(raw.scan),
+    security: parseSecurity(raw.security),
   };
   validateReviewSection(cfg);
   foldLegacyOwnerSlackId(raw, cfg.owner);

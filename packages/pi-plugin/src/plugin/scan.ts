@@ -33,7 +33,7 @@ import { scanConfigOf } from "../scan/scanagents.js";
 import { assembleScan, type AssembledScan } from "../scan/scanassemble.js";
 import { checkoutReader, stateHomeFs } from "../scan/scanfs.js";
 import type { CaseRunner, Refusal } from "../scan/scanports.js";
-import { listFindings, pathFlag, type ScanVerbs } from "../scan/scanrender.js";
+import { listFindings, pathFlag, renderStatus, type ScanVerbs } from "../scan/scanrender.js";
 import { scanPath } from "../scan/scan.js";
 import type { ScanRun, ScanStatus } from "../scan/scanrun.js";
 import {
@@ -66,6 +66,7 @@ export const SCAN_SUBCOMMANDS = [
   "match",
   "suggestions",
   "stage2",
+  "threat-model",
   "dismiss",
   "units",
   "login",
@@ -91,6 +92,7 @@ export const PLUGIN_SCAN_VERBS: ScanVerbs = {
     "To run only some rows: add --rows with their ids (e.g. --rows row-1,row-3) — only runnable rows, and the run stops hard at their total.",
   status: "/qcr-scan status",
   stop: "/qcr-scan stop",
+  threatModelStart: (p) => `/qcr-scan threat-model start --key ${p.key} --sha ${p.sha}`,
 };
 
 /** A scan finding as the scan's `--json` lists it. */
@@ -358,9 +360,82 @@ async function priceAndStart(
       pv = await scan.preview(previewArgs);
     }
     if (!pv.ok) return { ok: false, error: pv.errors.join("; ") };
-    const p = pv.preview;
+    let p = pv.preview;
     if (p.blockers.length > 0)
       return { ok: false, error: `the scan cannot start: ${p.blockers.join("; ")}` };
+    // The login before anything is paid for: pi's /login is the fix. Asked
+    // once, before whichever start comes first.
+    let borrowed = false;
+    const borrow = async (): Promise<string | null> => {
+      if (borrowed) return null;
+      borrowed = true;
+      const cfg = engine.config();
+      if (!cfg.ok) return null;
+      const b = await borrowLogin({
+        providers: reviewProviders(cfg.cfg),
+        host: host.auth,
+        needMs: PLUGIN_CASE_MS,
+        marginMs: PI_REFRESH_MARGIN_MS,
+      });
+      return b.ok ? null : b.error.replaceAll("/qcr-review", "/qcr-scan");
+    };
+    // Stage 0 is part of the scan ([scan] threat_model): when it is due, the
+    // threat model is drafted first, at the price shown, and the scan is
+    // priced again over its draft.
+    const stage0 = p.threat_model_stage;
+    if (stage0 !== undefined) {
+      const first =
+        `Before scanning ${host.cwd}, QuickReview drafts its threat model (stage 0 — ${stage0.why}): one case, ` +
+        `${stage0.estimate_usd === null ? "no price measured yet" : `about ${usd(stage0.estimate_usd)}`}, stopped hard at ${usd(stage0.cap_usd)}. ` +
+        "The draft goes to the state home only, never to the repository.";
+      if (o.preview)
+        return {
+          ok: true,
+          preview: `${first}\n\nStart it with \`${PLUGIN_SCAN_VERBS.threatModelStart!(stage0)}\`, or \`/qcr-scan\`; the scan itself is priced once the draft is written.`,
+        };
+      if (!ui.interactive)
+        return {
+          ok: false,
+          error: `${first} A scan spends money, and nobody here can confirm it: run /qcr-scan in an interactive pi.`,
+        };
+      const login = await borrow();
+      if (login !== null) return { ok: false, error: login };
+      if (!(await ui.confirm("QuickReview scan", `${first} Start it?`, host.shutdown)))
+        return {
+          ok: false,
+          error:
+            stage0.existing === null
+              ? 'the scan was not started: [scan] threat_model drafts a threat model first (set it to "off" to skip drafting and scan with no threat model)'
+              : 'the scan was not started: [scan] threat_model drafts a revised threat model first (set it to "off" to skip drafting; the scan still reads the existing model)',
+        };
+      const s0 = await scan.start({ key: stage0.key, sha: stage0.sha });
+      if (!s0.ok) return { ok: false, error: s0.errors.join("; ") };
+      // Stage 0 is paid for like any stage: Esc, the session ending and a
+      // stop asked for from outside this pi stop it, as they stop the scan.
+      const stop = new AbortController();
+      const offEscape = ui.onEscape(() => stop.abort());
+      let ended: ScanStatus["run"];
+      try {
+        ended = (await watchRun(host, ui, engine, stop.signal)).run;
+      } finally {
+        offEscape();
+      }
+      if (stop.signal.aborted || host.shutdown.aborted)
+        return { ok: false, error: "the threat-model stage was stopped — nothing was scanned" };
+      if (ended === null || ended.mode !== "threat-model" || ended.display !== "complete")
+        return {
+          ok: false,
+          error: `the threat-model stage ended ${ended?.display ?? "unknown"}${ended?.cases[0]?.error ? `: ${ended.cases[0].error}` : ""} — nothing was scanned`,
+        };
+      ui.status("QuickReview: pricing the scan…");
+      const again = await scan.preview(previewArgs);
+      if (!again.ok) return { ok: false, error: again.errors.join("; ") };
+      p = again.preview;
+      if (p.blockers.length > 0)
+        return { ok: false, error: `the scan cannot start: ${p.blockers.join("; ")}` };
+      if (p.threat_model_stage !== undefined)
+        return { ok: false, error: "the threat-model stage wrote no draft the scan can read" };
+    }
     const what =
       `Scan ${p.files} files of ${p.path !== null ? `${p.path}/ in ` : ""}${host.cwd}` +
       `${p.mode === "delta" ? " (the files changed since the last scan)" : ""} for about ` +
@@ -375,18 +450,8 @@ async function priceAndStart(
         ok: false,
         error: `${what} A scan spends money, and nobody here can confirm it: run /qcr-scan in an interactive pi.`,
       };
-    // The login before anything is paid for: pi's /login is the fix.
-    const cfg = engine.config();
-    if (cfg.ok) {
-      const borrowed = await borrowLogin({
-        providers: reviewProviders(cfg.cfg),
-        host: host.auth,
-        needMs: PLUGIN_CASE_MS,
-        marginMs: PI_REFRESH_MARGIN_MS,
-      });
-      if (!borrowed.ok)
-        return { ok: false, error: borrowed.error.replaceAll("/qcr-review", "/qcr-scan") };
-    }
+    const login = await borrow();
+    if (login !== null) return { ok: false, error: login };
     if (!(await ui.confirm("QuickReview scan", `${what} Start it?`, host.shutdown)))
       return { ok: false, error: "the scan was not started" };
     const started = await scan.start({
@@ -402,14 +467,15 @@ async function priceAndStart(
   }
 }
 
-/** Wait for the run in flight to end, the status line ticking; `stop` (or the
- * session ending) stops it. The new findings, or why there are none. */
-async function followRun(
+/** Wait for the run in flight to end, the status line ticking: `stop`, the
+ * session ending, and a stop asked for from outside this pi (`qcr scan
+ * stop`, the TUI's tab) stop it. Its status at the end. */
+async function watchRun(
   host: PluginHost,
   ui: SessionUi,
   engine: RepoScan,
   stop?: AbortSignal,
-): Promise<GuidedScan> {
+): Promise<ScanStatus> {
   const { scan } = engine;
   const startedAt = Date.now();
   const halt = (): void => void scan.stop();
@@ -429,15 +495,25 @@ async function followRun(
   tick();
   const ticker = setInterval(tick, 1000);
   ticker.unref?.();
-  let s: ScanStatus;
   try {
     await scan.idle();
-    s = scan.status();
+    return scan.status();
   } finally {
     clearInterval(ticker);
     for (const sig of [stop, host.shutdown]) sig?.removeEventListener("abort", halt);
     ui.status(undefined);
   }
+}
+
+/** Wait for the run in flight to end (`watchRun`). The new findings, or why
+ * there are none. */
+async function followRun(
+  host: PluginHost,
+  ui: SessionUi,
+  engine: RepoScan,
+  stop?: AbortSignal,
+): Promise<GuidedScan> {
+  const s = await watchRun(host, ui, engine, stop);
   if (stop?.aborted || host.shutdown.aborted)
     return { ok: false, error: "the scan was stopped: what finished is in the ledger" };
   const run = s.run;
@@ -509,6 +585,9 @@ function inBackground(
   const done = followRun(host, ui, engine).then(
     (r) => {
       if (!r.ok) return fail(ui, r.error);
+      // Stage 0 reads no findings: what it leaves is its draft.
+      const s = engine.scan.status();
+      if (s.run?.mode === "threat-model") return say(ui, renderStatus(s, PLUGIN_SCAN_VERBS));
       say(ui, renderScanFindings(r.findings, r.total));
     },
     (err: unknown) => fail(ui, err instanceof Error ? err.message : String(err)),
@@ -571,7 +650,8 @@ async function passThrough(
     );
   const json = argv.includes("--json");
   const rest = argv.filter((a) => a !== "--json");
-  const starts = verb === "start" || (verb === "stage2" && argv[1] === "start");
+  const starts =
+    verb === "start" || ((verb === "stage2" || verb === "threat-model") && argv[1] === "start");
   if (starts && sessions.running !== null)
     return fail(ui, `QuickReview is already scanning ${sessions.running}: /qcr-scan stop stops it`);
   // Esc, or the session ending, ends a wait (`status --wait`) and stops a
@@ -617,7 +697,12 @@ async function passThrough(
                   key: parsed.key,
                   ...(parsed.rows ? { rows: parsed.rows } : {}),
                 })
-              : ({ ok: false, errors: [`not a start: ${args.join(" ")}`] } as Refusal);
+              : parsed.verb === "threat-model-start"
+                ? await engine.scan.startThreatModel({
+                    key: parsed.key,
+                    ...(parsed.sha ? { sha: parsed.sha } : {}),
+                  })
+                : ({ ok: false, errors: [`not a start: ${args.join(" ")}`] } as Refusal);
         if (!r.ok) return r;
         inBackground(host, ui, engine, sessions);
         return { ok: true, run: r.run, log: join(engine.home, "scan", "plugin.log") };

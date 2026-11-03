@@ -768,6 +768,8 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
 
   // A preset is the core's own options, named: never a path of its own.
   // MUTATION: drop the preset's levers from contextFrom — this fails.
+  // MUTATION: drop `|| preset?.securityRequest` from runReviewCommand — the
+  // security preset's request assertion fails.
   it("resolves a preset to the core's review options", async () => {
     const deps = fakeReview();
     await runReviewCommand("quick 12", fakeHost(), fakeUi(), deps);
@@ -784,6 +786,9 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
     expect(skipped.length).toBeGreaterThan(0);
     for (const kept of SECURITY_LENSES) expect(skipped).not.toContain(kept);
     expect(skipped).toContain("pass-ui");
+    // the security preset plans the whole family as a request; no other does
+    expect(security!.securityRequest).toEqual({ by: "", source: "operator" });
+    for (const o of [quick, full, none]) expect(o!.securityRequest).toBeUndefined();
     expect(none!.config.review.preset).toBe("default");
     expect(none!.config.review.skip_lenses).toEqual([]);
   });
@@ -1164,6 +1169,24 @@ describe("/qcr-review in the background, through the extension on a fake pi", ()
     expect(deps.calls[0]!.opts.config.review.preset).toBe("low");
     deps.finish();
   });
+
+  // MUTATION: drop the securityRequest spread from the plugin's ReviewOptions
+  // (packages/pi-plugin/src/plugin/review.ts) — `--security` is parsed and
+  // then ignored, and this fails.
+  it("--security asks the core for the security family; without it, nothing is asked", async () => {
+    const asked = heldReview();
+    const { run } = pluginOnFakePi(asked);
+    await run("12 --security", fakeUi());
+    await until(() => asked.calls.length === 1, "the review");
+    expect(asked.calls[0]!.opts.securityRequest).toEqual({ by: "", source: "operator" });
+    asked.finish();
+    const plain = heldReview();
+    const second = pluginOnFakePi(plain);
+    await second.run("12", fakeUi());
+    await until(() => plain.calls.length === 1, "the review");
+    expect(plain.calls[0]!.opts).not.toHaveProperty("securityRequest");
+    plain.finish();
+  });
 });
 
 /** A runner that answers `qcr` calls from a script and logs them. */
@@ -1228,6 +1251,7 @@ function fakeScan(
   host: { head: string },
   o: {
     hang?: boolean;
+    hangStage0?: boolean;
     hold?: Promise<void>;
     built?: (opts: Parameters<ScanCommandDeps["cases"]>[0]) => void;
   } = {},
@@ -1245,6 +1269,19 @@ function fakeScan(
           agents.push(spec.agent);
           if (spec.agent.startsWith("pass-validate"))
             return { ok: true, output: "NONE\n", cost_usd: 0.01 };
+          // Stage 0's lens: a threat model, in its sections.
+          if (spec.agent.startsWith("pass-sec-threat-model") && o.hangStage0)
+            return new Promise((done) =>
+              signal.addEventListener("abort", () => done({ ok: false, reason: "stopped" }), {
+                once: true,
+              }),
+            );
+          if (spec.agent.startsWith("pass-sec-threat-model"))
+            return {
+              ok: true,
+              cost_usd: 0.05,
+              output: `THREAT MODEL ${spec.id} @${host.head}\n\n## Entry points\n\n- \`app/**\` — the public API.\n`,
+            };
           if (o.hold) await o.hold;
           if (o.hang)
             return new Promise((done) =>
@@ -1308,6 +1345,79 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     expect(existsSync(join(scanStateHome(host), "setup", "unit-cut.json"))).toBe(true);
     // never the qcr CLI, nor any other program through the host's runner
     expect(runner.asked).toEqual([]);
+  });
+
+  // Stage 0 is part of the guided scan ([scan] threat_model): asked for and
+  // run first, then the scan itself is priced and asked for over its draft.
+  // MUTATION: drop the stage-0 block from priceAndStart — the stage-1 start
+  // is refused while stage 0 is due, and this fails.
+  it("with [scan] threat_model = auto, drafts the threat model first, then scans over the draft", async () => {
+    const host = scanHost();
+    const config = join(host.home, "qcr-config.toml");
+    writeFileSync(
+      config,
+      readFileSync(join(ROOT, "config.example.toml"), "utf8").replace(
+        /^threat_model = "off"/m,
+        'threat_model = "auto"',
+      ),
+    );
+    const env = { ...host.env, QCR_CONFIG: config };
+    const asked: string[] = [];
+    const ui = fakeUi({
+      confirm: async (_title: string, message: string) => (asked.push(message), true),
+    });
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    await runScanCommand("units propose", { ...host, env }, ui, { sessions, deps });
+    await runScanCommand("units save", { ...host, env }, ui, { sessions, deps });
+    await runScanCommand("", { ...host, env }, ui, { sessions, deps });
+    await sessions.idle();
+    expect(asked[0]).toMatch(/drafts its threat model \(stage 0/);
+    expect(asked[1]).toMatch(/^Scan \d+ files/);
+    const lens = deps.agents.findIndex((a) => a.startsWith("pass-sec-threat-model"));
+    const scan = deps.agents.findIndex((a) => a.startsWith("pass-scan"));
+    expect(lens).toBeGreaterThanOrEqual(0);
+    expect(scan).toBeGreaterThan(lens);
+    expect(
+      readFileSync(join(scanStateHome(host), "scan", "threat-model.draft.md"), "utf8"),
+    ).toContain("DRAFT threat model");
+    // never into the repository
+    expect(existsSync(join(host.cwd, ".qcr"))).toBe(false);
+  });
+
+  // MUTATION: drop the Esc handler from priceAndStart's stage-0 wait — the
+  // drafting case never ends, the command never returns, and this fails.
+  it("Esc stops a threat-model draft in flight, and nothing is scanned", async () => {
+    const host = scanHost();
+    const config = join(host.home, "qcr-config.toml");
+    writeFileSync(
+      config,
+      readFileSync(join(ROOT, "config.example.toml"), "utf8").replace(
+        /^threat_model = "off"/m,
+        'threat_model = "auto"',
+      ),
+    );
+    const env = { ...host.env, QCR_CONFIG: config };
+    const ui = fakeUi();
+    const deps = fakeScan(host, { hangStage0: true });
+    const sessions = new ScanSessions();
+    await runScanCommand("units propose", { ...host, env }, ui, { sessions, deps });
+    await runScanCommand("units save", { ...host, env }, ui, { sessions, deps });
+    const command = runScanCommand("", { ...host, env }, ui, { sessions, deps }).then(
+      () => "returned",
+    );
+    await until(
+      () => deps.agents.some((a) => a.startsWith("pass-sec-threat-model")),
+      "the threat-model draft to start",
+    );
+    ui.escape();
+    const settled = await Promise.race([
+      command,
+      new Promise<string>((r) => setTimeout(() => r("still drafting"), 5_000)),
+    ]);
+    expect(settled).toBe("returned");
+    expect(ui.notes.at(-1)?.[1]).toMatch(/threat-model stage was stopped/);
+    expect(deps.agents.some((a) => a.startsWith("pass-scan"))).toBe(false);
   });
 
   it("starts nothing on a no, and nothing with nobody to confirm the price", async () => {

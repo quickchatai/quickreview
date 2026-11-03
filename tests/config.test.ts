@@ -16,7 +16,11 @@ import {
   tierModel,
 } from "../src/config.js";
 import { tuiMemoryContainer } from "../src/tui/memforward.js";
-import { parseCoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  parseCoreConfig,
+  withSecurityFamily,
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The suite parses the neutral fixture, never the operator's live config
@@ -406,7 +410,14 @@ describe("[models] tiered pass scheme", () => {
       "sol-med": "openai-codex/gpt-5.6-sol:medium",
       "sol-high": "openai-codex/gpt-5.6-sol:high",
     });
-    expect(cfg.models.risk_passes).toEqual(["pass-security", "pass-prod-risk", "pass-data-safety"]);
+    // The configured list, then the security family: a family lens always
+    // runs at the risk tier, whatever the list says.
+    expect(cfg.models.risk_passes).toEqual([
+      "pass-security",
+      "pass-prod-risk",
+      "pass-data-safety",
+      ...SECURITY_FAMILY,
+    ]);
     // The fixture runs the validator at the top tier.
     expect(cfg.models.validate_tier).toBe("sol-high");
     expect(cfg.models.small_diff_lines).toBe(150);
@@ -419,7 +430,7 @@ describe("[models] tiered pass scheme", () => {
     );
     const cfg2 = parseConfig(minimal);
     expect(cfg2.models.tiers).toEqual(MODELS_TIER_DEFAULTS.tiers);
-    expect(cfg2.models.risk_passes).toEqual(MODELS_TIER_DEFAULTS.risk_passes);
+    expect(cfg2.models.risk_passes).toEqual(withSecurityFamily(MODELS_TIER_DEFAULTS.risk_passes));
     expect(cfg2.models.validate_tier).toBe("sol-high");
     expect(cfg2.models.small_diff_lines).toBe(150);
     expect(cfg2.models.pricing).toEqual({});

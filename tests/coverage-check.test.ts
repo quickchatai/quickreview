@@ -165,10 +165,12 @@ describe("the knob and the note", () => {
     expect(note).toContain("A row that failed, errored or was cut short sweeps nothing");
     expect(note).not.toContain("a lens that only\nanswered NONE addresses nothing");
   });
+  // The exploit chain's note follows it: the chain's compose row is launched
+  // after the wave and its coverage, last thing before the merge.
   it("sits at the end of step 2 in every round template", () => {
     for (const t of ["round-first.md", "round-re-review.md", "round-staleness.md"]) {
       expect(readFileSync(join(root, "prompts", t), "utf8")).toContain(
-        "{{intent_note}}{{coverage_note}}\n\n## 3. Merge",
+        "{{intent_note}}{{coverage_note}}{{chain_note}}\n\n## 3. Merge",
       );
     }
   });

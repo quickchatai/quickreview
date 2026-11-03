@@ -659,7 +659,10 @@ Those are the shipped defaults. The names come from **your** `config.toml`
 (`[github] trigger_label` and its two siblings, recorded by the interview at
 step 35), so if you renamed any of them the wizard creates the labels your
 installation actually triggers on. A label that already exists is left exactly
-as it is — colour and description included.
+as it is — colour and description included. The security-review label
+(`[security] label`, `qcr:security` by default) is not among them: create it
+yourself if you want label requests for a security review
+([profiles.md](profiles.md#asking-for-a-security-review)).
 
 Two things that trip people up:
 

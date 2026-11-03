@@ -11,17 +11,22 @@
 // and BEFORE the dynamic same-day feedback addendum (which wire.ts appends
 // last). Seeds stay frozen; nothing here touches `agents/` or `prompts/`.
 //
-// File format — YAML-shaped frontmatter, two keys only, then the body:
+// File format — YAML-shaped frontmatter, three keys only, then the body:
 //
 //   ---
 //   id: migration-discipline
 //   scope: pass-data-safety
+//   mode: review
 //   ---
 //   ## Migration discipline — … (sandbox rule)
 //   …
 //
 //   * `id`    — stable kebab-case id (what tests and commit messages cite).
-//   * `scope` — `all` | `lenses` | a comma-separated list of pass names.
+//   * `scope` — `all` | `lenses` | a comma-separated list of pass names and
+//     lens families (`family:security`, every lens of
+//     packages/pi-plugin/src/passes.ts `LENS_FAMILIES.security`).
+//   * `mode`  — optional: `review` (a PR round's build only), `scan` (a
+//     whole-repo scan's build only) or `both`, the default.
 //
 // The composed text is `"\n" + body` (body = every byte after the closing
 // fence, verbatim): built-in addenda all start with a newline separator, and
@@ -62,7 +67,12 @@
 //   * the scan table (`[scan]`) — per key, the nearest profile that
 //     sets it wins (a list, `exclude`, is replaced whole, never appended);
 //   * the posting policy (`[posting]`) — per key, the nearest
-//     profile that sets it wins.
+//     profile that sets it wins;
+//   * the security table (`[security]`) — per key, the nearest profile
+//     that sets it wins, over config.toml's;
+//   * the threat model (`threat-model.md`) — the nearest profile that
+//     carries one wins whole; the repository's own (`.qcr/threat-model.md`,
+//     packages/pi-plugin/src/profileoverrides.ts) wins over every profile's.
 // The shipped `default` profile encodes the shipped behaviour (an empty pack,
 // no heuristics, `ecosystem = "none"`, and `[posting] repeat_sites = false`:
 // one comment per root cause) and is the base a generated profile extends. An
@@ -71,9 +81,19 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
-import { parseScanTable, SCAN_PROFILE_KEYS, type ScanConfig } from "./reviewconfig.js";
+import {
+  parseScanTable,
+  parseSecurityTable,
+  SCAN_PROFILE_KEYS,
+  SECURITY_DEFAULTS,
+  SECURITY_PROFILE_KEYS,
+  type ModelsConfig,
+  type ScanConfig,
+  type SecurityConfig,
+} from "./reviewconfig.js";
 import type { EcosystemName } from "./ecosystem.js";
-import { ALL_PASSES } from "./passes.js";
+import { ALL_PASSES, LENS_FAMILIES, SECURITY_FAMILY } from "./passes.js";
+import { PROFILE_THREAT_MODEL_FILE } from "./threatmodel.js";
 import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
 import {
@@ -82,6 +102,7 @@ import {
   PASS_ADDENDA,
   SCAN_PASS,
   splitFrontmatter,
+  VALIDATE_PASS,
 } from "./include.js";
 import type { PassAddendum, PassAddendumScope } from "./include.js";
 import {
@@ -101,6 +122,7 @@ import {
   LENS_TUNING_ID_PREFIXES,
   mergeLensTuning,
   parseLensTable,
+  profileRiskLenses,
   type LensTuning,
 } from "./lenstuning.js";
 
@@ -165,6 +187,8 @@ interface ProfileLayer {
   scan?: unknown;
   /** The raw `[posting]` table, when this profile has one. */
   posting?: unknown;
+  /** The raw `[security]` table, when this profile has one. */
+  security?: unknown;
   /** The layer may omit `addenda/` without extending anything (the repo
    * profile: a `.qcr/` that only tunes). */
   optionalPack?: boolean;
@@ -207,6 +231,7 @@ function readLayer(name: string, dir: string): ProfileLayer {
   if ("lenses" in doc) layer.lenses = doc["lenses"];
   if ("scan" in doc) layer.scan = doc["scan"];
   if ("posting" in doc) layer.posting = doc["posting"];
+  if ("security" in doc) layer.security = doc["security"];
   const addenda = doc["addenda"];
   if (addenda !== undefined) {
     if (typeof addenda !== "object" || addenda === null || Array.isArray(addenda)) {
@@ -278,11 +303,19 @@ function chainOf(
   lookup: ProfileLookup,
   soft: boolean,
 ): ProfileLayer[] {
-  const named =
-    profile === "" || (soft && !findProfile({ root, profile, homes: lookup.homes ?? [] }))
-      ? []
-      : profileChain(root, profile, lookup);
-  return [...repoLayer(lookup), ...named];
+  return [...repoLayer(lookup), ...namedChain(root, profile, lookup, soft)];
+}
+
+/** The named profile's chain alone, base first, without the repo layer. */
+function namedChain(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup,
+  soft: boolean,
+): ProfileLayer[] {
+  return profile === "" || (soft && !findProfile({ root, profile, homes: lookup.homes ?? [] }))
+    ? []
+    : profileChain(root, profile, lookup);
 }
 
 /** The selected profile's resolved `extends` chain, base first — name and
@@ -312,17 +345,39 @@ export function reservedAddendumIds(): Set<string> {
   ]);
 }
 
+/** The `family:<name>` spelling of a lens family in an addendum scope. */
+const FAMILY_PREFIX = "family:";
+
 function parseScope(raw: string, file: string): PassAddendumScope {
   if (raw === "all" || raw === "lenses") return raw;
-  const names = raw
+  const tokens = raw
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
-  if (names.length === 0) throw new Error(`profile addendum ${file}: empty scope`);
+  if (tokens.length === 0) throw new Error(`profile addendum ${file}: empty scope`);
+  const names: string[] = [];
+  for (const t of tokens) {
+    if (!t.startsWith(FAMILY_PREFIX)) {
+      names.push(t);
+      continue;
+    }
+    // A family expands to its members as they are today, so a lens that
+    // joins the family later is bound without editing the pack.
+    const family = t.slice(FAMILY_PREFIX.length);
+    if (!Object.hasOwn(LENS_FAMILIES, family))
+      throw new Error(
+        `profile addendum ${file}: unknown lens family "${family}" in scope "${raw}" — one of: ${Object.keys(
+          LENS_FAMILIES,
+        )
+          .map((f) => FAMILY_PREFIX + f)
+          .join(", ")}`,
+      );
+    names.push(...LENS_FAMILIES[family as keyof typeof LENS_FAMILIES]);
+  }
   for (const n of names) {
     if (!PASS_NAME_RE.test(n)) {
       throw new Error(
-        `profile addendum ${file}: unknown scope "${raw}" — use "all", "lenses", or a comma-separated list of pass names (pass-…)`,
+        `profile addendum ${file}: unknown scope "${raw}" — use "all", "lenses", or a comma-separated list of pass names (pass-…) and lens families (family:security)`,
       );
     }
     // A well-shaped name no pass carries matches nothing at composition
@@ -334,23 +389,31 @@ function parseScope(raw: string, file: string): PassAddendumScope {
       );
     }
   }
-  return names;
+  return [...new Set(names)];
 }
+
+/** An addendum's `mode:` → the build it binds (`PassAddendum.mode`); `both`
+ * is no field, binding either build. */
+const ADDENDUM_MODES: Readonly<Record<string, PassAddendum["mode"] | null>> = {
+  review: "pr",
+  scan: "scan",
+  both: null,
+};
 
 /** Parse ONE addendum file's raw bytes. Throws (naming `file`) on anything
  * malformed — the loud-failure contract. */
 export function parseProfileAddendum(file: string, raw: string): PassAddendum {
   const doc = splitFrontmatter(raw);
   if (!doc.hasFrontmatter) {
-    throw new Error(`profile addendum ${file}: missing frontmatter (--- id/scope fences)`);
+    throw new Error(`profile addendum ${file}: missing frontmatter (--- id/scope/mode fences)`);
   }
   const fields = new Map<string, string>();
   for (const line of doc.frontmatter.split("\n")) {
     if (line.trim() === "") continue;
-    const m = /^(id|scope):[ \t]*(.+?)[ \t]*$/.exec(line);
+    const m = /^(id|scope|mode):[ \t]*(.+?)[ \t]*$/.exec(line);
     if (!m)
       throw new Error(
-        `profile addendum ${file}: unrecognized frontmatter line "${line}" — only "id:" and "scope:" are allowed`,
+        `profile addendum ${file}: unrecognized frontmatter line "${line}" — only "id:", "scope:" and "mode:" are allowed`,
       );
     const key = m[1] as string;
     const value = m[2] as string;
@@ -366,10 +429,14 @@ export function parseProfileAddendum(file: string, raw: string): PassAddendum {
   if (rawScope === undefined)
     throw new Error(`profile addendum ${file}: missing "scope:" in frontmatter`);
   const scope = parseScope(rawScope, file);
+  const rawMode = fields.get("mode") ?? "both";
+  if (!Object.hasOwn(ADDENDUM_MODES, rawMode))
+    throw new Error(`profile addendum ${file}: mode "${rawMode}" — use "review", "scan" or "both"`);
+  const mode = ADDENDUM_MODES[rawMode];
   if (doc.body.trim() === "") throw new Error(`profile addendum ${file}: empty body`);
   // "\n" + verbatim body: byte-compatible with the compiled-in constants,
   // which each begin with a newline separator.
-  return { id, scope, text: `\n${doc.body}` };
+  return { id, scope, ...(mode ? { mode } : {}), text: `\n${doc.body}` };
 }
 
 function mustBeDir(path: string, what: string): void {
@@ -587,25 +654,196 @@ export function loadProfilePosting(
   return merged;
 }
 
+// ---- the security table -------------------------------------------------------
+
+/**
+ * The named profile's overrides of `config.toml [security]` — `[security]` in
+ * `profile.toml`, the whole `extends` chain merged (per key, the nearest
+ * profile that sets it wins). Only `SECURITY_PROFILE_KEYS` may appear:
+ * `triggers`, `only` and `fold`. `label` and `command` are refused as
+ * config.toml only. A repository's `.qcr/profile.toml` never carries the
+ * table (packages/pi-plugin/src/profileoverrides.ts cuts it), so a repository
+ * cannot make its own review security-only or switch its triggers off.
+ *
+ * `""`, a profile found nowhere and a chain with no `[security]` all mean
+ * `{}`; anything malformed in any layer throws with the file named.
+ */
+export function loadProfileSecurity(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup = {},
+): Partial<SecurityConfig> {
+  let merged: Partial<SecurityConfig> = {};
+  for (const layer of chainOf(root, profile, lookup, true)) {
+    if (layer.security === undefined) continue;
+    const where = `[review] profile "${layer.name}": ${layer.toml}`;
+    merged = { ...merged, ...parseSecurityTable(where, layer.security, SECURITY_PROFILE_KEYS) };
+  }
+  return merged;
+}
+
+/** The lenses a security-only review keeps: the family and the validator. */
+function keptBySecurityOnly(lens: string): boolean {
+  return SECURITY_FAMILY.includes(lens) || lens === VALIDATE_PASS;
+}
+
+/**
+ * The tuning map a security-only review runs with: every lens of `passes`
+ * outside the security family and the validator is `enabled = false`,
+ * through the same switch a profile writes by hand, so every consumer that
+ * honours `enabled` (the plan, the add list, the sweep, behaviour-delta)
+ * drops it without knowing about `only`. A lens added to `ALL_PASSES` later
+ * is covered with no edit. An explicit `enabled` the profile wrote is kept,
+ * either way — and `explicit` says which values count as written by the
+ * profile: the named chain's tuning alone, never the repository's
+ * `.qcr/profile.toml` (a repository cannot switch a non-security lens back
+ * on in a security-only review). It defaults to `lenses` itself, for a
+ * caller whose map has no repo layer in it.
+ */
+export function securityOnlyLenses(
+  lenses: Readonly<Record<string, LensTuning>> | undefined,
+  passes: readonly string[] = ALL_PASSES,
+  explicit: Readonly<Record<string, LensTuning>> | undefined = lenses,
+): Record<string, LensTuning> {
+  const out: Record<string, LensTuning> = { ...(lenses ?? {}) };
+  for (const lens of passes) {
+    if (keptBySecurityOnly(lens)) continue;
+    const written = explicit?.[lens]?.enabled;
+    out[lens] = { ...out[lens], enabled: written ?? false };
+  }
+  return out;
+}
+
+/**
+ * The config with the profile's `[security]` overlaid — the profile wins
+ * over config.toml for `triggers`, `only` and `fold` — and what follows from
+ * it resolved once, so every consumer reads one answer:
+ *   * `only` switches every lens outside the family and the validator off in
+ *     `cfg.lenses` (`securityOnlyLenses`; `passes` is `ALL_PASSES`);
+ *   * each `[lenses.<pass>] risk = true` lens joins `models.risk_passes`. A
+ *     `[models.pass_tiers]` pin or a `[models.pass_models]` override on such a
+ *     lens is refused: a risk pass always runs at sol-high on its tier's
+ *     model, and a profile that asked for both asked for something this
+ *     cannot honour.
+ * Run after the lens tuning is overlaid (it reads `cfg.lenses`). `explicit`
+ * is the named chain's own tuning, when `cfg.lenses` carries a repo layer
+ * (`securityOnlyLenses`).
+ */
+export function applyProfileSecurity<
+  C extends {
+    review: { profile: string };
+    lenses?: Record<string, LensTuning>;
+    security?: SecurityConfig;
+    models: Pick<ModelsConfig, "risk_passes" | "pass_tiers" | "pass_models">;
+  },
+>(
+  cfg: C,
+  overrides: Partial<SecurityConfig>,
+  passes: readonly string[] = ALL_PASSES,
+  explicit: Readonly<Record<string, LensTuning>> | undefined = cfg.lenses,
+): C {
+  const security: SecurityConfig = { ...SECURITY_DEFAULTS, ...cfg.security, ...overrides };
+  const risky = profileRiskLenses(cfg.lenses);
+  for (const lens of risky) {
+    const where = `[review] profile "${cfg.review.profile}": [lenses.${lens}] risk = true`;
+    if (Object.hasOwn(cfg.models.pass_tiers, lens))
+      throw new Error(
+        `${where}, but [models.pass_tiers] pins ${lens} — a risk pass always runs at sol-high; remove one of the two`,
+      );
+    if (Object.hasOwn(cfg.models.pass_models, lens))
+      throw new Error(
+        `${where}, but [models.pass_models] moves ${lens} — a risk pass always runs on the sol-high tier's model; remove one of the two`,
+      );
+  }
+  return {
+    ...cfg,
+    security,
+    ...(security.only ? { lenses: securityOnlyLenses(cfg.lenses, passes, explicit) } : {}),
+    models: {
+      ...cfg.models,
+      risk_passes: [...new Set([...cfg.models.risk_passes, ...risky])],
+    },
+  };
+}
+
 /**
  * A parsed config with its profile's overlays applied — the per-lens tuning,
- * then the `[posting]` policy — so `cfg.lenses` and `cfg.posting` are the one
- * resolved answer (the profile wins over config.toml, the preset and the
- * defaults). The daemon's assembly and the regression replay resolve through
- * this one function, so a replay plans rounds exactly as the daemon does.
+ * then the `[security]` table (`applyProfileSecurity`), then the `[posting]`
+ * policy — so `cfg.lenses`, `cfg.security`, `cfg.models.risk_passes` and
+ * `cfg.posting` are the one resolved answer (the profile wins over
+ * config.toml, the preset and the defaults). A security-only review posts
+ * only security findings: `[posting] scope` becomes `security` unless the
+ * named profile chain sets it. What a security-only review keeps is the
+ * named chain's to say, never the repo layer's: a repository's
+ * `[lenses.<pass>] enabled = true` on a non-security lens, or its
+ * `[posting] scope`, cannot widen it. The daemon's assembly, the one-shot review and the
+ * regression replay resolve through this one function, so each plans rounds
+ * exactly as the daemon does.
  */
 export function applyProfileOverlays<
   C extends {
     review: { profile: string };
     lenses?: Record<string, LensTuning>;
     posting?: PostingPolicy;
+    security?: SecurityConfig;
+    models: Pick<ModelsConfig, "risk_passes" | "pass_tiers" | "pass_models">;
   },
 >(root: string, cfg: C, lookup: ProfileLookup = {}): C {
   const profile = cfg.review.profile;
-  return applyProfilePosting(
+  const named: ProfileLookup = { ...lookup, repoProfile: undefined };
+  const secured = applyProfileSecurity(
     applyProfileTuning(cfg, loadProfileLensTuning(root, profile, lookup)),
-    loadProfilePosting(root, profile, lookup),
+    loadProfileSecurity(root, profile, lookup),
+    ALL_PASSES,
+    loadProfileLensTuning(root, profile, named),
   );
+  const posting = loadProfilePosting(root, profile, lookup);
+  return applyProfilePosting(
+    secured,
+    secured.security?.only === true && loadProfilePosting(root, profile, named).scope === undefined
+      ? { ...posting, scope: "security" }
+      : posting,
+  );
+}
+
+// ---- the threat model ---------------------------------------------------------
+
+/**
+ * The named profile's threat model — `threat-model.md` in a profile's
+ * directory, the nearest profile in the `extends` chain that carries one
+ * winning whole (a threat model is one document, never merged). Private to
+ * the operator's install; the repository's own (`.qcr/threat-model.md` on the
+ * base commit, `OverrideSet.repoThreatModel`) wins over it, which is why the
+ * repo layer is not walked here. The text is returned as written:
+ * packages/pi-plugin/src/threatmodel.ts `parseThreatModel` cuts it at
+ * `THREAT_MODEL_MAX_CHARS` with a marker.
+ *
+ * `""`, a profile found nowhere, and a chain where no profile carries a
+ * non-blank one all mean null — no threat model, so no section is rendered.
+ * A file that exists and cannot be read throws, naming it: the loud-boot
+ * contract.
+ */
+export function loadProfileThreatModel(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup = {},
+): string | null {
+  for (const layer of namedChain(root, profile, lookup, true).reverse()) {
+    const file = join(layer.dir, PROFILE_THREAT_MODEL_FILE);
+    if (!existsSync(file)) continue;
+    let text: string;
+    try {
+      if (!statSync(file).isFile()) throw new Error("is not a file");
+      text = readFileSync(file, "utf8");
+    } catch (err) {
+      throw new Error(
+        `[review] profile "${layer.name}": cannot read ${file}: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+    if (text.trim() !== "") return text;
+  }
+  return null;
 }
 
 /** The config with the profile's `[scan]` overrides applied — the profile
@@ -628,7 +866,7 @@ export function applyProfileScan<C extends { scan: ScanConfig }>(
 // compiled-in one, and never touch the addable-only lenses or the body-keyed
 // `pass-intent`.
 //
-// File format — one table per extendable lens, two optional keys each:
+// File format — one table per extendable lens, four optional keys each:
 //
 //   [pass-security]
 //   paths = ['(^|/)settings[^/]*\.py$']       # RegExp sources over filenames
@@ -636,10 +874,23 @@ export function applyProfileScan<C extends { scan: ScanConfig }>(
 //   [pass-delivery]
 //   added_lines = ['@background_task']   # probes over ADDED patch lines
 //
+//   [pass-sec-authn-coverage]
+//   removed_lines = ['@login_required']  # probes over REMOVED patch lines
+//   config_lines = ['AuthType:\s*NONE']  # probes over ADDED lines of config files
+//
+// `removed_lines` and `config_lines` are read by the security family's
+// triggers alone (securitytriggers.ts): the compiled-in `selectLenses` reads
+// `paths` and `added_lines` only. So they are accepted for a `pass-sec-*`
+// lens and refused for any other — a probe the selection never reads would
+// be configured and silently never fire.
+//
 // `paths` entries are compiled verbatim (case-sensitive, like the compiled-in
-// path predicates). `added_lines` entries are wrapped as `^\+.*(?:…)` with
-// the `im` flags, so each one matches an ADDED unified-diff line containing
-// the pattern, case-insensitively. Anything malformed — an unknown lens, an
+// path predicates). `added_lines` and `config_lines` entries are wrapped as
+// `^\+.*(?:…)` with the `im` flags, so each one matches an ADDED unified-diff
+// line containing the pattern, case-insensitively; a `config_lines` probe is
+// tested against configuration files only (the security triggers'
+// `CONFIG_FILE_RE`). `removed_lines` entries are wrapped as `^-(?!--).*(?:…)`,
+// a REMOVED line and never the `--- a/<file>` header. Anything malformed — an unknown lens, an
 // unknown key, a non-string entry, a regex that does not compile — throws
 // with the offending file and key named: a malformed extension is a loud
 // assembly failure (wire.ts loads it once at boot), never a silent skip.
@@ -660,6 +911,8 @@ export function parseProfileHeuristics(file: string, raw: string): HeuristicsExt
   }
   const paths: Record<string, RegExp[]> = {};
   const addedLines: Record<string, RegExp[]> = {};
+  const removedLines: Record<string, RegExp[]> = {};
+  const configLines: Record<string, RegExp[]> = {};
   const compile = (
     lens: string,
     key: string,
@@ -692,7 +945,7 @@ export function parseProfileHeuristics(file: string, raw: string): HeuristicsExt
     }
     if (typeof table !== "object" || table === null || Array.isArray(table)) {
       throw new Error(
-        `profile heuristics ${file}: [${lens}] must be a table with "paths" and/or "added_lines" arrays`,
+        `profile heuristics ${file}: [${lens}] must be a table of "paths", "added_lines", "removed_lines" and/or "config_lines" arrays`,
       );
     }
     for (const [key, value] of Object.entries(table as Record<string, unknown>)) {
@@ -707,14 +960,48 @@ export function parseProfileHeuristics(file: string, raw: string): HeuristicsExt
           new RegExp(src); // validate the source on its own for a clean error
           return new RegExp(`^\\+.*(?:${src})`, "im");
         });
+      } else if (
+        (key === "removed_lines" || key === "config_lines") &&
+        !SECURITY_FAMILY.includes(lens)
+      ) {
+        throw new Error(
+          `profile heuristics ${file}: [${lens}] ${key} is read only for a security-family lens (pass-sec-*) — ` +
+            `${lens}'s selection reads "paths" and "added_lines"`,
+        );
+      } else if (key === "removed_lines") {
+        // `^-(?!--)`: a REMOVED line, never the `--- a/<file>` header a
+        // whole-file patch can carry.
+        removedLines[lens] = compile(lens, key, value, (src) => {
+          new RegExp(src);
+          return new RegExp(`^-(?!--).*(?:${src})`, "im");
+        });
+      } else if (key === "config_lines") {
+        configLines[lens] = compile(lens, key, value, (src) => {
+          new RegExp(src);
+          return new RegExp(`^\\+.*(?:${src})`, "im");
+        });
       } else {
         throw new Error(
-          `profile heuristics ${file}: [${lens}] unknown key "${key}" — only "paths" and "added_lines" are allowed`,
+          `profile heuristics ${file}: [${lens}] unknown key "${key}" — only "paths", "added_lines", "removed_lines" and "config_lines" are allowed`,
         );
       }
     }
   }
-  return { paths, addedLines };
+  return withLineProbes({ paths, addedLines }, removedLines, configLines);
+}
+
+/** `ext` with the removed-line and config-line probes, each only when some
+ * lens has one, so an extension without them keeps its two-key shape. */
+function withLineProbes(
+  ext: HeuristicsExtension,
+  removedLines: Record<string, RegExp[]>,
+  configLines: Record<string, RegExp[]>,
+): HeuristicsExtension {
+  return {
+    ...ext,
+    ...(Object.keys(removedLines).length > 0 ? { removedLines } : {}),
+    ...(Object.keys(configLines).length > 0 ? { configLines } : {}),
+  };
 }
 
 /**
@@ -736,6 +1023,8 @@ export function loadProfileHeuristics(
   // base's predicate (the same ADD-only contract as against the core).
   const paths: Record<string, RegExp[]> = {};
   const addedLines: Record<string, RegExp[]> = {};
+  const removedLines: Record<string, RegExp[]> = {};
+  const configLines: Record<string, RegExp[]> = {};
   let any = false;
   for (const layer of chainOf(root, profile, lookup, false)) {
     const file = join(layer.dir, "heuristics.toml");
@@ -746,6 +1035,10 @@ export function loadProfileHeuristics(
       paths[lens] = [...(paths[lens] ?? []), ...res];
     for (const [lens, res = []] of Object.entries(ext.addedLines))
       addedLines[lens] = [...(addedLines[lens] ?? []), ...res];
+    for (const [lens, res = []] of Object.entries(ext.removedLines ?? {}))
+      removedLines[lens] = [...(removedLines[lens] ?? []), ...res];
+    for (const [lens, res = []] of Object.entries(ext.configLines ?? {}))
+      configLines[lens] = [...(configLines[lens] ?? []), ...res];
   }
-  return any ? { paths, addedLines } : EMPTY_HEURISTICS;
+  return any ? withLineProbes({ paths, addedLines }, removedLines, configLines) : EMPTY_HEURISTICS;
 }

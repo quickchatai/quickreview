@@ -49,6 +49,7 @@ Timestamps are ISO-8601 strings in `TEXT` columns throughout. Booleans are
 | `rechecks` | post-approval delta rechecks actually nudged; the unique key is the runaway guard | `(pr, fingerprint)` (PK), `head_sha`, `trigger` | `claimRecheck`, `hasRecheck`, `releaseRecheck`, `recheckClaimsBefore` |
 | `trigger_levels` | the previous reconcile observation of each trigger level, so a level already present cannot look like a fresh request | `(pr, kind)` (PK), `present`, `observed_at` | `triggerLevel`, `observeTriggerLevel` |
 | `successor_obligations` | a newer head seen while an older round owned the PR — durable work owed | `pr` (PK), `predecessor_round_id`, `head_sha`, `provenance` | `recordSuccessor`, `successorFor`, `settleSuccessor`, `clearSuccessor` |
+| `pr_review_requests` | a standing request for an extra review of one kind (today only `security`: the label, `@<bot> security`, `qcr review-now --security`); served once as new evidence, withdrawn when the label comes off, dropped when the PR closes (`src/securityrequest.ts`) | `(pr, kind)` (PK), `source`, `requested_by` (`''` when the asker is unknown), `comment_id`, `requested_at`, `served_at` | `recordReviewRequest`, `reviewRequest`, `unservedReviewRequests`, `reviewRequestPrs`, `markReviewRequestServed`, `clearReviewRequests` |
 
 `reviewed_heads` is deliberately **not** part of `pr_state`: the mark outlives
 lifecycle churn. Every lifecycle consumer reads it through the single
@@ -592,7 +593,8 @@ regardless).
 
 **`[models]`** — `default`, `conversation`, `overseer` (model spec strings,
 all `"openai-codex/gpt-6.1-sol"` in the example), `risk_passes` (string array,
-`["pass-security", "pass-prod-risk", "pass-data-safety"]`), `validate_tier`
+`["pass-security", "pass-prod-risk", "pass-data-safety"]`; the parsed list
+always gains the fourteen `pass-sec-*` lenses, `withSecurityFamily`), `validate_tier`
 (`PassTier`, `"sol-high"` — the validator's own tier, floored only by the
 profile's `min_tier` for it and never raised to match a lens; `validatorTier`
 in `src/dispatch.ts`), `small_diff_lines` (number, `150`).

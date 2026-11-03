@@ -31,6 +31,7 @@ import {
   parsePiSection,
   parseReviewSection,
   parseScan,
+  parseSecurity,
   presetOf,
   req,
   requireGithubKeys,
@@ -1853,6 +1854,7 @@ export function parseConfig(toml: string): Config {
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: parseOwnerSection(raw),
     scan: parseScan(raw.scan),
+    security: parseSecurity(raw.security),
     scan_sandbox: parseScanSandbox(raw.scan, companion),
     archive: parseArchive((raw.archive ?? {}) as Record<string, unknown>),
     login_refresh: parseLoginRefresh(

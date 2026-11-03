@@ -39,7 +39,8 @@
 // reviewed with the old and the new profile, the cost stated first, the two
 // reviews side by side; the scan's (extensions/setup-scan.ts): scan_preview /
 // _start / _status / _stop, scan_findings and scan_matches / scan_match;
-// stage 2's scan_suggestions / scan_stage2_propose / scan_stage2_start, and
+// stage 2's scan_suggestions / scan_stage2_propose / scan_stage2_start;
+// stage 0's scan_threat_model_propose (scan_start starts it); and
 // the watcher that answers the TUI's stage-2 start click and scan stop; and
 // triage's (extensions/setup-triage.ts): scan_dismiss / scan_promote /
 // scan_close_fixed / scan_memory.

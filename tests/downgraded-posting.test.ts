@@ -115,3 +115,38 @@ describe("a downgraded entry with no tag is never silent", () => {
     expect(r.problems.some((p) => /downgraded with no posted_as/.test(p))).toBe(true);
   });
 });
+
+// The security fold's question is a downgrade survivor too: recorded
+// `security-demoted` with `posted_as: "question"` it is posted; without the
+// tag the record cannot count it as posted, and says so.
+describe("a security-demoted question recorded without its tag", () => {
+  const demoted = entry({
+    id: "s1",
+    lens: "pass-sec-access",
+    kind: "security:idor",
+    severity: "P1",
+    confidence: 0.5,
+    disposition: "downgraded",
+    word: "security-demoted",
+    axis: "confidence",
+    posted_as: undefined,
+    request: undefined,
+  });
+
+  // MUTATION: drop the `downgraded_untagged` push in parseFindingsRecord — fails.
+  it("counts as not posted and raises downgraded_untagged", () => {
+    expect(entryDisposition(demoted)).toBe("downgraded");
+    const parsed = parseFindingsRecord(record([demoted]), 7, 1);
+    expect(parsed.record!.findings[0]!.disposition).toBe("downgraded");
+    expect(parsed.conformance!.downgraded_untagged).toEqual(["s1"]);
+    expect(parsed.note).toMatch(/1 downgraded finding\(s\) with no posted_as/);
+  });
+
+  it("with its tag it is a posted question, and nothing is counted", () => {
+    const tagged = { ...demoted, posted_as: "question" };
+    const parsed = parseFindingsRecord(record([tagged]), 7, 1);
+    expect(parsed.record!.findings[0]!.disposition).toBe("posted");
+    expect(parsed.conformance!.downgraded_untagged).toEqual([]);
+    expect(renderReviewFromRecord(record([tagged])).comments[0]!.body).toMatch(/^\[question\] /);
+  });
+});

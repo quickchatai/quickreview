@@ -95,9 +95,27 @@ const NON_SEEDED = [
   "agents/pass-abstraction.md",
   "agents/pass-style.md",
   "agents/pass-consistency.md",
+  // The security family and the contract every one of them includes.
+  "agents/pass-sec-authn-coverage.md",
+  "agents/pass-sec-access.md",
+  "agents/pass-sec-privesc.md",
+  "agents/pass-sec-iam.md",
+  "agents/pass-sec-tokens.md",
+  "agents/pass-sec-toctou.md",
+  "agents/pass-sec-injection.md",
+  "agents/pass-sec-boundaries.md",
+  "agents/pass-sec-secrets-data.md",
+  "agents/pass-sec-supply-chain.md",
+  "agents/pass-sec-llm.md",
+  "agents/pass-sec-infra.md",
+  "agents/pass-sec-variant.md",
+  "agents/pass-sec-exploit-chain.md",
+  "prompts/pass-sec-common.md",
   // Scan stage 1's lens, built only into the companion's scan build
   // (agents/scan/, never a PR round's).
   "agents/scan/pass-scan.md",
+  // Scan stage 0's threat-model drafter, the same scan-only build.
+  "agents/scan/pass-sec-threat-model.md",
   "prompts/round-first.md",
   "prompts/round-re-review.md",
   // The follow-up round template.

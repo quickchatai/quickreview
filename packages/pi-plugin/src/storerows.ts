@@ -124,6 +124,10 @@ export interface RoundRow {
   sweep_plan: string | null;
   /** ran | not_owed | not_reached | unknown — what became of the sweep. */
   sweep_status: string | null;
+  /** The post-discovery rows (JSON PassPlanEntry[] — the exploit chain's
+   * `compose`, launched from `tasks-post/` after the wave), when planned.
+   * NULL when none was, and on rounds recorded before the column. */
+  post_plan: string | null;
 }
 
 /** One parsed row of the durable reasoning record. */

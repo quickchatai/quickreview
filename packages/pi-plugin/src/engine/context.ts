@@ -6,20 +6,14 @@
 // config in (src/homes.ts for the CLI, src/reviewcontext.ts for the app).
 
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
-import { applyProfileTuning } from "../lenstuning.js";
-import {
-  loadProfileEcosystem,
-  loadProfileLensTuning,
-  loadProfilePosting,
-  type ProfileLookup,
-} from "../profiles.js";
-import { applyProfilePosting } from "../postingpolicy.js";
+import { applyProfileOverlays, loadProfileEcosystem, type ProfileLookup } from "../profiles.js";
 import {
   applyReviewEffort,
   parseCoreConfig,
   parseEffort,
   parsePreset,
   validateLensKnobs,
+  withSecurityFamily,
   type CoreConfig,
   type ReviewPreset,
 } from "../reviewconfig.js";
@@ -184,6 +178,10 @@ export function applyConfigOverrides<C extends CoreConfig>(
     }
     next.models = applyReviewEffort({ ...next.models, effort });
   }
+  // A lever that lists the risk passes lists them as config.toml would: the
+  // security family joins them, as it does at parse.
+  if (rest.some((p) => keyOf(p) === "models.risk_passes"))
+    next.models = { ...next.models, risk_passes: withSecurityFamily(next.models.risk_passes) };
   validateLensKnobs(next);
   return next;
 }
@@ -226,15 +224,11 @@ export function contextFrom<C extends CoreConfig>(
   // review.profile=<name>` (arm.sh's spelling) — every loader reads the same
   // one, so a profile chosen either way is the whole profile.
   const chosen = levered.review.profile;
-  // The profile's lens tuning (and its `[posting]` policy) is
-  // overlaid LAST — after the `--config` levers and any preset re-parse —
-  // exactly as production overlays it after config.toml: the profile wins.
-  const cfg = withAuthModels(
-    applyProfilePosting(
-      applyProfileTuning(levered, loadProfileLensTuning(root, chosen, lookup)),
-      loadProfilePosting(root, chosen, lookup),
-    ),
-  );
+  // The profile's overlays (its lens tuning, its `[security]` and its
+  // `[posting]` policy) are applied LAST — after the `--config` levers and
+  // any preset re-parse — through the one function production overlays with
+  // after config.toml: the profile wins.
+  const cfg = withAuthModels(applyProfileOverlays(root, levered, lookup));
   return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, chosen, lookup)) };
 }
 

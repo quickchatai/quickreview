@@ -12,12 +12,14 @@ import {
   buildPassPlan,
   buildRoundOrder,
   optionalOrderOf,
+  postOrderOf,
   renderDeltaPatch,
   roundDeltaOf,
   sweepOrderOf,
   type FollowUpDecision,
   type FollowUpFullReason,
   type PassPlan,
+  type PlanSecurityInputs,
 } from "../planner.js";
 import { parseLedgerCarry, settledFromLedger } from "../ledgercarry.js";
 import type { CiLinter } from "../lintconfig.js";
@@ -30,7 +32,8 @@ import { lensRuntimeOf } from "../launchvocab.js";
 import { lensEnabled } from "../lenstuning.js";
 import { MEMORY_LESS, type RoundMemory } from "../memoryport.js";
 import { renderPassTasks } from "../passtasks.js";
-import { loadProfileHeuristics, type ProfileLookup } from "../profiles.js";
+import { loadProfileHeuristics, loadProfileThreatModel, type ProfileLookup } from "../profiles.js";
+import type { SecurityFact } from "../secfacts.js";
 import { firstPartyDirectiveFiles } from "../severity.js";
 import {
   renderConversationSystemPrompt,
@@ -39,7 +42,8 @@ import {
   roundTemplateFile,
   templateFileForOrder,
 } from "../templates.js";
-import type { PassPlanEntry, RoundOrder } from "../types.js";
+import { resolveThreatModel, type ThreatModel } from "../threatmodel.js";
+import type { PassPlanEntry, RoundOrder, SecurityRequest } from "../types.js";
 import { findCiLinters } from "../lintconfig.js";
 import { findStyleGuide } from "../styleguide.js";
 import { benchAppendix } from "./caseout.js";
@@ -92,6 +96,77 @@ export function benchContextPack(
   return { order: { ...built, context_pack_file: path }, file: { path, text: pack.text } };
 }
 
+// ---- the security inputs -------------------------------------------------------
+
+/** What a host hands a one-shot round about security beyond the files. */
+export interface OneShotSecurity {
+  /** A security review was asked for (`/qcr-review --security`): the whole
+   * security family is planned. */
+  securityRequest?: SecurityRequest;
+  /** Reads the reviewed repository's threat model (`.qcr/threat-model.md`
+   * at the base commit) — the host's reader, since only the host knows how
+   * to read the base. Absent ⇒ the host has none, and the profile's copy is
+   * the only one read. */
+  readRepoThreatModel?: () => string | null;
+  /** The deterministic security facts the host computed
+   * (packages/pi-plugin/src/secfacts.ts); absent ⇒ none. */
+  securityFacts?: readonly SecurityFact[];
+  /** The facts no plan reads (the route inventory), computed only when a
+   * security-family row is planned (`PlanSecurityInputs.securityInventory`). */
+  securityInventory?: () => readonly SecurityFact[];
+}
+
+/** The threat model a one-shot round reads: the repository's (through the
+ * host's reader), else the profile's, else null — the order dispatch reads
+ * them in. A reader that throws counts as no file there. */
+export function oneShotThreatModel(
+  root: string,
+  cfg: CoreConfig,
+  sec: OneShotSecurity,
+  lookup?: ProfileLookup,
+): ThreatModel | null {
+  return resolveThreatModel({
+    readRepo: sec.readRepoThreatModel ?? (() => null),
+    readProfile: () => loadProfileThreatModel(root, cfg.review.profile, lookup),
+  });
+}
+
+/** The planner's security inputs for a one-shot round. */
+function planSecurityOf(sec: OneShotSecurity, threatModel: ThreatModel | null): PlanSecurityInputs {
+  return {
+    ...(sec.securityRequest ? { securityRequest: sec.securityRequest } : {}),
+    threatModel,
+    ...(sec.securityFacts ? { securityFacts: sec.securityFacts } : {}),
+    ...(sec.securityInventory ? { securityInventory: sec.securityInventory } : {}),
+  };
+}
+
+/** The post-discovery rows' task files (`post_plan`), from the same order
+ * dispatch renders them from (`postOrderOf`), in `tasks-post/` — a
+ * directory the engine's wave never lists. */
+function postTasksOf(
+  cfg: CoreConfig,
+  order: RoundOrder,
+  ecosystem: Ecosystem,
+  caseDir: string,
+): Array<{ row: number; agent: string; path: string; text: string }> {
+  if (!cfg.review.task_files || !order.post_plan || order.post_plan.length === 0) return [];
+  const postOrder = postOrderOf(order, order.post_plan);
+  return renderPassTasks(postOrder, renderGateNotes(postOrder, ecosystem)).map((t) => ({
+    ...t,
+    path: join(caseDir, "tasks-post", t.file),
+  }));
+}
+
+/** The order's `post_task_files`, when there are any. */
+function postTaskFilesOf(
+  tasks: ReadonlyArray<{ row: number; agent: string; path: string }>,
+): Pick<RoundOrder, "post_task_files"> {
+  return tasks.length
+    ? { post_task_files: tasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })) }
+    : {};
+}
+
 // ---- the engine lens route's wording -------------------------------------------
 
 export { engineLensSection, type EngineWaveNote } from "./lens/section.js";
@@ -128,25 +203,27 @@ export interface OneShotPrompts {
 }
 
 /** The first round's order + system prompt for a target: production renderers. */
-export function renderOneShotPrompts(args: {
-  root: string;
-  cfg: CoreConfig;
-  ecosystem: Ecosystem;
-  target: OneShotTarget;
-  tree: string;
-  caseDir: string;
-  files: PrFileEntry[];
-  issuedAt: string;
-  /** The rendered third-party-sources block, "" when none (depsources.ts). */
-  dependencyNote?: string;
-  /** The round's memory seed (src/reviewmemory.ts); absent => memory-less. */
-  memory?: RoundMemory;
-  /** Reads a shipped `prompts/` file instead of the disk: where a profile's
-   * replacement is served (packages/pi-plugin/src/profileoverrides.ts). Absent: the file itself. */
-  readFile?: (path: string) => string;
-  /** The profile loaders' lookup, carrying the repo profile's layer. */
-  profileLookup?: ProfileLookup;
-}): OneShotPrompts {
+export function renderOneShotPrompts(
+  args: {
+    root: string;
+    cfg: CoreConfig;
+    ecosystem: Ecosystem;
+    target: OneShotTarget;
+    tree: string;
+    caseDir: string;
+    files: PrFileEntry[];
+    issuedAt: string;
+    /** The rendered third-party-sources block, "" when none (depsources.ts). */
+    dependencyNote?: string;
+    /** The round's memory seed (src/reviewmemory.ts); absent => memory-less. */
+    memory?: RoundMemory;
+    /** Reads a shipped `prompts/` file instead of the disk: where a profile's
+     * replacement is served (packages/pi-plugin/src/profileoverrides.ts). Absent: the file itself. */
+    readFile?: (path: string) => string;
+    /** The profile loaders' lookup, carrying the repo profile's layer. */
+    profileLookup?: ProfileLookup;
+  } & OneShotSecurity,
+): OneShotPrompts {
   const { root, cfg, target, tree } = args;
   const readPrompt = (name: string): string => {
     const path = join(root, "prompts", name);
@@ -157,10 +234,12 @@ export function renderOneShotPrompts(args: {
   const body = boundBody(target.body);
   const directiveFiles = directiveFilesOf(cfg, args.files);
   const row = { number: target.number, head_sha: target.headSha, title };
+  const threatModel = oneShotThreatModel(root, cfg, args, args.profileLookup);
   const built = buildRoundOrder({
     cfg,
     row,
     files: args.files,
+    ...planSecurityOf(args, threatModel),
     roundId: 1,
     roundNo: 1,
     reviewNo: 1,
@@ -204,11 +283,13 @@ export function renderOneShotPrompts(args: {
   // (`[review] render_outputs`, benchAppendix), so the order never carries
   // production's render-review.sh note: there is no scripts/.
   const { render_outputs: _renderedByRunner, ...unrendered } = built;
+  const postTasks = postTasksOf(cfg, packed.order, args.ecosystem, args.caseDir);
   const order: RoundOrder = taskFiles.length
     ? {
         ...unrendered,
         ...lensRuntimeOf(cfg),
         pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
+        ...postTaskFilesOf(postTasks),
       }
     : { ...unrendered, ...lensRuntimeOf(cfg) };
   const template = readPrompt(roundTemplateFile("first"));
@@ -246,6 +327,9 @@ export function renderOneShotPrompts(args: {
     passPlan: order.pass_plan,
     taskFiles: taskFiles.map((t) => ({ path: t.path, text: t.text })),
     ...(packed.file ? { contextPack: packed.file } : {}),
+    ...(postTasks.length
+      ? { extraFiles: postTasks.map((t) => ({ path: t.path, text: t.text })) }
+      : {}),
   };
 }
 
@@ -277,7 +361,9 @@ export interface FollowUpOneShotPrompts extends OneShotPrompts {
   sweepPlan?: PassPlanEntry[];
 }
 
-export interface FollowUpOneShotArgs {
+/** A follow-up case's inputs; the security inputs (`OneShotSecurity`) are
+ * read once and plan the whole PR, the delta and the order alike. */
+export interface FollowUpOneShotArgs extends OneShotSecurity {
   root: string;
   cfg: CoreConfig;
   ecosystem: Ecosystem;
@@ -293,12 +379,14 @@ export interface FollowUpOneShotArgs {
   prevHead: string;
   /** The ledger the previous round left, when there is one. */
   ledger?: string;
-  /** The follow-up decision, given the whole target's plan. */
+  /** The follow-up decision, given the whole target's plan. `security` is
+   * what planned it: the decision plans the delta with the same inputs. */
   decide: (ctx: {
     heuristics: ReturnType<typeof loadProfileHeuristics>;
     fullPlan: PassPlan;
     styleGuide: string[];
     ciLinters: CiLinter[];
+    security: PlanSecurityInputs;
   }) => FollowUpChoice;
   /** The prior findings note and sidecar; the sidecar is written at `sidecarPath`. */
   prior: (sidecarPath: string) => { note: string; sidecar: string; list: PriorFindingsList };
@@ -338,6 +426,9 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
   const ciLinters = lensEnabled(cfg.lenses, "pass-lint-conformance", cfg.review.lint_conformance)
     ? findCiLinters(tree)
     : [];
+  // The security inputs, read once: the full plan, the decision and the
+  // order all see the same ones.
+  const security = planSecurityOf(args, oneShotThreatModel(root, cfg, args, args.profileLookup));
   // The whole PR's plan, exactly as dispatch builds it before deciding.
   const fullPlan = buildPassPlan(
     cfg,
@@ -347,8 +438,9 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
     heuristics,
     styleGuide,
     ciLinters,
+    security,
   );
-  const decided = args.decide({ heuristics, fullPlan, styleGuide, ciLinters });
+  const decided = args.decide({ heuristics, fullPlan, styleGuide, ciLinters, security });
   const extraFiles: Array<{ path: string; text: string }> = [];
   // The ledger the PR session held when the round was dispatched: carried as
   // production's `ledger_carry` (and its SETTLED digest), and pinned as the
@@ -403,6 +495,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
     cfg,
     row,
     files: args.files,
+    ...security,
     roundId: 1,
     roundNo: args.roundNo,
     reviewNo: args.reviewNo,
@@ -465,6 +558,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
           );
         })()
       : [];
+  const postTasks = postTasksOf(cfg, packed.order, args.ecosystem, args.caseDir);
   const { render_outputs: _renderedByBench, ...unrendered } = built;
   const order = {
     ...unrendered,
@@ -472,6 +566,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
     ...(taskFiles.length
       ? { pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })) }
       : {}),
+    ...postTaskFilesOf(postTasks),
     ...(sweepTasks.length
       ? { sweep_task_files: sweepTasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })) }
       : {}),
@@ -518,6 +613,7 @@ export function renderFollowUpOneShotPrompts(args: FollowUpOneShotArgs): FollowU
   );
   for (const t of sweepTasks) extraFiles.push({ path: t.path, text: t.text });
   for (const t of optionalTasks) extraFiles.push({ path: t.path, text: t.text });
+  for (const t of postTasks) extraFiles.push({ path: t.path, text: t.text });
   return {
     system,
     order: orderText,

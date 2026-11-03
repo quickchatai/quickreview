@@ -36,6 +36,7 @@ let tick = 0;
 function belt(
   trees: Record<string, Record<string, string>> = { [SHA]: FILES },
   head = SHA,
+  over: Partial<typeof SCAN_DEFAULTS> = {},
 ): { defs: QcrTool[]; scan: ScanRunner } {
   const state = stateHomeFs(join(dir, "state"));
   const listOf = (sha: string) =>
@@ -51,7 +52,9 @@ function belt(
       run: async (spec) => ({
         ok: true,
         cost_usd: 0.02,
-        output: `FINDINGS pass-scan SCAN ${spec.id} @${SHA}\n- path: ${spec.files[0]}\n  line: 1-2\n  kind: bug\n  severity: P2\n  claim: it breaks\n\nSUGGEST NONE\n`,
+        output: spec.agent.startsWith("pass-sec-threat-model")
+          ? `THREAT MODEL ${spec.id} @${SHA}\n\n## Entry points\n\n- \`app/**\` — the API.\n`
+          : `FINDINGS pass-scan SCAN ${spec.id} @${SHA}\n- path: ${spec.files[0]}\n  line: 1-2\n  kind: bug\n  severity: P2\n  claim: it breaks\n\nSUGGEST NONE\n`,
       }),
     },
     source: {
@@ -77,11 +80,14 @@ function belt(
         ignored: [],
       },
     }),
-    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, validator: false } } }),
+    settings: () => ({
+      ok: true,
+      settings: { scan: { ...SCAN_DEFAULTS, validator: false, ...over } },
+    }),
     buildAgents: () => ({ ok: true }),
   });
   const settings = {
-    scan: { ...SCAN_DEFAULTS, validator: false },
+    scan: { ...SCAN_DEFAULTS, validator: false, ...over },
     riskPasses: ["pass-data-safety"],
   };
   return { defs: scanToolDefinitions(scan, new FindingsStore(state), () => settings), scan };
@@ -122,6 +128,24 @@ describe("the scan tools", () => {
 
     // Priced now: the next preview is stage 1 — and nothing is left to read.
     expect(await call(defs, "scan_preview")).toMatch(/✗ nothing left to read/);
+  });
+});
+
+describe("stage 0 through the tools", () => {
+  // MUTATION: drop threatModelStart from TOOL_VERBS — the preview names no
+  // tool to start stage 0, and this fails.
+  it("scan_preview offers the threat model first, scan_start runs it by its key, scan_threat_model_propose re-proposes it", async () => {
+    const { defs, scan } = belt({ [SHA]: FILES }, SHA, { threat_model: "auto" });
+    const preview = await call(defs, "scan_preview");
+    expect(preview).toContain("FIRST, before this scan reads anything: the threat model");
+    const key = /scan_start with key (\w+) and sha/.exec(preview)![1]!;
+    const proposed = await call(defs, "scan_threat_model_propose");
+    expect(proposed).toMatch(/^THREAT MODEL \(stage 0\) at aaaaaaaaaaaa/);
+    expect(proposed).toContain(`scan_start with key ${key} and sha ${SHA}`);
+    expect(await call(defs, "scan_start", { key })).toMatch(/\(threat-model\) started/);
+    await scan.idle();
+    expect(await call(defs, "scan_status")).toMatch(/\(threat model\) .*COMPLETE — DRAFT written/);
+    expect(await call(defs, "scan_preview")).not.toContain("FIRST, before this scan");
   });
 });
 

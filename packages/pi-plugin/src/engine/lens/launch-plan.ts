@@ -13,8 +13,10 @@ export const LAUNCH_PLAN_DIRS_ENV = "QCR_LAUNCH_PLAN_DIRS";
 
 /** A round's pass directory, as dispatch.ts names it. */
 const PASSES_DIR_RE = /^pr-\d+-round-\d+-passes$/;
-/** A task file, as passtasks.ts names it: the 1-based row, then the agent. */
-const TASK_FILE_RE = /^(\d{2,})-([a-z0-9][a-z0-9-]*)\.md$/;
+/** A task file, as passtasks.ts names it: the 1-based row, then the agent,
+ * then, on a row that runs one strategy of its lens (the exploit chain's
+ * `delta`, `forward`, …), `@<strategy>`. */
+const TASK_FILE_RE = /^(\d{2,})-([a-z0-9][a-z0-9-]*)(?:@([a-z][a-z0-9-]*))?\.md$/;
 /** The validator's agent ids — `pass-validate` and its tier variants. */
 const VALIDATOR_AGENT_RE = /^pass-validate(--|$)/;
 
@@ -24,14 +26,21 @@ export function taskPointer(path: string): string {
   return `Task file: ${path}. Read it first; it is your complete task.`;
 }
 
+/** The task directory a unit comes from: "plan" for the round's tasks dir,
+ * "optional" for a follow-up round's optional rows, "sweep" for the sweep's,
+ * "post" for the rows that run after the discovery wave (`tasks-post`, the
+ * chain's `compose`). */
+export type LaunchPhase = "plan" | "sweep" | "optional" | "post";
+
 /** One unit of a planned launch. */
 export interface LaunchUnit {
-  /** "plan" for the round's tasks dir, "optional" for a follow-up round's
-   * optional rows, "sweep" for the sweep's. */
-  phase: "plan" | "sweep" | "optional";
+  phase: LaunchPhase;
   /** 1-based row, as the plan tables print it. */
   row: number;
   agent: string;
+  /** The strategy the row runs, from its file name (`NN-<agent>@<strategy>.md`);
+   * absent on a row of a lens with one strategy. */
+  strategy?: string;
   file: string;
   path: string;
   task: string;
@@ -67,9 +76,7 @@ export function resolveTaskDir(
   realRoot: string,
   extras: ReadonlySet<string>,
   pr: string | undefined,
-):
-  | { dir: string; phase: "plan" | "sweep" | "optional"; passes: string | undefined }
-  | { error: string } {
+): { dir: string; phase: LaunchPhase; passes: string | undefined } | { error: string } {
   const real = realDir(resolve(realRoot, input));
   if (!real) return { error: `${input}: no such directory` };
   // Resolved too: on the legacy VM `<sandbox>/state` was a SYMLINK to the state volume
@@ -80,49 +87,80 @@ export function resolveTaskDir(
   const ownPasses = (name: string) =>
     PASSES_DIR_RE.test(name) && (pr === undefined || name.startsWith(`pr-${pr}-round-`));
   if (dirname(real) === state && ownPasses(basename(real))) {
-    // The round's pass dir: its plan tasks. The sweep's dir is named itself.
+    // The round's pass dir: its plan tasks. The sweep's dir is named itself,
+    // and so is `tasks-post`: the discovery wave never lists the rows that
+    // run after it.
     const tasks = realDir(join(real, "tasks"));
     if (!tasks || tasks !== join(real, "tasks"))
       return { error: `${input}: the round has no task files (no tasks/ directory)` };
     return { dir: tasks, phase: "plan", passes: real };
   }
   const name = basename(real);
-  // `tasks-optional` — a follow-up round's optional rows.
-  const phaseOf = (n: string): "plan" | "sweep" | "optional" =>
-    n === "tasks-sweep" ? "sweep" : n === "tasks-optional" ? "optional" : "plan";
+  // `tasks-optional` — a follow-up round's optional rows; `tasks-post` — the
+  // rows the session launches once the discovery wave has returned.
+  const phaseOf = (n: string): LaunchPhase =>
+    n === "tasks-sweep"
+      ? "sweep"
+      : n === "tasks-optional"
+        ? "optional"
+        : n === "tasks-post"
+          ? "post"
+          : "plan";
   if (
-    (name === "tasks" || name === "tasks-sweep" || name === "tasks-optional") &&
+    (name === "tasks" ||
+      name === "tasks-sweep" ||
+      name === "tasks-optional" ||
+      name === "tasks-post") &&
     dirname(dirname(real)) === state &&
     ownPasses(basename(dirname(real)))
   )
     return { dir: real, phase: phaseOf(name), passes: dirname(real) };
   if (extras.has(real)) return { dir: real, phase: phaseOf(name), passes: undefined };
   return {
-    error: `${input}: not a round's task directory (only state/pr-<n>-round-<k>-passes/tasks, …/tasks-sweep or …/tasks-optional)`,
+    error: `${input}: not a round's task directory (only state/pr-<n>-round-<k>-passes/tasks, …/tasks-sweep, …/tasks-optional or …/tasks-post)`,
   };
 }
 
 /** The discovery task files of one dir, in row order (= the daemon's launch
- * order). Regular files only: a symlink is never followed. */
-export function listTaskFiles(dir: string): Array<{ row: number; agent: string; file: string }> {
-  const out: Array<{ row: number; agent: string; file: string }> = [];
+ * order), each with the strategy its name carries. Regular files only: a
+ * symlink is never followed. */
+export function listTaskFiles(
+  dir: string,
+): Array<{ row: number; agent: string; strategy?: string; file: string }> {
+  const out: Array<{ row: number; agent: string; strategy?: string; file: string }> = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isFile()) continue;
     const m = TASK_FILE_RE.exec(entry.name);
     if (!m || m[1] === undefined || m[2] === undefined) continue;
     if (VALIDATOR_AGENT_RE.test(m[2])) continue;
-    out.push({ row: Number.parseInt(m[1], 10), agent: m[2], file: entry.name });
+    out.push({
+      row: Number.parseInt(m[1], 10),
+      agent: m[2],
+      ...(m[3] !== undefined ? { strategy: m[3] } : {}),
+      file: entry.name,
+    });
   }
   return out.sort((a, b) => a.row - b.row || a.file.localeCompare(b.file));
 }
 
 /** The keys a unit answers to in `extra` and `skip`: its file name (with or
- * without `.md`), its row (`3`, or `sweep:3` / `optional:3` outside the
- * plan), its agent, its phase's wildcard (`plan:*` / `optional:*` /
- * `sweep:*`) and `*`. */
-export function unitKeys(u: Pick<LaunchUnit, "phase" | "row" | "file" | "agent">): string[] {
+ * without `.md`), its row (`3`, or `sweep:3` / `optional:3` / `post:3`
+ * outside the plan), its agent, its agent with its strategy
+ * (`<agent>@<strategy>`, on a strategy row), its phase's wildcard (`plan:*`
+ * / `optional:*` / `sweep:*` / `post:*`) and `*`. */
+export function unitKeys(
+  u: Pick<LaunchUnit, "phase" | "row" | "file" | "agent" | "strategy">,
+): string[] {
   const row = u.phase === "plan" ? String(u.row) : `${u.phase}:${u.row}`;
-  return [u.file, u.file.replace(/\.md$/, ""), row, u.agent, `${u.phase}:*`, "*"];
+  return [
+    u.file,
+    u.file.replace(/\.md$/, ""),
+    row,
+    u.agent,
+    ...(u.strategy !== undefined ? [`${u.agent}@${u.strategy}`] : []),
+    `${u.phase}:*`,
+    "*",
+  ];
 }
 
 export function stringList(value: unknown): string[] | undefined {
@@ -172,11 +210,7 @@ export function planLaunch(
     if (!realRoot) return { ok: false, error: `sandbox root ${root} is not readable` };
     const extras = sanctionedExtras(env);
 
-    const resolved: Array<{
-      dir: string;
-      phase: "plan" | "sweep" | "optional";
-      passes: string | undefined;
-    }> = [];
+    const resolved: Array<{ dir: string; phase: LaunchPhase; passes: string | undefined }> = [];
     for (const d of dirs) {
       const r = resolveTaskDir(d, realRoot, extras, env.QCR_PR?.trim() || undefined);
       if ("error" in r) return { ok: false, error: r.error };
@@ -187,9 +221,17 @@ export function planLaunch(
         return { ok: false, error: "the task directories belong to different rounds" };
       resolved.push(r);
     }
+    // The post-discovery rows read what the wave found (the chain's `compose`
+    // takes the wave's leads), so they launch in a call of their own, after it.
+    if (resolved.length > 1 && resolved.some((r) => r.phase === "post"))
+      return {
+        ok: false,
+        error:
+          "tasks-post launches on its own, once the discovery wave has returned: never with the round's other task directories",
+      };
     // Plan rows first, then the optional rows, then the sweep's — the daemon's
     // launch order within each.
-    const rank = { plan: 0, optional: 1, sweep: 2 } as const;
+    const rank = { plan: 0, optional: 1, sweep: 2, post: 3 } as const;
     resolved.sort((a, b) => rank[a.phase] - rank[b.phase]);
 
     const all: LaunchUnit[] = [];

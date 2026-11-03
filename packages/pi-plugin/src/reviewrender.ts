@@ -24,10 +24,12 @@ import {
   bareTag,
   CHECK_THIS_TAG,
   DEFERRED_TAG,
+  isSecurityFinding,
   ordinaryPostTag,
   SANCTIONED_TAGS,
   type SanctionedTagWord,
 } from "./severity.js";
+import { isPartialChain } from "./secevidence.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
 import {
   entryDisposition,
@@ -446,6 +448,8 @@ export interface PostedRenderConfig {
   /** The profile's `[posting]` policy, overlaid on the config the same way
    * on both routes (wire.ts / the bench: `applyProfilePosting`). */
   posting?: PostingPolicy;
+  /** `[security]`: only `fold` is read here (`applySecurityFoldToRecord`). */
+  security?: { fold?: boolean };
 }
 
 export interface PostedRenderOptions {
@@ -457,6 +461,9 @@ export interface PostedRenderOptions {
   dedupMerge?: boolean;
   /** The profile's `[posting]` policy; absent or all-default ⇒ no cut. */
   policy?: PostingPolicy;
+  /** `[security] fold`: a security entry doubted as `unverifiable` is
+   * posted as a `security-demoted` question (`applySecurityFoldToRecord`). */
+  securityFold?: boolean;
   /** The live route's hidden finding markers (see `renderReviewFromRecord`).
    * Never set by `postedRenderOptions`, so a caller that does not ask — the
    * bench — renders without them. */
@@ -472,6 +479,7 @@ export function postedRenderOptions(
     ...fallbacks,
     dedupMerge: cfg.review.dedup_merge === true,
     ...(isDefaultPosting(cfg.posting) ? {} : { policy: cfg.posting! }),
+    ...(cfg.security?.fold === true ? { securityFold: true } : {}),
   };
 }
 
@@ -489,6 +497,115 @@ export function postedClassOf(
   if (tag === "check this") return "check";
   if (!TAGS.includes(tag)) return "question";
   return severityTagOf(tag, str(entry.severity), num(entry.confidence), str(entry.reachability));
+}
+
+/** Is a record entry a security finding (severity.ts `isSecurityFinding`)? */
+export function securityEntry(entry: Record<string, unknown>): boolean {
+  return isSecurityFinding(str(entry.kind), str(entry.lens) ?? str(entry.name));
+}
+
+/** Is a record entry a partial exploit chain (secevidence.ts)? */
+export function partialChainEntry(entry: Record<string, unknown>): boolean {
+  return isPartialChain({
+    kind: str(entry.kind),
+    word: str(entry.word),
+    security_outcome: str(entry.security_outcome),
+  });
+}
+
+/** The reason a folded entry carries ahead of its own. */
+export const SECURITY_FOLD_REASON =
+  "Security fold: the validator could not verify this security finding, so it is asked as a question naming the proof gap rather than doubted.";
+
+/**
+ * A folded candidate's posted body: its own text — the evidence the lens
+ * wrote — then the uncertainty and the proof gap the validator named (its
+ * doubt's reason), as a question for the person to verify. A body that
+ * already quotes that gap is left as it is. With no reason recorded the gap
+ * is said to be unnamed, never left out: a folded question always says it is
+ * unverified.
+ */
+export function foldedQuestionBody(body: string, gap: string | null): string {
+  const own = body.trimEnd();
+  const named = gap?.trim() ?? "";
+  if (named !== "" && own.includes(named)) return own;
+  const why =
+    named !== ""
+      ? `: ${/[.!?]$/.test(named) ? named : `${named}.`}`
+      : ", and it named no proof gap.";
+  return `${own}\n\n**Unverified.** The validator could not prove this${why} Can you confirm whether it holds?`;
+}
+
+/**
+ * The security fold on the render route (`[security] fold`): a security entry
+ * the validator left `doubted` — or `killed`, which the record parser folds
+ * onto `doubted` — with the word `unverifiable` is rewritten in place as the
+ * session should have recorded it: `downgraded`, word `security-demoted`,
+ * axis `confidence`, `posted_as: "question"`. Its severity and confidence are
+ * kept: confidence carries the doubt. A partial chain, a `refuted` and a
+ * `bad-anchor` entry stay doubted. A security entry recorded `downgraded`
+ * with the word `security-demoted` but no `posted_as` — the fold's own answer
+ * with its tag forgotten, which would otherwise count as never posted
+ * (findingkey.ts `entryDisposition`) — is given `posted_as: "question"`, its
+ * own reason kept. The only fold the code makes; the shell route's session
+ * folds by the round prompt (templates.ts `renderSecurityFoldNote`). Returns
+ * the keys it folded; the record object itself when it folded none.
+ */
+export function applySecurityFoldToRecord(record: unknown): {
+  record: unknown;
+  folded: string[];
+} {
+  if (typeof record !== "object" || record === null || Array.isArray(record))
+    return { record, folded: [] };
+  const rec = record as Record<string, unknown>;
+  const rawEntries = entriesOf(rec);
+  if (rawEntries === null) return { record, folded: [] };
+  const folded: string[] = [];
+  const entries = rawEntries.map((e, index) => {
+    if (typeof e !== "object" || e === null) return e;
+    const entry = e as Record<string, unknown>;
+    const d = normalizeDisposition(entry.disposition);
+    const word = (str(entry.word) ?? str(entry.reason_word) ?? "").toLowerCase();
+    if (
+      d === "downgraded" &&
+      word === "security-demoted" &&
+      str(entry.posted_as) === null &&
+      securityEntry(entry) &&
+      !partialChainEntry(entry)
+    ) {
+      folded.push(findingRecordKey(entry, index));
+      const reason = str(entry.reason);
+      return {
+        ...entry,
+        posted_as: "question",
+        axis: str(entry.axis) ?? "confidence",
+        reason: reason ?? SECURITY_FOLD_REASON,
+      };
+    }
+    if (
+      (d !== "doubted" && d !== "killed") ||
+      word !== "unverifiable" ||
+      !securityEntry(entry) ||
+      partialChainEntry(entry)
+    )
+      return e;
+    folded.push(findingRecordKey(entry, index));
+    const reason = str(entry.reason);
+    const body = str(entry.body);
+    return {
+      ...entry,
+      disposition: "downgraded",
+      word: "security-demoted",
+      axis: "confidence",
+      posted_as: "question",
+      // The body is what posts (readPosted prefers it to the reason), so the
+      // uncertainty and the proof gap go into it, not only into the reason.
+      ...(body !== null ? { body: foldedQuestionBody(body, reason) } : {}),
+      reason: reason ? `${SECURITY_FOLD_REASON} ${reason}` : SECURITY_FOLD_REASON,
+    };
+  });
+  if (folded.length === 0) return { record, folded };
+  return { record: { ...rec, findings: entries }, folded };
 }
 
 /** Why a withheld entry is in the record and not on the PR. */
@@ -533,11 +650,14 @@ export function applyPostingPolicyToRecord(
   record: unknown,
   policy: PostingPolicy | undefined,
 ): { record: unknown; withheld: PolicyWithheld[] } {
-  if (isDefaultPosting(policy) || typeof record !== "object" || record === null)
-    return { record, withheld: [] };
+  if (typeof record !== "object" || record === null) return { record, withheld: [] };
   const rec = record as Record<string, unknown>;
   const rawEntries = entriesOf(rec);
   if (rawEntries === null) return { record, withheld: [] };
+  // A partial chain never posts, under any policy (postingpolicy.ts): with no
+  // policy and no partial chain posted, the record is left as it is.
+  if (isDefaultPosting(policy) && !rawEntries.some((e) => isPostedEntry(e) && partialChainEntry(e)))
+    return { record, withheld: [] };
   const entries = rawEntries.map((e) =>
     typeof e === "object" && e !== null ? { ...(e as Record<string, unknown>) } : e,
   );
@@ -551,6 +671,8 @@ export function applyPostingPolicyToRecord(
         cls: postedClassOf(e),
         severity: str(e.severity),
         key: keys.get(e)!,
+        security: securityEntry(e),
+        partialChain: partialChainEntry(e),
       };
     },
     policy,
@@ -590,16 +712,24 @@ export function renderPostedReview(
   record: unknown;
   merges: PostCheckMerge[];
   withheld: PolicyWithheld[];
+  /** The record keys the security fold turned into questions. */
+  folded: string[];
 } {
-  const { dedupMerge, policy, ...renderOpts } = opts;
+  const { dedupMerge, policy, securityFold, ...renderOpts } = opts;
   const candidates =
     typeof record === "object" && record !== null && !Array.isArray(record)
       ? recordEntries(record as Record<string, unknown>)
       : null;
-  const normalized =
+  const shaped =
     candidates !== null && !Array.isArray((record as Record<string, unknown>).findings)
       ? { ...(record as object), findings: candidates }
       : record;
+  // The fold first: a folded question is a posted entry the post-check may
+  // merge and the policy may cut, like any other.
+  const fold = securityFold
+    ? applySecurityFoldToRecord(shaped)
+    : { record: shaped, folded: [] as string[] };
+  const normalized = fold.record;
   const checked = dedupMerge
     ? postCheckRecord(normalized)
     : { record: normalized, merges: [] as PostCheckMerge[] };
@@ -609,9 +739,19 @@ export function renderPostedReview(
     ...(policy?.body === "verdict" ? { bodyMode: "verdict" as const } : {}),
   });
   let out = cut.record;
-  if ((checked.merges.length || cut.withheld.length) && typeof out === "object" && out !== null)
+  if (
+    (checked.merges.length || cut.withheld.length || fold.folded.length) &&
+    typeof out === "object" &&
+    out !== null
+  )
     out = { ...(out as Record<string, unknown>), comments_posted: rendered.comments.length };
-  return { rendered, record: out, merges: checked.merges, withheld: cut.withheld };
+  return {
+    rendered,
+    record: out,
+    merges: checked.merges,
+    withheld: cut.withheld,
+    folded: fold.folded,
+  };
 }
 
 /** The posting fields a rendered round's findings record carries, as the

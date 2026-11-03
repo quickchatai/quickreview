@@ -213,6 +213,13 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // template, the pass plan, or a rendered note changes; re-pin deliberately and
 // say why in the commit, never to make `[posting]` pass.
 //
+// The security family moved them all: the findings-record example gains a
+// security entry, the `posted_as` bullet covers a downgraded entry that went
+// out, the kill-word list gains `partial-chain`, and the validator gains the
+// security addenda. The fourteen `pass-sec-*` lenses join the build but not
+// the addable list of a round with no security signal, as this fixture's is.
+// None of it is `[posting]`.
+//
 // `[review] render_outputs` defaults on, so step 6 of every round carries the
 // `{{render_note}}` (write the findings record first, render the body and the
 // inline comments with scripts/render-review.sh). The fixture has no ledger
@@ -220,9 +227,9 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 //
 // With `dedup_merge = false`, `coverage_check = false` and no posting policy:
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "5a6b8eee1fedf57da0cf8cc7f87bb66ddda4447c12217ed92a0f1d4aa2644578",
-  "re-review": "8e3d391f8d249489f97a154aa642725da69e9eeecf649710102783d337c9c19c",
-  staleness: "a82515026ab63e8e187095cab7e539cfb9515c14a673f6182bb4a53816f41e31",
+  first: "80a61e1cfc09d1d09a7db21d74f30005934344491555450460a13ec2fe9dfdbc",
+  "re-review": "3bf11a63dcbb5609eb4e7e5161546fc8f025852132023665ae6fd65381457b38",
+  staleness: "b584759981b0b64a18e36a207ffdd5bd6550077aadf7970aea38663d6893e4ce",
 };
 // The default orders: `[review] dedup_merge` on (step 4 carries the
 // `{{dedup_note}}` — group candidates with `cluster_findings` before the
@@ -231,29 +238,29 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // posting-policy note), and `[review] coverage_check` on (the fixture PR
 // changes source files, so step 2 ends with the `{{coverage_note}}`).
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "ad5d377f8367e00161235e522b2e48536e13c04cc802b0688fd0e7018a09a76a",
-  "re-review": "88f16158a6b65d415b35c7902745a7a4c76bf76b7a3799b28cd8607e231e5b9c",
-  staleness: "60ac4fe87336a297b9e47755347679dc7dfb8b1270bf0aa0b6da54a55a3e14ff",
+  first: "90f9a34cd233b8a8af4f791d123c1a9e61a6b8d9816eb0bce2924155a662617b",
+  "re-review": "441abd8fd240f0a4f6009c00e363719794305f5bde56897bd27457bd987e5440",
+  staleness: "35d2ee04db7f26e101be9ca1c2eda07a0b791cc630dfd16619f14f7ccf316727",
 };
 // `[review] coverage_check = false`: the default orders without the
 // `{{coverage_note}}`.
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "4e8e9a9642ba9f9f461f9dc9854bcf5b2fb839218d7a837d5e90061abe668643",
-  "re-review": "0f5aab47c6fe51dd64c4b302496aa766c8622ab52dd69b71bc221ae6ef26842d",
-  staleness: "2b95af0a49ef7abad2af0888f196e807adcb643fa1cd0fd40934fc5981750f46",
+  first: "1104efb08375393da61dca3e4f0de8a86a07bc6a8d84cd9227fe5ae59dad43a9",
+  "re-review": "2f769e59222087845863e570449c742842bfeb0e13e1ce01c1bcfb3f9419faf9",
+  staleness: "e10e198b70f98bc5b0a11b50878ea346b332af3fb61888897243ee74f4621a23",
 };
 // `[review] render_outputs = false`, `dedup_merge = false`, `coverage_check =
 // false` and no posting policy: the orders without any of those levers.
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "5ca1f7843fb9a86f24e613368c2e7e58b0a4e2886fabd5a55408c3f2509b69e7",
-  "re-review": "4ecb375e17c8b4212bea3985fe4bdaec897edae8fc8a7641c3eac20cf7ab4542",
-  staleness: "53b9857224fada7bad93597f0cc45518a1ea7d9d4abe6761604ac683dff42e0e",
+  first: "780e6af3347c38c70dfc6c8c30407be84298633fac95f45760a2dbefb1623cd3",
+  "re-review": "f0f282e16815f9f9d90cb2c8840aa1b8a0d651cc332ccbf69b0df7cd5b391596",
+  staleness: "2b30d75c173ab6cfc4142146377466adee99b9551ba6653f235f4046f91fb0d4",
 };
 // The default profile's built agents with `[review] dedup_merge = false` and no
 // posting policy. These hashes move only when an agent body, an addendum or the
 // agent build changes on purpose; `[posting]` must never move them.
-const GOLDEN_AGENTS_NO_DEDUP = "76f6c2ff687eba37da3cc55812c0c145074ae80387c20d4ba611e5212b69f6e3";
+const GOLDEN_AGENTS_NO_DEDUP = "c148871d8926d12b8247545b99b4ff069c341b2f8a6a3611eed94e5f9a7941bc";
 // The default build: as GOLDEN_AGENTS_NO_DEDUP plus `dedup-group-validate`
 // (pass-validate, `[review] dedup_merge` on by default) and the default
 // profile's posting addendum for `repeat_sites = false`.
-const GOLDEN_AGENTS = "e35731c0247eb5f68c0fce12e2b90a865612ff43f8614473588af71f38414860";
+const GOLDEN_AGENTS = "97ca1cecd4b0647d58a19b57ead9777283b95c69a392e9ccf20edadc8f9447a9";

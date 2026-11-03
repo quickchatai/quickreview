@@ -109,6 +109,14 @@ export function renderDeltaRound(i: {
   readFile?: FollowUpOneShotArgs["readFile"];
   profileLookup?: FollowUpOneShotArgs["profileLookup"];
   memory?: FollowUpOneShotArgs["memory"];
+  /** A security review asked for on this run (`/qcr-review --security`). */
+  securityRequest?: FollowUpOneShotArgs["securityRequest"];
+  /** The repository's threat model at the base commit (it wins over the
+   * profile's copy). */
+  readRepoThreatModel?: FollowUpOneShotArgs["readRepoThreatModel"];
+  /** The deterministic security facts, and the route inventory on demand. */
+  securityFacts?: FollowUpOneShotArgs["securityFacts"];
+  securityInventory?: FollowUpOneShotArgs["securityInventory"];
 }): FollowUpOneShotPrompts {
   const last = lastRound(i.state);
   const list = openFindings(i.state, last.round_no + 1);
@@ -127,8 +135,14 @@ export function renderDeltaRound(i: {
     ...(i.readFile ? { readFile: i.readFile } : {}),
     ...(i.profileLookup ? { profileLookup: i.profileLookup } : {}),
     ...(i.memory ? { memory: i.memory } : {}),
+    ...(i.securityRequest ? { securityRequest: i.securityRequest } : {}),
+    ...(i.readRepoThreatModel ? { readRepoThreatModel: i.readRepoThreatModel } : {}),
+    ...(i.securityFacts ? { securityFacts: i.securityFacts } : {}),
+    ...(i.securityInventory ? { securityInventory: i.securityInventory } : {}),
     decide: (ctx) =>
       planFollowUp(i.cfg, ctx.heuristics, {
+        // The delta is planned with the inputs that planned the whole target.
+        ...ctx.security,
         delta: i.delta,
         fromSha: last.head_sha,
         files: i.files,

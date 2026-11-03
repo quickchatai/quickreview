@@ -152,6 +152,11 @@ export interface IssueCommentFull {
   user_type: string;
   body: string;
   created_at: string | null;
+  /** The author's relation to the repository (`OWNER`, `MEMBER`,
+   * `COLLABORATOR`, `CONTRIBUTOR`, `NONE`, …) as GitHub reports it: the
+   * reconcile backstop of the `@<bot> security` command reads it
+   * (src/securityrequest.ts). Absent ⇒ not reported, which no check accepts. */
+  author_association?: string;
 }
 
 /** One past review by the bot identity, as the importer sees it. */
@@ -1079,6 +1084,9 @@ export class GitHubAdapter {
       user_type: c.user?.type ?? "User",
       body: c.body ?? "",
       created_at: c.created_at ?? null,
+      ...(typeof c.author_association === "string"
+        ? { author_association: c.author_association }
+        : {}),
     }));
   }
 
@@ -1332,14 +1340,16 @@ export class GitHubAdapter {
     });
   }
 
-  /** A claimed PR-level author response; ordinary posting guards and dry-run apply. */
-  async createIssueComment(n: number, body: string): Promise<GateResult> {
+  /** A comment in a PR's conversation — a claimed PR-level author response,
+   * or the acknowledgement of a security request (`note` says which);
+   * ordinary posting guards and dry-run apply. */
+  async createIssueComment(n: number, body: string, note?: string): Promise<GateResult> {
     return this.gate.execute({
       kind: "create_issue_comment",
       method: "POST",
       path: `/repos/${this.owner}/${this.repo}/issues/${n}/comments`,
       body: { body },
-      note: `answer the author in PR #${n}'s conversation`,
+      note: note ?? `answer the author in PR #${n}'s conversation`,
       pr: n,
     });
   }

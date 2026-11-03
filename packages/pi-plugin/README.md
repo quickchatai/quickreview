@@ -22,8 +22,14 @@ knows the command and can tell you the line to type.
     `--uncommitted` reviews the uncommitted changes alone.
   - The preset, first when given: `quick` (lower reasoning, about half the
     cost), `full` (the whole target again at the highest reasoning) or
-    `security` (only the security and data-safety lenses the change
-    triggers).
+    `security` (the whole `pass-sec-*` security family, planned as a
+    request whatever the change's signals say, and the validator; every
+    other lens is skipped).
+  - `--security` asks for a security review on top of the plan: all
+    fourteen `pass-sec-*` lenses are planned, at the risk tier, except any
+    your profile switched off. The `security` preset already asks for it.
+    The profile that reviews only security on every review is `security`
+    (`--profile security`).
   - `--preview` shows the plan and the price without running anything;
     `--stop` stops the review that is running. One review runs per session
     at a time, and ending the session stops it.

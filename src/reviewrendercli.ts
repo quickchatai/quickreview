@@ -20,7 +20,10 @@ import { loadConfig, REVIEW_DEFAULTS } from "./config.js";
 import { findingsRecordPath } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import { homeProfileLookup } from "./install.js";
 import { applyProfilePosting } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
-import { loadProfilePosting } from "@quickchatai/pi-quickreview/src/profiles.js";
+import {
+  loadProfilePosting,
+  loadProfileSecurity,
+} from "@quickchatai/pi-quickreview/src/profiles.js";
 import {
   postedRenderOptions,
   renderPostedReview,
@@ -42,6 +45,8 @@ export function renderRound(
       rendered: RenderedReview;
       merges: PostCheckMerge[];
       withheld: PolicyWithheld[];
+      /** The record keys the security fold turned into questions. */
+      folded: string[];
       body: string;
       comments: string;
     }
@@ -68,7 +73,14 @@ export function renderRound(
     writeFileSync(tmp, JSON.stringify(out.record, null, 2) + "\n");
     renameSync(tmp, recordPath);
   }
-  return { rendered: out.rendered, merges: out.merges, withheld: out.withheld, body, comments };
+  return {
+    rendered: out.rendered,
+    merges: out.merges,
+    withheld: out.withheld,
+    folded: out.folded,
+    body,
+    comments,
+  };
 }
 
 /** The install's render config: the live config when it loads, else the
@@ -80,19 +92,34 @@ export function renderConfig(
   load: {
     config: typeof loadConfig;
     profilePosting: typeof loadProfilePosting;
+    /** The profile's `[security]`; the real chain when not given. */
+    profileSecurity?: typeof loadProfileSecurity;
   } = { config: loadConfig, profilePosting: loadProfilePosting },
 ): { cfg: PostedRenderConfig; unread?: string } {
   let review: PostedRenderConfig["review"] = { dedup_merge: REVIEW_DEFAULTS.dedup_merge };
   let posting: PostedRenderConfig["posting"];
+  let fold = false;
   let unread: string | undefined;
   try {
     const loaded = load.config();
     review = { dedup_merge: loaded.review.dedup_merge };
+    const lookup = homeProfileLookup();
     // The profile's `[posting]` policy, overlaid exactly as the daemon does
     // (wire.ts buildParts) — so this route enforces the cut the bench does.
+    const profilePosting = load.profilePosting(root, loaded.review.profile, lookup);
+    // The profile's `[security]` over config.toml's, as the daemon resolves
+    // it (profiles.ts applyProfileOverlays): `fold` drives the render
+    // route's security fold, and a security-only review scopes what posts.
+    const security = {
+      ...loaded.security,
+      ...(load.profileSecurity ?? loadProfileSecurity)(root, loaded.review.profile, lookup),
+    };
+    fold = security.fold === true;
     posting = applyProfilePosting(
       loaded,
-      load.profilePosting(root, loaded.review.profile, homeProfileLookup()),
+      security.only === true && profilePosting.scope === undefined
+        ? { ...profilePosting, scope: "security" }
+        : profilePosting,
     ).posting;
   } catch (err) {
     unread = err instanceof Error ? err.message : String(err);
@@ -101,6 +128,7 @@ export function renderConfig(
     cfg: {
       review,
       ...(posting ? { posting } : {}),
+      ...(fold ? { security: { fold: true } } : {}),
       ...(botLogin ? { github: { bot_login: botLogin } } : {}),
     },
     ...(unread !== undefined ? { unread } : {}),
@@ -128,6 +156,8 @@ function main(argv: string[]): number {
   );
   for (const w of res.withheld)
     console.log(`render-review: posting policy withheld ${w.id} (${w.word})`);
+  for (const key of res.folded)
+    console.log(`render-review: security fold posted ${key} as a question (security-demoted)`);
   for (const m of res.merges)
     console.log(
       `render-review: post-check merged ${m.follower} into ${m.lead} (${m.path}:${m.line})`,

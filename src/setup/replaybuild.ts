@@ -364,7 +364,7 @@ function buildSide(deps: SidesDeps, name: SideName, src: SideSource, parsed: Con
     models: roundAgentModels(cfg),
     addenda: [
       ...PASS_ADDENDA,
-      ...configAddenda(cfg.review),
+      ...configAddenda(cfg.review, cfg.security),
       ...loadProfileAddenda(deps.root, src.profile, lookup),
       ...lensTuningAddenda(cfg.lenses),
       ...postingPolicyAddenda(cfg.posting),

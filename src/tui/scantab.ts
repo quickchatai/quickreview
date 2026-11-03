@@ -7,7 +7,8 @@
 //   units    one row per unit (count under the filter, ▲ the hotspot, the
 //            run's progress mark), `all` first
 //   right    the selected unit's findings grouped by validity tier — confirmed
-//            first, then likely, doubtful and unknown (the scan validator is
+//            first, then likely, needs-review (a security finding for a
+//            person to check), doubtful and unknown (the scan validator is
 //            the skeptic) — most severe first inside
 //            each, style findings grouped per rule with a count — over the
 //            selected one's detail; `t` steps the tier filter;
@@ -84,6 +85,7 @@ import {
   type ScanStopResult,
   type ValidityView,
   VALIDITY_ORDER,
+  isDoubted,
   validityOf,
 } from "../setup/scanreport.js";
 import { currentLease, leaseIsLive, type LeaseRecord } from "../setup/scanlease.js";
@@ -147,7 +149,7 @@ export function parseScanFilter(
     else
       return {
         ok: false,
-        error: `"${word}" is not a filter — state=new|promoted|dismissed|fixed · lens=<name> · sev=P0…P3|nit · tier=confirmed|likely|doubtful|unknown · doubted · valid`,
+        error: `"${word}" is not a filter — state=new|promoted|dismissed|fixed · lens=<name> · sev=P0…P3|nit · tier=${VALIDITY_ORDER.join("|")} · doubted · valid`,
       };
   }
   return { ok: true, filter };
@@ -171,14 +173,13 @@ export function matchesFilter(f: ScanFilter, x: ScanFinding): boolean {
   if (f.lens && ![x.lens, ...(x.lenses ?? [])].some((l) => l === f.lens || l === `pass-${f.lens}`))
     return false;
   if (f.severity && x.severity !== f.severity) return false;
-  if (f.doubted !== undefined && (x.doubt !== null && x.doubt !== undefined) !== f.doubted)
-    return false;
+  if (f.doubted !== undefined && isDoubted(x) !== f.doubted) return false;
   if (f.validity !== undefined && validityOf(x) !== f.validity) return false;
   return true;
 }
 
-/** `t`'s step through the tier filter: all → confirmed → likely → doubtful
- * → unknown → all. */
+/** `t`'s step through the tier filter: all → confirmed → likely →
+ * needs-review → doubtful → unknown → all. */
 export function nextTier(v: ValidityView | undefined): ValidityView | undefined {
   if (v === undefined) return VALIDITY_ORDER[0];
   const i = VALIDITY_ORDER.indexOf(v);
@@ -224,7 +225,8 @@ const sevRank = (s: ScanSeverity): number => {
 };
 
 /** The list the right pane shows: findings grouped by validity tier —
- * confirmed, likely, doubtful, unknown — and most severe first inside each
+ * confirmed, likely, needs-review, doubtful, unknown — and most severe first
+ * inside each
  * (then path and line), style findings folded into one row per rule and
  * tier. */
 export function reportItems(findings: readonly ScanFinding[]): ReportItem[] {
@@ -612,6 +614,7 @@ const MODE_LABEL: Record<ScanRun["mode"], string> = {
   stage1: "stage 1",
   delta: "delta",
   stage2: "stage 2",
+  "threat-model": "threat model",
 };
 
 function stateWord(state: ScanRun["state"] | "interrupted", why: string | null): string {
@@ -666,8 +669,11 @@ function headerLines(deps: ScanTabDeps, repo: string | undefined): string[] {
     const unknown = tier("unknown");
     const notReproduced = live.filter((f) => f.not_reproduced).length;
     const q = fs.kind === "read" ? fs.value.question : null;
+    // needs-review is said only when a security fold stored some.
+    const review = tier("needs-review");
     counts =
-      `${live.length} findings · ${tier("confirmed")} confirmed · ${tier("likely")} likely · ${tier("doubtful")} doubtful` +
+      `${live.length} findings · ${tier("confirmed")} confirmed · ${tier("likely")} likely · ` +
+      `${review > 0 ? `${review} needs-review · ` : ""}${tier("doubtful")} doubtful` +
       `${unknown > 0 ? ` · ${unknown} unknown` : ""}` +
       `${notReproduced > 0 ? ` · ${notReproduced} not reproduced` : ""}` +
       `${q ? ` · ${q.unreported.length} awaiting the companion's match` : ""}`;
@@ -677,12 +683,14 @@ function headerLines(deps: ScanTabDeps, repo: string | undefined): string[] {
 }
 
 function findingTitle(f: ScanFinding): string {
-  return `${STATE_GLYPH[f.state] ?? "?"} ${f.severity} ${f.lens.replace(/^pass-/, "")}  ${sanitizeText(f.path).replace(/\s+/g, " ")}:${f.start}${f.doubt ? "  ?" : ""}${f.not_reproduced ? "  ↺" : ""}${dismissedLookalike(f) ? "  ≈" : ""}`;
+  return `${STATE_GLYPH[f.state] ?? "?"} ${f.severity} ${f.lens.replace(/^pass-/, "")}  ${sanitizeText(f.path).replace(/\s+/g, " ")}:${f.start}${isDoubted(f) ? "  ?" : ""}${f.not_reproduced ? "  ↺" : ""}${dismissedLookalike(f) ? "  ≈" : ""}`;
 }
 
 const TIER_TITLE: Record<ValidityView, string> = {
   confirmed: "CONFIRMED — the skeptic traced a concrete scenario",
   likely: "LIKELY — a real mechanism, reachability not fully traced",
+  "needs-review":
+    "NEEDS REVIEW — a security finding the skeptic could not settle; check its proof gap",
   doubtful: "DOUBTFUL — refuted or class-matched; kept, not dropped",
   unknown: "UNKNOWN — no skeptic judged these",
 };
@@ -701,6 +709,12 @@ function validityLines(f: ScanFinding, width: number): string[] {
     return wrap(sanitizeText(`? doubtful — ${f.doubt.word}${cls}: ${f.doubt.reason}`), width).map(
       (l) => `${WARN}${l}${RESET}`,
     );
+  }
+  // A security finding for a person: its doubt is the proof gap to check.
+  if (v === "needs-review") {
+    const cls = f.doubt?.class ? ` [${f.doubt.class}]` : "";
+    const gap = f.doubt ? ` — ${f.doubt.word}${cls}: ${f.doubt.reason}` : "";
+    return wrap(sanitizeText(`! needs review${gap}`), width).map((l) => `${WARN}${l}${RESET}`);
   }
   if (f.doubt)
     return wrap(sanitizeText(`? may not be valid — ${f.doubt.word}: ${f.doubt.reason}`), width).map(
@@ -1239,7 +1253,7 @@ export function installScanTab(app: App, deps: ScanTabDeps): ScanTabState {
         }
         case "f":
           theApp.promptInput(
-            "scan filter — state=new|promoted|dismissed|fixed lens=<name> sev=P0…P3|nit tier=confirmed|likely|doubtful|unknown doubted|valid (F clears)",
+            `scan filter — state=new|promoted|dismissed|fixed lens=<name> sev=P0…P3|nit tier=${VALIDITY_ORDER.join("|")} doubted|valid (F clears)`,
             filterLabel(st.filter),
             (text) => {
               const r = parseScanFilter(text);

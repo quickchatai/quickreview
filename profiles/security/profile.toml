@@ -1,0 +1,87 @@
+# security — a security-only review: the fourteen pass-sec-* lenses and the
+# validator, nothing else (profiles/security/README.md).
+#
+# What changes against `default`:
+#   * `[security] only = true` switches off every lens outside the security
+#     family and pass-validate — baseline, bounds, the general pass-security,
+#     the sweep, tests and the quality lenses included — through the same
+#     `enabled = false` a profile writes by hand. A lens added to the code
+#     later is switched off too, with no edit here.
+#   * Every family lens runs at the risk tier (sol-high, one variant), as on
+#     every profile; four of them are planned on every PR that changes code
+#     or config, so a security-only review never plans nothing.
+#   * The validator runs at sol-high whatever the preset says, and an
+#     unverified security finding survives as a question (`fold`).
+#   * Security findings post in their own budget; nothing else posts, a
+#     [blocker] included (the validator kills every non-security candidate
+#     out-of-scope first, and posting withholds what it missed).
+#
+# An APPROVE from this profile means "no security finding", never "this PR
+# is correct". Select it with `[review] profile = "security"`.
+extends = "default"
+
+[security]
+only = true
+# Every content trigger plans its lens, the weak ones too (default: strong).
+triggers = "all"
+# An unverifiable security candidate survives as a question, never dies.
+fold = true
+
+# The floor: planned on every PR that changes code or config, whatever
+# its triggers say. A docs-only PR plans none of them.
+[lenses.pass-sec-authn-coverage]
+plan = "always"
+
+[lenses.pass-sec-access]
+plan = "always"
+
+[lenses.pass-sec-injection]
+plan = "always"
+
+[lenses.pass-sec-secrets-data]
+plan = "always"
+
+# The adversary every security finding passes runs at the risk tier.
+[lenses.pass-validate]
+min_tier = "sol-high"
+
+[posting]
+# Security findings' own slots, counted apart from any comment cap.
+security_max = 8
+# Post security findings only (only = true sets it too; said here so the
+# profile reads whole).
+scope = "security"
+
+[scan]
+depth = "deep"
+# A scan runs the family alone.
+lenses = [
+  "pass-sec-authn-coverage",
+  "pass-sec-access",
+  "pass-sec-privesc",
+  "pass-sec-iam",
+  "pass-sec-tokens",
+  "pass-sec-toctou",
+  "pass-sec-injection",
+  "pass-sec-boundaries",
+  "pass-sec-secrets-data",
+  "pass-sec-supply-chain",
+  "pass-sec-llm",
+  "pass-sec-infra",
+  "pass-sec-variant",
+  "pass-sec-exploit-chain",
+]
+# The deep floor: these read every file stage 1 reads.
+deep_lenses = [
+  "pass-sec-authn-coverage",
+  "pass-sec-access",
+  "pass-sec-injection",
+  "pass-sec-boundaries",
+  "pass-sec-secrets-data",
+  "pass-sec-variant",
+]
+# Security findings only: `security` keeps every `security:<class>`; a chain
+# is `exploit-chain`, or `partial-chain` when more than one hop is unproven.
+kinds = ["security", "exploit-chain", "partial-chain"]
+# Draft a threat model first when neither the repository nor a profile has one.
+threat_model = "auto"

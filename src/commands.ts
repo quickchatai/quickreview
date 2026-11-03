@@ -185,8 +185,9 @@ export type Command =
   | { command: "archive-run" }
   | { command: "archive-restore"; pr: number }
   /** The operator's "review this PR now" (`OPERATOR_COMMANDS`): never valid
-   * in a session's file. */
-  | { command: "review-now"; pr: number }
+   * in a session's file. `security: true` also asks for a security review
+   * (src/securityrequest.ts): every round of the PR plans the security family. */
+  | { command: "review-now"; pr: number; security?: true }
   /** The operator's round controls (`CONTROL_COMMANDS`): never valid in a
    * session's file. */
   | { command: "steer"; pr: number; text: string }
@@ -271,8 +272,13 @@ export interface CommandDeps {
   archiveRun?(file: string): Promise<FileOutcome | void> | FileOutcome | void;
   archiveRestore?(pr: number, file: string): Promise<FileOutcome | void> | FileOutcome | void;
   /** The operator's "review this PR now": queue one PR for a human-asked
-   * round. Reached only for an operator-issued command; optional like `drain`. */
-  reviewNow?(pr: number, file: string): Promise<FileOutcome | void> | FileOutcome | void;
+   * round, and with `security` ask for a security review of it. Reached only
+   * for an operator-issued command; optional like `drain`. */
+  reviewNow?(
+    pr: number,
+    file: string,
+    opts?: { security?: boolean },
+  ): Promise<FileOutcome | void> | FileOutcome | void;
   /** The operator's round controls (`CONTROL_COMMANDS`), forwarded to the PR's
    * host. Reached only for an operator-issued command; optional like `drain`,
    * so a daemon with no worker host refuses them with a reason. */
@@ -620,10 +626,16 @@ function validateOperatorCommand(
       return { ok: true, command: { command: "archive-restore", pr: obj["pr"] } };
     }
     case "review-now": {
-      const err = fieldError(obj, ["pr"]);
+      const err = fieldError(obj, ["pr", "security"]);
       if (err) return { ok: false, reason: err };
       if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
-      return { ok: true, command: { command: "review-now", pr: obj["pr"] } };
+      const security = obj["security"];
+      if (security !== undefined && typeof security !== "boolean")
+        return { ok: false, reason: "'security' must be a boolean" };
+      return {
+        ok: true,
+        command: { command: "review-now", pr: obj["pr"], ...(security ? { security: true } : {}) },
+      };
     }
     case "steer":
     case "follow-up":
@@ -995,7 +1007,13 @@ export async function executeCommand(
           reason: `'${command.command}' is the operator's alone — refused for issuer '${ctx.issuer}'`,
         };
       if (!deps.reviewNow) return { ok: false, reason: "review-now is not wired on this daemon" };
-      return normalize(await deps.reviewNow(command.pr, ctx.delivery_key ?? ctx.file));
+      return normalize(
+        await deps.reviewNow(
+          command.pr,
+          ctx.delivery_key ?? ctx.file,
+          command.security ? { security: true } : {},
+        ),
+      );
     }
     case "steer":
     case "follow-up":

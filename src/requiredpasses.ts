@@ -2,8 +2,9 @@
  * Required passes: the rows a round may not post without.
  *
  * The plan builder marks them (`PassPlanEntry.required`, `buildPassPlan` in
- * dispatch.ts): pass-baseline, every row of a split baseline, and the risk
- * passes. This module answers one question over the round's recorded plan
+ * dispatch.ts): pass-baseline, every row of a split baseline, the risk
+ * passes outside the security family, and the exploit chain's `delta` row.
+ * This module answers one question over the round's recorded plan
  * and its live round-progress snapshot: did a required pass FAIL and never
  * complete? Only positive evidence counts — a snapshot that is missing,
  * unreadable or belongs to another round is UNKNOWN, never a gap, so broken
@@ -24,6 +25,24 @@
  * executions failed and fewer executions completed than the plan has rows
  * for it. A session that relaunched the failed pass and got a return is
  * whole again; a still-running pass is not a gap (nothing has failed yet).
+ *
+ * A row that runs one strategy of its lens (the exploit chain's `delta`,
+ * `forward`, …: one agent, one row per strategy) is its own obligation,
+ * keyed `<lens>:<strategy>`, and only executions launched for that strategy
+ * (`LiveAgentProgress.strategy`, from the task file's name) count for it: a
+ * completed `forward` never covers a failed `delta`. A row with no strategy
+ * counts every execution of its lens, as before. When a strategy row's lens
+ * also ran executions with no recorded strategy (a pass launched without
+ * its task file's name), which row each ran cannot be told: the gap is then
+ * judged over the lens as a whole, failing toward blocking, and
+ * `failedSecurityRows` answers unknown unless the lens completed every row.
+ *
+ * `failedSecurityRows` reads the same evidence for the security family's
+ * rows, required or not, by a rule of its own: the line it feeds never holds
+ * the post back, so it can afford to name every row that did not complete —
+ * one that failed, one still running and one never launched — not only one
+ * with a failed execution. That is what the review body names as not
+ * completed.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -32,10 +51,13 @@ import {
   parseRoundProgress,
   type RoundProgressSnapshot,
 } from "@quickchatai/pi-quickreview/src/round-progress.js";
+import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
 
 export interface MissingPass {
   lens: string;
+  /** The row's strategy, on a lens that runs one row per strategy. */
+  strategy?: string;
   phase?: "sweep";
   /** Plan rows for this lens. */
   rows: number;
@@ -50,12 +72,107 @@ export type RequiredPassGap =
   | { state: "missing"; missing: MissingPass[] }
   | { state: "unknown"; reason: string };
 
-/** The required lenses of a plan, each with its row count. */
+/** The key a row is counted under: its lens, or `<lens>:<strategy>` on a
+ * row that runs one strategy of its lens. A lens name never holds a `:`. */
+export function rowKey(row: { lens: string; strategy?: string | undefined }): string {
+  return row.strategy !== undefined ? `${row.lens}:${row.strategy}` : row.lens;
+}
+
+function keyParts(key: string): { lens: string; strategy?: string } {
+  const at = key.indexOf(":");
+  return at < 0 ? { lens: key } : { lens: key.slice(0, at), strategy: key.slice(at + 1) };
+}
+
+/** The required rows of a plan, by `rowKey`, each with its row count. */
 export function requiredRows(plan: readonly PassPlanEntry[]): Map<string, number> {
+  return countRows(plan.filter((row) => row.required === true));
+}
+
+function countRows(plan: readonly PassPlanEntry[]): Map<string, number> {
   const rows = new Map<string, number>();
-  for (const row of plan)
-    if (row.required === true) rows.set(row.lens, (rows.get(row.lens) ?? 0) + 1);
+  for (const row of plan) rows.set(rowKey(row), (rows.get(rowKey(row)) ?? 0) + 1);
   return rows;
+}
+
+/** A phase's executions of one lens (any tier). */
+function lensRuns(
+  progress: RoundProgressSnapshot,
+  lens: string,
+  phase: "plan" | "sweep" | "post",
+): RoundProgressSnapshot["agents"] {
+  return progress.agents.filter(
+    (a) =>
+      lensForAgent(a.agent) === lens &&
+      (phase === "plan" ? a.phase === undefined || a.phase === "plan" : a.phase === phase),
+  );
+}
+
+/** The executions that answer for one counted row in one phase: its lens's
+ * (any tier), launched from that phase's task directory, and — for a
+ * strategy row — launched for that strategy. */
+function runsFor(
+  progress: RoundProgressSnapshot,
+  key: string,
+  phase: "plan" | "sweep" | "post",
+): RoundProgressSnapshot["agents"] {
+  const { lens, strategy } = keyParts(key);
+  return lensRuns(progress, lens, phase).filter(
+    (a) => strategy === undefined || a.strategy === strategy,
+  );
+}
+
+/** A strategy row's lens has executions with no recorded strategy: a pass
+ * launched without its task file's name, or a row whose strategy the
+ * telemetry lost. Which row such an execution ran cannot be told, so it can
+ * neither be dropped (a failed `delta` would read as never failed) nor be
+ * credited to one row (a completed `forward` would cover a failed `delta`). */
+function untaggedRuns(
+  progress: RoundProgressSnapshot,
+  key: string,
+  phase: "plan" | "sweep" | "post",
+): boolean {
+  const { lens, strategy } = keyParts(key);
+  return (
+    strategy !== undefined && lensRuns(progress, lens, phase).some((a) => a.strategy === undefined)
+  );
+}
+
+/** The plan's rows per lens, every strategy together. */
+function lensRowCounts(plan: readonly PassPlanEntry[]): Map<string, number> {
+  const rows = new Map<string, number>();
+  for (const row of plan) rows.set(row.lens, (rows.get(row.lens) ?? 0) + 1);
+  return rows;
+}
+
+/** The counted rows that failed and never completed, in one phase. A
+ * strategy row whose lens has executions with no recorded strategy is judged
+ * over its lens as a whole — every execution against every row the phase
+ * plans for the lens — so the gap fails toward blocking: a failed execution
+ * with fewer completions than the lens's rows is missing. */
+function gapsOf(
+  progress: RoundProgressSnapshot,
+  obligations: ReadonlyMap<string, number>,
+  phase: "plan" | "sweep" | "post",
+  lensRows: ReadonlyMap<string, number>,
+): Array<Omit<MissingPass, "phase">> {
+  const out: Array<Omit<MissingPass, "phase">> = [];
+  for (const [key, keyRows] of obligations) {
+    const whole = untaggedRuns(progress, key, phase);
+    const { lens } = keyParts(key);
+    const runs = whole ? lensRuns(progress, lens, phase) : runsFor(progress, key, phase);
+    const rows = whole ? Math.max(keyRows, lensRows.get(lens) ?? 0) : keyRows;
+    const completed = runs.filter((a) => a.status === "completed").length;
+    const failedRuns = runs.filter((a) => a.status === "failed");
+    if (failedRuns.length > 0 && completed < rows)
+      out.push({
+        ...keyParts(key),
+        rows,
+        completed,
+        failed: failedRuns.length,
+        errors: failedRuns.map((a) => a.error ?? "failed"),
+      });
+  }
+  return out;
 }
 
 /** The pure rule (see the module header). */
@@ -74,31 +191,140 @@ export function requiredPassGap(
       state: "unknown",
       reason: `round-progress snapshot is for round ${progress.round_no ?? "?"}, not ${roundNo}`,
     };
-  const missing: MissingPass[] = [];
-  for (const [phase, obligations] of [
-    ["plan", required],
-    ["sweep", sweepRequired],
-  ] as const) {
-    for (const [lens, rows] of obligations) {
-      const runs = progress.agents.filter(
-        (a) =>
-          lensForAgent(a.agent) === lens &&
-          (phase === "sweep" ? a.phase === "sweep" : a.phase === undefined || a.phase === "plan"),
-      );
-      const completed = runs.filter((a) => a.status === "completed").length;
-      const failedRuns = runs.filter((a) => a.status === "failed");
-      if (failedRuns.length > 0 && completed < rows)
-        missing.push({
-          lens,
-          ...(phase === "sweep" ? { phase } : {}),
-          rows,
-          completed,
-          failed: failedRuns.length,
-          errors: failedRuns.map((a) => a.error ?? "failed"),
-        });
-    }
-  }
+  const missing: MissingPass[] = [
+    ...gapsOf(progress, required, "plan", lensRowCounts(plan ?? [])),
+    ...gapsOf(progress, sweepRequired, "sweep", lensRowCounts(sweepPlan ?? [])).map((m) => ({
+      ...m,
+      phase: "sweep" as const,
+    })),
+  ];
   return missing.length > 0 ? { state: "missing", missing } : { state: "complete" };
+}
+
+/** A security-family row that did not complete. */
+export interface FailedSecurityRow {
+  lens: string;
+  strategy?: string;
+  /** A row of the follow-up's owed whole-PR sweep (`sweep_plan`). */
+  phase?: "sweep";
+  /** Why: an execution failed and none completed (`failed`), one is still
+   * running at posting time (`running`), or none was launched (`not-run`). */
+  why: "failed" | "running" | "not-run";
+  /** The failed executions' error texts. */
+  errors: string[];
+}
+
+/** What the round's evidence says of its security-family rows: `known`
+ * with the rows that did not complete (empty when every one did, or the
+ * plan has no family row), or `unknown` when there are family rows and no
+ * snapshot of this round to read — never an empty `known`, which would read
+ * as "every security pass completed". */
+export type SecurityRowFailures =
+  { state: "known"; failed: FailedSecurityRow[] } | { state: "unknown"; reason: string };
+
+/** The counted security rows that did not complete in one phase. A plan row
+ * did not complete when fewer of its executions completed than the plan has
+ * rows for it — failed, still running, or never launched. A post-discovery
+ * row (the chain's `compose`) counts only once launched: the round prompt
+ * skips it, legitimately, when the round has no security leads
+ * (`CHAIN-SKIPPED no leads`), and a clean round must not read as unfinished. */
+function incompleteSecurityRows(
+  progress: RoundProgressSnapshot,
+  obligations: ReadonlyMap<string, number>,
+  phase: "plan" | "sweep" | "post",
+  lensRows: ReadonlyMap<string, number>,
+): FailedSecurityRow[] | { untold: string } {
+  const out: FailedSecurityRow[] = [];
+  for (const [key, rows] of obligations) {
+    const { lens, strategy } = keyParts(key);
+    // A strategy row whose lens ran executions with no recorded strategy
+    // cannot be told complete or not, row by row: the lens as a whole either
+    // completed every row the phase plans for it, or the answer is unknown.
+    if (untaggedRuns(progress, key, phase)) {
+      const done = lensRuns(progress, lens, phase).filter((a) => a.status === "completed");
+      if (done.length >= Math.max(rows, lensRows.get(lens) ?? 0)) continue;
+      return { untold: lens };
+    }
+    const runs = runsFor(progress, key, phase);
+    if (runs.filter((a) => a.status === "completed").length >= rows) continue;
+    if (phase === "post" && runs.length === 0) continue;
+    const failedRuns = runs.filter((a) => a.status === "failed");
+    out.push({
+      lens,
+      ...(strategy !== undefined ? { strategy } : {}),
+      ...(phase === "sweep" ? { phase } : {}),
+      why:
+        failedRuns.length > 0
+          ? "failed"
+          : runs.some((a) => a.status === "running")
+            ? "running"
+            : "not-run",
+      errors: failedRuns.map((a) => a.error ?? "failed"),
+    });
+  }
+  return out;
+}
+
+/**
+ * The security-family rows of a round that did not complete — required or
+ * not (only the chain's `delta` is required; the others never hold the post
+ * back, so the review body says which did not complete) — row by row and
+ * strategy by strategy, over the plan's rows, the post-discovery rows
+ * (`post_plan`, launched from `tasks-post`) and a follow-up's owed whole-PR
+ * sweep (`sweep.plan`, launched from `tasks-sweep`). The rule is
+ * `incompleteSecurityRows`', not `requiredPassGap`'s: nothing here blocks,
+ * so a row with no failed execution is named too.
+ *
+ * The sweep runs before an approval, never before a request for changes: a
+ * follow-up's family rows can sit in the sweep alone, and the delta plan's
+ * completing says nothing of them. So an approval (`sweep.approval`) names
+ * every sweep family row that did not complete — never launched included,
+ * since that approval rests on a whole-PR security pass that did not run —
+ * and any other post names them once the sweep was launched.
+ */
+export function failedSecurityRows(
+  plan: readonly PassPlanEntry[] | null,
+  progress: RoundProgressSnapshot | undefined,
+  roundNo: number,
+  postPlan?: readonly PassPlanEntry[] | null,
+  sweep?: { plan: readonly PassPlanEntry[] | null; approval: boolean },
+): SecurityRowFailures {
+  const familyRows = (rows: readonly PassPlanEntry[] | null | undefined) =>
+    (rows ?? []).filter((row) => SECURITY_FAMILY.includes(row.lens));
+  const planned = countRows(familyRows(plan));
+  const post = countRows(familyRows(postPlan));
+  const sweepFamily = familyRows(sweep?.plan);
+  const sweepLaunched =
+    progress !== undefined &&
+    progress.round_no === roundNo &&
+    progress.agents.some((a) => a.phase === "sweep");
+  const sweepRows =
+    sweepFamily.length > 0 && (sweep?.approval === true || sweepLaunched)
+      ? countRows(sweepFamily)
+      : new Map<string, number>();
+  if (planned.size === 0 && post.size === 0 && sweepRows.size === 0)
+    return { state: "known", failed: [] };
+  if (!progress) return { state: "unknown", reason: "no readable round-progress snapshot" };
+  if (progress.round_no !== roundNo)
+    return {
+      state: "unknown",
+      reason: `round-progress snapshot is for round ${progress.round_no ?? "?"}, not ${roundNo}`,
+    };
+  const failed: FailedSecurityRow[] = [];
+  for (const rows of [
+    incompleteSecurityRows(progress, planned, "plan", lensRowCounts(familyRows(plan))),
+    incompleteSecurityRows(progress, sweepRows, "sweep", lensRowCounts(sweepFamily)),
+    incompleteSecurityRows(progress, post, "post", lensRowCounts(familyRows(postPlan))),
+  ]) {
+    // Never an empty `known` over rows nobody can tell apart.
+    if (!Array.isArray(rows))
+      return {
+        state: "unknown",
+        reason: `${rows.untold} ran executions with no recorded strategy, so which of its rows did not complete cannot be told`,
+      };
+    failed.push(...rows);
+  }
+  return { state: "known", failed };
 }
 
 /** Every failed pass execution in a round's snapshot — the round's gap
@@ -142,7 +368,7 @@ export function describeGap(missing: readonly MissingPass[]): string {
   return missing
     .map(
       (m) =>
-        `${m.phase === "sweep" ? "sweep " : ""}${m.lens} (${m.completed}/${m.rows} completed, ${m.failed} failed: ${m.errors.join("; ")})`,
+        `${m.phase === "sweep" ? "sweep " : ""}${rowKey(m)} (${m.completed}/${m.rows} completed, ${m.failed} failed: ${m.errors.join("; ")})`,
     )
     .join(", ");
 }
