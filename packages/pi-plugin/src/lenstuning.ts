@@ -1,7 +1,7 @@
 // Per-lens tuning from the repo profile.
 //
-// `profile.toml` may carry one `[lenses.<pass>]` table per lens, five keys
-// (and a sixth for the style lens alone):
+// `profile.toml` may carry one `[lenses.<pass>]` table per lens, seven keys
+// (and an eighth for the style lens alone):
 //
 //   [lenses.pass-security]
 //   min_tier = "sol-high"      # the lowest tier the plan may run it at
@@ -11,6 +11,10 @@
 //
 //   [lenses.pass-ui]
 //   enabled = false            # remove the lens from the plan and the add list
+//
+//   [lenses.pass-sec-access]
+//   plan = "always"            # triggered (default) | always — plan it on every PR
+//   risk = true                # run it at the risk tier, like [models] risk_passes
 //
 //   [lenses.pass-style]
 //   guide = "style-guide.md"   # a guide file in this profile's dir
@@ -41,6 +45,15 @@
 //     selector did not choose. `false` on `pass-validate` switches the
 //     validator off: the round then posts the merged candidates
 //     with no adversary in front of them, and nothing is doubted.
+//   * `plan` — plan time: `always` plans the lens on every PR its triggers
+//     would not plan it on (the planner drops such a row when the PR changes
+//     no code or config); `triggered`, the default, leaves it to selection.
+//     It never overrides `enabled = false` nor `[review] skip_lenses`.
+//   * `risk` — overlay time: `true` joins the lens to `[models] risk_passes`
+//     once (packages/pi-plugin/src/profiles.ts `applyProfileSecurity`), so it
+//     runs at sol-high, single variant, not raisable, like every risk pass; a
+//     `[models.pass_tiers]` pin on it is refused. `false` adds nothing: it
+//     never takes a lens out of `risk_passes`.
 //   * `emphasis` and `max_severity` — compiled into addenda
 //     (`lensTuningAddenda`) that wire.ts and the bench compose after the
 //     profile's own pack, so the addendum registry stays the ONLY route into a
@@ -76,11 +89,17 @@ export interface ProfileStyleGuide {
   text: string;
 }
 
+/** When a lens is planned — `[lenses.<pass>] plan`. */
+export const LENS_PLAN_MODES = ["triggered", "always"] as const;
+export type LensPlanMode = (typeof LENS_PLAN_MODES)[number];
+
 /** The keys of one `[lenses.<pass>]` table, after validation. */
 export interface LensTuning {
   min_tier?: PassTier;
   effort?: Exclude<ReviewEffort, "">;
   enabled?: boolean;
+  plan?: LensPlanMode;
+  risk?: boolean;
   emphasis?: string;
   max_severity?: Severity;
   /** `pass-style` only. */
@@ -94,6 +113,8 @@ export const LENS_TUNING_KEYS = [
   "min_tier",
   "effort",
   "enabled",
+  "plan",
+  "risk",
   "emphasis",
   "max_severity",
   "guide",
@@ -203,6 +224,23 @@ export function parseLensTable(
           if (typeof value !== "boolean") throw new Error(`${at} enabled must be true or false`);
           t.enabled = value;
           break;
+        case "plan":
+          if (lens === VALIDATE)
+            throw new Error(`${at} plan — the validator is planned on every review already`);
+          if (!(LENS_PLAN_MODES as readonly unknown[]).includes(value))
+            throw new Error(
+              `${at} plan must be ${LENS_PLAN_MODES.map((m) => `"${m}"`).join(" or ")}`,
+            );
+          t.plan = value as LensPlanMode;
+          break;
+        case "risk":
+          if (lens === VALIDATE)
+            throw new Error(
+              `${at} risk — the validator's tier is [models] validate_tier (floored by its min_tier)`,
+            );
+          if (typeof value !== "boolean") throw new Error(`${at} risk must be true or false`);
+          t.risk = value;
+          break;
         case "emphasis":
           if (typeof value !== "string" || value.trim() === "")
             throw new Error(`${at} emphasis must be a non-empty string`);
@@ -250,6 +288,22 @@ export function lensEnabled(
   lever = true,
 ): boolean {
   return lenses?.[lens]?.enabled ?? lever;
+}
+
+/** The lenses the profile plans on every PR (`plan = "always"`), in name
+ * order. */
+export function alwaysPlannedLenses(lenses: LensTuningMap | undefined): string[] {
+  return Object.keys(lenses ?? {})
+    .filter((lens) => lenses?.[lens]?.plan === "always")
+    .sort();
+}
+
+/** The lenses the profile runs at the risk tier (`risk = true`), in name
+ * order. */
+export function profileRiskLenses(lenses: LensTuningMap | undefined): string[] {
+  return Object.keys(lenses ?? {})
+    .filter((lens) => lenses?.[lens]?.risk === true)
+    .sort();
 }
 
 /** `tier`, raised to the lens's `min_tier` when the profile sets one. */

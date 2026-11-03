@@ -167,6 +167,83 @@ describe("renderPassTaskNote", () => {
   });
 });
 
+// With no task files the session writes every task string itself: the
+// security rows' context the files would have carried rides the order.
+describe("renderPassTaskNote without task files, beside a security row", () => {
+  const CHAIN = "pass-sec-exploit-chain--sol-high";
+  const sec = (): RoundOrder =>
+    order({
+      pass_plan: [
+        {
+          lens: "pass-baseline",
+          agent: "pass-baseline--sol-med",
+          tier: "sol-med",
+          raisable_to: [],
+        },
+        {
+          lens: "pass-sec-access",
+          agent: "pass-sec-access--sol-high",
+          tier: "sol-high",
+          raisable_to: [],
+        },
+        {
+          lens: "pass-sec-exploit-chain",
+          agent: CHAIN,
+          tier: "sol-high",
+          raisable_to: [],
+          strategy: "delta",
+          required: true,
+        },
+        {
+          lens: "pass-sec-exploit-chain",
+          agent: CHAIN,
+          tier: "sol-high",
+          raisable_to: [],
+          strategy: "forward",
+        },
+        {
+          lens: "pass-validate",
+          agent: "pass-validate--sol-high",
+          tier: "sol-high",
+          raisable_to: [],
+        },
+      ],
+      threat_model_excerpt: "Threat model: TM-MARK",
+      security_facts: [
+        {
+          check: "removed-guard",
+          status: "found",
+          lens: "pass-sec-authn-coverage",
+          detail: "FACT-MARK",
+        },
+      ],
+      prior_partial_chains: ["PARTIAL-MARK a.py:3 -> b.py:9"],
+    });
+
+  // MUTATION: return "" again for an order with no task files in
+  // renderPassTaskNote — the forward row runs as a second delta, blind, and
+  // this fails.
+  it("names each chain row's Strategy line and carries the threat model, facts and partial chains", () => {
+    const note = renderPassTaskNote(sec());
+    expect(note).toContain(
+      `the plan's row 3 (\`${CHAIN}\`, its reason starting \`delta:\`): \`Strategy: delta\``,
+    );
+    expect(note).toContain(
+      `the plan's row 4 (\`${CHAIN}\`, its reason starting \`forward:\`): \`Strategy: forward\``,
+    );
+    expect(note).toContain("## Threat model");
+    expect(note).toContain("TM-MARK");
+    expect(note).toContain("FACT-MARK");
+    expect(note).toContain("PARTIAL-MARK");
+    // The partial chains are the delta row's alone.
+    expect(note).toContain("the plan's row 3, the chain's `delta`, also carries");
+  });
+
+  it("is still empty for a plan with no security row", () => {
+    expect(renderPassTaskNote(order({ threat_model_excerpt: "x" }))).toBe("");
+  });
+});
+
 describe("a follow-up round's task files", () => {
   const DELTA: NonNullable<RoundOrder["delta"]> = {
     from_sha: "1111111111111111111111111111111111111111",

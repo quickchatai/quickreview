@@ -266,6 +266,8 @@ describe("the tool belt", () => {
         "scan_suggestions",
         "scan_stage2_propose",
         "scan_stage2_start",
+        // Stage 0, the threat model (scan_start starts it).
+        "scan_threat_model_propose",
         // Triage and scan memory.
         "scan_dismiss",
         "scan_promote",

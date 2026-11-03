@@ -33,6 +33,8 @@ import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
 import { validate } from "./helpers/json-schema-lite.js";
+import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
+import { workTreeFactsIo } from "@quickchatai/pi-quickreview/src/secfactsgit.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -257,6 +259,161 @@ describe("review(): the local review as a call", () => {
     expect(existsSync(nowhere)).toBe(false);
   });
 
+  // MUTATION: drop the securityRequest spread from planRound's inputs
+  // (packages/pi-plugin/src/reviewapi.ts) — the request plans nothing, and
+  // this fails.
+  it(
+    "a security request plans the whole security family into the plan the person sees",
+    { timeout: 30_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const plain = await preview({ kind: "branch" }, options("sec-plain", runtime));
+      const asked = await preview(
+        { kind: "branch" },
+        { ...options("sec-asked", runtime), securityRequest: { by: "", source: "operator" } },
+      );
+      expect(asked.exitCode, asked.text).toBe(0);
+      const lensesOf = (r: typeof plain): string[] =>
+        // the plan's agents, `<lens>--<tier>`
+        (r.data["preview"] as { lenses: string[] }).lenses.map((a) => a.replace(/--[^-].*$/, ""));
+      for (const lens of SECURITY_FAMILY) expect(lensesOf(asked), lens).toContain(lens);
+      expect(lensesOf(plain).filter((l) => SECURITY_FAMILY.includes(l))).toEqual([]);
+    },
+  );
+
+  // Owner rule: the repository's `.qcr/threat-model.md` (at the base commit)
+  // wins over the profile's copy, on the one-shot routes as on the daemon's,
+  // and the security lenses get the deterministic facts.
+  // MUTATION: drop `readRepoThreatModel` from planRound's inputs
+  // (packages/pi-plugin/src/reviewapi.ts `securityArgs`) — the round reads no
+  // threat model, and this fails; drop `securityFacts`/`securityInventory`
+  // and the facts section is missing.
+  it(
+    "a security round reads the repository's threat model at the base, and the facts",
+    { timeout: 60_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = {
+        ...options("sec-threat-model", runtime),
+        securityRequest: { by: "", source: "operator" as const },
+      };
+      // The model on main (the base); the branch changes it, and the base's wins.
+      const repo = opts.repoDir;
+      git(repo, "checkout", "-q", "main");
+      mkdirSync(join(repo, ".qcr"), { recursive: true });
+      writeFileSync(join(repo, ".qcr", "threat-model.md"), "## Controls\n- BASE-CONTROL-MARK\n");
+      git(repo, "add", "-A");
+      git(repo, "commit", "-q", "-m", "threat model");
+      git(repo, "checkout", "-q", "feature");
+      git(repo, "rebase", "-q", "main");
+      writeFileSync(join(repo, ".qcr", "threat-model.md"), "## Controls\n- HEAD-CONTROL-MARK\n");
+      git(repo, "commit", "-q", "-am", "edit the threat model");
+      let tasks = "";
+      faux.appendResponses([
+        async () => {
+          const out = outDirOf(opts.runsDir);
+          const dir = join(out, "tasks");
+          tasks = readdirSync(dir)
+            .filter((f) => f.includes("pass-sec-access"))
+            .map((f) => readFileSync(join(dir, f), "utf8"))
+            .join("\n");
+          writeFileSync(join(out, "findings-record.json"), record);
+          writeFileSync(join(out, "outcome.json"), outcome);
+          return fauxAssistantMessage("done");
+        },
+      ]);
+      const r = await review({ kind: "branch" }, opts, {});
+      expect(r.exitCode, r.text).toBe(0);
+      expect(tasks).toContain("the repository's `.qcr/threat-model.md` on the base branch");
+      expect(tasks).toContain("BASE-CONTROL-MARK");
+      expect(tasks).not.toContain("HEAD-CONTROL-MARK");
+      expect(tasks).toContain("Security facts (computed from the repository, not by a model)");
+      expect(tasks).toContain("`route-inventory`");
+    },
+  );
+
+  // MUTATION: drop `opts.securityRequest !== undefined` from the `prev`
+  // condition in review() — the request is answered "Nothing new" off the
+  // ordinary review's state, and this fails.
+  it(
+    "a security request at a head an ordinary review already saw is reviewed, not answered from its state",
+    { timeout: 60_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = options("sec-after-plain", runtime);
+      faux.appendResponses([
+        async () => {
+          const out = outDirOf(opts.runsDir);
+          writeFileSync(join(out, "findings-record.json"), record);
+          writeFileSync(join(out, "outcome.json"), outcome);
+          return fauxAssistantMessage("done");
+        },
+      ]);
+      const first = await review({ kind: "branch" }, opts, {});
+      expect(first.exitCode, first.text).toBe(0);
+      // The control: the same head again is nothing new.
+      const again = await preview({ kind: "branch" }, opts);
+      expect(again.data["unchanged"]).toBe(true);
+      const asked = await preview(
+        { kind: "branch" },
+        { ...opts, securityRequest: { by: "", source: "operator" } },
+      );
+      expect(asked.exitCode, asked.text).toBe(0);
+      expect(asked.data["unchanged"]).toBeUndefined();
+      const lenses = (asked.data["preview"] as { lenses: string[] }).lenses;
+      for (const lens of SECURITY_FAMILY)
+        expect(
+          lenses.some((a) => a.startsWith(`${lens}--`)),
+          lens,
+        ).toBe(true);
+    },
+  );
+
+  // An uncommitted target's snapshot tree lives in an object store gone by
+  // the time the facts are read; its head is read off the working tree.
+  // MUTATION: read the facts with `localGitFactsIo` at `t.uncommitted.treeSha`
+  // (packages/pi-plugin/src/reviewapi.ts `factsIo`) — the listing fails, the
+  // inventory reads unknown, and this fails.
+  it(
+    "an uncommitted review's facts read the working tree, a file git has never seen included",
+    { timeout: 60_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = {
+        ...options("sec-uncommitted", runtime),
+        securityRequest: { by: "", source: "operator" as const },
+      };
+      writeFileSync(
+        join(opts.repoDir, "src", "routes.py"),
+        '@app.route("/admin-uncommitted")\ndef admin():\n    return 1\n',
+      );
+      let tasks = "";
+      faux.appendResponses([
+        async () => {
+          const out = outDirOf(opts.runsDir);
+          const dir = join(out, "tasks");
+          tasks = readdirSync(dir)
+            .filter((f) => f.includes("pass-sec-access"))
+            .map((f) => readFileSync(join(dir, f), "utf8"))
+            .join("\n");
+          writeFileSync(join(out, "findings-record.json"), record);
+          writeFileSync(join(out, "outcome.json"), outcome);
+          return fauxAssistantMessage("done");
+        },
+      ]);
+      const r = await review({ kind: "uncommitted" }, opts, {});
+      expect(r.exitCode, r.text).toBe(0);
+      expect(tasks).toContain("`route-inventory`");
+      expect(tasks).toContain("/admin-uncommitted");
+      // the person's files are as they were
+      expect(git(opts.repoDir, "status", "--porcelain")).toBe("?? src/routes.py");
+    },
+  );
+
   // The bare /qcr-review: the branch's commits and the working tree's edits,
   // reviewed as one. MUTATION: drop the uncommitted option from the branch's
   // resolution — the edit is missing from the plan, and this fails.
@@ -473,4 +630,35 @@ describe("review(): the local review as a call", () => {
       expect(states.filter((f) => String(f).includes("state"))).toEqual([]);
     },
   );
+});
+
+describe("workTreeFactsIo: an uncommitted head read off the working tree", () => {
+  // MUTATION: read the head with no path check (drop both the realpath
+  // comparison and `st.isFile()` in workTreeFactsIo's readHead; either alone
+  // refuses the symlink) — it is followed out of the tree, and this fails. MUTATION: drop the
+  // `--deleted` filter — the deleted file is listed, and this fails.
+  it("lists what `git add -A` takes, reads regular files only, and the base from git", () => {
+    const repo = mkRepo("worktree-io");
+    writeFileSync(join(repo, ".gitignore"), "ignored.ts\n");
+    writeFileSync(join(repo, "ignored.ts"), "secret\n");
+    writeFileSync(join(repo, "src", "new.ts"), "export const n = 0;\n");
+    writeFileSync(join(tmp, "outside.txt"), "outside\n");
+    symlinkSync(join(tmp, "outside.txt"), join(repo, "src", "link.ts"));
+    const base = git(repo, "rev-parse", "main");
+    const io = workTreeFactsIo(join(repo, "src"), base);
+    const listed = io.listHead();
+    expect(listed).toContain("src/a.ts");
+    expect(listed).toContain("src/new.ts");
+    expect(listed).toContain("src/link.ts");
+    expect(listed).not.toContain("ignored.ts");
+    expect(io.readHead("src/new.ts")).toBe("export const n = 0;\n");
+    expect(io.readHead("src/a.ts")).toMatch(/export const c = 3;/);
+    expect(io.readHead("src/link.ts")).toBeNull();
+    expect(io.readHead("ignored.ts")).toBeNull();
+    expect(io.readHead("../outside.txt")).toBeNull();
+    expect(io.readBase("src/a.ts")).toBe("export const a = 1;\n");
+    // a tracked file deleted from the tree is not in the head
+    rmSync(join(repo, "src", "a.ts"));
+    expect(workTreeFactsIo(repo, base).listHead()).not.toContain("src/a.ts");
+  });
 });

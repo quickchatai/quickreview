@@ -137,7 +137,7 @@ export function renderPrLever(
   if (cmd.command === "review-now")
     return {
       lines: [
-        `✓ ${pr} queued for review${out.outcome ? ` (${out.outcome})` : ""} — follow it with \`qcr why ${cmd.pr}\` or on the board`,
+        `✓ ${pr} queued for ${cmd.security ? "a security review" : "review"}${out.outcome ? ` (${out.outcome})` : ""} — follow it with \`qcr why ${cmd.pr}\` or on the board`,
       ],
       code: 0,
     };

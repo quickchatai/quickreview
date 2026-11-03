@@ -13,7 +13,7 @@ import type { StateFs } from "./engine.js";
 import { FindingsStore } from "./findings.js";
 import type { PortraitScan, ScanUnitFacts } from "./portrait.js";
 import { SEVERITIES } from "./scan.js";
-import { isOpenFinding } from "./scanreport.js";
+import { isDoubted, isOpenFinding } from "./scanreport.js";
 import { finishedRuns } from "./scanrun.js";
 import { readScanMemory } from "./triage.js";
 
@@ -55,7 +55,7 @@ export function scanFacts(state: StateFs): { scan: PortraitScan | null; problems
       totals.open++;
       bySeverity[f.severity] = (bySeverity[f.severity] ?? 0) + 1;
       u.by.add(`${f.severity} ${f.lens}`);
-      if (f.doubt) {
+      if (isDoubted(f)) {
         u.doubted++;
         totals.doubted++;
       }

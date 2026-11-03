@@ -52,6 +52,7 @@ export const DOCS_SUITE = [
   "tests/publishability.test.ts",
   "tests/release-docs.test.ts",
   "tests/reviewer-context.test.ts",
+  "tests/security-addenda.test.ts",
   "tests/tool-uid.test.ts",
   "tests/tui-surfaces.test.ts",
   "tests/worker-rehearsal-tooling.test.ts",

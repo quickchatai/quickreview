@@ -21,6 +21,8 @@ import {
   loadProfileLensTuning,
   loadProfilePosting,
   loadProfileScan,
+  loadProfileSecurity,
+  loadProfileThreatModel,
   type ProfileLookup,
 } from "@quickchatai/pi-quickreview/src/profiles.js";
 
@@ -79,6 +81,8 @@ export function checkConfigHome(opts: { home: string; root?: string }): ConfigCh
     ["lens tuning", () => loadProfileLensTuning(root, profile, lookup)],
     ["scan", () => loadProfileScan(root, profile, lookup)],
     ["posting", () => loadProfilePosting(root, profile, lookup)],
+    ["security", () => loadProfileSecurity(root, profile, lookup)],
+    ["threat model", () => loadProfileThreatModel(root, profile, lookup)],
     ["heuristics", () => loadProfileHeuristics(root, profile, lookup)],
   ];
   const seen = new Set<string>();

@@ -127,6 +127,65 @@ export const LENS_PLANNING: Readonly<Record<string, LensPlanning>> = {
     priority: "signal",
     when: "a CI job runs a linter or formatter whose rules cover a changed file",
   },
+  // The security family (passes.ts SECURITY_FAMILY): each planned on its own
+  // trigger family (securitytriggers.ts), run at the risk tier once planned.
+  // A weak trigger plans only under `[security] triggers = "all"`.
+  "pass-sec-authn-coverage": {
+    priority: "risk",
+    when: "a guard, decorator or middleware check is removed, config turns authentication off, or the threat model names a changed entry point or control; or a route is registered (weak)",
+  },
+  "pass-sec-access": {
+    priority: "risk",
+    when: "the threat model names a changed control, or a query keyed on a tenant or owner changes (weak)",
+  },
+  "pass-sec-privesc": {
+    priority: "risk",
+    when: "a role or permission field is written from request input, or auth, role, invite, SSO or SCIM code changes (weak)",
+  },
+  "pass-sec-iam": {
+    priority: "risk",
+    when: "the change grants platform authority: a wildcard IAM action, PassRole or an open AssumeRole trust, a cluster-admin binding, RBAC escalate/bind/impersonate, sudoers NOPASSWD, or a SQL GRANT in a migration",
+  },
+  "pass-sec-tokens": {
+    priority: "risk",
+    when: "signature or expiry verification is switched off; or JWT, OAuth, SAML, session or expiry code changes (weak)",
+  },
+  "pass-sec-toctou": {
+    priority: "risk",
+    when: "a read-then-write lands next to a balance, quota, token, invite or other security asset (weak); addable otherwise",
+  },
+  "pass-sec-injection": {
+    priority: "risk",
+    when: "added code interpolates into raw SQL, runs a shell or eval on a non-literal, deserializes unsafely, or bypasses output escaping; or the threat model names a changed entry point or sink",
+  },
+  "pass-sec-boundaries": {
+    priority: "risk",
+    when: "the threat model names a changed sink, or added code fetches a URL or opens a path built from a variable (weak)",
+  },
+  "pass-sec-secrets-data": {
+    priority: "risk",
+    when: "an added line carries a credential shape, wherever it sits",
+  },
+  "pass-sec-supply-chain": {
+    priority: "risk",
+    when: "a CI workflow uses pull_request_target or an event expression in a run step; or a manifest, lockfile, workflow or container file changes (weak)",
+  },
+  "pass-sec-llm": {
+    priority: "risk",
+    when: "added code calls a model, defines an agent tool or changes a prompt template (weak)",
+  },
+  "pass-sec-infra": {
+    priority: "risk",
+    when: "config opens ingress to any address, turns authentication off, makes a resource public, or runs a container privileged or on the host network; or IaC, cluster, compose, proxy or firewall files change (weak)",
+  },
+  "pass-sec-variant": {
+    priority: "risk",
+    when: "the PR title or diff is shaped like a security fix (weak); addable otherwise, to hunt the pattern's siblings",
+  },
+  "pass-sec-exploit-chain": {
+    priority: "risk",
+    when: "one row per strategy: delta when a guard is removed, two or more family lenses are planned, the threat model is hit or a security review is requested; forward and backward on a request or a large server change under a threat model; compose after discovery when any family row ran",
+  },
   "pass-validate": {
     priority: "core",
     when: "every round, last, unless the profile switches it off",

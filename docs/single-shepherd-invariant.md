@@ -147,6 +147,13 @@ covers now that the bot runs in workers.
   Everything else (rows the session raises, lenses it adds, the validator) is
   launched by the PR's main session. The daemon launches no agent and the
   engine never launches pass-validate.
+- **A post-discovery row is the session's to launch.** The exploit chain's
+  `compose` row reads the security candidates the wave found, so it runs
+  after the wave. The planner puts it in `post_plan`, never `pass_plan`; its
+  task file sits in `tasks-post/`, a directory the engine's wave never lists
+  (the launch plan refuses `tasks-post` beside any other task directory);
+  and the session launches it with one lens-tool call once every planned row
+  has returned. The engine still starts only the planned discovery wave.
 - **Lenses are leaves by construction.** A lens session is never given a lens
   tool, and `include.ts` strips agent-spawning tools at build time (G1), so a
   pass cannot fan out on any route.

@@ -232,6 +232,14 @@ included:
 | in progress | `in_progress_label` | `AI review in progress` | yellow |
 | reviewed | `reviewed_label` | `Automatic Review` | green |
 
+A fourth label is optional and not created for you: **`qcr:security`**
+(`config.toml [security] label`) asks for a security review on top of the
+PR's plan when a person adds it. Create it in the reviewed repo if you want
+that route; `@<bot> security` in a comment from an owner, member or
+collaborator (`[security] command`) and `qcr review-now <pr> --security`
+need no label. `[security] label = ""` turns label requests off. See
+[profiles.md](profiles.md#asking-for-a-security-review).
+
 ## 8. Verify
 
 The wizard's verification step runs these in layers and stops at the first red

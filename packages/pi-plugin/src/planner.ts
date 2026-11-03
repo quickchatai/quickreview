@@ -9,7 +9,7 @@
 // nothing but its arguments, and a follow-up decision reads the PR's history
 // through `FollowUpHistory`, a port the bot fills from its state store.
 import type { CoreConfig } from "./reviewconfig.js";
-import { REVIEW_DEFAULTS } from "./reviewconfig.js";
+import { REVIEW_DEFAULTS, SECURITY_DEFAULTS } from "./reviewconfig.js";
 import { coverageEligible } from "./coverage.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import { promptTargetsFor } from "./escalationprompt.js";
@@ -38,16 +38,24 @@ import {
 import type { HeuristicsExtension } from "./heuristics.js";
 import { VALIDATE_PASS } from "./include.js";
 import { LENS_PLANNING } from "./lensplanning.js";
-import { flooredTier, lensEnabled } from "./lenstuning.js";
+import { alwaysPlannedLenses, flooredTier, lensEnabled } from "./lenstuning.js";
 import { lintersForFiles, type CiLinter } from "./lintconfig.js";
 import { detectLoosenedAssertions, loosenedReason } from "./loosenedtests.js";
 import type { MigrationCollision } from "./migrations.js";
-import { ALL_PASSES } from "./passes.js";
+import { ALL_PASSES, CHAIN_PASS, SECURITY_FAMILY, type ChainStrategy } from "./passes.js";
 import { isDefaultPosting } from "./postingpolicy.js";
 import { roundPostingKey } from "./postingkey.js";
 import { deltaAsPrFiles, type PrOwnedDelta, type PrOwnedDeltaFile } from "./prdelta.js";
 import type { PriorFindingsList } from "./priorfindings.js";
 import { assignPriorFindings } from "./priortasks.js";
+import type { SecurityFact } from "./secfacts.js";
+import {
+  isDocsOnlyChange,
+  planChainStrategies,
+  selectSecurityLenses,
+  triggeredServerLines,
+} from "./securitytriggers.js";
+import { renderThreatModelExcerpt, type ThreatModel } from "./threatmodel.js";
 import { PASS_TIER_ORDER } from "./types.js";
 import type {
   LedgerCarry,
@@ -58,6 +66,7 @@ import type {
   RoundOrder,
   RoundRecoveryContext,
   RoundType,
+  SecurityRequest,
 } from "./types.js";
 
 /** A plan's lens names, each once, in plan order — the compatibility list
@@ -132,9 +141,31 @@ export interface PlannedPr {
   title: string;
 }
 
+/** The security inputs a plan reads beyond the files: a request, the
+ * threat model, the deterministic facts. Every one is optional, and absent
+ * means none — the family is then planned by its content triggers alone. */
+export interface PlanSecurityInputs {
+  /** A maintainer's or the operator's request: the whole family is planned. */
+  securityRequest?: SecurityRequest;
+  /** The threat model the round reads (packages/pi-plugin/src/threatmodel.ts
+   * `resolveThreatModel`); null or absent ⇒ none. */
+  threatModel?: ThreatModel | null;
+  /** The deterministic security facts (packages/pi-plugin/src/secfacts.ts). */
+  securityFacts?: readonly SecurityFact[];
+  /** The facts no plan reads (the route inventory, secfacts.ts
+   * `SECURITY_TRIGGER_CHECKS` leaves it out), computed on demand: the order
+   * calls it only when a security-family row is planned, so a round with
+   * none reads nothing for them. Appended to `securityFacts`. */
+  securityInventory?: () => readonly SecurityFact[];
+}
+
 /** What `buildPassPlan` returns. */
 export interface PassPlan {
   pass_plan: PassPlanEntry[];
+  /** The rows that run after the discovery wave (`stage:
+   * "post-discovery"`, the chain's `compose`) — present only when one is
+   * planned, never in `pass_plan`. */
+  post_plan?: PassPlanEntry[];
   addable_lenses: string[];
   sweep_unswept: string[];
   /** Files the behaviour-delta lens would read but its group cap left out —
@@ -149,7 +180,8 @@ export interface PassPlan {
  *   raised to match a lens — is not raisable, and is always last;
  * - every other selected lens gets the passTier() tier and may be raised to
  *   any higher tier's variant (ascending order).
- * addable_lenses = every known pass not already in the plan.
+ * addable_lenses = every known pass not already in the plan — the security
+ * family only on a round already doing security work, the chain lens never.
  * The rows come back in launch order, slowest first (`slowestFirst`).
  *
  * The profile's per-lens tuning (`cfg.lenses`) wins over all of
@@ -157,7 +189,18 @@ export interface PassPlan {
  * sweep rows; `enabled = false` removes a lens from the plan AND the addable
  * list whatever selected it — the validator included, when the round
  * has no validator row at all; `enabled = true` on a lever-gated lens switches
- * it on whatever its `[review]` lever says. */
+ * it on whatever its `[review]` lever says.
+ *
+ * The security family (packages/pi-plugin/src/passes.ts `SECURITY_FAMILY`)
+ * joins the same union before those filters: the lenses its content
+ * triggers select (`[security] triggers`, packages/pi-plugin/src/
+ * securitytriggers.ts), the whole family on a request, and every lens the
+ * profile plans `always` (dropped on a docs-only change). The exploit-chain
+ * lens is planned as one row per strategy, each saying which rule planned
+ * it: `delta`, `forward` and `backward` in the discovery plan, and
+ * `compose` in `post_plan`, after the wave, whenever another family row is
+ * planned. A family row runs at the risk tier and is not required — except
+ * the chain's `delta` row. */
 export function buildPassPlan(
   cfg: CoreConfig,
   files: PrFileEntry[],
@@ -176,8 +219,9 @@ export function buildPassPlan(
   /** `tierFiles` — the files the round's default TIER is chosen from, when
    * the plan is built over fewer files than the PR (a follow-up round plans
    * from the delta, but a small fix push keeps the PR's tier and its
-   * migration floor). Absent ⇒ `files`. */
-  opts: { tierFiles?: PrFileEntry[] } = {},
+   * migration floor). Absent ⇒ `files`. The security inputs
+   * (`PlanSecurityInputs`) plan the security family beyond its triggers. */
+  opts: { tierFiles?: PrFileEntry[] } & PlanSecurityInputs = {},
 ): PassPlan {
   const tierBasis = opts.tierFiles ?? files;
   const defaultTier = passTier(tierBasis, {
@@ -269,15 +313,64 @@ export function buildPassPlan(
         )
         .join("; ")} on the changed files`,
     );
+  // The security family: what its content triggers select, the whole
+  // family on a request, and what the profile plans `always`. The chain
+  // lens is not a row of its own here — its strategy rows follow below.
+  const security = cfg.security ?? SECURITY_DEFAULTS;
+  const threatModel = opts.threatModel ?? null;
+  const requested = opts.securityRequest !== undefined;
+  const securitySel = selectSecurityLenses(files, {
+    mode: security.triggers,
+    threatModel,
+    ...(heuristics ? { extension: heuristics } : {}),
+    ...(opts.securityFacts ? { facts: opts.securityFacts } : {}),
+    ...(intent ? { intent } : {}),
+  });
+  // `plan = "always"` plans a lens on every PR that changes code or
+  // configuration: a docs-only change has nothing for it to read. A lens
+  // that something else planned keeps its row either way.
+  const always = new Set(isDocsOnlyChange(files) ? [] : alwaysPlannedLenses(cfg.lenses));
+  // A row's reason is the first that applies: the signal that fired, then
+  // the request, then the profile's `always`.
+  const reasonOnce = (lens: string, why: string): void => {
+    if (!whyOf.has(lens)) whyOf.set(lens, why);
+  };
+  for (const sel of securitySel) reasonOnce(sel.lens, sel.why);
+  if (opts.securityRequest)
+    for (const l of SECURITY_FAMILY) reasonOnce(l, requestReason(opts.securityRequest));
+  for (const l of always) reasonOnce(l, ALWAYS_REASON);
+  const triggered = new Set(securitySel.map((sel) => sel.lens));
+  const family = SECURITY_FAMILY.filter(
+    (l) => l !== CHAIN_PASS && (requested || triggered.has(l) || always.has(l)),
+  );
+  // A lens outside the family the profile plans always, in registry order.
+  // The validator, the sweep and behaviour-delta have rows of their own.
+  const alwaysOther = ALL_PASSES.filter(
+    (l) =>
+      always.has(l) &&
+      !SECURITY_FAMILY.includes(l) &&
+      ![VALIDATE_PASS, SWEEP_PASS, BEHAVIOUR_DELTA_PASS].includes(l),
+  );
   // `[review] skip_lenses` (cost tuning): a listed lens is neither planned
   // nor addable. pass-validate is refused at config parse, and is re-appended
   // unconditionally here besides.
   const skip = new Set((cfg.review.skip_lenses ?? []).filter((l) => l !== VALIDATE_PASS));
   // `enabled = false` is the last word on every lens, whatever selected it —
-  // a profile-level subtraction, separate from the ADD-only heuristics.
+  // a profile-level subtraction, separate from the ADD-only heuristics. A
+  // request and `plan = "always"` are selections like any other: neither
+  // plans a lens switched off or skipped.
   const lenses = [
-    ...[...selected0, ...sub.map((s) => s.lens), ...tests, ...quality, ...style, ...lint].filter(
-      (l) => !skip.has(l),
+    ...new Set(
+      [
+        ...selected0,
+        ...sub.map((s) => s.lens),
+        ...tests,
+        ...quality,
+        ...style,
+        ...lint,
+        ...alwaysOther,
+        ...family,
+      ].filter((l) => !skip.has(l)),
     ),
     VALIDATE_PASS,
   ].filter((l) => on(l));
@@ -297,9 +390,18 @@ export function buildPassPlan(
         ? "sol-high"
         : (pins[lens] ?? (lens === INTENT_PASS ? "terra-med" : defaultTier)),
     );
+  // The sweep and behaviour-delta are planned as grouped rows of their own,
+  // so `plan = "always"` reaches them here, as their lever would: on a change
+  // that is not docs-only, whatever the `[review]` lever says. `enabled =
+  // false` and `skip_lenses` still win, as for every lens.
+  const groupedOn = (lens: string, lever: boolean): boolean =>
+    on(lens, lever || always.has(lens)) && !skip.has(lens);
+  // A grouped row only `always` planned says so after its own reason.
+  const alwaysOnly = (lens: string, lever: boolean): string =>
+    always.has(lens) && !on(lens, lever) ? `; ${ALWAYS_REASON}` : "";
   // The sweep's rows run at the cheapest tier unless pinned (`[models.pass_tiers]`)
   // or floored by the profile.
-  const sweepOn = on(SWEEP_PASS, cfg.review.sweep) && !skip.has(SWEEP_PASS);
+  const sweepOn = groupedOn(SWEEP_PASS, cfg.review.sweep);
   const sweepTier = flooredTier(cfg.lenses, SWEEP_PASS, pins[SWEEP_PASS] ?? "terra-med");
   // The validator runs at its own tier — never raised to match a lens,
   // pinned or not.
@@ -316,7 +418,11 @@ export function buildPassPlan(
       tier,
       raisable_to: pinned ? [] : raisableFrom(lens, tier),
       ...(why !== undefined ? { why } : {}),
-      ...(lens === BASELINE_PASS || risk.has(lens) ? { required: true as const } : {}),
+      // A security-family row is not required: one that failed is named in
+      // the review body as not completed, never a requeued round.
+      ...(lens === BASELINE_PASS || (risk.has(lens) && !SECURITY_FAMILY.includes(lens))
+        ? { required: true as const }
+        : {}),
     };
   });
   // On a very large change pass-baseline — one row, and the round's
@@ -376,7 +482,7 @@ export function buildPassPlan(
         tier,
         raisable_to:
           pins[SWEEP_PASS] !== undefined && !isLight ? [] : raisableFrom(SWEEP_PASS, tier),
-        why: `every changed line of ${focus.length === 1 ? focus[0] : `${focus.length} changed files`}, read one by one${isLight ? " (tests, prose or config only: the light tier, [review] sweep_light_tier)" : ""}`,
+        why: `every changed line of ${focus.length === 1 ? focus[0] : `${focus.length} changed files`}, read one by one${isLight ? " (tests, prose or config only: the light tier, [review] sweep_light_tier)" : ""}${alwaysOnly(SWEEP_PASS, cfg.review.sweep)}`,
         focus,
       };
     });
@@ -386,7 +492,7 @@ export function buildPassPlan(
   // PR modifies or deletes code in, at the round's tier — comparing base and
   // head is reasoning, not attention. Appended, as the sweep's rows are.
   let behaviour_unread: string[] = [];
-  if (on(BEHAVIOUR_DELTA_PASS, cfg.review.behaviour_delta) && !skip.has(BEHAVIOUR_DELTA_PASS)) {
+  if (groupedOn(BEHAVIOUR_DELTA_PASS, cfg.review.behaviour_delta)) {
     const { groups, unread } = behaviourDeltaGroups(
       files,
       cfg.review.behaviour_delta_max_groups,
@@ -399,22 +505,97 @@ export function buildPassPlan(
       tier,
       raisable_to:
         pins[BEHAVIOUR_DELTA_PASS] !== undefined ? [] : raisableFrom(BEHAVIOUR_DELTA_PASS, tier),
-      why: `base behaviour is at risk in ${focus.length === 1 ? focus[0] : `${focus.length} files`}: removed or replaced guards, conditions, calls, returns or values, or existing code wrapped in a new branch`,
+      why: `base behaviour is at risk in ${focus.length === 1 ? focus[0] : `${focus.length} files`}: removed or replaced guards, conditions, calls, returns or values, or existing code wrapped in a new branch${alwaysOnly(BEHAVIOUR_DELTA_PASS, cfg.review.behaviour_delta)}`,
       focus,
     }));
     pass_plan.push(...rows);
     behaviour_unread = unread;
   }
-  const selected = new Set(pass_plan.map((p) => p.lens));
+  // The exploit chain: one row per strategy (packages/pi-plugin/src/
+  // securitytriggers.ts `planChainStrategies`), each naming the rule that
+  // planned it. Only `delta` — the hop this change adds — is required. In a
+  // security-only review, two family rows are enough for a `delta`.
+  // `compose` reads the round's security leads, so it runs after the wave,
+  // from `post_plan`, whenever another family row is planned.
+  const post_plan: PassPlanEntry[] = [];
+  if (on(CHAIN_PASS) && !skip.has(CHAIN_PASS)) {
+    const planned = pass_plan.filter((p) => SECURITY_FAMILY.includes(p.lens));
+    const strategies = planChainStrategies(securitySel, {
+      threatModel,
+      triggeredServerLines: triggeredServerLines(files, securitySel),
+      mode: security.triggers,
+      requested,
+    });
+    const hasDelta = (): boolean => strategies.some((st) => st.strategy === "delta");
+    if (!hasDelta() && always.has(CHAIN_PASS))
+      strategies.unshift({ strategy: "delta", why: ALWAYS_REASON });
+    if (!hasDelta() && security.only && planned.length >= 2)
+      strategies.unshift({
+        strategy: "delta",
+        why: `a security-only review planned ${planned.length} security lenses (${planned.map((p) => p.lens).join(", ")})`,
+      });
+    const tier = tierOf(CHAIN_PASS);
+    const chainPinned = risk.has(CHAIN_PASS) || pins[CHAIN_PASS] !== undefined;
+    const chainRow = (strategy: ChainStrategy, why: string): PassPlanEntry => ({
+      lens: CHAIN_PASS,
+      agent: `${CHAIN_PASS}--${tier}`,
+      tier,
+      raisable_to: chainPinned ? [] : raisableFrom(CHAIN_PASS, tier),
+      why: `${strategy}: ${why}`,
+      strategy,
+    });
+    for (const s of strategies)
+      pass_plan.push({
+        ...chainRow(s.strategy, s.why),
+        ...(s.strategy === "delta" ? { required: true as const } : {}),
+      });
+    if (pass_plan.some((p) => SECURITY_FAMILY.includes(p.lens)))
+      post_plan.push({
+        ...chainRow(
+          "compose",
+          "this round's security leads, composed into chains once every discovery row has returned",
+        ),
+        stage: "post-discovery",
+      });
+  }
+  const selected = new Set([...pass_plan, ...post_plan].map((p) => p.lens));
+  // The security family is offered only to a round already doing security
+  // work (a family row planned, a request, a security-only profile): a PR
+  // with no security signal is offered what it was before the family
+  // existed. The chain lens is never offered: it runs as strategy rows the
+  // plan places, never as an ad hoc pass.
+  const securityRound =
+    requested ||
+    security.only ||
+    [...pass_plan, ...post_plan].some((p) => SECURITY_FAMILY.includes(p.lens));
   const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter(
-    (l) => !selected.has(l) && on(l) && !skip.has(l),
+    (l) =>
+      !selected.has(l) &&
+      on(l) &&
+      !skip.has(l) &&
+      l !== CHAIN_PASS &&
+      (securityRound || !SECURITY_FAMILY.includes(l)),
   );
   return {
     pass_plan: slowestFirst(pass_plan, files, risk),
+    ...(post_plan.length > 0 ? { post_plan } : {}),
     addable_lenses,
     sweep_unswept,
     ...(behaviour_unread.length > 0 ? { behaviour_unread } : {}),
   };
+}
+
+/** Why a lens the profile plans `always` is in the plan. */
+const ALWAYS_REASON =
+  'the profile plans it on every change to code or configuration ([lenses] plan = "always")';
+
+/** Why a requested security lens is in the plan: who asked, and how. */
+function requestReason(r: SecurityRequest): string {
+  const how = { label: "with a PR label", comment: "in a PR comment", operator: "as the operator" };
+  // An asker the host could not name (a label seen without its webhook, the
+  // plugin's person) is left out, never rendered as a bare "@".
+  const by = r.by.trim() === "" ? "" : ` by @${r.by.trim()}`;
+  return `a security review was requested${by} ${how[r.source]}`;
 }
 
 /** The lenses `slowestFirst` launches last within their tier: conditional
@@ -486,6 +667,7 @@ export type FollowUpFullReason =
   | "no-adapter"
   | "delta-too-large"
   | "baseline-unplanned"
+  | "anchor-unplanned"
   | "delta-threw"
   | "patch-write-failed"
   | Exclude<PrOwnedDelta, { ok: true }>["reason"];
@@ -543,8 +725,9 @@ export type PrOwnedDeltaReader = (q: {
  * (docs/follow-up-rounds.md), and plan it. Total: any doubt — the knob, no
  * reviewed-head mark, no git seam, a delta git could not compute, a delta
  * above `follow_up_max_delta_ratio` of the PR's diff lines, a delta plan
- * without pass-baseline — answers `{full: reason}`, and the caller runs a
- * full re-review.
+ * with no row to carry the prior findings — answers `{full: reason}`, and
+ * the caller runs a full re-review. The security inputs plan the delta as
+ * they planned the full plan (`PlanSecurityInputs`).
  *
  * The plan is built over the DELTA's files with the intent text arms off
  * (the title and body did not change since the last review), its tier chosen
@@ -576,7 +759,7 @@ export async function decideFollowUp(
     ecosystem: Ecosystem;
     styleGuide: readonly string[];
     ciLinters: readonly CiLinter[];
-  },
+  } & PlanSecurityInputs,
 ): Promise<
   | { kind: "delta"; decision: FollowUpDecision }
   | { kind: "full"; reason: FollowUpFullReason; detail?: Record<string, unknown> }
@@ -620,6 +803,7 @@ export async function decideFollowUp(
     ecosystem: args.ecosystem,
     styleGuide: args.styleGuide,
     ciLinters: args.ciLinters,
+    ...securityInputsOf(args),
     sweepOwed: (deltaLines) =>
       followUpSweepOwed(cfg, {
         standing: args.standing,
@@ -682,7 +866,7 @@ export function planFollowUp(
     ciLinters: readonly CiLinter[];
     /** Handed the delta's line count. */
     sweepOwed: (deltaLines: number) => boolean;
-  },
+  } & PlanSecurityInputs,
 ):
   | { kind: "delta"; decision: FollowUpDecision }
   | { kind: "full"; reason: FollowUpFullReason; detail?: Record<string, unknown> } {
@@ -696,6 +880,14 @@ export function planFollowUp(
       detail: { delta_lines: delta.lines, pr_lines: prLines, ratio },
     };
   const deltaFiles = deltaAsPrFiles(delta.files) as PrFileEntry[];
+  // The security facts are the whole PR's (the daemon computes them over the
+  // PR head against its base), so a fact found once would plan its lens on
+  // every later push. The delta plans from the facts about its own files;
+  // a fact that names no file reads the whole PR, which a delta does not.
+  const deltaPaths = new Set(deltaFiles.map((f) => f.filename));
+  const securityFacts = args.securityFacts?.filter(
+    (f) => f.file !== undefined && deltaPaths.has(f.file),
+  );
   let plan = buildPassPlan(
     cfg,
     deltaFiles,
@@ -704,7 +896,7 @@ export function planFollowUp(
     heuristics,
     args.styleGuide,
     args.ciLinters,
-    { tierFiles: args.files },
+    { tierFiles: args.files, ...securityInputsOf({ ...args, securityFacts }) },
   );
   // The migration gate and the pre-check read the WHOLE PR, and their notes
   // name pass-data-safety (a degraded pre-check un-muzzles that lens, never
@@ -751,10 +943,47 @@ export function planFollowUp(
       cfg.review.follow_up_small_delta_lines ?? REVIEW_DEFAULTS.follow_up_small_delta_lines;
     if (smallDelta > 0 && delta.lines <= smallDelta) plan = leanFollowUpPlan(plan);
   }
+  // A security-only review anchors a follow-up on a family row, and a
+  // docs-only delta plans none (the `always` lenses drop on docs). Rather
+  // than answer the cheapest push with a full review, the delta carries one
+  // class row of the full plan — the profile's `always` lens first — to
+  // verify the prior findings over it.
+  const only = (cfg.security ?? SECURITY_DEFAULTS).only;
+  if (
+    only &&
+    isDocsOnlyChange(deltaFiles) &&
+    !plan.pass_plan.some((p) => SECURITY_FAMILY.includes(p.lens))
+  ) {
+    const classRows = args.fullPlan.pass_plan.filter(
+      (p) => SECURITY_FAMILY.includes(p.lens) && p.lens !== CHAIN_PASS,
+    );
+    const always = new Set(alwaysPlannedLenses(cfg.lenses));
+    const anchor = classRows.find((p) => always.has(p.lens)) ?? classRows[0];
+    if (anchor !== undefined) {
+      const carried: PassPlanEntry = {
+        ...anchor,
+        why: "a docs-only push: carried from the full plan to verify the prior findings",
+      };
+      const at = plan.pass_plan.findIndex((p) => p.lens === VALIDATE_PASS);
+      const rows = [...plan.pass_plan];
+      rows.splice(at < 0 ? rows.length : at, 0, carried);
+      plan = {
+        ...plan,
+        pass_plan: slowestFirst(rows, deltaFiles, new Set(cfg.models.risk_passes)),
+        addable_lenses: plan.addable_lenses.filter((l) => l !== anchor.lens),
+      };
+    }
+  }
   // pass-baseline carries every prior finding no other planned lens owns: a
   // follow-up plan without it (a profile switched it off) cannot verify them.
-  if (!plan.pass_plan.some((p) => p.lens === BASELINE_PASS))
-    return { kind: "full", reason: "baseline-unplanned" };
+  // A security-only review has no baseline: there a security-family row
+  // carries them (packages/pi-plugin/src/priortasks.ts), and a delta that
+  // plans none runs as a full round.
+  if (!plan.pass_plan.some((p) => p.lens === BASELINE_PASS)) {
+    if (!only) return { kind: "full", reason: "baseline-unplanned" };
+    if (!plan.pass_plan.some((p) => SECURITY_FAMILY.includes(p.lens)))
+      return { kind: "full", reason: "anchor-unplanned" };
+  }
   // An owed sweep needs a plan to run: an empty full plan records nothing
   // owed rather than a sweep no round could ever satisfy.
   const sweepOwed =
@@ -786,6 +1015,15 @@ export function planFollowUp(
 
 const BASELINE_PASS = "pass-baseline";
 const DATA_SAFETY_PASS = "pass-data-safety";
+
+/** Just the security inputs of a wider argument object, each only when set. */
+function securityInputsOf(a: PlanSecurityInputs): PlanSecurityInputs {
+  return {
+    ...(a.securityRequest !== undefined ? { securityRequest: a.securityRequest } : {}),
+    ...(a.threatModel !== undefined ? { threatModel: a.threatModel } : {}),
+    ...(a.securityFacts !== undefined ? { securityFacts: a.securityFacts } : {}),
+  };
+}
 
 /** The lenses a lean follow-up plan offers as addable instead of planning. */
 export const LEAN_ADDABLE_PASSES: readonly string[] = [...QUALITY_PASSES, STYLE_PASS];
@@ -860,12 +1098,45 @@ export function roundDeltaOf(d: FollowUpDecision, patchFile: string): RoundDelta
  * findings ride the core rows only (their assignment indexes `pass_plan`),
  * so none ride here. Pure. */
 export function optionalOrderOf(order: RoundOrder, optionalPlan: PassPlanEntry[]): RoundOrder {
-  const { prior_assignments: _p, optional_plan: _o, optional_task_files: _f, ...rest } = order;
+  // The post-discovery rows are the core plan's: the session launches them
+  // once, from the core order, never again for its optional rows.
+  const {
+    prior_assignments: _p,
+    optional_plan: _o,
+    optional_task_files: _f,
+    post_plan: _pp,
+    post_task_files: _pt,
+    chain_compose: _cc,
+    ...rest
+  } = order;
   return {
     ...rest,
     pass_plan: optionalPlan,
     lenses: lensesOf(optionalPlan),
   };
+}
+
+/** The order the post-discovery rows (`post_plan`) render their task files
+ * from: the round's own order with `post_plan` as its plan, so a `compose`
+ * row's task carries the same threat model, facts and scope as the rows
+ * whose leads it composes. Prior findings, the optional rows and the sweep
+ * index or belong to other plans, so none ride here. Pure; dispatch and the
+ * one-shot route write its tasks into `tasks-post/`, which the engine's wave
+ * never lists. */
+export function postOrderOf(order: RoundOrder, postPlan: PassPlanEntry[]): RoundOrder {
+  const {
+    prior_assignments: _p,
+    optional_plan: _o,
+    optional_task_files: _f,
+    sweep_plan: _sp,
+    sweep_plan_unswept: _su,
+    sweep_plan_behaviour_unread: _bu,
+    sweep_task_files: _st,
+    post_plan: _pp,
+    post_task_files: _pt,
+    ...rest
+  } = order;
+  return { ...rest, pass_plan: postPlan, lenses: lensesOf(postPlan) };
 }
 
 /** The order the pre-approval sweep's task files render from: the
@@ -886,6 +1157,10 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
     sweep_unswept: _du,
     behaviour_unread: _db,
     coverage_files: _cf,
+    // The post-discovery rows are the round's own, launched once from it.
+    post_plan: _pp,
+    post_task_files: _pt,
+    chain_compose: _cc,
     ...whole
   } = order;
   return {
@@ -900,6 +1175,84 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
       : {}),
   };
 }
+
+/**
+ * The security fields of a round order — every one absent on an order with
+ * nothing to say, so a round that plans no security-family row under the
+ * default `[security]` renders exactly as before.
+ *
+ *  - `post_plan`, and `chain_compose` when it carries the chain's `compose`;
+ *  - `security_fold` and `security_only`, from `[security]`;
+ *  - `security_validator_agent`: when a family row is planned and the
+ *    round's validator runs below the risk tier, the round's security
+ *    candidates are validated at `pass-validate--sol-high`, as their own
+ *    group. The validator row itself keeps its tier (`validatorTier`): the
+ *    raise is for the security group alone;
+ *  - when a family row is planned: the threat model (its source, hash and
+ *    fenced excerpt), the facts, and the earlier rounds' partial chains for
+ *    the chain's `delta` row; and the request, whenever there is one.
+ *
+ * "Planned" counts every phase the round runs: the discovery rows, the
+ * post-discovery rows and a follow-up's owed sweep (`sweepPlan`, the whole
+ * PR's full plan). The sweep's task order is this order with the sweep plan
+ * (`sweepOrderOf`), so a family row that runs only in the sweep reads the
+ * same threat model and facts, and is validated at the same tier, as one in
+ * the delta plan.
+ */
+function securityOrderFields(
+  args: Pick<
+    Parameters<typeof buildRoundOrder>[0],
+    | "cfg"
+    | "securityRequest"
+    | "threatModel"
+    | "securityFacts"
+    | "securityInventory"
+    | "priorPartialChains"
+  >,
+  passPlan: readonly PassPlanEntry[],
+  postPlan: PassPlanEntry[],
+  sweepPlan: readonly PassPlanEntry[],
+): Partial<RoundOrder> {
+  const security = args.cfg.security ?? SECURITY_DEFAULTS;
+  const familyPlanned = [...passPlan, ...postPlan, ...sweepPlan].some((p) =>
+    SECURITY_FAMILY.includes(p.lens),
+  );
+  const validator = passPlan.find((p) => p.lens === VALIDATE_PASS);
+  const raise =
+    familyPlanned &&
+    validator !== undefined &&
+    PASS_TIER_ORDER.indexOf(validator.tier) < PASS_TIER_ORDER.indexOf(SECURITY_VALIDATOR_TIER);
+  const tm = args.threatModel ?? null;
+  const facts = familyPlanned
+    ? [...(args.securityFacts ?? []), ...(args.securityInventory?.() ?? [])]
+    : [];
+  const partial = args.priorPartialChains ?? [];
+  const delta = [...passPlan, ...sweepPlan].some(
+    (p) => p.lens === CHAIN_PASS && p.strategy === "delta",
+  );
+  return {
+    ...(postPlan.length > 0 ? { post_plan: postPlan } : {}),
+    ...(postPlan.some((p) => p.lens === CHAIN_PASS && p.strategy === "compose")
+      ? { chain_compose: true as const }
+      : {}),
+    ...(security.fold ? { security_fold: true as const } : {}),
+    ...(security.only ? { security_only: true as const } : {}),
+    ...(raise ? { security_validator_agent: `${VALIDATE_PASS}--${SECURITY_VALIDATOR_TIER}` } : {}),
+    ...(familyPlanned && tm !== null
+      ? {
+          threat_model: { source: tm.source, hash: tm.hash },
+          threat_model_excerpt: renderThreatModelExcerpt(tm),
+        }
+      : {}),
+    ...(familyPlanned && facts.length > 0 ? { security_facts: [...facts] } : {}),
+    ...(args.securityRequest ? { security_request: args.securityRequest } : {}),
+    ...(delta && partial.length > 0 ? { prior_partial_chains: [...partial] } : {}),
+  };
+}
+
+/** The tier a round's security candidates are validated at: the risk tier
+ * the family's lenses run at. */
+export const SECURITY_VALIDATOR_TIER: PassTier = "sol-high";
 
 /** Build the round order for one PR — pure once the files list is in hand. */
 export function buildRoundOrder(args: {
@@ -953,8 +1306,25 @@ export function buildRoundOrder(args: {
   ciLinters?: readonly CiLinter[];
   /** The plan, already built by the caller (dispatch builds it once and
    * records the same plan on the round row). Absent ⇒ built here from
-   * `files`, the PR body, the style guide and the linters. */
+   * `files`, the PR body, the style guide, the linters and the security
+   * inputs. */
   plan?: PassPlan;
+  /** A security review was asked for (packages/pi-plugin/src/types.ts
+   * `SecurityRequest`): the plan carries the whole family, and the order
+   * names who asked. */
+  securityRequest?: SecurityRequest;
+  /** The threat model the round reads; null or absent ⇒ none. The order
+   * carries its excerpt when a security-family row is planned. */
+  threatModel?: ThreatModel | null;
+  /** The deterministic security facts; carried when a security-family row
+   * is planned. */
+  securityFacts?: readonly SecurityFact[];
+  /** `PlanSecurityInputs.securityInventory`: called only when a
+   * security-family row is planned, its facts carried after `securityFacts`. */
+  securityInventory?: () => readonly SecurityFact[];
+  /** Earlier rounds' `partial-chain` records on this PR, rendered as one
+   * line each: handed to the chain's `delta` row as unconfirmed leads. */
+  priorPartialChains?: readonly string[];
   /** A FOLLOW-UP round's facts: the delta, the prior findings note, the owed
    * sweep's plan. The coverage check then holds the round to the delta's
    * files. Absent ⇒ a full round's order. */
@@ -974,7 +1344,7 @@ export function buildRoundOrder(args: {
   };
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
-  const { pass_plan, addable_lenses, sweep_unswept, behaviour_unread } =
+  const { pass_plan, post_plan, addable_lenses, sweep_unswept, behaviour_unread } =
     args.plan ??
     buildPassPlan(
       args.cfg,
@@ -984,6 +1354,7 @@ export function buildRoundOrder(args: {
       args.heuristics,
       args.styleGuide ?? [],
       args.ciLinters ?? [],
+      securityInputsOf(args),
     );
   const headSha = reviewedHeadOf(args.tree, args.row);
   // An addable lens the profile floors above the add rule's own
@@ -1043,6 +1414,7 @@ export function buildRoundOrder(args: {
     ...((args.cfg.review?.validator_shards ?? 1) > 1
       ? { validator_shards: args.cfg.review.validator_shards }
       : {}),
+    ...securityOrderFields(args, pass_plan, post_plan ?? [], args.followUp?.sweepPlan ?? []),
     migration_gate: eco.migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
     ...(args.migrationCollisionsUndelivered && (args.migrationCollisions ?? []).length > 0

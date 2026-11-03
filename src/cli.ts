@@ -1244,19 +1244,23 @@ async function cmdDrain(rest: string[]): Promise<number> {
 // pauses every tracked PR but one with it before the drain is lifted.
 
 export const PR_LEVER_USAGE =
-  "usage: qcr pause-pr <pr> [--reason <text>] | qcr resume-pr <pr> | qcr review-now <pr>";
+  "usage: qcr pause-pr <pr> [--reason <text>] | qcr resume-pr <pr> | qcr review-now <pr> [--security]";
 
-/** `qcr pause-pr|resume-pr`'s arguments: one PR number, and for a pause an
- * optional `--reason <text>` (the reason the board and `qcr status` show). */
+/** `qcr pause-pr|resume-pr|review-now`'s arguments: one PR number; for a
+ * pause an optional `--reason <text>` (the reason the board and `qcr status`
+ * show); for review-now an optional `--security`, which also asks for a
+ * security review of the PR (src/securityrequest.ts). */
 export function parsePrLeverArgs(
   verb: "pause-pr" | "resume-pr" | "review-now",
   rest: readonly string[],
 ): import("./tui/prpause.js").PrLeverCommand {
   let pr: number | undefined;
   let reason: string | undefined;
+  let security = false;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
-    if (a === "--reason" && verb === "pause-pr" && reason === undefined) {
+    if (a === "--security" && verb === "review-now" && !security) security = true;
+    else if (a === "--reason" && verb === "pause-pr" && reason === undefined) {
       const v = rest[++i];
       if (v === undefined || v.trim() === "") throw new Error(PR_LEVER_USAGE);
       reason = v;
@@ -1265,7 +1269,8 @@ export function parsePrLeverArgs(
   }
   if (pr === undefined) throw new Error(PR_LEVER_USAGE);
   if (verb === "resume-pr") return { command: "resume-pr", pr };
-  if (verb === "review-now") return { command: "review-now", pr };
+  if (verb === "review-now")
+    return { command: "review-now", pr, ...(security ? { security: true as const } : {}) };
   return { command: "pause-pr", pr, reason: reason ?? "paused by the operator (qcr pause-pr)" };
 }
 
@@ -2232,8 +2237,8 @@ export async function main(rawArgv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <version|config check [--config-home <dir>]|home|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|review-now <pr>|github-token sync [--gh <path>] [--secrets-dir <dir>]|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
-          "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
+        "usage: qcr <version|config check [--config-home <dir>]|home|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|review-now <pr> [--security]|github-token sync [--gh <path>] [--secrets-dir <dir>]|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
+          "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--security] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|threat-model propose|threat-model start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
       // A bare `qcr` (or an explicit help) is a usage request; anything else

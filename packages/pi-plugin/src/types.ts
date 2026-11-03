@@ -2,6 +2,8 @@
 // it, and verdict files close the loop.
 import type { SessionCommandOwnership } from "./session-command.js";
 import type { MigrationCollision } from "./migrations.js";
+import type { ChainStrategy } from "./passes.js";
+import type { SecurityFact } from "./secfacts.js";
 import type { PostingPolicy } from "./postingpolicy.js";
 import type { SweepClaim } from "./sweepstatus.js";
 
@@ -129,8 +131,28 @@ export interface PassPlanEntry {
    * split row) and the risk passes (`[models] risk_passes`). One of these
    * failed and never completed is a round that posts nothing and is
    * requeued (src/requiredpasses.ts). Absent on every other row, and on
-   * plans recorded before the field existed. */
+   * plans recorded before the field existed. A security-family row is
+   * never required — a failed one is named in the review body as not
+   * completed — except the exploit chain's `delta` row. */
   required?: true;
+  /** The exploit-chain lens's search (packages/pi-plugin/src/passes.ts
+   * `CHAIN_STRATEGIES`): set on `pass-sec-exploit-chain` rows only, one row
+   * per strategy, so a required `delta` row is told apart from the others. */
+  strategy?: ChainStrategy;
+  /** `post-discovery`: the row runs after every discovery row has
+   * returned, over what they found, and the session launches it — never the
+   * discovery wave. Set only on the rows of an order's `post_plan`. */
+  stage?: "post-discovery";
+}
+
+/** Who asked for a security review of a PR, and how: a maintainer's PR
+ * label or `@<bot> security` comment, or the operator (`qcr review-now
+ * --security`, `/qcr-review --security`). A request plans the whole
+ * security family; it never plans a lens the profile switched off. */
+export interface SecurityRequest {
+  /** The login that asked; the operator's own name for an operator request. */
+  by: string;
+  source: "label" | "comment" | "operator";
 }
 
 /** One prior open finding as a lens's task file carries it. */
@@ -367,6 +389,49 @@ export interface RoundOrder {
    * the optional rows and whether an owed pre-approval sweep runs. Absent ⇒
    * the fixed rules. */
   follow_up_extent?: "session";
+  /** The rows that run after the discovery wave (`stage:
+   * "post-discovery"`): today the exploit chain's `compose` row, planned
+   * whenever another security-family row is. Never part of `pass_plan` or
+   * `lenses`, and never launched by the engine's wave: the main session
+   * launches it once every discovery row has returned. Absent ⇒ none. */
+  post_plan?: PassPlanEntry[];
+  /** Task files written for the `post_plan` rows, in their own directory
+   * (`tasks-post/`, which the wave never lists; `row` indexes `post_plan`).
+   * Absent ⇒ the session writes their task strings itself. */
+  post_task_files?: Array<{ row: number; agent: string; path: string }>;
+  /** `post_plan` carries the chain's `compose` row: the round prompt tells
+   * the session to collect the security leads and launch it. */
+  chain_compose?: true;
+  /** `[security] fold`: an unverified security candidate is posted as a
+   * `security-demoted` question, never doubted. Absent ⇒ off. */
+  security_fold?: true;
+  /** `[security] only`: the install reviews security alone, and a
+   * non-security candidate is killed `out-of-scope`. Absent ⇒ off. */
+  security_only?: true;
+  /** The validator variant the round's security candidates are validated
+   * at, as their own group in the same call — set when a security-family
+   * row is planned and the round's validator runs below the risk tier.
+   * The main validator row keeps its own tier. Absent ⇒ one validator for
+   * every candidate. */
+  security_validator_agent?: string;
+  /** The threat model the security rows read: where it came from and the
+   * sha256 of its text. Absent ⇒ none, or no security-family row planned. */
+  threat_model?: { source: "repo" | "profile" | "draft"; hash: string };
+  /** The threat model as a security-family task renders it
+   * (packages/pi-plugin/src/threatmodel.ts `renderThreatModelExcerpt`):
+   * fenced as data. Absent with `threat_model`. */
+  threat_model_excerpt?: string;
+  /** The deterministic security facts (packages/pi-plugin/src/secfacts.ts),
+   * rendered into security-family tasks only and never posted. Absent ⇒
+   * none computed, or no security-family row planned. */
+  security_facts?: SecurityFact[];
+  /** The request that planned the security family this round. Absent ⇒
+   * none. */
+  security_request?: SecurityRequest;
+  /** Earlier rounds' `partial-chain` records on this PR — chains with more
+   * than one unproven hop, never posted — handed to the chain's `delta`
+   * row as unconfirmed leads. Absent ⇒ none, or no `delta` row. */
+  prior_partial_chains?: string[];
 }
 
 /** One file of a follow-up round's delta (worktrees.ts `PrOwnedDeltaFile`,

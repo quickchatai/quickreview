@@ -234,6 +234,8 @@ improvement_pr_deny_prefixes = ["migrations/", "infra/", "ansible/", ".github/wo
 default = "openai-codex/gpt-6.1-sol"
 conversation = "openai-codex/gpt-6.1-sol"
 # Passes always run at sol-high — single variant, not raisable (already top).
+# The fourteen security-family lenses (pass-sec-*) always join this list,
+# whatever it says, and a profile's [lenses.<pass>] risk = true adds its lens.
 risk_passes = ["pass-security", "pass-prod-risk", "pass-data-safety"]
 # pass-validate's tier — its own configured tier (floored by a repo profile's
 # min_tier for it), never raised to match a lens (src/dispatch.ts
@@ -253,7 +255,8 @@ small_diff_lines = 150
 # is not raisable, and every built variant of it carries that tier's spec. The
 # validator never follows a pinned lens (it runs at validate_tier).
 # Not for pass-validate (use validate_tier) nor for a risk pass (always
-# sol-high). A profile min_tier still floors a pin. Unknown passes or tiers
+# sol-high), a security-family lens among them. A profile min_tier still
+# floors a pin. Unknown passes or tiers
 # are refused at load. e.g.
 #   [models.pass_tiers]
 #   "pass-sweep" = "sol-high"
@@ -892,6 +895,20 @@ extra_root_dirs = []           # ROOT-only directive dirs, like prompts/
 extra_files = []               # exact repo-relative paths
 extra_vendored_segments = []   # extra third-party markers (case-insensitive)
 
+# The security family: fourteen single-concern security lenses (pass-sec-*),
+# each planned on its own signals and always at the risk tier. A profile's
+# [security] table wins over this one for triggers, only and fold; label and
+# command are this file's alone.
+[security]
+triggers = "strong"            # which signals plan the family: "off" | "strong" (a removed guard,
+                               # interpolated SQL, a disabled signature check, …) | "all" (weak ones too)
+only = false                   # true: a security-only review — every other lens off but pass-validate,
+                               # only security findings post, and an APPROVE means "no security finding"
+fold = false                   # true: a security candidate the validator could not verify posts as a
+                               # question naming the proof gap, instead of being doubted
+label = "qcr:security"         # the PR label that asks for a security review; "" = no label requests
+command = true                 # "@<bot> security" from an owner, member or collaborator asks for one
+
 # ---------------------------------------------------------------------------
 # [escalation] — OPTIONAL, OFF BY DEFAULT.
 #
@@ -1040,6 +1057,17 @@ depth = "standard"             # "deep": stage 1 names a deep lens for every fil
 deep_lenses = ["pass-consistency", "pass-delivery", "pass-duplication", "pass-maintainability"]
                                # the deep floor: each of these over every file stage 1 reads (one switched off by the profile is skipped);
                                # the order is the priority: under a budget the first lens covers the whole tree before the next starts
+lenses = []                    # the lenses a scan may run at all, each a deep lens; [] = every deep lens
+kinds = []                     # the finding kinds a scan keeps, e.g. ["security"] (a prefix keeps
+                               # "security:injection" too; under a security kind a pass-sec-* lens's
+                               # findings are kept whatever kind it wrote); [] = every kind
+threat_model = "off"           # draft a threat model first (stage 0, part of the scan: a preview offers it, a scan
+                               # start waits for it): "auto" (only when neither the repo's .qcr/threat-model.md nor
+                               # the profile's threat-model.md exists, and no draft yet) | "always" (once per scanned
+                               # sha; with a repo/profile model present the draft is a revision for a person to
+                               # adopt, and scans keep reading the existing model) | "off" (the default; the
+                               # security profile sets "auto"); "off" also never reads
+                               # a draft. Not off, `qcr scan threat-model propose` drafts one again on request
 # Where `qcr scan start` drives a run (not a profile key). "docker": in a throwaway
 # container from the companion image, mounting only the reviewed repo (read-only),
 # the state home, the companion's pi login (read-only) and this config (read-only)

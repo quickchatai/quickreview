@@ -5,7 +5,7 @@
 import { parseDestinations, type Destination } from "@quickchatai/pi-quickreview/src/reviewdest.js";
 
 export const REVIEW_USAGE =
-  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] [--debug-pi] [--json] | --help";
+  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--security] [--to DEST] [--out FILE] [--debug-pi] [--json] | --help";
 
 export type ReviewCommand =
   | { help: true }
@@ -21,6 +21,10 @@ export type ReviewCommand =
       key?: string;
       limit?: number;
       full: boolean;
+      /** `--security`: a security review asked for on top of the plan, as
+       * `/qcr-review --security` asks it — the whole security family is
+       * planned (never a lens the profile switched off). Set only when given. */
+      securityRequest?: true;
       to?: Destination[];
       out?: string;
       /** `--debug-pi`: the round runs inside interactive pi. */
@@ -37,6 +41,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
   let diff: string | undefined;
   let preview = false;
   let full = false;
+  let security = false;
   let base: string | undefined;
   let pr: string | undefined;
   let repo: string | undefined;
@@ -55,6 +60,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     if (a === "--help" || a === "-h") help = true;
     else if (a === "--preview") preview = true;
     else if (a === "--full") full = true;
+    else if (a === "--security") security = true;
     else if (a === "--debug-pi") debugPi = true;
     else if (a === "--base") base = value(i++, a);
     else if (a === "--diff") {
@@ -109,6 +115,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     ...(repo !== undefined ? { repo } : {}),
     preview,
     full,
+    ...(security ? { securityRequest: true as const } : {}),
     debugPi,
     ...(base !== undefined ? { base } : {}),
     ...(key !== undefined ? { key } : {}),

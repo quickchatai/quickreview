@@ -809,7 +809,7 @@ describe("validity tiers (the scan validator is the skeptic)", () => {
     });
   });
 
-  it("the tier filter: `tier=`/bare words in the f box, and t steps all → confirmed → likely → doubtful → unknown → all", async () => {
+  it("the tier filter: `tier=`/bare words in the f box, and t steps all → confirmed → likely → needs-review → doubtful → unknown → all", async () => {
     expect(parseScanFilter("tier=likely")).toEqual({ ok: true, filter: { validity: "likely" } });
     expect(parseScanFilter("doubtful new")).toEqual({
       ok: true,
@@ -819,8 +819,10 @@ describe("validity tiers (the scan validator is the skeptic)", () => {
     expect(matchesFilter({ validity: "unknown" }, tiered[3]!)).toBe(true);
     expect(matchesFilter({ validity: "unknown" }, tiered[0]!)).toBe(false);
     expect(
-      [undefined, "confirmed", "likely", "doubtful", "unknown"].map((v) => nextTier(v as never)),
-    ).toEqual(["confirmed", "likely", "doubtful", "unknown", undefined]);
+      [undefined, "confirmed", "likely", "needs-review", "doubtful", "unknown"].map((v) =>
+        nextTier(v as never),
+      ),
+    ).toEqual(["confirmed", "likely", "needs-review", "doubtful", "unknown", undefined]);
     const { app, type, screen } = rig({ findings: tiered });
     await driving(app, () => {
       expect(barLabels(app)).toContain("t tier");
@@ -828,6 +830,8 @@ describe("validity tiers (the scan validator is the skeptic)", () => {
       expect(screen()).toContain("FINDINGS (all units) (1) · tier=confirmed (F clears)");
       type("t");
       expect(screen()).toContain("· tier=likely (F clears)");
+      type("t");
+      expect(screen()).toContain("· tier=needs-review (F clears)");
       type("t");
       type("t");
       type("t");

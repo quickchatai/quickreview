@@ -520,7 +520,8 @@ with `PASS_TIER_ORDER` as the single place the order is written down.
 `tiersForPass(pass, riskPasses, validateTier)` decides the fan-out:
 
 - a pass listed in `[models] risk_passes` builds **only** the `sol-high`
-  variant;
+  variant — every `pass-sec-*` lens among them, since the parsed list always
+  carries the security family;
 - `pass-validate` builds every tier at or above `[models] validate_tier`,
   because that setting is a **floor**, not a pin — dispatch raises the validator
   to the round's highest lens tier (`validatorTier` in `src/dispatch.ts`), and

@@ -71,7 +71,8 @@ export function argPreview(args: Bag): string | undefined {
 }
 
 /** The task slots of a `subagent` / `lens` call (one `{agent, task}` or
- * `{tasks:[...]}`), with the phase its task-file pointer names. */
+ * `{tasks:[...]}`), with the phase its task-file pointer names and the
+ * strategy its task file's name carries (`NN-<agent>@<strategy>.md`). */
 export function subagentExecutions(args: Bag): LiveExecution[] {
   const tasks =
     typeof args.agent === "string" ? [args] : Array.isArray(args.tasks) ? args.tasks : args.chain;
@@ -80,16 +81,19 @@ export function subagentExecutions(args: Bag): LiveExecution[] {
     const agent = text(task?.agent);
     if (!agent) return [];
     const pointer = text(task?.task)?.match(
-      /^Task file: [^\n]*[/]tasks(-sweep|-optional)?[/][^\n]+\. Read it first;/,
+      /^Task file: [^\n]*[/]tasks(-sweep|-optional|-post)?[/]([^\n]+)\. Read it first;/,
     );
     const phase: LiveExecution["phase"] | undefined = pointer
       ? pointer[1] === "-sweep"
         ? "sweep"
         : pointer[1] === "-optional"
           ? "optional"
-          : "plan"
+          : pointer[1] === "-post"
+            ? "post"
+            : "plan"
       : undefined;
-    return [{ agent, ...(phase ? { phase } : {}) }];
+    const strategy = pointer?.[2]?.match(/@([a-z][a-z0-9-]*)\.md$/)?.[1];
+    return [{ agent, ...(phase ? { phase } : {}), ...(strategy ? { strategy } : {}) }];
   });
 }
 
@@ -139,6 +143,14 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** The task-directory phases a wave slot may name (`LiveExecution.phase`). */
+const LIVE_PHASES: ReadonlyArray<NonNullable<LiveResult["phase"]>> = [
+  "plan",
+  "sweep",
+  "optional",
+  "post",
+];
+
 /** One child of a lens tool call, reduced to what round-progress reads. */
 export function slimResult(raw: Bag, slot: number): LiveResult {
   const progress = record(raw.progress);
@@ -149,6 +161,8 @@ export function slimResult(raw: Bag, slot: number): LiveResult {
   const error = typeof raw.errorMessage === "string" ? raw.errorMessage : undefined;
   const native = nativeParts(raw.messages);
   const cost = lensUsageOf(raw.usage).cost;
+  const phase = LIVE_PHASES.find((p) => p === raw.phase);
+  const strategy = text(raw.strategy);
   const recent = Array.isArray(progress?.recentTools)
     ? progress.recentTools.map(record).flatMap((t) => {
         if (t === undefined) return [];
@@ -194,6 +208,8 @@ export function slimResult(raw: Bag, slot: number): LiveResult {
     ...(slimProgress ? { progress: slimProgress } : {}),
     ...(native ? { native } : {}),
     ...(cost > 0 ? { cost_usd: cost } : {}),
+    ...(phase ? { phase } : {}),
+    ...(strategy ? { strategy } : {}),
   };
 }
 

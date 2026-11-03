@@ -4,6 +4,29 @@
 // `[models.pass_tiers]`, `[scan] deep_lenses`) against it without an import
 // cycle through dispatch.ts, which re-exports it.
 
+/** The security family: the `pass-sec-*` lenses, in plan order. Declared
+ * once, here: `ALL_PASSES` places the family by spreading this list, so a
+ * member is added or renamed in one place (tests/security-family.test.ts
+ * holds it equal to every `pass-sec-*` name in `ALL_PASSES`). A lens is a
+ * member only when its sole concern is security, so `pass-security` (the
+ * general lens the default profile keeps) and `pass-bounds` are not. */
+export const SECURITY_FAMILY: readonly string[] = [
+  "pass-sec-authn-coverage",
+  "pass-sec-access",
+  "pass-sec-privesc",
+  "pass-sec-iam",
+  "pass-sec-tokens",
+  "pass-sec-toctou",
+  "pass-sec-injection",
+  "pass-sec-boundaries",
+  "pass-sec-secrets-data",
+  "pass-sec-supply-chain",
+  "pass-sec-llm",
+  "pass-sec-infra",
+  "pass-sec-variant",
+  "pass-sec-exploit-chain",
+];
+
 /** Every pass the system knows: the lenses selectLenses can emit plus the
  * always-appended validator. addable_lenses derives from this set (∪ the
  * configured risk passes, which today are a subset of it). */
@@ -75,8 +98,53 @@ export const ALL_PASSES: readonly string[] = [
   // when a CI job runs a linter whose rules cover a changed file
   // (packages/pi-plugin/src/lintconfig.ts); addable otherwise.
   "pass-lint-conformance",
+  // The security family (SECURITY_FAMILY above): single-concern security
+  // lenses, planned on their own triggers (securitytriggers.ts), never in
+  // SUBLENS_TRIGGERS, and always at the risk tier. pass-security and
+  // pass-bounds stay where they are and are not members.
+  ...SECURITY_FAMILY,
   "pass-validate",
 ];
+
+/** Named lens families — what a profile's `only`, an addendum scope or a
+ * request names in place of a list of lenses that would go stale. */
+export const LENS_FAMILIES: Readonly<Record<"security", readonly string[]>> = {
+  security: SECURITY_FAMILY,
+};
+
+/** The exploit-chain lens: one row per strategy, never one row for all. */
+export const CHAIN_PASS = "pass-sec-exploit-chain";
+
+/** How a chain row searches: `delta` from the hop this change adds,
+ * `forward` from a persona at an entry point, `backward` from the assets
+ * worth reaching, and `compose` over this round's security leads, after the
+ * discovery wave. */
+export const CHAIN_STRATEGIES = ["delta", "forward", "backward", "compose"] as const;
+
+export type ChainStrategy = (typeof CHAIN_STRATEGIES)[number];
+
+/** The lens one part of a recorded lens field names: its first word, with a
+ * `:strategy`, `#n` or `@ site` after it dropped, and the built agent's
+ * `--<tier>` suffix (`pass-sec-access--sol-high`, round-progress.ts
+ * `lensForAgent`) dropped too — a session may write the agent it launched
+ * rather than the lens. No lens name contains `--`. */
+export function lensToken(part: string): string {
+  return (part.trim().split(/[\s:#@]+/)[0] ?? "").replace(/--.*$/, "");
+}
+
+/** Whether a recorded lens field names a security-family lens. The field is
+ * what a session wrote: one lens, or several joined
+ * (`pass-sec-access + pass-baseline`, `pass-sec-tokens,pass-sec-access`),
+ * a chain row carries its strategy (`pass-sec-exploit-chain:delta`), and
+ * either may carry the agent's tier suffix (`lensToken`).
+ * `pass-security` is not a member; a caller that counts it as security
+ * says so itself. */
+export function isSecurityLens(lensField: string): boolean {
+  for (const part of lensField.toLowerCase().split(/[+,/&;|]/)) {
+    if (SECURITY_FAMILY.includes(lensToken(part))) return true;
+  }
+  return false;
+}
 
 /** Lenses the whole-repo scan never runs: each needs a diff, a PR body or a
  * mid-round session to mean anything — plus the validator, which is not a

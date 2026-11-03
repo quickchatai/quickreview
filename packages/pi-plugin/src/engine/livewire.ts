@@ -29,7 +29,13 @@ export function roundLiveWriter(
     ...(warn ? { warn } : {}),
     launchExecutions: (args, planEnv) => {
       const plan = planLaunch(args, { ...planEnv });
-      return plan.ok ? plan.units.map(({ agent, phase }) => ({ agent, phase })) : [];
+      return plan.ok
+        ? plan.units.map(({ agent, phase, strategy }) => ({
+            agent,
+            phase,
+            ...(strategy !== undefined ? { strategy } : {}),
+          }))
+        : [];
     },
   });
 }

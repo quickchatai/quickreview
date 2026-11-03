@@ -19,6 +19,7 @@ import {
   type ScanCliDeps,
 } from "../src/scancli.js";
 import { scanToolDefinitions } from "../extensions/setup-scan.js";
+import { SCAN_USAGE } from "@quickchatai/pi-quickreview/src/scan/scanverbs.js";
 import type { ScanRunner } from "../src/setup/scanrun.js";
 import { SHA, SHA2, FILES, scanRig, type Rig } from "./helpers/scan-cli-rig.js";
 
@@ -452,6 +453,25 @@ describe("matches and match", () => {
 });
 
 describe("suggestions and stage 2", () => {
+  // MUTATION: call stage2Lenses without `s.scan.lenses` in the suggestions
+  // verb (packages/pi-plugin/src/scan/scanverbs.ts) — the JSON offers lenses
+  // the `[scan] lenses` allowlist leaves out, and this fails.
+  it("the suggestions' stage-2 lenses stay inside [scan] lenses", async () => {
+    const rig = scanRig({ dir });
+    const allowed = ["pass-data-safety", "pass-security"];
+    const h = harness({
+      ...rig,
+      settingsOf: () => {
+        const s = rig.settingsOf()!;
+        return { ...s, scan: { ...s.scan, lenses: allowed } };
+      },
+    });
+    await calibrate(h);
+    const sugs = await h.run(["suggestions"], true);
+    const offered = (sugs.json.stage2.lenses as Array<{ lens: string }>).map((l) => l.lens);
+    expect(offered.sort()).toEqual([...allowed].sort());
+  });
+
   it("suggestions list stage 1's leads; a proposal is priced and started by its key", async () => {
     const h = harness();
     await calibrate(h);
@@ -699,4 +719,24 @@ it("refuses interactive login as structured JSON without invoking the adapter", 
     errors: [expect.stringMatching(/interactive|json/i)],
   });
   expect(h.deps.login).not.toHaveBeenCalled();
+});
+
+// MUTATION: drop `threat-model propose|threat-model start` from the `scan <…>`
+// list in src/cli.ts's top-level usage — this fails.
+it("qcr's top-level usage names every scan subcommand SCAN_USAGE documents", () => {
+  const cli = readFileSync(join(import.meta.dirname, "../src/cli.ts"), "utf8");
+  const listed = /\|scan <([^>]+)>\|/.exec(cli)?.[1]?.split("|") ?? [];
+  expect(listed.length).toBeGreaterThan(0);
+  const documented = SCAN_USAGE.replace(/^usage: qcr scan /, "")
+    .split(" | ")
+    .map((part) => {
+      const words: string[] = [];
+      for (const w of part.trim().split(/\s+/)) {
+        if (/^[[(A-Z-]/.test(w)) break;
+        words.push(w);
+      }
+      return words.join(" ");
+    });
+  expect(documented).toContain("threat-model propose");
+  for (const verb of documented) expect(listed, verb).toContain(verb);
 });

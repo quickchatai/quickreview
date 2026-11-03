@@ -232,6 +232,7 @@ the fence.
 | Sessions | `src/sessions.ts`, `src/tmux.ts`, `src/worktrees.ts`, `src/wakes.ts`, `extensions/inject-bridge.ts` |
 | Verdict + posting | `src/verdicts.ts`, `packages/pi-plugin/src/gate.ts`, `packages/pi-plugin/src/guards.ts`, `packages/pi-plugin/src/cigate.ts`, `packages/pi-plugin/src/standing-review.ts`, `src/posting.ts`, `packages/pi-plugin/src/anchors.ts`, `src/postops.ts`, the session shims `scripts/post-review.sh`, `approve-pr.sh`, `reply-thread.sh` |
 | Review judgment | `packages/pi-plugin/src/severity.ts` (severity × confidence × reachability → tag), `src/recheck.ts`, `src/pingpong.ts`, `src/escalation.ts` |
+| Security review | `packages/pi-plugin/src/passes.ts` (`SECURITY_FAMILY`, the fourteen `pass-sec-*` lenses), `packages/pi-plugin/src/securitytriggers.ts` (what plans a family lens), `packages/pi-plugin/src/threatmodel.ts` (the threat model, read from the base), `packages/pi-plugin/src/secfacts.ts` (deterministic facts through read-only git), `packages/pi-plugin/src/secevidence.ts` (a chain's outcome from its hop labels), `src/securityrequest.ts` (the label, `@<bot> security`, `--security`), `profiles/security/` |
 | Learning | `src/feedback.ts`, `src/eod.ts`, `src/digest.ts`, `packages/pi-plugin/src/findingsrecord.ts`, `src/improvements.ts` |
 | Memory | `src/memory/` (the seam), `src/openviking/` (the engine, supervised on loopback) |
 | Operator surfaces | `src/tui/` (board, tabs, companion column), `src/cli.ts` (`qcr`), `src/slack/`, `src/commands.ts` + `src/levers.ts` |

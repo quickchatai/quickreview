@@ -162,6 +162,23 @@ export interface SuccessorObligationRow {
   updated_at: string;
 }
 
+/** One maintainer's or the operator's request for a kind of review of a PR
+ * (`pr_review_requests`; src/securityrequest.ts). `kind` is `security`
+ * today. `served_at` is when the request was handed to the queue — the
+ * reviewed-head mark stamped with new evidence and the PR triggered — and
+ * NULL while it waits for a running round to settle first. */
+export interface ReviewRequestRow {
+  pr: number;
+  kind: string;
+  source: "label" | "comment" | "operator";
+  /** The login that asked; "" when it is not known (a label dispatch read
+   * without its webhook). */
+  requested_by: string;
+  comment_id: number | null;
+  requested_at: string;
+  served_at: string | null;
+}
+
 export interface PrStateRow {
   number: number;
   state: PrLifecycleState;
@@ -969,6 +986,22 @@ CREATE TABLE IF NOT EXISTS trigger_edges (
   requested_at TEXT NOT NULL,
   PRIMARY KEY (pr, kind)
 );
+-- A maintainer's or the operator's request for a kind of review (a PR
+-- label, an @<bot> security comment, qcr review-now --security): every
+-- round of the PR plans that review while the row stands. served_at is
+-- when the request reached the queue (new evidence noted at the reviewed
+-- head, the PR triggered); NULL while a running round settles first. The
+-- rows go when the PR closes.
+CREATE TABLE IF NOT EXISTS pr_review_requests (
+  pr           INTEGER NOT NULL,
+  kind         TEXT NOT NULL,
+  source       TEXT NOT NULL,
+  requested_by TEXT NOT NULL DEFAULT '',
+  comment_id   INTEGER,
+  requested_at TEXT NOT NULL,
+  served_at    TEXT,
+  PRIMARY KEY (pr, kind)
+);
 -- A newer head observed while an older round owns the PR is durable
 -- work owed. It survives the predecessor's every terminal path and is retained
 -- after queue promotion until a verdict actually covers the target head.
@@ -1627,6 +1660,8 @@ export interface RoundStartMeta {
   sweep_owed?: boolean | null;
   sweep_plan?: PassPlanEntry[] | null;
   sweep_status?: SweepStatus | null;
+  /** The post-discovery rows (`PassPlan.post_plan`), when planned. */
+  post_plan?: PassPlanEntry[] | null;
 }
 
 /** One recheck claim, as `rechecksFor` reads it. */
@@ -1776,6 +1811,9 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN sweep_plan TEXT",
       "ALTER TABLE rounds ADD COLUMN sweep_status TEXT",
       "ALTER TABLE rounds ADD COLUMN merge_base TEXT",
+      // The post-discovery rows (the chain's `compose`), so a failed one is
+      // read from the round's own record. Nullable, additive.
+      "ALTER TABLE rounds ADD COLUMN post_plan TEXT",
       // Held wakes are leased and acked only after delivery.
       "ALTER TABLE pending_wakes ADD COLUMN claim_token TEXT",
       "ALTER TABLE pending_wakes ADD COLUMN claimed_at TEXT",
@@ -2402,6 +2440,10 @@ export class StateStore {
       sets.push("sweep_plan = ?");
       args.push(meta.sweep_plan === null ? null : JSON.stringify(meta.sweep_plan));
     }
+    if (meta.post_plan !== undefined) {
+      sets.push("post_plan = ?");
+      args.push(meta.post_plan === null ? null : JSON.stringify(meta.post_plan));
+    }
     if (sets.length === 0) return;
     this.db.prepare(`UPDATE rounds SET ${sets.join(", ")} WHERE id = ?`).run(...args, id);
   }
@@ -2854,6 +2896,151 @@ export class StateStore {
         "SELECT * FROM round_findings WHERE pr = ? AND disposition = 'conceded' ORDER BY round_no, id",
       )
       .all(pr) as RoundFindingRow[];
+  }
+
+  /** The `partial-chain` records on a PR — exploit chains with more than
+   * one unproven hop, never posted — newest round first, at most `limit`.
+   * The chain's `delta` row reads them as unconfirmed leads. A partial chain
+   * is told by its kind (the lens judged it partial) or by the validator's
+   * DOUBTED word `partial-chain` on a chain the lens wrote `exploit-chain`,
+   * as secevidence.ts `isPartialChain` tells one; `security_outcome` has no
+   * column here. */
+  partialChainFindings(pr: number, limit = 10): RoundFindingRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM round_findings WHERE pr = ?
+          AND (kind LIKE 'partial-chain%' OR lower(trim(coalesce(word, ''))) = 'partial-chain')
+          ORDER BY round_no DESC, id DESC LIMIT ?`,
+      )
+      .all(pr, Math.max(0, limit)) as RoundFindingRow[];
+  }
+
+  // ---- review requests (src/securityrequest.ts) ----------------------------
+
+  /** Record a request for a kind of review. True when the row is new; a
+   * request already standing for the PR is left as it is (the first asker and
+   * its serving stand), and false is returned. */
+  recordReviewRequest(input: {
+    pr: number;
+    kind: string;
+    source: ReviewRequestRow["source"];
+    requested_by: string;
+    comment_id?: number | null;
+  }): boolean {
+    const fresh =
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO pr_review_requests
+             (pr, kind, source, requested_by, comment_id, requested_at, served_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL)`,
+        )
+        .run(
+          input.pr,
+          input.kind,
+          input.source,
+          input.requested_by,
+          input.comment_id ?? null,
+          this.ts(),
+        ).changes === 1;
+    if (fresh)
+      this.logEvent("review_requested", input.pr, {
+        kind: input.kind,
+        source: input.source,
+        by: input.requested_by,
+        ...(input.comment_id ? { comment_id: input.comment_id } : {}),
+      });
+    return fresh;
+  }
+
+  /** A comment or operator request taking over a standing label request: the
+   * row keeps its time and its serving, and now stands on the asker's word,
+   * so the label coming off no longer withdraws it. True when a label row was
+   * taken over; a non-label row, or a label request, changes nothing. */
+  upgradeLabelReviewRequest(input: {
+    pr: number;
+    kind: string;
+    source: ReviewRequestRow["source"];
+    requested_by: string;
+    comment_id?: number | null;
+  }): boolean {
+    if (input.source === "label") return false;
+    const upgraded =
+      this.db
+        .prepare(
+          `UPDATE pr_review_requests SET source = ?, requested_by = ?, comment_id = ?
+            WHERE pr = ? AND kind = ? AND source = 'label'`,
+        )
+        .run(input.source, input.requested_by, input.comment_id ?? null, input.pr, input.kind)
+        .changes === 1;
+    if (upgraded)
+      this.logEvent("review_request_upgraded", input.pr, {
+        kind: input.kind,
+        source: input.source,
+        by: input.requested_by,
+        ...(input.comment_id ? { comment_id: input.comment_id } : {}),
+      });
+    return upgraded;
+  }
+
+  reviewRequest(pr: number, kind: string): ReviewRequestRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM pr_review_requests WHERE pr = ? AND kind = ?")
+      .get(pr, kind) as ReviewRequestRow | undefined;
+  }
+
+  /** Every request not yet handed to the queue, oldest first. */
+  unservedReviewRequests(): ReviewRequestRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM pr_review_requests WHERE served_at IS NULL ORDER BY requested_at, pr, kind",
+      )
+      .all() as ReviewRequestRow[];
+  }
+
+  /** Every PR that has a request standing, of any kind. */
+  reviewRequestPrs(): number[] {
+    return (
+      this.db.prepare("SELECT DISTINCT pr FROM pr_review_requests ORDER BY pr").all() as Array<{
+        pr: number;
+      }>
+    ).map((r) => r.pr);
+  }
+
+  /** The request reached the queue. Only a waiting request is stamped. */
+  markReviewRequestServed(pr: number, kind: string): boolean {
+    return (
+      this.db
+        .prepare(
+          "UPDATE pr_review_requests SET served_at = ? WHERE pr = ? AND kind = ? AND served_at IS NULL",
+        )
+        .run(this.ts(), pr, kind).changes === 1
+    );
+  }
+
+  /** Put a served request back to waiting: it was stamped served into a
+   * queue whose plan was built without it. Only a served request is
+   * un-stamped. True when the row changed. */
+  unserveReviewRequest(pr: number, kind: string, reason: string): boolean {
+    const changed =
+      this.db
+        .prepare(
+          "UPDATE pr_review_requests SET served_at = NULL WHERE pr = ? AND kind = ? AND served_at IS NOT NULL",
+        )
+        .run(pr, kind).changes === 1;
+    if (changed) this.logEvent("review_request_deferred", pr, { kind, reason });
+    return changed;
+  }
+
+  /** Withdraw one request (its label came off), or with no `kind` every
+   * request on the PR (it closed). True when a row went. */
+  clearReviewRequests(pr: number, reason: string, kind?: string): boolean {
+    const gone =
+      kind === undefined
+        ? this.db.prepare("DELETE FROM pr_review_requests WHERE pr = ?").run(pr).changes
+        : this.db.prepare("DELETE FROM pr_review_requests WHERE pr = ? AND kind = ?").run(pr, kind)
+            .changes;
+    if (gone > 0) this.logEvent("review_request_cleared", pr, { kind: kind ?? null, reason });
+    return gone > 0;
   }
 
   // ---- prior-finding checks -----------------------------------------------
@@ -6394,6 +6581,15 @@ export class StateStore {
         .prepare("SELECT 1 FROM pr_comments WHERE source = ? AND comment_id = ?")
         .get(source, comment_id) !== undefined
     );
+  }
+
+  /** When this daemon began tracking the PR, as far as the event log says:
+   * its first `pr_transition`. Undefined when none is logged. */
+  firstTrackedAt(pr: number): string | undefined {
+    const row = this.db
+      .prepare("SELECT ts FROM events WHERE kind = 'pr_transition' AND pr = ? ORDER BY id LIMIT 1")
+      .get(pr) as { ts: string } | undefined;
+    return row?.ts;
   }
 
   /** Comment-capture sweep watermark: the sweep costs three GitHub

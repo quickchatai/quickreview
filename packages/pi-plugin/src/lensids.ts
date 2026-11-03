@@ -40,7 +40,8 @@ export function canonicalLensIds(raw: string | null | undefined): string[] {
     .replace(/\([^)]*\)/g, " ");
   for (const part of cleaned.split(/[+,/&;|]|\band\b/)) {
     // "pass-sweep:G1", "pass-sweep#2", "pass-sweep @ a.ts" — the lens is the
-    // first word; what follows names a group or a site.
+    // first word; what follows names a group or a site, or, for the chain
+    // lens, its strategy ("pass-sec-exploit-chain:delta").
     const token = part.trim().split(/[\s:#@]+/)[0] ?? "";
     if (!token) continue;
     const id = KNOWN.has(token) ? token : KNOWN.has(`pass-${token}`) ? `pass-${token}` : null;

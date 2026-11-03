@@ -28,6 +28,10 @@
 // by `[scan] tier`/`effort`, config.toml's defaults under the profile's
 // `[scan]` table — the profile wins.
 //
+// `agents/scan/` also holds `pass-sec-threat-model`, stage 0's lens: a
+// read-only leaf like `pass-scan`, built at the `[scan] tier` alone, which
+// drafts the threat model a security scan reads when nobody wrote one.
+//
 // The build lands in `<state home>/scan/agents/`, which the scan's case
 // runner reads; it is rebuilt at every start, so a profile edit reaches the
 // next run without anything else to remember.
@@ -45,18 +49,21 @@ import {
   lensModelOverrides,
   lensTuningAddenda,
 } from "../lenstuning.js";
+import { ALL_PASSES } from "../passes.js";
 import type { CoreConfig } from "../reviewconfig.js";
 import { PASS_TIER_ORDER } from "../types.js";
 import {
   applyProfileScan,
+  applyProfileSecurity,
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileLensTuning,
   loadProfileScan,
+  loadProfileSecurity,
   type ProfileLookup,
 } from "../profiles.js";
 import { SCAN_PASS } from "./scan.js";
-import type { ScanSettings } from "./scanrun.js";
+import { THREAT_MODEL_PASS, type ScanSettings } from "./scanrun.js";
 
 /** Where the scan build lands, relative to the state home. */
 export const SCAN_AGENTS_DIR = "scan/agents";
@@ -65,8 +72,10 @@ export const SCAN_AGENTS_DIR = "scan/agents";
 export const SCAN_AGENTS_SRC = "agents/scan";
 
 /** The config a scan runs with: `parsed` (a config.toml, or the shipped
- * defaults) with the profile's per-lens tuning and `[scan]` overrides applied
- * (the profile wins). Throws on a bad profile — the caller reports it. */
+ * defaults) with the profile's per-lens tuning, `[security]` (a
+ * security-only profile switches every lens outside the family off; `fold`
+ * reaches the skeptic) and `[scan]` overrides applied (the profile wins).
+ * Throws on a bad profile — the caller reports it. */
 export function scanConfigOf<C extends CoreConfig>(
   parsed: C,
   root: string,
@@ -74,17 +83,34 @@ export function scanConfigOf<C extends CoreConfig>(
 ): C {
   const profile = parsed.review.profile;
   const tuned = applyProfileTuning(parsed, loadProfileLensTuning(root, profile, lookup));
-  return applyProfileScan(tuned, loadProfileScan(root, profile, lookup));
+  // A security-only scan keeps what the named chain says, never what a
+  // repository's .qcr/profile.toml switched back on (profiles.ts
+  // `securityOnlyLenses`).
+  const secured = applyProfileSecurity(
+    tuned,
+    loadProfileSecurity(root, profile, lookup),
+    ALL_PASSES,
+    loadProfileLensTuning(root, profile, { ...lookup, repoProfile: undefined }),
+  );
+  return applyProfileScan(secured, loadProfileScan(root, profile, lookup));
 }
 
-/** The settings a scan run takes from a resolved config. */
-export function scanSettings(cfg: CoreConfig): ScanSettings {
+/** The settings a scan run takes from a resolved config, and the install
+ * profile's threat model (profiles.ts `loadProfileThreatModel`; null =
+ * none). */
+export function scanSettings(
+  cfg: CoreConfig,
+  profileThreatModel: string | null = null,
+): ScanSettings {
   return {
     scan: cfg.scan,
     // Stage 2: which deep lenses run, at which tiers and effort —
     // the same per-lens tuning the build composes.
     lenses: cfg.lenses,
     riskPasses: cfg.models.risk_passes,
+    // The skeptic's security fold: what it could not settle is for a person.
+    fold: cfg.security.fold,
+    profileThreatModel,
   };
 }
 
@@ -120,12 +146,13 @@ export function buildScanAgents(
     vars: identityVars(cfg),
     ecosystem: loadProfileEcosystem(root, cfg.review.profile, lookup),
     models: { ...lensModelOverrides(cfg.models, cfg.lenses), ...scanPassModels(cfg) },
-    // Stage 1 runs `pass-scan--<[scan] tier>` and nothing else names it
-    // (stage 2 rows refuse it), so no other tier's variant is built.
-    onlyTiers: { [SCAN_PASS]: [cfg.scan.tier] },
+    // Stage 1 runs `pass-scan--<[scan] tier>` and stage 0
+    // `pass-sec-threat-model--<[scan] tier>`, and nothing else names either
+    // (stage 2 rows refuse them), so no other tier's variant is built.
+    onlyTiers: { [SCAN_PASS]: [cfg.scan.tier], [THREAT_MODEL_PASS]: [cfg.scan.tier] },
     addenda: [
       ...PASS_ADDENDA,
-      ...configAddenda(cfg.review),
+      ...configAddenda(cfg.review, cfg.security),
       ...loadProfileAddenda(root, cfg.review.profile, lookup),
       ...lensTuningAddenda(cfg.lenses),
     ],

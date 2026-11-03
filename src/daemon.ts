@@ -83,6 +83,7 @@ import { applyInterpretation, createWebhookServer, type Interpretation } from ".
 import { wakeOrHold, withRepoFacts } from "./wakes.js";
 import { prWorktreeRel } from "./worktrees.js";
 import { PrConversation, type ConversationAdapter } from "./pr-conversation.js";
+import { securityAckBody, type RepoGitReader } from "./securityrequest.js";
 import {
   PostingOutbox,
   jobPath as postingJobPath,
@@ -103,7 +104,15 @@ export type DaemonAdapter = DispatchAdapter &
   VerdictAdapter &
   Partial<RecheckAdapter> &
   Partial<CiAdapter> &
-  Partial<ConversationAdapter>;
+  Partial<ConversationAdapter> & {
+    /** The conversation comment with the gate's note naming why it posts
+     * (src/github.ts) — the security request's acknowledgement. */
+    createIssueComment?(
+      n: number,
+      body: string,
+      note?: string,
+    ): Promise<import("@quickchatai/pi-quickreview/src/gate.js").GateResult>;
+  };
 
 /** A per-PR runtime reader that cannot take the status write down with it. */
 function runtimeReader(
@@ -183,6 +192,13 @@ export interface DaemonDeps {
   /** Base-branch migration paths at a sha, for the collision pre-check.
    * Absent ⇒ no git: the pre-check is skipped and logged. */
   listBaseMigrations?: (baseSha: string) => Promise<string[]>;
+  /** Read-only git over the reviewed repository's commits: the threat model
+   * at the base and the security facts (src/securityrequest.ts). wire.ts
+   * passes `gitRepoReader` over the base clone. Absent ⇒ no git: no
+   * repository threat model, and the facts' diff-only checks alone. */
+  securityGit?: RepoGitReader;
+  /** The selected profile's threat model, read once at assembly. */
+  profileThreatModel?: string | null;
   /** Unpack the third-party sources a PR touches and return the round's note
    * (packages/pi-plugin/src/depsources.ts; `[review] dependency_sources`). Absent ⇒ no note. */
   dependencySources?: (
@@ -468,6 +484,16 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   store.setAnomalySink((signal) => wakePolicy.onAnomaly(signal));
 
   const gh: DaemonAdapter = deps.adapter ?? buildGitHubAdapter(cfg, stateDir);
+  /** The acknowledgement of a fresh security request, through the gate's
+   * `create_issue_comment`; an adapter without it (a stub) posts nothing. */
+  const ackSecurityRequest = async (pr: number, by: string): Promise<void> => {
+    if (!gh.createIssueComment) return;
+    await gh.createIssueComment(
+      pr,
+      securityAckBody(by),
+      `acknowledge the security review requested on #${pr}`,
+    );
+  };
 
   // The daemon measures its own event loop and the container's CPU
   // throttling. A stall wakes through the one anomaly funnel (WAKE kind
@@ -748,6 +774,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         onClosed: async (pr) => {
           await hooks.archiveAndClose(pr);
         },
+        // A fresh `@<bot> security` request is acknowledged once, through the
+        // gate (dry-run suppresses it).
+        onSecurityAck: async (req) => {
+          await ackSecurityRequest(req.pr, req.by);
+        },
         // A push after an approve: the recheck audits the new delta.
         onSynchronize: async (sync) => {
           await ingressGuard(`recheck #${sync.pr}`, () =>
@@ -906,6 +937,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
             runRecheck(recheckDeps, { pr, trigger: "push", head_sha }),
           );
         },
+        // The polling route of `@<bot> security`: the same acknowledgement.
+        ackSecurityRequest: (pr, by) => ackSecurityRequest(pr, by),
         // Feedback backstop: merged-over-block for closes the webhook missed.
         onMergedOverBlock: async (pr) => {
           await guard(`feedback #${pr}`, async () =>
@@ -1011,6 +1044,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         findingsDir: join(root, "state", "findings"),
         postingReceiptDir: join(root, "state", "posting-receipts"),
         listBaseMigrations: deps.listBaseMigrations,
+        ...(deps.securityGit ? { securityGit: deps.securityGit } : {}),
+        ...(deps.profileThreatModel !== undefined
+          ? { profileThreatModel: deps.profileThreatModel }
+          : {}),
         ...(deps.dependencySources ? { dependencySources: deps.dependencySources } : {}),
         directiveAuthor: deps.directiveAuthor,
         resolvedFilesInMerges: deps.resolvedFilesInMerges,

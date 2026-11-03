@@ -896,6 +896,7 @@ export class VerdictWatcher {
             findingsDir: this.deps.findingsDir,
             log: this.log.bind(this),
             ...(this.deps.onFindingsRecorded ? { onRecorded: this.deps.onFindingsRecorded } : {}),
+            ...(this.deps.cfg.security?.fold === true ? { securityFold: true } : {}),
           },
           this.now(),
         );
@@ -2889,6 +2890,7 @@ export class VerdictWatcher {
         inject: (n, message) => this.deps.hooks.inject(n, message),
         log: this.log.bind(this),
         ...(this.deps.onFindingsRecorded ? { onRecorded: this.deps.onFindingsRecorded } : {}),
+        ...(this.deps.cfg.security?.fold === true ? { securityFold: true } : {}),
       },
       { pr, roundNo, roundId, headSha, planned },
     );

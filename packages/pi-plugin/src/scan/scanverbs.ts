@@ -1,5 +1,6 @@
 // The scan's verbs — preview, start, status, stop, findings, the match
-// question, suggestions, stage 2, dismiss, the unit cut, and the sandbox's
+// question, suggestions, stage 2, the threat model (stage 0), dismiss, the
+// unit cut, and the sandbox's
 // own doctor, login and rebuild — over the engine and a host's ports, each
 // rendered twice: the human default, worded for the surface it answers on
 // (`ScanVerbs`), and a `--json` object on one line for scripts.
@@ -40,13 +41,14 @@ import {
   renderQuestion,
   renderStatus,
   renderSuggestions,
+  renderThreatModelPreview,
   stage2StartedLine,
   startedLine,
   stopScan,
   type ScanVerbs,
   type TicketsClosed,
 } from "./scanrender.js";
-import { dismissedLookalike, validityOf } from "./scanreport.js";
+import { dismissedLookalike, isDoubted, validityOf } from "./scanreport.js";
 import type { ScanRunner, ScanRun, ScanSettings, ScanStatus } from "./scanrun.js";
 import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "./stage2.js";
 import type { StoredStage2Proposal } from "./stage2request.js";
@@ -58,7 +60,8 @@ export const SCAN_USAGE =
   "findings [--state S] [--lens L] [--unit U] [--severity P] [--validity V] [--doubted|--not-doubted] [--limit N] | " +
   "matches | match --key K [OLD=NEW…] | suggestions | " +
   "stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] | " +
-  "stage2 start --key K [--rows ID,ID…] [--foreground] | dismiss FP… --reason TEXT | " +
+  "stage2 start --key K [--rows ID,ID…] [--foreground] | " +
+  "threat-model propose [--sha REF] | threat-model start --key K [--sha REF] [--foreground] | dismiss FP… --reason TEXT | " +
   "units show | units propose [--file F|-] | units adjust --file F|- | units save | login [--provider P] | doctor | rebuild   (every subcommand takes --json, and --sandbox host|docker over [scan] sandbox)";
 
 /** How often `status --wait` and `stop` look again. */
@@ -85,6 +88,8 @@ export type ScanCommand =
   | { verb: "suggestions" }
   | { verb: "stage2-propose"; rows?: string; budget?: number; deep?: boolean; sha?: string }
   | { verb: "stage2-start"; key: string; rows?: string[]; foreground: boolean }
+  | { verb: "threat-model-propose"; sha?: string }
+  | { verb: "threat-model-start"; key: string; sha?: string; foreground: boolean }
   | { verb: "dismiss"; fingerprints: string[]; reason: string }
   | { verb: "units-show" }
   | { verb: "units-propose"; file?: string }
@@ -104,7 +109,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
   const [first, ...more] = rest;
   let sub = first;
   let args = more;
-  if (first === "stage2" || first === "units") {
+  if (first === "stage2" || first === "units" || first === "threat-model") {
     sub = `${first}-${more[0] ?? ""}`;
     args = more.slice(1);
   }
@@ -266,6 +271,23 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
         foreground: flags.has("--foreground"),
       };
     }
+    case "threat-model-propose":
+      allowed("--sha");
+      noPositional();
+      return { verb: "threat-model-propose", ...sha() };
+    case "threat-model-start": {
+      allowed("--key", "--sha", "--foreground");
+      noPositional();
+      const key = str("--key");
+      if (key === undefined)
+        throw usage("threat-model start needs --key — the key the threat-model proposal showed");
+      return {
+        verb: "threat-model-start",
+        key,
+        ...sha(),
+        foreground: flags.has("--foreground"),
+      };
+    }
     case "dismiss": {
       allowed("--reason");
       const reason = str("--reason");
@@ -320,7 +342,8 @@ export interface FindingJson {
   validity: string;
   state: string;
   claim: string;
-  /** Marked "may not be valid" by the validator. */
+  /** Marked "may not be valid" by the validator — never a needs-review
+   * finding, whose doubt is the proof gap a person checks (`isDoubted`). */
   doubted: boolean;
   doubt: { word: string; reason: string; class: string | null } | null;
   /** A dismissed finding it resembles — flagged, never auto-dismissed. */
@@ -345,7 +368,7 @@ export function findingJson(f: ScanFinding): FindingJson {
     validity: validityOf(f),
     state: f.state,
     claim: f.claim,
-    doubted: f.doubt !== null,
+    doubted: isDoubted(f),
     doubt: f.doubt
       ? { word: f.doubt.word, reason: f.doubt.reason, class: f.doubt.class ?? null }
       : null,
@@ -508,18 +531,33 @@ export async function runScanVerb(
       const r = await scan.preview({ ...(cmd.sha ? { sha: cmd.sha } : {}), delta: cmd.delta });
       if (!r.ok) return refusal("Scan preview", r.errors);
       const p = r.preview;
+      // Stage 0 due first: `start` starts it (the runner routes its key).
+      const stage0 = p.threat_model_stage;
       const start =
         p.blockers.length > 0
           ? null
-          : ["--key", p.key, "--sha", p.sha, ...(p.mode === "delta" ? ["--delta"] : [])];
+          : stage0 !== undefined
+            ? ["--key", stage0.key, "--sha", p.sha]
+            : ["--key", p.key, "--sha", p.sha, ...(p.mode === "delta" ? ["--delta"] : [])];
       return emit(0, renderPreview(p, CLI_VERBS), {
         ok: true,
         preview: previewDetails(p),
         start,
       });
     }
+    case "threat-model-propose": {
+      const r = await scan.proposeThreatModel(cmd.sha ? { sha: cmd.sha } : {});
+      if (!r.ok) return refusal("Threat-model proposal", r.errors);
+      const p = r.preview;
+      return emit(0, renderThreatModelPreview(p, CLI_VERBS), {
+        ok: true,
+        preview: p,
+        start: p.blockers.length > 0 ? null : ["--key", p.key, "--sha", p.sha],
+      });
+    }
     case "start":
-    case "stage2-start": {
+    case "stage2-start":
+    case "threat-model-start": {
       const stage2 = cmd.verb === "stage2-start";
       const argv =
         cmd.verb === "start"
@@ -530,14 +568,20 @@ export async function runScanVerb(
               ...(cmd.sha ? ["--sha", cmd.sha] : []),
               ...(cmd.delta ? ["--delta"] : []),
             ]
-          : [
-              "stage2",
-              "start",
-              "--key",
-              cmd.key,
-              ...(cmd.rows ? ["--rows", cmd.rows.join(",")] : []),
-            ];
-      const what = stage2 ? "Stage 2 start" : "Scan start";
+          : cmd.verb === "threat-model-start"
+            ? ["threat-model", "start", "--key", cmd.key, ...(cmd.sha ? ["--sha", cmd.sha] : [])]
+            : [
+                "stage2",
+                "start",
+                "--key",
+                cmd.key,
+                ...(cmd.rows ? ["--rows", cmd.rows.join(",")] : []),
+              ];
+      const what = stage2
+        ? "Stage 2 start"
+        : cmd.verb === "threat-model-start"
+          ? "Threat-model start"
+          : "Scan start";
       const line = (run: ScanRun): string =>
         stage2
           ? stage2StartedLine(
@@ -568,7 +612,9 @@ export async function runScanVerb(
               ...(cmd.sha ? { sha: cmd.sha } : {}),
               delta: cmd.delta,
             })
-          : await scan.startStage2({ key: cmd.key, ...(cmd.rows ? { rows: cmd.rows } : {}) });
+          : cmd.verb === "threat-model-start"
+            ? await scan.startThreatModel({ key: cmd.key, ...(cmd.sha ? { sha: cmd.sha } : {}) })
+            : await scan.startStage2({ key: cmd.key, ...(cmd.rows ? { rows: cmd.rows } : {}) });
       if (!r.ok) {
         deps.onStart?.({ ok: false, errors: r.errors });
         return refusal(what, r.errors);
@@ -668,7 +714,7 @@ export async function runScanVerb(
         suggestions,
         stage2: s
           ? {
-              lenses: stage2Lenses(s.lenses).map((lens) => ({
+              lenses: stage2Lenses(s.lenses, s.scan.lenses).map((lens) => ({
                 lens,
                 tiers: lensTiers(s.lenses, lens, s.riskPasses ?? []),
               })),

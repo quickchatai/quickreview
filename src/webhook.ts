@@ -14,6 +14,12 @@ import { interpretReviewEvent, isFeedbackBody, ledgerFeedbackSignal } from "./fe
 import { applyEvent as applyEventFor, mergedOverBlock } from "./statemachine.js";
 import type { StateStore, StatusSnapshot } from "./state.js";
 import { blockedPrAuthor } from "./pr-conversation.js";
+import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  applySecurityRequest,
+  securityCommandDecision,
+  withdrawLabelSecurityRequest,
+} from "./securityrequest.js";
 
 // ---- signature -----------------------------------------------------------
 
@@ -99,6 +105,22 @@ export type Interpretation =
   /** A human took the bot off the PR (trigger label removed / team review
    * request withdrawn) before the review completed. */
   | { kind: "trigger_withdrawn"; pr: number; by: string }
+  /** A maintainer asked for a security review (src/securityrequest.ts): the
+   * `[security] label` set on the PR, or `@<bot> security` from an owner,
+   * member or collaborator. `by` is who asked; `meta` rides a label event,
+   * whose payload carries the PR (a comment's does not). */
+  | {
+      kind: "security_requested";
+      pr: number;
+      by: string;
+      source: "label" | "comment";
+      comment_id?: number;
+      meta?: EventPrMeta;
+    }
+  /** The `[security] label` came off the PR: a request standing on the label
+   * alone is withdrawn, so putting it back asks again (src/securityrequest.ts
+   * `withdrawLabelSecurityRequest`). */
+  | { kind: "security_withdrawn"; pr: number; by: string }
   /** CI finished at a head (check_suite / workflow_run). Never a transition
    * here; its consumers are the post-approval delta recheck and the
    * withheld-approval retry, which re-queues a PR whose approval red CI held
@@ -121,6 +143,12 @@ export interface InterpretDeps {
   botCommentPr: (id: number) => number | undefined;
   /** Known PR author, only while a substantive bot blocking review stands. */
   blockedPrAuthor?: (pr: number) => string | undefined;
+  /** `[security] label`: the PR label that asks for a security review.
+   * Absent or "" ⇒ no label requests. */
+  securityLabel?: string;
+  /** `[security] command`: whether `@<bot> security` asks for one. Absent ⇒
+   * off. */
+  securityCommand?: boolean;
 }
 
 function prMeta(pr: any): EventPrMeta {
@@ -216,9 +244,21 @@ function interpretPullRequest(
   switch (action) {
     case "labeled": {
       const name = payload?.label?.name;
-      if (name !== deps.triggerLabel)
-        return { kind: "ignored", reason: `non-trigger label: ${name}`, pr: meta.number };
-      return { kind: "trigger", pr: meta.number, source: "label", meta };
+      if (name === deps.triggerLabel)
+        return { kind: "trigger", pr: meta.number, source: "label", meta };
+      if (deps.securityLabel && name === deps.securityLabel) {
+        // Whoever set it counts, an auto-labeler too: the reconcile poll,
+        // which never learns who set a label, honours the same label
+        // (src/securityrequest.ts).
+        return {
+          kind: "security_requested",
+          pr: meta.number,
+          by: payload?.sender?.login ?? "",
+          source: "label",
+          meta,
+        };
+      }
+      return { kind: "ignored", reason: `non-trigger label: ${name}`, pr: meta.number };
     }
     case "review_requested": {
       const team = payload?.requested_team;
@@ -238,6 +278,11 @@ function interpretPullRequest(
     // sender is mechanics, never feedback.
     case "unlabeled": {
       const name = payload?.label?.name;
+      // Whoever took it off, as whoever set it counts: the label's edge is
+      // the request's (src/securityrequest.ts). Not feedback — a security
+      // review asked for and then not wanted says nothing of the reviews.
+      if (deps.securityLabel && name === deps.securityLabel && name !== deps.triggerLabel)
+        return { kind: "security_withdrawn", pr: meta.number, by: payload?.sender?.login ?? "" };
       if (name !== deps.triggerLabel)
         return { kind: "ignored", reason: `non-trigger label removed: ${name}`, pr: meta.number };
       if (isBotUser(payload?.sender, deps.botLogin))
@@ -374,6 +419,33 @@ function interpretIssueComment(
       body: comment.body ?? "",
       scope: "issue_comment",
     };
+
+  // `@<bot> security`: a maintainer's request for a security review. Only
+  // an owner, member or collaborator is heard; anyone else is ignored with
+  // the reason logged and no reply — the command is never a conversation
+  // reply either.
+  const command = securityCommandDecision(comment, {
+    botLogin: deps.botLogin,
+    command: deps.securityCommand ?? false,
+  });
+  if (command !== null) {
+    if (!command.ok) return { kind: "ignored", reason: command.reason, pr };
+    if (!Number.isSafeInteger(comment.id) || comment.id <= 0)
+      return { kind: "ignored", reason: "security command without a comment id", pr };
+    // A bot-authored PR is never reviewed (the pull_request route drops it
+    // too): refused here, before anything is recorded or acknowledged, since
+    // a PR this daemon does not track would otherwise be promised a round
+    // the reconcile pass then withdraws.
+    if (isBotUser(issue.user, deps.botLogin))
+      return { kind: "ignored", reason: "security request on a bot-authored PR", pr };
+    return {
+      kind: "security_requested",
+      pr,
+      by: comment.user?.login ?? "",
+      source: "comment",
+      comment_id: comment.id,
+    };
+  }
 
   const author = deps.blockedPrAuthor?.(pr);
   if (
@@ -565,6 +637,20 @@ function foreignRepository(deps: WebhookDeps, payload: any): boolean {
   return typeof repo === "string" && repo.toLowerCase() !== deps.cfg.github.repo.toLowerCase();
 }
 
+/** What the interpreter reads off the daemon's config and store. */
+function interpretDepsOf(deps: WebhookDeps): InterpretDeps {
+  const security = deps.cfg.security ?? SECURITY_DEFAULTS;
+  return {
+    botLogin: deps.cfg.github.bot_login,
+    triggerLabel: deps.cfg.github.trigger_label,
+    reviewTeam: deps.cfg.github.review_team,
+    botCommentPr: (id) => deps.store.botCommentPr(id, "review_comment"),
+    blockedPrAuthor: (pr) => blockedPrAuthor(deps.store, pr),
+    securityLabel: security.label,
+    securityCommand: security.command,
+  };
+}
+
 /** Preparation is replayable from the already-durable accepted payload. */
 function prepareAcceptedWebhook(deps: WebhookDeps, guid: string): Interpretation {
   return deps.store.db.transaction(() => {
@@ -574,13 +660,7 @@ function prepareAcceptedWebhook(deps: WebhookDeps, guid: string): Interpretation
     const payload = JSON.parse(row.payload);
     const interpretation: Interpretation = foreignRepository(deps, payload)
       ? { kind: "ignored", reason: "foreign-repository" }
-      : interpretEvent(row.event, row.action, payload, {
-          botLogin: deps.cfg.github.bot_login,
-          triggerLabel: deps.cfg.github.trigger_label,
-          reviewTeam: deps.cfg.github.review_team,
-          botCommentPr: (id) => deps.store.botCommentPr(id, "review_comment"),
-          blockedPrAuthor: (pr) => blockedPrAuthor(deps.store, pr),
-        });
+      : interpretEvent(row.event, row.action, payload, interpretDepsOf(deps));
     // Capture is a side copy: its persistence must never divert routing.
     if (!foreignRepository(deps, payload)) {
       try {
@@ -653,13 +733,7 @@ export function resumeWebhookDeliveries(
               }
               deps.store.registerBotComment(root, pr, "review_comment");
             }
-            interpretation = interpretEvent(row.event, row.action, payload, {
-              botLogin: deps.cfg.github.bot_login,
-              triggerLabel: deps.cfg.github.trigger_label,
-              reviewTeam: deps.cfg.github.review_team,
-              botCommentPr: (id) => deps.store.botCommentPr(id, "review_comment"),
-              blockedPrAuthor: (number) => blockedPrAuthor(deps.store, number),
-            });
+            interpretation = interpretEvent(row.event, row.action, payload, interpretDepsOf(deps));
             deps.store.prepareWebhookInbox(row.guid, JSON.stringify(interpretation));
           }
         }
@@ -790,6 +864,12 @@ export async function applyInterpretation(
       i: Extract<Interpretation, { kind: "author_pr_comment" }>,
     ) => void | Promise<void>;
     onClosed?: (pr: number) => void | Promise<void>;
+    /** Acknowledge a fresh `@<bot> security` request in the PR's
+     * conversation — the daemon posts it through the gate
+     * (`create_issue_comment`, suppressed in dry-run). Absent ⇒ no reply. */
+    onSecurityAck?: (
+      i: Extract<Interpretation, { kind: "security_requested" }>,
+    ) => void | Promise<void>;
     /** Post-approval recheck triggers — none touches lifecycle. */
     onSynchronize?: (i: Extract<Interpretation, { kind: "synchronize" }>) => void | Promise<void>;
     onCiCompleted?: (i: Extract<Interpretation, { kind: "ci_completed" }>) => void | Promise<void>;
@@ -867,6 +947,7 @@ export async function applyInterpretation(
         const result = applyEventFor(store, i.pr, { type: "closed" }, i.meta, opts);
         if (result.skipped) return false;
         store.logEvent("pr_closed", i.pr, { merged: i.merged, source: "webhook" });
+        store.clearReviewRequests(i.pr, "pr-closed");
         const over = mergedOverBlock(i.merged, priorState);
         if (over)
           ledgerFeedbackSignal(
@@ -902,6 +983,39 @@ export async function applyInterpretation(
     }
     case "bot_comment":
       local(() => store.registerBotComment(i.comment_id, i.pr, i.scope));
+      return;
+    case "security_requested": {
+      // An explicit maintainer request is new evidence: a PR reviewed at
+      // its head is reviewed again, with the security family planned
+      // (src/securityrequest.ts). A request that already stands changes
+      // nothing and is not acknowledged twice — except a comment taking over
+      // a label request, which now stands on its word and is acknowledged.
+      const outcome = local(() =>
+        applySecurityRequest(
+          store,
+          {
+            pr: i.pr,
+            source: i.source,
+            by: i.by,
+            ...(i.comment_id !== undefined ? { comment_id: i.comment_id } : {}),
+          },
+          { botLogin: opts.botLogin, ...(i.meta ? { meta: i.meta } : {}) },
+        ),
+      );
+      if (!outcome.fresh) {
+        if (outcome.reason === "upgraded" && i.source === "comment") await deps.onSecurityAck?.(i);
+        return;
+      }
+      if (i.source === "comment") await deps.onSecurityAck?.(i);
+      if (outcome.served) await deps.onPrTouched?.(i.pr);
+      return;
+    }
+    case "security_withdrawn":
+      // The label's own request goes; a comment's or the operator's stays.
+      // Withdrawn here, not only on the next reconcile pass: the label put
+      // back before that pass would find the old row standing and ask for
+      // nothing.
+      local(() => withdrawLabelSecurityRequest(store, i.pr));
       return;
     // Pure tuning-loop signals — no state-machine event, no session
     // wake, no reviewed_heads mark. The engine (wired by the daemon) owns

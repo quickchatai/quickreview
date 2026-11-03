@@ -187,13 +187,15 @@ describe("the handler queues one human-asked round", () => {
 
   it("wire.ts connects it, reading the PR and passing no bot login on the own-account route", () => {
     const wire = readFileSync(join(repoRoot, "src", "wire.ts"), "utf8");
-    const at = wire.indexOf("reviewNow(pr) {");
+    const at = wire.search(/reviewNow\(pr[,)][^{]*\{/);
     expect(at).toBeGreaterThan(0);
-    const body = wire.slice(at, at + 700);
+    const body = wire.slice(at, at + 900);
     expect(body).toMatch(/getPr: \(n\) => adapter\.getPr\(n\)/);
     expect(body).toMatch(
       /isPersonMode\(cfg\.github\) \? \{\} : \{ botLogin: cfg\.github\.bot_login \}/,
     );
+    // `qcr review-now <pr> --security` reaches the handler as a request.
+    expect(body).toMatch(/opts\?\.security \? \{ security: true \} : \{\}/);
   });
 });
 

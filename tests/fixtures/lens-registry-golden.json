@@ -532,6 +532,132 @@
       ]
     },
     {
+      "name": "pass-sec-access--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-authn-coverage--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-boundaries--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-exploit-chain--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-iam--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-infra--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-injection--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-llm--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-privesc--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-secrets-data--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-supply-chain--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-toctou--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-tokens--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-variant--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
       "name": "pass-security--sol-high",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
@@ -1265,6 +1391,132 @@
     {
       "name": "pass-roundtrip--terra-med",
       "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-access--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-authn-coverage--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-boundaries--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-exploit-chain--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-iam--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-infra--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-injection--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-llm--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-privesc--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-secrets-data--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-supply-chain--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-toctou--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-tokens--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-variant--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
         "bash",
@@ -2073,6 +2325,156 @@
     {
       "name": "pass-scan--sol-med",
       "model": "openai-codex/gpt-5.6-sol:low",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-access--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-authn-coverage--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-boundaries--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-exploit-chain--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-iam--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-infra--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-injection--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-llm--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-privesc--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-secrets-data--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-supply-chain--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-threat-model--sol-med",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-toctou--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-tokens--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sec-variant--sol-high",
+      "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
         "grep",

@@ -51,6 +51,7 @@ import {
   engineLensSection,
   renderOneShotPrompts,
   type OneShotPrompts,
+  type OneShotSecurity,
   type OneShotTarget,
 } from "./prompts.js";
 import { renderBenchOutputs } from "./render.js";
@@ -159,6 +160,10 @@ export interface RoundSpec {
   dependencyNote?: string;
   /** The memory seed for the first round's prompt (ignored with `prompts`). */
   memory?: RoundMemory;
+  /** The first round's security inputs (`--security`, the host's threat-model
+   * reader, the facts; ignored with `prompts`). Omitted: none — the plan's
+   * security rows come from the triggers and the profile alone. */
+  security?: OneShotSecurity;
   /** Names the run in log lines (default `repo#number`). */
   label?: string;
   /** The session name pi is given (default `oneshot-<number>`). */
@@ -297,10 +302,13 @@ export function prepareRound(
         issuedAt: new Date().toISOString(),
         ...(i.dependencyNote ? { dependencyNote: i.dependencyNote } : {}),
         ...(i.memory ? { memory: i.memory } : {}),
+        ...i.security,
       });
     // An earlier attempt's task files never leak into this one: launch_plan
-    // launches every task file the dir holds.
+    // launches every task file the dir holds. The post-discovery rows' task
+    // files (`tasks-post`, written among the extra files) go with them.
     rmSync(join(outDir, "tasks"), { recursive: true, force: true });
+    rmSync(join(outDir, "tasks-post"), { recursive: true, force: true });
     rmSync(join(outDir, CONTEXT_PACK_FILE), { force: true });
     for (const f of rendered.extraFiles ?? []) {
       mkdirSync(dirname(f.path), { recursive: true });
@@ -334,11 +342,14 @@ export function prepareRound(
       QCR_SUBAGENT_CACHE_STAGGER_MS: String(cfg.engine.lens_cache_stagger_ms),
       QCR_SUBAGENT_PASS_DEADLINE_MIN: String(cfg.engine.lens_pass_deadline_min),
       // This run's task dirs are its sanctioned launch_plan dirs
-      // (production's live under state/pr-<n>-round-<k>-passes/).
+      // (production's live under state/pr-<n>-round-<k>-passes/). The
+      // engine's wave reads `tasks/` alone; `tasks-post` is the session's to
+      // launch once the wave has returned.
       QCR_LAUNCH_PLAN_DIRS: [
         join(outDir, "tasks"),
         join(outDir, "tasks-optional"),
         join(outDir, "tasks-sweep"),
+        join(outDir, "tasks-post"),
       ].join(delimiter),
       QCR_SANDBOX_ROOT: root,
       QCR_SESSION_NAME: sessionName,
