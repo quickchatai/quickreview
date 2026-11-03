@@ -4,6 +4,29 @@
 // `[models.pass_tiers]`, `[scan] deep_lenses`) against it without an import
 // cycle through dispatch.ts, which re-exports it.
 
+/** The security family: the `pass-sec-*` lenses, in plan order. Declared
+ * once, here: `ALL_PASSES` places the family by spreading this list, so a
+ * member is added or renamed in one place (tests/security-family.test.ts
+ * holds it equal to every `pass-sec-*` name in `ALL_PASSES`). A lens is a
+ * member only when its sole concern is security, so `pass-security` (the
+ * general lens the default profile keeps) and `pass-bounds` are not. */
+export const SECURITY_FAMILY: readonly string[] = [
+  "pass-sec-authn-coverage",
+  "pass-sec-access",
+  "pass-sec-privesc",
+  "pass-sec-iam",
+  "pass-sec-tokens",
+  "pass-sec-toctou",
+  "pass-sec-injection",
+  "pass-sec-boundaries",
+  "pass-sec-secrets-data",
+  "pass-sec-supply-chain",
+  "pass-sec-llm",
+  "pass-sec-infra",
+  "pass-sec-variant",
+  "pass-sec-exploit-chain",
+];
+
 /** Every pass the system knows: the lenses selectLenses can emit plus the
  * always-appended validator. addable_lenses derives from this set (∪ the
  * configured risk passes, which today are a subset of it). */
@@ -75,47 +98,12 @@ export const ALL_PASSES: readonly string[] = [
   // when a CI job runs a linter whose rules cover a changed file
   // (packages/pi-plugin/src/lintconfig.ts); addable otherwise.
   "pass-lint-conformance",
-  // The security family (SECURITY_FAMILY below): single-concern security
+  // The security family (SECURITY_FAMILY above): single-concern security
   // lenses, planned on their own triggers (securitytriggers.ts), never in
   // SUBLENS_TRIGGERS, and always at the risk tier. pass-security and
   // pass-bounds stay where they are and are not members.
-  "pass-sec-authn-coverage",
-  "pass-sec-access",
-  "pass-sec-privesc",
-  "pass-sec-iam",
-  "pass-sec-tokens",
-  "pass-sec-toctou",
-  "pass-sec-injection",
-  "pass-sec-boundaries",
-  "pass-sec-secrets-data",
-  "pass-sec-supply-chain",
-  "pass-sec-llm",
-  "pass-sec-infra",
-  "pass-sec-variant",
-  "pass-sec-exploit-chain",
+  ...SECURITY_FAMILY,
   "pass-validate",
-];
-
-/** The security family: the `pass-sec-*` lenses, in `ALL_PASSES` order
- * (tests/security-family.test.ts holds it equal to every `pass-sec-*` name
- * there). A lens is a member only when its sole concern is security, so
- * `pass-security` (the general lens the default profile keeps) and
- * `pass-bounds` are not. */
-export const SECURITY_FAMILY: readonly string[] = [
-  "pass-sec-authn-coverage",
-  "pass-sec-access",
-  "pass-sec-privesc",
-  "pass-sec-iam",
-  "pass-sec-tokens",
-  "pass-sec-toctou",
-  "pass-sec-injection",
-  "pass-sec-boundaries",
-  "pass-sec-secrets-data",
-  "pass-sec-supply-chain",
-  "pass-sec-llm",
-  "pass-sec-infra",
-  "pass-sec-variant",
-  "pass-sec-exploit-chain",
 ];
 
 /** Named lens families — what a profile's `only`, an addendum scope or a

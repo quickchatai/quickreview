@@ -3,7 +3,7 @@
 // must read as security however a session joined it, and every list that
 // derives from the registry (the preset, the lesson ids, the planning table)
 // must pick the members up without an edit of its own.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { canonicalLensIds } from "@quickchatai/pi-quickreview/src/lensids.js";
@@ -56,7 +56,8 @@ describe("the security family", () => {
     expect(SECURITY_FAMILY).not.toContain("pass-bounds");
   });
 
-  // MUTATION: drop "pass-sec-llm" from ALL_PASSES — this fails.
+  // MUTATION: rename "pass-sec-llm" in SECURITY_FAMILY to "pass-sec-llms" —
+  // this fails (no shipped agent file, no planning entry).
   it("every member is a known pass with a shipped agent file and a planning entry", () => {
     for (const lens of SECURITY_FAMILY) {
       expect(ALL_PASSES, lens).toContain(lens);
@@ -70,6 +71,18 @@ describe("the security family", () => {
     expect(ALL_PASSES[at - 1]).toBe("pass-lint-conformance");
     expect(ALL_PASSES.slice(at, at + FAMILY.length)).toEqual(FAMILY);
     expect(ALL_PASSES[at + FAMILY.length]).toBe("pass-validate");
+  });
+
+  // Membership is declared once: ALL_PASSES places the family by spreading
+  // SECURITY_FAMILY, so passes.ts spells each member's name exactly once.
+  // MUTATION: replace `...SECURITY_FAMILY,` in ALL_PASSES with the fourteen
+  // names written out — this fails.
+  it("is declared once: passes.ts names each member a single time", () => {
+    const src = readFileSync(join(ROOT, "packages", "pi-plugin", "src", "passes.ts"), "utf8");
+    // The chain lens is also CHAIN_PASS's value; the other thirteen decide.
+    for (const lens of SECURITY_FAMILY.filter((l) => l !== CHAIN_PASS))
+      expect(src.split(`"${lens}"`).length - 1, lens).toBe(1);
+    expect(src).toContain("...SECURITY_FAMILY,");
   });
 
   // MUTATION: give LENS_FAMILIES.security its own copy of the list — this
