@@ -42,6 +42,11 @@ import {
   scanCasePrompt,
   type TreeFile,
 } from "@quickchatai/pi-quickreview/src/scan/scan.js";
+import {
+  coveredBy,
+  partialRanges,
+  type LedgerEntry,
+} from "@quickchatai/pi-quickreview/src/scan/ledger.js";
 import { scanConfigOf, scanSettings } from "@quickchatai/pi-quickreview/src/scan/scanagents.js";
 import { stateHomeFs } from "@quickchatai/pi-quickreview/src/scan/scanfs.js";
 import { renderPreview, renderStatus } from "@quickchatai/pi-quickreview/src/scan/scanrender.js";
@@ -667,7 +672,7 @@ describe("a reading settles and covers only what its scope and strategy could re
     expect(again.proposal.rows.map((x) => x.status)).toEqual(["run"]);
   });
 
-  // MUTATION: drop `supersededBySibling` from ledger.ts coveredBy — the
+  // MUTATION: drop `{ acrossKeys: true }` from ledger.ts coveredBy — the
   // general reading of v1 still covers the reverted file and this fails.
   it("content that comes back after another scope's reading settled its finding is read again", async () => {
     const t = versioned();
@@ -695,6 +700,53 @@ describe("a reading settles and covers only what its scope and strategy could re
     expect(back.preview.cases.flatMap((c) => c.files.map((f) => f.path))).not.toContain(
       "api/routes.py",
     );
+  });
+
+  // MUTATION: drop the sibling `cut` from ledger.ts `readings` (keep every
+  // row of the newest content) — the re-read's first range borrows the
+  // superseded second range, the file reads as covered and this fails.
+  it("a revert re-read only in part never borrows the ranges another scope's reading superseded", () => {
+    const general = stage1LensKey([]);
+    const scoped = stage1LensKey(SEC_KINDS);
+    const at = (h: number): string => `2026-10-01T0${h}:00:00Z`;
+    const ledgerRow = (over: Partial<LedgerEntry>): LedgerEntry => ({
+      path: "big.py",
+      blob: "A",
+      lens: general,
+      tier: "sol-med",
+      effort: "tier",
+      validator: false,
+      sha: "s",
+      lines: 100,
+      cost_usd: 0.1,
+      run: "r1",
+      case: "c1",
+      at: at(1),
+      ...over,
+    });
+    const first = { start: 1, end: 100, total: 200 };
+    const second = { start: 101, end: 200, total: 200 };
+    const rows = [
+      // v1 read whole, in two ranges, by the general scope.
+      ledgerRow({ range: first, at: at(1) }),
+      ledgerRow({ range: second, at: at(2) }),
+      // v2 read by the security scope: it settles v1's findings.
+      ledgerRow({ lens: scoped, blob: "B", run: "r2", at: at(3) }),
+      // Back at v1: the owed re-read stops after its first range.
+      ledgerRow({ range: first, run: "r3", at: at(4) }),
+    ];
+    expect(coveredBy(rows, general)).toEqual(new Set());
+    expect(partialRanges(rows, general)).toEqual(new Map([["big.py\0A", [first]]]));
+    // Finished: the second range read again, the file is covered once more.
+    const finished = [...rows, ledgerRow({ range: second, run: "r3", at: at(5) })];
+    expect(coveredBy(finished, general)).toEqual(new Set(["big.py\0A"]));
+    // A sibling row of the SAME content supersedes nothing.
+    const same = [
+      ledgerRow({ range: first, at: at(1) }),
+      ledgerRow({ lens: scoped, run: "r2", at: at(2) }),
+      ledgerRow({ range: second, at: at(3) }),
+    ];
+    expect(coveredBy(same, general)).toEqual(new Set(["big.py\0A"]));
   });
 });
 

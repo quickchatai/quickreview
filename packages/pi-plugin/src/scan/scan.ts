@@ -670,15 +670,8 @@ export function parseReadingKey(key: string): {
   strategy: string | null;
   kinds: string[];
 } {
-  const at = key.indexOf(KINDS_MARK);
-  const base = at < 0 ? key : key.slice(0, at);
-  const kinds =
-    at < 0
-      ? []
-      : key
-          .slice(at + KINDS_MARK.length)
-          .split(",")
-          .filter((k) => k !== "");
+  const { base, scope } = splitScope(key);
+  const kinds = scope === null ? [] : scope.split(",").filter((k) => k !== "");
   const colon = base.indexOf(":");
   return colon < 0
     ? { lens: base, strategy: null, kinds }
@@ -688,8 +681,17 @@ export function parseReadingKey(key: string): {
 /** A ledger key without its `[scan] kinds` scope: what a reading costs is
  * the lens's (and strategy's) price per line, not its focus. Pure. */
 export function unscopedKey(key: string): string {
+  return splitScope(key).base;
+}
+
+/** A ledger key at its `KINDS_MARK`: the lens (and strategy) before it, and
+ * the kinds text after it (null for an unscoped key) — the one place the
+ * boundary is found, for `parseReadingKey` and `unscopedKey` alike. Pure. */
+function splitScope(key: string): { base: string; scope: string | null } {
   const at = key.indexOf(KINDS_MARK);
-  return at < 0 ? key : key.slice(0, at);
+  return at < 0
+    ? { base: key, scope: null }
+    : { base: key.slice(0, at), scope: key.slice(at + KINDS_MARK.length) };
 }
 
 /**

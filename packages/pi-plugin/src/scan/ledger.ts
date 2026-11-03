@@ -144,41 +144,21 @@ export class Ledger {
   }
 }
 
-/** `path\0blob` of each file's NEWEST reading by `lens` — the same newest
- * row `FindingsStore.reconcile` settles findings against — complete at
- * `depth` (`readings`). An older reading a later one superseded covers
- * nothing: its findings may since have been settled `fixed`, so content that
- * comes back to it (a revert) must be read again for them to come back too.
- * That holds across the lens's keys (scan.ts `sameReadingLens`): a reading
- * under another `[scan] kinds` scope or chain strategy settles this one's
- * findings too, so a newer one of OTHER content supersedes it as well. */
+/** `path\0blob` of each file's NEWEST reading by `lens`, complete at `depth`
+ * — the same newest row `FindingsStore.reconcile` settles findings against
+ * (`readings`), as counted across the lens's keys (`acrossKeys`). An older
+ * reading a later one superseded covers nothing: its findings may since have
+ * been settled `fixed`, so content that comes back to it (a revert) must be
+ * read again for them to come back too. */
 export function coveredBy(
   entries: readonly LedgerEntry[],
   lens: string,
   depth: ScanDepth = "standard",
 ): Set<string> {
   const out = new Set<string>();
-  const superseded = supersededBySibling(entries, lens);
-  for (const [path, r] of readings(entries, lens, depth))
-    if (r.complete && !superseded(path, r)) out.add(coverKey(path, r.blob));
+  for (const [path, r] of readings(entries, lens, depth, { acrossKeys: true }))
+    if (r.complete) out.add(coverKey(path, r.blob));
   return out;
-}
-
-/** Was `r`, `lens`'s newest reading of `path`, superseded by a later row of
- * other content under another key of the same lens (`coveredBy`)? */
-function supersededBySibling(
-  entries: readonly LedgerEntry[],
-  lens: string,
-): (path: string, r: Reading) => boolean {
-  const byPath = new Map<string, LedgerEntry[]>();
-  for (const e of entries) {
-    if (e.lens === lens || !sameReadingLens(e.lens, lens)) continue;
-    const rows = byPath.get(e.path);
-    if (rows) rows.push(e);
-    else byPath.set(e.path, [e]);
-  }
-  return (path, r) =>
-    (byPath.get(path) ?? []).some((e) => e.blob !== r.blob && compareAt(e.at, r.newest.at) > 0);
 }
 
 /** A file's newest reading by one lens: the rows at its newest content,
@@ -202,18 +182,35 @@ export interface Reading {
  * other content supersedes a deep one too); within it, a `"standard"` reading
  * is made of every row — a deep reading is at least a standard one — and a
  * `"deep"` reading of the deep rows alone, so a path whose newest content was
- * read only at standard depth has no deep reading. */
+ * read only at standard depth has no deep reading.
+ *
+ * `acrossKeys` counts the lens's other keys too (scan.ts `sameReadingLens`):
+ * a reading under another `[scan] kinds` scope or chain strategy settles this
+ * key's findings, so its row of OTHER content supersedes every row of this
+ * key older than it — they are no part of the reading, however much newer
+ * the reading's own newest row is (a revert re-read only in part must not
+ * borrow the superseded ranges to read as complete), and a path all of whose
+ * rows it superseded has no reading. Its rows are never part of the reading:
+ * its coverage is its own key's. */
 export function readings(
   entries: readonly LedgerEntry[],
   lens: string,
   depth: ScanDepth = "standard",
+  opts: { acrossKeys?: boolean } = {},
 ): Map<string, Reading> {
   const byPath = new Map<string, LedgerEntry[]>();
+  const siblings = new Map<string, LedgerEntry[]>();
   for (const e of entries) {
-    if (e.lens !== lens) continue;
-    const rows = byPath.get(e.path);
+    const into =
+      e.lens === lens
+        ? byPath
+        : opts.acrossKeys === true && sameReadingLens(e.lens, lens)
+          ? siblings
+          : null;
+    if (into === null) continue;
+    const rows = into.get(e.path);
     if (rows) rows.push(e);
-    else byPath.set(e.path, [e]);
+    else into.set(e.path, [e]);
   }
   const out = new Map<string, Reading>();
   for (const [path, rows] of byPath) {
@@ -222,8 +219,18 @@ export function readings(
       .map((e, i) => ({ e, i }))
       .sort((a, b) => compareAt(a.e.at, b.e.at) || a.i - b.i);
     const newest = sorted[sorted.length - 1]!.e;
+    // The newest sibling row of other content: every row older is superseded.
+    let cut: string | null = null;
+    for (const e of siblings.get(path) ?? [])
+      if (e.blob !== newest.blob && (cut === null || compareAt(e.at, cut) > 0)) cut = e.at;
     const all: LedgerEntry[] = [];
-    for (let k = sorted.length - 1; k >= 0 && sorted[k]!.e.blob === newest.blob; k--)
+    for (
+      let k = sorted.length - 1;
+      k >= 0 &&
+      sorted[k]!.e.blob === newest.blob &&
+      (cut === null || compareAt(sorted[k]!.e.at, cut) >= 0);
+      k--
+    )
       all.push(sorted[k]!.e);
     const streak = depth === "deep" ? all.filter((e) => depthOf(e) === "deep") : all;
     if (streak.length === 0) continue;
@@ -249,10 +256,8 @@ export function partialRanges(
   depth: ScanDepth = "standard",
 ): Map<string, FileRange[]> {
   const out = new Map<string, FileRange[]>();
-  const superseded = supersededBySibling(entries, lens);
-  for (const [path, r] of readings(entries, lens, depth))
-    if (!r.complete && r.ranges.length > 0 && !superseded(path, r))
-      out.set(coverKey(path, r.blob), r.ranges);
+  for (const [path, r] of readings(entries, lens, depth, { acrossKeys: true }))
+    if (!r.complete && r.ranges.length > 0) out.set(coverKey(path, r.blob), r.ranges);
   return out;
 }
 
