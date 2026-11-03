@@ -1403,9 +1403,10 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     const command = runScanCommand("", { ...host, env }, ui, { sessions, deps }).then(
       () => "returned",
     );
-    for (let i = 0; i < 200 && !deps.agents.some((a) => a.startsWith("pass-sec-threat-model")); i++)
-      await new Promise((r) => setTimeout(r, 10));
-    expect(deps.agents.some((a) => a.startsWith("pass-sec-threat-model"))).toBe(true);
+    await until(
+      () => deps.agents.some((a) => a.startsWith("pass-sec-threat-model")),
+      "the threat-model draft to start",
+    );
     ui.escape();
     const settled = await Promise.race([
       command,
