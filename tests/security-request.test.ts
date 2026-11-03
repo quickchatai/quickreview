@@ -1049,6 +1049,40 @@ describe("a request is reviewed by a round planned with it", () => {
       expect(hasNewEvidence(store.reviewedHead(61), HEAD)).toBe(true);
     },
   );
+  // MUTATION: read requestSeen after prepareWorktree (where it was) instead
+  // of before the labels — the label request recorded while the tree is
+  // prepared counts as seen, stays served with no round planned with it, and
+  // this fails.
+  it(
+    "a label request recorded while the tree is prepared, after the labels were read, waits for that round",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = ticking();
+      tracked(store, 64, "queued", HEAD);
+      // GitHub's labels were read without the label; it lands, and the
+      // reconcile pass records and serves it, while the tree is prepared.
+      const prepare: typeof tree = async () => {
+        store.recordReviewRequest({ pr: 64, kind: "security", source: "label", requested_by: "" });
+        store.markReviewRequestServed(64, "security");
+        return tree();
+      };
+      const orders: RoundOrder[] = [];
+      const hooks: SessionHooks = {
+        async dispatchRound(order) {
+          orders.push(order);
+        },
+        async inject() {},
+        async archiveAndClose() {},
+      };
+      await dispatchOnce({ cfg, store, adapter: adapterFor(), hooks, prepareWorktree: prepare });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.security_request).toBeUndefined();
+      expect(familyRows(orders[0]!)).toEqual([]);
+      // Planned without it, so it is put back for the reconcile pass.
+      expect(store.reviewRequest(64, "security")?.served_at).toBeNull();
+      expect(events(store, 64, "review_request_deferred")).toHaveLength(1);
+    },
+  );
   // MUTATION: drop the `requested_at === seen` test in
   // deferUncoveredSecurityRequest — the row the plan left out on purpose is
   // put back, served again and re-queued on every pass, and this fails.

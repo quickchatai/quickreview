@@ -1486,6 +1486,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // The PR's labels as GitHub has them this round (a label request for a
       // security review stands while its label does); null when unread.
       let labels: string[] | null = null;
+      // The request row this round's inputs may count as seen, read BEFORE
+      // the labels: a request recorded after this line (a label added while
+      // the tree is prepared) is never "seen", so a plan the stale labels
+      // left it out of puts it back (deferUncoveredSecurityRequest).
+      const requestSeen = store.reviewRequest(row.number, SECURITY_REQUEST_KIND)?.requested_at;
       try {
         const ref = await deps.adapter.getPr(row.number);
         baseRef = ref.base_ref;
@@ -1533,9 +1538,6 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // the operator's request, the threat model, the deterministic facts and
       // earlier rounds' partial chains. Read once, before the plan, and
       // handed to the plan, the follow-up decision and the order alike.
-      // The request row the inputs read (in the same turn): one recorded after
-      // it is not in this round's plan.
-      const requestSeen = store.reviewRequest(row.number, SECURITY_REQUEST_KIND)?.requested_at;
       const sec = await securityInputsFor(deps, row.number, files, tree, labels);
       const planSecurity: PlanSecurityInputs = {
         ...(sec.securityRequest ? { securityRequest: sec.securityRequest } : {}),
