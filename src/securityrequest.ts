@@ -9,9 +9,12 @@
 // (`noteNewEvidence`) and the PR is triggered, so a PR already reviewed at its
 // head is reviewed again rather than skipped by guard 2. An explicit
 // maintainer request is new evidence; nothing else about it widens the posting
-// boundary. A request that lands while a round runs waits for that round to
-// settle — the round was planned without it, and its verdict re-stamps the
-// mark — and the reconcile pass serves it then (`sweepSecurityRequests`).
+// boundary. A request that lands while a round runs — or while one is being
+// prepared, after its inputs were read — waits for that round to settle (the
+// round was planned without it, and its verdict re-stamps the mark), and the
+// reconcile pass serves it then (`sweepSecurityRequests`). The first round
+// that answers a request reviews the whole PR, never a follow-up over the
+// change since a review that ran no security family.
 //
 // Who may ask: a label needs triage rights on GitHub already, and whoever set
 // it counts — a person or an auto-labeler alike, since a polling install never
@@ -208,7 +211,7 @@ export function applySecurityRequest(
           fresh: false,
           reason: store.upgradeLabelReviewRequest(row) ? "upgraded" : "already-requested",
         };
-      return { fresh: true, served: serveSecurityRequest(store, req.pr, opts) };
+      return { fresh: true, served: serveInTransaction(store, req.pr, opts) };
       // Reads, then writes: IMMEDIATE takes the write lock up front, so a busy
       // writer elsewhere is waited for rather than failing the upgrade.
     })
@@ -219,39 +222,118 @@ export function applySecurityRequest(
  * Hand a waiting request to the queue: note new evidence at the reviewed
  * head (once — the row is stamped served in the same transaction) and
  * trigger the PR, the same `trigger`/`manual` event `qcr review-now` uses.
- * False — and nothing written — while a round runs, for a closed PR, for a PR
- * not tracked here with no head to adopt it at, or for a request already
- * served. A bot-authored PR is never reviewed: its request is withdrawn.
+ * False — and nothing written — while a round runs (the PR reviewing, or a
+ * round of it started and not yet handed off: that round was planned without
+ * the request), for a closed PR, for a PR not tracked here with no head to
+ * adopt it at, or for a request already served. A bot-authored PR is never
+ * reviewed: its request is withdrawn.
  */
 export function serveSecurityRequest(
   store: StateStore,
   pr: number,
   opts: { meta?: PrMeta; botLogin?: string; now?: () => Date } = {},
 ): boolean {
-  return store.db
-    .transaction((): boolean => {
-      const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
-      if (!req || req.served_at !== null) return false;
-      const row = store.getPr(pr);
-      if (row?.state === "reviewing" || row?.state === "closed") return false;
-      if (!row && !opts.meta?.head_sha) return false;
-      const now = opts.now ?? (() => new Date());
-      const result = applyEvent(store, pr, { type: "trigger", source: "manual" }, opts.meta ?? {}, {
-        ...(opts.botLogin !== undefined ? { botLogin: opts.botLogin } : {}),
-        now,
-        reason: `security-request:${req.source}`,
-      });
-      if (result.skipped) {
-        store.clearReviewRequests(pr, "bot-author", SECURITY_REQUEST_KIND);
-        return false;
-      }
-      store.noteNewEvidence(pr, now().toISOString());
-      store.markReviewRequestServed(pr, SECURITY_REQUEST_KIND);
-      return true;
-      // Reads, then writes: IMMEDIATE, as above (nested in a caller's
-      // transaction it is a savepoint).
-    })
-    .immediate();
+  // Reads, then writes: IMMEDIATE, as above.
+  return store.db.transaction(() => serveInTransaction(store, pr, opts)).immediate();
+}
+
+/** `serveSecurityRequest`'s body, for a caller already holding the write
+ * transaction. */
+function serveInTransaction(
+  store: StateStore,
+  pr: number,
+  opts: { meta?: PrMeta; botLogin?: string; now?: () => Date },
+): boolean {
+  const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
+  if (!req || req.served_at !== null) return false;
+  const row = store.getPr(pr);
+  if (row?.state === "reviewing" || row?.state === "closed") return false;
+  if (row && store.hasRunningRound(pr)) return false;
+  if (!row && !opts.meta?.head_sha) return false;
+  const now = opts.now ?? (() => new Date());
+  const result = applyEvent(store, pr, { type: "trigger", source: "manual" }, opts.meta ?? {}, {
+    ...(opts.botLogin !== undefined ? { botLogin: opts.botLogin } : {}),
+    now,
+    reason: `security-request:${req.source}`,
+  });
+  if (result.skipped) {
+    store.clearReviewRequests(pr, "bot-author", SECURITY_REQUEST_KIND);
+    return false;
+  }
+  store.noteNewEvidence(pr, now().toISOString());
+  store.markReviewRequestServed(pr, SECURITY_REQUEST_KIND);
+  return true;
+}
+
+/**
+ * Dispatch's half of "a request that lands while a round runs waits for it":
+ * a request recorded while this round was being prepared — after its security
+ * inputs were read, before its round row existed — was served into a queue
+ * whose plan was already built without it. Called in the same turn as the
+ * round row's start, for a round planned with no request; `seen` is the
+ * `requested_at` of the row the inputs read (undefined: there was none). A
+ * row recorded since, and served, loses its served stamp, so it waits for
+ * this round to settle and the reconcile pass serves it then
+ * (`sweepSecurityRequests`), with the family planned. A row the inputs saw is
+ * left alone: the plan left it out on purpose (its label is off). True when a
+ * request was put back.
+ */
+export function deferUncoveredSecurityRequest(
+  store: StateStore,
+  pr: number,
+  seen: string | undefined,
+): boolean {
+  const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
+  if (!req || req.served_at === null || req.requested_at === seen) return false;
+  store.db
+    .prepare("UPDATE pr_review_requests SET served_at = NULL WHERE pr = ? AND kind = ?")
+    .run(pr, SECURITY_REQUEST_KIND);
+  store.logEvent("review_request_deferred", pr, {
+    kind: SECURITY_REQUEST_KIND,
+    reason: "served-during-preparation",
+  });
+  return true;
+}
+
+/**
+ * Whether the PR's standing security request has been answered by a round
+ * that looked at the whole PR: a live round with a verdict, started at or
+ * after the request was served, that was a first review, a full re-review or
+ * a follow-up whose whole-PR sweep ran. Until then a re-review is not a
+ * follow-up over the change since the last reviewed head — an ordinary
+ * approval before the request says nothing about the security family, and a
+ * delta (empty, at the same head) would hand the family nothing to inspect.
+ * False with no recorded request (a label GitHub shows that the reconcile
+ * pass has not recorded yet is new as far as anything here knows).
+ */
+export function securityRequestCovered(store: StateStore, pr: number): boolean {
+  const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
+  if (!req || req.served_at === null) return false;
+  const servedAt = req.served_at;
+  return store
+    .roundsFor(pr)
+    .some(
+      (r) =>
+        r.backfilled === 0 &&
+        r.verdict !== null &&
+        r.started_at >= servedAt &&
+        (r.round_type === "first" ||
+          r.scope === null ||
+          r.scope === "full" ||
+          r.sweep_status === "ran"),
+    );
+}
+
+/**
+ * The webhook's half of the label's edge: the security label came off the
+ * PR, so a request standing on the label alone is withdrawn — and the label
+ * put back records a fresh one. A comment or operator request (or a label
+ * request one of those took over) stands on the asker's word and is kept.
+ * True when a row went.
+ */
+export function withdrawLabelSecurityRequest(store: StateStore, pr: number): boolean {
+  if (store.reviewRequest(pr, SECURITY_REQUEST_KIND)?.source !== "label") return false;
+  return store.clearReviewRequests(pr, "label-removed", SECURITY_REQUEST_KIND);
 }
 
 /**

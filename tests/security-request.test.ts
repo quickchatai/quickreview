@@ -41,6 +41,8 @@ import {
   SECURITY_ACK_MARKER,
   securityAckBody,
   securityFactsAt,
+  securityRequestCovered,
+  serveSecurityRequest,
   sweepSecurityRequests,
   type RepoGitReader,
 } from "../src/securityrequest.js";
@@ -358,6 +360,53 @@ describe("a request is new evidence, served once", () => {
       },
     );
     expect(store.reviewRequest(42, "security")).toBeUndefined();
+  });
+  // MUTATION: drop the security branch of interpretPullRequest's `unlabeled`
+  // (or the `security_withdrawn` case of applyInterpretation) — this fails:
+  // the old served row stands, and the label put back asks for nothing.
+  it("the label off and on again between reconcile passes asks again; a comment's request stays", async () => {
+    const store = new StateStore(":memory:");
+    tracked(store, 42);
+    const touched = vi.fn();
+    const on = () =>
+      interpretEvent("pull_request", "labeled", labelPayload(LABEL), interpretDeps());
+    const off = (name = LABEL) =>
+      interpretEvent(
+        "pull_request",
+        "unlabeled",
+        { ...labelPayload(name), action: "unlabeled" },
+        interpretDeps(),
+      );
+    await applyInterpretation({ cfg, store, onPrTouched: touched }, on());
+    expect(touched).toHaveBeenCalledOnce();
+    // The round settles at the head.
+    store.db.prepare("UPDATE pr_state SET state='tracked' WHERE number=42").run();
+    store.recordReviewedHead(42, {
+      head_sha: "head42",
+      verdict: "APPROVE",
+      posted_event: "APPROVE",
+    });
+    expect(off()).toEqual({ kind: "security_withdrawn", pr: 42, by: "maya-dev" });
+    await applyInterpretation({ cfg, store, onPrTouched: touched }, off());
+    expect(store.reviewRequest(42, "security")).toBeUndefined();
+    await applyInterpretation({ cfg, store, onPrTouched: touched }, on());
+    expect(touched).toHaveBeenCalledTimes(2);
+    expect(store.getPr(42)?.state).toBe("queued");
+    expect(hasNewEvidence(store.reviewedHead(42), "head42")).toBe(true);
+    // Another label coming off is no withdrawal.
+    expect(off("needs-love")).toMatchObject({ kind: "ignored" });
+    // A comment's request (here one that took over the label's) outlives it.
+    await applyInterpretation(
+      { cfg, store },
+      interpretEvent(
+        "issue_comment",
+        "created",
+        commentPayload(`${MENTION} security`, "MEMBER"),
+        interpretDeps(),
+      ),
+    );
+    await applyInterpretation({ cfg, store }, off());
+    expect(store.reviewRequest(42, "security")?.source).toBe("comment");
   });
 });
 
@@ -844,6 +893,181 @@ describe("dispatch plans the family from the request", () => {
 
 // The route inventory plans nothing and only a family row's task reads it:
 // a PR with no security signal reads nothing for it.
+describe("a request is reviewed by a round planned with it", () => {
+  const HEAD = "a".repeat(40);
+  const BASE = "b".repeat(40);
+  const tree = async () => ({
+    head_sha: HEAD,
+    base_ref: "master",
+    base_sha: BASE,
+    merge_base: BASE,
+  });
+  /** A store whose clock ticks a second per read, so "started after served"
+   * never ties. */
+  const ticking = (): StateStore => {
+    let t = Date.parse("2026-11-01T09:00:00Z");
+    return new StateStore(":memory:", () => new Date((t += 1000)));
+  };
+  const adapterFor = (labels: string[] = []): DispatchAdapter => ({
+    listPrFiles: async () => [
+      { filename: "app/service.py", additions: 12, deletions: 1, status: "modified" },
+    ],
+    getPr: async () => ({ base_ref: "master", labels }),
+    addLabel: noop,
+    removeLabel: noop,
+    deleteTeamReviewRequest: noop,
+    createReview: noop,
+  });
+  const events = (store: StateStore, pr: number, kind: string): Array<Record<string, unknown>> =>
+    (
+      store.db
+        .prepare("SELECT payload FROM events WHERE pr = ? AND kind = ? ORDER BY id")
+        .all(pr, kind) as Array<{ payload: string }>
+    ).map((r) => JSON.parse(r.payload) as Record<string, unknown>);
+
+  // MUTATION: drop the `securityRequestCovered` branch before decideFollowUp
+  // in dispatchOnce — the round follows up over the empty change since the
+  // approval, and this fails.
+  it(
+    "after an ordinary approval at the same head, the requested round reviews the whole PR",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = ticking();
+      tracked(store, 60, "tracked", HEAD);
+      store.finishRound(store.startRound(60, "first", ["pass-baseline"], 60), "APPROVE", null);
+      store.recordReviewedHead(60, {
+        head_sha: HEAD,
+        verdict: "APPROVE",
+        posted_event: "APPROVE",
+        round_no: 1,
+      });
+      expect(applySecurityRequest(store, { pr: 60, source: "comment", by: "maya-dev" })).toEqual({
+        fresh: true,
+        served: true,
+      });
+      expect(securityRequestCovered(store, 60)).toBe(false);
+      const orders: RoundOrder[] = [];
+      const hooks: SessionHooks = {
+        async dispatchRound(order) {
+          orders.push(order);
+        },
+        async inject() {},
+        async archiveAndClose() {},
+      };
+      const emptyDelta = async () => ({
+        ok: true as const,
+        tree: "c".repeat(40),
+        files: [],
+        lines: 0,
+        conflicted: [],
+      });
+      await dispatchOnce({
+        cfg,
+        store,
+        adapter: adapterFor(),
+        hooks,
+        prepareWorktree: tree,
+        prOwnedDelta: emptyDelta,
+      });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.scope).not.toBe("delta");
+      expect(familyRows(orders[0]!).length).toBeGreaterThan(0);
+      expect(store.roundsFor(60).at(-1)!.scope).toBe("full");
+      expect(events(store, 60, "followup_full_round")).toEqual([
+        expect.objectContaining({ reason: "security-requested" }),
+      ]);
+      // That round, once it has a verdict, is the request's whole look: a
+      // later round of the same request may follow up over a delta again.
+      store.finishRound(store.roundsFor(60).at(-1)!.id, "APPROVE", null);
+      expect(securityRequestCovered(store, 60)).toBe(true);
+    },
+  );
+
+  // MUTATION: drop the deferUncoveredSecurityRequest call in dispatchOnce —
+  // the request stays served with no round planned with it, and this fails.
+  // MUTATION: drop the hasRunningRound check in serveSecurityRequest — a
+  // request during the handoff is served into a round planned without it, and
+  // this fails.
+  it(
+    "a request landing while a round is prepared waits for that round, then is served",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = ticking();
+      tracked(store, 61, "queued", HEAD);
+      const served: boolean[] = [];
+      // The request lands after the round read its security inputs: while
+      // the threat model is read.
+      const reader: RepoGitReader = {
+        listFiles: async () => [],
+        readFile: async () => {
+          if (store.reviewRequest(61, "security") === undefined)
+            served.push(
+              (
+                applySecurityRequest(store, { pr: 61, source: "comment", by: "maya-dev" }) as {
+                  served: boolean;
+                }
+              ).served,
+            );
+          return null;
+        },
+      };
+      const orders: RoundOrder[] = [];
+      const hooks: SessionHooks = {
+        async dispatchRound(order) {
+          orders.push(order);
+          // During the handoff the round is running: nothing serves it.
+          served.push(serveSecurityRequest(store, 61));
+        },
+        async inject() {},
+        async archiveAndClose() {},
+      };
+      await dispatchOnce({
+        cfg,
+        store,
+        adapter: adapterFor(),
+        hooks,
+        prepareWorktree: tree,
+        securityGit: reader,
+      });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.security_request).toBeUndefined();
+      expect(familyRows(orders[0]!)).toEqual([]);
+      // Served into the preparing queue, then put back; not served during the handoff.
+      expect(served).toEqual([true, false]);
+      expect(store.reviewRequest(61, "security")?.served_at).toBeNull();
+      expect(events(store, 61, "review_request_deferred")).toHaveLength(1);
+      // The round settles; the reconcile pass serves the request now.
+      store.finishRound(store.roundsFor(61).at(-1)!.id, "APPROVE", null);
+      store.db.prepare("UPDATE pr_state SET state='tracked' WHERE number=61").run();
+      store.recordReviewedHead(61, { head_sha: HEAD, verdict: "APPROVE", posted_event: "APPROVE" });
+      const open = new Map([
+        [61, { title: "PR 61", head_sha: HEAD, author: "dana-op", labels: [] as string[] }],
+      ]);
+      const listedAt = "2099-01-01T00:00:00Z";
+      expect(sweepSecurityRequests(store, { open, listedAt, label: LABEL }).served).toEqual([61]);
+      expect(store.getPr(61)?.state).toBe("queued");
+      expect(hasNewEvidence(store.reviewedHead(61), HEAD)).toBe(true);
+    },
+  );
+  // MUTATION: drop the `requested_at === seen` test in
+  // deferUncoveredSecurityRequest — the row the plan left out on purpose is
+  // put back, served again and re-queued on every pass, and this fails.
+  it(
+    "a served label request whose label is off is not put back by a round planned without it",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = ticking();
+      tracked(store, 62, "queued", HEAD);
+      store.recordReviewRequest({ pr: 62, kind: "security", source: "label", requested_by: "" });
+      store.markReviewRequestServed(62, "security");
+      const order = await dispatchWith(store, [], {}, { prepareWorktree: tree });
+      expect(order.security_request).toBeUndefined();
+      expect(store.reviewRequest(62, "security")?.served_at).not.toBeNull();
+      expect(events(store, 62, "review_request_deferred")).toEqual([]);
+    },
+  );
+});
+
 describe("dispatch reads the route inventory only for a round with a family row", () => {
   const counting = (): RepoGitReader & { reads: string[] } => {
     const reads: string[] = [];
@@ -1205,30 +1429,46 @@ describe("the repository reads", () => {
     expect(viaGit.find((f) => f.check === "route-inventory")?.status).not.toBe("unknown");
   });
 
-  // MUTATION: drop the `late()` checks in securityFactsAt — the reads go on
-  // past the deadline, and this fails.
-  it("past its deadline no read is issued, and a listed size spares the size read", async () => {
+  // More readable files than one chunk of reads, so a read past the
+  // deadline would show. MUTATION: drop the `late()` check before each chunk
+  // in securityFactsAt — the later chunks are issued, and this fails.
+  it("past its deadline no further chunk of reads is issued, and a listed size spares the size read", async () => {
+    const many = new Map(
+      Array.from({ length: 20 }, (_, i) => [
+        `app/r${String(i).padStart(2, "0")}.py`,
+        `@app.get("/r${i}")\ndef r${i}():\n    return 1\n`,
+      ]),
+    );
+    const head = new Map([...repo.head, ...many]);
     let clock = 0;
-    const reader = fake();
+    const reads: string[] = [];
     const sized: Array<number | undefined> = [];
-    const wrapped: RepoGitReader = {
-      listFiles: reader.listFiles,
-      readFile: async (sha, path, max, size) => {
+    const reader: RepoGitReader = {
+      listFiles: async () => [...head].map(([path, text]) => ({ path, size: text.length })),
+      readFile: async (sha, path, _max, size) => {
+        reads.push(`${sha}:${path}`);
         sized.push(size);
+        // the deadline passes while the first chunk is in flight
         clock = 10;
-        return reader.readFile(sha, path, max, size);
+        return (sha === "H" ? head : repo.base).get(path) ?? null;
       },
     };
     const facts = await securityFactsAt(
       files,
-      wrapped,
+      reader,
       { head: "H", base: "B" },
       { deadline: 5, now: () => clock },
     );
-    // the first chunk was issued before the deadline; nothing after it
-    expect(reader.reads.length).toBeLessThanOrEqual(8);
-    expect(reader.reads.length).toBeGreaterThan(0);
-    expect(facts.find((f) => f.check === "route-inventory")?.status).not.toBe("clear");
+    // exactly the first chunk (eight reads, issued together), nothing after it
+    expect(reads).toHaveLength(8);
+    const inventory = facts.find((f) => f.check === "route-inventory");
+    expect(inventory?.status).not.toBe("clear");
+    expect(inventory?.detail).toMatch(/could not be read/);
+    // the control: with no deadline every readable file is read
+    reads.length = 0;
+    clock = 0;
+    await securityFactsAt(files, reader, { head: "H", base: "B" });
+    expect(reads.length).toBeGreaterThan(20);
     // a head read carries the size the listing gave
     expect(sized.some((n) => typeof n === "number")).toBe(true);
   });

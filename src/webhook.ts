@@ -15,7 +15,11 @@ import { applyEvent as applyEventFor, mergedOverBlock } from "./statemachine.js"
 import type { StateStore, StatusSnapshot } from "./state.js";
 import { blockedPrAuthor } from "./pr-conversation.js";
 import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
-import { applySecurityRequest, securityCommandDecision } from "./securityrequest.js";
+import {
+  applySecurityRequest,
+  securityCommandDecision,
+  withdrawLabelSecurityRequest,
+} from "./securityrequest.js";
 
 // ---- signature -----------------------------------------------------------
 
@@ -113,6 +117,10 @@ export type Interpretation =
       comment_id?: number;
       meta?: EventPrMeta;
     }
+  /** The `[security] label` came off the PR: a request standing on the label
+   * alone is withdrawn, so putting it back asks again (src/securityrequest.ts
+   * `withdrawLabelSecurityRequest`). */
+  | { kind: "security_withdrawn"; pr: number; by: string }
   /** CI finished at a head (check_suite / workflow_run). Never a transition
    * here; its consumers are the post-approval delta recheck and the
    * withheld-approval retry, which re-queues a PR whose approval red CI held
@@ -270,6 +278,11 @@ function interpretPullRequest(
     // sender is mechanics, never feedback.
     case "unlabeled": {
       const name = payload?.label?.name;
+      // Whoever took it off, as whoever set it counts: the label's edge is
+      // the request's (src/securityrequest.ts). Not feedback — a security
+      // review asked for and then not wanted says nothing of the reviews.
+      if (deps.securityLabel && name === deps.securityLabel && name !== deps.triggerLabel)
+        return { kind: "security_withdrawn", pr: meta.number, by: payload?.sender?.login ?? "" };
       if (name !== deps.triggerLabel)
         return { kind: "ignored", reason: `non-trigger label removed: ${name}`, pr: meta.number };
       if (isBotUser(payload?.sender, deps.botLogin))
@@ -997,6 +1010,13 @@ export async function applyInterpretation(
       if (outcome.served) await deps.onPrTouched?.(i.pr);
       return;
     }
+    case "security_withdrawn":
+      // The label's own request goes; a comment's or the operator's stays.
+      // Withdrawn here, not only on the next reconcile pass: the label put
+      // back before that pass would find the old row standing and ask for
+      // nothing.
+      local(() => withdrawLabelSecurityRequest(store, i.pr));
+      return;
     // Pure tuning-loop signals — no state-machine event, no session
     // wake, no reviewed_heads mark. The engine (wired by the daemon) owns
     // dedupe, the memory entry, and the same-day addendum rebuild.

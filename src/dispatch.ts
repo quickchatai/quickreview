@@ -122,12 +122,14 @@ import {
 import { resolveThreatModel } from "@quickchatai/pi-quickreview/src/threatmodel.js";
 import type { PlanSecurityInputs } from "@quickchatai/pi-quickreview/src/planner.js";
 import {
+  deferUncoveredSecurityRequest,
   partialChainLeads,
   PRIOR_PARTIAL_CHAINS_MAX,
   readRepoThreatModel,
   resolveSecurityRequest,
   SECURITY_REQUEST_KIND,
   securityFactsAt,
+  securityRequestCovered,
   type RepoGitReader,
 } from "./securityrequest.js";
 
@@ -1531,6 +1533,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // the operator's request, the threat model, the deterministic facts and
       // earlier rounds' partial chains. Read once, before the plan, and
       // handed to the plan, the follow-up decision and the order alike.
+      // The request row the inputs read (in the same turn): one recorded after
+      // it is not in this round's plan.
+      const requestSeen = store.reviewRequest(row.number, SECURITY_REQUEST_KIND)?.requested_at;
       const sec = await securityInputsFor(deps, row.number, files, tree, labels);
       const planSecurity: PlanSecurityInputs = {
         ...(sec.securityRequest ? { securityRequest: sec.securityRequest } : {}),
@@ -1558,8 +1563,20 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // directive escalation, the diffstat, dependency sources, memory and
       // lessons); only the plan and the coverage check read the delta.
       let followUp: FollowUpDecision | null = null;
-      let fullRound: { reason: FollowUpFullReason; detail?: Record<string, unknown> } | null = null;
-      if (roundType === "re-review") {
+      let fullRound: {
+        reason: FollowUpFullReason | "security-requested";
+        detail?: Record<string, unknown>;
+      } | null = null;
+      if (
+        roundType === "re-review" &&
+        planSecurity.securityRequest &&
+        !securityRequestCovered(store, row.number)
+      ) {
+        // A security review asked for since the last whole look: the family
+        // reviews the PR's own change, never only the change since a review
+        // that did not run it (at the same head that delta is empty).
+        fullRound = { reason: "security-requested" };
+      } else if (roundType === "re-review") {
         const decided = await decideFollowUp(
           {
             cfg: deps.cfg,
@@ -1619,6 +1636,14 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         }
         continue;
       }
+      // A request served while this round was prepared, after its inputs were
+      // read, is not in its plan: it waits for this round to settle instead,
+      // as one landing during the round does (src/securityrequest.ts).
+      if (
+        !planSecurity.securityRequest &&
+        deferUncoveredSecurityRequest(store, row.number, requestSeen)
+      )
+        log(`dispatch: #${row.number} security request arrived during preparation — next round`);
       // Diffstat comes free off the files list dispatch already fetched — no
       // extra GitHub call in the hot path. trigger_ts is copied off pr_state
       // here because the `dispatched` transition clears it moments later.

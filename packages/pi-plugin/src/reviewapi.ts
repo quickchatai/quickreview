@@ -75,7 +75,7 @@ import { AuthExpiring } from "./engine/auth.js";
 import type { Runtime } from "./engine/port.js";
 import type { SecurityRequest } from "./types.js";
 import { computeSecurityFacts, SECURITY_TRIGGER_CHECKS, type SecurityFact } from "./secfacts.js";
-import { localGitFactsIo } from "./secfactsgit.js";
+import { localGitFactsIo, workTreeFactsIo } from "./secfactsgit.js";
 import { SECURITY_FAMILY } from "./passes.js";
 import { lensEnabled } from "./lenstuning.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
@@ -189,7 +189,9 @@ export interface ReviewOptions {
   profileHomes?: readonly ProfilePlace[];
   /** A security review asked for on this run (`/qcr-review --security`): the
    * whole security family is planned, never a lens the profile switched off.
-   * Absent: the family rows come from the triggers and the profile alone. */
+   * Absent: the family rows come from the triggers and the profile alone.
+   * A run with a request reviews the whole target, as `full` does: an earlier
+   * review's state is neither shortcut nor delta base for it. */
   securityRequest?: SecurityRequest;
   /** Builds the runtime that hosts one run's review session. Called once per
    * run, when the round is about to start (a preview, a refusal or an
@@ -665,7 +667,10 @@ async function runPipeline(
   // uncommitted edits on top and a diff keep none.
   // A run that posts to a PR reviews in full: the findings already on the PR
   // (the posted-findings skip) are its repeat protection, and an
-  // unchanged-head shortcut would also skip the post.
+  // unchanged-head shortcut would also skip the post. A security review asked
+  // for on this run reviews in full too: the earlier review it would build on
+  // ran no security family, so neither "nothing new" nor a follow-up over the
+  // change since it answers the request.
   const targetKey = prInfo
     ? prTargetKey(prInfo.repo, prInfo.number)
     : branchTargetKey(t.repo, t.branch);
@@ -675,7 +680,10 @@ async function runPipeline(
       ? null
       : (openReviewStoreIn(opts.storeDir, repoDir)?.statePath(targetKey) ?? null);
   const postsToPr = prInfo !== null && sends("pr");
-  const prev = opts.full || !keepsState || postsToPr ? null : loadState(statePath, targetKey);
+  const prev =
+    opts.full || opts.securityRequest !== undefined || !keepsState || postsToPr
+      ? null
+      : loadState(statePath, targetKey);
   const short = (sha: string): string => sha.slice(0, 7);
   const stillOpen = (s: ReviewState | null, before?: number): StillOpen[] =>
     openFindings(s)
@@ -797,10 +805,14 @@ async function runPipeline(
   // is read when every family lens is off.
   const repoThreatModel = overrides.repoThreatModel;
   const familyOn = SECURITY_FAMILY.some((lens) => lensEnabled(cfg.lenses, lens));
+  // An uncommitted target's snapshot tree is not readable once resolved (its
+  // object store is gone): its head is the working tree it was taken from.
   const factsIo =
     kind === "diff"
       ? null
-      : localGitFactsIo(gitDir, { head: t.uncommitted?.treeSha ?? t.headSha, base: t.baseSha });
+      : t.uncommitted !== undefined
+        ? workTreeFactsIo(gitDir, t.baseSha)
+        : localGitFactsIo(gitDir, { head: t.headSha, base: t.baseSha });
   let inventory: readonly SecurityFact[] | undefined;
   const securityArgs = familyOn
     ? {
