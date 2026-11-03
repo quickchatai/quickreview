@@ -147,7 +147,9 @@ export function parseScanCommand(
     } else if (w === "--path" && next !== undefined && !next.startsWith("--")) {
       const p = scanPath(next);
       if (!p.ok) return { error: `${p.why}\n${SCAN_COMMAND_USAGE}` };
-      if (p.path !== null) o.path = p.path;
+      // The last --path wins, as `qcr scan`'s does: a later `.` is the whole repo.
+      if (p.path === null) delete o.path;
+      else o.path = p.path;
       i++;
     } else if (w === "--sandbox")
       return {

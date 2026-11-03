@@ -1497,6 +1497,16 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     expect((parseScanCommand("--path /etc") as { error: string }).error).toMatch(
       /absolute[\s\S]*usage: \/qcr-scan/,
     );
+    // the last --path wins, as qcr scan's does; `.` is the whole repo.
+    // MUTATION: keep an earlier folder when a later --path is `.` — this fails.
+    expect(parseScanCommand("--path app --path .")).toEqual({
+      kind: "guided",
+      o: { delta: false },
+    });
+    expect(parseScanCommand("--path . --path app")).toEqual({
+      kind: "guided",
+      o: { delta: false, path: "app" },
+    });
     const host = scanHost();
     const deps = fakeScan(host);
     const sessions = new ScanSessions();
