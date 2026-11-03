@@ -1,9 +1,16 @@
 // The scan's config, as the app reads it: the live config.toml (the install
 // locator's answer), parsed whole, then the scan's own build and settings
 // (scanagents.ts) over it.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parseConfig, type Config } from "../config.js";
-import { homeProfileLookup, locateConfig } from "../install.js";
+import {
+  homeProfileLookup,
+  locateConfig,
+  missingConfigMessage,
+  SHIPPED_CONFIG_FILE,
+  strandedCheckoutConfig,
+} from "../install.js";
 import type { BuiltAgent } from "@quickchatai/pi-quickreview/src/include.js";
 import type { ProfileLookup } from "@quickchatai/pi-quickreview/src/profiles.js";
 import type { Refusal } from "./engine.js";
@@ -33,14 +40,27 @@ export function scanConfig(
 
 /** The live config (the install locator's answer), as `scanConfig` reads
  * it — or why it cannot be read. Never `loadConfig`: that also demands the
- * Slack token files, which the companion does not mount. */
+ * Slack token files, which the companion does not mount. Zero-config, by
+ * the one-shot review's rule (core homes.ts `loadOneShotConfig`): when the
+ * install's config home holds no config, the shipped defaults
+ * (`<root>/config.example.toml`) stand in — a fresh npm install scans as it
+ * reviews. A `$QCR_CONFIG` naming a missing file, a config stranded in the
+ * checkout, and a config that does not parse still refuse. */
 export function loadScanConfig(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
 ): { ok: true; cfg: Config } | Refusal {
   let path: string;
   try {
-    path = locateConfig({ env }).path;
+    const located = locateConfig({ env });
+    path = located.path;
+    if (!existsSync(path)) {
+      const shipped = join(root, SHIPPED_CONFIG_FILE);
+      const stranded = strandedCheckoutConfig({ root, env });
+      if (located.source === "override" || stranded !== null || !existsSync(shipped))
+        return { ok: false, errors: [missingConfigMessage(located, stranded)] };
+      path = shipped;
+    }
   } catch (err) {
     return { ok: false, errors: [`no live config: ${String(err)}`] };
   }
