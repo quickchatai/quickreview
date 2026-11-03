@@ -124,6 +124,21 @@ describe("each security addendum binds exactly its scope, in its mode", () => {
     expect(doc).toContain("Its candidates are security candidates");
   });
 
+  // The narrowing keeps what the base class (contrived-concurrency) requires
+  // before a window is contrived: a single-threaded runtime and no `await`,
+  // I/O or yield in it. Without them the stack-neutral rubric reads a
+  // threaded service's synchronous lookup-then-consume as serialized.
+  // MUTATION: drop "on a single-threaded runtime" from
+  // SCAN_SEC_PRECISION_ADDENDUM — this fails.
+  it("the scan's concurrency narrowing keeps the runtime, I/O and yield qualifications", () => {
+    const covers = SCAN_SEC_PRECISION_ADDENDUM.slice(
+      SCAN_SEC_PRECISION_ADDENDUM.indexOf("The class still covers"),
+    );
+    expect(covers).toContain("on a single-threaded runtime");
+    expect(covers).toMatch(/no `await`, I\/O or other yield between them/);
+    expect(covers).toContain("threaded or multi-process server");
+  });
+
   // MUTATION: scope validate-security-fold to "all" — this fails (every lens
   // would carry it in a PR build).
   it("with fold on, the fold binds the validator in PR builds, the needs-review rule in scans", () => {
