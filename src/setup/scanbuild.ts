@@ -1,16 +1,10 @@
 // The scan's config, as the app reads it: the live config.toml (the install
 // locator's answer), parsed whole, then the scan's own build and settings
 // (scanagents.ts) over it.
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { parseConfig, type Config } from "../config.js";
-import {
-  homeProfileLookup,
-  locateConfig,
-  missingConfigMessage,
-  SHIPPED_CONFIG_FILE,
-  strandedCheckoutConfig,
-} from "../install.js";
+import { oneShotConfigFile } from "../homes.js";
+import { homeProfileLookup } from "../install.js";
 import type { BuiltAgent } from "@quickchatai/pi-quickreview/src/include.js";
 import type { ProfileLookup } from "@quickchatai/pi-quickreview/src/profiles.js";
 import type { Refusal } from "./engine.js";
@@ -41,7 +35,7 @@ export function scanConfig(
 /** The live config (the install locator's answer), as `scanConfig` reads
  * it — or why it cannot be read. Never `loadConfig`: that also demands the
  * Slack token files, which the companion does not mount. Zero-config, by
- * the one-shot review's rule (core homes.ts `loadOneShotConfig`): when the
+ * the one-shot review's rule (homes.ts `oneShotConfigFile`): when the
  * install's config home holds no config, the shipped defaults
  * (`<root>/config.example.toml`) stand in — a fresh npm install scans as it
  * reviews. A `$QCR_CONFIG` naming a missing file, a config stranded in the
@@ -52,17 +46,12 @@ export function loadScanConfig(
 ): { ok: true; cfg: Config } | Refusal {
   let path: string;
   try {
-    const located = locateConfig({ env });
-    path = located.path;
-    if (!existsSync(path)) {
-      const shipped = join(root, SHIPPED_CONFIG_FILE);
-      const stranded = strandedCheckoutConfig({ root, env });
-      if (located.source === "override" || stranded !== null || !existsSync(shipped))
-        return { ok: false, errors: [missingConfigMessage(located, stranded)] };
-      path = shipped;
-    }
+    path = oneShotConfigFile({ root, env }).file;
   } catch (err) {
-    return { ok: false, errors: [`no live config: ${String(err)}`] };
+    return {
+      ok: false,
+      errors: [err instanceof Error ? err.message : `no live config: ${String(err)}`],
+    };
   }
   let toml: string;
   try {

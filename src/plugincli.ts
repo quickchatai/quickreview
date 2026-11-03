@@ -26,7 +26,7 @@
 // A host's own config-home variable names a profile of it (CLAUDE_CONFIG_DIR,
 // CODEX_HOME, COPILOT_HOME; opencode's XDG_CONFIG_HOME): a profile other than
 // the default keeps its renders and copy record in its own folder,
-// `<data home>/plugins/profiles/<key>/`, so the verbs one profile runs never
+// `<data home>/plugins/host-profiles/<key>/`, so the verbs one profile runs never
 // delete a render another profile loads. Gemini, Antigravity and Cursor are
 // read at their default homes alone.
 //
@@ -323,13 +323,13 @@ const movedFrom = (dir: string | undefined, fallback: string): string | null =>
   dir === undefined || dir === "" || resolve(dir) === resolve(fallback) ? null : resolve(dir);
 
 /** The run as `h`'s profile sees it: one other than the default keeps its
- * renders and copy record under `profiles/<key>/`, so no verb run for one
+ * renders and copy record under `host-profiles/<key>/`, so no verb run for one
  * profile deletes what another loads. */
 function forProfile(ctx: Ctx, h: HostInstaller): Ctx {
   const home = h.profile?.(ctx.deps.env) ?? null;
   if (home === null) return ctx;
   const key = createHash("sha256").update(home).digest("hex").slice(0, 16);
-  return { ...ctx, root: join(ctx.root, "profiles", key) };
+  return { ...ctx, root: join(ctx.root, "host-profiles", key) };
 }
 
 const real = (p: string): string => {

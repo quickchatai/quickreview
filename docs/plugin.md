@@ -122,7 +122,7 @@ path the record does not name fails instead. A host's own config-home variable
 (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, and opencode's
 `XDG_CONFIG_HOME`) set to anything but its default names a profile of that
 host, whose renders and record sit in their own folder under
-`$XDG_DATA_HOME/qcr/plugins/profiles/`, so a verb run for one profile never
+`$XDG_DATA_HOME/qcr/plugins/host-profiles/`, so a verb run for one profile never
 deletes what another loads.
 
 The pi Plugin's `packages/pi-plugin/skills/` is that render, made by

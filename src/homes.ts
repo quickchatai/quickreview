@@ -204,6 +204,12 @@ export function locateSecrets(opts: EnvOpt<LocateSecretsOptions> = {}): LocatedS
   return core.locateSecrets(optEnv(opts));
 }
 
+export function oneShotConfigFile(
+  opts: EnvOpt<Parameters<typeof core.oneShotConfigFile>[0]>,
+): ReturnType<typeof core.oneShotConfigFile> {
+  return core.oneShotConfigFile(optEnv(opts));
+}
+
 export function loadOneShotConfig(
   opts: EnvOpt<Parameters<typeof core.loadOneShotConfig>[0]>,
 ): OneShotConfig {

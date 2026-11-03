@@ -445,7 +445,7 @@ describe("Claude Code profiles (CLAUDE_CONFIG_DIR)", () => {
     const installed = await qcrJson("plugin", "install", "--to", "claude");
     expect(installed.code).toBe(0);
     const b = installed.rows[0]!.dir!;
-    expect(b.startsWith(join(data, "qcr", "plugins", "profiles") + "/")).toBe(true);
+    expect(b.startsWith(join(data, "qcr", "plugins", "host-profiles") + "/")).toBe(true);
     expect(b.endsWith(join("claude", VERSION))).toBe(true);
     expect(installed.rows[0]!.removed).toEqual([]);
     expect(existsSync(a)).toBe(true);
