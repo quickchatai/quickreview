@@ -1042,8 +1042,18 @@ it, or on an error, the round uses the diff alone and logs
 only for a round whose plan has a security-family row, within what is left
 of the same budget: a pull request with no security signal reads nothing
 for it. The one-shot routes (`/qcr-review`, `qcr review`) compute the same
-facts over the reviewed commits in the local checkout, and read the
-repository's `.qcr/threat-model.md` at the base before the profile's copy. The facts read the whole pull request; a
+facts in the local checkout, from a source that depends on the target
+(`packages/pi-plugin/src/reviewapi.ts`, `secfactsgit.ts`): a committed
+target reads the head and base commits through read-only git; an
+uncommitted target (or a branch with its uncommitted edits on top) reads
+its head from the working tree — tracked and untracked files, never ignored
+ones, never through a symlink — and its base through git; a diff target has
+no files to read, so only the two diff-only checks (removed guard, shifted
+role list) run and every other check is `unknown`. A committed or
+uncommitted target reads the repository's `.qcr/threat-model.md` at the
+base before the profile's copy; a diff names no base commit, so only the
+profile's copy is read.
+The facts read the whole pull request; a
 follow-up round plans only from those about a file its push touched, so a
 fact found once does not re-plan its lens on every later push.
 
