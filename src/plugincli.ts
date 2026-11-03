@@ -283,11 +283,13 @@ interface HostInstaller {
   uninstall(ctx: Ctx, exe: string): PluginRow;
 }
 
-/** The executable `cmd` on `path`, or null. */
-function which(cmd: string, path: string | undefined): string | null {
+/** The executable `cmd` on `path`, or null: absolute, a relative PATH entry
+ * resolved against `cwd`, so a host child run from another directory (a
+ * Claude Code project scope's) runs this same executable. */
+function which(cmd: string, path: string | undefined, cwd: string): string | null {
   for (const dir of (path ?? "").split(delimiter)) {
     if (dir === "") continue;
-    const p = join(dir, cmd);
+    const p = resolve(cwd, dir, cmd);
     try {
       accessSync(p, constants.X_OK);
       if (statSync(p).isFile()) return p;
@@ -301,7 +303,7 @@ function which(cmd: string, path: string | undefined): string | null {
 /** A host found by its executable `exe` on PATH. */
 const onPath = (exe: string): Pick<HostInstaller, "lookFor" | "locate" | "notFound"> => ({
   lookFor: () => [exe],
-  locate: (ctx) => which(exe, ctx.deps.env["PATH"]),
+  locate: (ctx) => which(exe, ctx.deps.env["PATH"], ctx.deps.cwd),
   notFound: () => `${exe} is not on PATH`,
 });
 
@@ -1276,7 +1278,7 @@ function copyInstaller(c: CopyHost): HostInstaller {
     lookFor: (ctx) => [...c.exes, ...(c.configDir ? [c.configDir(ctx.deps.env)] : [])],
     locate(ctx) {
       for (const exe of c.exes) {
-        const at = which(exe, ctx.deps.env["PATH"]);
+        const at = which(exe, ctx.deps.env["PATH"], ctx.deps.cwd);
         if (at !== null) return at;
       }
       const cfg = c.configDir?.(ctx.deps.env);

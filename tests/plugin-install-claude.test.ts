@@ -367,6 +367,21 @@ describe("qcr plugin update", () => {
     expect(readdirSync(join(data, "qcr", "plugins", "claude"))).toEqual([VERSION]);
   });
 
+  // A relative PATH entry finds `bin/claude` from here; the local scope's
+  // update runs from the project, where that spelling names nothing.
+  // MUTATION: return `join(dir, cmd)` from which() — the project's update
+  // spawns a relative claude from the project, fails, and this fails.
+  it("runs the claude it found from every scope's place, with a relative PATH entry too", async () => {
+    olderInstall("1.0.0", ["user", "local"]);
+    process.env.PATH = "bin";
+    const { code, rows } = await qcrJson("plugin", "update");
+    expect(code).toBe(0);
+    expect(rows.find((r) => r.host === "claude")).toEqual(
+      expect.objectContaining({ outcome: "updated", scopes: ["user", "local"] }),
+    );
+    expect(fakeState().installs.map((e) => e.version)).toEqual([VERSION, VERSION]);
+  });
+
   it("skips a claude with nothing installed, and touches nothing", async () => {
     const { code, rows } = await qcrJson("plugin", "update");
     expect(code).toBe(0);
