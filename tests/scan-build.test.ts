@@ -251,6 +251,9 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
 });
 
 describe("loadScanConfig — the live config, or the shipped defaults on a fresh install", () => {
+  /** The install env, as the process env loadScanConfig takes. */
+  const live = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ ...env, ...extra });
+
   /** An asset root holding only the shipped defaults (and, asked, a stranded config). */
   function assetRoot(stranded = false): string {
     const root = join(dir, "root");
@@ -267,7 +270,7 @@ describe("loadScanConfig — the live config, or the shipped defaults on a fresh
   // located path unconditionally) — the first case fails with ENOENT.
   it("an empty config home scans on config.example.toml, as `qcr review` does", () => {
     const root = assetRoot();
-    const loaded = loadScanConfig(root, env);
+    const loaded = loadScanConfig(root, live());
     expect(loaded).toMatchObject({ ok: true });
     const shipped = parseConfig(readFileSync(join(root, "config.example.toml"), "utf8"));
     expect(loaded.ok && loaded.cfg.scan).toEqual(shipped.scan);
@@ -281,14 +284,14 @@ describe("loadScanConfig — the live config, or the shipped defaults on a fresh
       join(configHome(env), "config.toml"),
       `${fixtureToml}\n[scan]\neffort = "medium"\n`,
     );
-    const loaded = loadScanConfig(root, env);
+    const loaded = loadScanConfig(root, live());
     expect(loaded.ok && loaded.cfg.scan.effort).toBe("medium");
   });
 
   // MUTATION: drop `located.source === "override"` from the refusal — this fails.
   it("a QCR_CONFIG naming a missing file still refuses: it named that file", () => {
     const root = assetRoot();
-    const loaded = loadScanConfig(root, { ...env, QCR_CONFIG: join(dir, "nope.toml") });
+    const loaded = loadScanConfig(root, live({ QCR_CONFIG: join(dir, "nope.toml") }));
     expect(loaded).toEqual({
       ok: false,
       errors: [expect.stringMatching(/no config at .*nope\.toml \(named by QCR_CONFIG\)/)],
@@ -296,7 +299,7 @@ describe("loadScanConfig — the live config, or the shipped defaults on a fresh
   });
 
   it("a config stranded in the checkout refuses and names `qcr install migrate`", () => {
-    const loaded = loadScanConfig(assetRoot(true), env);
+    const loaded = loadScanConfig(assetRoot(true), live());
     expect(loaded.ok).toBe(false);
     expect(!loaded.ok && loaded.errors[0]).toMatch(/qcr install migrate/);
   });
@@ -304,11 +307,11 @@ describe("loadScanConfig — the live config, or the shipped defaults on a fresh
   it("no shipped defaults either, or an invalid config, still refuses", () => {
     const bare = join(dir, "bare");
     mkdirSync(bare);
-    expect(loadScanConfig(bare, env).ok).toBe(false);
+    expect(loadScanConfig(bare, live()).ok).toBe(false);
     const root = assetRoot();
     mkdirSync(configHome(env), { recursive: true });
     writeFileSync(join(configHome(env), "config.toml"), `${fixtureToml}\n[scan]\nturbo = true\n`);
-    const loaded = loadScanConfig(root, env);
+    const loaded = loadScanConfig(root, live());
     expect(!loaded.ok && loaded.errors[0]).toMatch(/invalid: .*unknown key "turbo"/);
   });
 });
