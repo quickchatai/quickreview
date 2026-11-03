@@ -95,6 +95,12 @@ export const PLUGIN_SCAN_VERBS: ScanVerbs = {
   threatModelStart: (p) => `/qcr-scan threat-model start --key ${p.key} --sha ${p.sha}`,
 };
 
+/** The guided `/qcr-scan` line for `o`: what a preview offers as the run
+ * after it keeps the scope the person priced (folder, delta, commit). */
+export function guidedScanLine(o: ScanOptions): string {
+  return `/qcr-scan${o.delta ? " --delta" : ""}${o.sha ? ` --sha ${o.sha}` : ""}${pathFlag(o.path)}`;
+}
+
 /** A scan finding as the scan's `--json` lists it. */
 export type ScanFinding = FindingJson;
 
@@ -391,7 +397,7 @@ async function priceAndStart(
       if (o.preview)
         return {
           ok: true,
-          preview: `${first}\n\nStart it with \`${PLUGIN_SCAN_VERBS.threatModelStart!(stage0)}\`, or \`/qcr-scan\`; the scan itself is priced once the draft is written.`,
+          preview: `${first}\n\nStart it with \`${PLUGIN_SCAN_VERBS.threatModelStart!(stage0)}\`, or \`${guidedScanLine(o)}\`; the scan itself is priced once the draft is written.`,
         };
       if (!ui.interactive)
         return {
@@ -443,7 +449,7 @@ async function priceAndStart(
     if (o.preview)
       return {
         ok: true,
-        preview: `${what}\n\nStart it with \`${PLUGIN_SCAN_VERBS.start(p)}\`, or \`/qcr-scan\`.`,
+        preview: `${what}\n\nStart it with \`${PLUGIN_SCAN_VERBS.start(p)}\`, or \`${guidedScanLine(o)}\`.`,
       };
     if (!ui.interactive)
       return {

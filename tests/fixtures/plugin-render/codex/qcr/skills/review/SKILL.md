@@ -40,7 +40,7 @@ Run from inside the repository.
 | a diff on stdin or in a file | `git diff main... \| qcr --schema 1 review --diff - --preview` |
 | a PR | `qcr --schema 1 review <number or URL> --preview` |
 
-Add `--base REF` to name the base and `--repo OWNER/NAME` when the remote is ambiguous.
+Add `--base REF` to name the base and `--repo OWNER/NAME` when the remote is ambiguous. When the user asks for a security review, add `--security`: the usual plan plus all fourteen `pass-sec-*` security lenses, which a change with no strong security signal would otherwise not plan.
 
 ## Preview, then run
 

@@ -58,6 +58,7 @@ import type {
   ReviewTarget,
 } from "@quickchatai/pi-quickreview/src/reviewapi.js";
 import {
+  guidedScanLine,
   parseScanCommand,
   runScanCommand,
   SCAN_COMMAND_USAGE,
@@ -1385,6 +1386,41 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     expect(existsSync(join(host.cwd, ".qcr"))).toBe(false);
   });
 
+  // A preview with stage 0 due offers the guided run after it: that line
+  // keeps the scope the person priced, so the scan priced after the draft is
+  // the folder, delta and commit asked for, not the whole repository.
+  // MUTATION: offer a bare `/qcr-scan` in priceAndStart's stage-0 preview — this fails.
+  it("a stage-0 preview of one folder offers the guided run of that folder", async () => {
+    const host = scanHost();
+    const config = join(host.home, "qcr-config.toml");
+    writeFileSync(
+      config,
+      readFileSync(join(ROOT, "config.example.toml"), "utf8").replace(
+        /^threat_model = "off"/m,
+        'threat_model = "auto"',
+      ),
+    );
+    const env = { ...host.env, QCR_CONFIG: config };
+    const ui = fakeUi();
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    await runScanCommand("units propose", { ...host, env }, ui, { sessions, deps });
+    await runScanCommand("units save", { ...host, env }, ui, { sessions, deps });
+    await runScanCommand("--path lib --sha HEAD --preview", { ...host, env }, ui, {
+      sessions,
+      deps,
+    });
+    const shown = ui.shown.at(-1)!;
+    expect(shown).toMatch(/drafts its threat model \(stage 0/);
+    expect(shown).toMatch(/\/qcr-scan threat-model start --key \w+ --sha \w+`/);
+    expect(shown).toContain("`/qcr-scan --sha HEAD --path lib`");
+    expect(guidedScanLine({ delta: true, sha: "abc", path: "my dir" })).toBe(
+      '/qcr-scan --delta --sha abc --path "my dir"',
+    );
+    expect(guidedScanLine({ delta: false })).toBe("/qcr-scan");
+    expect(deps.agents).toEqual([]);
+  });
+
   // MUTATION: drop the Esc handler from priceAndStart's stage-0 wait — the
   // drafting case never ends, the command never returns, and this fails.
   it("Esc stops a threat-model draft in flight, and nothing is scanned", async () => {
@@ -1469,6 +1505,8 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     await runScanCommand("--path lib --preview", host, ui, { sessions, deps });
     expect(ui.shown.at(-1)).toMatch(/Scan 1 files of lib\/ in /);
     expect(ui.shown.at(-1)).toMatch(/\/qcr-scan start --key \w+ --sha \w+ --path lib`/);
+    // the guided line it offers beside the start keeps the folder too
+    expect(ui.shown.at(-1)).toMatch(/, or `\/qcr-scan --path lib`\.$/);
     await runScanCommand("preview --path lib", host, ui, { sessions, deps });
     expect(ui.shown.at(-1)).toMatch(/\/qcr-scan start --key \w+ --sha \w+ --path lib/);
     await runScanCommand("--path nope --preview", host, ui, { sessions, deps });

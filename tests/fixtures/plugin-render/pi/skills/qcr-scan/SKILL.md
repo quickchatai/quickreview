@@ -17,6 +17,7 @@ A slash command is the person's to type: you cannot run it yourself. To run the 
 - `--delta` scans only the files that changed since the last scan; `--sha REF` scans the tree at `REF`.
 - `--preview` prices the scan and starts nothing; `/qcr-scan stop` stops a running one.
 - `/qcr-scan findings`, `/qcr-scan status`, `/qcr-scan units` and the other scan subcommands pass through as typed.
+- When `[scan] threat_model` asks for a threat model and the repo has none, the command drafts it first (stage 0) and asks for that price on its own, then prices the scan.
 
 A scan spends money, so suggest it only when the person asked for a whole-repo look. For one change, the review (`/qcr-review`) is the right command.
 

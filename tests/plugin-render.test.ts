@@ -32,6 +32,9 @@ import { dirname, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
 import { supportedContracts } from "@quickchatai/pi-quickreview/src/contract.js";
+import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
+import { SECURITY_LENSES } from "@quickchatai/pi-quickreview/src/plugin/args.js";
+import type { ThreatModelPreview } from "@quickchatai/pi-quickreview/src/scan/scanrun.js";
 import { parseScanArgs } from "@quickchatai/pi-quickreview/src/scan/scanverbs.js";
 import { ADJUST_OPS } from "@quickchatai/pi-quickreview/src/scan/unitcut.js";
 import {
@@ -48,6 +51,7 @@ import {
   renderedDiff,
   writeRendered,
 } from "../plugins/qcr/render.mjs";
+import { parseReviewArgs } from "../src/reviewargs.js";
 import { parseSkillFrontmatter } from "./helpers/skill-frontmatter.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -491,6 +495,75 @@ describe("the bodies", () => {
     expect(scan).toContain("`qcr --schema 1 scan units adjust --file - --sandbox host`");
     const named = /a JSON array of ops on stdin \(([^;]+);/.exec(scan)?.[1] ?? "";
     expect([...named.matchAll(/`(\w+)`/g)].map((m) => m[1])).toEqual([...ADJUST_OPS]);
+  });
+
+  // Under `[scan] threat_model` (the security profile sets "auto") a preview
+  // can carry stage 0, and the scan's own start is refused until it has run:
+  // the body prices stage 0 on its own, starts it with its key, waits, and
+  // previews again, rather than starting with `preview.key` and looping on
+  // the refusal. Every `threat_model_stage` field it names is one the
+  // preview carries (the record below breaks the typecheck when one goes).
+  // MUTATION: drop the stage-0 branch from plugins/qcr/templates/scan.md's
+  // host body — this fails.
+  const STAGE0_FIELDS: Record<keyof ThreatModelPreview, true> = {
+    key: true,
+    mode: true,
+    sha: true,
+    why: true,
+    existing: true,
+    estimate_usd: true,
+    cap_usd: true,
+    tier: true,
+    inventory: true,
+    blockers: true,
+  };
+  it.each(HOSTS)("%s: scan drafts a due threat model first, at its own price", (t) => {
+    const scan = bodies(t).find(([p]) => /scan/.test(p))![1];
+    const at = [
+      "`preview.threat_model_stage`",
+      "`cap_usd`",
+      "ask for a go for this stage alone",
+      "`qcr --schema 1 scan threat-model start --key <preview.threat_model_stage.key> --sandbox host`",
+      "`qcr --schema 1 scan status --wait --sandbox host`",
+      "`qcr --schema 1 scan preview --sandbox host` again",
+      "\n2. ",
+    ].map((s) => scan.indexOf(s));
+    expect(
+      at.every((i) => i >= 0),
+      String(at),
+    ).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    const named = [...scan.matchAll(/threat_model_stage\.(\w+)/g)].map((m) => m[1]!);
+    expect(named.length).toBeGreaterThan(0);
+    for (const f of named) expect(Object.keys(STAGE0_FIELDS), f).toContain(f);
+  });
+
+  // `--security` (#28) plans the security family on top of the usual plan;
+  // a host body that never names it gives a security ask an ordinary plan.
+  // MUTATION: drop `--security` from plugins/qcr/templates/review.md's host
+  // body — this fails.
+  it.each(HOSTS)("%s: review offers --security, a flag qcr review takes", (t) => {
+    const review = bodies(t).find(([p]) => /review/.test(p))![1];
+    expect(review).toMatch(/add `--security`/);
+    expect(parseReviewArgs(["--security", "--preview"])).toMatchObject({ securityRequest: true });
+  });
+
+  // The `security` preset keeps the pass-sec-* family and the validator,
+  // nothing else; the pi body says so and names the flag beside it.
+  // MUTATION: put "the security and data-safety lenses only" back in
+  // review.md's pi body — this fails.
+  // MUTATION: add pass-data-safety to SECURITY_LENSES — this fails.
+  it("pi: review describes the security preset as it plans, and names --security", () => {
+    const review = bodies("pi").find(([p]) => /review/.test(p))![1];
+    expect(SECURITY_FAMILY.length).toBe(14);
+    expect(review).toMatch(
+      /`security` \(the fourteen `pass-sec-\*` security lenses and the validator, and no other lens/,
+    );
+    expect(review).not.toMatch(/data-safety lenses only/);
+    expect(SECURITY_LENSES).not.toContain("pass-data-safety");
+    expect(SECURITY_LENSES).not.toContain("pass-security");
+    expect(review).toMatch(/data-safety lenses are skipped/);
+    expect(review).toContain("`/qcr-review --security`");
   });
 
   it.each(HOSTS)("%s: review and scan say what a refusal of the contract looks like", (t) => {
