@@ -612,6 +612,37 @@ describe.each(HOSTS)("qcr plugin for $label", (h) => {
     expect(existsSync(old)).toBe(true);
   });
 
+  // A listing the host printed in a shape the parser does not know is no
+  // evidence of absence, so nothing is skipped as not installed and no render
+  // is deleted on it.
+  // MUTATION: restore the `: []` fallback in the host's list parser — update
+  // calls the host not installed, deletes the render, and this fails.
+  it("a listing of an unknown shape fails update and uninstall, and deletes no render", async () => {
+    const old = renderDir(h, OLD);
+    writeRendered(hostRender(h, OLD), old);
+    writeFileSync(
+      join(bin, h.exe),
+      `#!${process.execPath}
+require("node:fs").appendFileSync(${JSON.stringify(logOf(h))}, JSON.stringify({ argv: process.argv.slice(2), trust: null }) + "\\n");
+console.log("{}");
+`,
+      { mode: 0o755 },
+    );
+    for (const verb of [["update"], ["uninstall", "--from", h.host]]) {
+      const { code, rows } = await qcrJson("plugin", ...verb);
+      expect(code, verb[0]).toBe(1);
+      expect(rowOf(rows, h), verb[0]).toEqual(
+        expect.objectContaining({
+          outcome: "failed",
+          removed: [],
+          detail: expect.stringMatching(/gave no listing qcr plugin can read$/) as unknown,
+        }),
+      );
+      expect(existsSync(old), verb[0]).toBe(true);
+    }
+    expect(argvs(h).every((a) => a.includes("list"))).toBe(true);
+  });
+
   // MUTATION: drop the noProject skip in cmdPlugin — the host is given a
   // user install and this fails.
   it("--project skips it with the reason and runs nothing", async () => {

@@ -671,8 +671,9 @@ function landed(
   });
 }
 
+/** A list verb that failed, or printed what is not its listing. */
 const noAnswer = (exe: string, args: readonly string[]): string =>
-  `\`${[exe, ...args].join(" ")}\` did not answer`;
+  `\`${[exe, ...args].join(" ")}\` gave no listing qcr plugin can read`;
 
 /** What a re-point that failed after its first step removed the working
  * install adds to the host's message. No render has been deleted yet on that
@@ -705,13 +706,16 @@ interface MarketplaceHost {
   reload: string;
   noProject: string | null;
   /** The argv that lists the installs, and the release of QuickReview's in
-   * what it printed: null when it is not installed. */
+   * what it printed: null when it is not installed, undefined when what it
+   * printed is not that listing (no absence is read from an unknown shape,
+   * so nothing is deleted on it). */
   list: readonly string[];
-  installed(listed: unknown, ctx: Ctx): { version: string | null } | null;
+  installed(listed: unknown, ctx: Ctx): { version: string | null } | null | undefined;
   /** The argv that lists the marketplaces, and the folder QuickReview's
-   * points at in what it printed: null when it is not declared. */
+   * points at in what it printed: null when it is not declared, undefined
+   * when what it printed is not that listing. */
   marketplaces: readonly string[];
-  declared(listed: unknown, ctx: Ctx): string | null;
+  declared(listed: unknown, ctx: Ctx): string | null | undefined;
   /** Each verb's argv. */
   addMarketplace(ctx: Ctx, dir: string): string[];
   removeMarketplace(ctx: Ctx): string[];
@@ -839,8 +843,8 @@ const codexInstaller = (): HostInstaller =>
     noProject: "Codex enables plugins in the user's config only, so it has no project scope",
     list: ["plugin", "list", "--json"],
     installed(listed, ctx) {
-      const all = isRecord(listed) && Array.isArray(listed["installed"]) ? listed["installed"] : [];
-      const e = all.find(
+      if (!isRecord(listed) || !Array.isArray(listed["installed"])) return undefined;
+      const e = listed["installed"].find(
         (x): x is Record<string, unknown> =>
           isRecord(x) &&
           x["pluginId"] === `${ctx.render.PLUGIN_NAME}@${ctx.render.MARKETPLACE_NAME}` &&
@@ -850,9 +854,8 @@ const codexInstaller = (): HostInstaller =>
     },
     marketplaces: ["plugin", "marketplace", "list", "--json"],
     declared(listed, ctx) {
-      const all =
-        isRecord(listed) && Array.isArray(listed["marketplaces"]) ? listed["marketplaces"] : [];
-      const e = all.find(
+      if (!isRecord(listed) || !Array.isArray(listed["marketplaces"])) return undefined;
+      const e = listed["marketplaces"].find(
         (x): x is Record<string, unknown> =>
           isRecord(x) && x["name"] === ctx.render.MARKETPLACE_NAME,
       );
@@ -894,7 +897,8 @@ const copilotInstaller = (): HostInstaller =>
       "Copilot CLI's project scope is the repository's .github/copilot/settings.json, which no copilot verb writes",
     list: ["plugin", "list", "--json"],
     installed(listed, ctx) {
-      const e = (Array.isArray(listed) ? listed : []).find(
+      if (!Array.isArray(listed)) return undefined;
+      const e = listed.find(
         (x): x is Record<string, unknown> =>
           isRecord(x) &&
           x["name"] === ctx.render.PLUGIN_NAME &&
@@ -905,7 +909,8 @@ const copilotInstaller = (): HostInstaller =>
     },
     marketplaces: ["plugin", "marketplace", "list", "--json"],
     declared(listed, ctx) {
-      const e = (Array.isArray(listed) ? listed : []).find(
+      if (!Array.isArray(listed)) return undefined;
+      const e = listed.find(
         (x): x is Record<string, unknown> =>
           isRecord(x) && x["name"] === ctx.render.MARKETPLACE_NAME,
       );
@@ -938,9 +943,13 @@ interface FolderHost {
   noProject: string | null;
   /** The argv that lists the installs, and QuickReview's in what it
    * printed: its release and the folder it was installed from, each null
-   * when unknown; null when it is not installed. */
+   * when unknown; null when it is not installed, undefined when what it
+   * printed is not that listing. */
   list: readonly string[];
-  installed(listed: unknown, ctx: Ctx): { version: string | null; source: string | null } | null;
+  installed(
+    listed: unknown,
+    ctx: Ctx,
+  ): { version: string | null; source: string | null } | null | undefined;
   /** Each verb's argv, and the environment the install adds for its call. */
   install(ctx: Ctx, dir: string): { args: string[]; env?: Readonly<Record<string, string>> };
   uninstall(ctx: Ctx): string[];
@@ -1034,7 +1043,8 @@ const geminiInstaller = (): HostInstaller =>
     noProject: "Gemini CLI installs extensions for the user only, so it has no project scope",
     list: ["extensions", "list", "-o", "json"],
     installed(listed, ctx) {
-      const e = (Array.isArray(listed) ? listed : []).find(
+      if (!Array.isArray(listed)) return undefined;
+      const e = listed.find(
         (x): x is Record<string, unknown> => isRecord(x) && x["name"] === ctx.render.PLUGIN_NAME,
       );
       if (e === undefined) return null;
@@ -1064,7 +1074,8 @@ const antigravityInstaller = (): HostInstaller =>
         ? listed
         : isRecord(listed) && Array.isArray(listed["plugins"])
           ? listed["plugins"]
-          : [];
+          : undefined;
+      if (all === undefined) return undefined;
       const e = all.find(
         (x): x is Record<string, unknown> => isRecord(x) && x["name"] === ctx.render.PLUGIN_NAME,
       );
