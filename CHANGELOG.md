@@ -34,6 +34,55 @@ worktree of it, the scan still uses the companion's checkout and state.
 `QCR_REVIEWED_REPO` still names any checkout. A preview and a start now name
 the checkout they scan (`repo`).
 
+### Security review
+
+Fourteen `pass-sec-*` lenses review security: identity (authentication
+coverage, privilege escalation, IAM, tokens), the classes (access,
+injection, boundaries, secrets and data, supply chain, LLM, variants of a
+known bug) and three deep ones (check-then-use races, infrastructure,
+exploit chains). They share one contract, read a person-written threat
+model (`.qcr/threat-model.md`, or the profile's) and the security facts
+computed from the change, and are planned when the change carries a
+security signal (`[security] triggers`).
+
+- **Ask for one on a PR** with the `qcr:security` label or an
+  `@<bot> security` comment from an owner, member or collaborator
+  (`[security] label`, `command`).
+- **Ask for one locally** with `qcr review --security` or
+  `/qcr-review --security`: the usual plan plus the whole family. The
+  `/qcr-review security` preset runs the family and the validator only.
+- **A security-only bot** is the `security` profile (`[security] only`):
+  every other lens off, only security findings post, and an APPROVE means
+  "no security finding". `[posting] security_max` gives security findings
+  their own budget and `[posting] scope = "security"` posts only them.
+- **A security scan** keeps the kinds you name (`[scan] kinds`, e.g.
+  `["security"]`) and runs the lenses you list (`[scan] lenses`). With
+  `[scan] threat_model` set (the security profile sets `"auto"`) a scan
+  drafts the threat model first, at its own price, into the state home and
+  never the repository: `qcr scan threat-model propose|start`, or as the
+  first step of `/qcr-scan` and of every host's scan skill.
+
+### Runs on more machines
+
+- **Node 22.19 or newer**, down from 26: both packages declare
+  `engines.node ">=22.19"`, and CI tests on Node 22, 24 and 26.
+- **better-sqlite3 is optional.** An install where the native driver cannot
+  build still installs. `qcr` itself and `qcr review`, `scan`, `login`,
+  `pi`, `version`, `update` and `plugin` run without it; a verb that needs
+  the state store says so and how to fix it.
+
+### For scripts and plugins
+
+- `qcr --schema N review|scan|version …` asks for one host-plugin contract
+  (contract 1: review v1, scan v1, version v1). It implies `--json`; a
+  contract this qcr does not print exits 3 with nothing on stdout, and the
+  version payload lists the `contracts` it accepts. The plugin's `qcr-json`
+  wrapper is gone.
+- `qcr scan preview|start --path DIR`, `qcr scan stage2 propose --path DIR`
+  and `/qcr-scan --path DIR` scan one folder of the repo. The folder is part
+  of the plan key, and the scan payload gains `path` (null for the whole
+  repo), still scan v1.
+
 ## 1.3.2
 
 The pi plugin reviews again in a plain pi. Installed with `pi install
