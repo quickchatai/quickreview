@@ -635,20 +635,70 @@ export function kindKept(kind: string, lens: string, kinds: readonly string[]): 
   return kinds.some(isSecurityKind) && isSecurityFinding(kind, lens);
 }
 
+/** The ledger key's marker for a reading `[scan] kinds` filtered. */
+const KINDS_MARK = ":kinds=";
+
 /** The ledger lens's marker for a stage-1 reading filtered by `[scan] kinds`. */
-const STAGE1_FOCUS = `${SCAN_PASS}:kinds=`;
+const STAGE1_FOCUS = `${SCAN_PASS}${KINDS_MARK}`;
+
+/**
+ * The key a reading's ledger rows are kept under — its coverage, price and
+ * reconcile reading: the lens, `<lens>:<strategy>` for a chain row (stage2.ts
+ * `rowLensKey`), and `:kinds=<kinds, normalized, sorted>` after either when
+ * `[scan] kinds` dropped anything the lens could report. A filtered reading
+ * is its own coverage: a security scan never reads as a general scan of the
+ * same files (nor the reverse), and its silence never settles a finding of a
+ * kind it dropped (`readingCovers`). A security-family lens under a kinds
+ * list naming a security kind drops nothing (`kindKept`), so it keeps its
+ * plain key. Pure.
+ */
+export function readingKey(
+  lens: string,
+  kinds: readonly string[],
+  strategy?: string | null,
+): string {
+  const key = strategy ? `${lens}:${strategy}` : lens;
+  if (kinds.length === 0 || (kinds.some(isSecurityKind) && isSecurityFinding(null, lens)))
+    return key;
+  return `${key}${KINDS_MARK}${[...new Set(kinds.map(normalizeKind))].sort().join(",")}`;
+}
+
+/** A ledger key read back (`readingKey`): the lens, the chain strategy (null
+ * for none) and the kinds the reading kept (`[]` = every kind). Pure. */
+export function parseReadingKey(key: string): {
+  lens: string;
+  strategy: string | null;
+  kinds: string[];
+} {
+  const at = key.indexOf(KINDS_MARK);
+  const base = at < 0 ? key : key.slice(0, at);
+  const kinds =
+    at < 0
+      ? []
+      : key
+          .slice(at + KINDS_MARK.length)
+          .split(",")
+          .filter((k) => k !== "");
+  const colon = base.indexOf(":");
+  return colon < 0
+    ? { lens: base, strategy: null, kinds }
+    : { lens: base.slice(0, colon), strategy: base.slice(colon + 1), kinds };
+}
+
+/** A ledger key without its `[scan] kinds` scope: what a reading costs is
+ * the lens's (and strategy's) price per line, not its focus. Pure. */
+export function unscopedKey(key: string): string {
+  const at = key.indexOf(KINDS_MARK);
+  return at < 0 ? key : key.slice(0, at);
+}
 
 /**
  * The lens stage 1's ledger rows are kept under: `pass-scan` for a reading
  * that kept every kind, `pass-scan:kinds=<kinds, normalized, sorted>` for one
- * `[scan] kinds` filtered. A filtered reading is its own coverage, price and
- * reconcile reading: a security scan never reads as a general scan of the
- * same files (nor the reverse), and its silence never settles a finding of a
- * kind it dropped (`readingCovers`). Pure.
+ * `[scan] kinds` filtered (`readingKey`). Pure.
  */
 export function stage1LensKey(kinds: readonly string[]): string {
-  if (kinds.length === 0) return SCAN_PASS;
-  return `${STAGE1_FOCUS}${[...new Set(kinds.map(normalizeKind))].sort().join(",")}`;
+  return readingKey(SCAN_PASS, kinds);
 }
 
 /** The kinds a stage-1 ledger lens kept (`[]` = every kind), or null when the
@@ -656,10 +706,7 @@ export function stage1LensKey(kinds: readonly string[]): string {
 export function stage1Kinds(lensKey: string): string[] | null {
   if (lensKey === SCAN_PASS) return [];
   if (!lensKey.startsWith(STAGE1_FOCUS)) return null;
-  return lensKey
-    .slice(STAGE1_FOCUS.length)
-    .split(",")
-    .filter((k) => k !== "");
+  return parseReadingKey(lensKey).kinds;
 }
 
 /** Is this ledger lens a stage-1 reading, filtered or not? */
@@ -668,16 +715,24 @@ export const isStage1Lens = (lensKey: string): boolean => stage1Kinds(lensKey) !
 /**
  * Does a ledger row read by `rowLens` count as a reading of a finding of
  * `kind` that `findingLens` raised — one that would have reported it again?
- * Its own lens always; for a stage-1 finding (`pass-scan`), also a
- * kinds-filtered stage-1 reading that keeps its kind (`kindKept`). A
- * filtered reading of a kind it drops is silent about it by construction,
- * so it never settles one fixed. Pure.
+ * A reading by the finding's lens (findings are filed under the bare lens),
+ * at any chain strategy, that kept its kind: unfiltered, or `[scan] kinds`
+ * filtered to a list that keeps it (`kindKept`). A filtered reading of a
+ * kind it drops is silent about it by construction, so it never settles one
+ * fixed. Which strategy must have read a chain finding again is the
+ * reconcile's (findings.ts `strategiesOf`). Pure.
  */
 export function readingCovers(rowLens: string, findingLens: string, kind: string): boolean {
-  if (rowLens === findingLens) return true;
-  if (findingLens !== SCAN_PASS) return false;
-  const kinds = stage1Kinds(rowLens);
-  return kinds !== null && kinds.length > 0 && kindKept(kind, findingLens, kinds);
+  const r = parseReadingKey(rowLens);
+  if (r.lens !== findingLens) return false;
+  return r.kinds.length === 0 || kindKept(kind, findingLens, r.kinds);
+}
+
+/** Do two ledger keys read for one lens — readings whose silence can settle
+ * each other's findings (`readingCovers`), so a newer one of other content
+ * supersedes the older one's coverage (ledger.ts `coveredBy`)? Pure. */
+export function sameReadingLens(a: string, b: string): boolean {
+  return parseReadingKey(a).lens === parseReadingKey(b).lens;
 }
 
 /** One candidate as a validator reads it, in the findings grammar — the

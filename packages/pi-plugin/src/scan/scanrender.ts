@@ -203,10 +203,15 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
       stage0.existing === null
         ? "once its draft is written, preview again for the scan itself — it then reads the DRAFT."
         : `its draft is a revision for a person to read and adopt: this scan, like every scan while ${existingName(stage0.existing.source)} exists, keeps reading that model. Once the draft is written, preview again for the scan itself.`;
+    // `off` skips the draft, not the model: a repository or profile model
+    // is read under every setting (scanrun.ts `threatModelFor`).
+    const off =
+      stage0.existing === null
+        ? 'To skip drafting, set [scan] threat_model = "off": the scan then reads no threat model.'
+        : `To skip drafting, set [scan] threat_model = "off": the scan still reads ${existingName(stage0.existing.source)}.`;
     out.push(
       "FIRST, before this scan reads anything: the threat model ([scan] threat_model). " +
-        `Start stage 0 below; ${reads} ` +
-        'To scan without a threat model, set [scan] threat_model = "off".',
+        `Start stage 0 below; ${reads} ${off}`,
       renderThreatModelPreview(stage0, verbs),
     );
   } else if (p.blockers.length === 0) {

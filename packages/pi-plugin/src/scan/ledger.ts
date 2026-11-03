@@ -32,7 +32,7 @@
 // for the same files twice.
 import type { ScanDepth } from "../reviewconfig.js";
 import type { StateFs } from "./scanports.js";
-import { coverKey, rangesCover, type FileRange, type ScanRate } from "./scan.js";
+import { coverKey, rangesCover, sameReadingLens, type FileRange, type ScanRate } from "./scan.js";
 
 export const LEDGER_FILE = "scan/ledger.json";
 export const LEDGER_VERSION = 1;
@@ -148,16 +148,37 @@ export class Ledger {
  * row `FindingsStore.reconcile` settles findings against — complete at
  * `depth` (`readings`). An older reading a later one superseded covers
  * nothing: its findings may since have been settled `fixed`, so content that
- * comes back to it (a revert) must be read again for them to come back too. */
+ * comes back to it (a revert) must be read again for them to come back too.
+ * That holds across the lens's keys (scan.ts `sameReadingLens`): a reading
+ * under another `[scan] kinds` scope or chain strategy settles this one's
+ * findings too, so a newer one of OTHER content supersedes it as well. */
 export function coveredBy(
   entries: readonly LedgerEntry[],
   lens: string,
   depth: ScanDepth = "standard",
 ): Set<string> {
   const out = new Set<string>();
+  const superseded = supersededBySibling(entries, lens);
   for (const [path, r] of readings(entries, lens, depth))
-    if (r.complete) out.add(coverKey(path, r.blob));
+    if (r.complete && !superseded(path, r)) out.add(coverKey(path, r.blob));
   return out;
+}
+
+/** Was `r`, `lens`'s newest reading of `path`, superseded by a later row of
+ * other content under another key of the same lens (`coveredBy`)? */
+function supersededBySibling(
+  entries: readonly LedgerEntry[],
+  lens: string,
+): (path: string, r: Reading) => boolean {
+  const byPath = new Map<string, LedgerEntry[]>();
+  for (const e of entries) {
+    if (e.lens === lens || !sameReadingLens(e.lens, lens)) continue;
+    const rows = byPath.get(e.path);
+    if (rows) rows.push(e);
+    else byPath.set(e.path, [e]);
+  }
+  return (path, r) =>
+    (byPath.get(path) ?? []).some((e) => e.blob !== r.blob && compareAt(e.at, r.newest.at) > 0);
 }
 
 /** A file's newest reading by one lens: the rows at its newest content,
@@ -228,8 +249,10 @@ export function partialRanges(
   depth: ScanDepth = "standard",
 ): Map<string, FileRange[]> {
   const out = new Map<string, FileRange[]>();
+  const superseded = supersededBySibling(entries, lens);
   for (const [path, r] of readings(entries, lens, depth))
-    if (!r.complete && r.ranges.length > 0) out.set(coverKey(path, r.blob), r.ranges);
+    if (!r.complete && r.ranges.length > 0 && !superseded(path, r))
+      out.set(coverKey(path, r.blob), r.ranges);
   return out;
 }
 

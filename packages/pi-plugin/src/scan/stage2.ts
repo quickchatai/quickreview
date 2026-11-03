@@ -105,7 +105,8 @@ import {
   threatModelSection,
   type FileRange,
   SCAN_PASS,
-  isStage1Lens,
+  readingKey,
+  unscopedKey,
   type PromptContext,
   type ScanCaseFile,
   type ScanRate,
@@ -226,11 +227,13 @@ export function priceStage2Row(
   effort: string,
   depth?: ScanDepth,
 ): RowPrice | null {
-  // A `[scan] kinds`-filtered stage-1 reading prices stage 1 like any other:
-  // what a stage-2 row borrows is stage 1's cost per line, not its focus.
-  const entries = ledger.map((e) =>
-    e.lens !== SCAN_PASS && isStage1Lens(e.lens) ? { ...e, lens: SCAN_PASS } : e,
-  );
+  // A `[scan] kinds`-filtered reading prices its lens like any other (a
+  // filtered stage 1 prices stage 1): what a row borrows is the lens's cost
+  // per line, not its focus (scan.ts `unscopedKey`).
+  const entries = ledger.map((e) => {
+    const lens = unscopedKey(e.lens);
+    return lens === e.lens ? e : { ...e, lens };
+  });
   const any = priceFrom(entries, cfg, lens, tier, effort);
   if (depth === undefined || any === null) return any;
   const same = priceFrom(
@@ -367,8 +370,12 @@ export interface Stage2PlanInput {
   riskPasses: readonly string[];
   /** `[scan] tier` — a row's default tier before the lens's floor. */
   defaultTier: PassTier;
-  /** `coverKey`s the ledger holds for `lens`. */
+  /** `coverKey`s the ledger holds for `lens` — a ledger key, its chain
+   * strategy and `[scan] kinds` scope in it (scan.ts `readingKey`). */
   covered: (lens: string) => ReadonlySet<string>;
+  /** `[scan] kinds`: the scope a row's coverage is read under (scan.ts
+   * `readingKey`). Absent or empty: every kind. */
+  kinds?: readonly string[];
   /** `path\0blob` → the ranges a still-incomplete reading by `lens` holds. */
   partial?: (lens: string) => ReadonlyMap<string, readonly { start: number; end: number }[]>;
   /** The price of a lens at a tier and effort, or null when nothing measured
@@ -660,8 +667,10 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     floor: boolean;
   }): Stage2Row | string => {
     const { lens, sorted, lines } = spec;
-    // Coverage and price are the chain strategy's own.
+    // Coverage and price are the chain strategy's own; coverage is also
+    // the `[scan] kinds` scope's (scan.ts `readingKey`), price is not.
     const key = rowLensKey(lens, spec.strategy);
+    const readKey = readingKey(lens, input.kinds ?? [], spec.strategy);
     let rowLines = sorted.reduce((n, p) => n + lines.get(p)!, 0);
     const oversize = oversized(sorted, lines);
     // Pair the tests, nearest first, while the case budget holds. A ranged
@@ -698,7 +707,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     let ranges: FileRange[] | undefined;
     if (oversize) {
       const p = sorted[0]!;
-      const done = input.partial?.(key).get(coverKey(p, blobs.get(p)!)) ?? [];
+      const done = input.partial?.(readKey).get(coverKey(p, blobs.get(p)!)) ?? [];
       ranges = cutRanges(
         lines.get(p)!,
         input.budget.maxLines - pairedLines,
@@ -714,7 +723,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       return `no measured price for any scan lens yet — run stage 1 (its calibration run prices the scan) before proposing stage 2`;
     }
     const files = sorted.map((p) => ({ path: p, blob: blobs.get(p)!, lines: lines.get(p)! }));
-    const cover = input.covered(key);
+    const cover = input.covered(readKey);
     const all = [...files, ...tests];
     const isCovered =
       all.every((f) => cover.has(coverKey(f.path, f.blob))) ||
@@ -893,7 +902,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
           .filter((r) => !r.floor && rowLensKey(r.lens, r.strategy) === key)
           .flatMap((r) => r.files.map((f) => f.path)),
       );
-      const cover = input.covered(key);
+      const cover = input.covered(readingKey(lens, input.kinds ?? [], strategy));
       const tier = defaultRowTier(input, lens);
       const lensRows: Stage2Row[] = [];
       for (const u of input.cut.units) {

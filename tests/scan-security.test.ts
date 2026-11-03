@@ -37,6 +37,7 @@ import {
   kindKept,
   normalizeKind,
   readingCovers,
+  readingKey,
   stage1LensKey,
   scanCasePrompt,
   type TreeFile,
@@ -549,6 +550,154 @@ describe("a [scan] kinds-filtered stage 1 is its own coverage and reconcile read
   });
 });
 
+// ---- a reading's scope and strategy: what it covers and what it settles ----------------
+
+describe("a reading settles and covers only what its scope and strategy could report", () => {
+  const SEC_KINDS = ["security", "exploit-chain", "partial-chain"];
+
+  /** A tree whose app/a.py blob is the version the test sets. */
+  function versioned(): { tree: () => ScanTree; to: (v: number) => void } {
+    let v = 1;
+    return {
+      to: (next) => void (v = next),
+      tree: () => ({
+        ...mapTree(FILES),
+        files: Object.keys(FILES).map((path) => ({
+          path,
+          blob: path === "app/a.py" ? `b-${path}-v${v}` : `b-${path}`,
+        })),
+      }),
+    };
+  }
+
+  async function runStage2(s: ScanRunner, rows: Stage2RowRequest[]): Promise<void> {
+    const p = await s.proposeStage2({ rows });
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    const started = await s.startStage2({ key: p.proposal.key });
+    if (!started.ok) throw new Error(started.errors.join("; "));
+    await s.idle();
+  }
+
+  it("readingKey: a kinds scope rides a key only when the filter can drop what the lens reports", () => {
+    expect(readingKey("pass-consistency", [])).toBe("pass-consistency");
+    expect(readingKey("pass-consistency", SEC_KINDS)).toBe(
+      "pass-consistency:kinds=exploit-chain,partial-chain,security",
+    );
+    expect(readingKey(CHAIN_PASS, SEC_KINDS, "forward")).toBe(`${CHAIN_PASS}:forward`);
+    expect(readingKey(CHAIN_PASS, ["bug"], "forward")).toBe(`${CHAIN_PASS}:forward:kinds=bug`);
+    expect(readingKey("pass-scan", SEC_KINDS)).toBe(stage1LensKey(SEC_KINDS));
+    expect(readingCovers(`${CHAIN_PASS}:backward`, CHAIN_PASS, "exploit-chain")).toBe(true);
+    expect(readingCovers("pass-consistency:kinds=security", "pass-consistency", "bug")).toBe(false);
+    expect(readingCovers("pass-consistency:kinds=security", "pass-consistency", "security-x")).toBe(
+      true,
+    );
+  });
+
+  // MUTATION: record a chain row's ledger rows under rowLensKey with
+  // readingCovers matching exact keys only (the finding's bare lens never
+  // matches `:forward`) — the clean forward reading never settles it and
+  // this fails; reconcile against the newest reading of ANY strategy
+  // (drop `strategiesOf` from findings.reconcile) — the backward reading
+  // settles a forward finding and this fails.
+  it("a chain finding is settled by a clean re-read of the strategy that raised it, never by the other one", async () => {
+    const t = versioned();
+    let answer = (spec: CaseSpec): string =>
+      spec.agent.startsWith(`${CHAIN_PASS}--`)
+        ? findingsOn(spec, [item(1, "exploit-chain", "A session to an admin grant")])
+        : "NONE\n\nSUGGEST NONE\n";
+    const r = rig({ scan: { validator: false }, tree: t.tree, lens: (spec) => answer(spec) });
+    const s = new ScanRunner(r.ports);
+    await runStage1(s);
+    const row = (strategy: string): Stage2RowRequest => ({
+      lens: CHAIN_PASS,
+      strategy,
+      files: ["app/a.py"],
+      reason: "a session to an admin grant",
+    });
+    await runStage2(s, [row("forward")]);
+    const stateOf = () =>
+      new FindingsStore(r.state).list({ lens: CHAIN_PASS }).findings.map((f) => f.state);
+    expect(stateOf()).toEqual(["new"]);
+
+    t.to(2);
+    answer = () => "NONE\n\nSUGGEST NONE\n";
+    await runStage2(s, [row("backward")]);
+    expect(stateOf()).toEqual(["new"]);
+    await runStage2(s, [row("forward")]);
+    expect(stateOf()).toEqual(["fixed"]);
+  });
+
+  // MUTATION: drop the `[scan] kinds` scope from the stage-2 job's ledger
+  // key (`ledgerKey` = rowLensKey) — the filtered reading of changed
+  // content settles the bug it discarded, the unfiltered row reads as
+  // covered, and this fails.
+  it("a kinds-filtered stage-2 reading never settles, nor covers for, a finding of a kind it dropped", async () => {
+    const t = versioned();
+    const r = rig({
+      scan: { validator: false },
+      tree: t.tree,
+      lens: (spec) =>
+        spec.agent.startsWith("pass-consistency--")
+          ? findingsOn(spec, [item(3, "bug", "Off by one")])
+          : "NONE\n\nSUGGEST NONE\n",
+    });
+    const s = new ScanRunner(r.ports);
+    await runStage1(s);
+    const row: Stage2RowRequest = {
+      lens: "pass-consistency",
+      files: ["app/a.py"],
+      reason: "compare with its siblings",
+    };
+    await runStage2(s, [row]);
+    const stateOf = () =>
+      new FindingsStore(r.state).list({ lens: "pass-consistency" }).findings.map((f) => f.state);
+    expect(stateOf()).toEqual(["new"]);
+
+    // The bug is still there; a security-only reading drops it.
+    t.to(2);
+    r.settings.scan = { ...r.settings.scan, kinds: SEC_KINDS };
+    await runStage2(s, [row]);
+    expect(s.status().run!.cases[0]!.off_kind).toBe(1);
+    expect(stateOf()).toEqual(["new"]);
+
+    // An unrestricted reading of the same content is still owed.
+    r.settings.scan = { ...r.settings.scan, kinds: [] };
+    const again = await s.proposeStage2({ rows: [row] });
+    if (!again.ok) throw new Error(again.errors.join("; "));
+    expect(again.proposal.rows.map((x) => x.status)).toEqual(["run"]);
+  });
+
+  // MUTATION: drop `supersededBySibling` from ledger.ts coveredBy — the
+  // general reading of v1 still covers the reverted file and this fails.
+  it("content that comes back after another scope's reading settled its finding is read again", async () => {
+    const t = versioned();
+    let answer = (spec: CaseSpec): string =>
+      findingsOn(spec, [item(1, "security:sqli", "Interpolated SQL")]);
+    const r = rig({ scan: { validator: false }, tree: t.tree, lens: (spec) => answer(spec) });
+    const s = new ScanRunner(r.ports);
+    await runStage1(s);
+    const stateOf = () => new FindingsStore(r.state).list().findings.map((f) => f.state);
+    expect(stateOf()).toEqual(["new"]);
+
+    t.to(2);
+    answer = () => "NONE\n\nSUGGEST NONE\n";
+    r.settings.scan = { ...r.settings.scan, kinds: SEC_KINDS };
+    await runStage1(s);
+    expect(stateOf()).toEqual(["fixed"]);
+
+    // Reverted to v1, which the general reading last read: read again.
+    t.to(1);
+    r.settings.scan = { ...r.settings.scan, kinds: [] };
+    const back = await s.preview();
+    if (!back.ok) throw new Error(back.errors.join("; "));
+    expect(back.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toContain("app/a.py");
+    // Unchanged files the other scope read at the same content stay covered.
+    expect(back.preview.cases.flatMap((c) => c.files.map((f) => f.path))).not.toContain(
+      "api/routes.py",
+    );
+  });
+});
+
 // ---- needs-review ----------------------------------------------------------------------
 
 describe("[security] fold: a security candidate the skeptic could not settle is needs-review", () => {
@@ -1048,6 +1197,9 @@ describe("stage 0 is part of the scan: a preview offers it first, a stage-1 star
     expect(p.preview.blockers).toEqual([]);
     const text = renderPreview(p.preview);
     expect(text).toContain("FIRST, before this scan reads anything: the threat model");
+    expect(text).toContain(
+      'To skip drafting, set [scan] threat_model = "off": the scan then reads no threat model.',
+    );
     expect(text).toContain(`scan_start with key ${stage0!.key} and sha ${SHA}`);
     expect(text).not.toContain(`scan_start with key ${p.preview.key}`);
     // The stage-1 key is refused while stage 0 is due, naming it.
@@ -1145,6 +1297,13 @@ describe("stage 0 is part of the scan: a preview offers it first, a stage-1 star
       "its draft is a revision for a person to read and adopt: this scan, like every scan while the repository's .qcr/threat-model.md exists, keeps reading that model",
     );
     expect(text).toContain("scans keep reading that model");
+    // `off` skips the draft, never the model the scan reads.
+    // MUTATION: render "To scan without a threat model" whatever
+    // `stage0.existing` — this fails.
+    expect(text).toContain(
+      'To skip drafting, set [scan] threat_model = "off": the scan still reads the repository\'s .qcr/threat-model.md.',
+    );
+    expect(text).not.toContain("without a threat model");
     await s.start({ key: p.preview.threat_model_stage!.key });
     await s.idle();
     const after = await s.preview();

@@ -80,11 +80,15 @@
 //     security-only scan does not rest on prompt text alone. A security-
 //     family lens's findings are security findings whatever kind it wrote
 //     (`sqli`, none at all), so they are kept under a security `kinds`.
-//     A filtered stage-1 reading keeps its ledger rows under its own lens
-//     (scan.ts `stage1LensKey`, `pass-scan:kinds=…`): its own coverage,
-//     price and delta basis, so a security scan and a general scan never
-//     mark each other's files read, and reconcile lets it settle only the
-//     findings of a kind it keeps (scan.ts `readingCovers`).
+//     A filtered reading keeps its ledger rows under its own key (scan.ts
+//     `readingKey`: stage 1's `pass-scan:kinds=…`, a stage-2 row's
+//     `<lens>[:<strategy>]:kinds=…` when the filter drops anything the lens
+//     could report): its own coverage and delta basis, so a security scan
+//     and a general scan never mark each other's files read, and reconcile
+//     lets it settle only the findings of a kind it keeps (scan.ts
+//     `readingCovers`). A newer reading of other content under any key of
+//     the lens supersedes the others' coverage (ledger.ts `coveredBy`), so
+//     content that comes back after one settled a finding is read again.
 //   * With `[security] fold` on, the skeptic's verdict on a SECURITY
 //     candidate (severity.ts `isSecurityFinding`, the one rule PR rounds
 //     and the scan share) it could not settle — the
@@ -174,6 +178,7 @@ import {
   findingFingerprint,
   isStage1Lens,
   kindKept,
+  readingKey,
   normalizeCode,
   parseScanAnswer,
   parseValidatorAnswer,
@@ -676,10 +681,10 @@ interface CaseJob {
   /** Stage 2: why the row, and every unit it spans. */
   reason?: string;
   units?: string[];
-  /** Where the case's ledger rows are kept: the lens, a chain row's
-   * `<lens>:<strategy>` (stage2.ts `rowLensKey`), or a `[scan] kinds`-
-   * filtered stage-1 reading's `pass-scan:kinds=…` (scan.ts
-   * `stage1LensKey`). Absent: `lens`. */
+  /** Where the case's ledger rows are kept (scan.ts `readingKey`): the
+   * lens, a chain row's `<lens>:<strategy>`, either with the `:kinds=…`
+   * scope of a `[scan] kinds` filter that dropped anything the lens could
+   * report — stage 1's `pass-scan:kinds=…` among them. Absent: `lens`. */
   ledgerLens?: string;
   /** Stage 0: the case writes the threat-model draft, never findings. */
   threatModel?: true;
@@ -1750,6 +1755,7 @@ export class ScanRunner {
       defaultTier: cfg.tier,
       covered: (lens) => coveredBy(entries, lens, depth),
       partial: (lens) => partialRanges(entries, lens, depth),
+      kinds: cfg.kinds,
       price: (lens, tier, effort) => priceStage2Row(entries, cfg, lens, tier, effort, depth),
       budgetUsd,
       ...(depth === "deep" ? { floor: cfg.deep_lenses } : {}),
@@ -1763,7 +1769,10 @@ export class ScanRunner {
       sha,
       rows: runnable.map((r) => [
         r.id,
-        rowLensKey(r.lens, r.strategy),
+        // The ledger key, `[scan] kinds` scope and all: changing the kinds
+        // re-plans, so a start never records under a scope it was not
+        // planned (and covered) at.
+        readingKey(r.lens, cfg.kinds, r.strategy),
         r.tier,
         r.effort,
         [...r.files, ...r.tests].map((f) => `${f.path}@${f.blob}`),
@@ -1961,6 +1970,8 @@ export class ScanRunner {
     // refused start: the leads are help, not the plan.
     const leadSource = this.suggestions();
     const leadsOf = (row: Stage2Row) => stage2Leads(row, leadSource.suggestions);
+    const ledgerKey = (row: Stage2Row): string =>
+      readingKey(row.lens, p.settings.scan.kinds, row.strategy);
     // One case per row — or, for a row over a file too big for one case, one
     // per line range (`<row>#<i>`), its estimate the range's share.
     const jobs: CaseJob[] = rows.flatMap((row: Stage2Row) =>
@@ -1984,7 +1995,11 @@ export class ScanRunner {
         suggestions: false,
         reason: row.reason,
         units: row.units,
-        ...(row.strategy ? { ledgerLens: rowLensKey(row.lens, row.strategy) } : {}),
+        // The plan's own coverage key (stage2.ts planStage2): the chain
+        // strategy's, and the `[scan] kinds` scope's when it dropped
+        // anything the lens could report — so a filtered reading's silence
+        // is never coverage for (nor a settlement by) an unfiltered one.
+        ...(ledgerKey(row) !== row.lens ? { ledgerLens: ledgerKey(row) } : {}),
       })),
     );
     const cfg = p.settings.scan;

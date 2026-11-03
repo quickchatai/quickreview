@@ -95,7 +95,7 @@
 import { createHash } from "node:crypto";
 import type { StateFs } from "./scanports.js";
 import { readings, type LedgerEntry, type Reading } from "./ledger.js";
-import { readingCovers, SEVERITIES, type ScanSeverity } from "./scan.js";
+import { parseReadingKey, readingCovers, SEVERITIES, type ScanSeverity } from "./scan.js";
 import type { Reachability } from "../severity.js";
 import {
   FINDING_STATES,
@@ -763,6 +763,18 @@ function silentReread(
   return latest;
 }
 
+/** The chain strategies (null: none) of the covering `keys` that read a
+ * finding's file in the run that last saw it (`readIn`) — the readings that
+ * may have raised it, each of which must read it again before its silence
+ * settles it. Empty when none did. */
+function strategiesOf(
+  keys: readonly string[],
+  readIn: ReadonlySet<string> | undefined,
+): Array<string | null> {
+  if (readIn === undefined) return [];
+  return [...new Set(keys.filter((k) => readIn.has(k)).map((k) => parseReadingKey(k).strategy))];
+}
+
 export class FindingsStore {
   constructor(private readonly state: StateFs) {}
 
@@ -918,8 +930,9 @@ export class FindingsStore {
    * After a run: find the stored findings a re-scan no longer reports and
    * settle what an exact rule can. A finding is UNREPORTED when its file is
    * gone from the run's tree, or when the ledger's newest row for its lens
-   * and file (or for a stage-1 reading `[scan] kinds` filtered to keep its
-   * kind — scan.ts `readingCovers`) is a later run's reading of other content — so a run the
+   * and file (under any `[scan] kinds` scope that keeps its kind — scan.ts
+   * `readingCovers` — and, for a chain finding, for each strategy that read
+   * the file when it was last seen) is a later run's reading of other content — so a run the
    * companion never finished is still counted by the next one. Unreported
    * findings with no possible fresh counterpart are fixed now; the rest join
    * the one pending match question, with the fresh findings (first seen by
@@ -946,18 +959,35 @@ export class FindingsStore {
       for (const [path, r] of readings(args.rows, lens))
         if (r.complete) newest.set(`${lens}\0${path}`, r);
     }
-    // The newest complete reading of `f`'s file that would have reported it
-    // again (scan.ts `readingCovers`): its lens's own, or a stage-1 reading
-    // filtered by `[scan] kinds` that keeps its kind — never one that
-    // dropped its kind, whose silence says nothing about it.
-    const readingFor = (f: ScanFinding, lens: string): Reading | undefined => {
-      let best: Reading | undefined;
-      for (const rl of rowLenses) {
-        if (!readingCovers(rl, lens, f.kind)) continue;
-        const r = newest.get(`${rl}\0${f.path}`);
-        if (r && (best === undefined || r.newest.at > best.newest.at)) best = r;
-      }
-      return best;
+    // The ledger keys that read each file in each run.
+    const readIn = new Map<string, Set<string>>();
+    for (const r of args.rows) {
+      const at = `${r.run}\0${r.path}`;
+      const keys = readIn.get(at);
+      if (keys) keys.add(r.lens);
+      else readIn.set(at, new Set([r.lens]));
+    }
+    // The newest complete readings of `f`'s file that would have reported
+    // it again (scan.ts `readingCovers`): its lens's own, under any `[scan]
+    // kinds` scope that keeps its kind — never one that dropped its kind,
+    // whose silence says nothing about it. One per chain strategy that read
+    // the file in the run that last saw it (`strategiesOf`): a finding is
+    // filed under the bare chain lens, and a forward reading's silence says
+    // nothing about what the backward search found. Absent such a row,
+    // the newest of any covering reading.
+    const readingsFor = (f: ScanFinding, lens: string): Array<Reading | undefined> => {
+      const keys = rowLenses.filter((rl) => readingCovers(rl, lens, f.kind));
+      const newestOf = (ks: readonly string[]): Reading | undefined => {
+        let best: Reading | undefined;
+        for (const rl of ks) {
+          const r = newest.get(`${rl}\0${f.path}`);
+          if (r && (best === undefined || r.newest.at > best.newest.at)) best = r;
+        }
+        return best;
+      };
+      const raised = strategiesOf(keys, readIn.get(`${f.last_seen.run}\0${f.path}`));
+      if (raised.length === 0) return [newestOf(keys)];
+      return raised.map((s) => newestOf(keys.filter((k) => parseReadingKey(k).strategy === s)));
     };
     const prior = file.question ?? null;
     collapseRun(
@@ -997,7 +1027,7 @@ export class FindingsStore {
       // A collapsed finding is unreported only when EVERY lens that raised
       // it has re-read other content since — one lens's silence is not the
       // other's, and a single-lens run must not settle what it never read.
-      const readingsOf = lensesOf(f).map((l) => readingFor(f, l));
+      const readingsOf = lensesOf(f).flatMap((l) => readingsFor(f, l));
       const reread = readingsOf.every((reading) => {
         const row = reading?.newest;
         return (
