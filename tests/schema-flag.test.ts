@@ -17,7 +17,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/contract.js";
 import { main } from "../src/cli.js";
 import { binRoute, runBin } from "../src/qcrbin.js";
-import { parseSchemaFlag } from "../src/schemaflag.js";
+import { SCHEMA_VERBS, parseSchemaFlag } from "../src/schemaflag.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const NOTICE = "qcr 99.0.0 is available (this is 1.0.0): run `qcr update`.";
@@ -84,6 +84,19 @@ describe("reading the flag", () => {
       ["--schema=", "review"],
     ])
       expect(parseSchemaFlag(argv), argv.join(" ")).toMatchObject({ kind: "refused", code: 2 });
+  });
+
+  // MUTATION: hardcode USAGE as "usage: qcr --schema N review|scan [arguments…]" — this fails.
+  it("a usage refusal names exactly the verbs it accepts", () => {
+    for (const argv of [
+      ["--schema", "1", "login"],
+      ["--schema", "one", "review"],
+    ]) {
+      const r = parseSchemaFlag(argv);
+      expect(r.kind === "refused" && r.line, argv.join(" ")).toContain(
+        `usage: qcr --schema N ${SCHEMA_VERBS.join("|")} [`,
+      );
+    }
   });
 
   it("is read only before the verb: after it, it is the verb's own argument", () => {

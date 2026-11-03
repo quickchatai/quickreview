@@ -29,7 +29,7 @@ export type SchemaFlag =
   | { kind: "ok"; contract: number; argv: string[] }
   | { kind: "refused"; code: 2 | 3; line: string };
 
-const USAGE = "usage: qcr --schema N review|scan|version [arguments…]";
+const USAGE = `usage: qcr --schema N ${SCHEMA_VERBS.join("|")} [arguments…]`;
 
 /** Read a leading `--schema N` (or `--schema=N`) off `argv`. */
 export function parseSchemaFlag(argv: readonly string[]): SchemaFlag {
