@@ -178,6 +178,9 @@ describe("/selfimprove, the app's", () => {
     const bad = fakeUi();
     await runSelfImproveCommand("--wat", fakeHost(scriptedRunner()), bad);
     expect(bad.notes[0]).toMatch(/usage: \/selfimprove/);
+    // it takes the scan's folder too, its findings kept inside it
+    // (plugin/scan.ts followRun, tests/pi-plugin.test.ts)
+    expect(bad.notes[0]).toMatch(/\[--path DIR\]/);
     expect(bad.notes[0]).not.toMatch(/qcr-scan/);
   });
 

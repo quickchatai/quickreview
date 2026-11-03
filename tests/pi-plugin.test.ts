@@ -58,6 +58,7 @@ import type {
   ReviewTarget,
 } from "@quickchatai/pi-quickreview/src/reviewapi.js";
 import {
+  guidedScan,
   guidedScanLine,
   parseScanCommand,
   PLUGIN_SCAN_VERBS,
@@ -1541,6 +1542,44 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     expect(guidedScanLine({ delta: false, path: 'say "hi"' })).toMatch(
       /cannot quote: run qcr scan for it/,
     );
+  });
+
+  // MUTATION: drop the folder filter from followRun's listing — the folder
+  // run answers with the whole repo's earlier new findings, and this fails.
+  it("a folder run answers with the new findings inside its folder only", async () => {
+    const host = scanHost();
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await runScanCommand("units propose", host, ui, { sessions, deps });
+    await runScanCommand("units save", host, ui, { sessions, deps });
+    const whole = await guidedScan(host, ui, { delta: false }, { sessions, deps });
+    expect(whole.ok && whole.findings.map((f) => f.file).sort()).toEqual([
+      "app/a.py",
+      "lib/b.py",
+      "main.py",
+    ]);
+    writeFileSync(join(host.cwd, "lib", "b.py"), "X = 2\n");
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=T",
+        "-c",
+        "user.email=t@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-qam",
+        "b",
+      ],
+      { cwd: host.cwd },
+    );
+    const lib = await guidedScan(host, ui, { delta: true, path: "lib" }, { sessions, deps });
+    if (!lib.ok) throw new Error(lib.error);
+    expect(lib.findings.length).toBeGreaterThan(0);
+    for (const f of lib.findings) expect(f.file).toMatch(/^lib\//);
+    expect(lib.total).toBe(lib.findings.length);
   });
 
   it("stops the run in flight with /qcr-scan stop, and its findings so far follow", async () => {

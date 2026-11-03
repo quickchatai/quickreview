@@ -34,7 +34,7 @@ import { assembleScan, type AssembledScan } from "../scan/scanassemble.js";
 import { checkoutReader, stateHomeFs } from "../scan/scanfs.js";
 import type { CaseRunner, Refusal } from "../scan/scanports.js";
 import { listFindings, renderStatus, type ScanVerbs } from "../scan/scanrender.js";
-import { scanPath } from "../scan/scan.js";
+import { scanPath, underPath } from "../scan/scan.js";
 import type { ScanRun, ScanStatus } from "../scan/scanrun.js";
 import {
   findingJson,
@@ -546,11 +546,14 @@ async function followRun(
     );
   const listed = listFindings(engine.findings, { state: "new" });
   if (!listed.ok) return { ok: false, error: listed.error };
+  // The ledger is the whole repo's: a folder run answers with the new
+  // findings inside its folder only, never one an earlier run left outside.
+  const inScope = listed.findings.filter((f) => underPath(f.path, run?.path));
   return {
     ok: true,
     sha: run?.sha ?? null,
-    findings: listed.findings.map(findingJson),
-    total: listed.findings.length,
+    findings: inScope.map(findingJson),
+    total: inScope.length,
   };
 }
 
