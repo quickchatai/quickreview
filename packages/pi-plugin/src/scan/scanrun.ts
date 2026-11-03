@@ -2086,6 +2086,8 @@ export class ScanRunner {
           ...(cfg.depth === "deep" ? { depth: cfg.depth } : {}),
         },
         ...modelRef(p.threatModel),
+        // The approved proposal's folder, as stage 1 records its preview's.
+        ...(p.proposal.path !== undefined ? { path: p.proposal.path } : {}),
       },
       jobs,
       p.tree,

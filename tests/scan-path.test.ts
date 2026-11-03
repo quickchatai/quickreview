@@ -345,6 +345,11 @@ describe("a folder proposal's stage 2", () => {
     expect(s.code, JSON.stringify(s.json)).toBe(0);
     expect(h.ran.length).toBeGreaterThan(0);
     for (const c of h.ran) for (const f of c.files) expect(f).toMatch(/^app\/web\//);
+    // ...and the run says so, as a stage-1 folder run does: null would read
+    // as the whole repository. MUTATION: drop the `path` spread from the head
+    // startStage2Planned launches — both of these fail.
+    expect(s.json.run.path).toBe("app/web");
+    expect((await h.run(["status"], true)).json.run.path).toBe("app/web");
   });
 });
 
