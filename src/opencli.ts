@@ -518,7 +518,7 @@ export async function cmdOpen(rest: string[], json: boolean): Promise<number> {
   const { prepareHostRun } = await import("./hostroute.js");
   const { homedir } = await import("node:os");
   const { spawn } = await import("node:child_process");
-  const { scanTranscriptsDir } = await import("./scancli.js");
+  const { scanTranscriptsDir } = await import("./scanenv.js");
   const { DEFAULT_REVIEWED_REPO } = await import("../extensions/setup.js");
   const root = sandboxRoot();
   const home = stateHome();
