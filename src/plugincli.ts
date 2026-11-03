@@ -23,6 +23,13 @@
 // from its render, which nothing has deleted yet; when that cannot be done,
 // the failed row says the host is left without QuickReview.
 //
+// A host's own config-home variable names a profile of it (CLAUDE_CONFIG_DIR,
+// CODEX_HOME, COPILOT_HOME; opencode's XDG_CONFIG_HOME): a profile other than
+// the default keeps its renders and copy record in its own folder,
+// `<data home>/plugins/profiles/<key>/`, so the verbs one profile runs never
+// delete a render another profile loads. Gemini, Antigravity and Cursor are
+// read at their default homes alone.
+//
 // Cursor and opencode have no install verb, so their render is copied where
 // the host loads it, and a record of every file and folder the copy wrote
 // (`<data home>/plugins/<host>.copy.json`) is what update rewrites and
@@ -145,6 +152,7 @@
 // <name>/SKILL.md` (`opencode debug paths` names that config dir, default
 // `~/.config/opencode`), each also a `/<name>` command, read at startup.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   accessSync,
   constants,
@@ -255,7 +263,7 @@ interface Ctx {
   /** The skill source, read once. */
   source: Renderer.Source;
   version: string;
-  /** `<data home>/plugins`. */
+  /** `<data home>/plugins`, or a host profile's folder under it. */
   root: string;
 }
 
@@ -272,6 +280,9 @@ interface HostInstaller {
   locate(ctx: Ctx): string | null;
   /** Why it was not found. */
   notFound(ctx: Ctx): string;
+  /** The host's own config home, resolved, when the environment moves it
+   * off its default: a profile of the host; null at the default. */
+  profile?(env: PluginDeps["env"]): string | null;
   /** A copy host's record of an install here, which update and uninstall
    * reach even when the host is no longer found; null when there is none. */
   recorded?(ctx: Ctx): string | null;
@@ -306,6 +317,20 @@ const onPath = (exe: string): Pick<HostInstaller, "lookFor" | "locate" | "notFou
   locate: (ctx) => which(exe, ctx.deps.env["PATH"], ctx.deps.cwd),
   notFound: () => `${exe} is not on PATH`,
 });
+
+/** `dir`, resolved, unless it is unset or the default `fallback`. */
+const movedFrom = (dir: string | undefined, fallback: string): string | null =>
+  dir === undefined || dir === "" || resolve(dir) === resolve(fallback) ? null : resolve(dir);
+
+/** The run as `h`'s profile sees it: one other than the default keeps its
+ * renders and copy record under `profiles/<key>/`, so no verb run for one
+ * profile deletes what another loads. */
+function forProfile(ctx: Ctx, h: HostInstaller): Ctx {
+  const home = h.profile?.(ctx.deps.env) ?? null;
+  if (home === null) return ctx;
+  const key = createHash("sha256").update(home).digest("hex").slice(0, 16);
+  return { ...ctx, root: join(ctx.root, "profiles", key) };
+}
 
 const real = (p: string): string => {
   try {
@@ -541,6 +566,7 @@ function claudeInstaller(): HostInstaller {
     host,
     label: "Claude Code",
     ...onPath("claude"),
+    profile: (env) => movedFrom(env["CLAUDE_CONFIG_DIR"], join(homeOf(env), ".claude")),
     reload,
     noProject: null,
     install(ctx, exe, asked) {
@@ -703,6 +729,7 @@ interface MarketplaceHost {
   host: string;
   label: string;
   exe: string;
+  profile(env: PluginDeps["env"]): string | null;
   reload: string;
   noProject: string | null;
   /** The argv that lists the installs, and the release of QuickReview's in
@@ -783,6 +810,7 @@ function marketplaceInstaller(m: MarketplaceHost): HostInstaller {
     host,
     label: m.label,
     ...onPath(m.exe),
+    profile: m.profile,
     reload: m.reload,
     noProject: m.noProject,
     install(ctx, exe) {
@@ -839,6 +867,7 @@ const codexInstaller = (): HostInstaller =>
     host: "codex",
     label: "Codex",
     exe: "codex",
+    profile: (env) => movedFrom(env["CODEX_HOME"], join(homeOf(env), ".codex")),
     reload: "start a new Codex session",
     noProject: "Codex enables plugins in the user's config only, so it has no project scope",
     list: ["plugin", "list", "--json"],
@@ -892,6 +921,7 @@ const copilotInstaller = (): HostInstaller =>
     host: "copilot",
     label: "Copilot CLI",
     exe: "copilot",
+    profile: (env) => movedFrom(env["COPILOT_HOME"], join(homeOf(env), ".copilot")),
     reload: "start a new Copilot CLI session",
     noProject:
       "Copilot CLI's project scope is the repository's .github/copilot/settings.json, which no copilot verb writes",
@@ -1111,6 +1141,8 @@ interface CopyHost {
   exes: readonly string[];
   /** A folder whose presence also means it is here. */
   configDir?(env: PluginDeps["env"]): string;
+  /** HostInstaller's `profile`. */
+  profile?(env: PluginDeps["env"]): string | null;
   /** The render's files under `from` are copied to `<to>/<into><the rest
    * of the path>`. */
   from: string;
@@ -1286,6 +1318,7 @@ function copyInstaller(c: CopyHost): HostInstaller {
   return {
     host,
     label: c.label,
+    ...(c.profile === undefined ? {} : { profile: c.profile }),
     lookFor: (ctx) => [...c.exes, ...(c.configDir ? [c.configDir(ctx.deps.env)] : [])],
     locate(ctx) {
       for (const exe of c.exes) {
@@ -1358,6 +1391,8 @@ const opencodeInstaller = (): HostInstaller =>
     noProject:
       "qcr plugin puts opencode's skills in its global skills folder only, so it has no project scope",
     exes: ["opencode"],
+    profile: (env) =>
+      movedFrom(xdgBase(env["XDG_CONFIG_HOME"], env, ".config"), join(homeOf(env), ".config")),
     from: "skills/",
     into: "",
     to: (env) => join(xdgBase(env["XDG_CONFIG_HOME"], env, ".config"), "opencode", "skills"),
@@ -1464,10 +1499,11 @@ export async function cmdPlugin(
   /** The hosts not found here. */
   const missing = new Set<string>();
   for (const h of p.hosts) {
-    const exe = h.locate(ctx) ?? (p.verb === "install" ? null : (h.recorded?.(ctx) ?? null));
+    const hc = forProfile(ctx, h);
+    const exe = h.locate(hc) ?? (p.verb === "install" ? null : (h.recorded?.(hc) ?? null));
     if (exe === null) {
       missing.add(h.host);
-      rows.push(row(h.host, "skipped", h.notFound(ctx)));
+      rows.push(row(h.host, "skipped", h.notFound(hc)));
       continue;
     }
     // a host with no project scope is skipped, never given a user install
@@ -1478,10 +1514,10 @@ export async function cmdPlugin(
     try {
       rows.push(
         p.verb === "install"
-          ? h.install(ctx, exe, p.project ? "project" : "user")
+          ? h.install(hc, exe, p.project ? "project" : "user")
           : p.verb === "update"
-            ? h.update(ctx, exe)
-            : h.uninstall(ctx, exe),
+            ? h.update(hc, exe)
+            : h.uninstall(hc, exe),
       );
     } catch (err) {
       rows.push(row(h.host, "failed", err instanceof Error ? err.message : String(err)));

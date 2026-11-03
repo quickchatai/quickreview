@@ -118,7 +118,12 @@ folder into `~/.cursor/plugins/local/qcr`, opencode's skills into
 `$XDG_CONFIG_HOME/opencode/skills`. A record beside the render,
 `<host>.copy.json`, names every file and folder the copy wrote; update
 rewrites those, uninstall deletes them, and an install that would land on a
-path the record does not name fails instead.
+path the record does not name fails instead. A host's own config-home variable
+(`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, and opencode's
+`XDG_CONFIG_HOME`) set to anything but its default names a profile of that
+host, whose renders and record sit in their own folder under
+`$XDG_DATA_HOME/qcr/plugins/profiles/`, so a verb run for one profile never
+deletes what another loads.
 
 The pi Plugin's `packages/pi-plugin/skills/` is that render, made by
 `npm run build` and by the Plugin's prepack (`node plugins/qcr/render.mjs pi`,

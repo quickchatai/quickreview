@@ -357,6 +357,8 @@ const KEYS = [
   "FAKE_DIR",
   "QCR_NO_UPDATE_NOTICE",
   "GEMINI_CLI_TRUST_WORKSPACE",
+  "CODEX_HOME",
+  "COPILOT_HOME",
 ];
 const saved: Record<string, string | undefined> = {};
 let savedCwd: string;
@@ -376,6 +378,8 @@ beforeEach(() => {
   process.env.FAKE_DIR = join(dir, "fake");
   process.env.QCR_NO_UPDATE_NOTICE = "1";
   delete process.env.GEMINI_CLI_TRUST_WORKSPACE;
+  delete process.env.CODEX_HOME;
+  delete process.env.COPILOT_HOME;
   savedCwd = process.cwd();
   process.chdir(dir);
   out = [];
@@ -715,6 +719,43 @@ describe("qcr plugin across these hosts", () => {
     ]);
     expect(process.env.GEMINI_CLI_TRUST_WORKSPACE).toBeUndefined();
   });
+
+  // Copilot loads a local marketplace live from the render; both profiles
+  // share one data home, and each has its own config (here, its own fake
+  // state).
+  // MUTATION: drop `profile` from codexInstaller or copilotInstaller —
+  // profile B's update deletes the render profile A loads and this fails.
+  it.each([
+    ["codex", "CODEX_HOME"],
+    ["copilot", "COPILOT_HOME"],
+  ] as const)(
+    "a %s profile (%s) keeps its own renders and never deletes the default profile's",
+    async (host, name) => {
+      const h = byHost(host);
+      const a = olderInstall(h);
+      const fakeA = process.env.FAKE_DIR!;
+      process.env[name] = join(dir, "profile-b");
+      process.env.FAKE_DIR = join(dir, "fake-b");
+      mkdirSync(process.env.FAKE_DIR);
+
+      const skipped = await qcrJson("plugin", "update");
+      expect(rowOf(skipped.rows, h)).toEqual(
+        expect.objectContaining({ outcome: "skipped", removed: [] }),
+      );
+      const installed = await qcrJson("plugin", "install", "--to", host);
+      expect(rowOf(installed.rows, h)).toEqual(
+        expect.objectContaining({ outcome: "installed", removed: [] }),
+      );
+      expect(rowOf(installed.rows, h)!.dir).not.toBe(renderDir(h));
+      const removed = await qcrJson("plugin", "uninstall", "--from", host);
+      expect(rowOf(removed.rows, h)?.outcome).toBe("removed");
+      expect(existsSync(a)).toBe(true);
+
+      delete process.env[name];
+      process.env.FAKE_DIR = fakeA;
+      expect(h.loads(fakeState(h))).toBe(a);
+    },
+  );
 
   it("--to all --project installs into none of them, each skipped with its reason", async () => {
     const { code, rows } = await qcrJson("plugin", "install", "--to", "all", "--project");

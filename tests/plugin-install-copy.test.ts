@@ -412,6 +412,30 @@ describe("qcr plugin across every host", () => {
     expect(ran()).toEqual([]);
   });
 
+  // An opencode whose XDG_CONFIG_HOME is moved is a profile of its own: it
+  // shares the data home, never the default profile's copy record.
+  // MUTATION: drop `profile` from opencodeInstaller — the moved profile's
+  // update reads the default's record, deletes the default's copy, and this
+  // fails.
+  it("an opencode profile with its own XDG_CONFIG_HOME leaves the default profile's copy alone", async () => {
+    fake("opencode");
+    const c = byHost("opencode");
+    expect(await qcr("plugin", "install", "--to", "opencode")).toBe(0);
+    const before = tree(join(home, ".config"));
+    process.env.XDG_CONFIG_HOME = join(dir, "config-b");
+
+    const updated = await qcrJson("plugin", "update");
+    expect(rowOf(updated.rows, "opencode")).toEqual(
+      expect.objectContaining({ outcome: "skipped", detail: "QuickReview is not installed here" }),
+    );
+    const removed = await qcrJson("plugin", "uninstall", "--from", "opencode");
+    expect(rowOf(removed.rows, "opencode")?.outcome).toBe("skipped");
+    expect(tree(join(home, ".config"))).toEqual(before);
+    expect(existsSync(recordOf(c))).toBe(true);
+    expect(existsSync(renderDir(c))).toBe(true);
+    expect(ran()).toEqual([]);
+  });
+
   // MUTATION: drop the config-directory lookup from the copy host's locate —
   // Cursor, with no executable on PATH, is skipped and this fails.
   it("--to all installs into every host found, Cursor by its config directory alone, and names each one not found", async () => {

@@ -137,6 +137,7 @@ const KEYS = [
   "FAKE_CLAUDE_LOG",
   "FAKE_CLAUDE_FAIL",
   "QCR_NO_UPDATE_NOTICE",
+  "CLAUDE_CONFIG_DIR",
 ];
 const saved: Record<string, string | undefined> = {};
 let savedCwd: string;
@@ -157,6 +158,7 @@ beforeEach(() => {
   process.env.FAKE_CLAUDE_STATE = join(dir, "claude-state.json");
   process.env.FAKE_CLAUDE_LOG = join(dir, "claude-argv.log");
   delete process.env.FAKE_CLAUDE_FAIL;
+  delete process.env.CLAUDE_CONFIG_DIR;
   process.env.QCR_NO_UPDATE_NOTICE = "1";
   savedCwd = process.cwd();
   process.chdir(dir);
@@ -422,6 +424,43 @@ describe("qcr plugin uninstall --from claude", () => {
     const again = await qcrJson("plugin", "uninstall", "--from", "all");
     expect(again.code).toBe(0);
     expect(again.rows.map((r) => r.outcome)).toEqual(again.rows.map(() => "skipped"));
+  });
+});
+
+describe("Claude Code profiles (CLAUDE_CONFIG_DIR)", () => {
+  // Both profiles share one data home; each has its own settings (here, its
+  // own fake state), and the default profile loads a render in place.
+  // MUTATION: return `ctx` from forProfile whatever the profile — profile
+  // B's update deletes the render profile A loads and this fails.
+  it("a profile's verbs keep their own renders and never delete one the default profile loads", async () => {
+    const a = olderInstall("1.0.0", ["user"]);
+    const stateA = process.env.FAKE_CLAUDE_STATE!;
+    process.env.CLAUDE_CONFIG_DIR = join(dir, "profile-b");
+    process.env.FAKE_CLAUDE_STATE = join(dir, "claude-state-b.json");
+
+    const skipped = await qcrJson("plugin", "update");
+    expect(skipped.rows[0]).toEqual(expect.objectContaining({ outcome: "skipped", removed: [] }));
+    expect(existsSync(a)).toBe(true);
+
+    const installed = await qcrJson("plugin", "install", "--to", "claude");
+    expect(installed.code).toBe(0);
+    const b = installed.rows[0]!.dir!;
+    expect(b.startsWith(join(data, "qcr", "plugins", "profiles") + "/")).toBe(true);
+    expect(b.endsWith(join("claude", VERSION))).toBe(true);
+    expect(installed.rows[0]!.removed).toEqual([]);
+    expect(existsSync(a)).toBe(true);
+
+    const removed = await qcrJson("plugin", "uninstall", "--from", "claude");
+    expect(removed.rows[0]).toEqual(expect.objectContaining({ outcome: "removed", removed: [b] }));
+    expect(existsSync(a)).toBe(true);
+
+    // the default profile, named or not, is the default render folder
+    process.env.CLAUDE_CONFIG_DIR = join(dir, "home", ".claude");
+    process.env.FAKE_CLAUDE_STATE = stateA;
+    const back = await qcrJson("plugin", "update");
+    expect(back.rows[0]).toEqual(
+      expect.objectContaining({ outcome: "updated", dir: renderDir(), removed: [a] }),
+    );
   });
 });
 
