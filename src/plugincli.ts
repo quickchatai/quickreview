@@ -1369,7 +1369,8 @@ export const PLUGIN_HOSTS: readonly string[] = INSTALLERS.map((i) => i.host);
 interface Parsed {
   verb: "install" | "update" | "uninstall";
   hosts: readonly HostInstaller[];
-  /** Were the hosts named one by one (a missing one fails) or all? */
+  /** Was one host named (a missing one is its own skipped row) or all (none
+   * found prints the one "no coding-agent CLI found" line)? */
   named: boolean;
   project: boolean;
 }
