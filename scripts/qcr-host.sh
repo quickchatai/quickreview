@@ -298,12 +298,13 @@ case "$verb" in
 esac
 
 # A scan runs in the foreground: the container ends with the call, and a
-# driver detached inside it would end with the container.
+# driver detached inside it would end with the container. That holds for
+# every start: the scan's, stage 2's and stage 0's (threat-model start).
 if [ "$verb" = scan ]; then
   fg=0
   case "${2:-}" in
     start) fg=1 ;;
-    stage2) [ "${3:-}" != start ] || fg=1 ;;
+    stage2 | threat-model) [ "${3:-}" != start ] || fg=1 ;;
   esac
   for a in "$@"; do
     [ "$a" != --foreground ] || fg=0

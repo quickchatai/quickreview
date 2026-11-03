@@ -730,6 +730,39 @@ describe("the other verbs", () => {
     r.run(["review"]);
     expect(envs(r.calls()[4]!).join(" ")).not.toContain(IN_SANDBOX_ENV);
   });
+
+  // MUTATION: drop `| threat-model` from the wrapper's foreground case — this
+  // fails: stage 0's driver would detach inside a `--rm` container and die
+  // with it, so a host scan under threat_model = "auto" never gets past it.
+  it("a stage-0 threat-model start runs in the foreground too, behind a host plugin's --schema", () => {
+    const r = rig();
+    r.run(["--schema", "1", "scan", "threat-model", "start", "--key", "K", "--sandbox", "host"]);
+    r.run(["scan", "threat-model", "start", "--key", "K"]);
+    r.run(["--schema", "1", "scan", "threat-model", "propose", "--sandbox", "host"]);
+    const [hosted, plain, propose] = r.calls();
+    const tail = (a: string[]): string[] => a.slice(a.indexOf("cli") + 1);
+    expect(tail(hosted!)).toEqual([
+      "--schema=1",
+      "scan",
+      "threat-model",
+      "start",
+      "--key",
+      "K",
+      "--sandbox",
+      "host",
+      "--foreground",
+    ]);
+    expect(tail(plain!)).toEqual(["scan", "threat-model", "start", "--key", "K", "--foreground"]);
+    // a proposal starts nothing, so it stays as it was asked
+    expect(tail(propose!)).toEqual([
+      "--schema=1",
+      "scan",
+      "threat-model",
+      "propose",
+      "--sandbox",
+      "host",
+    ]);
+  });
 });
 
 // ---- the TUI: a companion on the host, a TUI container, no docker.sock ----------
