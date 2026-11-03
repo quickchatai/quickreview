@@ -672,7 +672,7 @@ export async function runScanVerb(
         return refused(what, r);
       }
       deps.onStart?.({ ok: true, run: r.run, log: deps.driverLog });
-      if (!json) deps.out(line(r.run));
+      if (!json) deps.out(`${scanning}${line(r.run)}`);
       // A pending promise alone keeps no process alive: hold it open until
       // the run ends.
       const keep = setInterval(() => {}, 60_000);
@@ -685,8 +685,10 @@ export async function runScanVerb(
       }
       const s = scan.status();
       const complete = s.run?.display === "complete";
+      // The same checkout as a detached start names (scan-result.v1 `repo`).
       return emit(complete ? 0 : 1, renderStatus(s, CLI_VERBS), {
         ok: complete,
+        ...repoField,
         run: s.run ? runJson(s.run) : null,
       });
     }
