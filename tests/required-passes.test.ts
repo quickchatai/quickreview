@@ -589,6 +589,88 @@ describe("failedSecurityRows", () => {
     });
   });
 
+  // A follow-up can carry its family rows in the owed whole-PR sweep alone
+  // (`sweep_plan`, launched from tasks-sweep/): a delta plan with no family
+  // row says nothing of them.
+  // MUTATION: drop the `sweepRows` phase from failedSecurityRows' loop — this
+  // fails.
+  describe("a follow-up's owed sweep", () => {
+    const DELTA_PLAN: PassPlanEntry[] = [row("pass-baseline", true), row("pass-validate")];
+    const SWEEP_PLAN: PassPlanEntry[] = [
+      row("pass-baseline", true),
+      row("pass-sec-access"),
+      row("pass-validate"),
+    ];
+    const swept = (lens: string, status: LiveAgentProgress["status"], error?: string) =>
+      Object.assign(agent(lens, status, error), { phase: "sweep" as const });
+    const deltaDone = [agent("pass-baseline", "completed")];
+
+    it("names a sweep family row that failed, marked as the sweep's", () => {
+      for (const approval of [false, true])
+        expect(
+          failedSecurityRows(
+            DELTA_PLAN,
+            snapshot(3, [...deltaDone, swept("pass-sec-access", "failed", "boom")]),
+            3,
+            undefined,
+            { plan: SWEEP_PLAN, approval },
+          ),
+        ).toEqual({
+          state: "known",
+          failed: [{ lens: "pass-sec-access", phase: "sweep", why: "failed", errors: ["boom"] }],
+        });
+    });
+
+    it("is never satisfied by the same lens completing in the plan phase", () => {
+      expect(
+        failedSecurityRows(
+          [...DELTA_PLAN, row("pass-sec-access")],
+          snapshot(3, [
+            ...deltaDone,
+            agent("pass-sec-access", "completed"),
+            swept("pass-baseline", "completed"),
+          ]),
+          3,
+          undefined,
+          { plan: SWEEP_PLAN, approval: false },
+        ),
+      ).toEqual({
+        state: "known",
+        failed: [{ lens: "pass-sec-access", phase: "sweep", why: "not-run", errors: [] }],
+      });
+    });
+
+    // The sweep runs before an approval only: a request for changes whose
+    // sweep never launched is no gap, an approval whose sweep never ran is.
+    it("an unlaunched sweep is named on an approval, not on another post", () => {
+      const p = snapshot(3, deltaDone);
+      expect(
+        failedSecurityRows(DELTA_PLAN, p, 3, undefined, { plan: SWEEP_PLAN, approval: false }),
+      ).toEqual({ state: "known", failed: [] });
+      expect(
+        failedSecurityRows(DELTA_PLAN, p, 3, undefined, { plan: SWEEP_PLAN, approval: true }),
+      ).toEqual({
+        state: "known",
+        failed: [{ lens: "pass-sec-access", phase: "sweep", why: "not-run", errors: [] }],
+      });
+      expect(
+        failedSecurityRows(DELTA_PLAN, undefined, 3, undefined, {
+          plan: SWEEP_PLAN,
+          approval: true,
+        }).state,
+      ).toBe("unknown");
+      expect(
+        failedSecurityRows(
+          DELTA_PLAN,
+          snapshot(3, [...deltaDone, swept("pass-sec-access", "completed")]),
+          3,
+          undefined,
+          { plan: SWEEP_PLAN, approval: true },
+        ),
+      ).toEqual({ state: "known", failed: [] });
+    });
+  });
+
   it("is unknown, never an empty list, without this round's snapshot", () => {
     expect(failedSecurityRows(SEC_PLAN, undefined, 3).state).toBe("unknown");
     expect(

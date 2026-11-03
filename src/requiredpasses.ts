@@ -205,6 +205,8 @@ export function requiredPassGap(
 export interface FailedSecurityRow {
   lens: string;
   strategy?: string;
+  /** A row of the follow-up's owed whole-PR sweep (`sweep_plan`). */
+  phase?: "sweep";
   /** Why: an execution failed and none completed (`failed`), one is still
    * running at posting time (`running`), or none was launched (`not-run`). */
   why: "failed" | "running" | "not-run";
@@ -229,7 +231,7 @@ export type SecurityRowFailures =
 function incompleteSecurityRows(
   progress: RoundProgressSnapshot,
   obligations: ReadonlyMap<string, number>,
-  phase: "plan" | "post",
+  phase: "plan" | "sweep" | "post",
   lensRows: ReadonlyMap<string, number>,
 ): FailedSecurityRow[] | { untold: string } {
   const out: FailedSecurityRow[] = [];
@@ -250,6 +252,7 @@ function incompleteSecurityRows(
     out.push({
       lens,
       ...(strategy !== undefined ? { strategy } : {}),
+      ...(phase === "sweep" ? { phase } : {}),
       why:
         failedRuns.length > 0
           ? "failed"
@@ -266,22 +269,41 @@ function incompleteSecurityRows(
  * The security-family rows of a round that did not complete — required or
  * not (only the chain's `delta` is required; the others never hold the post
  * back, so the review body says which did not complete) — row by row and
- * strategy by strategy, over the plan's rows and the post-discovery rows
- * (`post_plan`, launched from `tasks-post`). The rule is
+ * strategy by strategy, over the plan's rows, the post-discovery rows
+ * (`post_plan`, launched from `tasks-post`) and a follow-up's owed whole-PR
+ * sweep (`sweep.plan`, launched from `tasks-sweep`). The rule is
  * `incompleteSecurityRows`', not `requiredPassGap`'s: nothing here blocks,
  * so a row with no failed execution is named too.
+ *
+ * The sweep runs before an approval, never before a request for changes: a
+ * follow-up's family rows can sit in the sweep alone, and the delta plan's
+ * completing says nothing of them. So an approval (`sweep.approval`) names
+ * every sweep family row that did not complete — never launched included,
+ * since that approval rests on a whole-PR security pass that did not run —
+ * and any other post names them once the sweep was launched.
  */
 export function failedSecurityRows(
   plan: readonly PassPlanEntry[] | null,
   progress: RoundProgressSnapshot | undefined,
   roundNo: number,
   postPlan?: readonly PassPlanEntry[] | null,
+  sweep?: { plan: readonly PassPlanEntry[] | null; approval: boolean },
 ): SecurityRowFailures {
   const familyRows = (rows: readonly PassPlanEntry[] | null | undefined) =>
     (rows ?? []).filter((row) => SECURITY_FAMILY.includes(row.lens));
   const planned = countRows(familyRows(plan));
   const post = countRows(familyRows(postPlan));
-  if (planned.size === 0 && post.size === 0) return { state: "known", failed: [] };
+  const sweepFamily = familyRows(sweep?.plan);
+  const sweepLaunched =
+    progress !== undefined &&
+    progress.round_no === roundNo &&
+    progress.agents.some((a) => a.phase === "sweep");
+  const sweepRows =
+    sweepFamily.length > 0 && (sweep?.approval === true || sweepLaunched)
+      ? countRows(sweepFamily)
+      : new Map<string, number>();
+  if (planned.size === 0 && post.size === 0 && sweepRows.size === 0)
+    return { state: "known", failed: [] };
   if (!progress) return { state: "unknown", reason: "no readable round-progress snapshot" };
   if (progress.round_no !== roundNo)
     return {
@@ -291,6 +313,7 @@ export function failedSecurityRows(
   const failed: FailedSecurityRow[] = [];
   for (const rows of [
     incompleteSecurityRows(progress, planned, "plan", lensRowCounts(familyRows(plan))),
+    incompleteSecurityRows(progress, sweepRows, "sweep", lensRowCounts(sweepFamily)),
     incompleteSecurityRows(progress, post, "post", lensRowCounts(familyRows(postPlan))),
   ]) {
     // Never an empty `known` over rows nobody can tell apart.

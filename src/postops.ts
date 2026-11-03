@@ -396,14 +396,17 @@ class PostOps {
    * silence, which a reader takes for "every security pass completed".
    * Neither ever holds the post back.
    */
-  private withSecurityGaps(pr: number, round: number, text: string): string {
+  private withSecurityGaps(pr: number, round: number, text: string, event: ReviewEvent): string {
     const row = this.d.store.roundsFor(pr).find((r) => r.round_no === round);
     if (!row) return text;
+    // A follow-up's family rows can sit in its owed whole-PR sweep alone:
+    // they count too, every one on an approval, which rests on the sweep.
     const gaps = failedSecurityRows(
       parsePlan(row.pass_plan),
       readRoundProgress(this.d.root, pr),
       round,
       parsePlan(row.post_plan),
+      { plan: parsePlan(row.sweep_plan), approval: event === "APPROVE" },
     );
     if (gaps.state === "unknown") {
       this.d.store.logEvent("security_pass_unknown", pr, { round_no: round, reason: gaps.reason });
@@ -417,6 +420,7 @@ class PostOps {
       failed: gaps.failed.map((f) => ({
         row: f.strategy ? `${f.lens}:${f.strategy}` : f.lens,
         why: f.why,
+        ...(f.phase ? { phase: f.phase } : {}),
       })),
     });
     return withSecurityIncompleteLines(text, gaps.failed);
@@ -519,7 +523,7 @@ class PostOps {
     const { keyed, head, event } = r;
     // A security pass that did not complete is named in the body, never
     // silent (fail-closed); a round with no family row is untouched.
-    const text = keyed ? this.withSecurityGaps(ctx.pr, keyed.round, r.text) : r.text;
+    const text = keyed ? this.withSecurityGaps(ctx.pr, keyed.round, r.text, event) : r.text;
     const jobPayload: JobPayload = {
       commit_id: head,
       event,

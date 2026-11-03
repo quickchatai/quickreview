@@ -404,6 +404,83 @@ describe("post.review in dry-run", () => {
     );
   });
 
+  // A follow-up can carry its family rows only in the owed whole-PR sweep
+  // (`sweep_plan`): its delta plan completing says nothing of them.
+  // MUTATION: drop the sweep argument from withSecurityGaps' failedSecurityRows
+  // call — this fails.
+  it("names a failed family row of the round's owed sweep", async () => {
+    const baseline: PassPlanEntry = {
+      lens: "pass-baseline",
+      agent: "pass-baseline--sol-high",
+      tier: "sol-high",
+      raisable_to: [],
+      required: true,
+    };
+    rig.store.startRound(PR, "first", ["pass-baseline"], 30, {
+      pass_plan: [baseline],
+      sweep_plan: [
+        baseline,
+        {
+          lens: "pass-sec-access",
+          agent: "pass-sec-access--sol-high",
+          tier: "sol-high",
+          raisable_to: [],
+        },
+      ],
+    });
+    mkdirSync(join(rig.root, "state", "round-progress"), { recursive: true });
+    const run = (agent: string, status: "completed" | "failed", phase?: "sweep") => ({
+      execution_id: `call:${agent}#${phase ?? "plan"}`,
+      agent,
+      status,
+      duration_ms: 1,
+      tool_count: 0,
+      started_at: "2026-10-15T10:00:01.000Z",
+      finished_at: "2026-10-15T10:00:02.000Z",
+      ...(phase ? { phase } : {}),
+      ...(status === "failed" ? { error: "timed out" } : {}),
+    });
+    writeFileSync(
+      join(rig.root, "state", "round-progress", `pr-${PR}.json`),
+      JSON.stringify({
+        version: 2,
+        pr: PR,
+        session: `pr-${PR}`,
+        run_started_at: "2026-10-15T10:00:00.000Z",
+        updated_at: "2026-10-15T10:00:03.000Z",
+        parent_status: "active",
+        command_id: "c",
+        command_sha256: "a".repeat(64),
+        command_accepted_at: "2026-10-15T10:00:00.000Z",
+        preparing_at: "2026-10-15T10:00:00.000Z",
+        first_lens_started_at: "2026-10-15T10:00:01.000Z",
+        fanout_started_at: "2026-10-15T10:00:01.000Z",
+        round_no: 1,
+        head_sha: HEAD,
+        last_activity_at: "2026-10-15T10:00:03.000Z",
+        last_activity: "x",
+        agents: [
+          run("pass-baseline--sol-high", "completed"),
+          run("pass-baseline--sol-high", "completed", "sweep"),
+          run("pass-sec-access--sol-high", "failed", "sweep"),
+        ],
+      }),
+    );
+    const line = securityPassIncompleteLine("pass-sec-access");
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "**Verdict** no findings.");
+    const c = await rig.connect("c-round");
+    const out = await c.request<PostOutcome>(
+      "post.review",
+      { pr: PR, event: "COMMENT", body_file: body },
+      { pr: PR },
+    );
+    expect(out.status).toBe("dryrun");
+    const [rec] = dryrunRecords();
+    expect((rec as { body: { body: string } }).body.body).toBe(
+      `**Verdict** no findings.\n\n${line}\n\n${postingMarker(KEY)}`,
+    );
+  });
+
   // The security line never blocks, so it is not held to the required-pass
   // rule's positive evidence: a family row never launched is named, and a
   // round whose passes cannot be read says so instead of reading as complete.
