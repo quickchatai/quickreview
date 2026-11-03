@@ -83,11 +83,14 @@ export const TOOL_VERBS: ScanVerbs = {
   threatModelStart: (p) => `scan_start with key ${p.key} and sha ${p.sha}`,
 };
 
-/** ` --path P` for a folder scan's start line (quoted when it needs it), or
- * nothing for the whole repo. */
+/** ` --path P` for a folder scan's `qcr` start line, or nothing for the
+ * whole repo. The line is pasted into a POSIX shell, so a folder with any
+ * other character is single-quoted (a `'` as `'\''`): inside double quotes
+ * the shell would still expand a `$slug` or run a `$(…)` in the name. A pi
+ * slash line reads its words otherwise (plugin/scan.ts `slashPathFlag`). */
 export function pathFlag(path: string | null | undefined): string {
   if (path === null || path === undefined) return "";
-  return ` --path ${/^[\w./@+-]+$/.test(path) ? path : JSON.stringify(path)}`;
+  return ` --path ${/^[\w./@+-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`}`;
 }
 
 export const CLI_VERBS: ScanVerbs = {

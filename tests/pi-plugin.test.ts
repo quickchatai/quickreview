@@ -60,6 +60,7 @@ import type {
 import {
   guidedScanLine,
   parseScanCommand,
+  PLUGIN_SCAN_VERBS,
   runScanCommand,
   SCAN_COMMAND_USAGE,
   scanStateHome,
@@ -1512,6 +1513,24 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     await runScanCommand("--path nope --preview", host, ui, { sessions, deps });
     expect(ui.notes.at(-1)?.[1]).toMatch(/--path nope is not a folder/);
     expect(deps.agents).toEqual([]);
+  });
+
+  // MUTATION: render a /qcr-scan line's folder with the shell's quoting
+  // (scanrender.ts pathFlag: single quotes, which splitArgs keeps as part of
+  // the word) or JSON's (escapes it never undoes) — this fails.
+  it("writes a /qcr-scan line's folder as pi's words read it back", () => {
+    for (const path of ["lib", "my dir", "app/routes/$slug", "it's", 'a"b']) {
+      const guided = guidedScanLine({ delta: false, path });
+      expect(splitArgs(guided), guided).toEqual(["/qcr-scan", "--path", path]);
+      // ...and the command reads the line it offered back to the same folder
+      expect(parseScanCommand(guided.replace(/^\/qcr-scan /, ""))).toMatchObject({ o: { path } });
+      const start = PLUGIN_SCAN_VERBS.start({ key: "k", sha: "s", mode: "stage1", path });
+      expect(splitArgs(start).slice(-2), start).toEqual(["--path", path]);
+    }
+    // a folder no pi word spells is said to be one, never sent as a broken word
+    expect(guidedScanLine({ delta: false, path: 'say "hi"' })).toMatch(
+      /cannot quote: run qcr scan for it/,
+    );
   });
 
   it("stops the run in flight with /qcr-scan stop, and its findings so far follow", async () => {

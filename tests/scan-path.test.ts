@@ -13,6 +13,7 @@ import { parseScanArgs, runScanCli, type ScanCliDeps } from "../src/scancli.js";
 import type { CaseSpec } from "../src/setup/engine.js";
 import { planStage1, scanPath } from "@quickchatai/pi-quickreview/src/scan/scan.js";
 import { planStage2 } from "@quickchatai/pi-quickreview/src/scan/stage2.js";
+import { CLI_VERBS } from "@quickchatai/pi-quickreview/src/scan/scanrender.js";
 import type { UnitCut } from "../src/setup/unitcut.js";
 import { SHA, SHA2, scanRig, type Rig } from "./helpers/scan-cli-rig.js";
 
@@ -350,6 +351,48 @@ describe("a folder proposal's stage 2", () => {
     // startStage2Planned launches — both of these fail.
     expect(s.json.run.path).toBe("app/web");
     expect((await h.run(["status"], true)).json.run.path).toBe("app/web");
+  });
+});
+
+/** A POSIX shell's words for `line`, as far as the start line uses its
+ * grammar: bare words, `'…'` (nothing inside is special) and `\\'`. A `$`,
+ * a backtick or a `"` outside single quotes is refused — the shell would
+ * expand or regroup it — so a line that leans on one fails the test. */
+function shellWords(line: string): string[] {
+  const words: string[] = [];
+  for (const raw of line.match(/(?:'[^']*'|\\'|[^\s'\\])+/g) ?? []) {
+    let w = "";
+    for (const m of raw.matchAll(/'([^']*)'|\\(')|([^'\\]+)/g)) {
+      const bare = m[3];
+      if (bare !== undefined && /[$`"]/.test(bare)) throw new Error(`the shell expands ${bare}`);
+      w += m[1] ?? m[2] ?? bare!;
+    }
+    words.push(w);
+  }
+  return words;
+}
+
+describe("the qcr start line, pasted into a shell", () => {
+  // MUTATION: render a quoted folder with JSON.stringify again (double
+  // quotes, inside which the shell expands `$slug` and runs `$(…)`) — this
+  // fails.
+  it("hands the shell's qcr exactly the folder that was priced", () => {
+    for (const path of [
+      "app/web",
+      "app/routes/$slug",
+      "$(touch PWNED)",
+      "a`id`b",
+      "it's here",
+      'say "hi"',
+    ]) {
+      const line = CLI_VERBS.start({ key: "k", sha: "s", mode: "stage1", path });
+      const words = shellWords(line);
+      expect(words.slice(0, 7)).toEqual(["qcr", "scan", "start", "--key", "k", "--sha", "s"]);
+      expect(words.slice(7), line).toEqual(["--path", path]);
+    }
+    expect(CLI_VERBS.start({ key: "k", sha: "s", mode: "stage1", path: null })).toBe(
+      "qcr scan start --key k --sha s",
+    );
   });
 });
 

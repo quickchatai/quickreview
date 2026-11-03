@@ -33,7 +33,7 @@ import { scanConfigOf } from "../scan/scanagents.js";
 import { assembleScan, type AssembledScan } from "../scan/scanassemble.js";
 import { checkoutReader, stateHomeFs } from "../scan/scanfs.js";
 import type { CaseRunner, Refusal } from "../scan/scanports.js";
-import { listFindings, pathFlag, renderStatus, type ScanVerbs } from "../scan/scanrender.js";
+import { listFindings, renderStatus, type ScanVerbs } from "../scan/scanrender.js";
 import { scanPath } from "../scan/scan.js";
 import type { ScanRun, ScanStatus } from "../scan/scanrun.js";
 import {
@@ -84,7 +84,7 @@ export const SCAN_COMMAND_USAGE =
 /** How the scan's answers name the next step here. */
 export const PLUGIN_SCAN_VERBS: ScanVerbs = {
   start: (p) =>
-    `/qcr-scan start --key ${p.key} --sha ${p.sha}${p.mode === "delta" ? " --delta" : ""}${pathFlag(p.path)}`,
+    `/qcr-scan start --key ${p.key} --sha ${p.sha}${p.mode === "delta" ? " --delta" : ""}${slashPathFlag(p.path)}`,
   matches: "/qcr-scan matches",
   match: (key) => `/qcr-scan match --key ${key} OLD=NEW… — the pairs`,
   stage2Start: (key) =>
@@ -98,7 +98,21 @@ export const PLUGIN_SCAN_VERBS: ScanVerbs = {
 /** The guided `/qcr-scan` line for `o`: what a preview offers as the run
  * after it keeps the scope the person priced (folder, delta, commit). */
 export function guidedScanLine(o: ScanOptions): string {
-  return `/qcr-scan${o.delta ? " --delta" : ""}${o.sha ? ` --sha ${o.sha}` : ""}${pathFlag(o.path)}`;
+  return `/qcr-scan${o.delta ? " --delta" : ""}${o.sha ? ` --sha ${o.sha}` : ""}${slashPathFlag(o.path)}`;
+}
+
+/**
+ * ` --path P` for a `/qcr-scan` line, or nothing for the whole repo. pi's
+ * words are `splitArgs`'s: double quotes group and nothing else is special,
+ * so a folder is bare, or double-quoted when it holds a space, never
+ * escaped. A folder no such word spells (a space and a `"`, or a leading
+ * `"`) is named as one this line cannot carry, never as a broken word.
+ */
+export function slashPathFlag(path: string | null | undefined): string {
+  if (path === null || path === undefined) return "";
+  if (!path.includes('"')) return ` --path ${/\s/.test(path) ? `"${path}"` : path}`;
+  if (/^[^"\s]\S*$/.test(path)) return ` --path ${path}`;
+  return ` --path ${JSON.stringify(path)} (a folder name a /qcr-scan line cannot quote: run qcr scan for it)`;
 }
 
 /** A scan finding as the scan's `--json` lists it. */
