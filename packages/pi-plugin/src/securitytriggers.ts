@@ -255,11 +255,14 @@ const DOCKERFILE_RE = /(^|\/)(?:Dockerfile|Containerfile)[^/]*$/;
  * usual install step, not a root container. Spelled as "the last `USER`
  * line that is root or non-root is root": each candidate looks ahead only
  * to the next such line, so the look-aheads of successive candidates never
- * overlap. */
+ * overlap. A `USER` instruction is one line, so every whitespace run in it
+ * is `[ \t]`: a `\s*` before the line-end anchor would backtrack through
+ * each blank line after a `USER root`, rescanning the rest of the text from
+ * every one. */
 const USER_ROOT_RE =
-  /^[ \t]*USER\s+(?:root|0)(?::\S+)?\s*$(?![\s\S]*?^[ \t]*USER\s+(?:(?!root\b|0\b)\S|(?:root|0)(?::\S+)?\s*$))/m;
+  /^[ \t]*USER[ \t]+(?:root|0)(?::\S+)?[ \t]*$(?![\s\S]*?^[ \t]*USER[ \t]+(?:(?!root\b|0\b)\S|(?:root|0)(?::\S+)?[ \t]*$))/m;
 /** A non-root user taken away: the container falls back to root. */
-const USER_NONROOT_RE = /^[ \t]*USER\s+(?!root\b|0\b)\S+/m;
+const USER_NONROOT_RE = /^[ \t]*USER[ \t]+(?!root\b|0\b)\S+/m;
 
 /** A grant wide enough to be the escalation: a wildcard action or
  * principal, role passing, cluster-admin, the RBAC verbs that mint

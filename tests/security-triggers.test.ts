@@ -899,7 +899,10 @@ describe("the registry and its line helpers", () => {
  * deadline. MUTATION: restore `^\s*verbs:` in WILDCARD_GRANT_RE — this fails
  * (the structure check; the timing too, on a run of blank lines).
  * MUTATION: unbound SQL_GRANT_RE's `{0,400}?` back to `*?` — this fails (a
- * run of GRANTs grows quadratically).
+ * run of GRANTs grows quadratically). MUTATION: put back `\s*$` for
+ * `[ \t]*$` after USER_ROOT_RE's `(?::\S+)?` — this fails (the line-end
+ * structure check; the timing too, on a `USER root`, a run of blank lines
+ * and a `USER app`).
  */
 describe("every probe is linear in the PR's text", () => {
   const SMALL = 16_000;
@@ -923,6 +926,8 @@ describe("every probe is linear in the PR's text", () => {
     { atom: "USER root\n" },
     { atom: "USER root\r" },
     { atom: "USER \n" },
+    { atom: "\n", prefix: "USER root", suffix: "\nUSER app" },
+    { atom: "\r\n", prefix: "USER root", suffix: "\r\nUSER app" },
     { atom: "GRANT " },
     { atom: "source_ranges = [" },
     { atom: "yaml.load(" },
@@ -1028,6 +1033,14 @@ describe("every probe is linear in the PR's text", () => {
       if (t.re.multiline) expect(t.re.source, t.why).not.toMatch(/\^\\s\*/);
   });
 
+  // The same at the other end: `\s*$` backtracks through every blank line
+  // after the text it follows, trying the rest of the pattern from each, so
+  // trailing whitespace before a line-end anchor is `[ \t]*` too.
+  it("no line-anchored probe lets its trailing whitespace cross lines", () => {
+    for (const t of SECURITY_TRIGGERS)
+      if (t.re.multiline) expect(t.re.source, t.why).not.toMatch(/\\s[*+]\$/);
+  });
+
   // The rewrite keeps every probe's answer: the shapes the linear arms read
   // in one pass, pinned in both directions.
   it.each([
@@ -1056,5 +1069,8 @@ describe("every probe is linear in the PR's text", () => {
     expect(fires(["USER root", "USER root", "USER app"])).toBe(false);
     // a USER line neither root nor not (two words) is skipped either way
     expect(fires(["USER root", "USER root extra"])).toBe(true);
+    // blank lines between, and trailing whitespace, change neither answer
+    expect(fires(["USER root \t", "", "", "RUN make"])).toBe(true);
+    expect(fires(["USER root", "", "", "USER app"])).toBe(false);
   });
 });
