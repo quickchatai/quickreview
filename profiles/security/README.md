@@ -63,8 +63,8 @@ too.
   a request, or when a threat model exists and a security trigger fired
   (the four `always` lenses alone do not count; the default profile also
   wants over 150 triggered server-side lines); and `compose`, after every
-  other lens has returned,
-  over this round's security findings.
+  other lens has returned, over this round's security leads, and only when
+  there are any.
 - **A threat model** (below) plans the lenses its entries name when the
   change touches them.
 
@@ -130,11 +130,13 @@ A scan under this profile is a deep security scan:
 Every family row runs at `sol-high`. On any PR that changes code or config
 that is at least five lens runs (the four planned always, and the chain's
 `delta`), plus the validator, plus one `compose` run after them when the
-lenses return findings. The design estimate is four to six family runs on a
-PR that fires a trigger and up to about ten on a large authentication
-change. These numbers are estimates, not measurements. A security-only
-review skips the general lenses, so a PR with no security surface costs
-less than a default review; one with a large surface can cost more.
+round has security leads — a candidate raised by a family lens or of a
+security kind. A round with none skips `compose`. The design estimate is
+four to six family runs on a PR that fires a trigger and up to about ten
+on a large authentication change. These numbers are estimates, not
+measurements. A security-only review skips the general lenses, so a PR
+with no security surface costs less than a default review; one with a
+large surface can cost more.
 
 ## Without this profile
 

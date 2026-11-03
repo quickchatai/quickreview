@@ -1,7 +1,32 @@
 # A security profile for review and scan — research and proposal
 
-Researched 2026-11-02. Status: **proposal, nothing built**. The decisions it
-needs are listed in the last section.
+Researched 2026-11-02. Status: **historical — implemented**. This is the
+research and the proposal as they stood before the build; it is kept for the
+reasoning and the mined data, not as a description of the code. Where it and
+the code disagree, the code and these pages win:
+
+- [`docs/profiles.md`](../../profiles.md), section *Security review — the
+  `pass-sec-*` family and `[security]`*: the family, its triggers, the
+  threat model, the security facts, validation, posting and requests;
+- [`profiles/security/README.md`](../../../profiles/security/README.md): the
+  security-only profile, its scan and its cost.
+
+What shipped: fourteen `pass-sec-*` lenses (not the seven of §8), content
+triggers in every profile, the security fold as an operator lever, the
+threat model in both homes, deterministic security facts (M22) read through
+read-only git with a line parser and no new dependency, exploit-chain rows
+per strategy, the security-only profile, on-demand security requests, and the
+scan's stage-0 threat-model draft. The questions in §8 and §11.5 were ruled
+as the implementation shows: OAuth `state` belongs to tokens, an automounted
+broad-role token to infra, a migration `GRANT` to iam; the field renames of
+§11.5 item 8 were made; only the chain's `delta` row is required.
+
+Deferred: scan findings carried into PR rounds (§5 item 4); reading
+`SECURITY.md`, root or nested (§5 item 1); stage 2's per-instance file
+ranking and loop-until-dry (§5 item 2); the trigger-rate replay over
+archived PRs (M25, §11.3), so trigger rates and costs are unmeasured;
+terraform or helm rendering for the facts (§11.5 item 3); and the gaps
+listed in §11.4.
 
 The question: what security lenses should QuickReview have, and what must
 change so a security-focused review works plainly better? The review must be
