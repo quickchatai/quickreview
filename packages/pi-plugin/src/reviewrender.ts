@@ -518,6 +518,25 @@ export const SECURITY_FOLD_REASON =
   "Security fold: the validator could not verify this security finding, so it is asked as a question naming the proof gap rather than doubted.";
 
 /**
+ * A folded candidate's posted body: its own text — the evidence the lens
+ * wrote — then the uncertainty and the proof gap the validator named (its
+ * doubt's reason), as a question for the person to verify. A body that
+ * already quotes that gap is left as it is. With no reason recorded the gap
+ * is said to be unnamed, never left out: a folded question always says it is
+ * unverified.
+ */
+export function foldedQuestionBody(body: string, gap: string | null): string {
+  const own = body.trimEnd();
+  const named = gap?.trim() ?? "";
+  if (named !== "" && own.includes(named)) return own;
+  const why =
+    named !== ""
+      ? `: ${/[.!?]$/.test(named) ? named : `${named}.`}`
+      : ", and it named no proof gap.";
+  return `${own}\n\n**Unverified.** The validator could not prove this${why} Can you confirm whether it holds?`;
+}
+
+/**
  * The security fold on the render route (`[security] fold`): a security entry
  * the validator left `doubted` — or `killed`, which the record parser folds
  * onto `doubted` — with the word `unverifiable` is rewritten in place as the
@@ -572,12 +591,16 @@ export function applySecurityFoldToRecord(record: unknown): {
       return e;
     folded.push(findingRecordKey(entry, index));
     const reason = str(entry.reason);
+    const body = str(entry.body);
     return {
       ...entry,
       disposition: "downgraded",
       word: "security-demoted",
       axis: "confidence",
       posted_as: "question",
+      // The body is what posts (readPosted prefers it to the reason), so the
+      // uncertainty and the proof gap go into it, not only into the reason.
+      ...(body !== null ? { body: foldedQuestionBody(body, reason) } : {}),
       reason: reason ? `${SECURITY_FOLD_REASON} ${reason}` : SECURITY_FOLD_REASON,
     };
   });

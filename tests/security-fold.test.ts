@@ -92,6 +92,36 @@ describe("the security fold on the render route", () => {
     expect(parsed.conformance!.security_doubted).toEqual([]);
   });
 
+  // A candidate whose body is a definite allegation: the fold changes its tag,
+  // and the rendered comment — which prints the body, not the reason — must
+  // carry the uncertainty and the validator's proof gap too.
+  // MUTATION: drop the `body: foldedQuestionBody(…)` spread from the
+  // unverifiable branch of applySecurityFoldToRecord — this fails.
+  it("puts the uncertainty and the validator's proof gap into a folded body that alleges", () => {
+    const alleging = entry({
+      ...doubted,
+      body: "Any user reads another org's invoices: the handler never checks org_id.",
+    });
+    const out = renderPostedReview(record([alleging]), { securityFold: true });
+    const posted = out.rendered.comments[0]!.body;
+    expect(posted).toMatch(/^\[question\] Invoices are read without the tenant key/);
+    expect(posted).toContain("the handler never checks org_id");
+    expect(posted).toContain("**Unverified.** The validator could not prove this");
+    expect(posted).toContain("No read settles whether the middleware sets org_id first.");
+    expect(findingsOf(out.record)[0]!.body).toContain("Can you confirm whether it holds?");
+    // with no reason recorded the gap is said to be unnamed, never dropped
+    const bare = applySecurityFoldToRecord(record([{ ...alleging, reason: undefined }]));
+    expect(findingsOf(bare.record)[0]!.body).toContain("it named no proof gap.");
+    // a body that already quotes the gap is left as it is
+    const quoting = entry({
+      ...doubted,
+      body: "Is it reachable? No read settles whether the middleware sets org_id first.",
+    });
+    expect(findingsOf(applySecurityFoldToRecord(record([quoting])).record)[0]!.body).toBe(
+      quoting.body,
+    );
+  });
+
   it("does nothing without the fold: the doubt stays a doubt and the record is untouched", () => {
     const rec = record([entry(doubted)]);
     const out = renderPostedReview(rec, {});

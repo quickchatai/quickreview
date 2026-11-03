@@ -526,7 +526,7 @@ describe("heuristics.toml removed_lines and config_lines", () => {
   it("a removed_lines probe matches a removed line, never the --- header nor an added line", () => {
     const ext = parseProfileHeuristics(
       "h.toml",
-              '[pass-sec-authn-coverage]\nremoved_lines = ["login_required", "views", "render"]\n',
+      '[pass-sec-authn-coverage]\nremoved_lines = ["login_required", "views", "render"]\n',
     );
     const [guard, views, render] = ext.removedLines?.["pass-sec-authn-coverage"] ?? [];
     expect(guard?.test(PATCH)).toBe(true);
