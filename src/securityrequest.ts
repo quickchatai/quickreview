@@ -285,14 +285,7 @@ export function deferUncoveredSecurityRequest(
 ): boolean {
   const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
   if (!req || req.served_at === null || req.requested_at === seen) return false;
-  store.db
-    .prepare("UPDATE pr_review_requests SET served_at = NULL WHERE pr = ? AND kind = ?")
-    .run(pr, SECURITY_REQUEST_KIND);
-  store.logEvent("review_request_deferred", pr, {
-    kind: SECURITY_REQUEST_KIND,
-    reason: "served-during-preparation",
-  });
-  return true;
+  return store.unserveReviewRequest(pr, SECURITY_REQUEST_KIND, "served-during-preparation");
 }
 
 /**

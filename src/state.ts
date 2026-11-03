@@ -3017,6 +3017,20 @@ export class StateStore {
     );
   }
 
+  /** Put a served request back to waiting: it was stamped served into a
+   * queue whose plan was built without it. Only a served request is
+   * un-stamped. True when the row changed. */
+  unserveReviewRequest(pr: number, kind: string, reason: string): boolean {
+    const changed =
+      this.db
+        .prepare(
+          "UPDATE pr_review_requests SET served_at = NULL WHERE pr = ? AND kind = ? AND served_at IS NOT NULL",
+        )
+        .run(pr, kind).changes === 1;
+    if (changed) this.logEvent("review_request_deferred", pr, { kind, reason });
+    return changed;
+  }
+
   /** Withdraw one request (its label came off), or with no `kind` every
    * request on the PR (it closed). True when a row went. */
   clearReviewRequests(pr: number, reason: string, kind?: string): boolean {

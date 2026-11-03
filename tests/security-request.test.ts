@@ -1066,6 +1066,27 @@ describe("a request is reviewed by a round planned with it", () => {
       expect(events(store, 62, "review_request_deferred")).toEqual([]);
     },
   );
+  // MUTATION: drop `AND served_at IS NOT NULL` in StateStore.unserveReviewRequest
+  // — a waiting row reports a change and logs a second deferral, and this fails.
+  it("the store puts a served request back once and leaves a waiting one alone", () => {
+    const store = new StateStore(":memory:");
+    tracked(store, 63);
+    expect(store.unserveReviewRequest(63, "security", "served-during-preparation")).toBe(false);
+    store.recordReviewRequest({
+      pr: 63,
+      kind: "security",
+      source: "comment",
+      requested_by: "maya-dev",
+    });
+    expect(store.unserveReviewRequest(63, "security", "served-during-preparation")).toBe(false);
+    store.markReviewRequestServed(63, "security");
+    expect(store.unserveReviewRequest(63, "security", "served-during-preparation")).toBe(true);
+    expect(store.reviewRequest(63, "security")?.served_at).toBeNull();
+    expect(store.unserveReviewRequest(63, "security", "served-during-preparation")).toBe(false);
+    expect(events(store, 63, "review_request_deferred")).toEqual([
+      expect.objectContaining({ kind: "security", reason: "served-during-preparation" }),
+    ]);
+  });
 });
 
 describe("dispatch reads the route inventory only for a round with a family row", () => {
