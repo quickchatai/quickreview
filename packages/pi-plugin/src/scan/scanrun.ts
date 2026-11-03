@@ -63,7 +63,8 @@
 // a preview of one folder handed out never starts a run over another, and a
 // path that names no folder of the tree at the sha is refused as a usage
 // error before anything is planned or priced. A folder run reconciles the
-// findings like any run: only the files it re-read settle theirs.
+// findings like any run: only the files it re-read settle theirs, and a file
+// gone from the tree settles its findings only inside the folder.
 //
 // Where a case runs: background pi subagents inside the companion (the case
 // runner port), from the scan agent build — `pass-scan`, and the validator
@@ -204,6 +205,7 @@ import {
   SCAN_DEEP_MAX_SUGGESTIONS,
   SCAN_PASS,
   stage1LensKey,
+  underPath,
   type ExclusionReason,
   type PromptContext,
   type ScanCandidate,
@@ -1111,7 +1113,7 @@ export class ScanRunner {
     // Nothing to read, but the findings still owe a reconcile — a reported
     // file deleted since, or a run that ended before its own reconcile: the
     // run reads nothing and only settles them, so emptiness is no blocker.
-    const reconcileOnly = cases.length === 0 ? this.reconcileOwed(tree) : null;
+    const reconcileOnly = cases.length === 0 ? this.reconcileOwed(tree, path) : null;
     if (cases.length === 0 && reconcileOnly === null) {
       blockers.push(
         delta
@@ -1292,8 +1294,10 @@ export class ScanRunner {
   /** Why a run that reads nothing must still run, or null: an open finding
    * on a file the tree no longer holds (outside the pending match question,
    * which waits for the companion's answer), or a last run that ended before
-   * its own reconcile (interrupted, or its reconcile failed). */
-  private reconcileOwed(tree: ScanTree): string | null {
+   * its own reconcile (interrupted, or its reconcile failed). A folder run
+   * owes the gone files inside its folder only: it settles no other
+   * (findings.ts reconcile `scope`). */
+  private reconcileOwed(tree: ScanTree, path: string | null): string | null {
     const last = this.load().file.current;
     // A threat-model run reads no findings, so it owes no reconcile.
     if (
@@ -1310,7 +1314,8 @@ export class ScanRunner {
     );
     const paths = new Set(tree.files.map((f) => f.path));
     const gone = findings.filter(
-      (f) => !settled(f) && !asked.has(f.fingerprint) && !paths.has(f.path),
+      (f) =>
+        !settled(f) && !asked.has(f.fingerprint) && !paths.has(f.path) && underPath(f.path, path),
     ).length;
     return gone > 0 ? `${gone} open finding(s) on file(s) no longer in the tree` : null;
   }
@@ -3088,6 +3093,8 @@ export class ScanRunner {
         tree: new Set(tree.files.map((f) => f.path)),
         blobs: new Map(tree.files.map((f) => [f.path, f.blob])),
         run: { run: run.id, sha: run.sha, at: this.ports.clock().toISOString() },
+        // A folder run settles no gone file outside its folder.
+        scope: run.path ?? null,
       });
     } catch (err) {
       run.problems.push(

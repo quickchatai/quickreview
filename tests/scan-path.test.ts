@@ -242,6 +242,39 @@ describe("a folder scan's stage 1", () => {
     );
     expect((await previewOf(h, ["--delta", "--sha", SHA2])).files).toBe(1);
   });
+
+  // MUTATION: drop `scope` from ScanRun.reconcile's call (or the scope check
+  // in findings.ts reconcile) — the lib run settles, or asks about, the app
+  // finding it never read; or drop `underPath` from reconcileOwed — the lib
+  // preview owes a reconcile-only run. Either way this fails.
+  it("settles no finding whose file moved outside the folder, and owes no run for it", async () => {
+    const { "app/a.py": moved, ...rest } = TREE;
+    const h = harness({
+      trees: { [SHA]: TREE, [SHA2]: { ...rest, "app/z.py": moved!, "lib/b.py": "x\nY\n" } },
+    });
+    await scanWhole(h);
+    const onA = () => h.rig.findings.load().findings.find((f) => f.path === "app/a.py");
+    expect(onA()?.state).toBe("new");
+    // app/a.py moved to app/z.py; a lib run reads lib/b.py alone
+    const lib = await previewOf(h, ["--delta", "--sha", SHA2, "--path", "lib"]);
+    h.ran.length = 0;
+    const s = await h.run(
+      ["start", "--key", lib.key, "--sha", SHA2, "--delta", "--path", "lib", "--foreground"],
+      true,
+    );
+    expect(s.code, s.text).toBe(0);
+    expect(h.ran.flatMap((c) => c.files)).toEqual(["lib/b.py"]);
+    expect(onA()?.state).toBe("new");
+    // lib/b.py's own changed finding may be asked about; app/a.py's is not
+    const asked = h.rig.findings.question().question?.unreported ?? [];
+    expect(asked.map((f) => f.path)).not.toContain("app/a.py");
+    // nothing is left to read in lib, and its gone file is not lib's to settle
+    const again = await h.run(["preview", "--sha", SHA2, "--path", "lib"], true);
+    expect(again.json.preview.reconcile_only ?? null).toBeNull();
+    expect(again.json.preview.blockers.join("\n")).toMatch(/nothing left to read under lib/);
+    // the whole repo still owes it: a run over app/z.py settles it
+    expect((await previewOf(h, ["--sha", SHA2])).files).toBeGreaterThan(0);
+  });
 });
 
 describe("refusals", () => {

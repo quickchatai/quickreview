@@ -95,7 +95,13 @@
 import { createHash } from "node:crypto";
 import type { StateFs } from "./scanports.js";
 import { readings, type LedgerEntry, type Reading } from "./ledger.js";
-import { parseReadingKey, readingCovers, SEVERITIES, type ScanSeverity } from "./scan.js";
+import {
+  parseReadingKey,
+  readingCovers,
+  SEVERITIES,
+  underPath,
+  type ScanSeverity,
+} from "./scan.js";
 import type { Reachability } from "../severity.js";
 import {
   FINDING_STATES,
@@ -946,6 +952,11 @@ export class FindingsStore {
      * says nothing about a tree that has since gone back. */
     blobs?: ReadonlyMap<string, string>;
     run: Sighting;
+    /** A folder run's folder (scan.ts `scanPath`): a finding whose file is
+     * gone from the tree outside it is left open, never settled — the run
+     * read nothing there, so a file moved within that part of the repo
+     * waits for a run whose scope covers it. Absent = the whole repo. */
+    scope?: string | null;
   }): ReconcileResult {
     const { file, error } = this.loadFile();
     if (error !== null) throw new Error(error);
@@ -1008,6 +1019,7 @@ export class FindingsStore {
     for (const f of [...byFp.values()]) {
       if (settled(f) || pending.has(f.fingerprint)) continue;
       if (!args.tree.has(f.path)) {
+        if (!underPath(f.path, args.scope)) continue;
         unreported.push(f.fingerprint);
         // Wherever it moved may have been read by a run the companion never
         // finished: every run of its lenses since its last sighting is one
