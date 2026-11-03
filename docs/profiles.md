@@ -1121,7 +1121,9 @@ config_lines = ['AuthType:\s*NONE']  # probes over ADDED lines of config files
   case-insensitively, and only when the file's patch is available.
 - **`removed_lines`** — wrapped as `^-(?!--).*(?:…)`: a REMOVED line (never
   the `--- a/<file>` header). **`config_lines`** — as `added_lines`, tested
-  against configuration files only. A probe for a `pass-sec-*` lens is a
+  against configuration files only. Both are read by the security family's
+  triggers alone, so they are accepted for a `pass-sec-*` lens and refused
+  for any other. A probe for a `pass-sec-*` lens is a
   strong security trigger: it plans that lens under `[security] triggers =
   "strong"` too.
 - **Extendable lenses only**: `pass-ui`, `pass-contracts`,

@@ -526,9 +526,9 @@ describe("heuristics.toml removed_lines and config_lines", () => {
   it("a removed_lines probe matches a removed line, never the --- header nor an added line", () => {
     const ext = parseProfileHeuristics(
       "h.toml",
-      '[pass-security]\nremoved_lines = ["login_required", "views", "render"]\n',
+              '[pass-sec-authn-coverage]\nremoved_lines = ["login_required", "views", "render"]\n',
     );
-    const [guard, views, render] = ext.removedLines?.["pass-security"] ?? [];
+    const [guard, views, render] = ext.removedLines?.["pass-sec-authn-coverage"] ?? [];
     expect(guard?.test(PATCH)).toBe(true);
     expect(guard?.test("-    @Login_Required")).toBe(true);
     expect(views?.test(PATCH)).toBe(false); // only the `--- a/app/views.py` header names it
@@ -539,11 +539,33 @@ describe("heuristics.toml removed_lines and config_lines", () => {
   it("a config_lines probe matches an added line, case-insensitively", () => {
     const ext = parseProfileHeuristics(
       "h.toml",
-      '[pass-security]\nconfig_lines = ["AuthType:\\\\s*NONE"]\n',
+      '[pass-sec-authn-coverage]\nconfig_lines = ["AuthType:\\\\s*NONE"]\n',
     );
-    const [probe] = ext.configLines?.["pass-security"] ?? [];
+    const [probe] = ext.configLines?.["pass-sec-authn-coverage"] ?? [];
     expect(probe?.test("+  authtype: none")).toBe(true);
     expect(probe?.test("-  AuthType: NONE")).toBe(false);
+  });
+
+  // The compiled-in selection (heuristics.ts selectLenses) reads `paths` and
+  // `added_lines` only; the family's triggers read the other two. A
+  // removed-line or config-line probe on any other lens would be accepted
+  // and never fire, so it is refused at parse.
+  // MUTATION: drop the SECURITY_FAMILY check before the removed_lines branch
+  // in parseProfileHeuristics — this fails.
+  it("removed_lines and config_lines are refused on a lens outside the security family", () => {
+    for (const lens of ["pass-delivery", "pass-security", "pass-ui"])
+      for (const key of ["removed_lines", "config_lines"])
+        expect(
+          () => parseProfileHeuristics("h.toml", `[${lens}]\n${key} = ["@custom_task"]\n`),
+          `${lens} ${key}`,
+        ).toThrow(new RegExp(`\\[${lens}\\] ${key} is read only for a security-family lens`));
+    for (const lens of SECURITY_FAMILY)
+      expect(() =>
+        parseProfileHeuristics(
+          "h.toml",
+          `[${lens}]\nremoved_lines = ["x"]\nconfig_lines = ["y"]\n`,
+        ),
+      ).not.toThrow();
   });
 
   it("an extension with neither keeps its two-key shape, and a bad probe is refused", () => {
@@ -551,7 +573,7 @@ describe("heuristics.toml removed_lines and config_lines", () => {
       "removedLines",
     );
     expect(() =>
-      parseProfileHeuristics("h.toml", '[pass-security]\nremoved_lines = ["("]\n'),
+      parseProfileHeuristics("h.toml", '[pass-sec-access]\nremoved_lines = ["("]\n'),
     ).toThrow(/removed_lines pattern "\(" is not a valid RegExp/);
     expect(() => parseProfileHeuristics("h.toml", '[pass-security]\ndeleted = ["x"]\n')).toThrow(
       /only "paths", "added_lines", "removed_lines" and "config_lines" are allowed/,

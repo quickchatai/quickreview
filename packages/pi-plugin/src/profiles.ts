@@ -874,9 +874,15 @@ export function applyProfileScan<C extends { scan: ScanConfig }>(
 //   [pass-delivery]
 //   added_lines = ['@background_task']   # probes over ADDED patch lines
 //
-//   [pass-security]
+//   [pass-sec-authn-coverage]
 //   removed_lines = ['@login_required']  # probes over REMOVED patch lines
 //   config_lines = ['AuthType:\s*NONE']  # probes over ADDED lines of config files
+//
+// `removed_lines` and `config_lines` are read by the security family's
+// triggers alone (securitytriggers.ts): the compiled-in `selectLenses` reads
+// `paths` and `added_lines` only. So they are accepted for a `pass-sec-*`
+// lens and refused for any other — a probe the selection never reads would
+// be configured and silently never fire.
 //
 // `paths` entries are compiled verbatim (case-sensitive, like the compiled-in
 // path predicates). `added_lines` and `config_lines` entries are wrapped as
@@ -954,6 +960,14 @@ export function parseProfileHeuristics(file: string, raw: string): HeuristicsExt
           new RegExp(src); // validate the source on its own for a clean error
           return new RegExp(`^\\+.*(?:${src})`, "im");
         });
+      } else if (
+        (key === "removed_lines" || key === "config_lines") &&
+        !SECURITY_FAMILY.includes(lens)
+      ) {
+        throw new Error(
+          `profile heuristics ${file}: [${lens}] ${key} is read only for a security-family lens (pass-sec-*) — ` +
+            `${lens}'s selection reads "paths" and "added_lines"`,
+        );
       } else if (key === "removed_lines") {
         // `^-(?!--)`: a REMOVED line, never the `--- a/<file>` header a
         // whole-file patch can carry.
