@@ -106,7 +106,13 @@ const REVIEW_GOLDENS = [
   "review-status-done",
   "review-stop",
 ];
-const SCAN_GOLDENS = ["scan-preview", "scan-status", "scan-findings", "scan-refused"];
+const SCAN_GOLDENS = [
+  "scan-preview",
+  "scan-status",
+  "scan-findings",
+  "scan-refused",
+  "scan-threat-model-propose",
+];
 
 describe("the committed golden outputs", () => {
   it.skipIf(UPDATE).each(REVIEW_GOLDENS)("%s validates against review-result.v1", (name) => {
@@ -497,5 +503,11 @@ describe("qcr scan --json", () => {
       SCAN_SCHEMA_VERSION,
       await run(["start", "--key", "stale", "--foreground"]),
     );
+    // Stage 0's proposal names its own preview shape (threatModelPreview), not
+    // a scan's: no cases, files, lines or depth.
+    // MUTATION: point the top-level `preview` back at `#/$defs/preview` alone — this fails.
+    const stage0 = await run(["threat-model", "propose"]);
+    expectContract(scan, "scan-threat-model-propose", SCAN_SCHEMA_VERSION, stage0);
+    expect((stage0["preview"] as Json)["mode"]).toBe("threat-model");
   }, 60_000);
 });
