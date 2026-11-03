@@ -61,7 +61,11 @@ export interface SecurityTrigger {
   probe: "added" | "removed" | "config" | "path";
   /** Tested against the file's chosen lines with their signs stripped,
    * joined by newlines (so `^`/`$` with the `m` flag are line anchors, and a
-   * pattern may span lines of one file). Never global. */
+   * pattern may span lines of one file). Never global. Linear in its text:
+   * the text is the PR's, unbounded, and a probe runs synchronously in the
+   * dispatch pump, so no pattern may rescan a suffix per candidate start
+   * (see "Linear probes" below; tests/security-triggers.test.ts times every
+   * probe against pathological inputs). */
   re: RegExp;
   /** Narrows the population by filename (and, for `added`/`removed`, widens
    * it past code files — see `probe`). */
@@ -76,6 +80,51 @@ export interface SecurityTrigger {
   why: string;
 }
 
+// ---- linear probes ---------------------------------------------------------
+//
+// A probe reads text the PR's author wrote, of any length, synchronously.
+// A backtracking engine turns two shapes into super-linear work, and the
+// probes below avoid both:
+//
+//   - a scan nested in a scan: "A, then later B, then later C" spelled as
+//     `A[^\n]*?B[^\n]*?C` retries every later B for every A, and every C
+//     for every B. Such a probe is a chain of ATOMIC steps (`atomicSteps`)
+//     from a line start, each finding the first occurrence of its pattern
+//     after the last: the earliest A leaves the most line for B, so the first
+//     occurrence is the right one, and a line is read once per chain;
+//   - whitespace that crosses lines at a line anchor: `^\s*` with the `m`
+//     flag lets every line start rescan the blank lines after it, and an
+//     optional token between two `\s*` splits a run every way. Leading
+//     whitespace is `[ \t]*`, and an optional token carries its own
+//     whitespace (`\s*(?:\[\s*)?`).
+//
+// A scan that must start at each occurrence of a token (a GRANT, a
+// `source_ranges = [`) is bounded instead (`{0,400}`), as the ingress
+// probes always were.
+
+/** One line, and nothing a line anchor stops at (`\r` and the Unicode
+ * separators are line terminators to `^`/`$` too, so a scan that crossed
+ * them would be re-run from every one). */
+const LINE = String.raw`[^\n\r\u2028\u2029]`;
+
+/**
+ * A regex source builder for ATOMIC steps. JavaScript has no atomic group,
+ * but a lookahead that captures, followed by a backreference to that
+ * capture, is one: the lookahead finds its match once, the backreference
+ * consumes exactly it, and a later failure never retries a longer or later
+ * match. `step(re, scan)` finds the first `re` after the current position
+ * across `scan` (a lazy run: `${LINE}*?`, or a bounded `${LINE}{0,400}?`).
+ * Groups are numbered in source order, so one builder serves one regex, and
+ * its steps are placed in the order built.
+ */
+function atomicSteps(): (re: string, scan: string) => string {
+  let group = 0;
+  return (re, scan) => {
+    group++;
+    return `(?=(${scan}(?:${re})))\\${group}`;
+  };
+}
+
 // ---- strong probes ---------------------------------------------------------
 
 /** A guard: an authentication or authorisation check, or a verification,
@@ -84,33 +133,57 @@ export interface SecurityTrigger {
  * passes in as well. `verify=` is a keyword argument, never a variable
  * named verify. The probe never reads an import line (`importLineMask`). */
 const GUARD_RE =
-  /\blogin_required\b|\bpermission_required\b|\bpermission_classes\b|\bauthentication_classes\b|\bIs(?:Authenticated|AdminUser)\w*|@UseGuards\b|@(?:PreAuthorize|PostAuthorize|Secured|RolesAllowed)\b|\[Authorize\b|\b(?:load_and_)?authorize(?:_resource\b|!|\()|\b[rR]equire_?(?:[aA]uth\w*|[lL]ogin|[aA]dmin|[rR]ole|[pP]ermission)s?\b|\b(?:before_action|before_filter|prepend_before_action)\s+:(?:authenticate\w*|authorize\w*|require_login|ensure_\w*(?:auth|admin|login)\w*)|\b(?:auth|jwt|fresh_jwt|token|admin|staff_member)_required\b|\brequires_auth\w*|\b(?:ensure|is)Authenticated\b|\bpassport\.authenticate\b|\b\w*[Aa]uth\w*[Mm]iddleware\b|\.(?:authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority)\(|(?:[(,]\s*verify\s*=|^\s*verify=)(?!=)(?!\s*(?:False|false|0)\b)\s*\S+/;
+  /\blogin_required\b|\bpermission_required\b|\bpermission_classes\b|\bauthentication_classes\b|\bIs(?:Authenticated|AdminUser)\w*|@UseGuards\b|@(?:PreAuthorize|PostAuthorize|Secured|RolesAllowed)\b|\[Authorize\b|\b(?:load_and_)?authorize(?:_resource\b|!|\()|\b[rR]equire_?(?:[aA]uth\w*|[lL]ogin|[aA]dmin|[rR]ole|[pP]ermission)s?\b|\b(?:before_action|before_filter|prepend_before_action)\s+:(?:authenticate\w*|authorize\w*|require_login|ensure_\w*(?:auth|admin|login)\w*)|\b(?:auth|jwt|fresh_jwt|token|admin|staff_member)_required\b|\brequires_auth\w*|\b(?:ensure|is)Authenticated\b|\bpassport\.authenticate\b|\b(?=\w*[Aa]uth)(?=\w*[Mm]iddleware\b)\w+|\.(?:authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority)\(|(?:[(,]\s*verify\s*=|^\s*verify=)(?!=)(?!\s*(?:False|false|0)\b)\s*\S+/;
 
-/** A SQL statement inside a string: the keyword in capitals and the shape
- * after it, so prose that says "select … from" is not SQL. */
-const SQL = String.raw`(?:SELECT\b[^\n]*?\bFROM\b|INSERT\s+INTO\b|UPDATE\s+[\w."\x60\[\]]+\s+SET\b|DELETE\s+FROM\b)`;
+/** A SQL statement inside a string, as atomic steps: the keyword in
+ * capitals and the shape after it, so prose that says "select … from" is
+ * not SQL. */
+const SQL_STATEMENTS: readonly (readonly string[])[] = [
+  [String.raw`SELECT\b`, String.raw`\bFROM\b`],
+  [String.raw`INSERT\s+INTO\b`],
+  [String.raw`UPDATE\s+[\w."\x60\[\]]+\s+SET\b`],
+  [String.raw`DELETE\s+FROM\b`],
+];
 
 /** Raw SQL built by interpolation: an f-string, a JS template, `+`
  * concatenation, `%` formatting, `.format(`, `Sprintf`/`String.format` —
- * never the parameterised `execute("… %s", (x,))`. */
-const SQL_INTERPOLATION_RE = new RegExp(
-  [
-    // Python f-string carrying SQL and a placeholder
-    String.raw`\b[fF][rR]?(["'])(?=[^\n]*?${SQL})(?=[^\n]*?\{)`,
-    // JS/TS template literal carrying SQL and ${…} — untagged: a tag
-    // (sql`…`) is how the query libraries parameterise
-    String.raw`(?<![\w.)\]$])\x60(?=[^\x60\n]*?${SQL})(?=[^\x60\n]*?\$\{)`,
-    // "… SQL …" + value
-    String.raw`${SQL}[^\n]*?["'\x60]\s*\+\s*[\w(]`,
-    // "… SQL … %s" % value — the operator, spaced; never a parameter tuple
-    // and never a LIKE pattern ('%foo%')
-    String.raw`${SQL}[^\n]*?["'](?:\s+%\s*|\s*%\s+)[\w(]`,
-    // "… SQL …".format(…)
-    String.raw`${SQL}[^\n]*?["']\.format\(`,
-    // Go / Java / C# formatting into a statement
-    String.raw`\b(?:Sprintf|String\.format|string\.Format)\(\s*[@$]?["'\x60][^\n]*?${SQL}`,
-  ].join("|"),
-);
+ * never the parameterised `execute("… %s", (x,))`. Every arm is a chain of
+ * atomic steps (`atomicSteps`), so a line that repeats a statement's
+ * keywords is read once per arm, never once per keyword pair. */
+const SQL_INTERPOLATION_RE: RegExp = (() => {
+  const step = atomicSteps();
+  /** Each statement as its steps, one alternative each: its keyword across
+   * `first`, the rest of its shape across `rest`. */
+  const statements = (first: string, rest = first): string =>
+    SQL_STATEMENTS.map((steps) =>
+      steps.map((re, i) => step(re, i === 0 ? first : rest)).join(""),
+    ).join("|");
+  const ONE_LINE = `${LINE}*?`;
+  /** A template literal's line: up to its closing backtick. */
+  const TEMPLATE = String.raw`[^\x60\n\r\u2028\u2029]`;
+  return new RegExp(
+    [
+      // Python f-string carrying SQL and a placeholder: the line's first
+      // f-string opener (a later one sees less of the line), a statement
+      // after it, and a `{`.
+      String.raw`^${step(String.raw`\b[fF][rR]?["']`, ONE_LINE)}(?=${statements(ONE_LINE)})(?=${ONE_LINE}\{)`,
+      // JS/TS template literal carrying SQL and ${…} — untagged: a tag
+      // (sql`…`) is how the query libraries parameterise. The keyword and
+      // the placeholder sit before the literal closes, so each opener reads
+      // its own literal; the statement's FROM may follow in a literal
+      // concatenated on, within a bounded run, so no opener reads the line.
+      String.raw`(?<![\w.)\]$])\x60(?=${statements(`${TEMPLATE}*?`, `${LINE}{0,400}?`)})(?=${TEMPLATE}*?\$\{)`,
+      // A statement, then the value spliced on after it: `"…" + value`;
+      // `"… %s" % value` — the operator, spaced; never a parameter tuple and
+      // never a LIKE pattern ('%foo%'); or `"…".format(…)`.
+      String.raw`^(?:${statements(ONE_LINE)})${ONE_LINE}(?:["'\x60]\s*\+\s*[\w(]|["'](?:\s+%\s*|\s*%\s+)[\w(]|["']\.format\()`,
+      // Go / Java / C# formatting into a statement: the line's first
+      // formatter call, and a statement after it.
+      String.raw`^${step(String.raw`\b(?:Sprintf|String\.format|string\.Format)\(\s*[@$]?["'\x60]`, ONE_LINE)}(?=${statements(ONE_LINE)})`,
+    ].join("|"),
+    "m",
+  );
+})();
 
 /** A shell or an evaluator on a non-literal. A method named `exec`
  * (`pattern.exec(text)`) is not a call into a shell. */
@@ -123,7 +196,7 @@ const SHELL_EVAL_RE =
 const DESERIALIZE_RE =
   /\b(?:c?[pP]ickle|dill|shelve)\.loads?\(|\byaml\.unsafe_load\w*\(|\bjsonpickle\.decode\(|\bObjectInputStream\b|\bMarshal\.load\b|\bBinaryFormatter\b|(?<![\w.])unserialize\(|\bnode-serialize\b/;
 
-const PYYAML_LOAD_RE = /\byaml\.(?:load|load_all)\((?![^)\n]*Safe)/;
+const PYYAML_LOAD_RE = /\byaml\.(?:load|load_all)\((?![^)\n]{0,400}Safe)/;
 const PY_FILE_RE = /\.pyi?$/;
 
 /** An escape hatch out of HTML escaping, in code. */
@@ -153,12 +226,12 @@ const ATTACKER_LEAF = [
   String.raw`event\.(?:pull_request|issue|discussion)\.(?:title|body)\b`,
   String.raw`event\.pull_request\.head\.(?:ref|label|repo\.default_branch)\b`,
   String.raw`event\.(?:comment|review|review_comment|discussion_comment)\.body\b`,
-  String.raw`event\.(?:commits(?:\[[^\]\s]*\]|\.\*)?|head_commit)\.(?:message|author\.(?:name|email))\b`,
-  String.raw`event\.pages(?:\[[^\]\s]*\]|\.\*)?\.page_name\b`,
+  String.raw`event\.(?:commits(?:\[[^\]\s]{0,40}\]|\.\*)?|head_commit)\.(?:message|author\.(?:name|email))\b`,
+  String.raw`event\.pages(?:\[[^\]\s]{0,40}\]|\.\*)?\.page_name\b`,
   String.raw`event\.workflow_run\.(?:head_branch|display_title|head_commit\.(?:message|author\.(?:name|email)))\b`,
 ].join("|");
 const WORKFLOW_INJECTION_RE = new RegExp(
-  String.raw`^(?!\s*-?\s*(?!run:)[\w.-]+:(?:\s|$)).*\$\{\{\s*github\.(?:${ATTACKER_LEAF})`,
+  String.raw`^(?![ \t]*(?:-[ \t]*)?(?!run:)[\w.-]+:(?:\s|$)).*\$\{\{\s*github\.(?:${ATTACKER_LEAF})`,
   "m",
 );
 
@@ -169,7 +242,7 @@ const CREDENTIAL_RE =
 
 /** Ingress open to every address (an egress rule to anywhere is normal). */
 const OPEN_INGRESS_RE =
-  /\bingress\b[\s\S]{0,400}?(?:0\.0\.0\.0\/0|::\/0)|\bSecurityGroupIngress\b[\s\S]{0,400}?CidrIp(?:v6)?:\s*["']?(?:0\.0\.0\.0\/0|::\/0)|\bsource_ranges\s*=\s*\[[^\]]*0\.0\.0\.0\/0|\bloadBalancerSourceRanges\b[\s\S]{0,80}?0\.0\.0\.0\/0/;
+  /\bingress\b[\s\S]{0,400}?(?:0\.0\.0\.0\/0|::\/0)|\bSecurityGroupIngress\b[\s\S]{0,400}?CidrIp(?:v6)?:\s*["']?(?:0\.0\.0\.0\/0|::\/0)|\bsource_ranges\s*=\s*\[[^\]]{0,400}?0\.0\.0\.0\/0|\bloadBalancerSourceRanges\b[\s\S]{0,80}?0\.0\.0\.0\/0/;
 /** An endpoint or a resource published with no authentication. */
 const NO_AUTH_RE =
   /\bAuthType:\s*["']?NONE\b|\bauthori[sz]ation(?:_type)?\s*=\s*["']NONE["']|\bauthorization_type\s*:\s*["']?NONE\b|\b(?:allUsers|allAuthenticatedUsers)\b|--allow-unauthenticated\b/;
@@ -179,19 +252,23 @@ const PRIVILEGED_RE =
 const DOCKERFILE_RE = /(^|\/)(?:Dockerfile|Containerfile)[^/]*$/;
 /** A container that runs as root, said outright — and left that way: a
  * `USER root` the same added text follows with a non-root `USER` is the
- * usual install step, not a root container. */
-const USER_ROOT_RE = /^\s*USER\s+(?:root|0)(?::\S+)?\s*$(?![\s\S]*^\s*USER\s+(?!root\b|0\b)\S+)/m;
+ * usual install step, not a root container. Spelled as "the last `USER`
+ * line that is root or non-root is root": each candidate looks ahead only
+ * to the next such line, so the look-aheads of successive candidates never
+ * overlap. */
+const USER_ROOT_RE =
+  /^[ \t]*USER\s+(?:root|0)(?::\S+)?\s*$(?![\s\S]*?^[ \t]*USER\s+(?:(?!root\b|0\b)\S|(?:root|0)(?::\S+)?\s*$))/m;
 /** A non-root user taken away: the container falls back to root. */
-const USER_NONROOT_RE = /^\s*USER\s+(?!root\b|0\b)\S+/m;
+const USER_NONROOT_RE = /^[ \t]*USER\s+(?!root\b|0\b)\S+/m;
 
 /** A grant wide enough to be the escalation: a wildcard action or
  * principal, role passing, cluster-admin, the RBAC verbs that mint
  * privilege, passwordless sudo. */
 const WILDCARD_GRANT_RE =
-  /["']?Action["']?\s*[:=]\s*\[?\s*["']\*["']|\bactions\s*=\s*\[\s*"\*"\s*\]|\biam:PassRole\b|["']?(?:Principal|AWS)["']?\s*[:=]\s*\{?\s*["']?\*["']|\bkind:\s*ClusterRoleBinding\b[\s\S]{0,600}?\bname:\s*cluster-admin\b|^\s*verbs:\s*\[[^\]\n]*(?:\b(?:escalate|bind|impersonate)\b|["']\*["'])|^\s*-\s*["']?(?:escalate|bind|impersonate)["']?\s*$|\bNOPASSWD\b/m;
+  /["']?Action["']?\s*[:=]\s*(?:\[\s*)?["']\*["']|\bactions\s*=\s*\[\s*"\*"\s*\]|\biam:PassRole\b|["']?(?:Principal|AWS)["']?\s*[:=]\s*(?:\{\s*)?["']?\*["']|\bkind:\s*ClusterRoleBinding\b[\s\S]{0,600}?\bname:\s*cluster-admin\b|^[ \t]*verbs:\s*\[[^\]\n\r\u2028\u2029]*(?:\b(?:escalate|bind|impersonate)\b|["']\*["'])|^[ \t]*-[ \t]*["']?(?:escalate|bind|impersonate)["']?[ \t]*$|\bNOPASSWD\b/m;
 /** A database grant in a migration or SQL file. */
 const SQL_GRANT_FILE_RE = /\.sql$|(^|\/)(?:migrations|db\/migrate|migrate)\//i;
-const SQL_GRANT_RE = /\bGRANT\s+[^;\n]*?\bTO\s+["\w]/i;
+const SQL_GRANT_RE = /\bGRANT\s+[^;\n]{0,400}?\bTO\s+["\w]/i;
 
 /** A role or permission field written from `source` — never the caller's
  * own identity read off the request (`request.user.role`). */
@@ -211,7 +288,7 @@ const NON_PY_CODE_FILE_RE =
 // ---- weak probes -----------------------------------------------------------
 
 const ROUTE_RE =
-  /@(?:app|router|api|bp|blueprint|\w+_router)\.(?:get|post|put|patch|delete|route|api_route)\(|@(?:Get|Post|Put|Patch|Delete|Request)Mapping\b|@(?:Get|Post|Put|Patch|Delete|All)\(|\b(?:app|router|r|server)\.(?:get|post|put|patch|delete|all|route)\(\s*["'`/]|\b(?:re_)?path\(\s*r?["']|\bHandleFunc\(|^\s*(?:get|post|put|patch|delete|match|resources?)\s+["':]/m;
+  /@(?:app|router|api|bp|blueprint|\w+_router)\.(?:get|post|put|patch|delete|route|api_route)\(|@(?:Get|Post|Put|Patch|Delete|Request)Mapping\b|@(?:Get|Post|Put|Patch|Delete|All)\(|\b(?:app|router|r|server)\.(?:get|post|put|patch|delete|all|route)\(\s*["'`/]|\b(?:re_)?path\(\s*r?["']|\bHandleFunc\(|^[ \t]*(?:get|post|put|patch|delete|match|resources?)\s+["':]/m;
 const TENANT_QUERY_RE =
   /^(?=.*\b(?:tenant|org(?:anization)?|account|workspace|owner|team|company|customer|user)_?[iI][dD]\b)(?=.*\b(?:filter|where|find\w*|query|select|objects|get_object_or_404)\b)/m;
 const OUTBOUND_RE =

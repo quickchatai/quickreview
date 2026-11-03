@@ -6,6 +6,7 @@
 // comment-free mention in the wrong file type — does not. The default profile
 // plans on the strong probes alone, so a near-miss that fired would put a
 // risk-tier lens on ordinary PRs.
+import { Worker } from "node:worker_threads";
 import { describe, expect, it } from "vitest";
 import type { PrFileEntry } from "@quickchatai/pi-quickreview/src/githubcore.js";
 import {
@@ -29,6 +30,7 @@ import {
   type SecuritySelection,
 } from "@quickchatai/pi-quickreview/src/securitytriggers.js";
 import { parseThreatModel } from "@quickchatai/pi-quickreview/src/threatmodel.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 type Mode = "off" | "strong" | "all";
 
@@ -875,5 +877,184 @@ describe("the registry and its line helpers", () => {
     };
     expect(removedCode([withHeaders])[0]!.removed).toBe("-old()");
     expect(addedCode([withHeaders])[0]!.added).toBe("+new()");
+  });
+});
+
+// ---- linear probes ---------------------------------------------------------------
+
+/**
+ * Every probe reads text the PR's author wrote, unbounded, synchronously in
+ * the dispatch pump: one super-linear probe lets a long added line stall
+ * every other review. Each probe runs over pathological inputs — a probe's
+ * own keywords repeated with nothing to complete them, blank and
+ * carriage-return runs, an f-string or template of SELECT/FROM pairs that
+ * ends in a quote with no concatenation — at two sizes, in a worker that is
+ * terminated at a deadline (a catastrophic regex never returns, so no
+ * in-thread timer could fail it). A probe fails when the larger input is slow
+ * AND its time grows faster than linearly; a slow machine slows both sizes
+ * alike and fails neither.
+ *
+ * MUTATION: restore the SQL probe's `${SQL}[^\n]*?["'\x60]\s*\+\s*[\w(]`
+ * arm (a SELECT…FROM scan nested in an unanchored scan) — this fails at the
+ * deadline. MUTATION: restore `^\s*verbs:` in WILDCARD_GRANT_RE — this fails
+ * (the structure check; the timing too, on a run of blank lines).
+ * MUTATION: unbound SQL_GRANT_RE's `{0,400}?` back to `*?` — this fails (a
+ * run of GRANTs grows quadratically).
+ */
+describe("every probe is linear in the PR's text", () => {
+  const SMALL = 16_000;
+  const LARGE = 64_000;
+  /** A pathological input: `prefix`, `atom` repeated to the size, `suffix`. */
+  const INPUTS: ReadonlyArray<{ atom: string; prefix?: string; suffix?: string }> = [
+    { atom: "SELECT a FROM b ", prefix: 'x = "', suffix: "'" },
+    { atom: "SELECT FROM " },
+    { atom: "f'SELECT a FROM b " },
+    { atom: "`SELECT a FROM b " },
+    { atom: "SELECT ", prefix: 'Sprintf("' },
+    { atom: "UPDATE x " },
+    { atom: "INSERT INTO t " },
+    { atom: "\n" },
+    { atom: "\r" },
+    { atom: " " },
+    { atom: "\t" },
+    { atom: "\n \n" },
+    { atom: "  -  " },
+    { atom: "${{ github.event.commits[" },
+    { atom: "USER root\n" },
+    { atom: "USER root\r" },
+    { atom: "USER \n" },
+    { atom: "GRANT " },
+    { atom: "source_ranges = [" },
+    { atom: "yaml.load(" },
+    { atom: "verbs: [\r" },
+    { atom: "verbs: [ " },
+    { atom: " ", prefix: "AWS: " },
+    { atom: " ", prefix: "Action: " },
+    { atom: "auth" },
+    { atom: "authMiddlewar" },
+    { atom: "ingress " },
+    { atom: "kind: ClusterRoleBinding " },
+    { atom: "exec(`" },
+    { atom: "findOne( save token " },
+    { atom: "tenant_id where " },
+    { atom: "role = request " },
+    { atom: "-----BEGIN " },
+  ];
+
+  /** Runs in the worker: plain JavaScript over the probes' sources. */
+  const WORKER = `
+    const { parentPort, workerData } = require("node:worker_threads");
+    const { probes, inputs, small, large } = workerData;
+    const build = (input, n) => {
+      const body = input.atom.repeat(Math.ceil(n / input.atom.length)).slice(0, n);
+      return (input.prefix ?? "") + body + (input.suffix ?? "");
+    };
+    const time = (re, text) => {
+      let best = Infinity;
+      for (let i = 0; i < 2; i++) {
+        const t0 = performance.now();
+        re.exec(text);
+        best = Math.min(best, performance.now() - t0);
+      }
+      return best;
+    };
+    for (const p of probes) {
+      const re = new RegExp(p.source, p.flags);
+      inputs.forEach((input, i) => {
+        parentPort.postMessage({ start: p.why, input: i });
+        const s = time(re, build(input, small));
+        const l = time(re, build(input, large));
+        parentPort.postMessage({ done: p.why, input: i, small: s, large: l });
+      });
+    }
+  `;
+
+  it(
+    "no probe's work grows faster than its input, on any pathological input",
+    { timeout: HEAVY_TIMEOUT_MS * 2 },
+    async () => {
+      const probes = SECURITY_TRIGGERS.filter((t) => t.probe !== "path").map((t) => ({
+        why: `${t.lens} (${t.probe}): ${t.why}`,
+        source: t.re.source,
+        flags: t.re.flags,
+      }));
+      const slow: string[] = [];
+      let inFlight = "";
+      let measured = 0;
+      const worker = new Worker(WORKER, {
+        eval: true,
+        workerData: { probes, inputs: INPUTS, small: SMALL, large: LARGE },
+      });
+      const finished = await new Promise<boolean>((resolve, reject) => {
+        const deadline = setTimeout(() => {
+          void worker.terminate();
+          resolve(false);
+        }, HEAVY_TIMEOUT_MS);
+        worker.on(
+          "message",
+          (m: { start?: string; done?: string; input: number; small: number; large: number }) => {
+            const input = JSON.stringify(INPUTS[m.input]);
+            if (m.start !== undefined) {
+              inFlight = `${m.start} on ${input}`;
+              return;
+            }
+            measured++;
+            if (m.large > 40 && m.large > 10 * Math.max(m.small, 0.5))
+              slow.push(
+                `${m.done} on ${input}: ${m.small.toFixed(1)} ms → ${m.large.toFixed(1)} ms`,
+              );
+          },
+        );
+        worker.on("error", (err: Error) => {
+          clearTimeout(deadline);
+          reject(err);
+        });
+        worker.on("exit", () => {
+          clearTimeout(deadline);
+          resolve(true);
+        });
+      });
+      expect(finished, `still running at the deadline: ${inFlight}`).toBe(true);
+      expect(measured).toBe(probes.length * INPUTS.length);
+      expect(slow).toEqual([]);
+    },
+  );
+
+  // A line anchor under the `m` flag matches after every line terminator, so
+  // `^\s*` — whitespace that crosses lines — rescans the blank lines after
+  // each one: leading whitespace at a line anchor is `[ \t]*`.
+  it("no line-anchored probe lets its leading whitespace cross lines", () => {
+    for (const t of SECURITY_TRIGGERS)
+      if (t.re.multiline) expect(t.re.source, t.why).not.toMatch(/\^\\s\*/);
+  });
+
+  // The rewrite keeps every probe's answer: the shapes the linear arms read
+  // in one pass, pinned in both directions.
+  it.each([
+    ["the first SELECT has no FROM after it", 'q = "SELECT 1" + x', false],
+    [
+      "a later statement completes the line",
+      'q = "SELECT 1; SELECT a FROM t WHERE id = " + x',
+      true,
+    ],
+    ["concatenation on the next line", 'q = "SELECT a FROM t WHERE id = "\n  + x', true],
+    ["a template's FROM in a literal concatenated on", "q = `SELECT ${a}` + ` FROM t`", true],
+    ["a template with no statement in it", "q = `id ${a}` + ` FROM t`", false],
+    ["an f-string whose SQL follows a plain string", "log(f'{n}', 'DELETE FROM t')", true],
+  ])("the SQL probe: %s", (_what, line, fires) => {
+    const sql = SECURITY_TRIGGERS.find((t) => t.why === "SQL is built by interpolation")!;
+    expect(sql.re.test(line)).toBe(fires);
+  });
+
+  it("the root-container probe reads the last USER line that is root or not", () => {
+    const fires = (lines: string[]): boolean =>
+      selectSecurityLenses([changed("Dockerfile", lines)], { mode: "strong" }).some(
+        (s) => s.lens === "pass-sec-infra",
+      );
+    expect(fires(["USER root", "RUN make", "USER root:root"])).toBe(true);
+    expect(fires(["USER root", "USER app", "USER root"])).toBe(true);
+    expect(fires(["USER root", "USER root", "USER app"])).toBe(false);
+    // a USER line neither root nor not (two words) is skipped either way
+    expect(fires(["USER root", "USER root extra"])).toBe(true);
   });
 });
