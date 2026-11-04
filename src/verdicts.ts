@@ -1752,8 +1752,8 @@ export class VerdictWatcher {
         kind: "failed",
         detail: `deferred posting for ${round.posting_key} was not delivered${ledger ? ` (${ledger.status} after ${ledger.attempts} attempt(s)${ledger.last_error ? `: ${ledger.last_error}` : ""})` : " (no retry on record)"}`,
         failure: "exhausted",
-        // The marker read above ran and found nothing: the attempted POST
-        // never landed.
+        // The marker read above ran and found nothing: whatever POST was
+        // sent, if any, never landed.
         unposted: reconciled,
       };
     }
