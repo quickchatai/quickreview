@@ -30,13 +30,17 @@ import {
   roundPostingKey,
   type PostingReceipt,
 } from "../src/posting-receipt.js";
-import { ownerRecord } from "../src/posting-journal.js";
+import { ownerRecord, PostingJournal } from "../src/posting-journal.js";
 import {
   IN_FLIGHT_LINE,
+  postOps,
   replyPostMarker,
   validationText,
+  type PostAdapter,
+  type PostOpsDeps,
   type PostOutcome,
 } from "../src/postops.js";
+import type { RequestContext } from "../src/ipc/server.js";
 import {
   SECURITY_PASSES_UNKNOWN_LINE,
   securityPassIncompleteLine,
@@ -923,11 +927,22 @@ describe("post.approval live: the CI pre-check", () => {
     },
   );
 
+  // MUTATION: interpolate the failure's `detail` into ciUnreadable again — this fails.
+  it("a read that failed on a local file never names that file to the session", async () => {
+    rig.gh.failChecks = new Error("EACCES: permission denied, open '/srv/qcr/secrets/app.pem'");
+    const err = await approve().catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "blocked" });
+    expect((err as Error).message).not.toContain("/srv/qcr/secrets");
+    expect((err as Error).message).toMatch(/the daemon's log has the cause/);
+    // The daemon's own log keeps the full cause.
+    expect(rig.logs.join("\n")).toContain("/srv/qcr/secrets/app.pem");
+  });
+
   it("checks read 404: blocked with a next step, the queued approval withdrawn", async () => {
     rig.gh.failChecks = 404;
     await expect(approve()).rejects.toMatchObject({
       code: "blocked",
-      message: expect.stringMatching(/pr-unreadable: .*refused the read.*post-review\.sh/),
+      message: expect.stringMatching(/pr-unreadable: .*GitHub answered 404.*post-review\.sh/),
     });
     expect(rig.gh.posts()).toEqual([]);
     expect(receipt()).toBeUndefined();
@@ -1061,8 +1076,10 @@ describe("post.reply", () => {
 });
 
 describe("post.reply live", () => {
+  let clock: number;
   beforeEach(async () => {
-    rig = await build(false);
+    clock = Date.parse("2026-11-04T10:00:00Z");
+    rig = await buildRig(false, clients, { now: () => new Date(clock) });
     plainCommand("c-answer", { may_post: true, answer: true });
   });
 
@@ -1118,24 +1135,129 @@ describe("post.reply live", () => {
     expect(replyPosts()).toHaveLength(1);
   });
 
-  it("an unanswered POST whose reply is not there says so; the re-run posts it once", async () => {
+  // MUTATION: post again on the first re-run's negative read (skip the
+  // reconciliation of the earlier attempt) — this fails.
+  it("an unanswered POST stays uncertain: a re-run posts only after the quiet window and two negative reads", async () => {
     rig.gh.failReplyPost = 502;
     await expect(reply()).rejects.toMatchObject({
       code: "post_failed",
-      message: /not on GitHub: nothing was posted/,
+      message: /not on GitHub yet: it may still land.*Run the same script again/,
     });
+    rig.gh.failReplyPost = null;
+    // At once: the earlier POST may still be processing — nothing is sent.
+    await expect(reply()).rejects.toMatchObject({
+      code: "post_failed",
+      message: /may still land, so nothing was posted now/,
+    });
+    clock += 121_000; // past the quiet window: the first negative read
+    await expect(reply()).rejects.toMatchObject({ message: /may still land/ });
+    clock += 10_000; // too soon after it
+    await expect(reply()).rejects.toMatchObject({ message: /may still land/ });
+    expect(replyPosts()).toHaveLength(1);
+    clock += 21_000; // the second negative read, apart: it may post now
+    expect((await reply()).status).toBe("posted");
+    expect(replyPosts()).toHaveLength(2);
+    // Settled: the next run finds it and posts nothing.
+    expect((await reply()).status).toBe("already_confirmed");
+    expect(replyPosts()).toHaveLength(2);
+  });
+
+  it("an earlier POST that lands while its re-run waits is found, never posted again", async () => {
+    rig.gh.failReplyPost = 502;
+    await expect(reply()).rejects.toMatchObject({ code: "post_failed" });
+    rig.gh.failReplyPost = null;
+    rig.gh.comments.push({
+      id: 9200,
+      user: { login: BOT },
+      body: `thanks, fixed\n\n${replyPostMarker(PR, 9001, "thanks, fixed")}`,
+      in_reply_to_id: 9001,
+    });
+    expect((await reply()).status).toBe("already_confirmed");
+    clock += 600_000;
+    expect((await reply()).status).toBe("already_confirmed");
+    expect(replyPosts()).toHaveLength(1);
+  });
+
+  // MUTATION: answer "do NOT retry" again on an unreadable pre-check — this fails.
+  it("a reply check that cannot read GitHub posts nothing; the re-run once GitHub reads posts it", async () => {
+    rig.gh.failComments = 500;
+    await expect(reply()).rejects.toMatchObject({
+      code: "post_failed",
+      message: /nothing was posted\. Run the same script again in a few minutes/,
+    });
+    expect(replyPosts()).toEqual([]);
+    rig.gh.failComments = null;
+    expect((await reply()).status).toBe("posted");
+    expect(replyPosts()).toHaveLength(1);
+  });
+
+  it("a refused POST (4xx) is a known outcome: the re-run may post at once", async () => {
+    rig.gh.failReplyPost = 422;
+    await expect(reply()).rejects.toMatchObject({ code: "post_failed" });
     rig.gh.failReplyPost = null;
     expect((await reply()).status).toBe("posted");
     expect(replyPosts()).toHaveLength(2);
   });
+});
 
-  it("a reply check that cannot read GitHub posts nothing and says do NOT retry", async () => {
-    rig.gh.failComments = 500;
-    await expect(reply()).rejects.toMatchObject({
-      code: "post_failed",
-      message: /do NOT retry/,
-    });
-    expect(replyPosts()).toEqual([]);
+// Two requests for one reply, overlapping inside the daemon: called on the
+// handler directly, so both are in flight before either reads GitHub.
+describe("post.reply: one owner per reply", () => {
+  // MUTATION: drop the in-flight map in PostOps.reply — this fails (two POSTs).
+  it("two requests for the same reply at once read and post it once, and both get its answer", async () => {
+    const root = mkdtempSync(join(tmpdir(), "po-reply-"));
+    try {
+      const comments: Array<{ id: number; user: string; body: string }> = [];
+      const posts: string[] = [];
+      let reads = 0;
+      const adapter = {
+        gate: { isDryRun: false },
+        listRecentReviewComments: async () => {
+          reads++;
+          return [...comments];
+        },
+        createReviewCommentReply: async (_pr: number, _id: number, body: string) => {
+          posts.push(body);
+          comments.push({ id: 9300, user: BOT, body });
+          return { executed: true, response: { id: 9300 } };
+        },
+      } as unknown as PostAdapter;
+      const deps: PostOpsDeps = {
+        root,
+        adapter,
+        store: {
+          registerBotComment: () => {},
+          logEvent: () => {},
+          reviewedHead: () => undefined,
+          roundsFor: () => [],
+        } as unknown as PostOpsDeps["store"],
+        journal: new PostingJournal({ dir: join(root, "receipts"), repo: REPO }),
+        cfg: { github: { repo: REPO, trigger_label: "review" } } as unknown as PostOpsDeps["cfg"],
+        botLogins: [BOT],
+        roundOf: () => null,
+        resultDirs: () => [{ dir: root }],
+      };
+      const file = join(root, "reply.md");
+      writeFileSync(file, "thanks, fixed");
+      const ctx: RequestContext = {
+        commandId: "c-answer",
+        role: "shim",
+        pr: PR,
+        generation: 1,
+        mayPost: true,
+        answer: true,
+        lease: "none",
+        requirePr: () => {},
+      };
+      const handle = postOps(deps)["post.reply"].handle;
+      const body = { pr: PR, comment_id: 9001, body_file: file };
+      const [a, b] = await Promise.all([handle(ctx, body), handle(ctx, body)]);
+      expect(posts).toHaveLength(1);
+      expect(reads).toBe(1);
+      expect([(a as PostOutcome).status, (b as PostOutcome).status]).toEqual(["posted", "posted"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

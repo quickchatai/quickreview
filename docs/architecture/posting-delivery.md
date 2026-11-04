@@ -167,6 +167,24 @@ and leave the round alone, without a GitHub read of their own that could race
 the retry. When the retry confirms, the round settles as a normally posted one.
 The round keeps its dispatch slot for the window.
 
+## Thread replies (`post.reply`)
+
+A session's thread reply (`scripts/reply-thread.sh`) carries a hidden marker,
+`<!-- qcr:reply=<pr>:<comment>:<sha8 of body> -->`, and is never posted
+blind. `src/postops.ts` reads the PR's review comments for that marker before
+every POST; a reply found there answers "already posted". Two requests for
+the same reply at once share one owner in the daemon: the second joins the
+first and gets its answer, so the read and the POST are never run twice.
+
+A POST GitHub did not answer (no response, a 5xx, a rate limit) is uncertain,
+not failed: it may still land. The daemon records the attempt beside the PR's
+receipts (`pr-<n>-reply-<hash>.json`) before the POST, and a later run of the
+same reply posts again only after the quiet window (two minutes) and two
+reads, at least 30 seconds apart, that both find it absent, as the review
+outbox does. A read that fails before any POST sends nothing and says so: the
+session runs the script again later, and the marker read comes first. A
+refused POST (a 4xx) is a known outcome and clears the record.
+
 ## Lifecycle and visibility
 
 `src/verdicts.ts` leaves a pending outbox's round and verdict waiting beyond

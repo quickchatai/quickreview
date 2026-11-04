@@ -43,6 +43,13 @@ import type { StandingMarkSnapshot } from "@quickchatai/pi-quickreview/src/stand
 
 export type ReviewEvent = PostingReceipt["intended_event"];
 
+/** A reply POST whose outcome is not yet known: when it was sent, and when
+ * a read first found it absent. */
+export interface ReplyAttempt {
+  attempted_at: string;
+  negative_at?: string;
+}
+
 /** What `check` says about a round's receipt slot. */
 export type ReceiptSlot = "none" | "mismatch" | "invalid" | PostingReceiptStatus | "skipped";
 
@@ -559,6 +566,43 @@ export class PostingJournal {
       delete job.attempted_at;
       this.write(this.jobPath(pr, round), job);
     }
+  }
+
+  // ---- reply attempts ------------------------------------------------------
+
+  /** The record of one reply's last POST, keyed by the reply's marker,
+   * beside the PR's receipts (`pr-<n>-reply-<hash>.json`). */
+  private replyAttemptPath(pr: number, marker: string): string {
+    const id = createHash("sha256").update(marker).digest("hex").slice(0, 16);
+    return join(this.o.dir, `pr-${pr}-reply-${id}.json`);
+  }
+
+  /** The last POST of this reply that has not been settled (confirmed,
+   * refused, or found on GitHub), if any. A record that cannot be read is a
+   * refusal, never "no attempt". */
+  readReplyAttempt(pr: number, marker: string): ReplyAttempt | undefined {
+    const value = readObject(this.replyAttemptPath(pr, marker), "reply attempt");
+    if (!value) return undefined;
+    if (
+      value.marker !== marker ||
+      typeof value.attempted_at !== "string" ||
+      !Number.isFinite(Date.parse(value.attempted_at)) ||
+      (value.negative_at !== undefined &&
+        (typeof value.negative_at !== "string" || !Number.isFinite(Date.parse(value.negative_at))))
+    )
+      throw new JournalError("existing reply attempt invalid");
+    return {
+      attempted_at: value.attempted_at,
+      ...(typeof value.negative_at === "string" ? { negative_at: value.negative_at } : {}),
+    };
+  }
+
+  noteReplyAttempt(pr: number, marker: string, attempt: ReplyAttempt): void {
+    this.write(this.replyAttemptPath(pr, marker), { version: 1, marker, ...attempt });
+  }
+
+  clearReplyAttempt(pr: number, marker: string): void {
+    rmSync(this.replyAttemptPath(pr, marker), { force: true });
   }
 
   /** A dry-run receipt left by an earlier dry-run is set aside when the install
