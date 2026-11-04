@@ -50,11 +50,7 @@ import { renderRoundPrompt, roundVars } from "@quickchatai/pi-quickreview/src/te
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { SessionHooks, VerdictFile } from "@quickchatai/pi-quickreview/src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
-import {
-  ESCALATION_FACTS_RETRY_MS,
-  VerdictWatcher,
-  type VerdictAdapter,
-} from "../src/verdicts.js";
+import { ESCALATION_FACTS_RETRY_MS, VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const repoRoot = resolve(process.cwd());
@@ -495,9 +491,9 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     expect(reviews).toBeGreaterThan(0);
     expect(
       (
-        s.db
-          .prepare("SELECT completed_at FROM round_work WHERE kind = 'escalations'")
-          .get() as { completed_at: string | null }
+        s.db.prepare("SELECT completed_at FROM round_work WHERE kind = 'escalations'").get() as {
+          completed_at: string | null;
+        }
       ).completed_at,
     ).not.toBeNull();
     s.close();

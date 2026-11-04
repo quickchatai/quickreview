@@ -347,7 +347,7 @@ it("drain preserves already accepted work and the existing incoming-drop contrac
 it("a breaker drain holds deliveries in the inbox and fulfils them after the lift", async () => {
   const s = store();
   const raw = Buffer.from(JSON.stringify(payload()));
-  const callback = vi.fn(async () => {});
+  const callback = vi.fn(async (..._args: unknown[]) => {});
   const deps: WebhookDeps = { cfg, store: s, secret: "test", onInterpretation: callback };
   s.engageDrain(
     { issuer: "operator", expires_at: new Date(Date.now() + 60 * 60_000).toISOString() },
