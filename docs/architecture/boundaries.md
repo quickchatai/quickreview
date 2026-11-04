@@ -99,8 +99,9 @@ mutations exactly once. `x-ratelimit-reset` counts as a wait only when
 `x-ratelimit-remaining` is `0`, since GitHub sends it on every answer. One
 classifier, `classifyGitHubFailure` (`packages/pi-plugin/src/githubcore.ts`),
 sorts every thrown GitHub call into `transient`, `rate_limited`, `rejected`
-or `unknown`; the retry here and every caller's schedule read that one
-answer. The App's token minting (`TokenMinter`) retries the same way and
+or `unknown`, from GitHub's answer and never from the request line (a path
+may say anything); the retry here, the posting outbox and every caller's
+schedule read that one answer. The App's token minting (`TokenMinter`) retries the same way and
 throws the same `GitHubRequestError`.
 
 ### The closed set of kinds
