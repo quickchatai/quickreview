@@ -1,6 +1,7 @@
 import {
   deferRoundWork,
   enqueueRoundWork,
+  laterRoundWork,
   pendingRoundWork,
   finishRoundWork,
   type RoundWork,
@@ -60,6 +61,7 @@ import {
   resumeEscalations,
   type EscalationDeps,
   evaluateEscalationRules,
+  normalizeScope,
   normalizeSessionEscalations,
   type EscalationFacts,
 } from "./escalation.js";
@@ -2848,7 +2850,15 @@ export class VerdictWatcher {
         const parsed = validateVerdict(JSON.parse(work.payload));
         if (!parsed.ok || !parsed.verdict || parsed.verdict.outcome === "head_moved")
           throw new Error(`unreadable escalation intent ${work.key}`);
-        if ((await this.deliverEscalations(parsed.verdict)) === "deferred") {
+        if (laterRoundWork(this.deps.store, "escalations", work.pr, work.round_no)) {
+          // A later round has its own evaluation, on its own facts: this
+          // one is obsolete, and settled before it can deliver anything (a
+          // deferred one would otherwise notify a person about candidates
+          // the later round no longer raised).
+          this.deps.store.logEvent("escalation_evaluation_superseded", work.pr, {
+            round_no: work.round_no,
+          });
+        } else if ((await this.deliverEscalations(parsed.verdict)) === "deferred") {
           // A later round of the PR evaluates its own facts: this one is
           // answered by it. Otherwise the evaluation is owed again later.
           const later = this.deps.store
@@ -2974,10 +2984,16 @@ export class VerdictWatcher {
     const failingChecks = await this.escalationFailingChecks(v.pr, v.head_sha, causes);
     const sessionCandidates = cfg.session_judgement ? (v.escalations ?? []) : [];
     const needed = {
-      // Every rule and every session candidate is validated against the
-      // changed paths (the path-in-diff check), so they are needed whenever
-      // anything could be delivered.
-      changed_paths: cfg.rules.length > 0 || sessionCandidates.length > 0,
+      // Only what can carry a path needs the changed paths: a path rule's
+      // predicate, a severity rule (its finding's anchor is checked against
+      // them), and a session candidate whose scope names a path (the
+      // path-in-diff check). A label or failing-check rule, and a pathless
+      // candidate, decide and deliver without them.
+      changed_paths:
+        cfg.rules.some((r) => r.paths.length > 0 || r.min_severity !== "") ||
+        sessionCandidates.some(
+          (c) => normalizeScope((c as { scope?: unknown } | null)?.scope)?.path !== undefined,
+        ),
       labels: cfg.rules.some((r) => r.labels.length > 0),
       failing_checks: cfg.rules.some((r) => r.failing_checks.length > 0),
     };
@@ -3035,10 +3051,11 @@ export class VerdictWatcher {
       verdict: v.verdict,
       head_sha: v.head_sha,
       round_no: v.round_no,
-      // The path-in-diff check's input. An unreadable listing never gets
-      // here (the evaluation is deferred above); a daemon wired with no
-      // listing route at all passes `[]`, which refuses every path-bearing
-      // scope rather than waving it through.
+      // The path-in-diff check's input. An unreadable listing gets here
+      // only when nothing to deliver carries a path (the evaluation is
+      // deferred above otherwise), and a daemon wired with no listing route
+      // at all passes `[]`: either refuses every path-bearing scope rather
+      // than waving it through.
       changed_paths: facts.changed_paths,
       // Whether the round's own review actually reached GitHub, from the
       // posting receipt: the note must not claim a posting no confirmed

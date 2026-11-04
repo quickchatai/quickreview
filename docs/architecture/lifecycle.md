@@ -768,9 +768,14 @@ The facts a rule reads (the changed paths, the labels, the failing checks)
 come off GitHub reads, and a read that fails is **unknown**, never an empty
 list that would silently keep every rule keyed on it from firing. An unknown
 fact a configured rule or a session candidate needs defers the whole
-evaluation (`escalation_facts_unavailable`, with the cause): the round's owed
-escalation work is retried five minutes later, and a later round of the PR
-answers it instead when one exists (`escalation_evaluation_superseded`). A
+evaluation (`escalation_facts_unavailable`, with the cause). The changed paths
+are needed only by what can carry a path: a path or severity rule, or a
+session candidate whose scope names a file; a label or failing-check rule and
+a pathless candidate decide without them. The round's owed escalation work is
+retried five minutes later, and a later round of the PR answers it instead
+when one exists (`escalation_evaluation_superseded`); a round's work is also
+settled, before it can deliver anything, once a later round has an evaluation
+of its own. A
 read GitHub refuses outright (a 4xx the shared classifier calls `rejected`,
 such as 404 or 403) would be refused again on every retry, so it is logged once
 (`escalation_fact_rejected`) and read as a known absence, and the evaluation
