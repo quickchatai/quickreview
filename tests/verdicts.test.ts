@@ -1441,7 +1441,7 @@ describe("confirmed round posting receipts", () => {
     expect(existsSync(join(dir, name))).toBe(true);
   });
 
-  // MUTATION: drop the postingRequeueCount term from selfRequeue's spend — a
+  // MUTATION: drop the persistentRequeueCount term from selfRequeue's spend — a
   // fanout renews the budget and a review that never posts is redone for
   // ever; this fails.
   it("a replacement's fanout does not renew the posting requeue budget", async () => {

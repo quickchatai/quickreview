@@ -436,8 +436,8 @@ Three endings are not ordinary verdicts:
   `posting_unconfirmed`) rather than held for an operator. The receipt grace
   runs from the newest delivery snapshot queued for the key, a withdrawn one
   included, not from the round's dispatch. These requeues spend a budget of
-  their own as well (`postingRequeueCount`): a replacement's fanout does not
-  renew it — starting passes says nothing of whether posting recovered — and
+  their own as well (`persistentRequeueCount`; a required pass's failure spends
+  another the same way): a replacement's fanout does not renew it — starting passes says nothing of whether posting recovered — and
   only a verdict applied at the head resets it. A round with posting linkage
   on record (a marker reconcile found its review) is never redone this way.
 

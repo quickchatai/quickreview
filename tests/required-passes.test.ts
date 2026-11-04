@@ -1005,6 +1005,25 @@ describe("the verdict path requeues instead of applying", () => {
     expect(status(id)).not.toBe("done");
   }
 
+  // MUTATION: drop `|| mode === "required_pass_missing"` from selfRequeue's
+  // persistent spend — every replacement's fanout renews the budget and a
+  // sustained outage redoes full reviews for ever; this fails.
+  it("a replacement's fanout does not renew the required-pass requeue budget", async () => {
+    const w = watcher();
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++) {
+      round(708, withPr(708, missing));
+      await w.sweep();
+      // The replacement started its passes: the general budget's generation resets.
+      store.logEvent("round_fanout_started", 708, { head_sha: "abc123" });
+    }
+    expect(store.selfRequeueCount(708, "abc123")).toBe(0);
+    const last = round(708, withPr(708, missing));
+    await w.sweep();
+    expect(events("round_self_requeued")).toHaveLength(DEFAULT_MAX_SELF_REQUEUES);
+    expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
+    expect(status(last)).not.toBe("done");
+  });
+
   // MUTATION: pass `undefined` as the cause on the required-pass exhaustion
   // in verdicts.ts — a provider outage that cost a lens waits for `u`; this fails.
   it("past the cap, a required pass the provider failed (rate limit) waits on the automatic retry", async () => {

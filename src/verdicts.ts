@@ -4586,11 +4586,14 @@ export class VerdictWatcher {
     const row = store.getPr(round.pr);
     const head = row?.head_sha ?? "";
     const cap = this.selfRequeueCap();
-    // A posting that never went out spends its own budget too, one a
-    // replacement's fanout does not renew (`postingRequeueCount`).
+    // A posting that never went out, or a required pass that failed, spends
+    // a budget of its own too, one a replacement's fanout does not renew
+    // (`persistentRequeueCount`).
     const spent = Math.max(
       store.selfRequeueCount(round.pr, head),
-      mode === "posting_unconfirmed" ? store.postingRequeueCount(round.pr, head) : 0,
+      mode === "posting_unconfirmed" || mode === "required_pass_missing"
+        ? store.persistentRequeueCount(round.pr, head, mode)
+        : 0,
     );
     const attempt = spent + 1;
     const exhausted = spent >= cap;

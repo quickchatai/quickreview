@@ -7666,15 +7666,21 @@ export class StateStore {
   }
 
   /**
-   * Requeues of finished rounds whose review never reached GitHub
-   * (`round_self_requeued` with mode `posting_unconfirmed`) at a head, since
-   * the last verdict applied there. A planned fanout does NOT start a fresh
-   * count, as it does for `selfRequeueSpend`: a replacement that runs its
-   * passes and again posts nothing has not shown that posting recovered, and
-   * a budget renewed by every fanout would redo full reviews for ever instead
-   * of reaching the FAILED_LOUD hold and its slower automatic retry ladder.
+   * Requeues of one mode that only a finished round's evidence can raise
+   * (`round_self_requeued` with mode `posting_unconfirmed`: its review never
+   * reached GitHub; or `required_pass_missing`: a required pass failed) at a
+   * head, since the last verdict applied there. A planned fanout does NOT
+   * start a fresh count, as it does for `selfRequeueSpend`: a replacement
+   * that starts its passes has not shown that posting, or the provider that
+   * failed the pass, recovered, and a budget renewed by every fanout would
+   * redo full reviews for ever instead of reaching the FAILED_LOUD hold and
+   * its slower automatic retry ladder.
    */
-  postingRequeueCount(pr: number, headSha: string): number {
+  persistentRequeueCount(
+    pr: number,
+    headSha: string,
+    mode: "posting_unconfirmed" | "required_pass_missing",
+  ): number {
     const rows = this.db
       .prepare(
         `SELECT kind, payload FROM events
@@ -7686,7 +7692,7 @@ export class StateStore {
     for (const row of rows) {
       if (readStringField(row.payload, "head_sha") !== headSha) continue;
       if (row.kind === "verdict_applied") count = 0;
-      else if (readStringField(row.payload, "mode") === "posting_unconfirmed") count += 1;
+      else if (readStringField(row.payload, "mode") === mode) count += 1;
     }
     return count;
   }
