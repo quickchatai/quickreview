@@ -1526,7 +1526,9 @@ export class VerdictWatcher {
      *     retry is over without a confirmed review — its window spent, a
      *     guard refused it, or its handoff is unreadable. A POST may have
      *     been sent (by the session, or by the retry after a deferral made
-     *     before any attempt), so never a requeue: every path fails it loud. */
+     *     before any attempt), so never a requeue: every path fails it loud.
+     *     An ordinary delivery whose window ran out (its outbox job failed
+     *     with `exhausted_at`) is the same failure. */
     failure?: "unconfirmed" | "ambiguous" | "contradicted" | "exhausted";
     /** On an `unconfirmed` or `exhausted` failure: the evidence says nothing
      * reached GitHub. `unconfirmed`: no posting receipt of any status exists
