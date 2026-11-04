@@ -701,6 +701,10 @@ function prepareAcceptedWebhook(deps: WebhookDeps, guid: string): Interpretation
 
 const webhookPumps = new WeakMap<StateStore, Promise<void>>();
 
+/** Failed fulfilment attempts of one accepted delivery that raise the one
+ * `webhook_delivery_failing` anomaly. */
+export const WEBHOOK_FAILING_AFTER = 5;
+
 /** Fulfill accepted work independently of another delivery or process lifetime. */
 export function resumeWebhookDeliveries(
   deps: WebhookDeps,
@@ -759,11 +763,21 @@ export function resumeWebhookDeliveries(
         if (stopping() || deps.store.drainState().draining) break;
         deps.store.completeWebhookDelivery(row.guid);
       } catch (error) {
-        deps.store.deferWebhookDelivery(row.guid, String(error), clock());
+        const attempts = deps.store.deferWebhookDelivery(row.guid, String(error), clock());
         deps.log?.("webhook: accepted work remains pending", {
           guid: row.guid,
           error: String(error),
+          attempts,
         });
+        // Retried forever on the capped backoff, and said once: a delivery
+        // that keeps failing is owed work nobody would otherwise see.
+        if (attempts === WEBHOOK_FAILING_AFTER)
+          deps.store.logAnomaly(
+            "webhook_delivery_failing",
+            null,
+            null,
+            `accepted webhook ${row.guid} (${row.event}${row.action ? `.${row.action}` : ""}) failed ${attempts} times; it stays in the inbox and is retried on a backoff. Last error: ${String(error).slice(0, 300)}`,
+          );
       }
     }
   });

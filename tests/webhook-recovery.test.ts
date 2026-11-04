@@ -3,7 +3,12 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { StateStore, WORKER_FAILURES_DRAIN_REASON } from "../src/state.js";
+import {
+  StateStore,
+  WEBHOOK_RETRY_MAX_MS,
+  WORKER_FAILURES_DRAIN_REASON,
+  webhookRetryDelayMs,
+} from "../src/state.js";
 import { parseConfig } from "../src/config.js";
 import {
   handleDelivery,
@@ -11,6 +16,7 @@ import {
   createWebhookServer,
   applyInterpretation,
   resumeWebhookDeliveries,
+  WEBHOOK_FAILING_AFTER,
   type WebhookDeps,
   type Interpretation,
 } from "../src/webhook.js";
@@ -363,6 +369,53 @@ it("a breaker drain holds deliveries in the inbox and fulfils them after the lif
   expect(callback).toHaveBeenCalledOnce();
   expect(callback.mock.calls[0]![0]).toMatchObject({ kind: "trigger", pr: 4242 });
   expect(s.webhookInbox("during-breaker")).toBeUndefined();
+});
+
+// A delivery whose fulfilment keeps failing was retried every 30 s forever,
+// silently. It now backs off (30 s doubling to 30 min), counts its attempts,
+// and raises one anomaly at the fifth failure.
+// MUTATION: return to a fixed `now + 30_000` in deferWebhookDelivery — the
+// third attempt is due at 30 s, not 60 s, and the attempt count stays 2.
+it("a failing delivery backs off on its attempts and raises one anomaly", async () => {
+  let clock = Date.parse("2026-10-18T12:00:00Z");
+  const s = new StateStore(":memory:", () => new Date(clock));
+  stores.push(s);
+  const f = accepted(s, "keeps-failing");
+  const callback = vi.fn(async () => {
+    throw new Error("callback 502");
+  });
+  f.deps.onInterpretation = callback;
+  f.deps.now = () => clock;
+  const run = async () => resumeWebhookDeliveries(f.deps);
+
+  await run();
+  expect(s.webhookInbox("keeps-failing")).toMatchObject({
+    attempts: 1,
+    next_attempt_at: new Date(clock + 30_000).toISOString(),
+  });
+  clock += 29_000;
+  await run();
+  expect(callback).toHaveBeenCalledTimes(1); // not due yet
+  clock += 1_000;
+  await run();
+  expect(s.webhookInbox("keeps-failing")).toMatchObject({
+    attempts: 2,
+    next_attempt_at: new Date(clock + 60_000).toISOString(),
+  });
+  const failing = () => s.anomalies().filter((a) => a.kind === "webhook_delivery_failing");
+  for (let i = 0; i < 6; i++) {
+    clock += WEBHOOK_RETRY_MAX_MS;
+    await run();
+    if (s.webhookInbox("keeps-failing")!.attempts < WEBHOOK_FAILING_AFTER)
+      expect(failing()).toHaveLength(0);
+  }
+  const row = s.webhookInbox("keeps-failing")!;
+  expect(row.attempts).toBe(8);
+  // The wait is capped.
+  expect(Date.parse(row.next_attempt_at!) - clock).toBe(WEBHOOK_RETRY_MAX_MS);
+  expect(failing()).toHaveLength(1);
+  expect(webhookRetryDelayMs(1)).toBe(30_000);
+  expect(webhookRetryDelayMs(20)).toBe(WEBHOOK_RETRY_MAX_MS);
 });
 
 it("checks the configured repository again before replaying accepted payload", async () => {
