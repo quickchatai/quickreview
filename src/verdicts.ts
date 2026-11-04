@@ -1706,8 +1706,7 @@ export class VerdictWatcher {
       job.status === "failed" &&
       job.exhausted_at
     ) {
-      const attempted =
-        job.attempts > 0 || (receiptIdentityOk && receipt?.status === "prepared");
+      const attempted = job.attempts > 0 || (receiptIdentityOk && receipt?.status === "prepared");
       return {
         kind: "failed",
         detail: `review posting for ${round.posting_key} was not delivered (${job.last_error ?? "delivery window exhausted"})${

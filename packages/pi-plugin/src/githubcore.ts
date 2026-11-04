@@ -175,7 +175,10 @@ export function classifyGitHubFailure(err: unknown): GitHubFailure {
     // are ours, and a repository or branch name may say anything.
     const answer = field(err, "detail");
     return {
-      kind: kindOfStatus(s, typeof answer === "string" ? answer : withoutRequestLine(messageOf(err))),
+      kind: kindOfStatus(
+        s,
+        typeof answer === "string" ? answer : withoutRequestLine(messageOf(err)),
+      ),
       status: s,
       ...(typeof retryAfterMs === "number" ? { retryAfterMs } : {}),
       detail,
