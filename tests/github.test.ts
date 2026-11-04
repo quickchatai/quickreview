@@ -6,11 +6,21 @@ import { fileURLToPath } from "node:url";
 import { parseConfig, type Config } from "../src/config.js";
 import { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "../src/github.js";
+import {
+  GitHubRequestError,
+  IncompleteReadError,
+  READ_RETRY_AFTER_CAP_MS,
+} from "@quickchatai/pi-quickreview/src/githubcore.js";
+import type { MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import { ThreadResolutionRefusal } from "../src/thread-resolution-refusal.js";
 import type { FetchFn, TokenMinter } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cfg: Config = parseConfig(readFileSync(join(root, "tests/fixtures/config.toml"), "utf8"));
+
+/** The adapter's clocks made instant: no read retry or checks restart
+ * sleeps for real in this file. */
+const INSTANT = { sleep: async () => {}, random: () => 0.5, checkRestartMs: 0 };
 
 /** A TokenMinter stand-in — no PEM, no network, no cache logic under test. */
 const minter = {
@@ -62,7 +72,7 @@ function build(
   let adapter!: GitHubAdapter;
   const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent));
   const adapterCfg: Config = { ...cfg, github: { ...cfg.github, ...githubOverride } };
-  adapter = new GitHubAdapter(adapterCfg, minter, gate, rec.fetchFn, "https://api.github.com");
+  adapter = new GitHubAdapter(adapterCfg, minter, gate, rec.fetchFn, "https://api.github.com", INSTANT);
   return { adapter, calls: rec.calls };
 }
 
@@ -88,7 +98,7 @@ function buildStatusSequence(
   }) as unknown as FetchFn;
   let adapter!: GitHubAdapter;
   const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent));
-  adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com");
+  adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com", INSTANT);
   return { adapter, calls };
 }
 
@@ -729,7 +739,7 @@ describe("the App's own webhook config (app-self-config class)", () => {
       undefined,
       () => {},
     );
-    adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com");
+    adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com", INSTANT);
     return { adapter, calls };
   }
 
@@ -1145,7 +1155,7 @@ describe("GraphQL rides REST's transport rules", () => {
     } as unknown as TokenMinter;
     let adapter!: GitHubAdapter;
     const gate = new MutationGate(true, dryrunDir, (intent) => adapter.executeMutation(intent));
-    adapter = new GitHubAdapter(cfg, counting, gate, fetchFn, "https://api.github.com");
+    adapter = new GitHubAdapter(cfg, counting, gate, fetchFn, "https://api.github.com", INSTANT);
     return { adapter, signals, invalidated: () => invalidated };
   }
   const history = {
@@ -1290,7 +1300,7 @@ describe("GitHubAdapter in person mode (auth = user)", () => {
     let adapter!: GitHubAdapter;
     const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent));
     const personCfg: Config = { ...cfg, github: { ...cfg.github, ...PERSON } };
-    adapter = new GitHubAdapter(personCfg, userToken, gate, rec.fetchFn, "https://api.github.com");
+    adapter = new GitHubAdapter(personCfg, userToken, gate, rec.fetchFn, "https://api.github.com", INSTANT);
     return { adapter, calls: rec.calls };
   }
 
@@ -1319,6 +1329,7 @@ describe("GitHubAdapter in person mode (auth = user)", () => {
       gate,
       fetchFn,
       "https://api.github.com",
+      INSTANT,
     );
     await adapter.searchLabelTriggered();
     expect(seen).toEqual(["Bearer ghu_person"]);
@@ -1391,5 +1402,257 @@ describe("GitHubAdapter in person mode (auth = user)", () => {
     await expect(human.adapter.resolveOwnReviewThread(3, 555)).rejects.toThrow(
       ThreadResolutionRefusal,
     );
+  });
+});
+
+// The read edge: a GET (and a GraphQL query) is retried on a short bounded
+// schedule when GitHub's failure is transient or rate-limited; a write is
+// sent exactly once, whatever happens.
+describe("bounded read retry", () => {
+  interface Scripted {
+    status: number;
+    payload?: unknown;
+    headers?: Record<string, string>;
+    /** The body read itself fails (a deadline that fired mid-stream). */
+    bodyAborts?: boolean;
+    /** fetch rejects instead of answering. */
+    throws?: unknown;
+  }
+
+  function scripted(responses: Scripted[], dryRun = true) {
+    const calls: Array<{ url: string; method: string }> = [];
+    const sleeps: number[] = [];
+    let index = 0;
+    const fetchFn = (async (url: string | URL, init: RequestInit = {}) => {
+      calls.push({ url: String(url), method: init.method ?? "GET" });
+      const r = responses[Math.min(index++, responses.length - 1)]!;
+      if (r.throws !== undefined) throw r.throws;
+      return {
+        ok: r.status >= 200 && r.status < 300,
+        status: r.status,
+        headers: new Headers(r.headers ?? {}),
+        json: async () => r.payload,
+        text: async () => {
+          if (r.bodyAborts)
+            throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+          return JSON.stringify(r.payload ?? {});
+        },
+      } as unknown as Response;
+    }) as unknown as FetchFn;
+    let adapter!: GitHubAdapter;
+    const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent));
+    adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com", {
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      random: () => 0.5,
+      checkRestartMs: 2000,
+    });
+    return { adapter, calls, sleeps };
+  }
+
+  const PR = {
+    number: 12,
+    title: "T",
+    user: { login: "alice" },
+    head: { sha: "abc" },
+    base: { ref: "master" },
+    updated_at: "2026-08-13T10:00:00Z",
+    state: "open",
+    draft: false,
+    merged: false,
+    labels: [],
+  };
+
+  it("a GET that meets a 502 is tried again, about 1 s later, and answers", async () => {
+    const { adapter, calls, sleeps } = scripted([{ status: 502 }, { status: 200, payload: PR }]);
+    expect((await adapter.getPr(12)).head_sha).toBe("abc");
+    expect(calls).toHaveLength(2);
+    expect(sleeps).toEqual([1000]);
+  });
+
+  it("a dropped connection is retried like a 5xx", async () => {
+    const { adapter, calls } = scripted([
+      { status: 0, throws: new TypeError("fetch failed", { cause: { code: "ECONNRESET" } }) },
+      { status: 200, payload: PR },
+    ]);
+    expect((await adapter.getPr(12)).number).toBe(12);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("three attempts in all, about 1 s then 3 s apart, then the last error", async () => {
+    const { adapter, calls, sleeps } = scripted([{ status: 503 }]);
+    const err = await adapter.getPr(12).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GitHubRequestError);
+    expect((err as GitHubRequestError).status).toBe(503);
+    expect(calls).toHaveLength(3);
+    expect(sleeps).toEqual([1000, 3000]);
+  });
+
+  it("a rejection (404, 422) is never retried", async () => {
+    const { adapter, calls } = scripted([{ status: 404, payload: { message: "Not Found" } }]);
+    await expect(adapter.getPr(12)).rejects.toThrow("404");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("honours a retry-after within the cap", async () => {
+    const { adapter, calls, sleeps } = scripted([
+      { status: 429, headers: { "retry-after": "7" } },
+      { status: 200, payload: PR },
+    ]);
+    expect((await adapter.getPr(12)).number).toBe(12);
+    expect(calls).toHaveLength(2);
+    expect(sleeps).toEqual([7000]);
+  });
+
+  it("a retry-after past the cap throws at once, carrying the wait for the durable layers", async () => {
+    const { adapter, calls, sleeps } = scripted([
+      { status: 429, headers: { "retry-after": "120" } },
+      { status: 200, payload: PR },
+    ]);
+    const err = await adapter.getPr(12).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GitHubRequestError);
+    expect((err as GitHubRequestError).retryAfterMs).toBe(120_000);
+    expect(120_000).toBeGreaterThan(READ_RETRY_AFTER_CAP_MS);
+    expect(calls).toHaveLength(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("a 502 does not inherit the rate-limit window's reset (x-ratelimit-reset is on every answer)", async () => {
+    const resetInAnHour = String(Math.floor(Date.now() / 1000) + 3600);
+    const { adapter, calls } = scripted([
+      { status: 502, headers: { "x-ratelimit-reset": resetInAnHour, "x-ratelimit-remaining": "4999" } },
+    ]);
+    const err = (await adapter.getPr(12).catch((e: unknown) => e)) as GitHubRequestError;
+    expect(err.status).toBe(502);
+    expect(err.retryAfterMs).toBeUndefined();
+    expect(calls).toHaveLength(3);
+  });
+
+  it("an exhausted window (remaining 0) does name its reset, and that wait defers", async () => {
+    const resetInAnHour = String(Math.floor(Date.now() / 1000) + 3600);
+    const { adapter, calls } = scripted([
+      {
+        status: 403,
+        payload: { message: "API rate limit exceeded for installation" },
+        headers: { "x-ratelimit-reset": resetInAnHour, "x-ratelimit-remaining": "0" },
+      },
+    ]);
+    const err = (await adapter.getPr(12).catch((e: unknown) => e)) as GitHubRequestError;
+    expect(err.retryAfterMs).toBeGreaterThan(READ_RETRY_AFTER_CAP_MS);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("a failed answer whose body read aborts still throws the status-bearing error", async () => {
+    const { adapter } = scripted([{ status: 404, bodyAborts: true }]);
+    const err = await adapter.getPr(12).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GitHubRequestError);
+    expect((err as GitHubRequestError).status).toBe(404);
+  });
+
+  it("a REST write through the gate is sent once, never retried", async () => {
+    const { adapter, calls, sleeps } = scripted([{ status: 502 }, { status: 200, payload: [] }], false);
+    await expect(adapter.addLabel(3, "x")).rejects.toThrow("502");
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("a GraphQL mutation is sent once, never retried", async () => {
+    const { adapter, calls, sleeps } = scripted([{ status: 502 }, { status: 200, payload: { data: {} } }], false);
+    const intent: MutationIntent = {
+      kind: "resolve_own_review_thread",
+      method: "POST",
+      path: "/graphql",
+      body: { query: "mutation { x }", variables: {} },
+      note: "test",
+    };
+    await expect(adapter.executeMutation(intent)).rejects.toBeInstanceOf(GitHubRequestError);
+    expect(calls).toHaveLength(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("a GraphQL read is retried, and its non-2xx is a GitHubRequestError", async () => {
+    const history = {
+      data: {
+        repository: {
+          pullRequest: {
+            number: 7,
+            reviews: { pageInfo: { hasNextPage: false }, nodes: [] },
+            timelineItems: { pageInfo: { hasNextPage: false }, nodes: [] },
+          },
+        },
+      },
+    };
+    const ok = scripted([{ status: 502 }, { status: 200, payload: history }]);
+    expect((await ok.adapter.prReviewHistory(7, "bot"))?.number).toBe(7);
+    expect(ok.calls).toHaveLength(2);
+
+    const down = scripted([{ status: 504, headers: { "retry-after": "2" } }]);
+    const err = await down.adapter.prReviewHistory(7, "bot").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GitHubRequestError);
+    expect(err).toMatchObject({ method: "POST", path: "/graphql", status: 504, retryAfterMs: 2000 });
+    expect(down.calls).toHaveLength(3);
+  });
+});
+
+// CI creates runs while the checks list is read: a snapshot whose count
+// moves is read again from page 1, and partial rows never pass as complete.
+describe("listChecks on a moving snapshot", () => {
+  function checksWorld(passes: Array<{ total: number; rows: number }>) {
+    let pass = 0;
+    const sleeps: number[] = [];
+    const calls: string[] = [];
+    const fetchFn = (async (url: string | URL) => {
+      const u = String(url);
+      calls.push(u);
+      let payload: unknown;
+      if (u.includes("/check-runs?")) {
+        const p = passes[Math.min(pass++, passes.length - 1)]!;
+        payload = {
+          total_count: p.total,
+          check_runs: Array.from({ length: p.rows }, (_, i) => ({
+            name: `ci-${i}`,
+            status: "completed",
+            conclusion: "success",
+          })),
+        };
+      } else payload = { total_count: 0, statuses: [] };
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => payload,
+        text: async () => JSON.stringify(payload),
+      } as unknown as Response;
+    }) as unknown as FetchFn;
+    const gate = new MutationGate(true, dryrunDir, async () => undefined);
+    const adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com", {
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      random: () => 0.5,
+      checkRestartMs: 2000,
+    });
+    return { adapter, sleeps, checkRunCalls: () => calls.filter((c) => c.includes("/check-runs?")) };
+  }
+
+  it("a count that drifts, then settles, is read again from page 1 and answers whole", async () => {
+    const w = checksWorld([
+      { total: 3, rows: 2 },
+      { total: 3, rows: 3 },
+    ]);
+    const checks = await w.adapter.listChecks("abc");
+    expect(checks.filter((c) => c.source === "check_run")).toHaveLength(3);
+    expect(w.checkRunCalls()).toHaveLength(2);
+    expect(w.checkRunCalls().every((u) => u.includes("page=1"))).toBe(true);
+    expect(w.sleeps).toEqual([2500]);
+  });
+
+  it("still inconsistent after two restarts: IncompleteReadError, never partial rows", async () => {
+    const w = checksWorld([{ total: 5, rows: 2 }]);
+    const err = await w.adapter.listChecks("abc").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IncompleteReadError);
+    expect(w.checkRunCalls()).toHaveLength(3);
+    expect(w.sleeps).toEqual([2500, 2500]);
   });
 });

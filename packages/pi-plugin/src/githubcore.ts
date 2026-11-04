@@ -199,3 +199,87 @@ export function classifyGitHubFailure(err: unknown): GitHubFailure {
     return { kind: "rate_limited", detail };
   return { kind: "unknown", detail };
 }
+
+/**
+ * How long a failed response asked the caller to wait, in ms: `retry-after`
+ * (seconds or an HTTP date) when present; otherwise the rate-limit window's
+ * `x-ratelimit-reset`, but only when `x-ratelimit-remaining` is "0". GitHub
+ * sends the reset header on every response, so without that condition a
+ * plain 502 would inherit "wait until the hourly window resets".
+ */
+export function retryAfterFromHeaders(
+  headers: Pick<Headers, "get"> | null | undefined,
+  now: number = Date.now(),
+): number | undefined {
+  const retryAfter = headers?.get("retry-after");
+  if (retryAfter) {
+    const ms = /^\d+$/.test(retryAfter.trim())
+      ? Number(retryAfter.trim()) * 1000
+      : Date.parse(retryAfter) - now;
+    return Number.isFinite(ms) ? Math.max(0, ms) : undefined;
+  }
+  if (headers?.get("x-ratelimit-remaining") === "0") {
+    const reset = headers.get("x-ratelimit-reset");
+    if (reset && /^\d+$/.test(reset.trim())) return Math.max(0, Number(reset) * 1000 - now);
+  }
+  return undefined;
+}
+
+/** A read is tried at most this many times in all. */
+export const READ_ATTEMPTS = 3;
+/** The pause after the first and the second failed attempt, before jitter
+ * (each is scaled by a factor in [0.75, 1.25)). */
+export const READ_BACKOFF_MS: readonly number[] = [1000, 3000];
+/** The longest wait GitHub may ask for that a read still sits out in place.
+ * Past it the read throws at once, `retryAfterMs` set, and the durable
+ * layers above (the outbox, the reply schedules) defer instead. */
+export const READ_RETRY_AFTER_CAP_MS = 20_000;
+
+/** The clock of a bounded read retry, injectable so tests are instant. */
+export interface ReadRetryOptions {
+  sleep?: (ms: number) => Promise<void>;
+  /** A number in [0, 1): the jitter source. */
+  random?: () => number;
+}
+
+/**
+ * The pause before trying a read again after attempt `attempt` (0-based)
+ * failed with `err`, or null when it must not be tried again: the attempts
+ * are spent, the failure is neither transient nor rate_limited, or GitHub
+ * asked for a wait longer than READ_RETRY_AFTER_CAP_MS.
+ */
+export function readRetryDelay(
+  err: unknown,
+  attempt: number,
+  random: () => number = Math.random,
+): number | null {
+  if (attempt + 1 >= READ_ATTEMPTS) return null;
+  const failure = classifyGitHubFailure(err);
+  if (failure.kind !== "transient" && failure.kind !== "rate_limited") return null;
+  const base = READ_BACKOFF_MS[Math.min(attempt, READ_BACKOFF_MS.length - 1)] ?? 1000;
+  const backoff = Math.round(base * (0.75 + 0.5 * random()));
+  if (failure.retryAfterMs === undefined) return backoff;
+  if (failure.retryAfterMs > READ_RETRY_AFTER_CAP_MS) return null;
+  return Math.max(backoff, failure.retryAfterMs);
+}
+
+const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Run one idempotent read, retrying a transient or rate-limited failure on
+ * the bounded schedule above. Never wrap a mutation in this. */
+export async function withReadRetry<T>(
+  read: () => Promise<T>,
+  o: ReadRetryOptions = {},
+): Promise<T> {
+  const sleep = o.sleep ?? realSleep;
+  const random = o.random ?? Math.random;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await read();
+    } catch (err) {
+      const delay = readRetryDelay(err, attempt, random);
+      if (delay === null) throw err;
+      await sleep(delay);
+    }
+  }
+}

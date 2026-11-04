@@ -107,7 +107,11 @@ function harness(prs: FakePr[], opts: { failGraphql?: number[]; searchFails?: bo
     mutations.push(intent);
     throw new Error("no mutation expected");
   });
-  const adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com");
+  // The read retry's sleep is instant here: a failing read is retried
+  // (three attempts) without the real 1 s / 3 s pauses.
+  const adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com", {
+    sleep: async () => {},
+  });
   return { adapter, calls, mutations };
 }
 
