@@ -476,14 +476,16 @@ Exhausting the budget ends in a loud failure, never a loop.
 
 **Who clears a FAILED_LOUD incident.** Every incident is loud the same way —
 the `review_failed_loud` anomaly, the board row, the Slack FAILED_LOUD message,
-status.json — and holds the PR's review until it clears. What clears it
+status.json and its line in `qcr status` — and holds the PR's review until it clears. What clears it
 depends on its cause (`TransientFailureCause` in `src/state.ts`). A transient
 cause with nothing posted waits on the automatic retry ladder (`retry_wait`:
 15 minutes, doubling to 6 hours, reset by a round that finishes), at any
-stage, and the board, the inbox line and Slack say when it is due; `u` still
+stage, and the board, `qcr status`, the inbox line and Slack say when it is due; `u` still
 retries at once. The transient causes are a provider failure (a dropped
 connection, a rate limit, an overload — `provider_unavailable` when the
-worker's own requeues were spent on it), an infrastructure stage or a dead or
+worker's own requeues were spent on it; and a required lens pass still missing
+after the self-requeues when every failure recorded for it was one of those),
+an infrastructure stage or a dead or
 wedged session exhausted after its self-requeues, a posting with no receipt at
 all once its requeue cap is spent, and an exhausted deferred POST whose marker
 GitHub was read for and does not hold. "Nothing posted" is proven, not
