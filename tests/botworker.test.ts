@@ -26,6 +26,7 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai";
 import {
+  BOT_RETRY,
   EXIT,
   continuationText,
   jsonlHasMarker,
@@ -715,6 +716,30 @@ describe("the borrowed login", () => {
   });
 });
 
+describe("pi's retry policy", () => {
+  // MUTATION: pass agentDirSettings(spec.agent_dir) alone to the host — the bot
+  // runs pi's two-minute default retry; this fails.
+  it("the bot's sessions get BOT_RETRY, about 13 minutes of patience inside the round deadline", async () => {
+    const { code } = await round("ORDER\n", script([say("ok")]));
+    expect(code).toBe(EXIT.ok);
+    expect(hostOptions[0]!.settings?.retry).toEqual(BOT_RETRY);
+    let waitMs = 0;
+    for (let i = 0; i < BOT_RETRY.maxRetries; i++)
+      waitMs += Math.min(BOT_RETRY.baseDelayMs * 2 ** i, BOT_RETRY.maxAgentDelayMs);
+    expect(waitMs).toBeGreaterThan(10 * 60_000);
+    expect(waitMs).toBeLessThan(15 * 60_000);
+    expect(waitMs).toBeLessThan(75 * 60_000);
+  });
+
+  it("an operator's retry in the agent dir's settings.json wins", async () => {
+    const operator = { enabled: true, maxRetries: 2, baseDelayMs: 1_000 };
+    writeFileSync(join(world.agentDir, "settings.json"), JSON.stringify({ retry: operator }));
+    const { code } = await round("ORDER\n", script([say("ok")]));
+    expect(code).toBe(EXIT.ok);
+    expect(hostOptions[0]!.settings?.retry).toEqual(operator);
+  });
+});
+
 describe("nothing runs on what the daemon did not dispatch", () => {
   it("a payload whose bytes are not the recorded sha256 starts no session", async () => {
     dispatching(faux, script([say("never")]));
@@ -779,6 +804,27 @@ describe("a round that fails", () => {
     expect(daemon.of("compacted")).toEqual([]);
     expect(daemon.requests.map((r) => r.op)).toEqual(["worker.spec"]);
     expect(daemon.acked).toEqual([]);
+  });
+
+  // MUTATION: throw EXIT.failed for every provider failure in botworker's
+  // settle — a 429 fails the command instead of being requeued; this fails.
+  it("a turn a transient provider failure ended exits EXIT.provider; any other provider error exits 1", async () => {
+    const limited: Step = fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: "429 Too Many Requests",
+    });
+    const first = await round("ORDER\n", script([limited]));
+    expect(first.code).toBe(EXIT.provider);
+    expect(daemon.of("failed").at(-1)!.body).toMatchObject({ code: EXIT.provider });
+    expect(String(daemon.of("failed").at(-1)!.body["reason"])).toContain(
+      "the provider failed the turn: 429",
+    );
+
+    const broken: Step = fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: "invalid request: unknown parameter",
+    });
+    expect((await round("ORDER\n", script([broken]))).code).toBe(EXIT.failed);
   });
 
   it("a wall-clock cap that runs out is a failed round", async () => {
