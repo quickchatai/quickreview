@@ -6,6 +6,8 @@ import { parseConfig, type Config } from "../src/config.js";
 import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
 import { StateStore } from "../src/state.js";
+import { anomalySeverity } from "../src/anomalies.js";
+import type { AnomalyAnnouncement } from "../src/slack/announce.js";
 import type {
   RoundRecoveryDisposition,
   SessionCommandObservation,
@@ -293,7 +295,47 @@ describe("a transient provider failure", () => {
       next_action: "retry_wait",
       next_retry_at: new Date(clock.getTime() + 15 * 60_000).toISOString(),
     });
-    expect(store.anomalies().at(-1)?.detail).toContain("replayed again automatically");
+    expect(
+      store.anomalies().find((a) => a.kind === "session_command_recovery_exhausted")?.detail,
+    ).toContain("replayed again automatically");
+  });
+
+  // MUTATION: drop the `review_failed_loud` anomaly or the announce call from
+  // recoverNonRound's exhaustion — the incident holds the PR's review with no
+  // inbox wake (session_command_recovery_exhausted is not a WAKE kind) and no
+  // Slack message; this fails.
+  it("exhausted, it is loud: the review_failed_loud wake and a Slack FAILED_LOUD message", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 3 });
+    failWith(id, PROVIDER_429);
+    store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id=?").run(id);
+    const anomaly = vi.fn(async (_a: AnomalyAnnouncement) => {});
+    const wakes: string[] = [];
+    store.setAnomalySink((signal) => {
+      if (anomalySeverity(signal.kind) === "wake") wakes.push(signal.kind);
+    });
+
+    await new SessionCommandSupervisor({
+      cfg: baseCfg,
+      store,
+      hooks: hooks({ killSession: vi.fn(async () => {}) }),
+      verdictDir,
+      onRoundFailure: vi.fn<RoundFailureHandler>(async () => "requeued"),
+      announce: { anomaly },
+      now: () => clock,
+    }).scan();
+
+    const failure = store.openReviewFailure(pr)!;
+    expect(wakes).toEqual(["review_failed_loud"]);
+    expect(store.anomalies().find((a) => a.kind === "review_failed_loud")?.detail).toContain(
+      `work remains owed as ${failure.incident_id}; automatic retry scheduled for ${failure.next_retry_at}`,
+    );
+    expect(anomaly).toHaveBeenCalledWith({
+      pr,
+      round_no: null,
+      kind: "failed_loud",
+      deadline_min: baseCfg.daemon.round_deadline_min,
+      incident_id: failure.incident_id,
+    });
   });
 
   it("any other exhausted wake failure still needs the operator", async () => {

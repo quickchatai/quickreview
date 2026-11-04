@@ -624,6 +624,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     progress: (pr) => readRoundProgress(root, pr),
     onRoundFailure: (pr, roundNo, stage, detail) =>
       verdicts.recoverInfrastructureFailure(pr, roundNo, stage, detail),
+    ...(announce ? { announce } : {}),
     ...(deps.now ? { now: deps.now } : {}),
   });
   const prConversation = new PrConversation({

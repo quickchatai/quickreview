@@ -653,6 +653,46 @@ describe("pinned heartbeat", () => {
     expect(posted?.text).toContain("u on the board retries now");
   });
 
+  // MUTATION: restore `if (a.round_no === null || !this.enabled) return` in
+  // SlackAnnouncer.anomaly — a failed wake's incident holds the PR's review
+  // with no Slack message at all; this fails.
+  it("a failed wake's FAILED_LOUD incident is announced; any other round-less anomaly stays silent", async () => {
+    const a = announcer();
+    store.upsertPr({
+      number: 5412,
+      state: "tracked",
+      head_sha: "abc",
+      title: "PR",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    store.openReviewFailure({
+      pr: 5412,
+      command_id: "wake-5412",
+      round_id: null,
+      round_no: null,
+      head_sha: "abc",
+      stage: "session_command",
+      detail: "fetch failed",
+      attempts: 2,
+      retry_cap: 2,
+    });
+    await a.anomaly({ pr: 5412, round_no: null, kind: "overdue", deadline_min: 75 });
+    expect(slack.posts.filter((p) => p.text.includes("#5412"))).toEqual([]);
+    await a.anomaly({
+      pr: 5412,
+      round_no: null,
+      kind: "failed_loud",
+      deadline_min: 75,
+      incident_id: "review-failure:wake-5412",
+    });
+    const posted = slack.posts.find((p) => p.text.startsWith("⛔ #5412"));
+    expect(posted?.text).toContain("conversation work (a failed wake)");
+    expect(posted?.text).toContain("Use u on the board to recover");
+  });
+
   describe("a recovered incident's correction", () => {
     async function recoveredIncident(a: SlackAnnouncer): Promise<string> {
       store.upsertPr({
