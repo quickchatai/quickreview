@@ -535,7 +535,12 @@ describe("daemon wiring", () => {
         accept(roundNo);
         clock = new Date(clock.getTime() + 5 * 60_000);
         await daemon.scanRoundStages();
-        if (roundNo < 3) await daemon.pump();
+        if (roundNo < 3) {
+          // The self-requeued replacement waits out its backoff (2, then 8
+          // minutes; verdicts.ts SELF_REQUEUE_BACKOFF_MIN) before it dispatches.
+          clock = new Date(clock.getTime() + 8 * 60_000);
+          await daemon.pump();
+        }
       }
 
       const debt = store.openReviewFailure(PR)!;

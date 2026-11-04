@@ -20,6 +20,12 @@
 import { createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  GitHubRequestError,
+  retryAfterFromHeaders,
+  withReadRetry,
+  type ReadRetryOptions,
+} from "./githubcore.js";
 
 export type FetchFn = typeof fetch;
 
@@ -139,16 +145,28 @@ const REFRESH_MARGIN_MS = 5 * 60 * 1000;
  * stalled mint cannot hold every caller waiting on its shared promise. */
 export const GITHUB_REQUEST_TIMEOUT_MS = 60_000;
 
-/** GitHub's own words for a failed call (its `message`), capped, as ": <text>";
- * empty when the body cannot be read. A 403's permission or rate-limit
- * explanation is what tells operators two failures of one status apart. */
+/** GitHub's own words for a failed call (its `message`), capped; empty when
+ * the body cannot be read. A 403's permission or rate-limit explanation is
+ * what tells operators two failures of one status apart. */
 async function explanation(res: Response): Promise<string> {
   try {
-    const text = (await res.text()).replace(/\s+/g, " ").trim().slice(0, 300);
-    return text ? `: ${text}` : "";
+    return (await res.text()).replace(/\s+/g, " ").trim().slice(0, 300);
   } catch {
     return "";
   }
+}
+
+/** A failed answer as the adapter's own error: the status, GitHub's words
+ * and its retry-after, so one classifier (`classifyGitHubFailure`) reads a
+ * mint failure the way it reads any other GitHub call. */
+async function refused(method: string, path: string, res: Response): Promise<GitHubRequestError> {
+  return new GitHubRequestError(
+    method,
+    path,
+    res.status,
+    await explanation(res),
+    retryAfterFromHeaders(res.headers),
+  );
 }
 
 export class TokenMinter implements GitHubCredential {
@@ -161,6 +179,8 @@ export class TokenMinter implements GitHubCredential {
     private readonly fetchFn: FetchFn = fetch,
     private readonly apiBase = "https://api.github.com",
     private readonly now: () => number = Date.now,
+    /** The bounded retry's clock (sleep, jitter); injectable for tests. */
+    private readonly retry: ReadRetryOptions = {},
   ) {}
 
   private readSecret(name: string): string {
@@ -175,16 +195,22 @@ export class TokenMinter implements GitHubCredential {
     );
   }
 
-  /** Resolve (and cache) the single installation this app serves. */
+  /** Resolve (and cache) the single installation this app serves. A
+   * transient or rate-limited failure is retried on the adapter's bounded
+   * read schedule; a refusal throws GitHubRequestError at once. */
   async resolveInstallationId(): Promise<number> {
     if (this.installationId !== null) return this.installationId;
-    const res = await this.fetchFn(`${this.apiBase}/app/installations`, {
-      signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
-      headers: { authorization: `Bearer ${this.appJwt()}`, accept: "application/vnd.github+json" },
-    });
-    if (!res.ok)
-      throw new Error(`GET /app/installations failed: ${res.status}${await explanation(res)}`);
-    const installs = (await res.json()) as Array<{ id: number }>;
+    const installs = await withReadRetry(async () => {
+      const res = await this.fetchFn(`${this.apiBase}/app/installations`, {
+        signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+        headers: {
+          authorization: `Bearer ${this.appJwt()}`,
+          accept: "application/vnd.github+json",
+        },
+      });
+      if (!res.ok) throw await refused("GET", "/app/installations", res);
+      return (await res.json()) as Array<{ id: number }>;
+    }, this.retry);
     const first = installs[0];
     if (!first) throw new Error("app has no installations");
     this.installationId = first.id;
@@ -207,17 +233,24 @@ export class TokenMinter implements GitHubCredential {
     return p;
   }
 
+  /** Mint an installation token. The POST writes nothing to the reviewed
+   * repository (a lost answer leaves at most an unused token that expires on
+   * its own), so a transient or rate-limited failure is retried on the read
+   * schedule; a refusal throws GitHubRequestError at once. */
   private async mint(id: number): Promise<string> {
-    const res = await this.fetchFn(`${this.apiBase}/app/installations/${id}/access_tokens`, {
-      method: "POST",
-      signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
-      headers: { authorization: `Bearer ${this.appJwt()}`, accept: "application/vnd.github+json" },
-    });
-    if (!res.ok)
-      throw new Error(
-        `token mint failed for installation ${id}: ${res.status}${await explanation(res)}`,
-      );
-    const tok = (await res.json()) as InstallationToken;
+    const path = `/app/installations/${id}/access_tokens`;
+    const tok = await withReadRetry(async () => {
+      const res = await this.fetchFn(`${this.apiBase}${path}`, {
+        method: "POST",
+        signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+        headers: {
+          authorization: `Bearer ${this.appJwt()}`,
+          accept: "application/vnd.github+json",
+        },
+      });
+      if (!res.ok) throw await refused("POST", path, res);
+      return (await res.json()) as InstallationToken;
+    }, this.retry);
     this.cache.set(id, tok);
     return tok.token;
   }

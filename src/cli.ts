@@ -514,6 +514,22 @@ export function renderStatus(snapshot: StatusSnapshot): string {
         lines.push(`#${pr.number} ${who}${reason ? ` — ${reason}` : ""}`);
       }
     }
+    // Every PR that owes review work after a FAILED_LOUD incident says so,
+    // and what lifts it: its automatic retry's time, or the operator's u.
+    const failed = snapshot.prs.filter((pr) => pr.review_failure);
+    if (failed.length > 0) {
+      lines.push("");
+      for (const pr of failed) {
+        const f = pr.review_failure!;
+        const exit =
+          f.next_action === "retry_wait" && f.next_retry_at
+            ? `automatic retry at ${f.next_retry_at} (u retries now)`
+            : "operator u required";
+        lines.push(
+          `#${pr.number} FAILED_LOUD ${oneLine(f.stage)} — ${exit} — ${oneLine(f.detail).slice(0, 120)}`,
+        );
+      }
+    }
   }
   return lines.join("\n");
 }

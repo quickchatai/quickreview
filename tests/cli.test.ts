@@ -80,6 +80,46 @@ describe("renderStatus", () => {
     expect(rows[1]).toContain("yes"); // stale_recheck = 1
   });
 
+  // MUTATION: drop the FAILED_LOUD block from renderStatus — an incident
+  // waiting on its automatic retry is invisible in `qcr status`; this fails.
+  it("names every FAILED_LOUD incident and what lifts it: the automatic retry's time, or u", () => {
+    const failure = {
+      incident_id: "review-failure:cmd-1",
+      command_id: "cmd-1",
+      round_no: 2,
+      head_sha: "0f1e2d3c4b5a6978",
+      stage: "posting_receipt",
+      detail: "no confirmed posting receipt",
+      attempts: 1,
+      retry_cap: 0,
+      retry_epoch: 0,
+      failed_at: "2026-08-13T17:00:00.000Z",
+    };
+    const out = renderStatus({
+      ...snapshot,
+      prs: [
+        {
+          ...snapshot.prs[0]!,
+          review_failure: {
+            ...failure,
+            next_action: "retry_wait",
+            next_retry_at: "2026-08-13T17:15:00.000Z",
+          },
+        },
+        {
+          ...snapshot.prs[1]!,
+          review_failure: { ...failure, next_action: "operator_unwedge", next_retry_at: null },
+        },
+      ],
+    });
+    expect(out).toContain(
+      "#1421 FAILED_LOUD posting_receipt — automatic retry at 2026-08-13T17:15:00.000Z (u retries now) — no confirmed posting receipt",
+    );
+    expect(out).toContain(
+      "#88 FAILED_LOUD posting_receipt — operator u required — no confirmed posting receipt",
+    );
+  });
+
   it("says LIVE when dry-run is off and omits the digest line when absent", () => {
     const out = renderStatus({ ...snapshot, dry_run: false, digest_headline: undefined });
     const lines = out.split("\n");

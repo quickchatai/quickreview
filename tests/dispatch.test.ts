@@ -14,8 +14,9 @@ import {
   type DispatchAdapter,
 } from "../src/dispatch.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
-import type { PrFileEntry } from "../src/github.js";
+import { GitHubRequestError, type PrFileEntry } from "../src/github.js";
 import { fingerprintRoundIntegrity } from "../src/execboundary.js";
+import { dispatchBackoffHold, noteDispatchFailure } from "../src/dispatchbackoff.js";
 import { recheckFingerprint } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
@@ -267,6 +268,111 @@ describe("the pump spends a slot only on a round that went running", () => {
       await dispatchOnce({ cfg: threeSlots, store, adapter: racing, hooks });
       expect(orders.map((o) => o.order.pr)).toEqual([208]);
       expect(store.getPr(209)?.state).toBe("queued");
+    },
+  );
+});
+
+// A dispatch that fails before its handoff leaves the PR queued; without a
+// bound the pump repeated the whole attempt — prepare, trigger consumption,
+// labels — every 15 s tick, with nothing but `dispatch_failed` events to show.
+describe("a failing dispatch backs off per PR", () => {
+  class FailingFiles extends FakeAdapter {
+    failWith: Error | undefined;
+    override async listPrFiles(n: number): Promise<PrFileEntry[]> {
+      if (this.failWith) throw this.failWith;
+      return super.listPrFiles(n);
+    }
+  }
+  const T0 = Date.parse("2026-08-13T12:00:00Z");
+  const attempts = (a: FakeAdapter, pr: number): number =>
+    a.calls.filter((c) => c.fn === "getPr" && c.pr === pr).length;
+
+  // MUTATION: drop the `dispatchBackoffHold` check from heldBack — the second
+  // pump retries at once and the attempt count is 2, not 1.
+  it(
+    "holds the PR back 30 s, then doubles, and lets other PRs through meanwhile",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(301, "2026-08-13T09:00:00Z");
+      const failing = new FailingFiles();
+      failing.failWith = new Error("files API 502");
+      const { hooks, orders } = recordingHooks();
+      let t = T0;
+      const deps = { cfg: baseCfg, store, adapter: failing, hooks, now: () => new Date(t) };
+
+      await dispatchOnce(deps);
+      expect(attempts(failing, 301)).toBe(1);
+      t = T0 + 15_000;
+      await dispatchOnce(deps);
+      expect(attempts(failing, 301)).toBe(1); // held back
+      // Another PR is not held behind it.
+      queue(302, "2026-08-13T10:00:00Z");
+      failing.failWith = undefined;
+      await dispatchOnce(deps);
+      expect(orders.map((o) => o.order.pr)).toEqual([302]);
+      failing.failWith = new Error("files API 502");
+
+      t = T0 + 30_000;
+      await dispatchOnce(deps);
+      expect(attempts(failing, 301)).toBe(2);
+      t = T0 + 30_000 + 59_000;
+      await dispatchOnce(deps);
+      expect(attempts(failing, 301)).toBe(2); // the second wait is 60 s
+      t = T0 + 30_000 + 60_000;
+      await dispatchOnce(deps);
+      expect(attempts(failing, 301)).toBe(3);
+      expect(store.getPr(301)?.state).toBe("queued");
+    },
+  );
+
+  it(
+    "a GitHub Retry-After longer than its own wait is honoured",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(303, "2026-08-13T09:00:00Z");
+      const failing = new FailingFiles();
+      failing.failWith = new GitHubRequestError("GET", "/pulls/303/files", 403, "rate", 600_000);
+      const { hooks } = recordingHooks();
+      let t = T0;
+      const deps = { cfg: baseCfg, store, adapter: failing, hooks, now: () => new Date(t) };
+      await dispatchOnce(deps);
+      t = T0 + 599_000;
+      await dispatchOnce(deps);
+      expect(attempts(failing, 303)).toBe(1);
+      t = T0 + 600_000;
+      await dispatchOnce(deps);
+      expect(attempts(failing, 303)).toBe(2);
+    },
+  );
+
+  // MUTATION: remove the `raised` flag — every failure past the fourth raises
+  // another anomaly and the count is 2.
+  it(
+    "the fourth consecutive failure raises one dispatch_failing anomaly; a success ends the streak",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(304, "2026-08-13T09:00:00Z");
+      const failing = new FailingFiles();
+      failing.failWith = new Error("files API 502");
+      const { hooks, orders } = recordingHooks();
+      let t = T0;
+      const deps = { cfg: baseCfg, store, adapter: failing, hooks, now: () => new Date(t) };
+      const failingAnomalies = (): number =>
+        store.anomalies().filter((a) => a.kind === "dispatch_failing").length;
+      for (let i = 0; i < 5; i++) {
+        await dispatchOnce(deps);
+        if (i < 3) expect(failingAnomalies()).toBe(0);
+        t += 60 * 60_000; // past any wait
+      }
+      expect(attempts(failing, 304)).toBe(5);
+      expect(failingAnomalies()).toBe(1);
+
+      failing.failWith = undefined;
+      await dispatchOnce(deps);
+      expect(orders.map((o) => o.order.pr)).toEqual([304]);
+      // The streak is over: the next failure is the first of a new one.
+      expect(dispatchBackoffHold(store, 304, t)).toBeNull();
+      expect(noteDispatchFailure(store, 304, new Error("x"), t)).toBe(1);
     },
   );
 });
@@ -1160,10 +1266,10 @@ describe("dispatchOnce", () => {
       const { hooks } = recordingHooks();
       await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
       expect(adapter.calls).toEqual([
+        { fn: "getPr", pr: 21 }, // base branch, for the worktree fetch — read first
         { fn: "removeLabel", pr: 21, arg: baseCfg.github.trigger_label },
         { fn: "deleteTeamReviewRequest", pr: 21 },
         { fn: "addLabel", pr: 21, arg: baseCfg.github.in_progress_label },
-        { fn: "getPr", pr: 21 }, // base branch, for the worktree fetch
         { fn: "listPrFiles", pr: 21 },
       ]);
     },
@@ -1509,14 +1615,19 @@ describe("dispatchOnce", () => {
     },
   );
 
+  // A round run without its getPr read silently loses its base fetch and its
+  // intent lens. The read is taken before anything is written to GitHub, so a
+  // failure leaves the PR queued, untouched, and held back on its backoff.
+  // MUTATION: swallow the getPr failure again (degrade to base_ref "") — the
+  // round dispatches with empty base facts and this fails.
   it(
-    "still dispatches when the base-ref lookup fails — degraded, not blocked",
+    "defers the dispatch when the base-ref lookup fails — no degraded round, no trigger consumed",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       queue(63, "2026-08-13T09:00:00Z", { head: "abc" });
       adapter.failGetPrOn.add(63);
-      const { hooks } = recordingHooks();
-      const [order] = await dispatchOnce({
+      const { hooks, orders } = recordingHooks();
+      const orders1 = await dispatchOnce({
         cfg: baseCfg,
         store,
         adapter,
@@ -1528,8 +1639,11 @@ describe("dispatchOnce", () => {
           merge_base: "",
         }),
       });
-      expect(order).toBeDefined();
-      expect(order!.base_ref).toBe("");
+      expect(orders1).toEqual([]);
+      expect(orders).toEqual([]);
+      expect(store.getPr(63)?.state).toBe("queued");
+      expect(adapter.calls).toEqual([{ fn: "getPr", pr: 63 }]);
+      expect(store.runningRounds()).toEqual([]);
     },
   );
 

@@ -6,6 +6,7 @@ import { StateStore } from "../src/state.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { flushHeldWakes } from "../src/wakes.js";
 import { PrConversation } from "../src/pr-conversation.js";
+import { GitHubRequestError } from "@quickchatai/pi-quickreview/src/githubcore.js";
 
 describe("blocked author's PR conversation", () => {
   let store: StateStore;
@@ -407,6 +408,66 @@ describe("blocked author's PR conversation", () => {
     await conversation.sweep();
     expect(post).toHaveBeenCalledOnce();
     expect(inject).toHaveBeenCalledTimes(3);
+  });
+
+  it("a run of 502s does not fail the answer: the long schedule, no strike, then the anomaly", async () => {
+    await conversation.accept(objection);
+    answer();
+    list.mockRejectedValue(
+      new GitHubRequestError("GET", "/repos/o/r/issues/77/comments", 502, "Bad Gateway"),
+    );
+    // About 1, 2, 5, 15, 30, 60, 60 minutes: seven waits, eight attempts.
+    for (const waitMin of [1, 2, 5, 15, 30, 60, 60]) {
+      await conversation.sweep();
+      expect(conversation.context(77)).toContain("pending");
+      // Not before its time: no read inside the wait.
+      const reads = list.mock.calls.length;
+      advance(waitMin * 60_000 - 1000);
+      await conversation.sweep();
+      expect(list.mock.calls.length).toBe(reads);
+      advance(1000);
+    }
+    expect(store.anomalies().some((e) => e.kind === "pr_conversation_failed")).toBe(false);
+    const row = store.db
+      .prepare("SELECT attempts, transient_attempts FROM pr_conversation WHERE comment_id = 100")
+      .get() as { attempts: number; transient_attempts: number };
+    expect(row).toEqual({ attempts: 0, transient_attempts: 7 });
+    // The eighth failure spends the schedule: the existing terminal path.
+    await conversation.sweep();
+    expect(list).toHaveBeenCalledTimes(8);
+    expect(conversation.context(77)).toContain("failed");
+    expect(post).not.toHaveBeenCalled();
+    expect(store.anomalies().some((e) => e.kind === "pr_conversation_failed")).toBe(true);
+  });
+
+  it("a rate limit waits as long as GitHub asked, when that is longer than the schedule", async () => {
+    await conversation.accept(objection);
+    answer();
+    list.mockRejectedValueOnce(
+      new GitHubRequestError("GET", "/repos/o/r/issues/77/comments", 429, "slow down", 10 * 60_000),
+    );
+    await conversation.sweep();
+    advance(9 * 60_000);
+    await conversation.sweep();
+    expect(post).not.toHaveBeenCalled();
+    advance(60_000);
+    await conversation.sweep();
+    expect(post).toHaveBeenCalledOnce();
+    expect(conversation.context(77)).toContain("answered");
+  });
+
+  it("a refusal (4xx) still spends one of three strikes", async () => {
+    await conversation.accept(objection);
+    answer();
+    list.mockRejectedValue(
+      new GitHubRequestError("GET", "/repos/o/r/issues/77/comments", 404, "Not Found"),
+    );
+    for (let i = 0; i < 3; i++) {
+      advance(3 * 60_000);
+      await conversation.sweep();
+    }
+    expect(conversation.context(77)).toContain("failed");
+    expect(store.anomalies().some((e) => e.kind === "pr_conversation_failed")).toBe(true);
   });
 
   it("retains failed response work with an observable anomaly after finite retries", async () => {

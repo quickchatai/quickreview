@@ -179,6 +179,24 @@ mid-round cannot leave the tree ahead of the prompt.
 `checkoutAt` (normal) and a full `ensureWorktree` (only when no prepare step
 ran).
 
+Every git command the manager runs that reaches the network — the clone, the
+round's fetch, the ref-lag fetch and the fetch on miss — is bounded
+(`networkGitExec`): a wall-clock timeout (120 s for a fetch, 600 s for the
+clone), git's low-speed abort (`http.lowSpeedLimit=1000`,
+`http.lowSpeedTime=60`) and `GIT_TERMINAL_PROMPT=0`. git runs in its own
+process group, so the timeout kills the ssh transport or credential helper it
+started too, and the call settles within a short grace
+(`EXEC_SETTLE_GRACE_MS`) even if a descendant still holds git's output open.
+The dispatch pump is one promise and webhook fulfilment waits on it, so a
+fetch that hung would stall both. One clone runs per destination at a time:
+every caller that finds no clone waits on the one in flight. A clone that
+fails leaves nothing of its own behind, so a half-written `.git` never passes
+for a finished clone: the whole directory when it made it, else only the
+entries it added, so a mounted destination stays and stays empty for the
+retry. These settings are per invocation and name no program or
+path; the `DAEMON_GIT_PINS` ride the environment unchanged
+(docs/exec-boundary.md).
+
 The manager is read-only with respect to the reviewed repo: it clones, fetches,
 resets, lists and removes. Nothing here commits, pushes, or writes a branch.
 Other read-only helpers on it serve specific daemon checks —
@@ -340,6 +358,33 @@ freshness through a supervisor lease (`round-stage`, stale after
 
 A worker's ack is its receipt, so the supervisor never defers a command for
 compaction or for unknown transcript evidence.
+
+**Provider failures** (`src/providerfailure.ts` reads the words
+`src/botworker.ts` gives them). A turn that a transient provider failure ended
+— a dropped connection, a rate limit, an overload — exits `EXIT.provider`; the
+worker supervisor requeues the command within `maxRequeues` but launches no
+worker for it before its `not_before` (2, then 8, then 30 minutes). Once those
+are spent the failed round command reaches the verdict watcher as stage
+`provider_unavailable`, never as a session that exceeded its running bound. An
+ordinary wake that failed on the provider is replayed with the same backoff
+rather than at once, and when its replays are spent its debt waits on the
+automatic retry ladder instead of `u`. The breaker never parks a PR for a
+transient provider failure (it feeds the drain only on a repeat), and a spent
+usage window feeds the drain without parking. The breaker classifies the
+whole failure text, not its 300-character display cut, and the worker and the
+lens deadline classify the provider's whole message before they bound it
+(`boundedProviderError`: a cut that lost the message's kind, a late 429 or
+usage-limit qualifier, is led by words naming it). The worker's own pi
+sessions retry a provider for about 13 minutes per request (`BOT_RETRY`)
+before any of this; an operator's `retry` in the agent dir's settings.json
+wins. A lens pass's shorter per-pass deadline can end it while pi still
+retries; its failure then names the provider error pi was retrying, so a
+required pass an outage kept from completing still reads as transient. Any
+answer from the provider since (a replacement attempt's first reply, say)
+forgets that error, so a pass that recovered and then timed out on its own
+reads as a bare timeout. A
+login the worker's own check refused fails in words that keep the incident
+the operator's.
 
 `src/daemon.ts` runs `roundStages.scan()` once at startup (off the critical
 path) and on the deadline tick.

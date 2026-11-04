@@ -21,6 +21,7 @@ import { StateStore, type ReviewedHeadRow } from "../src/state.js";
 import { fingerprintRoundIntegrity } from "../src/execboundary.js";
 import { githubCloneDir } from "../src/config.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
+import { PostingJournal } from "../src/posting-journal.js";
 import type {
   PassPlanEntry,
   SessionHooks,
@@ -177,6 +178,14 @@ function stampPosting(
   const key = roundPostingKey(pr, roundNo, head);
   store.stampPostingKey(round.id, key);
   return { roundId: round.id, key, receiptDir: join(dir, "state", "posting-receipts") };
+}
+
+/** Spend the PR's per-head self-requeue budget at the fixture head, so a
+ * finished round whose review never reached GitHub fails loud instead of
+ * being requeued (verdicts.ts, the apply's `posting_unconfirmed` requeue). */
+function spendSelfRequeues(pr: number, head = "abc123"): void {
+  for (let i = 0; i < (cfg.daemon.max_self_requeues ?? 2); i++)
+    store.logEvent("round_self_requeued", pr, { head_sha: head });
 }
 
 function writePostingReceipt(
@@ -1111,6 +1120,7 @@ describe("measured round usage", () => {
     it("a posting-receipt failure's reads wait behind its FAILED_LOUD incident", async () => {
       const roundId = reviewingRound(126);
       stampPosting(126, 1);
+      spendSelfRequeues(126);
       const gated = gatedTranscripts(126, [modelLine(), jsonlLine(10, 1)]);
       const handled = watcher({ postingReceiptGraceS: 0, usage: gated.usage }).handleFile(
         write(126, 1, verdictFile({ pr: 126 })),
@@ -1342,9 +1352,177 @@ describe("confirmed round posting receipts", () => {
     expect(adapter.calls).toEqual([]);
   });
 
-  it("fails loud after the finite receipt grace instead of trusting or reposting", async () => {
+  // MUTATION: drop the `posting_unconfirmed` requeue from the verdict apply —
+  // the round is held FAILED_LOUD for an operator over a review that never
+  // went out (the stuck-for-hours shape); this fails.
+  it("a finished round whose review has no receipt at all is requeued through the capped self-requeue, not held", async () => {
+    reviewingRound(180);
+    stampPosting(180, 1);
+
+    expect(
+      await watcher({ postingReceiptGraceS: 0 }).handleFile(
+        write(180, 1, verdictFile({ pr: 180 })),
+      ),
+    ).toBe(true);
+
+    expect(store.roundsFor(180)[0]).toMatchObject({
+      status: "cancelled",
+      cancel_cause: "posting_unconfirmed",
+      verdict: null,
+    });
+    expect(store.openReviewFailure(180)).toBeUndefined();
+    expect(store.getPr(180)?.state).toBe("queued");
+    expect(store.reviewedHead(180)).toBeUndefined();
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) c FROM events WHERE kind='round_self_requeued' AND pr=180")
+        .get(),
+    ).toMatchObject({ c: 1 });
+  });
+
+  // MUTATION: count a prepared receipt as "nothing posted" in postingProof's
+  // `unposted` — a POST that may have landed is redone; this fails.
+  it("a prepared receipt is never requeued from the apply: it may have landed", async () => {
+    reviewingRound(179);
+    const { key } = stampPosting(179, 1);
+    writePostingReceipt(179, 1, key, "APPROVE", {
+      status: "prepared",
+      confirmed_at: undefined,
+      gh_review_id: undefined,
+      gh_commit_id: undefined,
+      gh_state: undefined,
+    });
+
+    expect(
+      await watcher({ postingReceiptGraceS: 0 }).handleFile(
+        write(179, 1, verdictFile({ pr: 179 })),
+      ),
+    ).toBe(true);
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) c FROM events WHERE kind='round_self_requeued' AND pr=179")
+        .get(),
+    ).toMatchObject({ c: 0 });
+    expect(store.openReviewFailure(179)).toMatchObject({
+      stage: "posting_receipt",
+      work_owed: 1,
+      next_action: "operator_unwedge",
+      next_retry_at: null,
+    });
+  });
+
+  // MUTATION: take the grace origin from round.started_at again in postingProof —
+  // a review queued just now is judged against the round's dispatch; this fails.
+  it("the receipt grace runs from the newest delivery snapshot for the key, a withdrawn one included", async () => {
+    reviewingRound(178);
+    const { key, receiptDir } = stampPosting(178, 1);
+    // The round started long ago; its approval was queued, then withdrawn by a
+    // guard, a minute before now.
+    store.db
+      .prepare("UPDATE rounds SET started_at = ? WHERE pr = 178")
+      .run(new Date(Date.now() - 3 * 3_600_000).toISOString());
+    // The guard's withdrawal, through the journal that owns the snapshot files.
+    const queuedAt = () => new Date(Date.now() - 60_000);
+    const journal = new PostingJournal({ dir: receiptDir, repo: cfg.github.repo, now: queuedAt });
+    journal.enqueue({
+      key,
+      pr: 178,
+      round: 1,
+      head: "abc123",
+      event: "APPROVE",
+      mode: "dryrun",
+      payload: { commit_id: "abc123", event: "APPROVE", body: `LGTM\n\n${postingMarker(key)}` },
+    });
+    journal.withdraw(178, 1, key);
+    const name = write(178, 1, verdictFile({ pr: 178 }));
+
+    expect(await watcher({ postingReceiptGraceS: 120 }).handleFile(name)).toBe(false);
+    expect(store.roundsFor(178)[0]?.status).toBe("running");
+    expect(existsSync(join(dir, name))).toBe(true);
+  });
+
+  // MUTATION: drop the persistentRequeueCount term from selfRequeue's spend — a
+  // fanout renews the budget and a review that never posts is redone for
+  // ever; this fails.
+  it("a replacement's fanout does not renew the posting requeue budget", async () => {
+    reviewingRound(177);
+    stampPosting(177, 1);
+    for (let i = 0; i < (cfg.daemon.max_self_requeues ?? 2); i++)
+      store.logEvent("round_self_requeued", 177, {
+        head_sha: "abc123",
+        mode: "posting_unconfirmed",
+      });
+    // The replacement started its passes: the general budget's generation resets.
+    store.logEvent("round_fanout_started", 177, { head_sha: "abc123" });
+    expect(store.selfRequeueCount(177, "abc123")).toBe(0);
+    store.createSessionCommand({
+      id: "cmd-177",
+      pr: 177,
+      session: "pr-177",
+      kind: "round",
+      round_no: 1,
+      payload_sha256: "a".repeat(64),
+      payload_path: "/payload/cmd-177.md",
+      inject_path: "/inject/cmd-177.md",
+      next_check_at: new Date().toISOString(),
+    });
+
+    expect(
+      await watcher({ postingReceiptGraceS: 0 }).handleFile(
+        write(177, 1, verdictFile({ pr: 177 })),
+      ),
+    ).toBe(true);
+
+    const requeues = store.db
+      .prepare("SELECT COUNT(*) c FROM events WHERE kind='round_self_requeued' AND pr=177")
+      .get() as { c: number };
+    expect(requeues.c).toBe(cfg.daemon.max_self_requeues ?? 2);
+    expect(store.openReviewFailure(177)).toMatchObject({
+      stage: "posting_receipt",
+      next_action: "retry_wait",
+    });
+  });
+
+  // MUTATION: drop `!this.postingLinked(round)` from postingProof's `unposted`
+  // and from the apply's requeue — a round a stage probe proved posted is
+  // cancelled and redone while GitHub is unreadable; this fails.
+  it("a round with durable posting linkage and no receipt file is never requeued", async () => {
+    const roundId = reviewingRound(176);
+    const { key } = stampPosting(176, 1);
+    store.confirmRoundPosting(roundId, {
+      posting_key: key,
+      actual_event: "REQUEST_CHANGES",
+      gh_review_id: 555,
+      gh_commit_id: "abc123",
+      confirmed_at: new Date().toISOString(),
+    });
+
+    await watcher({ postingReceiptGraceS: 0 }).handleFile(write(176, 1, verdictFile({ pr: 176 })));
+
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) c FROM events WHERE kind='round_self_requeued' AND pr=176")
+        .get(),
+    ).toMatchObject({ c: 0 });
+    expect(store.openReviewFailure(176)).toMatchObject({ next_action: "operator_unwedge" });
+  });
+
+  it("past the self-requeue cap it fails loud instead of trusting or reposting", async () => {
     reviewingRound(182);
     stampPosting(182, 1);
+    spendSelfRequeues(182);
+    // The round's own command: the transient class is proven against it.
+    store.createSessionCommand({
+      id: "cmd-182",
+      pr: 182,
+      session: "pr-182",
+      kind: "round",
+      round_no: 1,
+      payload_sha256: "a".repeat(64),
+      payload_path: "/payload/cmd-182.md",
+      inject_path: "/inject/cmd-182.md",
+      next_check_at: new Date().toISOString(),
+    });
 
     expect(
       await watcher({ postingReceiptGraceS: 0 }).handleFile(
@@ -1353,7 +1531,13 @@ describe("confirmed round posting receipts", () => {
     ).toBe(true);
 
     expect(store.roundsFor(182)[0]).toMatchObject({ status: "cancelled", verdict: null });
-    expect(store.openReviewFailure(182)).toMatchObject({ stage: "posting_receipt", work_owed: 1 });
+    // Nothing reached GitHub, so the hold is the automatic retry ladder's.
+    expect(store.openReviewFailure(182)).toMatchObject({
+      stage: "posting_receipt",
+      work_owed: 1,
+      next_action: "retry_wait",
+    });
+    expect(store.openReviewFailure(182)?.next_retry_at).not.toBeNull();
     expect(store.reviewedHead(182)).toBeUndefined();
   });
 
@@ -3549,6 +3733,7 @@ describe("guarded no-op settlement", () => {
     standingMark(512);
     reviewingRound(512);
     stampPosting(512, 1);
+    spendSelfRequeues(512);
     expect(
       await watcher({ postingReceiptGraceS: 0 }).handleFile(
         write(512, 1, verdictFile({ pr: 512 })),
@@ -4764,6 +4949,7 @@ describe("ownership after awaits: a round some other path ended owes nothing", (
   it("a posting failure owes its FAILED_LOUD incident before its label call", async () => {
     reviewingRound(700);
     stampPosting(700, 1);
+    spendSelfRequeues(700);
     let owedAtLabel: number | undefined;
     adapter.removeLabel = async (n, label) => {
       adapter.calls.push(`removeLabel:${n}:${label}`);

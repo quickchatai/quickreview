@@ -130,18 +130,50 @@ import { MAX_REPLY_CHARS, operatorMayPost } from "./operatormessage.js";
 import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import { newestSessionFile } from "./sessionjsonl.js";
+import { WORKER_EXIT_AUTH, WORKER_EXIT_PROVIDER, isProviderTransient } from "./providerfailure.js";
+import { boundedProviderError } from "@quickchatai/pi-quickreview/src/modelerrors.js";
 
 export const EXIT = {
   ok: 0,
   failed: 1,
   usage: 2,
   handshake: 3,
-  auth: 4,
+  auth: WORKER_EXIT_AUTH,
   session: 5,
   aborted: 6,
+  /** The turn was ended by a transient provider failure (the connection, a
+   * rate limit, an overload; src/providerfailure.ts): the daemon requeues the
+   * command with backoff rather than failing it. */
+  provider: WORKER_EXIT_PROVIDER,
   lost: 75,
   fenced: 76,
   terminated: 143,
+} as const;
+
+/**
+ * pi's agent-level retry for the bot's own sessions (the round's and every
+ * lens pass's). pi's default (3 attempts, at most a minute apart) gives up
+ * inside two minutes, shorter than a provider's ordinary overload or
+ * rate-limit window, and the turn is then lost to a worker failure. This is
+ * the benchmark sandbox's patience (`BENCH_RETRY`): 5 s doubling to a 2-minute
+ * cap over 10 attempts, about 13 minutes per request, which stays well inside
+ * `[daemon] round_deadline_min` (75 by default). Provider-level retries stay
+ * off, as there: they would hide quota and usage-limit errors from pi. An
+ * operator's `retry` in the agent dir's settings.json still wins.
+ *
+ * A lens pass runs under the shorter per-pass deadline (`[engine]
+ * lens_pass_deadline_min`, 8 by default), which can end it while pi is still
+ * waiting out this policy. Its failure then names the provider error pi was
+ * retrying (packages/pi-plugin/src/engine/lens/deadline.ts
+ * `passTimeoutMessage`), so a required pass the outage kept from completing
+ * still reads as a transient provider failure (src/providerfailure.ts
+ * `isProviderTransientPassError`).
+ */
+export const BOT_RETRY = {
+  enabled: true,
+  maxRetries: 10,
+  baseDelayMs: 5_000,
+  maxAgentDelayMs: 120_000,
 } as const;
 
 /** The most rounds of `wakes.take` one worker serves: wakes that arrive while it
@@ -267,13 +299,13 @@ class RoundWatch {
         if (full.stopReason !== "toolUse" && full.stopReason !== "error")
           this.replyText = textOf(full.content);
       }
+      // Kept whole: the failure is classified before any display cut.
       if (message?.role === "assistant")
         this.lastError =
           message.stopReason === "error"
-            ? (typeof message.errorMessage === "string"
-                ? message.errorMessage
-                : "the provider returned an error"
-              ).slice(0, 300)
+            ? typeof message.errorMessage === "string"
+              ? message.errorMessage
+              : "the provider returned an error"
             : undefined;
       return;
     }
@@ -474,7 +506,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
           ...credentialPaths(env, spec.env),
         ],
         credentials: auth.credentials,
-        settings: agentDirSettings(spec.agent_dir),
+        settings: { retry: BOT_RETRY, ...agentDirSettings(spec.agent_dir) },
       });
       // The lens cap is the daemon's, over every worker: a pass asks the broker.
       const permits = brokerPermits(client, (m) => log(`botworker: ${m}`));
@@ -562,19 +594,30 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       checkpoint();
       if (r.timedOut) throw new Stop(EXIT.failed, `${what}: the wall-clock cap ran out`);
       if (r.capped) throw new Stop(EXIT.failed, `${what}: the dollar cap was reached`);
-      if (r.streamError)
+      // A transient provider failure (the connection, a rate limit, an
+      // overload) exits `provider`: the same turn later succeeds, so the daemon
+      // requeues it with backoff. Any other ends the command `failed`.
+      // Each is classified on the provider's whole message; the bounded words
+      // the daemon keeps read as the same kind (`boundedProviderError`).
+      if (r.streamError) {
+        const lead = `${what}: output stream failed: `;
         throw new Stop(
-          EXIT.failed,
-          `${what}: output stream failed: ${r.streamError.slice(0, 300)}`,
+          isProviderTransient(lead + r.streamError) ? EXIT.provider : EXIT.failed,
+          lead + boundedProviderError(r.streamError),
         );
+      }
       // A provider failure ends the turn as an assistant message, not as a throw.
       if (watch.lastError !== undefined) {
         const refused = classifyAuthFailure(watch.lastError);
+        if (refused)
+          throw new Stop(
+            EXIT.failed,
+            `${what}: the provider refused the login: ${refused.message.slice(0, 300)}`,
+          );
+        const lead = `${what}: the provider failed the turn: `;
         throw new Stop(
-          EXIT.failed,
-          refused
-            ? `${what}: the provider refused the login: ${refused.message}`
-            : `${what}: the provider failed the turn: ${watch.lastError}`,
+          isProviderTransient(lead + watch.lastError) ? EXIT.provider : EXIT.failed,
+          lead + boundedProviderError(watch.lastError),
         );
       }
       if (r.code !== 0)

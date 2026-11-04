@@ -96,6 +96,7 @@
 // `APP_SELF_CONFIG_KINDS`.
 import { createHash } from "node:crypto";
 import { GitHubRequestError } from "./github.js";
+import { classifyGitHubFailure } from "@quickchatai/pi-quickreview/src/githubcore.js";
 import type { EscalationRecoveryRow, StateStore } from "./state.js";
 import type { EscalationConfig, EscalationRule, EscalationSeverityFloor } from "./config.js";
 import { codePath } from "@quickchatai/pi-quickreview/src/codespan.js";
@@ -956,12 +957,14 @@ async function continueEscalation(
           { purpose: "escalation" },
         );
       } catch (error) {
+        // A GitHub answer that refused the POST (a rejection or a rate limit)
+        // means nothing landed; anything else (a 5xx, a 408, a dropped
+        // connection) leaves the delivery unknown.
+        const kind = classifyGitHubFailure(error).kind;
         if (
           journal &&
           error instanceof GitHubRequestError &&
-          error.status >= 400 &&
-          error.status < 500 &&
-          error.status !== 408
+          (kind === "rejected" || kind === "rate_limited")
         ) {
           if (error.status === 422 || error.status === 400 || error.status === 410) finish();
           else

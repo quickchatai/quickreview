@@ -151,10 +151,13 @@ round_posted_tail_grace_min = 15
 # passes and its hard cap.
 # follow_up_sweep_extra_min = 20
 posting_receipt_grace_s = 120
-# A review POST GitHub answers 5xx (or not at all) is handed to the daemon
-# (receipt `deferred`) and retried at these minutes after the first failure,
-# each attempt through the gate after a marker read; past the window the PR
-# goes FAILED_LOUD (u to recover).
+# A review POST GitHub answers 5xx (or not at all), or an approval whose CI
+# could not be read, is handed to the daemon (receipt `deferred`) and retried
+# at these minutes after the first failure, each attempt through the gate
+# after a marker read; past the window the PR goes FAILED_LOUD (u to recover).
+# Attempts that send no POST (GitHub could not be read) do not count, and
+# stretch the window up to 3x. The window also bounds the outbox's ordinary
+# replay of a queued review, from the time it was queued.
 # posting_retry_offsets_min = [4, 12, 36]
 # posting_retry_window_min = 60
 session_command_unknown_grace_s = 60
@@ -599,6 +602,15 @@ health_timeout_ms = 6000
 # a slow retry, and every call site already degrades memory-less.
 restart_backoff_ms = [1000, 2000, 5000, 15000, 30000, 60000]
 restart_reset_after_s = 120       # an uptime this long resets the ladder
+# The liveness restart: a server that is RUNNING but no longer answers /health
+# (a deadlock, a wedged loop) is stopped and restarted on the ladder above
+# after liveness_failures consecutive failed probes spanning at least
+# liveness_span_s. A server that has never answered since it started is judged
+# only after liveness_startup_grace_s. 0 failures switches it off. Memory size
+# never restarts the server.
+liveness_failures = 3
+liveness_span_s = 90
+liveness_startup_grace_s = 300
 # The embedder. LOCAL is the shipped default: a small
 # ENGLISH embedding model (bge-small-en-v1.5, 384 dims) served on LOOPBACK
 # inside the container by scripts/openviking-embedder.py, over the pinned
