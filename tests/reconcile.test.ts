@@ -450,6 +450,32 @@ describe("reconcileOnce", () => {
   // listed by a lagging search: the closed-sync decides it from the PR, so the
   // search must not queue it first — that would erase the standing block the
   // merge-over-block signal reads, and count a phantom correction.
+  // With the open list unread, `open` is empty and every live PR looked
+  // closed: each got its own getPr (each up to its timeout) in one pass.
+  // MUTATION: drop the `openListed` check from closed-sync — every live PR
+  // gets a getPr, and the count is 3.
+  it("skips the closed-sync when the open-PR list was not read", async () => {
+    seed(71, "tracked");
+    seed(72, "queued");
+    seed(73, "awaiting_author");
+    let getPrs = 0;
+    gh.listOpenPrs = async () => {
+      throw new Error("GET /pulls → 502");
+    };
+    const realGetPr = gh.getPr.bind(gh);
+    gh.getPr = async (n: number) => {
+      getPrs++;
+      return realGetPr(n);
+    };
+    const { hooks, archived } = recordingHooks();
+    const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(getPrs).toBe(0);
+    expect(report.closed).toEqual([]);
+    expect(archived).toEqual([]);
+    expect(store.getPr(71)?.state).toBe("tracked");
+    expect(report.errors.some((e) => e.includes("listOpenPrs"))).toBe(true);
+  });
+
   it("a search-only PR still live locally is left to the closed-sync", async () => {
     const { hooks } = recordingHooks();
     seed(44, "awaiting_author");
