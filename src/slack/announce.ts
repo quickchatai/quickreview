@@ -865,7 +865,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     }
     const owed: AnomalyAnnouncement[] = [];
     for (const failure of open) {
-      if (failure.round_no === null) continue;
+      const kind = incidentAnnouncementKind(failure.stage);
+      // A round-less incident (a failed wake's) is announced as FAILED_LOUD
+      // and owed like any other; a round-less one of another kind stays
+      // silent, as `anomaly` keeps it.
+      if (failure.round_no === null && kind !== "failed_loud") continue;
       const id = failure.incident_id;
       const post = store.slackPost(id);
       if (post?.ok === 1) {
@@ -880,7 +884,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       owed.push({
         pr: failure.pr,
         round_no: failure.round_no,
-        kind: incidentAnnouncementKind(failure.stage),
+        kind,
         deadline_min: cfg.daemon.round_deadline_min,
         incident_id: id,
       });

@@ -497,8 +497,9 @@ at boot (`validateSlackConfig`).
   later round's pickup never overtakes a verdict or alert called before it.
   Each heartbeat
   re-announces an open FAILED_LOUD incident whose alert is missing or was
-  definitely refused, under the incident's own idem key; an alert whose
-  delivery is unknown is never re-posted.
+  definitely refused (a failed wake's, which has no round, included), under
+  the incident's own idem key; an alert whose delivery is unknown is never
+  re-posted.
 - `policy.ts` holds the caps and cooldowns, enforced in daemon code over the
   SQLite ledgers — never by prompt.
 - `reply.ts` is the overseer's only way to speak: the session holds no token and
