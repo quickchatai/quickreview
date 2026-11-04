@@ -37,6 +37,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import { isProviderTransient, providerBackoffMs } from "./providerfailure.js";
 import type { RoundRow, SessionCommandRow, StateStore, SupervisorLeaseRow } from "./state.js";
+import type { VerdictAnnouncer } from "./slack/announce.js";
 import type {
   RoundRecoveryDisposition,
   SessionHooks,
@@ -91,6 +92,10 @@ export interface SessionCommandSupervisorDeps {
     stage: RoundInfrastructureStage,
     detail: string,
   ) => Promise<RoundRecoveryDisposition>;
+  /** Slack, for a failed wake's FAILED_LOUD incident (a round's is the
+   * verdict watcher's). Optional: absent ⇒ no Slack. Never allowed to throw
+   * into the supervisor. */
+  announce?: Pick<VerdictAnnouncer, "anomaly">;
   now?: () => Date;
 }
 
@@ -924,7 +929,13 @@ export class SessionCommandSupervisor {
       DEFAULT_SESSION_COMMAND_MAX_START_RETRIES;
     const effectiveReason = command.failure?.trim() || reason;
     const providerTransient = command.status === "failed" && isProviderTransient(effectiveReason);
-    if (providerTransient && command.recovery_attempts < retryCap) {
+    // A retry the ladder scheduled (its activation reset the count to zero)
+    // makes one delivery attempt even when no immediate replay is allowed.
+    const allowance = Math.max(
+      retryCap,
+      command.recovery_attempts === 0 && this.deps.store.commandRetryActivated(command.id) ? 1 : 0,
+    );
+    if (providerTransient && command.recovery_attempts < allowance) {
       const failedMs = Date.parse(command.failed_at ?? command.updated_at);
       const dueMs = failedMs + providerBackoffMs(command.recovery_attempts);
       if (Number.isFinite(dueMs) && this.now().getTime() < dueMs) {
@@ -943,7 +954,7 @@ export class SessionCommandSupervisor {
         return;
       }
     }
-    if (command.recovery_attempts < retryCap) {
+    if (command.recovery_attempts < allowance) {
       const retry = this.admitRecovery(command, retryCap, "command");
       const recoveryAttempt = command.recovery_attempts + 1;
       const result = await retry(command.id, effectiveReason);
@@ -1025,14 +1036,42 @@ export class SessionCommandSupervisor {
       retry_cap: retryCap,
       ...(transient ? { cause: "provider_transient" as const, nothing_posted: true } : {}),
     });
+    const automatic = failure.next_action === "retry_wait" && failure.next_retry_at;
     this.deps.store.logAnomaly(
       "session_command_recovery_exhausted",
       command.pr,
       null,
-      failure.next_action === "retry_wait" && failure.next_retry_at
+      automatic
         ? `${effectiveReason}; automatic process recovery exhausted on a transient provider failure; the command is replayed again automatically at ${failure.next_retry_at} (restart-session replays it now)`
         : `${effectiveReason}; automatic process recovery exhausted and operator recovery is required`,
     );
+    // Loud like every FAILED_LOUD incident: the `review_failed_loud` wake
+    // reaches the companion inbox, and Slack names the incident. The debt it
+    // opened holds the PR's next review round until it clears.
+    this.deps.store.logAnomaly(
+      "review_failed_loud",
+      command.pr,
+      null,
+      `${command.kind} command ${command.id}: ${effectiveReason}; work remains owed as ${failure.incident_id}; ${
+        automatic
+          ? `automatic retry scheduled for ${failure.next_retry_at} (u retries immediately)`
+          : "press u to recover"
+      }`,
+    );
+    const announce = this.deps.announce;
+    if (announce) {
+      try {
+        await announce.anomaly({
+          pr: command.pr,
+          round_no: null,
+          kind: "failed_loud",
+          deadline_min: this.deps.cfg.daemon.round_deadline_min,
+          incident_id: failure.incident_id,
+        });
+      } catch {
+        // Slack is a side channel: the inbox wake and the durable debt stand.
+      }
+    }
   }
 
   private async failRound(

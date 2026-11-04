@@ -50,8 +50,9 @@ export class FakeGitHub {
   failPr: number | null = null;
   /** When set, every DELETE (the approval's trigger steps) answers with this status. */
   failDeletes: number | null = null;
-  /** When set, the check-runs read answers with this status (or no answer). */
-  failChecks: number | "network" | "hang" | null = null;
+  /** When set, the check-runs read answers with this status (or no answer,
+   * or throws this error before any request is made). */
+  failChecks: number | "network" | "hang" | Error | null = null;
   /** The PR's inline review comments, newest last; a posted reply joins them. */
   comments: Array<Record<string, unknown>> = [];
   /** When set, the review-comments read answers with this status. */
@@ -60,6 +61,11 @@ export class FakeGitHub {
   failReplyPost: number | "network" | null = null;
   /** The reply POST lands on GitHub even though it fails (its answer lost). */
   replyLandsOnFailure = false;
+  /** The failed reply POST's `Retry-After`, in seconds. */
+  replyRetryAfterS: number | null = null;
+  /** The reply POST is accepted, but its answer is cut short (invalid JSON),
+   * and the reply is not yet visible to a read. */
+  replyAnswerTruncated = false;
   calls: Array<{ method: string; path: string; body?: any }> = [];
   posts(): Array<{ method: string; path: string; body?: any }> {
     return this.calls.filter((c) => c.method !== "GET");
@@ -90,6 +96,7 @@ export class FakeGitHub {
     if (method === "GET" && /\/check-runs$/.test(path)) {
       if (this.failChecks === "network") throw new TypeError("fetch failed");
       if (this.failChecks === "hang") return new Promise<Response>(() => {});
+      if (this.failChecks instanceof Error) throw this.failChecks;
       if (this.failChecks !== null)
         return new Response("checks unavailable", { status: this.failChecks });
       return json({ total_count: this.checks.length, check_runs: this.checks });
@@ -126,10 +133,16 @@ export class FakeGitHub {
         body: body.body,
         in_reply_to_id: Number(/comments\/(\d+)\/replies$/.exec(path)?.[1]),
       };
+      if (this.replyAnswerTruncated) return new Response(`{"id": ${reply.id}, "bo`);
       if (this.failReplyPost !== null) {
         if (this.replyLandsOnFailure) this.comments.push(reply);
         if (this.failReplyPost === "network") throw new TypeError("fetch failed");
-        return new Response("upstream trouble", { status: this.failReplyPost });
+        return new Response("upstream trouble", {
+          status: this.failReplyPost,
+          ...(this.replyRetryAfterS !== null
+            ? { headers: { "retry-after": String(this.replyRetryAfterS) } }
+            : {}),
+        });
       }
       this.comments.push(reply);
       return json({ ...reply, html_url: `https://github.com/${REPO}/pull/${PR}#r${reply.id}` });
@@ -169,7 +182,7 @@ export interface Rig {
 export async function buildRig(
   dryRun: boolean,
   clients: IpcClient[],
-  opts: { readDeadlineMs?: number } = {},
+  opts: { readDeadlineMs?: number; now?: () => Date } = {},
 ): Promise<Rig> {
   const root = mkdtempSync(join(tmpdir(), "po-"));
   mkdirSync(join(root, "state"), { recursive: true });
@@ -216,7 +229,11 @@ export async function buildRig(
     commands: (id) => rows.get(id) ?? null,
     helloTimeoutMs: 500,
   });
-  const journal = new PostingJournal({ dir: join(state, "posting-receipts"), repo: REPO });
+  const journal = new PostingJournal({
+    dir: join(state, "posting-receipts"),
+    repo: REPO,
+    ...(opts.now ? { now: opts.now } : {}),
+  });
   registerPostOps(server, {
     root,
     adapter,
@@ -227,6 +244,7 @@ export async function buildRig(
     log: (m) => logs.push(m),
     roundOf: (id) => rounds.get(id) ?? null,
     ...(opts.readDeadlineMs !== undefined ? { readDeadlineMs: opts.readDeadlineMs } : {}),
+    ...(opts.now ? { now: opts.now } : {}),
   });
   await server.start();
   const r: Rig = {

@@ -20,13 +20,14 @@ import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   jobPath as postingJobPath,
   readPostingJob,
@@ -42,6 +43,15 @@ import {
 import type { StandingMarkSnapshot } from "@quickchatai/pi-quickreview/src/standing-review.js";
 
 export type ReviewEvent = PostingReceipt["intended_event"];
+
+/** A reply POST whose outcome is not yet known: when it was sent, when a
+ * read first found it absent, and the time before which GitHub asked not to
+ * be called again (a rate limit's `Retry-After` or reset). */
+export interface ReplyAttempt {
+  attempted_at: string;
+  negative_at?: string;
+  not_before?: string;
+}
 
 /** What `check` says about a round's receipt slot. */
 export type ReceiptSlot = "none" | "mismatch" | "invalid" | PostingReceiptStatus | "skipped";
@@ -100,6 +110,39 @@ function readObject(path: string, what: string): Record<string, unknown> | undef
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new JournalError(`existing ${what} must be a nonempty object`);
   return Object.keys(value).length === 0 ? undefined : (value as Record<string, unknown>);
+}
+
+/** A withdrawn snapshot keeps its job's name and this infix, then the stamp
+ * of its withdrawal: `<job>.withdrawn-<stamp>`. */
+const WITHDRAWN_INFIX = ".withdrawn-";
+
+/** When this round's newest delivery snapshot for `key` was queued (its
+ * `created_at`): the live outbox job's, or a withdrawn one's, what a guard
+ * that refused the queued post leaves behind (`PostingJournal.withdraw`).
+ * Undefined when no snapshot names the key or the directory cannot be read. */
+export function newestSnapshotQueuedAt(
+  dir: string,
+  pr: number,
+  round: number,
+  key: string,
+): string | undefined {
+  const live = postingJobPath(dir, pr, round);
+  const paths = [live];
+  try {
+    const prefix = `${basename(live)}${WITHDRAWN_INFIX}`;
+    for (const name of readdirSync(dirname(live)))
+      if (name.startsWith(prefix)) paths.push(join(dirname(live), name));
+  } catch {
+    return undefined;
+  }
+  let newest: string | undefined;
+  for (const path of paths) {
+    const job = readPostingJob(path);
+    if (job?.posting_key !== key) continue;
+    if (newest === undefined || Date.parse(job.created_at) > Date.parse(newest))
+      newest = job.created_at;
+  }
+  return newest;
 }
 
 export interface JournalOptions {
@@ -276,7 +319,7 @@ export class PostingJournal {
       .toISOString()
       .replace(/[-:.]/g, "")
       .replace(/(\d{3})Z$/, "$1000Z");
-    renameSync(path, `${path}.withdrawn-${stamp}`);
+    renameSync(path, `${path}${WITHDRAWN_INFIX}${stamp}`);
   }
 
   // ---- the receipt ---------------------------------------------------------
@@ -399,6 +442,8 @@ export class PostingJournal {
       throw new JournalError("no delivery snapshot for this posting key — cannot hand off");
     const first = (value.deferred_at as string | undefined) ?? this.iso();
     delete queued.negative_at;
+    // The deferred retry counts its unposted attempts against its own ledger.
+    if (value.status !== "deferred") delete queued.unposted_attempts;
     this.write(jobPath, {
       ...queued,
       payload: o.payload,
@@ -425,7 +470,10 @@ export class PostingJournal {
    * must already be queued (`enqueue`); no receipt may exist, so this never
    * writes a `prepared` ("may have landed") receipt and never overwrites an
    * attempted one. Job first, then the receipt, as `defer` does: a deferred
-   * receipt always has its handoff on disk. Idempotent for the same deferral.
+   * receipt always has its handoff on disk, and a stop between the two writes
+   * (a job with `deferred_at` and no receipt) is finished by the outbox's
+   * handoff recovery, which writes the deferred receipt this would have.
+   * Idempotent for the same deferral.
    */
   deferUnattempted(o: {
     key: string;
@@ -464,6 +512,7 @@ export class PostingJournal {
     const now = this.iso();
     delete queued.negative_at;
     delete queued.attempted_at;
+    delete queued.unposted_attempts;
     this.write(jobPath, {
       ...queued,
       payload: o.payload,
@@ -556,6 +605,45 @@ export class PostingJournal {
       delete job.attempted_at;
       this.write(this.jobPath(pr, round), job);
     }
+  }
+
+  // ---- reply attempts ------------------------------------------------------
+
+  /** The record of one reply's last POST, keyed by the reply's marker,
+   * beside the PR's receipts (`pr-<n>-reply-<hash>.json`). */
+  private replyAttemptPath(pr: number, marker: string): string {
+    const id = createHash("sha256").update(marker).digest("hex").slice(0, 16);
+    return join(this.o.dir, `pr-${pr}-reply-${id}.json`);
+  }
+
+  /** The last POST of this reply that has not been settled (confirmed,
+   * refused, or found on GitHub), if any. A record that cannot be read is a
+   * refusal, never "no attempt". */
+  readReplyAttempt(pr: number, marker: string): ReplyAttempt | undefined {
+    const value = readObject(this.replyAttemptPath(pr, marker), "reply attempt");
+    if (!value) return undefined;
+    if (
+      value.marker !== marker ||
+      typeof value.attempted_at !== "string" ||
+      !Number.isFinite(Date.parse(value.attempted_at)) ||
+      [value.negative_at, value.not_before].some(
+        (t) => t !== undefined && (typeof t !== "string" || !Number.isFinite(Date.parse(t))),
+      )
+    )
+      throw new JournalError("existing reply attempt invalid");
+    return {
+      attempted_at: value.attempted_at,
+      ...(typeof value.negative_at === "string" ? { negative_at: value.negative_at } : {}),
+      ...(typeof value.not_before === "string" ? { not_before: value.not_before } : {}),
+    };
+  }
+
+  noteReplyAttempt(pr: number, marker: string, attempt: ReplyAttempt): void {
+    this.write(this.replyAttemptPath(pr, marker), { version: 1, marker, ...attempt });
+  }
+
+  clearReplyAttempt(pr: number, marker: string): void {
+    rmSync(this.replyAttemptPath(pr, marker), { force: true });
   }
 
   /** A dry-run receipt left by an earlier dry-run is set aside when the install

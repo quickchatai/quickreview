@@ -25,3 +25,45 @@ export function modelErrorKind(
   if (OVERLOAD_RE.test(message)) return "overloaded";
   return "other";
 }
+
+/** The phrasings of a dropped connection: Node's and undici's (`fetch failed`,
+ * the socket errnos, `other side closed`, `terminated`) and the SDKs'
+ * (`Connection error`). */
+export const TRANSPORT_RE =
+  /\b(fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|socket hang up|connection error|other side closed|terminated)\b/i;
+
+/** A provider error message's kind: `modelErrorKind`'s reading, then a
+ * dropped connection (`transport`). */
+export function providerErrorKind(
+  message: string,
+): "usage_limit" | "rate_limited" | "overloaded" | "transport" | "other" {
+  const kind = modelErrorKind(message);
+  if (kind !== "other") return kind;
+  return TRANSPORT_RE.test(message) ? "transport" : "other";
+}
+
+/** Words that read as each kind, put ahead of a cut that lost its kind. */
+const KIND_WORDS = {
+  usage_limit: "usage limit reached",
+  rate_limited: "rate limit",
+  overloaded: "overloaded",
+  transport: "connection error",
+} as const;
+
+/**
+ * A provider error bounded to about `max` characters for display and storage,
+ * classified before the cut: a discriminator (a late 429, an ECONNRESET, a
+ * usage-limit qualifier) can sit past it. The cut ends on a whole word (one
+ * word longer than `max` is cut inside), so it matches nothing the whole
+ * message does not; when it alone would read as
+ * another kind than the whole message, the whole message's kind is named
+ * ahead of it. Every reader of the bounded text then reads the whole
+ * message's kind.
+ */
+export function boundedProviderError(message: string, max = 300): string {
+  const whole = message.replace(/\s+/g, " ").trim();
+  if (whole.length <= max) return whole;
+  const cut = `${whole.slice(0, max + 1).replace(/\s*\S*$/, "") || whole.slice(0, max)}…`;
+  const kind = providerErrorKind(whole);
+  return kind === "other" || kind === providerErrorKind(cut) ? cut : `(${KIND_WORDS[kind]}) ${cut}`;
+}
