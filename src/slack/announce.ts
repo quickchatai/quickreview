@@ -256,6 +256,8 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   private readonly ambiguousIncidents = new Set<string>();
   /** Tail of each posting lane (one per PR, else one per idem key). */
   private readonly lanes = new Map<string, Promise<unknown>>();
+  /** Tail of each PR's announcement lane (`inPrOrder`). */
+  private readonly announcements = new Map<number, Promise<unknown>>();
   /** Corrections to one incident execute in order, including recovery edits. */
   private readonly incidentEdits = new Map<string, Promise<unknown>>();
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
@@ -380,6 +382,26 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     return result.ts;
   }
 
+  /**
+   * The order a PR's lifecycle announcements are made in — a round's pickup,
+   * its verdict, an anomaly, a supersede — is the order they were CALLED in,
+   * whoever calls: dispatch and the verdict watcher both fire and forget, and
+   * the lane is reserved synchronously on the call, so neither waits on
+   * Slack and a later round's pickup can never overtake the verdict or
+   * alert called before it. The whole announcement runs in the lane, an
+   * incident's edit included, not just its post.
+   */
+  private inPrOrder(pr: number, fn: () => Promise<void>): Promise<void> {
+    const prev = this.announcements.get(pr) ?? Promise.resolve();
+    const run = prev.then(fn);
+    const tail = run.catch(() => undefined);
+    this.announcements.set(pr, tail);
+    void tail.then(() => {
+      if (this.announcements.get(pr) === tail) this.announcements.delete(pr);
+    });
+    return run;
+  }
+
   /** Lifecycle gate: the cause's own switch, nothing more (see header). */
   private lifecycleEnabled(cause: string): boolean {
     if (!this.enabled) return false;
@@ -448,7 +470,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * never be a re-round — that guard keeps a replayed first round silent
    * instead of inventing a 🔄 line for it.
    */
-  async roundStarted(a: RoundAnnouncement): Promise<void> {
+  roundStarted(a: RoundAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.roundStartedNow(a));
+  }
+
+  private async roundStartedNow(a: RoundAnnouncement): Promise<void> {
     if (!this.enabled) return;
     const { store, cfg } = this.deps;
     // A previously FAILED pickup (ok = 0) is retried by `post`, so it does not
@@ -487,7 +513,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
   /** The verdict, in-thread. Never `reply_broadcast`, whatever
    * `broadcast_verdicts` says — the seam has no broadcast parameter at all. */
-  async verdict(a: VerdictAnnouncement): Promise<void> {
+  verdict(a: VerdictAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.verdictNow(a));
+  }
+
+  private async verdictNow(a: VerdictAnnouncement): Promise<void> {
     if (!this.lifecycleEnabled(LIFECYCLE_CAUSES.verdict)) return;
     const author = a.author ?? this.deps.store.getPr(a.pr)?.author ?? "";
     await this.post({
@@ -507,7 +537,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   }
 
   /** A round outlived by a newer one. Wording per AGENTS.md invariant 2. */
-  async superseded(a: SupersededAnnouncement): Promise<void> {
+  superseded(a: SupersededAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.supersededNow(a));
+  }
+
+  private async supersededNow(a: SupersededAnnouncement): Promise<void> {
     if (!this.lifecycleEnabled(LIFECYCLE_CAUSES.superseded)) return;
     await this.post({
       idemKey: `superseded:${a.pr}:${a.old_round_no}`,
@@ -520,11 +554,18 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   // ---- unprompted causes -------------------------------------------------
 
   /** Overdue / malformed: both return the PR to its standing-verdict state
-   * (never a park) and neither implies an approval. A
-   * round-less anomaly has nothing to say and stays silent. */
-  async anomaly(a: AnomalyAnnouncement): Promise<void> {
-    if (a.round_no === null || !this.enabled) return;
-    const { cause, text } = this.anomalyMessage({ ...a, round_no: a.round_no });
+   * (never a park) and neither implies an approval. A round-less anomaly has
+   * nothing to say and stays silent — except a FAILED_LOUD incident of
+   * conversation work (a failed wake, no round), which holds the PR's review
+   * as any incident does and is announced by its incident id. */
+  anomaly(a: AnomalyAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.anomalyNow(a));
+  }
+
+  private async anomalyNow(a: AnomalyAnnouncement): Promise<void> {
+    if (!this.enabled) return;
+    if (a.round_no === null && !(a.kind === "failed_loud" && a.incident_id)) return;
+    const { cause, text } = this.anomalyMessage(a);
     if (!causePolicy(this.deps.cfg, cause).enabled) return;
     // An incident already announced is announced again when it reopens (or
     // fails again before it recovered): its one message — which a recovery
@@ -587,11 +628,13 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   }
 
   /** An anomaly's policy cause and its message, chosen once by its kind. */
-  private anomalyMessage(a: AnomalyAnnouncement & { round_no: number }): {
+  private anomalyMessage(a: AnomalyAnnouncement): {
     cause: string;
     text: string;
   } {
     const { cfg } = this.deps;
+    // Only a failed wake's incident reaches here without a round.
+    const roundNo = a.round_no ?? 0;
     switch (a.kind) {
       case "overdue":
         return {
@@ -599,7 +642,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
           text: causeMessage(cfg, {
             cause: "round.overdue",
             pr: a.pr,
-            round_no: a.round_no,
+            round_no: roundNo,
             deadline_min: a.deadline_min,
           }),
         };
@@ -614,11 +657,13 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
           failure.next_retry_at
             ? failure.next_retry_at
             : null;
+        const what =
+          a.round_no === null ? "conversation work (a failed wake)" : `round ${a.round_no}`;
         return {
           cause: "review.failed_loud",
           text: retryAt
-            ? `⛔ #${a.pr} round ${a.round_no} exhausted its immediate recovery — review work is still owed. Automatic retry at ${retryAt.slice(11, 16)}Z; u on the board retries now.`
-            : `⛔ #${a.pr} round ${a.round_no} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`,
+            ? `⛔ #${a.pr} ${what} exhausted its immediate recovery — review work is still owed. Automatic retry at ${retryAt.slice(11, 16)}Z; u on the board retries now.`
+            : `⛔ #${a.pr} ${what} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`,
         };
       }
       case "malformed":
@@ -627,7 +672,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
           text: causeMessage(cfg, {
             cause: "round.malformed_verdict",
             pr: a.pr,
-            round_no: a.round_no,
+            round_no: roundNo,
           }),
         };
     }
@@ -820,7 +865,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     }
     const owed: AnomalyAnnouncement[] = [];
     for (const failure of open) {
-      if (failure.round_no === null) continue;
+      const kind = incidentAnnouncementKind(failure.stage);
+      // A round-less incident (a failed wake's) is announced as FAILED_LOUD
+      // and owed like any other; a round-less one of another kind stays
+      // silent, as `anomaly` keeps it.
+      if (failure.round_no === null && kind !== "failed_loud") continue;
       const id = failure.incident_id;
       const post = store.slackPost(id);
       if (post?.ok === 1) {
@@ -835,7 +884,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       owed.push({
         pr: failure.pr,
         round_no: failure.round_no,
-        kind: incidentAnnouncementKind(failure.stage),
+        kind,
         deadline_min: cfg.daemon.round_deadline_min,
         incident_id: id,
       });

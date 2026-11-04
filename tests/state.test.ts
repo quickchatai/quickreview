@@ -1970,20 +1970,22 @@ describe("a transient failure with nothing posted waits on the automatic retry l
     over: {
       preflight?: "none" | "dryrun" | "refused" | "executed" | "ambiguous";
       posted?: boolean;
+      head?: string;
     } = {},
   ): { roundId: number; roundNo: number; commandId: string } {
-    store.upsertPr(prRow(pr, { state: "reviewing", head_sha: `head-${pr}` }));
+    const head = over.head ?? `head-${pr}`;
+    store.upsertPr(prRow(pr, { state: "reviewing", head_sha: head }));
     const roundId = store.startRound(pr, "re-review", ["pass-baseline"], 75);
     const roundNo = store.roundsFor(pr).find((r) => r.id === roundId)!.round_no;
-    store.stampPostingKey(roundId, `v1:${pr}:${roundNo}:head-${pr}`);
+    store.stampPostingKey(roundId, `v1:${pr}:${roundNo}:${head}`);
     if (over.preflight && over.preflight !== "none")
       store.recordRoundPreflightPosting(roundId, over.preflight);
     if (over.posted)
       store.confirmRoundPosting(roundId, {
-        posting_key: `v1:${pr}:${roundNo}:head-${pr}`,
+        posting_key: `v1:${pr}:${roundNo}:${head}`,
         actual_event: "APPROVE",
         gh_review_id: 77,
-        gh_commit_id: `head-${pr}`,
+        gh_commit_id: head,
         confirmed_at: clock.toISOString(),
       });
     const commandId = `cmd-${pr}-${roundNo}`;
@@ -2116,6 +2118,80 @@ describe("a transient failure with nothing posted waits on the automatic retry l
     store.finishRound(done, "APPROVE", null, "ok");
     r = failedRound(5608);
     expect(open(5608, r)).toMatchObject({ retry_epoch: 0 });
+  });
+
+  // MUTATION: compare the activation's target head with `failure.head_sha` in
+  // activateDueReviewFailureRetries — the successor's head inherits the
+  // predecessor's retry generation and its first failure waits 30 minutes;
+  // this fails.
+  it("keeps the failed round's head apart from the queued successor's", () => {
+    const r = failedRound(5615);
+    // A push moved the PR on while the round failed: the caller names the
+    // successor's head, the newest owed.
+    store.db.prepare("UPDATE pr_state SET head_sha='succ-head' WHERE number=5615").run();
+    const first = open(5615, r, { head_sha: "succ-head" });
+    expect(first).toMatchObject({ next_action: "retry_wait" });
+    clock = new Date(first.next_retry_at!);
+    expect(store.activateDueReviewFailureRetries(clock.toISOString())).toEqual([
+      expect.objectContaining({ pr: 5615, target_head_sha: "succ-head", retry_epoch: 0 }),
+    ]);
+
+    // The successor's own first failure starts the ladder at 15 minutes.
+    const b = failedRound(5615, { head: "succ-head" });
+    const second = open(5615, b, { head_sha: "succ-head" });
+    expect(second).toMatchObject({ head_sha: "succ-head", retry_epoch: 0 });
+    expect(Date.parse(second.next_retry_at!) - clock.getTime()).toBe(15 * 60_000);
+  });
+
+  const park = (pr: number) =>
+    store.recordWorkerFailure(pr, {
+      commandId: "c",
+      error: "the worker exited 1",
+      at: clock.toISOString(),
+      parkAfter: 1,
+    });
+
+  // MUTATION: drop `!this.isWorkerParked(arg.pr)` from `automatic` in
+  // openReviewFailure — a parked PR is promised a retry no worker can run; this fails.
+  it("a PR the worker breaker parked is the operator's at once", () => {
+    const r = failedRound(5612);
+    park(5612);
+    expect(open(5612, r)).toMatchObject({ next_action: "operator_unwedge", next_retry_at: null });
+  });
+
+  // MUTATION: drop the isWorkerParked check from activateDueReviewFailureRetries —
+  // the retry republishes work the park refuses to launch, again and again; this fails.
+  it("a park set while the retry waited hands the incident to the operator when it falls due", () => {
+    const r = failedRound(5613);
+    const failure = open(5613, r);
+    expect(failure.next_action).toBe("retry_wait");
+    park(5613);
+    clock = new Date(failure.next_retry_at!);
+    expect(store.activateDueReviewFailureRetries(clock.toISOString())).toEqual([]);
+    expect(store.openReviewFailure(5613)).toMatchObject({
+      work_owed: 1,
+      next_action: "operator_unwedge",
+      next_retry_at: null,
+    });
+    expect(store.getSessionCommand(r.commandId)?.status).toBe("failed");
+  });
+
+  // MUTATION: read only the fanout-first instruction's epoch for a pre-fanout
+  // stall in openReviewFailure (drop the transientRetryEpoch term) — the wait
+  // falls back to 15 minutes when the failure class changes; this fails.
+  it("the ladder's generation carries across a change of failure class at the same head", () => {
+    let r = failedRound(5614);
+    const first = open(5614, r, { stage: "provider_unavailable", cause: "provider_transient" });
+    clock = new Date(first.next_retry_at!);
+    store.activateDueReviewFailureRetries(clock.toISOString());
+
+    // The successor stalls before its first lens: no fanout-first instruction
+    // was bound to it (a provider retry binds none), yet it is the second
+    // failure at this head with no round finished.
+    r = failedRound(5614);
+    const second = open(5614, r, { stage: "first_pass_start", cause: undefined });
+    expect(second).toMatchObject({ next_action: "retry_wait", retry_epoch: 1 });
+    expect(Date.parse(second.next_retry_at!) - clock.getTime()).toBe(30 * 60_000);
   });
 
   it("a failed wake retries by handing its own command back to the supervisor's replay", () => {

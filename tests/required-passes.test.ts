@@ -51,6 +51,7 @@ import type { PassPlanEntry, SessionHooks } from "@quickchatai/pi-quickreview/sr
 import { PASS_TIER_ORDER, roundPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import type { AnomalyAnnouncement, VerdictAnnouncer } from "../src/slack/announce.js";
 
 const root = resolve(import.meta.dirname, "..");
 const baseCfg: Config = parseConfig(
@@ -794,6 +795,7 @@ describe("the verdict path requeues instead of applying", () => {
     dir = mkdtempSync(join(tmpdir(), "qcr-required-verdict-"));
     store = new StateStore(":memory:", () => clock);
     adapter = new FakeAdapter();
+    announced = [];
   });
   afterEach(() => {
     store.close();
@@ -804,6 +806,14 @@ describe("the verdict path requeues instead of applying", () => {
     async dispatchRound() {},
     async inject() {},
     async archiveAndClose() {},
+  };
+  let announced: AnomalyAnnouncement[] = [];
+  const announce: VerdictAnnouncer = {
+    async verdict() {},
+    async anomaly(a) {
+      announced.push(a);
+    },
+    async superseded() {},
   };
   const watcher = () =>
     new VerdictWatcher({
@@ -816,6 +826,7 @@ describe("the verdict path requeues instead of applying", () => {
       usage: {},
       partialWrite: { windowMs: 0 },
       now: () => clock,
+      announce,
     });
   function round(pr: number, progress: (roundNo: number) => RoundProgressSnapshot): number {
     store.upsertPr({
@@ -1005,6 +1016,25 @@ describe("the verdict path requeues instead of applying", () => {
     expect(status(id)).not.toBe("done");
   }
 
+  // MUTATION: drop `|| mode === "required_pass_missing"` from selfRequeue's
+  // persistent spend — every replacement's fanout renews the budget and a
+  // sustained outage redoes full reviews for ever; this fails.
+  it("a replacement's fanout does not renew the required-pass requeue budget", async () => {
+    const w = watcher();
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++) {
+      round(708, withPr(708, missing));
+      await w.sweep();
+      // The replacement started its passes: the general budget's generation resets.
+      store.logEvent("round_fanout_started", 708, { head_sha: "abc123" });
+    }
+    expect(store.selfRequeueCount(708, "abc123")).toBe(0);
+    const last = round(708, withPr(708, missing));
+    await w.sweep();
+    expect(events("round_self_requeued")).toHaveLength(DEFAULT_MAX_SELF_REQUEUES);
+    expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
+    expect(status(last)).not.toBe("done");
+  });
+
   // MUTATION: pass `undefined` as the cause on the required-pass exhaustion
   // in verdicts.ts — a provider outage that cost a lens waits for `u`; this fails.
   it("past the cap, a required pass the provider failed (rate limit) waits on the automatic retry", async () => {
@@ -1015,6 +1045,20 @@ describe("the verdict path requeues instead of applying", () => {
     });
     expect(store.openReviewFailure(706)?.next_retry_at).not.toBeNull();
     expect(events("review_failed_loud").at(-1)).toMatchObject({ cause: "provider_transient" });
+  });
+
+  // MUTATION: announce `kind` in handleAnomaly whatever the incident's
+  // next_action — Slack words an automatic retry as a deadline overrun, under
+  // round.overdue's policy, with no retry time; this fails.
+  it("past the cap, the automatic-retry incident is announced as FAILED_LOUD; an operator hold as overdue", async () => {
+    await exhaustOn(709, "429 Too Many Requests: rate limit exceeded");
+    expect(announced.at(-1)).toMatchObject({
+      pr: 709,
+      kind: "failed_loud",
+      incident_id: store.openReviewFailure(709)?.incident_id,
+    });
+    await exhaustOn(710, TIMEOUT);
+    expect(announced.at(-1)).toMatchObject({ pr: 710, kind: "overdue" });
   });
 
   // MUTATION: treat every recorded pass failure as provider-transient — a

@@ -655,6 +655,31 @@ describe("operator PR recovery", () => {
     expect(pump).toHaveBeenCalledOnce();
   });
 
+  // MUTATION: drop the liftSelfRequeueBackoff call from operator recovery —
+  // u keeps the human row's FIFO identity, nothing else lifts the backoff, and
+  // the pump holds the round u asked for; this fails.
+  it("lifts a self-requeue's backoff on a human row it keeps queued", async () => {
+    const { store, pr } = setup();
+    store.db.prepare("UPDATE pr_state SET trigger_provenance='human' WHERE number=?").run(pr);
+    const queued = store.getPr(pr)!;
+    store.logEvent("round_self_requeued", pr, {
+      head_sha: queued.head_sha,
+      not_before: "2026-08-31T08:08:00.000Z",
+      queued_head_sha: queued.head_sha,
+      queued_trigger_ts: queued.trigger_ts,
+    });
+    expect(store.selfRequeueNotBefore(pr, queued)).toBe("2026-08-31T08:08:00.000Z");
+    let heldAtPump: string | undefined = "unread";
+    const pump = vi.fn(async () => {
+      heldAtPump = store.selfRequeueNotBefore(pr, store.getPr(pr)!);
+    });
+
+    await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(store.getPr(pr)).toMatchObject({ trigger_ts: T0, trigger_provenance: "human" });
+    expect(heldAtPump).toBeUndefined();
+  });
+
   it("restart-session preserves a human retrigger that arrived while it awaited the kill", async () => {
     const { store, dir, pr } = setup();
     command(store, dir, pr);

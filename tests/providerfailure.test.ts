@@ -4,13 +4,19 @@
 import { describe, expect, it } from "vitest";
 import {
   PROVIDER_BACKOFF_MIN,
+  isOperatorWorkerFailure,
   isProviderTransient,
   isProviderTransientPassError,
+  isTransientKind,
   providerBackoffMs,
   providerFailureKind,
+  providerMessageKind,
 } from "../src/providerfailure.js";
 import { modelErrorKind } from "@quickchatai/pi-quickreview/src/engine/roundevents.js";
-import { modelErrorKind as coreModelErrorKind } from "@quickchatai/pi-quickreview/src/modelerrors.js";
+import {
+  boundedProviderError,
+  modelErrorKind as coreModelErrorKind,
+} from "@quickchatai/pi-quickreview/src/modelerrors.js";
 
 describe("providerFailureKind", () => {
   it.each([
@@ -78,6 +84,41 @@ describe("isProviderTransientPassError", () => {
   });
 });
 
+describe("isTransientKind", () => {
+  // MUTATION: add "usage_limit" to isTransientKind — a spent window retries on
+  // the ladder and never parks or drains as the breaker's own; this fails.
+  it("is the one transient list: the connection, a rate limit, an overload", () => {
+    expect(
+      (["transport", "rate_limited", "overloaded", "usage_limit", "other", undefined] as const).map(
+        isTransientKind,
+      ),
+    ).toEqual([true, true, true, false, false, false]);
+  });
+});
+
+describe("isOperatorWorkerFailure", () => {
+  // MUTATION: return false from isOperatorWorkerFailure — a refused login's
+  // exhausted round waits on the automatic retry ladder; this fails.
+  it("is a refused login, the worker's own refused login check and a spent usage window", () => {
+    expect(isOperatorWorkerFailure("the round: the provider refused the login: expired")).toBe(
+      true,
+    );
+    expect(
+      isOperatorWorkerFailure("the worker's login was refused: no login in the agent dir"),
+    ).toBe(true);
+    expect(
+      isOperatorWorkerFailure("x: the provider failed the turn: The usage limit has been reached"),
+    ).toBe(true);
+  });
+
+  it("is never a transient provider failure, a crash or nothing", () => {
+    expect(isOperatorWorkerFailure("x: the provider failed the turn: fetch failed")).toBe(false);
+    expect(isOperatorWorkerFailure("the worker died of SIGKILL")).toBe(false);
+    expect(isOperatorWorkerFailure("the round: the wall-clock cap ran out")).toBe(false);
+    expect(isOperatorWorkerFailure(null)).toBe(false);
+  });
+});
+
 describe("the backoff ladder", () => {
   it("waits 2, 8, then 30 minutes, and 30 for every retry after", () => {
     expect(PROVIDER_BACKOFF_MIN).toEqual([2, 8, 30]);
@@ -91,5 +132,37 @@ describe("the backoff ladder", () => {
 describe("one reading of a model error", () => {
   it("the engine's modelErrorKind is the core's, re-exported", () => {
     expect(modelErrorKind).toBe(coreModelErrorKind);
+  });
+});
+
+describe("boundedProviderError", () => {
+  const preamble = "upstream request failed while streaming the response body ".repeat(8);
+
+  // MUTATION: return the plain cut in boundedProviderError (never name the
+  // whole message's kind) — a late 429, ECONNRESET or usage-limit qualifier
+  // is lost to the cut and the bounded words read as another kind; this fails.
+  it.each([
+    [`${preamble}: 429 Too Many Requests`, "rate_limited"],
+    [`${preamble}: read ECONNRESET`, "transport"],
+    [`429 Too Many Requests: ${preamble} the usage limit has been reached`, "usage_limit"],
+    [`503 ${preamble} 500 internal error`, "overloaded"],
+    [`${preamble} 500 internal error`, "other"],
+  ] as const)("a long message keeps its kind when cut: %#", (message, kind) => {
+    const bounded = boundedProviderError(message);
+    expect(bounded.length).toBeLessThanOrEqual(330);
+    expect(providerMessageKind(message)).toBe(kind);
+    expect(providerMessageKind(bounded)).toBe(kind);
+  });
+
+  // MUTATION: cut at exactly `max` characters — a 4291 cut to 429 reads as a
+  // rate limit the whole message never named; this fails.
+  it("cuts on a whole word, so the cut matches nothing the message does not", () => {
+    const message = `${"x".repeat(296)} 4291 bytes`;
+    expect(providerMessageKind(message)).toBe("other");
+    expect(providerMessageKind(boundedProviderError(message))).toBe("other");
+  });
+
+  it("leaves a short message whole, its spacing folded", () => {
+    expect(boundedProviderError("429  Too Many\nRequests")).toBe("429 Too Many Requests");
   });
 });

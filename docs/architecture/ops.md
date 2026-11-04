@@ -490,12 +490,16 @@ at boot (`validateSlackConfig`).
 - `announce.ts` decides *whether, where and exactly once*; `messages.ts` owns
   the wording as pure functions, so no model can reword an announcement. Every
   interpolated user string is escaped, and a `<@U…>` mention is only emitted
-  for an id the daemon itself resolved. The verdict watcher's announcements
-  are fire-and-forget, chained per PR so their order holds, so a slow Slack
-  never holds the verdict path or the deadline sweep. Each heartbeat
+  for an id the daemon itself resolved. The verdict watcher's announcements,
+  like dispatch's pickups, are fire-and-forget, so a slow Slack never holds
+  the verdict path, the deadline sweep or the pump; their order is the
+  announcer's, one lane per PR reserved on the call whoever makes it, so a
+  later round's pickup never overtakes a verdict or alert called before it.
+  Each heartbeat
   re-announces an open FAILED_LOUD incident whose alert is missing or was
-  definitely refused, under the incident's own idem key; an alert whose
-  delivery is unknown is never re-posted.
+  definitely refused (a failed wake's, which has no round, included), under
+  the incident's own idem key; an alert whose delivery is unknown is never
+  re-posted.
 - `policy.ts` holds the caps and cooldowns, enforced in daemon code over the
   SQLite ledgers — never by prompt.
 - `reply.ts` is the overseer's only way to speak: the session holds no token and

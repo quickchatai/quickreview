@@ -446,7 +446,11 @@ Three endings are not ordinary verdicts:
   the round is redone through the same capped self-requeue (cancel cause
   `posting_unconfirmed`) rather than held for an operator. The receipt grace
   runs from the newest delivery snapshot queued for the key, a withdrawn one
-  included, not from the round's dispatch.
+  included, not from the round's dispatch. These requeues spend a budget of
+  their own as well (`persistentRequeueCount`; a required pass's failure spends
+  another the same way): a replacement's fanout does not renew it — starting passes says nothing of whether posting recovered — and
+  only a verdict applied at the head resets it. A round with posting linkage
+  on record (a marker reconcile found its review) is never redone this way.
 
 Malformed files and rounds that blow `[daemon] round_deadline_min` route to
 `handleAnomaly()`: the round is marked, a companion-inbox item is written, and the PR
@@ -498,16 +502,30 @@ worker's own requeues were spent on it; and a required lens pass still missing
 after the self-requeues when every failure recorded for it was one of those),
 an infrastructure stage or a dead or
 wedged session exhausted after its self-requeues, a posting with no receipt at
-all once its requeue cap is spent, and an exhausted deferred POST whose marker
-GitHub was read for and does not hold. "Nothing posted" is proven, not
-assumed: the round's preflight posted nothing, it has no confirmed posting
-linkage, no posting receipt of any status exists, and nothing is pending
-delivery. Everything else — a POST that may have landed, evidence that
+all once its requeue cap is spent, an exhausted deferred POST whose marker
+GitHub was read for and does not hold, and an ordinary delivery whose window
+ran out before it sent any POST or wrote any receipt. "Nothing posted" is proven, not
+assumed, and the proof takes one of two forms. For every cause it means the
+round's preflight posted nothing, it has no confirmed posting linkage and
+nothing is pending delivery; beyond that, ordinary unconfirmed work proves it
+by the absence of any posting receipt for the key, while an exhausted
+deferred delivery — whose `deferred` receipt is still there by construction —
+proves it by a marker read that inspected every review GitHub returned and
+found none carrying the key (a read that failed, or threw part-way, proves
+nothing). Everything else — a POST that may have landed, evidence that
 contradicts the round, a malformed verdict, a posted round with no verdict, a
-round with no posting key — waits for an operator (`operator_unwedge`). Due,
-a round's retry republishes ordinary queued work (only a pre-fanout stall
-binds its fanout-first instruction to the successor); a failed wake's retry
-hands the same command back to the supervisor's bounded replay.
+round with no posting key, a worker failure only an operator cures (a refused
+login, a spent usage window), a PR the worker breaker parked — waits for an
+operator (`operator_unwedge`); a park set while a retry waits hands the
+incident to the operator when the retry falls due. The ladder's generation is
+the head's, whatever the class of each failure. Due, a round's retry
+republishes ordinary queued work (only a pre-fanout stall binds its
+fanout-first instruction to the successor); a failed wake's retry hands the
+same command back to the supervisor's bounded replay, and that retry delivers
+the command once even when `session_command_max_start_retries` allows no
+immediate replay. A failed wake's
+incident is as loud as a round's: its `review_failed_loud` wake reaches the
+inbox and Slack names it as conversation work.
 
 ## 6. CI and withheld approvals
 
@@ -570,10 +588,15 @@ withheld mark and applies a `REQUEST_CHANGES` verdict event, moving the PR to
 
 `runBaseAdvance()` fans a base-branch move out only to open PRs that target that
 branch and hold a standing approval; every other PR is skipped without an API
-call. A base-advance question whose reads fail — the fan-out's `getPr`, or the
-delta read — is never dropped: it is owed in `owed_base_rechecks`, and every
-reconcile pass asks the due ones again (`retryOwedBaseRechecks`, 2 min doubling
-to 1 h), settling each once it is asked or nothing is left to ask.
+call. Whether an advance is a question for a PR is one decision
+(`baseAdvanceEligibility`), shared by the fan-out and the retry below. A
+base-advance question a run cannot answer — the fan-out's `getPr` or the delta
+read fails, the head moves under the reads, or the run fails before its
+question is handed off durably — is never dropped: `runRecheck` says so in its
+outcome (`owed`), the question is owed in `owed_base_rechecks` (one row per PR,
+branch and commit), and every reconcile pass asks the due ones again
+(`retryOwedBaseRechecks`, 2 min doubling to 1 h), settling each once it is
+answered or nothing is left to ask.
 
 ## 8. Ping-pong, wake holding and self-requeue
 
@@ -667,7 +690,10 @@ never reached GitHub. Every mode is bounded by `[daemon] max_self_requeues`
 per head, and backs off: the replacement round is held from dispatch for 2
 minutes after the first requeue at a head and 8 after the second
 (`SELF_REQUEUE_BACKOFF_MIN`; the `round_self_requeued` event carries the
-not-before time, and any newer trigger lifts it). A `head_moved` requeue, or
+not-before time, and any newer trigger lifts it — a push, an operator's `u`,
+or a person's request, read from the lifecycle log because a request on a row
+already queued keeps the row's FIFO `trigger_ts`; an operator's `u` on such a
+row logs `self_requeue_backoff_lifted`). A `head_moved` requeue, or
 one onto a fresher head, is new work and waits for nothing; prompt *redelivery* is bounded
 separately by `[daemon] max_prompt_redeliveries`, because re-sending the exact
 bytes to a live session is far cheaper than cancelling a round. A live session
@@ -742,9 +768,14 @@ The facts a rule reads (the changed paths, the labels, the failing checks)
 come off GitHub reads, and a read that fails is **unknown**, never an empty
 list that would silently keep every rule keyed on it from firing. An unknown
 fact a configured rule or a session candidate needs defers the whole
-evaluation (`escalation_facts_unavailable`, with the cause): the round's owed
-escalation work is retried five minutes later, and a later round of the PR
-answers it instead when one exists (`escalation_evaluation_superseded`). A
+evaluation (`escalation_facts_unavailable`, with the cause). The changed paths
+are needed only by what can carry a path: a path or severity rule, or a
+session candidate whose scope names a file; a label or failing-check rule and
+a pathless candidate decide without them. The round's owed escalation work is
+retried five minutes later, and a later round of the PR answers it instead
+when one exists (`escalation_evaluation_superseded`); a round's work is also
+settled, before it can deliver anything, once a later round has an evaluation
+of its own. A
 read GitHub refuses outright (a 4xx the shared classifier calls `rejected`,
 such as 404 or 403) would be refused again on every retry, so it is logged once
 (`escalation_fact_rejected`) and read as a known absence, and the evaluation

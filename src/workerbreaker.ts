@@ -31,7 +31,7 @@
 // A daemon's own stop or an operator's kill is not a failure: the caller does not
 // report it. Single-shepherd (rule 9): this module decides whether to spawn, it
 // never schedules an agent and never touches GitHub.
-import { providerFailureKind } from "./providerfailure.js";
+import { isTransientKind, providerFailureKind } from "./providerfailure.js";
 import { WORKER_FAILURES_DRAIN_REASON, type StateStore } from "./state.js";
 
 export interface BreakerLimits {
@@ -76,8 +76,7 @@ const ERROR_CHARS = 300;
  *     drains as counted. */
 function breakerEffect(error: string, firstFailure: boolean): { park: boolean; drain: boolean } {
   const kind = providerFailureKind(error);
-  if (kind === "transport" || kind === "rate_limited" || kind === "overloaded")
-    return { park: false, drain: !firstFailure };
+  if (isTransientKind(kind)) return { park: false, drain: !firstFailure };
   if (kind === "usage_limit") return { park: false, drain: true };
   return { park: true, drain: true };
 }
@@ -129,9 +128,13 @@ export class WorkerBreaker {
   /** A worker for `pr` failed. */
   failure(pr: number, commandId: string, error: string): WorkerFailure {
     const at = this.iso();
-    const last = error.replace(/\s+/g, " ").trim().slice(0, ERROR_CHARS) || "no reason given";
+    const whole = error.replace(/\s+/g, " ").trim();
+    const last = whole.slice(0, ERROR_CHARS) || "no reason given";
     const firstFailure = (this.store.workerBreaker(pr)?.failures ?? 0) === 0;
-    const effect = breakerEffect(last, firstFailure);
+    // Classified on the whole text: the 300-character cut is the display's,
+    // and a provider's discriminator (a 429 after a long preamble) can sit
+    // past it once the worker's prefix is added.
+    const effect = breakerEffect(whole, firstFailure);
     const res = this.store.recordWorkerFailure(pr, {
       commandId,
       error: last,

@@ -16,6 +16,7 @@ import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { StateStore } from "../src/state.js";
+import { applyEvent } from "../src/statemachine.js";
 import { roundPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
@@ -405,6 +406,42 @@ describe("exhausted infrastructure recovery with nothing posted retries itself",
     await v.recoverInfrastructureFailure(298, 1, "running_hard_bound", "fixed bound exhausted");
     expect(store.openReviewFailure(298)).toMatchObject({ next_action: "operator_unwedge" });
   });
+
+  // MUTATION: drop the isOperatorWorkerFailure checks from transientCause in
+  // src/verdicts.ts — a refused login's exhausted round waits on the automatic
+  // retry, which cannot fix its credentials; this fails.
+  it.each([
+    ["its own failure", "round: the provider refused the login: token expired", undefined],
+    [
+      "the worker's last failure",
+      "fixed bound exhausted",
+      "the worker's login was refused: no login in the agent dir",
+    ],
+  ])("a refused login keeps the operator's hold (%s)", async (_where, detail, workerError) => {
+    const roundId = reviewingRound(299);
+    store.stampPostingKey(roundId, "v1:299:1:abc123");
+    commandForRound(299, 1);
+    if (workerError)
+      store.recordWorkerFailure(299, {
+        commandId: "c",
+        error: workerError,
+        at: clock.toISOString(),
+        parkAfter: 99,
+      });
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++)
+      store.logEvent("round_self_requeued", 299, { head_sha: "abc123" });
+    const v = watcher(hooks);
+    expect(await v.recoverInfrastructureFailure(299, 1, "running_hard_bound", detail)).toBe(
+      "exhausted",
+    );
+    expect(store.openReviewFailure(299)).toMatchObject({
+      next_action: "operator_unwedge",
+      next_retry_at: null,
+    });
+    expect(events("review_failed_loud").at(-1)!.payload).toMatchObject({ cause: null });
+  });
 });
 
 describe("infrastructure recovery acts only for the round it read, and leaves no stale label", () => {
@@ -746,6 +783,27 @@ describe("a self-requeue backs off before its replacement dispatches", () => {
     store.upsertPr({ ...row, trigger_ts: later, trigger_provenance: "human" });
     expect(store.selfRequeueNotBefore(341, store.getPr(341)!)).toBeUndefined();
     expect(await pump(new Date(clock.getTime() + 30_000))).toHaveLength(1);
+  });
+
+  // MUTATION: drop the pr_transition read from selfRequeueNotBefore — a
+  // label or team request on the already-queued row keeps its FIFO trigger_ts
+  // and waits behind the backoff; this fails.
+  it.each([
+    [343, "label", true],
+    [344, "team_request", true],
+    [345, "reconcile", false],
+  ] as const)("#%i: a %s trigger on the queued row lifts it: %s", async (pr, source, lifted) => {
+    reviewingRound(pr);
+    pastDeadline();
+    const { hooks } = hooksWith(false);
+    await watcher(hooks).checkDeadlines();
+    const queued = store.getPr(pr)!;
+    expect(queued.state).toBe("queued");
+    expect(store.selfRequeueNotBefore(pr, queued)).toBeDefined();
+    applyEvent(store, pr, { type: "trigger", source }, {}, { now: () => clock });
+    // The queued row keeps its FIFO place: trigger_ts is unchanged.
+    expect(store.getPr(pr)!.trigger_ts).toBe(queued.trigger_ts);
+    expect(store.selfRequeueNotBefore(pr, store.getPr(pr)!) === undefined).toBe(lifted);
   });
 });
 

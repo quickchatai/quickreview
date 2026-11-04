@@ -16,10 +16,13 @@
 //
 // Exit code 0: the daemon posted, recorded the post in dry-run, found it
 // already confirmed, took the delivery over (deferred), or another attempt in
-// the daemon owns the round's posting right now (in flight). A review or an
-// approval this client stopped waiting for is in flight too: the daemon goes on
-// and records its outcome, so the session is told not to post again. Anything
-// else prints the daemon's typed refusal and exits 1.
+// the daemon owns the round's posting right now (in flight). A keyed round's
+// review or approval this client stopped waiting for is in flight too: the
+// daemon goes on and records its outcome under the round's receipt, so the
+// session is told not to post again. An UNKEYED post (no round: an answer
+// worker's) has no receipt and nothing in the daemon that follows it up, so a
+// timeout there is an unknown outcome, exit 1. Anything else prints the
+// daemon's typed refusal and exits 1.
 import { resolve } from "node:path";
 import { connectFromEnv, type IpcEnv } from "./client.js";
 import { IpcError } from "./protocol.js";
@@ -169,12 +172,19 @@ export async function runPostShim(
       return 0;
     } catch (e) {
       // The request reached the daemon and no answer came in time: the post
-      // goes on there. A review or an approval is the round's posting, which
-      // the daemon records; a reply's outcome is simply unknown.
+      // goes on there. A keyed round's review or approval is the round's
+      // posting, which the daemon records and owns; an unkeyed one is not
+      // followed by anything. A reply is found by its marker on the next run.
       if (e instanceof IpcError && e.code === "timeout") {
         if (kind === "reply") {
           io.stderr(
-            `${k.prefix}: timeout: the daemon did not answer in time; whether the reply was posted is unknown — do NOT retry\n`,
+            `${k.prefix}: timeout: the daemon did not answer in time and the reply may still be posted. Run the same script again in a few minutes: it checks for this reply first and never posts a second copy\n`,
+          );
+          return 1;
+        }
+        if (body.posting_key === undefined && body.round_no === undefined) {
+          io.stderr(
+            `${k.prefix}: timeout: the daemon did not answer in time; whether this review was posted is unknown, and with no round nothing in the daemon records or retries it. Do NOT post it again: check the PR's reviews first\n`,
           );
           return 1;
         }

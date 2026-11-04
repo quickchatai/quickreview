@@ -1016,6 +1016,53 @@ describe("structured thread decision", () => {
     watcher.stop();
   });
 
+  // MUTATION: record the retry and open the breaker at the attempt's start
+  // (`now`) instead of `failedAt` — this fails.
+  it("cooldowns run from when the failure arrived, not from when the attempt began", async () => {
+    ledger.claimAuthorMessage(event);
+    let now = new Date("2026-08-26T09:00:00Z");
+    // Each call spends three minutes (a read on its own retries) before failing.
+    const slowly = (err: Error) => async () => {
+      now = new Date(now.getTime() + 3 * 60_000);
+      throw err;
+    };
+    const resolveOwnReviewThread = vi
+      .fn()
+      .mockImplementationOnce(
+        slowly(new GitHubRequestError("POST", "/graphql", 502, "Bad Gateway")),
+      )
+      .mockImplementationOnce(
+        slowly(new GitHubRequestError("POST", "/graphql", 429, "rate limit", 10 * 60_000)),
+      );
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "",
+      }),
+    );
+    expect(await watcher.handleFile(name)).toBe(false);
+    // The 502 arrived at 09:03; the first transient wait is a minute from then.
+    expect(ledger.retry(5001).next_attempt_at).toBe("2026-08-26T09:04:00.000Z");
+    now = new Date("2026-08-26T09:04:00Z");
+    expect(await watcher.handleFile(name)).toBe(false);
+    // The 429 arrived at 09:07 asking for ten minutes: the breaker holds until 09:17.
+    expect(ledger.breaker().open_until).toBe("2026-08-26T09:17:00.000Z");
+    watcher.stop();
+  });
+
   it("only a refusal spends a strike; a transient failure between them does not", async () => {
     ledger.claimAuthorMessage(event);
     let now = new Date("2026-08-26T09:00:00Z");

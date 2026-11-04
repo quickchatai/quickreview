@@ -396,6 +396,45 @@ describe("verdict hooks", () => {
     expect(texts("1699999999.0002")).toEqual(["overdue"]);
   });
 
+  // The order was kept by a queue inside the verdict watcher, so an
+  // announcement waiting there had not reached the announcer yet, and
+  // dispatch's pickup of the next round, which calls the announcer directly,
+  // reserved the PR's lane first and posted ahead of it. The order is the
+  // announcer's now, reserved on the call whoever makes it.
+  // MUTATION: chain announceSafe's calls behind a per-PR promise of the
+  // watcher's own again — the pickup posts between the supersede and the
+  // overdue alert; this fails.
+  it("a later round's pickup never overtakes the announcements called before it", async () => {
+    store.upsertSlackThread({ pr: 5263, channel: "C_REVIEW", root_ts: "1699999999.0001" });
+    reviewingRound(5263);
+    store.startRound(5263, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    let release!: () => void;
+    slack.hold = new Promise<void>((r) => (release = r));
+    clock = new Date("2026-08-17T23:00:00.000Z");
+    const shared = announcer();
+    const w = watcher(shared);
+    await w.checkDeadlines();
+    // Dispatch picks up the next round while Slack still holds the first post.
+    const pickup = shared.roundStarted({
+      pr: 5263,
+      title: "Fix the retry loop",
+      author: "alice",
+      head_sha: "abcdef1234567890",
+      round_no: 3,
+      round_type: "re-review",
+      lenses: ["pass-baseline"],
+      additions: 1,
+      deletions: 1,
+      changed_files: 1,
+    });
+    release();
+    await w.idle();
+    await pickup;
+    const kind = (text: string): string =>
+      text.startsWith("♻️") ? "superseded" : text.startsWith("⏱") ? "overdue" : "pickup";
+    expect(slack.posts.map((p) => kind(p.text))).toEqual(["superseded", "overdue", "pickup"]);
+  });
+
   it("applies verdicts unchanged with no announcer, and survives a Slack outage", async () => {
     reviewingRound(5263);
     writeVerdict(5263, 1, {

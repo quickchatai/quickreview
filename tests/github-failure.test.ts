@@ -42,6 +42,26 @@ describe("classifyGitHubFailure — one classification of a thrown GitHub call",
     ).toBe("rejected");
   });
 
+  // MUTATION: classify a GitHubRequestError by its whole message (request line
+  // included) instead of its `detail` — this fails.
+  it("a 403 whose request path says rate-limit is still a refusal: the evidence is GitHub's answer", () => {
+    const refused = new GitHubRequestError(
+      "GET",
+      "/repos/o/rate-limit-demo/commits/abc/check-runs",
+      403,
+      '{"message":"Resource not accessible by integration"}',
+    );
+    expect(classifyGitHubFailure(refused).kind).toBe("rejected");
+    // A plain error that quotes the same request line reads the same way.
+    expect(classifyGitHubFailure(new Error(refused.message)).kind).toBe("rejected");
+    // A second copy of the class (no `detail` it can trust by type) too.
+    const foreign = Object.assign(new Error(refused.message), {
+      name: "GitHubRequestError",
+      status: 403,
+    });
+    expect(classifyGitHubFailure(foreign).kind).toBe("rejected");
+  });
+
   it.each([400, 401, 404, 410, 422])("any other 4xx (%i) is rejected", (status) => {
     expect(classifyGitHubFailure(rest(status)).kind).toBe("rejected");
   });

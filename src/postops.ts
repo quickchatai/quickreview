@@ -71,7 +71,7 @@ import {
   type InlineComment,
   type ReviewPayload,
 } from "./posting.js";
-import { markedReviewsOf } from "./posting-outbox.js";
+import { markedReviewsOf, uncertainPostStep } from "./posting-outbox.js";
 import {
   describeGap,
   failedSecurityRows,
@@ -150,6 +150,8 @@ export interface PostOpsDeps {
   log?: (msg: string, extra?: unknown) => void;
   /** Override POSTING_READ_DEADLINE_MS (tests). */
   readDeadlineMs?: number;
+  /** The clock a reply's reconciliation windows run on (tests). */
+  now?: () => Date;
 }
 
 /** What a post op answers with. The shim prints `lines` and exits 0. */
@@ -362,6 +364,16 @@ function unanswered(err: unknown): boolean {
   return kind === "transient" || kind === "rate_limited";
 }
 
+/** What a session is told about a failed read: the status GitHub answered,
+ * or the kind of failure. Never the cause itself, which may name a local file
+ * (an unreadable credential, say); that stays in the daemon's log. */
+function clientCause(f: GitHubFailure): string {
+  if (f.status !== undefined) return `GitHub answered ${f.status}`;
+  if (f.kind === "transient") return "GitHub did not answer";
+  if (f.kind === "rate_limited") return "GitHub rate-limited the read";
+  return "the read failed before GitHub answered; the daemon's log has the cause";
+}
+
 /** A failure the daemon may retry by itself later. */
 const retryable = (f: GitHubFailure): boolean =>
   f.kind === "transient" || f.kind === "rate_limited";
@@ -426,7 +438,15 @@ function describeFailure(err: unknown): string {
 }
 
 class PostOps {
+  /** The reply requests running now, by the reply's identity (its marker):
+   * a second request for the same reply joins the first and gets its answer,
+   * so the marker read and the POST are one owner's, never two. */
+  private readonly replies = new Map<string, Promise<PostOutcome>>();
   constructor(private readonly d: PostOpsDeps) {}
+
+  private now(): Date {
+    return this.d.now?.() ?? new Date();
+  }
 
   private log(msg: string, extra?: unknown): void {
     this.d.log?.(msg, extra);
@@ -540,8 +560,8 @@ class PostOps {
       throw new IpcError(
         "blocked",
         retryable(f)
-          ? `pr-unreadable: the PR's head could not be read (GitHub did not answer: ${f.detail}). Nothing was posted: run the same script again in a few minutes.`
-          : `pr-unreadable: the PR's head could not be read (GitHub refused the read: ${f.detail}). Nothing was posted, and running it again will be refused the same way.`,
+          ? `pr-unreadable: the PR's head could not be read (${clientCause(f)}). Nothing was posted: run the same script again in a few minutes.`
+          : `pr-unreadable: the PR's head could not be read (${clientCause(f)}). Nothing was posted, and running it again will be refused the same way.`,
       );
     }
   }
@@ -755,7 +775,7 @@ class PostOps {
           return {
             status: "deferred",
             lines: [
-              `approval deferred: the CI checks at ${head.slice(0, 7)} could not be read (${ci.failure.detail}).`,
+              `approval deferred: the CI checks at ${head.slice(0, 7)} could not be read (${clientCause(ci.failure)}).`,
               "The daemon now owns its delivery and re-reads CI before every attempt: it posts the approval when CI is green, or a COMMENT with the approval withheld when CI is red.",
               "Do NOT post again for this round — finish the round normally (verdict file as decided).",
             ],
@@ -1052,35 +1072,149 @@ class PostOps {
     // after a POST GitHub did not answer, the reply is looked for, so a
     // repeated script never posts a second copy.
     const marker = replyPostMarker(ctx.pr, id, text);
+    const running = this.replies.get(marker);
+    if (running) return running;
+    const attempt = this.replyOnce(ctx, id, text, marker);
+    this.replies.set(marker, attempt);
+    try {
+      return await attempt;
+    } finally {
+      if (this.replies.get(marker) === attempt) this.replies.delete(marker);
+    }
+  }
+
+  /** The refusal while an earlier unanswered POST of this reply may still
+   * land: nothing is posted until GitHub has had time to show it, and then
+   * has shown twice, apart, that it is not there. */
+  private replySettling(ctx: RequestContext, until: Date): IpcError {
+    this.audit(ctx, "post.reply", "settling");
+    return new IpcError(
+      "post_failed",
+      `an earlier attempt to post this reply got no answer from GitHub and may still land, so nothing was posted now. Run the same script again after ${until.toISOString()}: it posts only once GitHub has shown twice, apart, that the reply is not there.`,
+    );
+  }
+
+  /** The time GitHub asked this reply's earlier POST to wait until, while
+   * it is still ahead. A record that cannot be read answers nothing here;
+   * the attempt read after the marker check refuses it. */
+  private replyNotBefore(pr: number, marker: string): Date | undefined {
+    let notBefore: string | undefined;
+    try {
+      notBefore = this.d.journal.readReplyAttempt(pr, marker)?.not_before;
+    } catch {
+      return undefined;
+    }
+    const at = notBefore === undefined ? NaN : Date.parse(notBefore);
+    return at > this.now().getTime() ? new Date(at) : undefined;
+  }
+
+  private async replyOnce(
+    ctx: RequestContext,
+    id: number,
+    text: string,
+    marker: string,
+  ): Promise<PostOutcome> {
+    const j = this.d.journal;
     const replyBody = `${text.trimEnd()}\n\n${marker}`;
+    // GitHub asked for a wait after an earlier POST of this reply: neither a
+    // read nor a POST until it is over.
+    const asked = this.replyNotBefore(ctx.pr, marker);
+    if (asked) {
+      this.audit(ctx, "post.reply", "rate-limited");
+      throw new IpcError(
+        "post_failed",
+        `GitHub asked for no more requests for this reply until ${asked.toISOString()}, so nothing was read or posted now. Run the same script again after that time.`,
+      );
+    }
     const before = await this.findReply(ctx, id, marker);
     if (before === "unreadable") {
+      // Nothing was sent now. The reply is still owed; the next run reads
+      // for it first, so running again is safe and never posts blind.
       this.audit(ctx, "post.reply", "unknown");
       throw new IpcError(
         "post_failed",
-        `could not read #${ctx.pr}'s review comments to check for an earlier copy of this reply; nothing was posted now, and whether an earlier attempt landed is unknown — do NOT retry`,
+        `could not read #${ctx.pr}'s review comments to check for an earlier copy of this reply, so nothing was posted. Run the same script again in a few minutes: it checks for an earlier copy before it posts, and never posts a second one.`,
       );
     }
-    if (before !== null) return this.replyAlreadyPosted(ctx, id, before);
+    if (before !== null) {
+      j.clearReplyAttempt(ctx.pr, marker);
+      return this.replyAlreadyPosted(ctx, id, before);
+    }
+    // An earlier POST of this reply got no answer: one read that does not
+    // find it proves nothing yet. Wait out the quiet window, then require
+    // two negative reads apart, as the review outbox does.
+    const earlier = j.readReplyAttempt(ctx.pr, marker);
+    if (earlier) {
+      const step = uncertainPostStep(
+        earlier.attempted_at,
+        earlier.negative_at,
+        this.now().getTime(),
+      );
+      if (step.step === "first-negative")
+        j.noteReplyAttempt(ctx.pr, marker, {
+          ...earlier,
+          negative_at: this.now().toISOString(),
+        });
+      if (step.step !== "post") throw this.replySettling(ctx, new Date(step.until));
+    }
+    // The attempt is on disk BEFORE the POST: a lost answer, or a daemon
+    // that stops mid-POST, leaves the reconciliation above owed. A dry run
+    // sends nothing and records nothing.
+    if (!this.d.adapter.gate.isDryRun)
+      j.noteReplyAttempt(ctx.pr, marker, { attempted_at: this.now().toISOString() });
     let res: GateResult;
     try {
       res = await this.d.adapter.createReviewCommentReply(ctx.pr, id, replyBody);
     } catch (err) {
-      if (!unanswered(err)) {
+      const f = classifyGitHubFailure(err);
+      if (gateRefusal(err) || f.kind === "rejected") {
+        // A refusal (the gate's, or a permanent 4xx): nothing landed.
+        j.clearReplyAttempt(ctx.pr, marker);
         this.audit(ctx, "post.reply", "failed");
         throw new IpcError("post_failed", this.describe(err));
       }
+      // Anything else — no answer, a 5xx, a timeout, a rate limit, an answer
+      // that could not be read — leaves the POST uncertain: the attempt stays
+      // on record. A wait GitHub asked for is kept with it, and nothing is
+      // read during that wait.
       const why = this.describe(err);
+      const notBefore =
+        f.retryAfterMs !== undefined && f.retryAfterMs > 0
+          ? new Date(this.now().getTime() + f.retryAfterMs)
+          : undefined;
+      if (notBefore) {
+        const kept = this.tryJournal("record GitHub's requested wait", () => {
+          const earlier = j.readReplyAttempt(ctx.pr, marker);
+          if (earlier)
+            j.noteReplyAttempt(ctx.pr, marker, {
+              ...earlier,
+              not_before: notBefore.toISOString(),
+            });
+        });
+        if (kept !== false) {
+          this.audit(ctx, "post.reply", "rate-limited");
+          throw new IpcError(
+            "post_failed",
+            `${why}: GitHub asked for no more requests until ${notBefore.toISOString()}, and nothing more was sent. Run the same script again after that time: it checks for this reply first and posts it only once GitHub has shown twice, apart, that it is not there.`,
+          );
+        }
+      }
       const after = await this.findReply(ctx, id, marker);
-      if (after !== null && after !== "unreadable") return this.replyAlreadyPosted(ctx, id, after);
+      if (after !== null && after !== "unreadable") {
+        j.clearReplyAttempt(ctx.pr, marker);
+        return this.replyAlreadyPosted(ctx, id, after);
+      }
       this.audit(ctx, "post.reply", "unanswered");
       throw new IpcError(
         "post_failed",
-        after === "unreadable"
-          ? `${why}, and the check for the reply could not read GitHub: the outcome is unknown — do NOT retry`
-          : `${why}, and the reply is not on GitHub: nothing was posted. Run the same script again; it checks for this reply before posting.`,
+        `${why}, and ${
+          after === "unreadable"
+            ? "the check for the reply could not read GitHub"
+            : "the reply is not on GitHub yet"
+        }: it may still land, and nothing more was sent. Run the same script again in a few minutes: it checks for this reply first and posts it only once GitHub has shown twice, apart, that it is not there.`,
       );
     }
+    if (!res.executed) j.clearReplyAttempt(ctx.pr, marker); // refused or dry-run: nothing sent
     if (res.blocked) {
       this.audit(ctx, "post.reply", `blocked:${res.blocked}`);
       throw new IpcError("blocked", `${res.blocked}: nothing was posted`);
@@ -1101,6 +1235,7 @@ class PostOps {
     // ungated-review audit accounts for the review GitHub files it under.
     if (res.executed && typeof posted?.id === "number")
       this.d.store.registerBotComment(posted.id, ctx.pr, "review_comment");
+    j.clearReplyAttempt(ctx.pr, marker);
     this.audit(ctx, "post.reply", "posted");
     return {
       status: "posted",
@@ -1119,8 +1254,8 @@ function ciUnreadable(f: GitHubFailure, head: string, queued: boolean): IpcError
   return new IpcError(
     "blocked",
     retryable(f)
-      ? `pr-unreadable: the checks at ${at} could not be read (GitHub did not answer: ${f.detail}). Nothing was posted${taken}: run the same script again in a few minutes.`
-      : `pr-unreadable: the checks at ${at} could not be read (GitHub refused the read: ${f.detail}). Nothing was posted${taken}, and running it again will be refused the same way: post your review as a COMMENT through post-review.sh saying the approval is held because CI could not be read, then finish the round.`,
+      ? `pr-unreadable: the checks at ${at} could not be read (${clientCause(f)}). Nothing was posted${taken}: run the same script again in a few minutes.`
+      : `pr-unreadable: the checks at ${at} could not be read (${clientCause(f)}). Nothing was posted${taken}, and running it again will be refused the same way: post your review as a COMMENT through post-review.sh saying the approval is held because CI could not be read, then finish the round.`,
   );
 }
 

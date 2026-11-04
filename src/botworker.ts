@@ -130,14 +130,15 @@ import { MAX_REPLY_CHARS, operatorMayPost } from "./operatormessage.js";
 import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import { newestSessionFile } from "./sessionjsonl.js";
-import { WORKER_EXIT_PROVIDER, isProviderTransient } from "./providerfailure.js";
+import { WORKER_EXIT_AUTH, WORKER_EXIT_PROVIDER, isProviderTransient } from "./providerfailure.js";
+import { boundedProviderError } from "@quickchatai/pi-quickreview/src/modelerrors.js";
 
 export const EXIT = {
   ok: 0,
   failed: 1,
   usage: 2,
   handshake: 3,
-  auth: 4,
+  auth: WORKER_EXIT_AUTH,
   session: 5,
   aborted: 6,
   /** The turn was ended by a transient provider failure (the connection, a
@@ -159,6 +160,14 @@ export const EXIT = {
  * `[daemon] round_deadline_min` (75 by default). Provider-level retries stay
  * off, as there: they would hide quota and usage-limit errors from pi. An
  * operator's `retry` in the agent dir's settings.json still wins.
+ *
+ * A lens pass runs under the shorter per-pass deadline (`[engine]
+ * lens_pass_deadline_min`, 8 by default), which can end it while pi is still
+ * waiting out this policy. Its failure then names the provider error pi was
+ * retrying (packages/pi-plugin/src/engine/lens/deadline.ts
+ * `passTimeoutMessage`), so a required pass the outage kept from completing
+ * still reads as a transient provider failure (src/providerfailure.ts
+ * `isProviderTransientPassError`).
  */
 export const BOT_RETRY = {
   enabled: true,
@@ -290,13 +299,13 @@ class RoundWatch {
         if (full.stopReason !== "toolUse" && full.stopReason !== "error")
           this.replyText = textOf(full.content);
       }
+      // Kept whole: the failure is classified before any display cut.
       if (message?.role === "assistant")
         this.lastError =
           message.stopReason === "error"
-            ? (typeof message.errorMessage === "string"
-                ? message.errorMessage
-                : "the provider returned an error"
-              ).slice(0, 300)
+            ? typeof message.errorMessage === "string"
+              ? message.errorMessage
+              : "the provider returned an error"
             : undefined;
       return;
     }
@@ -588,9 +597,14 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       // A transient provider failure (the connection, a rate limit, an
       // overload) exits `provider`: the same turn later succeeds, so the daemon
       // requeues it with backoff. Any other ends the command `failed`.
+      // Each is classified on the provider's whole message; the bounded words
+      // the daemon keeps read as the same kind (`boundedProviderError`).
       if (r.streamError) {
-        const reason = `${what}: output stream failed: ${r.streamError.slice(0, 300)}`;
-        throw new Stop(isProviderTransient(reason) ? EXIT.provider : EXIT.failed, reason);
+        const lead = `${what}: output stream failed: `;
+        throw new Stop(
+          isProviderTransient(lead + r.streamError) ? EXIT.provider : EXIT.failed,
+          lead + boundedProviderError(r.streamError),
+        );
       }
       // A provider failure ends the turn as an assistant message, not as a throw.
       if (watch.lastError !== undefined) {
@@ -598,10 +612,13 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
         if (refused)
           throw new Stop(
             EXIT.failed,
-            `${what}: the provider refused the login: ${refused.message}`,
+            `${what}: the provider refused the login: ${refused.message.slice(0, 300)}`,
           );
-        const reason = `${what}: the provider failed the turn: ${watch.lastError}`;
-        throw new Stop(isProviderTransient(reason) ? EXIT.provider : EXIT.failed, reason);
+        const lead = `${what}: the provider failed the turn: `;
+        throw new Stop(
+          isProviderTransient(lead + watch.lastError) ? EXIT.provider : EXIT.failed,
+          lead + boundedProviderError(watch.lastError),
+        );
       }
       if (r.code !== 0)
         throw new Stop(EXIT.failed, `${what}: the turn failed${lastLineOf(spec.stderr_file)}`);

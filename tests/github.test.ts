@@ -1625,20 +1625,25 @@ describe("bounded read retry", () => {
 // CI creates runs while the checks list is read: a snapshot whose count
 // moves is read again from page 1, and partial rows never pass as complete.
 describe("listChecks on a moving snapshot", () => {
-  function checksWorld(passes: Array<{ total: number; rows: number }>) {
-    let pass = 0;
+  /** A checks list that answers by the page asked for. The snapshot (the
+   * advertised total, and as many rows) moves on with every check-runs
+   * request, until the last listed total holds. */
+  function checksWorld(totals: number[]) {
+    let request = 0;
     const sleeps: number[] = [];
-    const calls: string[] = [];
+    const pages: number[] = [];
     const fetchFn = (async (url: string | URL) => {
-      const u = String(url);
-      calls.push(u);
+      const u = new URL(String(url));
       let payload: unknown;
-      if (u.includes("/check-runs?")) {
-        const p = passes[Math.min(pass++, passes.length - 1)]!;
+      if (u.pathname.endsWith("/check-runs")) {
+        const page = Number(u.searchParams.get("page"));
+        pages.push(page);
+        const total = totals[Math.min(request++, totals.length - 1)]!;
+        const from = (page - 1) * 100;
         payload = {
-          total_count: p.total,
-          check_runs: Array.from({ length: p.rows }, (_, i) => ({
-            name: `ci-${i}`,
+          total_count: total,
+          check_runs: Array.from({ length: Math.max(0, Math.min(100, total - from)) }, (_, i) => ({
+            name: `ci-${from + i}`,
             status: "completed",
             conclusion: "success",
           })),
@@ -1660,30 +1665,36 @@ describe("listChecks on a moving snapshot", () => {
       random: () => 0.5,
       checkRestartMs: 2000,
     });
-    return {
-      adapter,
-      sleeps,
-      checkRunCalls: () => calls.filter((c) => c.includes("/check-runs?")),
-    };
+    return { adapter, sleeps, pages };
   }
 
-  it("a count that drifts, then settles, is read again from page 1 and answers whole", async () => {
-    const w = checksWorld([
-      { total: 3, rows: 2 },
-      { total: 3, rows: 3 },
-    ]);
+  // MUTATION: restart the pass at the page it stopped on instead of page 1 — this fails.
+  it("a count that moves mid-read is read again from page 1 and answers whole", async () => {
+    // Page 1 says 150; page 2 says 151 (CI created a run): the snapshot
+    // contradicts itself. The restart reads page 1, then page 2, at 151.
+    const w = checksWorld([150, 151]);
     const checks = await w.adapter.listChecks("abc");
-    expect(checks.filter((c) => c.source === "check_run")).toHaveLength(3);
-    expect(w.checkRunCalls()).toHaveLength(2);
-    expect(w.checkRunCalls().every((u) => u.includes("page=1"))).toBe(true);
+    expect(w.pages).toEqual([1, 2, 1, 2]);
+    const runs = checks.filter((c) => c.source === "check_run");
+    expect(runs).toHaveLength(151);
+    expect(new Set(runs.map((c) => c.name)).size).toBe(151);
     expect(w.sleeps).toEqual([2500]);
   });
 
+  it("a count that drops between pages is read again from page 1 at the new count", async () => {
+    // Page 1 at 150 (100 rows), page 2 at 99: restart on page 1, whole at 99.
+    const w = checksWorld([150, 99]);
+    const checks = await w.adapter.listChecks("abc");
+    expect(w.pages).toEqual([1, 2, 1]);
+    expect(checks.filter((c) => c.source === "check_run")).toHaveLength(99);
+  });
+
   it("still inconsistent after two restarts: IncompleteReadError, never partial rows", async () => {
-    const w = checksWorld([{ total: 5, rows: 2 }]);
+    // Every request advertises one more run than the last.
+    const w = checksWorld([150, 151, 152, 153, 154, 155]);
     const err = await w.adapter.listChecks("abc").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(IncompleteReadError);
-    expect(w.checkRunCalls()).toHaveLength(3);
+    expect(w.pages).toEqual([1, 2, 1, 2, 1, 2]);
     expect(w.sleeps).toEqual([2500, 2500]);
   });
 });

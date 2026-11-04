@@ -217,13 +217,21 @@ describe("the client posts through a daemon", () => {
   });
 
   // MUTATION: drop the `e.code === "timeout"` branch in runPostShim — this fails.
-  it("a post the client stopped waiting for is in flight; a reply's outcome is unknown", async () => {
+  it("a keyed round's post the client stopped waiting for is in flight; a reply is run again", async () => {
     const hang = { roles: ["worker", "shim"] as const, handle: () => new Promise(() => {}) };
     rig.server.register("post.approval", hang);
     rig.server.register("post.reply", hang);
     const body = rig.write(`pr-${PR}-round-1-approve.md`, "ok");
     expect(
-      await runPostShim("approval", [String(PR), body], envFor("c-round"), io, { timeoutMs: 100 }),
+      await runPostShim(
+        "approval",
+        [String(PR), body],
+        envFor("c-round", { QCR_ROUND_NO: "1" }),
+        io,
+        {
+          timeoutMs: 100,
+        },
+      ),
     ).toBe(0);
     expect(out).toMatch(/in flight in the daemon; do NOT post again/);
     const reply = rig.write(`pr-${PR}-reply.md`, "thanks");
@@ -232,7 +240,25 @@ describe("the client posts through a daemon", () => {
         timeoutMs: 100,
       }),
     ).toBe(1);
-    expect(err).toMatch(/^reply-thread: timeout: .*unknown — do NOT retry/);
+    expect(err).toMatch(
+      /^reply-thread: timeout: .*may still be posted\. Run the same script again .*never posts a second copy/,
+    );
+  });
+
+  // MUTATION: answer IN_FLIGHT for every review timeout, keyed or not — this fails.
+  it("an unkeyed post the client stopped waiting for is an unknown outcome, never daemon-owned", async () => {
+    const hang = { roles: ["worker", "shim"] as const, handle: () => new Promise(() => {}) };
+    rig.server.register("post.review", hang);
+    const body = rig.write(`pr-${PR}-answer-review.md`, "x");
+    expect(
+      await runPostShim("review", [String(PR), "COMMENT", body], envFor("c-round"), io, {
+        timeoutMs: 100,
+      }),
+    ).toBe(1);
+    expect(out).toBe("");
+    expect(err).toMatch(
+      /^post-review: timeout: .*unknown, and with no round nothing in the daemon records or retries it\. Do NOT post it again/,
+    );
   });
 
   it("the client answers before a session's two-minute command timeout kills it", () => {

@@ -100,7 +100,7 @@ import {
   type WorkerLogLimits,
 } from "./workerlog.js";
 import { WorkerBreaker, type BreakerLimits } from "./workerbreaker.js";
-import { WORKER_EXIT_PROVIDER, providerBackoffMs } from "./providerfailure.js";
+import { WORKER_EXIT_AUTH, WORKER_EXIT_PROVIDER, providerBackoffMs } from "./providerfailure.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
 import {
   WorkerLeases,
@@ -253,6 +253,14 @@ export function decideOutcome(x: {
       kind: "requeue",
       reason: x.failedReason ?? "the provider failed the turn",
       backoff: "provider",
+    };
+  // A login the worker's own check refused is the operator's to fix: its
+  // words say so wherever the failure surfaces (src/providerfailure.ts
+  // `isOperatorWorkerFailure`).
+  if (x.code === WORKER_EXIT_AUTH)
+    return {
+      kind: "failed",
+      reason: `the worker's login was refused: ${x.failedReason ?? `the worker exited ${x.code}`}`,
     };
   if (x.code !== null && x.code >= 1 && x.code <= 6)
     return { kind: "failed", reason: x.failedReason ?? `the worker exited ${x.code}` };

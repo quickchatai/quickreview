@@ -12,7 +12,6 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,6 +21,7 @@ import { StateStore, type ReviewedHeadRow } from "../src/state.js";
 import { fingerprintRoundIntegrity } from "../src/execboundary.js";
 import { githubCloneDir } from "../src/config.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
+import { PostingJournal } from "../src/posting-journal.js";
 import type {
   PassPlanEntry,
   SessionHooks,
@@ -1421,37 +1421,90 @@ describe("confirmed round posting receipts", () => {
     store.db
       .prepare("UPDATE rounds SET started_at = ? WHERE pr = 178")
       .run(new Date(Date.now() - 3 * 3_600_000).toISOString());
-    mkdirSync(receiptDir, { recursive: true });
-    const payload = {
-      commit_id: "abc123",
-      event: "APPROVE",
-      body: `LGTM\n\n${postingMarker(key)}`,
-    };
-    const job = {
-      version: 1,
-      posting_key: key,
-      repo: cfg.github.repo,
-      mode: "dryrun",
+    // The guard's withdrawal, through the journal that owns the snapshot files.
+    const queuedAt = () => new Date(Date.now() - 60_000);
+    const journal = new PostingJournal({ dir: receiptDir, repo: cfg.github.repo, now: queuedAt });
+    journal.enqueue({
+      key,
       pr: 178,
-      round_no: 1,
-      head_sha: "abc123",
-      intended_event: "APPROVE",
-      payload,
-      payload_sha256: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
-      status: "pending",
-      attempts: 0,
-      created_at: new Date(Date.now() - 60_000).toISOString(),
-      next_attempt_at: new Date(Date.now() - 60_000).toISOString(),
-    };
-    writeFileSync(
-      join(receiptDir, "pr-178-round-1.outbox.json.withdrawn-20261104T000000000000Z"),
-      JSON.stringify(job),
-    );
+      round: 1,
+      head: "abc123",
+      event: "APPROVE",
+      mode: "dryrun",
+      payload: { commit_id: "abc123", event: "APPROVE", body: `LGTM\n\n${postingMarker(key)}` },
+    });
+    journal.withdraw(178, 1, key);
     const name = write(178, 1, verdictFile({ pr: 178 }));
 
     expect(await watcher({ postingReceiptGraceS: 120 }).handleFile(name)).toBe(false);
     expect(store.roundsFor(178)[0]?.status).toBe("running");
     expect(existsSync(join(dir, name))).toBe(true);
+  });
+
+  // MUTATION: drop the persistentRequeueCount term from selfRequeue's spend — a
+  // fanout renews the budget and a review that never posts is redone for
+  // ever; this fails.
+  it("a replacement's fanout does not renew the posting requeue budget", async () => {
+    reviewingRound(177);
+    stampPosting(177, 1);
+    for (let i = 0; i < (cfg.daemon.max_self_requeues ?? 2); i++)
+      store.logEvent("round_self_requeued", 177, {
+        head_sha: "abc123",
+        mode: "posting_unconfirmed",
+      });
+    // The replacement started its passes: the general budget's generation resets.
+    store.logEvent("round_fanout_started", 177, { head_sha: "abc123" });
+    expect(store.selfRequeueCount(177, "abc123")).toBe(0);
+    store.createSessionCommand({
+      id: "cmd-177",
+      pr: 177,
+      session: "pr-177",
+      kind: "round",
+      round_no: 1,
+      payload_sha256: "a".repeat(64),
+      payload_path: "/payload/cmd-177.md",
+      inject_path: "/inject/cmd-177.md",
+      next_check_at: new Date().toISOString(),
+    });
+
+    expect(
+      await watcher({ postingReceiptGraceS: 0 }).handleFile(
+        write(177, 1, verdictFile({ pr: 177 })),
+      ),
+    ).toBe(true);
+
+    const requeues = store.db
+      .prepare("SELECT COUNT(*) c FROM events WHERE kind='round_self_requeued' AND pr=177")
+      .get() as { c: number };
+    expect(requeues.c).toBe(cfg.daemon.max_self_requeues ?? 2);
+    expect(store.openReviewFailure(177)).toMatchObject({
+      stage: "posting_receipt",
+      next_action: "retry_wait",
+    });
+  });
+
+  // MUTATION: drop `!this.postingLinked(round)` from postingProof's `unposted`
+  // and from the apply's requeue — a round a stage probe proved posted is
+  // cancelled and redone while GitHub is unreadable; this fails.
+  it("a round with durable posting linkage and no receipt file is never requeued", async () => {
+    const roundId = reviewingRound(176);
+    const { key } = stampPosting(176, 1);
+    store.confirmRoundPosting(roundId, {
+      posting_key: key,
+      actual_event: "REQUEST_CHANGES",
+      gh_review_id: 555,
+      gh_commit_id: "abc123",
+      confirmed_at: new Date().toISOString(),
+    });
+
+    await watcher({ postingReceiptGraceS: 0 }).handleFile(write(176, 1, verdictFile({ pr: 176 })));
+
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) c FROM events WHERE kind='round_self_requeued' AND pr=176")
+        .get(),
+    ).toMatchObject({ c: 0 });
+    expect(store.openReviewFailure(176)).toMatchObject({ next_action: "operator_unwedge" });
   });
 
   it("past the self-requeue cap it fails loud instead of trusting or reposting", async () => {

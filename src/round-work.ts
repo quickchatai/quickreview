@@ -47,3 +47,18 @@ export function deferRoundWork(store: StateStore, key: string, at: string): void
     .prepare("UPDATE round_work SET due_at=? WHERE key=? AND completed_at IS NULL")
     .run(at, key);
 }
+
+/** Whether a later round of the PR has work of this kind of its own (owed or
+ * done): that round's work answers this one's. */
+export function laterRoundWork(
+  store: StateStore,
+  kind: RoundWorkKind,
+  pr: number,
+  roundNo: number,
+): boolean {
+  return (
+    store.db
+      .prepare("SELECT 1 FROM round_work WHERE kind=? AND pr=? AND round_no>? LIMIT 1")
+      .get(kind, pr, roundNo) !== undefined
+  );
+}
