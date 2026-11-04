@@ -4020,8 +4020,7 @@ export class StateStore {
                WHERE r.pr = session_commands.pr AND r.round_no = session_commands.round_no
                  AND r.status = 'running'))`,
         )
-        .run({ id, owner: ownerToken, ts, next: nextCheckAt, not_before: notBefore }).changes ===
-      1
+        .run({ id, owner: ownerToken, ts, next: nextCheckAt, not_before: notBefore }).changes === 1
     );
   }
 
@@ -5083,7 +5082,9 @@ export class StateStore {
         round.gh_review_id === null
       );
     return (
-      (arg.round_id ?? null) === null && (arg.round_no ?? null) === null && command.status === "failed"
+      (arg.round_id ?? null) === null &&
+      (arg.round_no ?? null) === null &&
+      command.status === "failed"
     );
   }
 
@@ -5393,8 +5394,7 @@ export class StateStore {
           AND kind NOT IN ('round', 'answer')`,
       )
       .run({ id: command.id, pr: failure.pr, session: `pr-${failure.pr}`, ts }).changes;
-    if (commandChanged !== 1)
-      throw new Error(`automatic retry command CAS lost for ${command.id}`);
+    if (commandChanged !== 1) throw new Error(`automatic retry command CAS lost for ${command.id}`);
     const failureChanged = this.db
       .prepare(
         `UPDATE review_failures
@@ -5577,7 +5577,7 @@ export class StateStore {
             stage: "first_pass_start",
             source_incident_id: failure.incident_id,
             source_command_id: failure.command_id,
-            source_round_no: failure.round_no!,
+            source_round_no: failure.round_no,
             immediate_attempt: failure.attempts,
             retry_epoch: retryEpoch,
             created_at: this.ts(),
@@ -7615,7 +7615,8 @@ export class StateStore {
     if (notBefore === undefined) return undefined;
     if (
       readStringField(row?.payload ?? null, "queued_head_sha") !== queued.head_sha ||
-      readStringField(row?.payload ?? null, "queued_trigger_ts") !== (queued.trigger_ts ?? undefined)
+      readStringField(row?.payload ?? null, "queued_trigger_ts") !==
+        (queued.trigger_ts ?? undefined)
     )
       return undefined;
     return notBefore;

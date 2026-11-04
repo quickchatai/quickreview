@@ -1967,7 +1967,10 @@ describe("a transient failure with nothing posted waits on the automatic retry l
    * every failure path leaves it before it opens the debt. */
   function failedRound(
     pr: number,
-    over: { preflight?: "none" | "dryrun" | "refused" | "executed" | "ambiguous"; posted?: boolean } = {},
+    over: {
+      preflight?: "none" | "dryrun" | "refused" | "executed" | "ambiguous";
+      posted?: boolean;
+    } = {},
   ): { roundId: number; roundNo: number; commandId: string } {
     store.upsertPr(prRow(pr, { state: "reviewing", head_sha: `head-${pr}` }));
     const roundId = store.startRound(pr, "re-review", ["pass-baseline"], 75);
@@ -2029,22 +2032,25 @@ describe("a transient failure with nothing posted waits on the automatic retry l
     ["provider_unavailable", "provider_transient"],
     ["posting_receipt", "posting_unconfirmed"],
     ["posting_receipt", "posting_exhausted_unposted"],
-  ] as const)("at stage %s, cause %s, the debt waits 15 minutes for its automatic retry", (stage, cause) => {
-    const r = failedRound(5600);
-    expect(open(5600, r, { stage, cause })).toMatchObject({
-      work_owed: 1,
-      stage,
-      next_action: "retry_wait",
-      retry_epoch: 0,
-      next_retry_at: "2026-08-13T09:15:00.000Z",
-    });
-    // Loud all the while: the FAILED_LOUD event carries the cause.
-    const loud = store
-      .eventsOn("2026-08-13")
-      .filter((e) => e.kind === "review_failed_loud")
-      .map((e) => JSON.parse(e.payload!));
-    expect(loud.at(-1)).toMatchObject({ cause, next_action: "retry_wait" });
-  });
+  ] as const)(
+    "at stage %s, cause %s, the debt waits 15 minutes for its automatic retry",
+    (stage, cause) => {
+      const r = failedRound(5600);
+      expect(open(5600, r, { stage, cause })).toMatchObject({
+        work_owed: 1,
+        stage,
+        next_action: "retry_wait",
+        retry_epoch: 0,
+        next_retry_at: "2026-08-13T09:15:00.000Z",
+      });
+      // Loud all the while: the FAILED_LOUD event carries the cause.
+      const loud = store
+        .eventsOn("2026-08-13")
+        .filter((e) => e.kind === "review_failed_loud")
+        .map((e) => JSON.parse(e.payload!));
+      expect(loud.at(-1)).toMatchObject({ cause, next_action: "retry_wait" });
+    },
+  );
 
   // MUTATION: drop the preflight / posted_at / gh_review_id checks from
   // transientRetryProven — a round that may have posted retries itself; this fails.
@@ -2125,7 +2131,10 @@ describe("a transient failure with nothing posted waits on the automatic retry l
       inject_path: "/inject/wake-5609.md",
       next_check_at: clock.toISOString(),
     });
-    store.failPendingSessionCommand("wake-5609", "wake: the provider failed the turn: fetch failed");
+    store.failPendingSessionCommand(
+      "wake-5609",
+      "wake: the provider failed the turn: fetch failed",
+    );
     store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id='wake-5609'").run();
     const failure = store.openReviewFailure({
       pr: 5609,
@@ -2140,7 +2149,10 @@ describe("a transient failure with nothing posted waits on the automatic retry l
       cause: "provider_transient",
       nothing_posted: true,
     });
-    expect(failure).toMatchObject({ next_action: "retry_wait", next_retry_at: "2026-08-13T09:15:00.000Z" });
+    expect(failure).toMatchObject({
+      next_action: "retry_wait",
+      next_retry_at: "2026-08-13T09:15:00.000Z",
+    });
     // While the debt stands the command is never replayed.
     expect(store.dueSessionCommands("2026-08-13T10:00:00.000Z").map((c) => c.id)).toEqual([]);
 
