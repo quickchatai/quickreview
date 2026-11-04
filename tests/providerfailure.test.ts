@@ -4,8 +4,10 @@
 import { describe, expect, it } from "vitest";
 import {
   PROVIDER_BACKOFF_MIN,
+  isOperatorWorkerFailure,
   isProviderTransient,
   isProviderTransientPassError,
+  isTransientKind,
   providerBackoffMs,
   providerFailureKind,
 } from "../src/providerfailure.js";
@@ -75,6 +77,41 @@ describe("isProviderTransientPassError", () => {
     expect(isProviderTransientPassError("invalid_request_error: prompt is too long")).toBe(false);
     expect(isProviderTransientPassError("failed")).toBe(false);
     expect(isProviderTransientPassError(undefined)).toBe(false);
+  });
+});
+
+describe("isTransientKind", () => {
+  // MUTATION: add "usage_limit" to isTransientKind — a spent window retries on
+  // the ladder and never parks or drains as the breaker's own; this fails.
+  it("is the one transient list: the connection, a rate limit, an overload", () => {
+    expect(
+      (["transport", "rate_limited", "overloaded", "usage_limit", "other", undefined] as const).map(
+        isTransientKind,
+      ),
+    ).toEqual([true, true, true, false, false, false]);
+  });
+});
+
+describe("isOperatorWorkerFailure", () => {
+  // MUTATION: return false from isOperatorWorkerFailure — a refused login's
+  // exhausted round waits on the automatic retry ladder; this fails.
+  it("is a refused login, the worker's own refused login check and a spent usage window", () => {
+    expect(isOperatorWorkerFailure("the round: the provider refused the login: expired")).toBe(
+      true,
+    );
+    expect(
+      isOperatorWorkerFailure("the worker's login was refused: no login in the agent dir"),
+    ).toBe(true);
+    expect(
+      isOperatorWorkerFailure("x: the provider failed the turn: The usage limit has been reached"),
+    ).toBe(true);
+  });
+
+  it("is never a transient provider failure, a crash or nothing", () => {
+    expect(isOperatorWorkerFailure("x: the provider failed the turn: fetch failed")).toBe(false);
+    expect(isOperatorWorkerFailure("the worker died of SIGKILL")).toBe(false);
+    expect(isOperatorWorkerFailure("the round: the wall-clock cap ran out")).toBe(false);
+    expect(isOperatorWorkerFailure(null)).toBe(false);
   });
 });
 

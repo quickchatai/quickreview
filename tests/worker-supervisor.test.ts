@@ -29,6 +29,7 @@ import { PermitBroker } from "../src/ipc/permits.js";
 import { IpcServer, type OpHandler } from "../src/ipc/server.js";
 import type { WorkerSpec } from "../src/ipc/workerspec.js";
 import { PostingJournal } from "../src/posting-journal.js";
+import { isOperatorWorkerFailure } from "../src/providerfailure.js";
 import { StateStore, buildStatusSnapshot, type SessionCommandRow } from "../src/state.js";
 import { type WorkerLeases, realProc, type WorkerLease } from "../src/workerlease.js";
 import {
@@ -854,6 +855,18 @@ describe("what an exit means", () => {
       backoff: "provider",
     });
     expect(decideOutcome({ ...base, code: 75 })).not.toHaveProperty("backoff");
+  });
+
+  // MUTATION: drop the WORKER_EXIT_AUTH branch from decideOutcome — a refused
+  // login check reads as an ordinary failure and its exhausted round waits on
+  // the automatic retry ladder; this fails.
+  it("a worker whose own login check refused it fails in words that say the login is the operator's", () => {
+    const outcome = decideOutcome({ ...base, code: 4, failedReason: "no login in the agent dir" });
+    expect(outcome).toEqual({
+      kind: "failed",
+      reason: "the worker's login was refused: no login in the agent dir",
+    });
+    expect(isOperatorWorkerFailure(outcome.kind === "failed" ? outcome.reason : "")).toBe(true);
   });
 });
 

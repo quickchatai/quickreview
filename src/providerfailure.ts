@@ -47,24 +47,48 @@ export function providerMessageKind(message: string): ProviderFailureKind {
   return TRANSPORT.test(message) ? "transport" : "other";
 }
 
+/** The kinds a later attempt of the same request cures: the connection, a
+ * rate limit, an overload. The one list the worker's exit, the required-pass
+ * gap and the breaker all read, so they cannot disagree about a kind. */
+export function isTransientKind(kind: ProviderFailureKind | undefined): boolean {
+  return kind === "transport" || kind === "rate_limited" || kind === "overloaded";
+}
+
 /** A provider failure that a later attempt of the same request cures: the
  * connection, a rate limit, an overload. */
 export function isProviderTransient(error: string | null | undefined): boolean {
   if (!error) return false;
-  const kind = providerFailureKind(error);
-  return kind === "transport" || kind === "rate_limited" || kind === "overloaded";
+  return isTransientKind(providerFailureKind(error));
 }
 
 /** A lens pass's recorded failure is a transient provider failure: either
  * the worker's wording of one, or the provider's bare message reading as the
- * connection, a rate limit or an overload. A timeout, a crash or an empty
- * error is not. */
+ * connection, a rate limit or an overload (a pass the per-pass deadline ended
+ * while pi was retrying the provider names the provider's error too). A
+ * timeout with no provider error, a crash or an empty error is not. */
 export function isProviderTransientPassError(error: string | null | undefined): boolean {
   if (!error) return false;
   if (isProviderTransient(error)) return true;
-  const kind = providerMessageKind(error);
-  return kind === "transport" || kind === "rate_limited" || kind === "overloaded";
+  return isTransientKind(providerMessageKind(error));
 }
+
+/** The words of a worker failure only an operator cures, whatever stage it
+ * surfaced at: the provider refused the login (src/botworker.ts), the
+ * worker's own login check refused it before work started (`EXIT.auth`, which
+ * src/workersupervisor.ts words this way), or the plan's usage window is
+ * spent. Such a failure never waits on the automatic retry ladder. */
+const OPERATOR_FAILURE = /the provider refused the login|the worker's login was refused/i;
+
+/** A worker failure an automatic retry cannot cure (`OPERATOR_FAILURE`, or a
+ * spent usage window): its incident stays the operator's. */
+export function isOperatorWorkerFailure(error: string | null | undefined): boolean {
+  if (!error) return false;
+  return OPERATOR_FAILURE.test(error) || providerFailureKind(error) === "usage_limit";
+}
+
+/** The exit code of a worker whose own login check refused it before work
+ * started (src/botworker.ts `EXIT.auth`). */
+export const WORKER_EXIT_AUTH = 4;
 
 /** The exit code of a worker whose turn a transient provider failure ended
  * (src/botworker.ts `EXIT.provider`). Named here because the worker supervisor

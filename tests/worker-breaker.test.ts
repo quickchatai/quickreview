@@ -163,6 +163,19 @@ describe("the breaker over the store", () => {
     }
   });
 
+  // MUTATION: classify `last` (the 300-character display cut) in
+  // WorkerBreaker.failure instead of the whole text — the 429 falls past the
+  // cut, reads "other" and parks the PR; this fails.
+  it("classifies the whole failure, not its display cut", () => {
+    const store = new StateStore(":memory:");
+    const b = new WorkerBreaker(store);
+    const blip = `the round: the provider failed the turn: ${"x".repeat(270)} 429 Too Many Requests`;
+    for (let i = 0; i < 3; i++) expect(b.failure(1, `c${i}`, blip).parked).toBe(false);
+    expect(b.gate(1)).toEqual({ ok: true });
+    // The display keeps its cut.
+    expect(store.workerBreaker(1)?.last_error?.length).toBe(300);
+  });
+
   it("a hand-set drain keeps no reason, and the breaker does not take it over", () => {
     const store = new StateStore(":memory:");
     store.engageDrain({ issuer: "operator", expires_at: null });
