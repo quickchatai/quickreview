@@ -1222,6 +1222,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           : "operator u required";
       return `held FAILED_LOUD (${failure.incident_id}); ${action}`;
     }
+    // A self-requeued round's replacement waits out its backoff (verdicts.ts
+    // SELF_REQUEUE_BACKOFF_MIN); a newer trigger on the row lifts it.
+    const notBefore = store.selfRequeueNotBefore(row.number, row);
+    if (notBefore !== undefined && notBefore > now().toISOString())
+      return `held — self-requeue backoff until ${notBefore}`;
     const active = store.blockingSessionCommand(`pr-${row.number}`);
     if (active) return `skipped — session command ${active.id} is ${active.status}`;
     // The operator holds the session (src/takeover.ts): the round waits for the release.

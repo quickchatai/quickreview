@@ -228,6 +228,21 @@ function stageFailure(outcome: "verdict" | "ended" | "failed"): RoundRecoveryDis
   return outcome === "verdict" ? "retryable" : outcome === "ended" ? "settled" : "failed_loud";
 }
 
+/** How long a self-requeued round's replacement waits before it may
+ * dispatch: 2 minutes after the first requeue at a head, 8 after the second
+ * (and any after it). The failure that caused it — a provider blip, a dead
+ * session, a posting that never went out — is rarely cured in the second an
+ * immediate redispatch would take. A requeue onto a fresh head (`head_moved`,
+ * a successor) is new work and waits for nothing. Dispatch holds the queued
+ * row until then (`StateStore.selfRequeueNotBefore`); any newer trigger lifts
+ * it. */
+export const SELF_REQUEUE_BACKOFF_MIN: readonly number[] = [2, 8];
+
+function selfRequeueBackoffMin(attempt: number): number {
+  const steps = SELF_REQUEUE_BACKOFF_MIN;
+  return steps[Math.min(Math.max(0, attempt - 1), steps.length - 1)]!;
+}
+
 /** A failed posting proof, as far as the failure's class is concerned. */
 interface PostingProofFailure {
   failure?: "unconfirmed" | "ambiguous" | "contradicted" | "exhausted";
@@ -4601,6 +4616,20 @@ export class VerdictWatcher {
         `round ${round.round_no} stopped dead inside its deadline window (${round.started_at} → ${round.deadline_at}) and was cancelled; self-requeue attempt ${attempt}/${cap}`,
       );
     }
+    // The replacement waits out its backoff unless it is new work: a moved
+    // head, or a successor at a fresher head than the round reviewed.
+    const reviewedHead =
+      round.head_sha ?? (round.posting_key ? round.posting_key.split(":").slice(3).join(":") : head);
+    const queued = store.getPr(round.pr);
+    const notBefore =
+      mode !== "head_moved" &&
+      publication.queued &&
+      queued &&
+      publication.target_head_sha === reviewedHead
+        ? new Date(
+            this.now().getTime() + selfRequeueBackoffMin(attempt) * 60_000,
+          ).toISOString()
+        : undefined;
     store.logEvent("round_self_requeued", round.pr, {
       cancel_cause: cause,
       round_id: round.id,
@@ -4610,6 +4639,13 @@ export class VerdictWatcher {
       cap,
       mode,
       reason,
+      ...(notBefore && queued
+        ? {
+            not_before: notBefore,
+            queued_head_sha: queued.head_sha,
+            queued_trigger_ts: queued.trigger_ts,
+          }
+        : {}),
     });
     await this.closeMeasurement(owed, measureModeForRequeue(mode));
     if (!publication.queued) {
@@ -4621,7 +4657,7 @@ export class VerdictWatcher {
       return true;
     }
     this.log(
-      `verdicts: SELF-REQUEUE #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — ${reason}`,
+      `verdicts: SELF-REQUEUE #${round.pr} round ${round.round_no} attempt ${attempt}/${cap}${notBefore ? ` (dispatch not before ${notBefore})` : ""} — ${reason}`,
     );
     await this.safe(
       async () =>
@@ -4629,7 +4665,7 @@ export class VerdictWatcher {
           [
             `SELF-REQUEUE (recovery) — PR #${round.pr} round ${round.round_no}, attempt ${attempt}/${cap}`,
             reason,
-            "The daemon cancelled the round and re-queued the PR for a fresh dispatch through the normal path. No GitHub state was touched.",
+            `The daemon cancelled the round and re-queued the PR for a fresh dispatch through the normal path${notBefore ? `, not before ${notBefore}` : ""}. No GitHub state was touched.`,
             "This is a recovery path, not a normal one — if it recurs on the same PR, investigate the cause the line above names.",
           ].join("\n"),
           "anomaly",

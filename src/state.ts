@@ -7577,6 +7577,33 @@ export class StateStore {
     return spend;
   }
 
+  /**
+   * The not-before time of this PR's newest self-requeue, while the queued
+   * work it backed off is still the work queued: the same head and the same
+   * trigger the requeue wrote (`round_self_requeued`'s `queued_head_sha` and
+   * `queued_trigger_ts`). Any newer trigger — a push, a person's request, an
+   * operator's `u` — writes its own and so lifts the backoff. Undefined when
+   * there is none, or it no longer describes the queued row.
+   */
+  selfRequeueNotBefore(
+    pr: number,
+    queued: { head_sha: string; trigger_ts: string | null },
+  ): string | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT payload FROM events WHERE kind='round_self_requeued' AND pr=? ORDER BY id DESC LIMIT 1",
+      )
+      .get(pr) as { payload: string | null } | undefined;
+    const notBefore = readStringField(row?.payload ?? null, "not_before");
+    if (notBefore === undefined) return undefined;
+    if (
+      readStringField(row?.payload ?? null, "queued_head_sha") !== queued.head_sha ||
+      readStringField(row?.payload ?? null, "queued_trigger_ts") !== (queued.trigger_ts ?? undefined)
+    )
+      return undefined;
+    return notBefore;
+  }
+
   /** `selfRequeueSpend` collapsed to the number the cap is compared against:
    * attributed and unattributed rows both spend the budget. */
   selfRequeueCount(pr: number, headSha: string): number {
