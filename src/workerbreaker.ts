@@ -4,8 +4,9 @@
 //
 //   - PER PR. A worker's failure is a non-zero exit, a `failed` event over the IPC,
 //     or a deadline kill (wall clock, stage or silence). After `parkAfter`
-//     consecutive ones the PR is PARKED (a provider network drop counts but
-//     never parks by itself: it says nothing about the PR): no further spawn, a `worker_crash_loop`
+//     consecutive ones the PR is PARKED (a provider failure counts but never
+//     parks by itself: a dropped connection, a rate limit, an overload or a
+//     spent usage window says nothing about the PR): no further spawn, a `worker_crash_loop`
 //     anomaly (to the companion inbox), the last error in status.json and a TUI
 //     alert. A worker that served its round resets the PR's count. The operator
 //     unparks with `rerun-round` or `restart-session` (src/operator-recovery.ts).
@@ -17,9 +18,11 @@
 //     lifts it at once) starts the wait from `healAfterMs` again. A boot's first
 //     healthy reconcile pass does not lift it early, and an operator's own
 //     `drain on` over it stands until the operator lifts it. A PR's FIRST
-//     failure that is the provider's network dropping (`fetch failed`, a reset
-//     socket) does not feed the drain: one blip fails every concurrent worker at
-//     the same instant, and each of them is retried. A retry that fails again counts.
+//     failure that is a transient provider failure (src/providerfailure.ts: the
+//     network dropping, a rate limit, an overload) does not feed the drain: one
+//     blip fails every concurrent worker at the same instant, and each of them
+//     is retried. A retry that fails again counts. A spent usage window feeds
+//     the drain at once: it is the login's, and every PR will hit it.
 //   - EVERY HOST. `gate` is the one question each host asks before it starts a
 //     round worker, an answer worker or a debug round: the bot
 //     is drained, or the PR is parked, and the answer is no. A takeover
@@ -28,6 +31,7 @@
 // A daemon's own stop or an operator's kill is not a failure: the caller does not
 // report it. Single-shepherd (rule 9): this module decides whether to spawn, it
 // never schedules an agent and never touches GitHub.
+import { providerFailureKind } from "./providerfailure.js";
 import { WORKER_FAILURES_DRAIN_REASON, type StateStore } from "./state.js";
 
 export interface BreakerLimits {
@@ -62,13 +66,20 @@ export interface WorkerFailure {
 
 const ERROR_CHARS = 300;
 
-/** The provider's transport dropped the turn (src/botworker.ts words it), as
- * opposed to the provider answering with an error or refusing the login. */
-const PROVIDER_TRANSPORT =
-  /the provider failed the turn: .*\b(fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up)\b/i;
-
-function isProviderTransportFailure(error: string): boolean {
-  return PROVIDER_TRANSPORT.test(error);
+/** How a worker's failure moves the breaker, by what it says about the
+ * provider (src/providerfailure.ts reads the words src/botworker.ts gives it):
+ *   - a transient provider failure (the connection, a rate limit, an
+ *     overload) never parks the PR, and feeds the drain only on a repeat;
+ *   - a spent usage window never parks the PR either, and feeds the drain
+ *     from its first occurrence;
+ *   - anything else (a refused login, a provider error, a crash) parks and
+ *     drains as counted. */
+function breakerEffect(error: string, firstFailure: boolean): { park: boolean; drain: boolean } {
+  const kind = providerFailureKind(error);
+  if (kind === "transport" || kind === "rate_limited" || kind === "overloaded")
+    return { park: false, drain: !firstFailure };
+  if (kind === "usage_limit") return { park: false, drain: true };
+  return { park: true, drain: true };
 }
 
 export class WorkerBreaker {
@@ -120,14 +131,14 @@ export class WorkerBreaker {
     const at = this.iso();
     const last = error.replace(/\s+/g, " ").trim().slice(0, ERROR_CHARS) || "no reason given";
     const firstFailure = (this.store.workerBreaker(pr)?.failures ?? 0) === 0;
-    const transport = isProviderTransportFailure(last);
+    const effect = breakerEffect(last, firstFailure);
     const res = this.store.recordWorkerFailure(pr, {
       commandId,
       error: last,
       at,
       parkAfter: this.limits.parkAfter,
-      drain: !(firstFailure && transport),
-      park: !transport,
+      drain: effect.drain,
+      park: effect.park,
     });
     if (res.newlyParked) {
       const detail = `PR #${pr} is parked after ${res.failures} consecutive worker failures; last: ${last}`;
