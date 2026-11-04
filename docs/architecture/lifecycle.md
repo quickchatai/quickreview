@@ -588,7 +588,10 @@ withheld mark and applies a `REQUEST_CHANGES` verdict event, moving the PR to
 
 `runBaseAdvance()` fans a base-branch move out only to open PRs that target that
 branch and hold a standing approval; every other PR is skipped without an API
-call.
+call. A base-advance question whose reads fail — the fan-out's `getPr`, or the
+delta read — is never dropped: it is owed in `owed_base_rechecks`, and every
+reconcile pass asks the due ones again (`retryOwedBaseRechecks`, 2 min doubling
+to 1 h), settling each once it is asked or nothing is left to ask.
 
 ## 8. Ping-pong, wake holding and self-requeue
 
