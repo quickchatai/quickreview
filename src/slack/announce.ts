@@ -240,6 +240,8 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * is a previous run's, interrupted mid-post. */
   /** Idem keys whose post request is awaiting Slack's answer in this process. */
   private readonly inFlight = new Set<string>();
+  /** Incidents whose ambiguous alert claim this process has already logged. */
+  private readonly ambiguousIncidents = new Set<string>();
   /** Tail of each posting lane (one per PR, else one per idem key). */
   private readonly lanes = new Map<string, Promise<unknown>>();
   /** Corrections to one incident execute in order, including recovery edits. */
@@ -777,6 +779,57 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     }
   }
 
+  // ---- owed incident alerts ----------------------------------------------
+
+  /**
+   * Every open FAILED_LOUD incident is owed its alert, and the first one can
+   * be lost: a definite refusal settles the claim `ok = 0` and nothing posts
+   * it again, and an announcement queued behind a slow Slack dies with the
+   * process. Each heartbeat re-announces an open incident whose post is
+   * missing or refused, under its own idem key (`incident_id`), through
+   * `anomaly` — the cause switch and the cooldown still apply, and the
+   * ledger still refuses a second delivery.
+   *
+   * An AMBIGUOUS claim (claimed, no ts, not in flight here) is never
+   * re-posted: Slack may have accepted it, and the no-duplicate rule is the
+   * ledger's whole point. It is logged once per process instead.
+   */
+  private async announceOwedIncidents(): Promise<void> {
+    const { store, cfg } = this.deps;
+    let open;
+    try {
+      open = store.openReviewFailures();
+    } catch (err) {
+      this.log("slack: open incidents unreadable — owed alerts not checked", err);
+      return;
+    }
+    for (const failure of open) {
+      if (failure.round_no === null) continue;
+      const id = failure.incident_id;
+      const post = store.slackPost(id);
+      if (post?.ok === 1) {
+        if (!post.ts && !this.inFlight.has(id) && !this.ambiguousIncidents.has(id)) {
+          this.ambiguousIncidents.add(id);
+          this.log(
+            `slack: the alert for ${id} (#${failure.pr}) may or may not have posted — not re-posted (${post.error ?? "no answer"})`,
+          );
+        }
+        continue;
+      }
+      try {
+        await this.anomaly({
+          pr: failure.pr,
+          round_no: failure.round_no,
+          kind: "failed_loud",
+          deadline_min: cfg.daemon.round_deadline_min,
+          incident_id: id,
+        });
+      } catch (err) {
+        this.log(`slack: owed alert for ${id} failed`, err);
+      }
+    }
+  }
+
   // ---- pinned heartbeat --------------------------------------------------
 
   /**
@@ -788,6 +841,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     if (!this.enabled) return undefined;
     const { store, cfg, slack } = this.deps;
     for (const owed of store.owedSlackReopenings()) await this.retryReopening(owed);
+    await this.announceOwedIncidents();
     const refreshedAt = this.now();
     // The banner names only a JUST-recovered incident; the incident message's
     // correction is owed until Slack accepts it, whatever the tick cadence —
