@@ -40,3 +40,10 @@ export function finishRoundWork(store: StateStore, key: string, at: string): voi
     )
     .run(at, key);
 }
+
+/** Owed again later: the item stays pending, due at `at`. */
+export function deferRoundWork(store: StateStore, key: string, at: string): void {
+  store.db
+    .prepare("UPDATE round_work SET due_at=? WHERE key=? AND completed_at IS NULL")
+    .run(at, key);
+}
