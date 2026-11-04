@@ -386,6 +386,10 @@ round in flight.
 - **Effect.** While draining, `src/webhook.ts` answers deliveries `200` and
   **drops** them (counted, so the lift line can say how many the poll must make
   up); `GET /health` is untouched, and the dispatch pump starts no new rounds.
+  The worker-failure breaker's drain is the exception for webhooks: the same
+  process lifts it, so its deliveries are accepted into the durable inbox
+  (`webhook_inbox`) unprepared and fulfilled once it lifts — the inbox pump does
+  no work while any drain is on.
   Terminal failure obligations stay visible but do not count as live rounds.
 - **Lifting it.** The operator's drain has no expiry, and the boot's **first**
   reconcile pass lifts it — only that pass, and only when it completed with no

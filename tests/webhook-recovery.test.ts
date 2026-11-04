@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { StateStore } from "../src/state.js";
+import { StateStore, WORKER_FAILURES_DRAIN_REASON } from "../src/state.js";
 import { parseConfig } from "../src/config.js";
 import {
   handleDelivery,
@@ -331,6 +331,38 @@ it("drain preserves already accepted work and the existing incoming-drop contrac
   s.liftDrain("operator");
   await resumeWebhookDeliveries(f.deps);
   expect(callback).toHaveBeenCalledOnce();
+});
+
+// The worker-failure breaker drains the same process that lifts it: what
+// arrives meanwhile is accepted into the durable inbox, left unprepared, and
+// fulfilled after the lift. A deploy drain (above) keeps dropping.
+// MUTATION: drop `holdInInbox` from handleDelivery — the delivery is answered
+// "draining" and never reaches the inbox, so the callback never runs.
+it("a breaker drain holds deliveries in the inbox and fulfils them after the lift", async () => {
+  const s = store();
+  const raw = Buffer.from(JSON.stringify(payload()));
+  const callback = vi.fn(async () => {});
+  const deps: WebhookDeps = { cfg, store: s, secret: "test", onInterpretation: callback };
+  s.engageDrain(
+    { issuer: "operator", expires_at: new Date(Date.now() + 60 * 60_000).toISOString() },
+    WORKER_FAILURES_DRAIN_REASON,
+  );
+  const res = handleDelivery(deps, signed("during-breaker", "pull_request", raw), raw);
+  expect(res).toMatchObject({ status: 200, reason: "draining-held" });
+  expect(s.drainState().drained_deliveries).toBe(0);
+  // Durable and unprepared: nothing interpreted while the bot is drained.
+  expect(s.webhookInbox("during-breaker")).toMatchObject({ interpretation: null });
+  await resumeWebhookDeliveries(deps);
+  expect(callback).not.toHaveBeenCalled();
+  // A redelivery is a duplicate, not a second piece of work.
+  expect(handleDelivery(deps, signed("during-breaker", "pull_request", raw), raw).reason).toBe(
+    "duplicate",
+  );
+  s.liftDrain("operator");
+  await resumeWebhookDeliveries(deps);
+  expect(callback).toHaveBeenCalledOnce();
+  expect(callback.mock.calls[0]![0]).toMatchObject({ kind: "trigger", pr: 4242 });
+  expect(s.webhookInbox("during-breaker")).toBeUndefined();
 });
 
 it("checks the configured repository again before replaying accepted payload", async () => {

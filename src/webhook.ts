@@ -12,7 +12,7 @@ import { reviewTeamSlug, type Config } from "./config.js";
 import { botAccountLogin } from "@quickchatai/pi-quickreview/src/identity.js";
 import { interpretReviewEvent, isFeedbackBody, ledgerFeedbackSignal } from "./feedback.js";
 import { applyEvent as applyEventFor, mergedOverBlock } from "./statemachine.js";
-import type { StateStore, StatusSnapshot } from "./state.js";
+import { WORKER_FAILURES_DRAIN_REASON, type StateStore, type StatusSnapshot } from "./state.js";
 import { blockedPrAuthor } from "./pr-conversation.js";
 import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import {
@@ -595,8 +595,17 @@ export function handleDelivery(
   // a redelivery from GitHub serves it. Counted so the lift log line can say
   // how many deliveries were dropped. GET /health is untouched (it never
   // reaches this function).
+  //
+  // The worker-failure breaker's drain (`WORKER_FAILURES_DRAIN_REASON`) is
+  // not a deploy: the same process keeps running and lifts it itself, so
+  // nothing argues for losing what arrives meanwhile. Its deliveries are
+  // accepted into the durable inbox (below) and left unprepared;
+  // `resumeWebhookDeliveries` does no work while any drain is on and
+  // fulfils them once it lifts. A deploy drain keeps dropping: the process
+  // that would fulfil them is about to be replaced.
   const drain = deps.store.drainState();
-  if (drain.draining) {
+  const holdInInbox = drain.draining && drain.reason === WORKER_FAILURES_DRAIN_REASON;
+  if (drain.draining && !holdInInbox) {
     const dropped = deps.store.countDrainedDelivery();
     log("webhook: draining — delivery dropped", { guid, event, dropped });
     return { status: 200, reason: "draining" };
@@ -627,6 +636,10 @@ export function handleDelivery(
   if (!deps.store.acceptWebhookDelivery(guid, event, action, JSON.stringify(payload))) {
     log("webhook: duplicate delivery", { guid, event, action });
     return { status: 200, reason: "duplicate" };
+  }
+  if (holdInInbox) {
+    log("webhook: breaker drain — delivery held in the inbox", { guid, event, action });
+    return { status: 200, reason: "draining-held" };
   }
   const interpretation = prepareAcceptedWebhook(deps, guid);
   return { status: 200, reason: interpretation.kind, interpretation, action };
