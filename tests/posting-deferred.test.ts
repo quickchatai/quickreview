@@ -7,13 +7,20 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PostingOutbox, pendingPosting, type PostingJob } from "../src/posting-outbox.js";
+import {
+  PostingOutbox,
+  pendingPosting,
+  withApprovalCiPrecheck,
+  type PostingJob,
+} from "../src/posting-outbox.js";
 import {
   parsePostingReceipt,
   postingMarker,
   postingReceiptPath,
   readPostingReceipt,
+  retrySoftenedApproval,
   roundPostingKey,
+  type PostingReceipt,
 } from "../src/posting-receipt.js";
 import { StateStore } from "../src/state.js";
 
@@ -285,13 +292,52 @@ describe("deferred review posting", () => {
     expect(onExhausted).toHaveBeenCalledTimes(1);
   });
 
-  it("a marker read that fails consumes the attempt and never POSTs", async () => {
+  // MUTATION: call `failed` instead of `unsent` on the marker read — this fails.
+  it("a marker read that fails moves to the next offset and uses no POST attempt", async () => {
     listReviewsFull.mockRejectedValueOnce(new Error("offline"));
     at(4);
     await worker().tick();
     expect(deliver).not.toHaveBeenCalled();
     expect(store.postingRetry(key)).toMatchObject({ attempts: 1, status: "pending" });
+    expect(jobFile()).toMatchObject({ unposted_attempts: 1 });
     expect(jobFile().next_attempt_at).toBe(new Date(t0 + 12 * MIN).toISOString());
+    // All three POST attempts are still there: 12, 36, and one past the offsets.
+    deliver.mockRejectedValue(unavailable());
+    for (const min of [12, 36]) {
+      at(min);
+      await worker().tick();
+    }
+    expect(deliver).toHaveBeenCalledTimes(2);
+    expect(store.postingRetry(key)?.status).toBe("pending");
+    at(60);
+    await worker().tick();
+    expect(deliver).toHaveBeenCalledTimes(3);
+    expect(store.postingRetry(key)?.status).toBe("exhausted");
+    expect(onExhausted).toHaveBeenCalledTimes(1);
+  });
+
+  // MUTATION: set DEFERRED_READ_WINDOW_FACTOR to 1 — this fails (exhausted at
+  // the first window instead of reading on).
+  it("while only reads fail the window stretches to its ceiling, then exhausts loud with no POST", async () => {
+    listReviewsFull.mockRejectedValue(new Error("offline"));
+    for (let min = 4; min <= 200; min += 4) {
+      at(min);
+      await worker().tick();
+      if (min < 180) expect(store.postingRetry(key)?.status, `at ${min} min`).toBe("pending");
+    }
+    expect(deliver).not.toHaveBeenCalled();
+    expect(store.postingRetry(key)?.status).toBe("exhausted");
+    expect(onExhausted).toHaveBeenCalledTimes(1);
+    expect(onExhausted.mock.calls[0]![1]).toMatch(/could not be read for 180 min.*no POST sent/);
+    expect(jobFile().status).toBe("failed");
+  });
+
+  it("a rate-limited POST sends nothing and uses no POST attempt", async () => {
+    deliver.mockRejectedValueOnce(Object.assign(new Error("rate limit"), { status: 429 }));
+    at(4);
+    await worker().tick();
+    expect(store.postingRetry(key)).toMatchObject({ attempts: 1, status: "pending" });
+    expect(jobFile()).toMatchObject({ unposted_attempts: 1 });
   });
 
   it("a round that no longer owes the posting (operator u) is abandoned, never posted", async () => {
@@ -317,6 +363,81 @@ describe("deferred review posting", () => {
     }).tick();
     expect(createReview).not.toHaveBeenCalled();
     expect(listReviewsFull).not.toHaveBeenCalled();
+  });
+});
+
+// The deferred retry of an APPROVE carries the CI pre-check the session's own
+// post made (wire.ts wires `withApprovalCiPrecheck` around the gated POST).
+describe("a deferred APPROVE and its CI pre-check", () => {
+  const listChecks = vi.fn();
+  const post = vi.fn();
+  beforeEach(() => {
+    writeDeferred("APPROVE");
+    listChecks.mockReset();
+    post.mockReset();
+    deliver.mockImplementation((pr: number, payload: PostingJob["payload"], postingKey: string) =>
+      withApprovalCiPrecheck({ listChecks, enabled: true }, pr, payload, () =>
+        post(pr, payload, postingKey),
+      ),
+    );
+  });
+
+  // MUTATION: drop the listChecks read in withApprovalCiPrecheck — this fails.
+  it("unreadable CI makes no POST, moves to the next offset, and uses no POST attempt", async () => {
+    listChecks.mockRejectedValueOnce(unavailable());
+    at(4);
+    await worker().tick();
+    expect(listChecks).toHaveBeenCalledWith(head);
+    expect(post).not.toHaveBeenCalled();
+    expect(store.postingRetry(key)).toMatchObject({ attempts: 1, status: "pending" });
+    expect(jobFile()).toMatchObject({ unposted_attempts: 1, status: "pending" });
+    expect(jobFile().next_attempt_at).toBe(new Date(t0 + 12 * MIN).toISOString());
+    // CI reads green at the next offset: the approval posts.
+    listChecks.mockResolvedValue([{ name: "ci", status: "completed", conclusion: "success" }]);
+    post.mockResolvedValue({
+      executed: true,
+      response: { id: 91, commit_id: head, state: "APPROVED" },
+    });
+    at(12);
+    await worker().tick();
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(readPostingReceipt(dir, 12, 1)).toMatchObject({
+      status: "confirmed",
+      actual_event: "APPROVE",
+    });
+  });
+
+  it("red CI goes on to the gate, whose softened COMMENT confirms as a withheld approval", async () => {
+    listChecks.mockResolvedValue([{ name: "ci", status: "completed", conclusion: "failure" }]);
+    // Guard 4 on the gate softens the APPROVE; the gate's answer is the COMMENT.
+    post.mockResolvedValue({
+      executed: true,
+      response: { id: 92, commit_id: head, state: "COMMENTED" },
+    });
+    at(4);
+    await worker().tick();
+    expect(post).toHaveBeenCalledWith(12, expect.objectContaining({ event: "APPROVE" }), key);
+    const receipt = readPostingReceipt(dir, 12, 1) as PostingReceipt;
+    expect(receipt).toMatchObject({
+      status: "confirmed",
+      intended_event: "APPROVE",
+      actual_event: "COMMENT",
+      delivered_by: "daemon_retry",
+    });
+    expect(retrySoftenedApproval(receipt)).toBe(true);
+  });
+
+  it("a COMMENT, or an install that does not block approvals on CI, reads no checks", async () => {
+    const posted = { executed: true } as const;
+    const send = vi.fn(async () => posted);
+    const payload = { commit_id: head, event: "COMMENT" as const, body: "x" };
+    await withApprovalCiPrecheck({ listChecks, enabled: true }, 12, payload, send);
+    await withApprovalCiPrecheck({ listChecks, enabled: false }, 12, {
+      ...payload,
+      event: "APPROVE",
+    }, send);
+    expect(listChecks).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });
 

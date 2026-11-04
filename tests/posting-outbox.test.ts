@@ -228,6 +228,46 @@ describe("durable review delivery", () => {
     await worker().tick();
     expect(createReview).not.toHaveBeenCalled();
   });
+  // MUTATION: return false at the top of deliveryExpired — this fails.
+  it("is bounded by the delivery window from created_at, then fails loud, an ambiguous receipt kept", async () => {
+    createReview.mockRejectedValue(Object.assign(new Error("GitHub unavailable"), { status: 503 }));
+    const expired = vi.fn();
+    const bounded = () =>
+      new PostingOutbox({
+        dir,
+        repo: "org/repo",
+        dryRun: false,
+        botLogins: ["review[bot]"],
+        now: () => new Date(clock),
+        adapter: { createReview, listReviewsFull },
+        current: () => true,
+        log: () => {},
+        deliveryWindowMs: 60 * 60_000,
+        onDeliveryExpired: expired,
+      });
+    const created = clock;
+    for (let i = 0; i < 14; i++) {
+      await bounded().tick();
+      if (clock - created < 60 * 60_000) expect(expired).not.toHaveBeenCalled();
+      advance(10 * 60_000);
+    }
+    expect(expired).toHaveBeenCalledTimes(1);
+    expect(expired.mock.calls[0]![1]).toMatch(/not delivered within 60 min of being queued/);
+    expect(pendingPosting(dir, 12, 1, key)).toBe(false);
+    expect(JSON.parse(readFileSync(join(dir, "pr-12-round-1.outbox.json"), "utf8")).status).toBe(
+      "failed",
+    );
+    // A POST that may have landed stays ambiguous for the operator, never "not posted".
+    expect(readPostingReceipt(dir, 12, 1)?.status).toBe("prepared");
+  });
+  it("without a window the ordinary delivery keeps its debt", async () => {
+    listReviewsFull.mockRejectedValue(new Error("offline"));
+    for (let i = 0; i < 5; i++) {
+      await worker().tick();
+      advance();
+    }
+    expect(pendingPosting(dir, 12, 1, key)).toBe(true);
+  });
   it("refuses contradictory marker identities", async () => {
     reviews = [1, 2].map((id) => ({
       id,

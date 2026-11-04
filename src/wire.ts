@@ -53,7 +53,6 @@ import { GitHubAdapter } from "./github.js";
 import { priorSidecarPath } from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import { completeRecordedFindings } from "./recordedfindings.js";
 import { makePostingGuard } from "@quickchatai/pi-quickreview/src/guards.js";
-import { classifyCi, ciBlocksApproval } from "@quickchatai/pi-quickreview/src/cigate.js";
 import {
   githubCredential,
   type GitHubCredential,
@@ -145,7 +144,7 @@ import { SlackRouter } from "./slack/router.js";
 import { SlackSocketClient } from "./slack/socket.js";
 import type { SlackTransport } from "./slack/types.js";
 import { StateStore, type RoundRow } from "./state.js";
-import { deliverablePosting } from "./posting-outbox.js";
+import { deliverablePosting, withApprovalCiPrecheck } from "./posting-outbox.js";
 import { readPostingReceipt } from "./posting-receipt.js";
 import type { RecheckOrder } from "./recheck.js";
 import {
@@ -939,6 +938,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // daemon log; the default console fallback covers any unwired gate.
   gate.setLog(log);
 
+  const approvalPrecheck = {
+    listChecks: (head: string) => adapter.listChecks(head),
+    enabled: cfg.guards.block_approve_on_red_ci,
+    log,
+  };
   const daemon = createDaemon({
     cfg,
     root,
@@ -946,30 +950,24 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     adapter,
     ...(parts.runHost ? { runHost: parts.runHost } : {}),
     postingDelivery: {
-      createReview: async (pr, payload) => {
-        // An approval queued by approve-pr.sh keeps that route's green-CI
-        // precondition. Do not silently turn an old approval verdict into a
-        // COMMENT that its session never marked approval_withheld.
-        if (payload.event === "APPROVE" && cfg.guards.block_approve_on_red_ci) {
-          try {
-            if (
-              ciBlocksApproval(classifyCi(await adapter.listChecks(payload.commit_id)), {
-                noChecksIsRed: cfg.guards.no_checks_is_red,
-              })
-            )
-              return { executed: false, blocked: "ci-not-green" };
-          } catch {
-            return { executed: false, blocked: "pr-unreadable" };
-          }
-        }
-        return adapter.createReview(pr, payload);
-      },
+      // Every daemon delivery of an APPROVE carries the CI pre-check: CI
+      // that cannot be read holds the delivery (`pr-unreadable`, no POST,
+      // retried), so an approval is never posted over unknown CI. CI that
+      // reads red goes on to the gate, where guard 4 softens the APPROVE to
+      // a COMMENT with the approval withheld; the receipt says so
+      // (`delivered_by: daemon_retry`) and the verdict apply reads it as
+      // `approval_withheld`, so a red-CI approval never loops on a refusal.
+      createReview: (pr, payload) =>
+        withApprovalCiPrecheck(approvalPrecheck, pr, payload, () =>
+          adapter.createReview(pr, payload),
+        ),
       listReviewsFull: (pr) => adapter.listReviewsFull(pr),
-      // The deferred-posting retry: straight through the gate, whose guards
-      // bind as on any review (guard 4 softens a red-CI approval to a
-      // COMMENT there); only guard 5 is exempt, via `postingRetry`.
+      // The deferred-posting retry: through the gate, whose guards bind as
+      // on any review; only guard 5 is exempt, via `postingRetry`.
       createDeferredReview: (pr, payload, postingKey) =>
-        adapter.createReview(pr, payload, { postingRetry: postingKey }),
+        withApprovalCiPrecheck(approvalPrecheck, pr, payload, () =>
+          adapter.createReview(pr, payload, { postingRetry: postingKey }),
+        ),
     },
     hooks: botHost,
     writeInbox,
