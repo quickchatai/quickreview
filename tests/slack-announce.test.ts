@@ -658,7 +658,7 @@ describe("pinned heartbeat", () => {
   // slow Slack died with the process. The heartbeat owes every open incident
   // its alert — and never re-posts one Slack may already have.
   describe("an open incident's owed alert", () => {
-    function openIncident(): void {
+    function openIncident(stage = "command_start"): void {
       store.upsertPr({
         number: 5420,
         state: "tracked",
@@ -675,7 +675,7 @@ describe("pinned heartbeat", () => {
         round_id: null,
         round_no: 3,
         head_sha: "abc",
-        stage: "command_start",
+        stage,
         detail: "no start",
         attempts: 2,
         retry_cap: 2,
@@ -732,6 +732,18 @@ describe("pinned heartbeat", () => {
       await a.heartbeat();
       await announcer().heartbeat();
       expect(alerts()).toHaveLength(0);
+    });
+
+    // MUTATION: re-post every owed alert as `kind: "failed_loud"` — the
+    // overdue incident's alert says "exhausted automatic recovery" instead.
+    it("the re-post says what the original would have: an overdue incident's alert is the overdue one", async () => {
+      openIncident("round_deadline");
+      cfg.slack.policy.causes["round.overdue"] = { enabled: true, cooldown_min: 0 };
+      await announcer().heartbeat();
+      const posted = slack.posts.filter((p) => p.text.includes("#5420"));
+      expect(posted).toHaveLength(1);
+      expect(posted[0]!.text.startsWith("⏱ #5420 round 3")).toBe(true);
+      expect(store.slackPost(ID)).toMatchObject({ ok: 1 });
     });
 
     it("a recovered incident is owed nothing", async () => {
