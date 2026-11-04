@@ -27,7 +27,7 @@ import {
   sweepStatusOf,
   type SweepStatus,
 } from "@quickchatai/pi-quickreview/src/sweepstatus.js";
-import { pendingPosting } from "./posting-outbox.js";
+import { jobPath, pendingPosting, readPostingJob } from "./posting-outbox.js";
 
 export { sweepStatusOf, type SweepStatus };
 import {
@@ -110,6 +110,7 @@ import {
   readPostingReceipt,
   receiptMatchesVerdict,
   retrySoftenedApproval,
+  withheldApprovalPosted,
   type GuardedNoopReceipt,
   type PostingReceipt,
 } from "./posting-receipt.js";
@@ -402,8 +403,9 @@ export interface ReceiptDecision {
  * (standing-review.ts rule 4).
  */
 export function decidedVerdictFromReceipt(receipt: PostingReceipt): ReceiptDecision | null {
-  // The daemon's deferred-posting retry delivered the session's
-  // APPROVE and guard 4 softened it on the gate — the withheld-approval shape.
+  // The daemon's delivery posted the session's APPROVE as a COMMENT, the
+  // approval withheld for CI (its CI pre-check, or guard 4 on the gate) —
+  // the withheld-approval shape.
   if (retrySoftenedApproval(receipt)) return { verdict: "APPROVE", approval_withheld: true };
   if (
     receipt.intended_event === "REQUEST_CHANGES" &&
@@ -1463,8 +1465,9 @@ export class VerdictWatcher {
      *     mode).
      *   - `exhausted`: a `deferred` receipt whose daemon-owned
      *     retry is over without a confirmed review — its window spent, a
-     *     guard refused it, or its handoff is unreadable. The POST was
-     *     attempted, so never a requeue: every path fails it loud. */
+     *     guard refused it, or its handoff is unreadable. A POST may have
+     *     been sent (by the session, or by the retry after a deferral made
+     *     before any attempt), so never a requeue: every path fails it loud. */
     failure?: "unconfirmed" | "ambiguous" | "contradicted" | "exhausted";
   }> {
     if (!round.posting_key) return { kind: "legacy" };
@@ -1606,7 +1609,16 @@ export class VerdictWatcher {
             head_sha: expectedHead,
             intended_event: verifiedIntent?.intended_event ?? actualEvent,
             actual_event: actualEvent,
-            ...(verifiedIntent?.status === "deferred"
+            // A deferred receipt is the daemon's delivery; an APPROVE found as
+            // a COMMENT is a withheld approval, read as the outbox's own
+            // confirmation reads it, whichever delivery posted it.
+            ...(verifiedIntent &&
+            (verifiedIntent.status === "deferred" ||
+              withheldApprovalPosted(
+                verifiedIntent.intended_event,
+                actualEvent,
+                isPersonMode(this.deps.cfg.github),
+              ))
               ? { delivered_by: "daemon_retry" as const }
               : {}),
             status: "confirmed",
@@ -1682,14 +1694,42 @@ export class VerdictWatcher {
       pendingPosting(this.postingReceiptDir(), round.pr, round.round_no, round.posting_key)
     )
       return { kind: "waiting" };
-    // A deferred POST whose retry is over (the outbox job is failed or gone)
-    // and whose marker the read above did not find: attempted, never
-    // confirmed. Loud on every path — never a requeue.
+    // A deferred posting whose retry is over (the outbox job is failed or
+    // gone) and whose marker the read above did not find: never confirmed,
+    // and a POST may have been sent. Loud on every path — never a requeue.
     if (receiptIdentityOk && receipt && receipt.status === "deferred") {
       const ledger = this.deps.store.postingRetry(round.posting_key);
       return {
         kind: "failed",
         detail: `deferred posting for ${round.posting_key} was not delivered${ledger ? ` (${ledger.status} after ${ledger.attempts} attempt(s)${ledger.last_error ? `: ${ledger.last_error}` : ""})` : " (no retry on record)"}`,
+        failure: "exhausted",
+      };
+    }
+    // The ordinary delivery's window ran out (its job is failed with
+    // `exhausted_at`) and the read above did not find the marker: as loud as
+    // an exhausted deferred retry, never a requeue. A POST it attempted may
+    // still have landed, so the detail says what is known.
+    const job = readPostingJob(jobPath(this.postingReceiptDir(), round.pr, round.round_no));
+    if (
+      !this.deps.cfg.dry_run &&
+      job?.posting_key === round.posting_key &&
+      job.status === "failed" &&
+      job.exhausted_at
+    ) {
+      // Delivery attempts that sent no POST (`unposted_attempts`: a read the
+      // delivery needed could not be read) are not POST attempts.
+      const attempted =
+        job.attempts > (job.unposted_attempts ?? 0) ||
+        (receiptIdentityOk && receipt?.status === "prepared");
+      return {
+        kind: "failed",
+        detail: `review posting for ${round.posting_key} was not delivered (${job.last_error ?? "delivery window exhausted"})${
+          attempted
+            ? reconciled
+              ? "; a POST was attempted and GitHub showed no review carrying its marker"
+              : "; a POST was attempted and whether it landed is unknown (GitHub could not be read for its marker)"
+            : "; no POST was sent"
+        }`,
         failure: "exhausted",
       };
     }
@@ -2221,8 +2261,9 @@ export class VerdictWatcher {
           ? "failed"
           : "applied";
       }
-      // The daemon's retry delivered this round's APPROVE after the
-      // session finished, and guard 4 softened it to a COMMENT on the gate.
+      // The daemon's delivery posted this round's APPROVE after the session
+      // finished, as a COMMENT with the approval withheld for CI (its CI
+      // pre-check read CI not green, or guard 4 softened it on the gate).
       // The posted review withheld the approval, so the verdict does too —
       // what the session would have written had the softening happened
       // under it; the withheld mark then re-queues on green CI (cigate.ts).

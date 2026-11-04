@@ -18,7 +18,8 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCapabilityFd } from "../src/ipc/capability.js";
 import type { IpcClient } from "../src/ipc/client.js";
-import { postRequest, runPostShim } from "../src/ipc/postshim.js";
+import { POST_TIMEOUT_MS, postRequest, runPostShim } from "../src/ipc/postshim.js";
+import { ownerRecord } from "../src/posting-journal.js";
 import { postingMarker } from "../src/posting-receipt.js";
 import {
   HEAD,
@@ -198,6 +199,73 @@ describe("the client posts through a daemon", () => {
       }
     }
     expect(dryrunRecords(rig)).toEqual([]);
+  });
+
+  // MUTATION: throw the lock's JournalError as `blocked` in postops wrap — this fails.
+  it("a posting already in flight in the daemon: exit 0, told not to post again", async () => {
+    const dir = join(rig.state, "posting-receipts");
+    mkdirSync(join(dir, `pr-${PR}-round-1.json.lock`), { recursive: true });
+    writeFileSync(
+      join(dir, `pr-${PR}-round-1.json.lock`, "pid"),
+      ownerRecord(process.pid) ?? String(process.pid),
+    );
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "x");
+    const code = await runPostShim("review", [String(PR), "COMMENT", body], envFor("c-round"), io);
+    expect({ code, err }).toEqual({ code: 0, err: "" });
+    expect(out).toMatch(/in flight in the daemon; do NOT post again — finish the round normally/);
+    expect(dryrunRecords(rig)).toEqual([]);
+  });
+
+  // MUTATION: drop the `e.code === "timeout"` branch in runPostShim — this fails.
+  it("a keyed round's post the client stopped waiting for is in flight; a reply is run again", async () => {
+    const hang = { roles: ["worker", "shim"] as const, handle: () => new Promise(() => {}) };
+    rig.server.register("post.approval", hang);
+    rig.server.register("post.reply", hang);
+    const body = rig.write(`pr-${PR}-round-1-approve.md`, "ok");
+    expect(
+      await runPostShim(
+        "approval",
+        [String(PR), body],
+        envFor("c-round", { QCR_ROUND_NO: "1" }),
+        io,
+        {
+          timeoutMs: 100,
+        },
+      ),
+    ).toBe(0);
+    expect(out).toMatch(/in flight in the daemon; do NOT post again/);
+    const reply = rig.write(`pr-${PR}-reply.md`, "thanks");
+    expect(
+      await runPostShim("reply", [String(PR), "9001", reply], envFor("c-round"), io, {
+        timeoutMs: 100,
+      }),
+    ).toBe(1);
+    expect(err).toMatch(
+      /^reply-thread: timeout: .*may still be posted\. Run the same script again .*never posts a second copy/,
+    );
+  });
+
+  // MUTATION: answer IN_FLIGHT for every review timeout, keyed or not — this fails.
+  it("an unkeyed post the client stopped waiting for is an unknown outcome, never daemon-owned", async () => {
+    const hang = { roles: ["worker", "shim"] as const, handle: () => new Promise(() => {}) };
+    rig.server.register("post.review", hang);
+    const body = rig.write(`pr-${PR}-answer-review.md`, "x");
+    expect(
+      await runPostShim("review", [String(PR), "COMMENT", body], envFor("c-round"), io, {
+        timeoutMs: 100,
+      }),
+    ).toBe(1);
+    expect(out).toBe("");
+    expect(err).toMatch(
+      /^post-review: timeout: .*unknown, and with no round nothing in the daemon records or retries it\. Do NOT post it again/,
+    );
+  });
+
+  it("the client answers before a session's two-minute command timeout kills it", () => {
+    // A slower post answers "in flight" (tested above); a killed script answers nothing.
+    expect(POST_TIMEOUT_MS).toBeLessThan(120_000);
+    // Long enough for a post whose capped daemon reads (20 s each) and POST (60 s) all run slow.
+    expect(POST_TIMEOUT_MS).toBeGreaterThanOrEqual(2 * 20_000 + 60_000);
   });
 
   it("exits 1 with no capability on the fd, and 2 for an unknown kind", async () => {

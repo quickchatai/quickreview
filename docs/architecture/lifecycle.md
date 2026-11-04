@@ -544,6 +544,16 @@ them verbatim. The session answers with a thread decision file
 output as untrusted — ids must match a claimed author message, and the adapter
 independently verifies bot ownership before resolving anything.
 
+A decision that fails is retried by what the failure was
+(`classifyThreadDecisionError`, over the one GitHub failure classifier). A
+rate limit opens one installation-wide breaker. A transient failure (a 5xx, a
+timeout, a dropped connection, a PR state the posting guard could not read)
+waits on a long bounded schedule, about 1, 2, 5, 15, 30, 60 and 60 minutes,
+honouring GitHub's `retry-after`, and spends no strike. A refusal or an
+unknown failure spends one of three strikes. Either budget, once spent,
+preserves the decision under `failed/` with the
+`pingpong_decision_retry_exhausted` anomaly.
+
 **PR-level author objections.** While a substantive bot REQUEST_CHANGES stands
 on a tracked open PR, an ordinary, nonempty top-level comment from that PR's
 verified author is also delivered to its main session. No @mention is needed.
@@ -560,8 +570,11 @@ standing verdict or automatically requests another review.
 SQLite preserves each obligation independently of the held-wake queue. Failed
 injections are held; missing answers may be redelivered after five minutes only
 when the PR session is idle and no copy is held. Three unsuccessful deliveries
-or posting attempts leave a retained failed obligation and an anomaly, not
-unbounded retry. Before posting, the daemon reads the conversation for the
+or refused posting attempts leave a retained failed obligation and an anomaly,
+not unbounded retry. A posting attempt that fails transiently or is
+rate-limited (or meets an unreadable PR state) spends no strike: it waits on
+the same long bounded schedule as a thread decision, about three hours in
+all, and only then fails the obligation the same way. Before posting, the daemon reads the conversation for the
 exact bot answer and its per-comment marker, so an interrupted successful POST
 is recovered rather than duplicated; an unreadable or truncated list cannot
 license a blind repost. A separate bounded capture-recovery step admits only

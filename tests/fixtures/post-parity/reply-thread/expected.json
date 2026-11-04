@@ -4,7 +4,7 @@
     "method": "POST",
     "path": "/repos/example-org/example-app/pulls/7/comments/9001/replies",
     "body": {
-      "body": "Thanks, fixed in the next push — \"naïve\" is now handled.\n\n(日本語 stays intact.)\n"
+      "body": "Thanks, fixed in the next push — \"naïve\" is now handled.\n\n(日本語 stays intact.)\n\n<!-- qcr:reply=7:9001:d2c1ed25 -->"
     },
     "pr": 7
   }

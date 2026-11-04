@@ -22,10 +22,18 @@
 //
 // The posting guards (merged/closed, head drift, no new evidence, the human
 // approval downgrade) are installed on the gate and bind here as on any route.
-// The two the shell route enforces BEFORE the gate (a required pass that failed
-// and never completed; an APPROVE over red CI, which the shell route REFUSES
-// where the gate would soften it) are enforced here before the gate too, so the
-// IPC path posts what the shell path posts.
+// Two are enforced BEFORE the gate: a required pass that failed and never
+// completed, and an APPROVE over red CI, which this route REFUSES where the
+// gate would soften it (the session then posts its COMMENT itself).
+//
+// A GitHub read this route depends on can fail. Its cause is classified once
+// (`classifyGitHubFailure`) and the answer follows from it: a transient or
+// rate-limited read on a keyed round hands the queued post to the daemon's
+// deferred retry (`deferUnattempted`, nothing sent, nothing that may have
+// landed), a permanent refusal blocks with a next step. Every read here has
+// its own deadline (`POSTING_READ_DEADLINE_MS`), so a post op cannot sit on
+// one read for the adapter's whole retry budget.
+import { createHash } from "node:crypto";
 import {
   closeSync,
   constants,
@@ -38,6 +46,10 @@ import {
 } from "node:fs";
 import { isAbsolute, join, sep } from "node:path";
 import { ciBlocksApproval, classifyCi } from "@quickchatai/pi-quickreview/src/cigate.js";
+import {
+  classifyGitHubFailure,
+  type GitHubFailure,
+} from "@quickchatai/pi-quickreview/src/githubcore.js";
 import type { Config, GuardsConfig } from "./config.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubRequestError, type GitHubAdapter } from "./github.js";
@@ -59,7 +71,7 @@ import {
   type InlineComment,
   type ReviewPayload,
 } from "./posting.js";
-import { markedReviewsOf } from "./posting-outbox.js";
+import { markedReviewsOf, uncertainPostStep } from "./posting-outbox.js";
 import {
   describeGap,
   failedSecurityRows,
@@ -88,7 +100,13 @@ export type PostAdapter = Pick<
   | "removeLabel"
   | "deleteTeamReviewRequest"
   | "createReviewCommentReply"
+  | "listRecentReviewComments"
 > & { readonly gate: Pick<GitHubAdapter["gate"], "isDryRun"> };
+
+/** The longest a post op waits on one GitHub read of its own (the PR's
+ * head, the approval's CI, a marker read). Past it the read counts as
+ * transient: a keyed post is deferred to the daemon, never left hanging. */
+export const POSTING_READ_DEADLINE_MS = 20_000;
 
 export type PostStore = Pick<
   StateStore,
@@ -130,11 +148,17 @@ export interface PostOpsDeps {
    * `<root>/state/commands/<command id>/` (the worker's). */
   resultDirs?(pr: number, commandId: string): ResultDir[];
   log?: (msg: string, extra?: unknown) => void;
+  /** Override POSTING_READ_DEADLINE_MS (tests). */
+  readDeadlineMs?: number;
+  /** The clock a reply's reconciliation windows run on (tests). */
+  now?: () => Date;
 }
 
 /** What a post op answers with. The shim prints `lines` and exits 0. */
 export interface PostOutcome {
-  status: "posted" | "dryrun" | "deferred" | "already_confirmed";
+  /** `in_flight`: another attempt for this round (the daemon's own) holds
+   * the round's posting now; it records the outcome. */
+  status: "posted" | "dryrun" | "deferred" | "already_confirmed" | "in_flight";
   lines: string[];
   review_url?: string;
   review_id?: number;
@@ -327,18 +351,84 @@ function keyedRound(
   return { round: rd.round_no, head, key };
 }
 
-/** Whether `err` says GitHub never answered, or answered 5xx: the post may or
- * may not have landed. A 4xx, or the gate's own refusal, is a plain failure. */
+const gateRefusal = (err: unknown): boolean =>
+  err instanceof Error && err.message.startsWith("gate:");
+
+/** Whether `err` says GitHub never answered, answered 5xx, or rate-limited
+ * the post: the post may or may not have landed (a rate limit says it did
+ * not, and a marker read confirms it), and the daemon's deferred retry owns
+ * it from here. A 4xx refusal, or the gate's own refusal, is not. */
 function unanswered(err: unknown): boolean {
-  if (err instanceof GitHubRequestError) return err.status >= 500;
-  if (!(err instanceof Error)) return false;
-  if (err.message.startsWith("gate:")) return false;
-  return (
-    err.name === "TimeoutError" ||
-    err.name === "AbortError" ||
-    (err instanceof TypeError && /fetch failed/i.test(err.message))
-  );
+  if (gateRefusal(err)) return false;
+  const kind = classifyGitHubFailure(err).kind;
+  return kind === "transient" || kind === "rate_limited";
 }
+
+/** What a session is told about a failed read: the status GitHub answered,
+ * or the kind of failure. Never the cause itself, which may name a local file
+ * (an unreadable credential, say); that stays in the daemon's log. */
+function clientCause(f: GitHubFailure): string {
+  if (f.status !== undefined) return `GitHub answered ${f.status}`;
+  if (f.kind === "transient") return "GitHub did not answer";
+  if (f.kind === "rate_limited") return "GitHub rate-limited the read";
+  return "the read failed before GitHub answered; the daemon's log has the cause";
+}
+
+/** A failure the daemon may retry by itself later. */
+const retryable = (f: GitHubFailure): boolean =>
+  f.kind === "transient" || f.kind === "rate_limited";
+
+/**
+ * GitHub's validation text of a refused POST, and only that: the
+ * `errors[].message` entries (or the plain strings GitHub sometimes lists
+ * there) of the answer the adapter quoted. Control characters go, and each
+ * entry is capped; an answer with no such entries says so.
+ */
+export function validationText(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const at = raw.indexOf("{");
+  const out: string[] = [];
+  const push = (x: unknown): void => {
+    if (typeof x !== "string") return;
+    const clean = x.replace(/\p{Cc}+/gu, " ").trim();
+    if (clean) out.push(clean.slice(0, 200));
+  };
+  if (at >= 0) {
+    try {
+      const body = JSON.parse(raw.slice(at)) as { errors?: unknown };
+      if (Array.isArray(body.errors))
+        for (const e of body.errors)
+          push(typeof e === "string" ? e : (e as { message?: unknown } | null)?.message);
+    } catch {
+      // The quoted answer is cut short: read the `errors` array as far as it goes.
+      const seg = /"errors"\s*:\s*\[([\s\S]*)/.exec(raw.slice(at))?.[1] ?? "";
+      const strings = (re: RegExp): void => {
+        for (const m of seg.matchAll(re)) {
+          try {
+            push(JSON.parse(`"${m[1]}"`));
+          } catch {
+            push(m[1]);
+          }
+        }
+      };
+      if (seg.trimStart().startsWith("{")) strings(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/g);
+      else strings(/"((?:[^"\\]|\\.)*)"/g);
+    }
+  }
+  return out.length > 0 ? out.slice(0, 5).join("; ") : "(GitHub gave no validation detail)";
+}
+
+/** The reply's hidden identity: which PR, which comment it answers, and a
+ * short hash of what it says. A reply carrying it is this reply. */
+export function replyPostMarker(pr: number, inReplyTo: number, text: string): string {
+  const sha8 = createHash("sha256").update(text).digest("hex").slice(0, 8);
+  return `<!-- qcr:reply=${pr}:${inReplyTo}:${sha8} -->`;
+}
+
+/** What the session is told when a round's posting is already owned by an
+ * attempt in the daemon (the lock is held, or the shim stopped waiting). */
+export const IN_FLIGHT_LINE =
+  "a posting for this round is in flight in the daemon; do NOT post again — finish the round normally (verdict file as decided)";
 
 /** Never let a refusal reach the wire with a path or a token in it. */
 function describeFailure(err: unknown): string {
@@ -348,7 +438,15 @@ function describeFailure(err: unknown): string {
 }
 
 class PostOps {
+  /** The reply requests running now, by the reply's identity (its marker):
+   * a second request for the same reply joins the first and gets its answer,
+   * so the marker read and the POST are one owner's, never two. */
+  private readonly replies = new Map<string, Promise<PostOutcome>>();
   constructor(private readonly d: PostOpsDeps) {}
+
+  private now(): Date {
+    return this.d.now?.() ?? new Date();
+  }
 
   private log(msg: string, extra?: unknown): void {
     this.d.log?.(msg, extra);
@@ -426,14 +524,75 @@ class PostOps {
     return withSecurityIncompleteLines(text, gaps.failed);
   }
 
+  /** One read of this op's own, bounded by the read deadline. Past it the
+   * read is abandoned as a `TimeoutError` (transient); the adapter's own
+   * request timeout still ends the request itself. */
+  private within<T>(read: Promise<T>, what: string): Promise<T> {
+    const ms = this.d.readDeadlineMs ?? POSTING_READ_DEADLINE_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const e = new Error(`${what} did not answer within ${Math.round(ms / 1000)} s`);
+        e.name = "TimeoutError";
+        reject(e);
+      }, ms);
+      timer.unref?.();
+    });
+    return Promise.race([read, deadline]).finally(() => clearTimeout(timer));
+  }
+
+  /** Classify a failed read and log its real cause. */
+  private readFailure(pr: number, what: string, err: unknown): GitHubFailure {
+    const f = classifyGitHubFailure(err);
+    this.log(
+      `post: #${pr} ${what} failed (${f.kind}${f.status ? ` ${f.status}` : ""}): ${f.detail}`,
+    );
+    return f;
+  }
+
   /** The head the review is about: the round's, else the PR's live head. */
   private async commitHead(pr: number, keyed: Keyed | null): Promise<string> {
     if (keyed) return keyed.head;
     try {
-      return (await this.d.adapter.getPr(pr)).head_sha.toLowerCase();
-    } catch {
-      throw new IpcError("blocked", "pr-unreadable: the PR's head could not be read");
+      return (await this.within(this.d.adapter.getPr(pr), "the PR read")).head_sha.toLowerCase();
+    } catch (err) {
+      const f = this.readFailure(pr, "head read", err);
+      throw new IpcError(
+        "blocked",
+        retryable(f)
+          ? `pr-unreadable: the PR's head could not be read (${clientCause(f)}). Nothing was posted: run the same script again in a few minutes.`
+          : `pr-unreadable: the PR's head could not be read (${clientCause(f)}). Nothing was posted, and running it again will be refused the same way.`,
+      );
     }
+  }
+
+  /**
+   * The approval's CI pre-check: the checks at `head`, read before anything
+   * is sent. `skip` when there is nothing to check (not an APPROVE, or the
+   * install does not block approvals on red CI).
+   */
+  private async ciPrecheck(
+    pr: number,
+    head: string,
+    event: ReviewEvent,
+  ): Promise<
+    { state: "skip" | "green" | "red" } | { state: "unreadable"; failure: GitHubFailure }
+  > {
+    if (event !== "APPROVE" || !this.d.cfg.guards.block_approve_on_red_ci) return { state: "skip" };
+    let checks: Awaited<ReturnType<PostAdapter["listChecks"]>>;
+    try {
+      checks = await this.within(this.d.adapter.listChecks(head), "the checks read");
+    } catch (err) {
+      return {
+        state: "unreadable",
+        failure: this.readFailure(pr, `checks read at ${head.slice(0, 7)}`, err),
+      };
+    }
+    return ciBlocksApproval(classifyCi(checks), {
+      noChecksIsRed: this.d.cfg.guards.no_checks_is_red,
+    })
+      ? { state: "red" }
+      : { state: "green" };
   }
 
   // ---- post.review ----------------------------------------------------------
@@ -486,18 +645,25 @@ class PostOps {
       payload: { commit_id: head, event: "APPROVE", body: text, comments: comments ?? [] },
       trigger_label: this.d.cfg.github.trigger_label,
     }).slice(1);
+    // The approval stands whatever these steps do: a step that fails is a
+    // line of the answer, never a refusal (dispatch already consumed both
+    // triggers when it started the round, so nothing is left re-armed).
     for (const step of steps) {
       let res: GateResult;
       try {
         res = await step.run(this.d.adapter);
       } catch (e) {
-        throw new IpcError(
-          "post_failed",
-          `the approval is recorded but "${step.describe}" failed: ${this.describe(e)}`,
+        out.lines.push(
+          `the approval is posted, but "${step.describe}" failed (${this.describe(e)}) — nothing to do; do NOT post again`,
         );
+        continue;
       }
-      if (res.blocked)
-        throw new IpcError("blocked", `${res.blocked}: "${step.describe}" was refused`);
+      if (res.blocked) {
+        out.lines.push(
+          `the approval is posted, but "${step.describe}" was refused (${res.blocked}) — nothing to do; do NOT post again`,
+        );
+        continue;
+      }
       out.lines.push(
         res.dryRunFile
           ? `dry-run: ${step.describe} -> ${res.dryRunFile} — nothing was sent`
@@ -530,27 +696,18 @@ class PostOps {
       body: keyed ? `${text}\n\n${postingMarker(keyed.key)}` : text,
       ...(r.comments ? { comments: r.comments } : {}),
     };
-    // The approval's red-CI refusal runs before anything is queued or sent.
-    const refuseRedCi = async (): Promise<void> => {
-      if (event !== "APPROVE" || !this.d.cfg.guards.block_approve_on_red_ci) return;
-      let blocked: boolean;
-      try {
-        blocked = ciBlocksApproval(classifyCi(await this.d.adapter.listChecks(head)), {
-          noChecksIsRed: this.d.cfg.guards.no_checks_is_red,
-        });
-      } catch {
-        throw new IpcError("blocked", "pr-unreadable: the checks at this head could not be read");
-      }
-      if (blocked)
-        throw new IpcError(
-          "blocked",
-          "ci-not-green: no green CI at this head, so no approval — post the COMMENT through post.review instead",
-        );
-    };
     const submit = (): Promise<PostOutcome> => this.submit(ctx, op, r, jobPayload);
+    const ciNotGreen = (): IpcError =>
+      new IpcError(
+        "blocked",
+        "ci-not-green: no green CI at this head, so no approval — post the COMMENT through post.review instead",
+      );
 
     if (keyed === null) {
-      await refuseRedCi();
+      // No round, no outbox: an unreadable CI blocks, with the next step.
+      const ci = await this.ciPrecheck(ctx.pr, head, event);
+      if (ci.state === "unreadable") throw ciUnreadable(ci.failure, head, false);
+      if (ci.state === "red") throw ciNotGreen();
       return submit();
     }
     const j = this.d.journal;
@@ -573,7 +730,7 @@ class PostOps {
           return {
             status: "deferred",
             lines: [
-              `posting for ${keyed.key} is deferred to the daemon (GitHub did not answer an earlier attempt); it delivers this ${event === "APPROVE" ? "approval" : "review"} itself — nothing to do, finish the round normally`,
+              `posting for ${keyed.key} is deferred to the daemon (an earlier attempt could not complete: GitHub did not answer it, or a read it depends on failed); it delivers this ${event === "APPROVE" ? "approval" : "review"} itself — do NOT post again, finish the round normally`,
             ],
           };
         case "skipped":
@@ -596,24 +753,52 @@ class PostOps {
         mode: dry ? "dryrun" : "live",
         payload: jobPayload,
       });
-      try {
-        await refuseRedCi();
-      } catch (e) {
-        // The refused approval must not stay queued: the session answers with a
-        // COMMENT under the same key, and the outbox must never deliver this.
+      const ident = { key: keyed.key, pr: ctx.pr, round: keyed.round, head };
+      // The approval's CI pre-check, before anything is sent.
+      const ci = await this.ciPrecheck(ctx.pr, head, event);
+      if (ci.state === "unreadable" && retryable(ci.failure) && !dry) {
+        // A read that failed and may succeed later: nothing was sent, so the
+        // queued approval stays queued and the daemon's deferred retry owns
+        // it. That retry re-reads CI before every attempt.
+        const reason = `ci-unreadable: ${ci.failure.detail}`;
+        const handed = this.tryJournal("defer the approval", () => {
+          j.deferUnattempted({ ...ident, intended: event, payload: jobPayload, reason });
+          return true;
+        });
+        if (handed) {
+          this.d.store.logEvent("posting_deferred_unattempted", ctx.pr, {
+            round_no: keyed.round,
+            posting_key: keyed.key,
+            reason,
+          });
+          this.audit(ctx, op, "deferred:ci-unreadable");
+          return {
+            status: "deferred",
+            lines: [
+              `approval deferred: the CI checks at ${head.slice(0, 7)} could not be read (${clientCause(ci.failure)}).`,
+              "The daemon now owns its delivery and re-reads CI before every attempt: it posts the approval when CI is green, or a COMMENT with the approval withheld when CI is red.",
+              "Do NOT post again for this round — finish the round normally (verdict file as decided).",
+            ],
+          };
+        }
+      }
+      // A refusal that will not pass by itself: the queued approval must not
+      // stay queued. The session answers with a COMMENT under the same key,
+      // and the outbox must never deliver this.
+      const withdrawApproval = (): void => {
         this.tryJournal("withdraw the queued approval", () =>
           j.withdraw(ctx.pr, keyed.round, keyed.key),
         );
-        throw e;
+      };
+      if (ci.state === "red") {
+        withdrawApproval();
+        throw ciNotGreen();
       }
-      j.prepare({
-        key: keyed.key,
-        pr: ctx.pr,
-        round: keyed.round,
-        head,
-        intended: event,
-        payload: jobPayload,
-      });
+      if (ci.state === "unreadable") {
+        withdrawApproval();
+        throw ciUnreadable(ci.failure, head, true);
+      }
+      j.prepare({ ...ident, intended: event, payload: jobPayload });
       return submit();
     });
   }
@@ -651,8 +836,30 @@ class PostOps {
       );
     } catch (err) {
       if (ident && unanswered(err)) return this.handoff(ctx, ident, event, jobPayload, err);
+      const why = this.describe(err); // logs GitHub's own answer daemon-side
+      const f = classifyGitHubFailure(err);
+      if (!gateRefusal(err) && f.kind === "rejected") {
+        // GitHub answered with a 4xx: the review was refused, nothing landed.
+        // The receipt and the queued job are taken back, so the corrected
+        // review posts under the same key.
+        if (ident) {
+          this.tryJournal("clear the prepared receipt", () =>
+            j.clearPrepared(ident.pr, ident.round, ident.key),
+          );
+          this.tryJournal("withdraw the rejected review", () =>
+            j.withdraw(ident.pr, ident.round, ident.key),
+          );
+        }
+        this.audit(ctx, op, `rejected:${f.status ?? "4xx"}`);
+        throw new IpcError(
+          "post_rejected",
+          f.status === 422
+            ? `GitHub rejected the review (422): ${validationText(err)}. Nothing was posted; fix the named comment (or move it into the body) and run the same script again.`
+            : `GitHub refused the review (${f.status ?? "4xx"}): ${validationText(err)}. Nothing was posted, and running it again will be refused the same way: record that in the verdict and finish the round.`,
+        );
+      }
       this.audit(ctx, op, "failed");
-      throw new IpcError("post_failed", this.describe(err));
+      throw new IpcError("post_failed", why);
     }
     const res = sub.result;
     if (res.blocked) {
@@ -661,6 +868,37 @@ class PostOps {
         this.tryJournal("clear the prepared receipt", () =>
           j.clearPrepared(ident.pr, ident.round, ident.key),
         );
+        // The gate could not read the PR: nothing was sent, and the queued
+        // job is handed to the daemon's deferred retry, which reads again.
+        if (res.blocked === "pr-unreadable" && !this.d.adapter.gate.isDryRun) {
+          const reason = "pr-unreadable: the posting guard could not read the PR";
+          const handed = this.tryJournal("defer the post", () => {
+            j.deferUnattempted({ ...ident, intended: event, payload: jobPayload, reason });
+            return true;
+          });
+          if (handed) {
+            this.d.store.logEvent("posting_deferred_unattempted", ctx.pr, {
+              round_no: ident.round,
+              posting_key: ident.key,
+              reason,
+            });
+            this.audit(ctx, op, "deferred:pr-unreadable");
+            return {
+              status: "deferred",
+              lines: [
+                `posting deferred: the posting guard could not read #${ctx.pr} from GitHub, so nothing was sent.`,
+                "The daemon now owns its delivery: it retries this exact review through the gate on its schedule and confirms it from GitHub before every attempt.",
+                "Do NOT post again for this round — finish the round normally (verdict file as decided).",
+              ],
+            };
+          }
+        }
+        // A refusal that ends this round's posting: no orphaned queued job
+        // may keep the round's posting proof waiting.
+        if (TERMINAL_REFUSALS.has(res.blocked))
+          this.tryJournal("withdraw the refused post", () =>
+            j.withdraw(ident.pr, ident.round, ident.key),
+          );
         if (res.blocked === "no-new-evidence" && event !== "APPROVE") {
           const mark = this.d.store.reviewedHead(ctx.pr);
           const wrote =
@@ -731,13 +969,14 @@ class PostOps {
       "none" | "unreadable" | "multiple" | { id: number; commit_id: string; state: string };
     try {
       const found = markedReviewsOf(
-        await this.d.adapter.listReviewsFull(ctx.pr),
+        await this.within(this.d.adapter.listReviewsFull(ctx.pr), "the marker read"),
         this.d.botLogins,
         ident.head,
         ident.key,
       );
       marker = found.length > 1 ? "multiple" : (found[0] ?? "none");
-    } catch {
+    } catch (err) {
+      this.readFailure(ctx.pr, `marker read for ${ident.key}`, err);
       marker = "unreadable";
     }
     if (marker === "multiple")
@@ -771,6 +1010,40 @@ class PostOps {
     };
   }
 
+  /** The bot's reply carrying `marker` among the PR's review comments newer
+   * than the one it answers; null when there is none, `unreadable` when the
+   * read failed. */
+  private async findReply(
+    ctx: RequestContext,
+    commentId: number,
+    marker: string,
+  ): Promise<{ id: number } | null | "unreadable"> {
+    let comments: Awaited<ReturnType<PostAdapter["listRecentReviewComments"]>>;
+    try {
+      comments = await this.within(
+        this.d.adapter.listRecentReviewComments(ctx.pr, commentId),
+        "the reply check",
+      );
+    } catch (err) {
+      this.readFailure(ctx.pr, `reply check for comment ${commentId}`, err);
+      return "unreadable";
+    }
+    const found = comments.find(
+      (c) => this.d.botLogins.includes(c.user) && c.body.includes(marker),
+    );
+    return found ? { id: found.id } : null;
+  }
+
+  private replyAlreadyPosted(
+    ctx: RequestContext,
+    commentId: number,
+    found: { id: number },
+  ): PostOutcome {
+    this.d.store.registerBotComment(found.id, ctx.pr, "review_comment");
+    this.audit(ctx, "post.reply", "already-posted");
+    return alreadyConfirmedReply(ctx.pr, commentId);
+  }
+
   /** A journal write that must not turn a refusal into a different failure. */
   private tryJournal<T>(what: string, fn: () => T): T | false {
     try {
@@ -795,13 +1068,153 @@ class PostOps {
         "comment_id must be the numeric databaseId of a review comment",
       );
     const text = readResultFile(this.d, ctx, b.body_file);
+    // The hidden marker makes the reply findable: before every POST, and
+    // after a POST GitHub did not answer, the reply is looked for, so a
+    // repeated script never posts a second copy.
+    const marker = replyPostMarker(ctx.pr, id, text);
+    const running = this.replies.get(marker);
+    if (running) return running;
+    const attempt = this.replyOnce(ctx, id, text, marker);
+    this.replies.set(marker, attempt);
+    try {
+      return await attempt;
+    } finally {
+      if (this.replies.get(marker) === attempt) this.replies.delete(marker);
+    }
+  }
+
+  /** The refusal while an earlier unanswered POST of this reply may still
+   * land: nothing is posted until GitHub has had time to show it, and then
+   * has shown twice, apart, that it is not there. */
+  private replySettling(ctx: RequestContext, until: Date): IpcError {
+    this.audit(ctx, "post.reply", "settling");
+    return new IpcError(
+      "post_failed",
+      `an earlier attempt to post this reply got no answer from GitHub and may still land, so nothing was posted now. Run the same script again after ${until.toISOString()}: it posts only once GitHub has shown twice, apart, that the reply is not there.`,
+    );
+  }
+
+  /** The time GitHub asked this reply's earlier POST to wait until, while
+   * it is still ahead. A record that cannot be read answers nothing here;
+   * the attempt read after the marker check refuses it. */
+  private replyNotBefore(pr: number, marker: string): Date | undefined {
+    let notBefore: string | undefined;
+    try {
+      notBefore = this.d.journal.readReplyAttempt(pr, marker)?.not_before;
+    } catch {
+      return undefined;
+    }
+    const at = notBefore === undefined ? NaN : Date.parse(notBefore);
+    return at > this.now().getTime() ? new Date(at) : undefined;
+  }
+
+  private async replyOnce(
+    ctx: RequestContext,
+    id: number,
+    text: string,
+    marker: string,
+  ): Promise<PostOutcome> {
+    const j = this.d.journal;
+    const replyBody = `${text.trimEnd()}\n\n${marker}`;
+    // GitHub asked for a wait after an earlier POST of this reply: neither a
+    // read nor a POST until it is over.
+    const asked = this.replyNotBefore(ctx.pr, marker);
+    if (asked) {
+      this.audit(ctx, "post.reply", "rate-limited");
+      throw new IpcError(
+        "post_failed",
+        `GitHub asked for no more requests for this reply until ${asked.toISOString()}, so nothing was read or posted now. Run the same script again after that time.`,
+      );
+    }
+    const before = await this.findReply(ctx, id, marker);
+    if (before === "unreadable") {
+      // Nothing was sent now. The reply is still owed; the next run reads
+      // for it first, so running again is safe and never posts blind.
+      this.audit(ctx, "post.reply", "unknown");
+      throw new IpcError(
+        "post_failed",
+        `could not read #${ctx.pr}'s review comments to check for an earlier copy of this reply, so nothing was posted. Run the same script again in a few minutes: it checks for an earlier copy before it posts, and never posts a second one.`,
+      );
+    }
+    if (before !== null) {
+      j.clearReplyAttempt(ctx.pr, marker);
+      return this.replyAlreadyPosted(ctx, id, before);
+    }
+    // An earlier POST of this reply got no answer: one read that does not
+    // find it proves nothing yet. Wait out the quiet window, then require
+    // two negative reads apart, as the review outbox does.
+    const earlier = j.readReplyAttempt(ctx.pr, marker);
+    if (earlier) {
+      const step = uncertainPostStep(
+        earlier.attempted_at,
+        earlier.negative_at,
+        this.now().getTime(),
+      );
+      if (step.step === "first-negative")
+        j.noteReplyAttempt(ctx.pr, marker, {
+          ...earlier,
+          negative_at: this.now().toISOString(),
+        });
+      if (step.step !== "post") throw this.replySettling(ctx, new Date(step.until));
+    }
+    // The attempt is on disk BEFORE the POST: a lost answer, or a daemon
+    // that stops mid-POST, leaves the reconciliation above owed. A dry run
+    // sends nothing and records nothing.
+    if (!this.d.adapter.gate.isDryRun)
+      j.noteReplyAttempt(ctx.pr, marker, { attempted_at: this.now().toISOString() });
     let res: GateResult;
     try {
-      res = await this.d.adapter.createReviewCommentReply(ctx.pr, id, text);
+      res = await this.d.adapter.createReviewCommentReply(ctx.pr, id, replyBody);
     } catch (err) {
-      this.audit(ctx, "post.reply", "failed");
-      throw new IpcError("post_failed", this.describe(err));
+      const f = classifyGitHubFailure(err);
+      if (gateRefusal(err) || f.kind === "rejected") {
+        // A refusal (the gate's, or a permanent 4xx): nothing landed.
+        j.clearReplyAttempt(ctx.pr, marker);
+        this.audit(ctx, "post.reply", "failed");
+        throw new IpcError("post_failed", this.describe(err));
+      }
+      // Anything else — no answer, a 5xx, a timeout, a rate limit, an answer
+      // that could not be read — leaves the POST uncertain: the attempt stays
+      // on record. A wait GitHub asked for is kept with it, and nothing is
+      // read during that wait.
+      const why = this.describe(err);
+      const notBefore =
+        f.retryAfterMs !== undefined && f.retryAfterMs > 0
+          ? new Date(this.now().getTime() + f.retryAfterMs)
+          : undefined;
+      if (notBefore) {
+        const kept = this.tryJournal("record GitHub's requested wait", () => {
+          const earlier = j.readReplyAttempt(ctx.pr, marker);
+          if (earlier)
+            j.noteReplyAttempt(ctx.pr, marker, {
+              ...earlier,
+              not_before: notBefore.toISOString(),
+            });
+        });
+        if (kept !== false) {
+          this.audit(ctx, "post.reply", "rate-limited");
+          throw new IpcError(
+            "post_failed",
+            `${why}: GitHub asked for no more requests until ${notBefore.toISOString()}, and nothing more was sent. Run the same script again after that time: it checks for this reply first and posts it only once GitHub has shown twice, apart, that it is not there.`,
+          );
+        }
+      }
+      const after = await this.findReply(ctx, id, marker);
+      if (after !== null && after !== "unreadable") {
+        j.clearReplyAttempt(ctx.pr, marker);
+        return this.replyAlreadyPosted(ctx, id, after);
+      }
+      this.audit(ctx, "post.reply", "unanswered");
+      throw new IpcError(
+        "post_failed",
+        `${why}, and ${
+          after === "unreadable"
+            ? "the check for the reply could not read GitHub"
+            : "the reply is not on GitHub yet"
+        }: it may still land, and nothing more was sent. Run the same script again in a few minutes: it checks for this reply first and posts it only once GitHub has shown twice, apart, that it is not there.`,
+      );
     }
+    if (!res.executed) j.clearReplyAttempt(ctx.pr, marker); // refused or dry-run: nothing sent
     if (res.blocked) {
       this.audit(ctx, "post.reply", `blocked:${res.blocked}`);
       throw new IpcError("blocked", `${res.blocked}: nothing was posted`);
@@ -822,6 +1235,7 @@ class PostOps {
     // ungated-review audit accounts for the review GitHub files it under.
     if (res.executed && typeof posted?.id === "number")
       this.d.store.registerBotComment(posted.id, ctx.pr, "review_comment");
+    j.clearReplyAttempt(ctx.pr, marker);
     this.audit(ctx, "post.reply", "posted");
     return {
       status: "posted",
@@ -829,6 +1243,32 @@ class PostOps {
       lines: [`replied to review comment ${id} on #${ctx.pr}`],
     };
   }
+}
+
+/** The approval's CI could not be read and the daemon does not take it over
+ * (a permanent refusal, an unkeyed post, a dry run): blocked, with what the
+ * session does next. */
+function ciUnreadable(f: GitHubFailure, head: string, queued: boolean): IpcError {
+  const at = head.slice(0, 7);
+  const taken = queued ? " and the queued approval was taken back" : "";
+  return new IpcError(
+    "blocked",
+    retryable(f)
+      ? `pr-unreadable: the checks at ${at} could not be read (${clientCause(f)}). Nothing was posted${taken}: run the same script again in a few minutes.`
+      : `pr-unreadable: the checks at ${at} could not be read (${clientCause(f)}). Nothing was posted${taken}, and running it again will be refused the same way: post your review as a COMMENT through post-review.sh saying the approval is held because CI could not be read, then finish the round.`,
+  );
+}
+
+/** Gate refusals that end the round's posting for good: the queued job goes. */
+const TERMINAL_REFUSALS: ReadonlySet<string> = new Set(["pr-merged", "pr-closed", "head-drift"]);
+
+function alreadyConfirmedReply(pr: number, commentId: number): PostOutcome {
+  return {
+    status: "already_confirmed",
+    lines: [
+      `this reply to review comment ${commentId} on #${pr} is already posted — not posting it again`,
+    ],
+  };
 }
 
 function alreadyConfirmed(key: string): PostOutcome {
@@ -858,7 +1298,14 @@ function wrap(
     try {
       return await fn(ctx, body);
     } catch (e) {
-      if (e instanceof JournalError) throw new IpcError("blocked", e.message);
+      if (e instanceof JournalError) {
+        // Another attempt (the daemon's outbox or retry, or this op still
+        // running for an earlier call) owns the round's posting right now:
+        // it records the outcome, so the session must not post again.
+        if (e.message.startsWith("another posting attempt owns"))
+          return { status: "in_flight", lines: [`${IN_FLIGHT_LINE} (${e.message})`] };
+        throw new IpcError("blocked", e.message);
+      }
       throw e;
     }
   };

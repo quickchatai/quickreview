@@ -48,9 +48,10 @@ export interface PostingReceipt {
   defer_reason?: string;
   /** Set on a receipt the daemon's deferred-posting retry confirmed, and on
    * any daemon delivery of an APPROVE that GitHub holds as a COMMENT. The
-   * session was gone when the gate's guards ran, so a guard 4 softening
-   * (APPROVE posted as a COMMENT, approval withheld for red CI) is something
-   * the verdict file cannot know: see `retrySoftenedApproval`. */
+   * session was gone when the delivery ran, so an approval withheld for CI
+   * (APPROVE posted as a COMMENT, by the delivery's CI pre-check or guard 4's
+   * softening) is something the verdict file cannot know: see
+   * `retrySoftenedApproval`. */
   delivered_by?: "daemon_retry";
   /** Written by a person-mode install (`[github] auth = "user"`): the posting
    * guard posts EVERY review as a COMMENT there, so `actual_event` COMMENT
@@ -243,10 +244,25 @@ export function parsePostingReceipt(raw: string): PostingOutcome | undefined {
   }
 }
 
+/** An APPROVE that GitHub holds as a COMMENT, outside person mode, is a
+ * withheld approval: guard 4 softened it on the gate (on its own CI read, or
+ * on the state a daemon delivery's CI pre-check carried there), the one path
+ * that posts an approval as a COMMENT. Read the same way wherever the posted
+ * review is found: the outbox's confirmation and the verdict watcher's
+ * marker reconciliation both mark it `delivered_by: "daemon_retry"`. */
+export function withheldApprovalPosted(
+  intended: PostingReceipt["intended_event"],
+  actual: PostingReceipt["actual_event"],
+  personMode: boolean,
+): boolean {
+  return intended === "APPROVE" && actual === "COMMENT" && !personMode;
+}
+
 /** An approval the daemon's delivery (the deferred-posting retry, or the
- * outbox's ordinary delivery) posted as a COMMENT:
- * guard 4 (no green CI at the head) softened it on the gate, as it softens
- * any approval there. The session that wrote the verdict file had finished
+ * outbox's ordinary delivery) posted as a COMMENT: CI was not green at the
+ * head, so guard 4 withheld it on the gate, on the state the delivery's CI
+ * pre-check carried there or on its own read. The session that wrote the
+ * verdict file had finished
  * long before, so its verdict says APPROVE without `approval_withheld` — and
  * the receipt is the evidence that the approval was withheld. */
 export function retrySoftenedApproval(receipt: PostingReceipt): boolean {

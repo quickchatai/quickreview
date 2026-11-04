@@ -554,6 +554,17 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           );
         },
         ...(deps.now ? { now: deps.now } : {}),
+        // The ordinary delivery is bounded too: a job not delivered within
+        // the window of being queued fails loud, never retries for ever.
+        deliveryWindowMs:
+          (cfg.daemon.posting_retry_window_min ?? DEFAULT_POSTING_RETRY_WINDOW_MIN) * 60_000,
+        onDeliveryExpired: (job: PostingJob, detail: string) =>
+          store.logAnomaly(
+            "posting_retry_exhausted",
+            job.pr,
+            job.round_no,
+            `review posting ${job.posting_key} was not delivered: ${detail}`,
+          ),
         ...(deps.postingDelivery.createDeferredReview
           ? {
               deferred: {

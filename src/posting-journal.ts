@@ -43,6 +43,15 @@ import type { StandingMarkSnapshot } from "@quickchatai/pi-quickreview/src/stand
 
 export type ReviewEvent = PostingReceipt["intended_event"];
 
+/** A reply POST whose outcome is not yet known: when it was sent, when a
+ * read first found it absent, and the time before which GitHub asked not to
+ * be called again (a rate limit's `Retry-After` or reset). */
+export interface ReplyAttempt {
+  attempted_at: string;
+  negative_at?: string;
+  not_before?: string;
+}
+
 /** What `check` says about a round's receipt slot. */
 export type ReceiptSlot = "none" | "mismatch" | "invalid" | PostingReceiptStatus | "skipped";
 
@@ -399,6 +408,8 @@ export class PostingJournal {
       throw new JournalError("no delivery snapshot for this posting key — cannot hand off");
     const first = (value.deferred_at as string | undefined) ?? this.iso();
     delete queued.negative_at;
+    // The deferred retry counts its unposted attempts against its own ledger.
+    if (value.status !== "deferred") delete queued.unposted_attempts;
     this.write(jobPath, {
       ...queued,
       payload: o.payload,
@@ -415,6 +426,85 @@ export class PostingJournal {
       defer_reason: o.reason,
       intended_event: o.intended,
       actual_event: o.payload.event,
+    });
+  }
+
+  /**
+   * Hand a queued post to the daemon's outbox BEFORE any attempt: a read the
+   * post depends on (the approval's CI pre-check, the gate's PR read) failed
+   * transiently, so nothing was sent and nothing may have landed. The job
+   * must already be queued (`enqueue`); no receipt may exist, so this never
+   * writes a `prepared` ("may have landed") receipt and never overwrites an
+   * attempted one. Job first, then the receipt, as `defer` does: a deferred
+   * receipt always has its handoff on disk, and a stop between the two writes
+   * (a job with `deferred_at` and no receipt) is finished by the outbox's
+   * handoff recovery, which writes the deferred receipt this would have.
+   * Idempotent for the same deferral.
+   */
+  deferUnattempted(o: {
+    key: string;
+    pr: number;
+    round: number;
+    head: string;
+    intended: ReviewEvent;
+    payload: JobPayload;
+    reason: string;
+  }): void {
+    const path = this.receiptPath(o.pr, o.round);
+    const hash = payloadHash(o.payload);
+    const existing = readObject(path, "receipt");
+    if (existing) {
+      if (
+        existing.posting_key === o.key &&
+        existing.status === "deferred" &&
+        existing.payload_sha256 === hash
+      )
+        return; // the same deferral, replayed
+      throw new JournalError(
+        `refusing to defer over a ${String(existing.status)} receipt — a posting was already attempted or recorded for this key`,
+      );
+    }
+    const jobPath = this.jobPath(o.pr, o.round);
+    const queued = readObject(jobPath, "delivery snapshot");
+    if (!queued || queued.posting_key !== o.key)
+      throw new JournalError("no delivery snapshot for this posting key — cannot hand off");
+    if (queued.status !== "pending" || queued.source_sha256 !== hash)
+      throw new JournalError("deferral does not match the queued delivery snapshot");
+    if (
+      (typeof queued.head_sha === "string" ? queued.head_sha.toLowerCase() : "") !==
+      o.head.toLowerCase()
+    )
+      throw new JournalError("deferral does not match the queued delivery snapshot");
+    const now = this.iso();
+    delete queued.negative_at;
+    delete queued.attempted_at;
+    delete queued.unposted_attempts;
+    this.write(jobPath, {
+      ...queued,
+      payload: o.payload,
+      payload_sha256: hash,
+      status: "pending",
+      deferred_at: now,
+      next_attempt_at: now,
+      last_error: o.reason,
+    });
+    this.write(path, {
+      version: 1,
+      posting_key: o.key,
+      marker: postingMarker(o.key),
+      pr: o.pr,
+      round_no: o.round,
+      head_sha: o.head.toLowerCase(),
+      intended_event: o.intended,
+      actual_event: o.payload.event,
+      status: "deferred",
+      payload_sha256: hash,
+      // The receipt shape requires it; no POST was attempted at this time.
+      prepared_at: now,
+      deferred_at: now,
+      defer_reason: o.reason,
+      unattempted: true,
+      ...(this.o.personMode ? { person_mode: true } : {}),
     });
   }
 
@@ -481,6 +571,45 @@ export class PostingJournal {
       delete job.attempted_at;
       this.write(this.jobPath(pr, round), job);
     }
+  }
+
+  // ---- reply attempts ------------------------------------------------------
+
+  /** The record of one reply's last POST, keyed by the reply's marker,
+   * beside the PR's receipts (`pr-<n>-reply-<hash>.json`). */
+  private replyAttemptPath(pr: number, marker: string): string {
+    const id = createHash("sha256").update(marker).digest("hex").slice(0, 16);
+    return join(this.o.dir, `pr-${pr}-reply-${id}.json`);
+  }
+
+  /** The last POST of this reply that has not been settled (confirmed,
+   * refused, or found on GitHub), if any. A record that cannot be read is a
+   * refusal, never "no attempt". */
+  readReplyAttempt(pr: number, marker: string): ReplyAttempt | undefined {
+    const value = readObject(this.replyAttemptPath(pr, marker), "reply attempt");
+    if (!value) return undefined;
+    if (
+      value.marker !== marker ||
+      typeof value.attempted_at !== "string" ||
+      !Number.isFinite(Date.parse(value.attempted_at)) ||
+      [value.negative_at, value.not_before].some(
+        (t) => t !== undefined && (typeof t !== "string" || !Number.isFinite(Date.parse(t))),
+      )
+    )
+      throw new JournalError("existing reply attempt invalid");
+    return {
+      attempted_at: value.attempted_at,
+      ...(typeof value.negative_at === "string" ? { negative_at: value.negative_at } : {}),
+      ...(typeof value.not_before === "string" ? { not_before: value.not_before } : {}),
+    };
+  }
+
+  noteReplyAttempt(pr: number, marker: string, attempt: ReplyAttempt): void {
+    this.write(this.replyAttemptPath(pr, marker), { version: 1, marker, ...attempt });
+  }
+
+  clearReplyAttempt(pr: number, marker: string): void {
+    rmSync(this.replyAttemptPath(pr, marker), { force: true });
   }
 
   /** A dry-run receipt left by an earlier dry-run is set aside when the install
