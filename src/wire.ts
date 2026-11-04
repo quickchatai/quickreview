@@ -1220,6 +1220,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           maxWaitMs: EMBEDDER_GATE_MAX_WAIT_MS,
           what: "the local embedder",
         },
+        // A running server that stopped answering is restarted; each one is a
+        // durable anomaly row (quiet: memory health carries the loud side).
+        onLivenessRestart: (detail) => {
+          try {
+            d.store.logAnomaly("openviking_liveness_restart", null, null, detail);
+          } catch (err) {
+            log("openviking: liveness restart anomaly not recorded", err);
+          }
+        },
         // The reviewer's memory root does not exist on a fresh server until
         // something creates it. The TUI does this for the companion's sake;
         // the daemon does it here for its own, each time the server comes up,
