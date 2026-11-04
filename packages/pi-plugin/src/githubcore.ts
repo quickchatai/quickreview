@@ -283,3 +283,23 @@ export async function withReadRetry<T>(
     }
   }
 }
+
+/**
+ * The long, bounded schedule a durable caller (a reply decision, a PR
+ * conversation answer) waits out a transient or rate-limited GitHub failure
+ * on: about 1, 2, 5, 15, 30, 60 and 60 minutes, some three hours in all.
+ * These waits do not count toward a caller's strike budget for refusals;
+ * when they are spent, the caller's ordinary terminal path runs.
+ */
+export const TRANSIENT_RETRY_SCHEDULE_MS: readonly number[] = [1, 2, 5, 15, 30, 60, 60].map(
+  (m) => m * 60_000,
+);
+
+/** The wait after the `n`th (1-based) transient failure in a row, raised to
+ * GitHub's own `retryAfterMs` when that is longer; null once the schedule is
+ * spent. */
+export function transientRetryDelayMs(n: number, retryAfterMs?: number): number | null {
+  const base = TRANSIENT_RETRY_SCHEDULE_MS[n - 1];
+  if (base === undefined) return null;
+  return Math.max(base, retryAfterMs ?? 0);
+}
