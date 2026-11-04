@@ -425,7 +425,10 @@ export class PostingJournal {
    * must already be queued (`enqueue`); no receipt may exist, so this never
    * writes a `prepared` ("may have landed") receipt and never overwrites an
    * attempted one. Job first, then the receipt, as `defer` does: a deferred
-   * receipt always has its handoff on disk. Idempotent for the same deferral.
+   * receipt always has its handoff on disk, and a stop between the two writes
+   * (a job with `deferred_at` and no receipt) is finished by the outbox's
+   * handoff recovery, which writes the deferred receipt this would have.
+   * Idempotent for the same deferral.
    */
   deferUnattempted(o: {
     key: string;

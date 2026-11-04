@@ -3,7 +3,13 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PostingOutbox, pendingPosting, type PostingJob } from "../src/posting-outbox.js";
+import { GitHubRequestError } from "@quickchatai/pi-quickreview/src/githubcore.js";
+import {
+  PostingOutbox,
+  pendingPosting,
+  withApprovalCiPrecheck,
+  type PostingJob,
+} from "../src/posting-outbox.js";
 import {
   roundPostingKey,
   postingMarker,
@@ -81,7 +87,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 describe("durable review delivery", () => {
   it("retains a 503 obligation and posts after recovery without another review round", async () => {
     createReview.mockRejectedValueOnce(
-      Object.assign(new Error("GitHub unavailable"), { status: 503 }),
+      new GitHubRequestError("GET", "/x", 503, "GitHub unavailable"),
     );
     await worker().tick();
     expect(pendingPosting(dir, 12, 1, key)).toBe(true);
@@ -158,7 +164,7 @@ describe("durable review delivery", () => {
   });
   it("honors rate-limit backoff rather than exhausting a retry cap", async () => {
     createReview.mockRejectedValueOnce(
-      Object.assign(new Error("rate limit"), { status: 429, retryAfterMs: 600_000 }),
+      new GitHubRequestError("POST", "/x", 429, "rate limit", 600_000),
     );
     const w = worker();
     await w.tick();
@@ -196,7 +202,7 @@ describe("durable review delivery", () => {
     expect(pendingPosting(dir, 12, 1, key)).toBe(false);
   });
   it("fails loud for permanent rejection, not endless silent retries", async () => {
-    createReview.mockRejectedValueOnce(Object.assign(new Error("invalid review"), { status: 422 }));
+    createReview.mockRejectedValueOnce(new GitHubRequestError("POST", "/x", 422, "invalid review"));
     await worker().tick();
     advance();
     await worker().tick();
@@ -230,7 +236,7 @@ describe("durable review delivery", () => {
   });
   // MUTATION: return false at the top of deliveryExpired — this fails.
   it("is bounded by the delivery window from created_at, then fails loud, an ambiguous receipt kept", async () => {
-    createReview.mockRejectedValue(Object.assign(new Error("GitHub unavailable"), { status: 503 }));
+    createReview.mockRejectedValue(new GitHubRequestError("GET", "/x", 503, "GitHub unavailable"));
     const expired = vi.fn();
     const bounded = () =>
       new PostingOutbox({
@@ -259,6 +265,50 @@ describe("durable review delivery", () => {
     );
     // A POST that may have landed stays ambiguous for the operator, never "not posted".
     expect(readPostingReceipt(dir, 12, 1)?.status).toBe("prepared");
+    // The terminal proof the verdict watcher reads as `exhausted`.
+    expect(jobFile().exhausted_at).toBe(new Date(created + 60 * 60_000).toISOString());
+  });
+  const jobFile = (): PostingJob =>
+    JSON.parse(readFileSync(join(dir, "pr-12-round-1.outbox.json"), "utf8")) as PostingJob;
+  const boundedWorker = (expired = vi.fn()) =>
+    new PostingOutbox({
+      dir,
+      repo: "org/repo",
+      dryRun: false,
+      botLogins: ["review[bot]"],
+      now: () => new Date(clock),
+      adapter: { createReview, listReviewsFull },
+      current: () => true,
+      log: () => {},
+      deliveryWindowMs: 60 * 60_000,
+      onDeliveryExpired: expired,
+    });
+  // MUTATION: drop `&& !this.windowPassed(job)` from the tick's due check — this fails.
+  it("expires at the window's end while GitHub's requested wait still holds, calling GitHub no sooner", async () => {
+    const expired = vi.fn();
+    advance(50 * 60_000);
+    createReview.mockRejectedValueOnce(
+      new GitHubRequestError("POST", "/x", 429, "rate limit", 60 * 60_000),
+    );
+    await boundedWorker(expired).tick();
+    expect(createReview).toHaveBeenCalledTimes(1);
+    expect(jobFile().next_attempt_at).toBe(new Date(clock + 60 * 60_000).toISOString());
+    listReviewsFull.mockClear();
+    advance(10 * 60_000); // minute 60: the window's end, the wait not over
+    await boundedWorker(expired).tick();
+    expect(expired).toHaveBeenCalledTimes(1);
+    expect(jobFile()).toMatchObject({ status: "failed" });
+    expect(jobFile().exhausted_at).toBeDefined();
+    expect(listReviewsFull).not.toHaveBeenCalled();
+    expect(createReview).toHaveBeenCalledTimes(1);
+  });
+  // MUTATION: drop the retryAfterMs from the marker-read failure's schedule — this fails.
+  it("a marker read refused with a long Retry-After waits that long before the next read", async () => {
+    listReviewsFull.mockRejectedValueOnce(
+      new GitHubRequestError("GET", "/x", 429, "rate limit", 30 * 60_000),
+    );
+    await worker().tick();
+    expect(jobFile().next_attempt_at).toBe(new Date(clock + 30 * 60_000).toISOString());
   });
   it("without a window the ordinary delivery keeps its debt", async () => {
     listReviewsFull.mockRejectedValue(new Error("offline"));
@@ -282,5 +332,70 @@ describe("durable review delivery", () => {
     expect(JSON.parse(readFileSync(join(dir, "pr-12-round-1.outbox.json"), "utf8")).status).toBe(
       "failed",
     );
+  });
+});
+
+// The ordinary replay of an APPROVE carries the CI pre-check (wire.ts wires
+// `withApprovalCiPrecheck` around the gated POST, as for the deferred retry).
+describe("an ordinary APPROVE delivery and its CI pre-check", () => {
+  const listChecks = vi.fn();
+  const gatePost = vi.fn();
+  beforeEach(() => {
+    job.intended_event = "APPROVE";
+    job.payload = { ...job.payload, event: "APPROVE" };
+    save();
+    listChecks.mockReset();
+    gatePost.mockReset();
+    // The gate answers with what it was asked for.
+    gatePost.mockImplementation(async (p: PostingJob["payload"]) => ({
+      executed: true,
+      response: {
+        id: 78,
+        commit_id: head,
+        state: p.event === "APPROVE" ? "APPROVED" : "COMMENTED",
+      },
+    }));
+    createReview.mockImplementation((pr: number, payload: PostingJob["payload"]) =>
+      withApprovalCiPrecheck({ listChecks, enabled: true }, pr, payload, gatePost),
+    );
+  });
+
+  // MUTATION: post the original payload when the pre-check reads red — this fails.
+  it("red CI the pre-check saw posts the withheld COMMENT, confirmed as a withheld approval", async () => {
+    listChecks.mockResolvedValue([
+      { name: "ci", source: "check_run", status: "completed", conclusion: "failure" },
+    ]);
+    await worker().tick();
+    expect(gatePost).toHaveBeenCalledTimes(1);
+    const asked = gatePost.mock.calls[0]![0] as PostingJob["payload"];
+    expect(asked.event).toBe("COMMENT");
+    expect(asked.body).toContain(postingMarker(key));
+    expect(asked.body).toMatch(/Approval is withheld because CI is not green/);
+    const receipt = readPostingReceipt(dir, 12, 1) as PostingReceipt;
+    expect(receipt).toMatchObject({
+      status: "confirmed",
+      intended_event: "APPROVE",
+      actual_event: "COMMENT",
+      delivered_by: "daemon_retry",
+    });
+    expect(retrySoftenedApproval(receipt)).toBe(true);
+  });
+
+  it("green CI posts the APPROVE as asked", async () => {
+    listChecks.mockResolvedValue([
+      { name: "ci", source: "check_run", status: "completed", conclusion: "success" },
+    ]);
+    await worker().tick();
+    expect(gatePost).toHaveBeenCalledWith(expect.objectContaining({ event: "APPROVE" }));
+    expect(readPostingReceipt(dir, 12, 1)).toMatchObject({ actual_event: "APPROVE" });
+  });
+
+  it("unreadable CI posts nothing and waits as long as GitHub asked", async () => {
+    listChecks.mockRejectedValue(new GitHubRequestError("GET", "/x", 429, "rate limit", 900_000));
+    await worker().tick();
+    expect(gatePost).not.toHaveBeenCalled();
+    expect(pendingPosting(dir, 12, 1, key)).toBe(true);
+    const j = JSON.parse(readFileSync(join(dir, "pr-12-round-1.outbox.json"), "utf8"));
+    expect(j.next_attempt_at).toBe(new Date(clock + 900_000).toISOString());
   });
 });

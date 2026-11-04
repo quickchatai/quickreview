@@ -941,6 +941,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   const approvalPrecheck = {
     listChecks: (head: string) => adapter.listChecks(head),
     enabled: cfg.guards.block_approve_on_red_ci,
+    noChecksIsRed: cfg.guards.no_checks_is_red,
     log,
   };
   const daemon = createDaemon({
@@ -953,20 +954,21 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // Every daemon delivery of an APPROVE carries the CI pre-check: CI
       // that cannot be read holds the delivery (`pr-unreadable`, no POST,
       // retried), so an approval is never posted over unknown CI. CI that
-      // reads red goes on to the gate, where guard 4 softens the APPROVE to
-      // a COMMENT with the approval withheld; the receipt says so
-      // (`delivered_by: daemon_retry`) and the verdict apply reads it as
-      // `approval_withheld`, so a red-CI approval never loops on a refusal.
+      // the pre-check reads red is carried forward: the delivery asks the
+      // gate for the COMMENT with the approval withheld (guard 4's shape),
+      // never relying on a second read there that fails open. The receipt
+      // says so (`delivered_by: daemon_retry`) and the verdict apply reads it
+      // as `approval_withheld`, so a red-CI approval never loops on a refusal.
       createReview: (pr, payload) =>
-        withApprovalCiPrecheck(approvalPrecheck, pr, payload, () =>
-          adapter.createReview(pr, payload),
+        withApprovalCiPrecheck(approvalPrecheck, pr, payload, (asked) =>
+          adapter.createReview(pr, asked),
         ),
       listReviewsFull: (pr) => adapter.listReviewsFull(pr),
       // The deferred-posting retry: through the gate, whose guards bind as
       // on any review; only guard 5 is exempt, via `postingRetry`.
       createDeferredReview: (pr, payload, postingKey) =>
-        withApprovalCiPrecheck(approvalPrecheck, pr, payload, () =>
-          adapter.createReview(pr, payload, { postingRetry: postingKey }),
+        withApprovalCiPrecheck(approvalPrecheck, pr, payload, (asked) =>
+          adapter.createReview(pr, asked, { postingRetry: postingKey }),
         ),
     },
     hooks: botHost,

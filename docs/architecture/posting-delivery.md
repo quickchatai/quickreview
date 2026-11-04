@@ -19,10 +19,14 @@ round dispatch and model sessions. `src/daemon.ts` ticks it on startup and every
 route through `MutationGate`. No new mutation kind, guard exemption, session,
 or GitHub write path exists. Every daemon delivery of an APPROVE carries a CI
 pre-check (`withApprovalCiPrecheck` in `src/posting-outbox.ts`): CI that cannot
-be read holds the delivery (`pr-unreadable`, no POST, retried), so an approval
-is never posted over unknown CI; CI that reads red goes on to the gate, where
-guard 4 softens the APPROVE to a COMMENT with the approval withheld, so a
-red-CI approval never loops on a refusal. PR state, head drift, unchanged-head
+be read holds the delivery (`pr-unreadable`, no POST, retried after any wait
+GitHub asked for), so an approval is never posted over unknown CI; CI the
+pre-check reads not green (red, pending, or no checks under `no_checks_is_red`)
+is carried forward: the delivery asks the gate for the COMMENT with the
+approval withheld, the shape guard 4's softening gives, so a red read is never
+lost to guard 4's own second read failing open, and a red-CI approval never
+loops on a refusal. The confirmed receipt (`delivered_by: "daemon_retry"`)
+makes the verdict apply as a withheld approval, as for guard 4's softening. PR state, head drift, unchanged-head
 and human approval guards still apply at delivery time. The queue never changes `dry_run` and does not
 automatically promote old dry-run obligations to live ones.
 
@@ -32,11 +36,17 @@ automatically promote old dry-run obligations to live ones.
   Exponential backoff starts at 30 seconds and caps at 15 minutes. Delivery
   debt is not exhausted by an attempt cap but by time: a job the marker read
   does not find on GitHub `posting_retry_window_min` after it was queued
-  (`created_at`) fails, with a `posting_retry_exhausted` anomaly. A `prepared`
-  receipt beside it stays, so a POST that may have landed still reads as
-  ambiguous (operator `u`), never as "not posted".
+  (`created_at`) fails, with a `posting_retry_exhausted` anomaly. The window
+  is checked apart from when the next attempt is due, so a wait GitHub asked
+  for never stretches it, and the job is failed without calling GitHub before
+  that wait is over. The failed job carries `exhausted_at`, the terminal proof
+  the verdict watcher's posting proof reads as `exhausted`: loud on every
+  path, never a requeue. A `prepared` receipt beside it stays, so a POST that
+  may have landed still reads as uncertain, never as "not posted".
 - Rate limits respect `Retry-After` / rate-limit reset when the adapter can
-  read them. Network errors, 408 and 5xx retain the obligation. Explicit
+  read them, on the POST and on the marker read alike. Network errors, 408 and
+  5xx retain the obligation. Every outcome is classified once
+  (`classifyGitHubFailure`). Explicit
   permission, authentication or validation rejection fails visibly instead
   of retrying forever. Closed/superseded/head-moved jobs are not sent.
 - All retries first read the **complete** review list and reconcile the exact
@@ -115,17 +125,28 @@ the row before its first GitHub call (a crash never repeats one), then:
 3. POSTs through the ONE gate with `postingRetry` set. Admission confines that
    field to a substantive `create_review` carrying the key's marker at the
    key's head, and it exempts guard 5 only: the review posts at its ORIGINAL
-   commit_id. Guards 3, 1, 2 and 4 bind as on any gated review — guard 4
-   softens a red-CI APPROVE to a COMMENT, and the confirmed receipt
-   (`delivered_by: "daemon_retry"`) makes the verdict apply as a withheld
-   approval. Dry-run suppresses it like anything else.
+   commit_id. Guards 3, 1, 2 and 4 bind as on any gated review. An APPROVE
+   whose CI pre-check read red posts as the COMMENT with the approval
+   withheld, and the confirmed receipt (`delivered_by: "daemon_retry"`) makes
+   the verdict apply as a withheld approval. Dry-run suppresses it like
+   anything else.
 
 An attempt that sends no POST — a failed marker read, a delivery whose own
 reads could not read the PR or its CI (`pr-unreadable`), a rate-limited POST —
 does not use up one of the POST attempts (the job's `unposted_attempts`). It
 moves to the next offset, past the last one at the last offsets' gap, and while
 it happens the window stretches to three times `posting_retry_window_min`
-(`DEFERRED_READ_WINDOW_FACTOR`), a hard ceiling.
+(`DEFERRED_READ_WINDOW_FACTOR`), a hard ceiling. A wait GitHub asked for
+(`Retry-After`, a rate-limit reset) is kept on the job as `not_before`, across
+ticks and restarts, and no attempt runs before it; a wait that outlasts the
+window exhausts the row at the window's end with no GitHub call. The least
+gap between attempts (one minute) holds only for an attempt whose offset had
+already passed when the last one ran; a configured offset still ahead is kept.
+
+A deferral the session's post made before any attempt (`deferUnattempted`)
+writes the job, then the receipt. A stop between the two leaves a job with
+`deferred_at` and no receipt; the outbox finishes that handoff by writing the
+deferred receipt, so the retry delivers or exhausts on its bounded schedule.
 
 A refusal by a guard, a permanent 4xx, a POST failure with the POST attempts
 spent, the ceiling reached with reads still failing, or a due time already past

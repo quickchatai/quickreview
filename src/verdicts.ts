@@ -27,7 +27,7 @@ import {
   sweepStatusOf,
   type SweepStatus,
 } from "@quickchatai/pi-quickreview/src/sweepstatus.js";
-import { pendingPosting } from "./posting-outbox.js";
+import { jobPath, pendingPosting, readPostingJob } from "./posting-outbox.js";
 
 export { sweepStatusOf, type SweepStatus };
 import {
@@ -402,8 +402,9 @@ export interface ReceiptDecision {
  * (standing-review.ts rule 4).
  */
 export function decidedVerdictFromReceipt(receipt: PostingReceipt): ReceiptDecision | null {
-  // The daemon's deferred-posting retry delivered the session's
-  // APPROVE and guard 4 softened it on the gate — the withheld-approval shape.
+  // The daemon's delivery posted the session's APPROVE as a COMMENT, the
+  // approval withheld for CI (its CI pre-check, or guard 4 on the gate) —
+  // the withheld-approval shape.
   if (retrySoftenedApproval(receipt)) return { verdict: "APPROVE", approval_withheld: true };
   if (
     receipt.intended_event === "REQUEST_CHANGES" &&
@@ -1694,6 +1695,31 @@ export class VerdictWatcher {
         failure: "exhausted",
       };
     }
+    // The ordinary delivery's window ran out (its job is failed with
+    // `exhausted_at`) and the read above did not find the marker: as loud as
+    // an exhausted deferred retry, never a requeue. A POST it attempted may
+    // still have landed, so the detail says what is known.
+    const job = readPostingJob(jobPath(this.postingReceiptDir(), round.pr, round.round_no));
+    if (
+      !this.deps.cfg.dry_run &&
+      job?.posting_key === round.posting_key &&
+      job.status === "failed" &&
+      job.exhausted_at
+    ) {
+      const attempted =
+        job.attempts > 0 || (receiptIdentityOk && receipt?.status === "prepared");
+      return {
+        kind: "failed",
+        detail: `review posting for ${round.posting_key} was not delivered (${job.last_error ?? "delivery window exhausted"})${
+          attempted
+            ? reconciled
+              ? "; a POST was attempted and GitHub showed no review carrying its marker"
+              : "; a POST was attempted and whether it landed is unknown (GitHub could not be read for its marker)"
+            : "; no POST was sent"
+        }`,
+        failure: "exhausted",
+      };
+    }
 
     const origin =
       receiptIdentityOk && receipt && receipt.status !== "skipped"
@@ -2222,8 +2248,9 @@ export class VerdictWatcher {
           ? "failed"
           : "applied";
       }
-      // The daemon's retry delivered this round's APPROVE after the
-      // session finished, and guard 4 softened it to a COMMENT on the gate.
+      // The daemon's delivery posted this round's APPROVE after the session
+      // finished, as a COMMENT with the approval withheld for CI (its CI
+      // pre-check read CI not green, or guard 4 softened it on the gate).
       // The posted review withheld the approval, so the verdict does too —
       // what the session would have written had the softening happened
       // under it; the withheld mark then re-queues on green CI (cigate.ts).
