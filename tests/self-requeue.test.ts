@@ -687,6 +687,66 @@ describe("self-requeued rounds do not age the PR", () => {
   );
 });
 
+describe("a self-requeue backs off before its replacement dispatches", () => {
+  const pump = (at: Date) =>
+    dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter: new FakeDispatchAdapter(),
+      hooks: dispatchHooks().hooks,
+      now: () => at,
+    });
+
+  // MUTATION: drop the selfRequeueNotBefore check from dispatch's heldBack —
+  // the replacement dispatches at once into whatever just failed; this fails.
+  it(
+    "the replacement is held until its not-before time, then dispatches",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      reviewingRound(340);
+      pastDeadline();
+      const { hooks } = hooksWith(false);
+      await watcher(hooks).checkDeadlines();
+      const first = events("round_self_requeued").at(-1)!.payload;
+      expect(first.not_before).toBe(new Date(clock.getTime() + 2 * 60_000).toISOString());
+
+      expect(await pump(new Date(clock.getTime() + 60_000))).toHaveLength(0);
+      expect(store.getPr(340)?.state).toBe("queued");
+      expect(await pump(new Date(clock.getTime() + 2 * 60_000))).toHaveLength(1);
+    },
+  );
+
+  // MUTATION: return SELF_REQUEUE_BACKOFF_MIN[0] for every attempt in
+  // selfRequeueBackoffMin — the second requeue waits 2 minutes; this fails.
+  it("the first requeue at a head waits 2 minutes, the second 8", async () => {
+    const { hooks } = hooksWith(false);
+    const w = watcher(hooks);
+    for (const wait of [2, 8]) {
+      reviewingRound(342);
+      pastDeadline();
+      await w.checkDeadlines();
+      expect(events("round_self_requeued").at(-1)!.payload.not_before).toBe(
+        new Date(clock.getTime() + wait * 60_000).toISOString(),
+      );
+    }
+  });
+
+  // MUTATION: drop the queued_trigger_ts comparison from selfRequeueNotBefore —
+  // a person's fresh request waits behind the backoff; this fails.
+  it("a newer trigger on the row lifts the backoff", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+    reviewingRound(341);
+    pastDeadline();
+    const { hooks } = hooksWith(false);
+    await watcher(hooks).checkDeadlines();
+    const row = store.getPr(341)!;
+    expect(store.selfRequeueNotBefore(341, row)).toBeDefined();
+    const later = new Date(clock.getTime() + 30_000).toISOString();
+    store.upsertPr({ ...row, trigger_ts: later, trigger_provenance: "human" });
+    expect(store.selfRequeueNotBefore(341, store.getPr(341)!)).toBeUndefined();
+    expect(await pump(new Date(clock.getTime() + 30_000))).toHaveLength(1);
+  });
+});
+
 describe("idempotency against the restart orphan-requeue", () => {
   it(
     "self-requeue first: the orphan sweep finds nothing running and dispatch runs exactly once",
