@@ -87,6 +87,7 @@ import {
 import { estimateUsd, type ModelPricing } from "./usage.js";
 import { TranscriptIndex } from "./transcriptindex.js";
 import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
+import { classifyGitHubFailure } from "@quickchatai/pi-quickreview/src/githubcore.js";
 import { VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
@@ -2963,7 +2964,10 @@ export class VerdictWatcher {
     // firing (honest-unknown). An unknown fact a rule or a session
     // candidate needs defers the whole evaluation — the round's owed
     // escalation work is retried, or the next round decides — and the
-    // round itself is never disturbed.
+    // round itself is never disturbed. A read GitHub refused outright (a
+    // `rejected` 4xx) is not unknown but a known absence, `[]`, so a
+    // permanent refusal never defers the evaluation for ever
+    // (`escalationFactFailed`).
     const causes: Record<string, string> = {};
     const paths = await this.escalationPaths(v.pr, causes);
     const labels = await this.escalationLabels(v.pr, causes);
@@ -3064,9 +3068,10 @@ export class VerdictWatcher {
     }
   }
 
-  /** The PR's changed paths; null when the read failed (its cause in
-   * `causes`). A daemon with no listing route has `[]`: nothing can ever be
-   * known there, so nothing waits for it. */
+  /** The PR's changed paths; null when the read failed transiently (its
+   * cause in `causes`), `[]` when GitHub refused it (`escalationFactFailed`).
+   * A daemon with no listing route has `[]`: nothing can ever be known
+   * there, so nothing waits for it. */
   private async escalationPaths(
     pr: number,
     causes: Record<string, string>,
@@ -3075,13 +3080,12 @@ export class VerdictWatcher {
     try {
       return (await this.deps.adapter.listPrFiles(pr)).map((f) => f.filename).filter(Boolean);
     } catch (err) {
-      this.log(`escalation: file listing failed on #${pr}`, err);
-      causes.changed_paths = String(err).slice(0, 300);
-      return null;
+      return this.escalationFactFailed(pr, "changed_paths", err, causes);
     }
   }
 
-  /** The PR's labels; null when the read failed (its cause in `causes`). */
+  /** The PR's labels; null when the read failed transiently (its cause in
+   * `causes`), `[]` when GitHub refused it (`escalationFactFailed`). */
   private async escalationLabels(
     pr: number,
     causes: Record<string, string>,
@@ -3090,9 +3094,7 @@ export class VerdictWatcher {
     try {
       return (await this.deps.adapter.getPr(pr)).labels ?? [];
     } catch (err) {
-      this.log(`escalation: PR read failed on #${pr}`, err);
-      causes.labels = String(err).slice(0, 300);
-      return null;
+      return this.escalationFactFailed(pr, "labels", err, causes);
     }
   }
 
@@ -3155,10 +3157,42 @@ export class VerdictWatcher {
         .filter((c) => checkOutcome(c) === "failed")
         .map((c) => c.name);
     } catch (err) {
-      this.log(`escalation: checks read failed on #${pr}`, err);
-      causes.failing_checks = String(err).slice(0, 300);
-      return null;
+      return this.escalationFactFailed(pr, "failing_checks", err, causes);
     }
+  }
+
+  /**
+   * What a failed fact read means for this evaluation. A failure GitHub may
+   * answer differently later (transient, rate-limited, or unclassifiable) is
+   * UNKNOWN: null, its cause in `causes`, and the evaluation is deferred and
+   * asked again. A `rejected` read (a 4xx such as 404 or 403) is GitHub's
+   * definite answer, and asking again every few minutes would get the same
+   * one for ever: it is logged once (`escalation_fact_rejected`) and read as a
+   * KNOWN ABSENCE, `[]`, so the decision proceeds. An absent fact only ever
+   * keeps a rule from firing, and an empty changed-path list refuses every
+   * path-bearing scope, so the absence never widens what is delivered.
+   */
+  private escalationFactFailed(
+    pr: number,
+    fact: "changed_paths" | "labels" | "failing_checks",
+    err: unknown,
+    causes: Record<string, string>,
+  ): string[] | null {
+    const failure = classifyGitHubFailure(err);
+    if (failure.kind === "rejected") {
+      this.log(
+        `escalation: ${fact} read refused on #${pr} (${failure.detail}) — read as absent; the evaluation proceeds`,
+      );
+      this.deps.store.logEvent("escalation_fact_rejected", pr, {
+        fact,
+        ...(failure.status !== undefined ? { status: failure.status } : {}),
+        detail: failure.detail,
+      });
+      return [];
+    }
+    this.log(`escalation: ${fact} read failed on #${pr} (${failure.kind})`, err);
+    causes[fact] = String(err).slice(0, 300);
+    return null;
   }
 
   // ---- ledger freshness ------------------------------------------------
