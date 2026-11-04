@@ -135,9 +135,14 @@ export interface OpenReviewFailureInput {
   retry_cap: number;
   /** A transient cause (`TransientFailureCause`); absent for every other. */
   cause?: TransientFailureCause;
-  /** The caller's reading of the posting evidence the store cannot see: no
-   * posting receipt was prepared or confirmed for the round's key, and no
-   * review carrying its marker landed. Read only with a transient cause. */
+  /** The caller's proof, from posting evidence the store cannot see, that
+   * no review for the round's key reached GitHub. Two proofs are accepted:
+   * for ordinary work, receipt absence (no posting receipt of any status for
+   * the key, since a POST writes `prepared` first and it stays; no posting
+   * linkage; nothing pending delivery); for an exhausted deferred delivery,
+   * which may have sent a POST and keeps its `deferred` receipt, a completed
+   * marker read that inspected every review and found none carrying the key.
+   * Read only with a transient cause. */
   nothing_posted?: boolean;
 }
 

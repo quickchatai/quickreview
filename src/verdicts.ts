@@ -118,6 +118,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   guardedNoopMatchesMark,
+  postingKeyAnyHead,
   postingMarker,
   postingReceiptPath,
   readPostingReceipt,
@@ -4703,8 +4704,7 @@ export class VerdictWatcher {
     // The replacement waits out its backoff unless it is new work: a moved
     // head, or a successor at a fresher head than the round reviewed.
     const reviewedHead =
-      round.head_sha ??
-      (round.posting_key ? round.posting_key.split(":").slice(3).join(":") : head);
+      round.head_sha ?? (round.posting_key ? postingKeyAnyHead(round.posting_key) : head);
     const queued = store.getPr(round.pr);
     const notBefore =
       mode !== "head_moved" &&
