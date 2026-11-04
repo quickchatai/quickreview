@@ -646,8 +646,11 @@ export class PostingOutbox {
       const unsent = (detail: string): void => {
         j.unposted_attempts = unposted + 1;
         if (this.now().getTime() >= ceiling) {
+          // Say how many POSTs were sent in all: a deferral made before any
+          // attempt may exhaust without one.
+          const posts = row.attempts - j.unposted_attempts;
           exhaust(
-            `GitHub could not be read for ${Math.round((d.windowMs * DEFERRED_READ_WINDOW_FACTOR) / 60_000)} min after the first failure (no POST sent); last: ${detail}`,
+            `GitHub could not be read for ${Math.round((d.windowMs * DEFERRED_READ_WINDOW_FACTOR) / 60_000)} min after the first failure (no POST sent by this attempt; ${posts} POST attempt(s) in all); last: ${detail}`,
           );
           return;
         }

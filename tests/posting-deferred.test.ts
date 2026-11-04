@@ -328,7 +328,9 @@ describe("deferred review posting", () => {
     expect(deliver).not.toHaveBeenCalled();
     expect(store.postingRetry(key)?.status).toBe("exhausted");
     expect(onExhausted).toHaveBeenCalledTimes(1);
-    expect(onExhausted.mock.calls[0]![1]).toMatch(/could not be read for 180 min.*no POST sent/);
+    expect(onExhausted.mock.calls[0]![1]).toMatch(
+      /could not be read for 180 min.*no POST sent by this attempt; 0 POST attempt\(s\) in all/,
+    );
     expect(jobFile().status).toBe("failed");
   });
 
