@@ -27,7 +27,7 @@ import { GitHubRequestError, type GitHubAdapter } from "./github.js";
 import type { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { StateStore } from "./state.js";
 import { runOrThrow, type ExecFn } from "./tmux.js";
-import { networkGitExec } from "./worktrees.js";
+import { networkGitExec, pinnedGitExec } from "./worktrees.js";
 
 /** Injectable git runner: `git <args>` in `cwd`, stdout on success, a THROW on
  * a non-zero exit. The cwd is mandatory — there is no sensible default. */
@@ -42,6 +42,13 @@ export function gitRunner(exec: ExecFn): Run {
   const bounded = networkGitExec(exec);
   return async (args, cwd) => (await runOrThrow(bounded, "git", args, { cwd })).stdout;
 }
+
+/** The daemon's runner for the improvement channel. Its git works in the
+ * reviewed repo's base clone (fetch, branch, commit, push), whose config and
+ * hooks are the reviewed repo's to set, so it carries `DAEMON_GIT_PINS` like
+ * every other git the daemon starts: no hook, fsmonitor or ext:: transport
+ * from that repo ever runs. */
+export const daemonGitRun: Run = gitRunner(pinnedGitExec);
 
 export interface ImprovementPayload {
   branch: string;
