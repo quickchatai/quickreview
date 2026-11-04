@@ -31,8 +31,12 @@ import {
   parseNewSideRanges,
   reviewedHeadRef,
   unquoteGitPath,
+  GIT_CLONE_TIMEOUT_MS,
+  GIT_FETCH_TIMEOUT_MS,
+  GIT_NETWORK_CONFIG,
+  networkGitExec,
 } from "../src/worktrees.js";
-import { nodeExec, type ExecFn } from "../src/tmux.js";
+import { nodeExec, type ExecFn, type ExecOpts } from "../src/tmux.js";
 
 let tmp: string;
 let origin: string;
@@ -95,6 +99,117 @@ describe("cloneUrlFor", () => {
     expect(cloneUrlFor("git@github.com:o/n.git")).toBe("git@github.com:o/n.git");
     expect(cloneUrlFor("https://example.com/n.git")).toBe("https://example.com/n.git");
     expect(cloneUrlFor("/srv/mirror.git")).toBe("/srv/mirror.git");
+  });
+});
+
+// One hung fetch stalls the dispatch pump and every webhook waiting on it:
+// each daemon git command that reaches the network carries a timeout, git's
+// low-speed abort and no terminal prompt. Nothing else gets them.
+describe("network git commands are bounded", () => {
+  type Seen = { args: string[]; opts: ExecOpts };
+  function recording(): { run: ExecFn; seen: Seen[] } {
+    const seen: Seen[] = [];
+    const run: ExecFn = async (cmd, args, opts = {}) => {
+      seen.push({ args, opts });
+      return nodeExec(cmd, args, opts);
+    };
+    return { run, seen };
+  }
+  const verb = (s: Seen): string => s.args[GIT_NETWORK_CONFIG.length] ?? "";
+
+  it("the clone and the round's fetch carry the timeout, the low-speed abort and no prompt", async () => {
+    const sha = commit("feature.txt", "v1\n");
+    publishPullHead(7, sha);
+    const { run, seen } = recording();
+    const m = new WorktreeManager({
+      root,
+      repo: "exampleorg/example-app",
+      cloneUrl: origin,
+      run,
+    });
+    await m.ensureWorktree(7, { baseRef: "master" });
+    const clone = seen.find((s) => verb(s) === "clone");
+    const fetch = seen.find((s) => verb(s) === "fetch");
+    expect(clone?.args.slice(0, GIT_NETWORK_CONFIG.length)).toEqual([...GIT_NETWORK_CONFIG]);
+    expect(clone?.opts.timeoutMs).toBe(GIT_CLONE_TIMEOUT_MS);
+    expect(clone?.opts.env?.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(fetch?.args).toEqual([
+      "-c",
+      "http.lowSpeedLimit=1000",
+      "-c",
+      "http.lowSpeedTime=60",
+      "fetch",
+      "--force",
+      "origin",
+      "+refs/pull/7/head:refs/qcr/pr-7",
+      "+refs/heads/master:refs/remotes/origin/master",
+    ]);
+    expect(fetch?.opts.timeoutMs).toBe(GIT_FETCH_TIMEOUT_MS);
+    expect(fetch?.opts.env?.GIT_TERMINAL_PROMPT).toBe("0");
+    // A local command is untouched: no flags, no timeout, no env override.
+    const local = seen.filter((s) => s.args[0] !== "-c");
+    expect(local.length).toBeGreaterThan(0);
+    for (const s of local) {
+      expect(s.opts.timeoutMs).toBeUndefined();
+      expect(s.opts.env).toBeUndefined();
+    }
+  });
+
+  it("the fetch on miss (the recheck's merge read) is bounded too", async () => {
+    const { run, seen } = recording();
+    const m = new WorktreeManager({
+      root,
+      repo: "exampleorg/example-app",
+      cloneUrl: origin,
+      run,
+    });
+    await m.ensureBaseClone();
+    const later = commit("later.txt", "x\n");
+    publishPullHead(3, later);
+    await m.resolvedFilesInMerges(later, later, 3);
+    const fetches = seen.filter((s) => verb(s) === "fetch");
+    expect(fetches.length).toBeGreaterThan(0);
+    for (const f of fetches) {
+      expect(f.args.slice(0, GIT_NETWORK_CONFIG.length)).toEqual([...GIT_NETWORK_CONFIG]);
+      expect(f.opts.timeoutMs).toBe(GIT_FETCH_TIMEOUT_MS);
+    }
+  });
+
+  it("a caller's own timeout wins, and a command that is not fetch or clone passes through", async () => {
+    const seen: Array<{ args: string[]; opts: ExecOpts | undefined }> = [];
+    const inner: ExecFn = async (_cmd, args, opts) => {
+      seen.push({ args, opts });
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const run = networkGitExec(inner);
+    await run("git", ["fetch", "origin"], { timeoutMs: 5 });
+    await run("git", ["rev-parse", "HEAD"], { cwd: root });
+    await run("tmux", ["fetch"]);
+    expect(seen[0]!.opts?.timeoutMs).toBe(5);
+    expect(seen[1]).toEqual({ args: ["rev-parse", "HEAD"], opts: { cwd: root } });
+    expect(seen[2]!.args).toEqual(["fetch"]);
+  });
+
+  it("a clone that fails leaves no half-written clone behind to pass for a finished one", async () => {
+    const run: ExecFn = async (cmd, args, opts) => {
+      if (args.includes("clone")) {
+        // What a clone killed mid-transfer leaves: a `.git`, no checkout.
+        mkdirSync(join(root, "example-app", ".git"), { recursive: true });
+        return { code: -1, stdout: "", stderr: "killed" };
+      }
+      return nodeExec(cmd, args, opts);
+    };
+    const m = new WorktreeManager({
+      root,
+      repo: "exampleorg/example-app",
+      cloneUrl: origin,
+      run,
+    });
+    await expect(m.ensureBaseClone()).rejects.toThrow();
+    expect(existsSync(join(m.basePath, ".git"))).toBe(false);
+    // The next attempt clones for real.
+    await mgr().ensureBaseClone();
+    expect(existsSync(join(m.basePath, ".git"))).toBe(true);
   });
 });
 

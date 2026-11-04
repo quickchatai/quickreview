@@ -357,6 +357,61 @@ export const pinnedGitExec: ExecFn = (cmd, args, opts = {}) =>
     ? nodeExec(cmd, args, { ...opts, env: pinnedGitEnv(opts.env ?? process.env) })
     : nodeExec(cmd, args, opts);
 
+/** How long one daemon `git fetch` may run before it is killed. */
+export const GIT_FETCH_TIMEOUT_MS = 120_000;
+/** How long the daemon's one `git clone` of the base repo may run. */
+export const GIT_CLONE_TIMEOUT_MS = 600_000;
+/**
+ * A transfer slower than 1000 bytes/s for 60 s is abandoned by git itself,
+ * well before the wall-clock timeout above: a stalled connection fails
+ * fast rather than holding its caller for the whole budget.
+ */
+export const GIT_NETWORK_CONFIG: readonly string[] = [
+  "-c",
+  "http.lowSpeedLimit=1000",
+  "-c",
+  "http.lowSpeedTime=60",
+];
+
+/** The git verbs that reach the network, and the timeout each one gets. */
+const NETWORK_GIT_TIMEOUTS: Readonly<Record<string, number>> = {
+  fetch: GIT_FETCH_TIMEOUT_MS,
+  clone: GIT_CLONE_TIMEOUT_MS,
+};
+
+/**
+ * `run`, with a bound on every daemon git command that reaches the network
+ * (`fetch`, `clone`); every other command passes through untouched.
+ *
+ * One hung fetch would otherwise stall the whole dispatch pump, and every
+ * webhook delivery that waits on it. A network command gets three
+ * per-invocation settings:
+ *   - a wall-clock timeout (`timeoutMs`; the caller's own wins), after
+ *     which the child is killed and the command fails like any other;
+ *   - git's low-speed abort, `GIT_NETWORK_CONFIG`;
+ *   - `GIT_TERMINAL_PROMPT=0`, so a credential git cannot find is a failed
+ *     command, never a prompt that waits forever on a terminal nobody has.
+ *
+ * Why these are safe beside `DAEMON_GIT_PINS` (docs/exec-boundary.md): they
+ * are the daemon's own git calls, never a session's, and they set only
+ * transfer speed limits and the prompt switch. Not one of them names a
+ * program, a path or a hook, so none opens a route from config to running
+ * anything. They are command-scope `-c` settings on keys the pins do not
+ * touch, so they neither override nor weaken a pin, and the pins still ride
+ * the environment exactly as before.
+ */
+export function networkGitExec(run: ExecFn): ExecFn {
+  return (cmd, args, opts = {}) => {
+    const timeoutMs = cmd === "git" ? NETWORK_GIT_TIMEOUTS[args[0] ?? ""] : undefined;
+    if (timeoutMs === undefined) return run(cmd, args, opts);
+    return run(cmd, [...GIT_NETWORK_CONFIG, ...args], {
+      ...opts,
+      timeoutMs: opts.timeoutMs ?? timeoutMs,
+      env: { ...(opts.env ?? process.env), GIT_TERMINAL_PROMPT: "0" },
+    });
+  };
+}
+
 export class WorktreeManager {
   readonly root: string;
   readonly basePath: string;
@@ -369,7 +424,10 @@ export class WorktreeManager {
     this.basePath = join(opts.root, opts.cloneDir ?? repoCloneDirName(opts.repo));
     this.wtRoot = join(opts.root, "wt");
     this.cloneUrl = opts.cloneUrl ?? cloneUrlFor(opts.repo);
-    this.run = opts.run ?? pinnedGitExec;
+    // Every fetch and clone the manager runs, however it reaches `run` (the
+    // round's fetch, the ref-lag fetch, the delta reader's fetch on miss), is
+    // bounded: `networkGitExec`.
+    this.run = networkGitExec(opts.run ?? pinnedGitExec);
   }
 
   private git(args: string[], cwd = this.basePath): Promise<ExecResult> {
@@ -388,7 +446,24 @@ export class WorktreeManager {
       ensureLocallyIgnored(this.root, basename(this.basePath));
     if (existsSync(join(this.basePath, ".git"))) return this.basePath;
     mkdirSync(this.root, { recursive: true });
-    await runOrThrow(this.run, "git", ["clone", this.cloneUrl, this.basePath], { cwd: this.root });
+    const preexisting = existsSync(this.basePath);
+    try {
+      await runOrThrow(this.run, "git", ["clone", this.cloneUrl, this.basePath], {
+        cwd: this.root,
+      });
+    } catch (err) {
+      // A clone killed by its timeout cannot clean up after itself, and the
+      // half-written `.git` it leaves would pass the existence check above
+      // as a finished clone. The next attempt starts from nothing instead.
+      // Only what this clone created is removed: the whole directory, or,
+      // in one that was already there, the `.git` it began (the check above
+      // proved there was none).
+      rmSync(preexisting ? join(this.basePath, ".git") : this.basePath, {
+        recursive: true,
+        force: true,
+      });
+      throw err;
+    }
     return this.basePath;
   }
 
