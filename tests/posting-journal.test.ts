@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   JournalError,
+  newestSnapshotQueuedAt,
   PostingJournal,
   payloadHash,
   type JobPayload,
@@ -263,6 +264,37 @@ describe("the journal writes the receipt and job files the readers expect", () =
     enqueue("COMMENT");
     prepare("COMMENT");
     expect(() => journal.withdraw(PR, ROUND, KEY)).toThrow(JournalError);
+  });
+
+  // MUTATION: drop the withdrawn snapshots from newestSnapshotQueuedAt's scan —
+  // the withdrawn snapshot's newer time is missed; this fails.
+  it("newestSnapshotQueuedAt: the newest snapshot queued for the key, a withdrawn one included", () => {
+    expect(newestSnapshotQueuedAt(tsDir, PR, ROUND, KEY)).toBeUndefined(); // no dir yet
+    const at = (iso: string) =>
+      new PostingJournal({ dir: tsDir, repo: REPO, now: () => new Date(iso) });
+    const queue = (j: PostingJournal) =>
+      j.enqueue({
+        key: KEY,
+        pr: PR,
+        round: ROUND,
+        head: HEAD,
+        event: "APPROVE",
+        mode: "live",
+        payload: payload("APPROVE"),
+      });
+    queue(at("2026-11-04T10:00:00.000Z"));
+    expect(newestSnapshotQueuedAt(tsDir, PR, ROUND, KEY)).toBe("2026-11-04T10:00:00.000Z");
+    at("2026-11-04T10:05:00.000Z").withdraw(PR, ROUND, KEY);
+    // Only the withdrawn snapshot remains: its queue time is still the answer.
+    expect(newestSnapshotQueuedAt(tsDir, PR, ROUND, KEY)).toBe("2026-11-04T10:00:00.000Z");
+    queue(at("2026-11-04T10:10:00.000Z"));
+    at("2026-11-04T10:12:00.000Z").withdraw(PR, ROUND, KEY);
+    expect(newestSnapshotQueuedAt(tsDir, PR, ROUND, KEY)).toBe("2026-11-04T10:10:00.000Z");
+    // Another key, another round: nothing of theirs.
+    expect(
+      newestSnapshotQueuedAt(tsDir, PR, ROUND, roundPostingKey(PR, ROUND, "c".repeat(40))),
+    ).toBeUndefined();
+    expect(newestSnapshotQueuedAt(tsDir, PR, ROUND + 1, KEY)).toBeUndefined();
   });
 
   it("skip", () => {

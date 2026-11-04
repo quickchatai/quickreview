@@ -624,6 +624,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     progress: (pr) => readRoundProgress(root, pr),
     onRoundFailure: (pr, roundNo, stage, detail) =>
       verdicts.recoverInfrastructureFailure(pr, roundNo, stage, detail),
+    ...(announce ? { announce } : {}),
     ...(deps.now ? { now: deps.now } : {}),
   });
   const prConversation = new PrConversation({
@@ -1080,7 +1081,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     if (automaticRetries.length > 0) {
       for (const retry of automaticRetries) {
         log(
-          `automatic pre-fanout retry: #${retry.pr} round ${retry.target_round_no} epoch ${retry.retry_epoch} @ ${retry.target_head_sha.slice(0, 7)}`,
+          retry.target_round_no === null
+            ? `automatic retry: #${retry.pr} command ${retry.replayed_command_id ?? "?"} (${retry.stage}) replayed, epoch ${retry.retry_epoch}`
+            : `automatic ${retry.stage === "first_pass_start" ? "pre-fanout " : ""}retry: #${retry.pr} round ${retry.target_round_no} (${retry.stage}) epoch ${retry.retry_epoch} @ ${retry.target_head_sha.slice(0, 7)}`,
         );
       }
       await pump();

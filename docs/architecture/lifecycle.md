@@ -429,6 +429,17 @@ Three endings are not ordinary verdicts:
 - **A guard-2 refusal at posting time** — the review was never published, so the
   verdict in the file is never applied; the round settles as a terminal
   no-new-evidence round rather than failing loud.
+- **A verdict whose review never reached GitHub** — no posting receipt of any
+  status for the round's key, nothing pending delivery (a guard's pre-check
+  refused and withdrew the queued approval, say). A redo cannot post twice, so
+  the round is redone through the same capped self-requeue (cancel cause
+  `posting_unconfirmed`) rather than held for an operator. The receipt grace
+  runs from the newest delivery snapshot queued for the key, a withdrawn one
+  included, not from the round's dispatch. These requeues spend a budget of
+  their own as well (`persistentRequeueCount`; a required pass's failure spends
+  another the same way): a replacement's fanout does not renew it — starting passes says nothing of whether posting recovered — and
+  only a verdict applied at the head resets it. A round with posting linkage
+  on record (a marker reconcile found its review) is never redone this way.
 
 Malformed files and rounds that blow `[daemon] round_deadline_min` route to
 `handleAnomaly()`: the round is marked, a companion-inbox item is written, and the PR
@@ -463,8 +474,47 @@ pending in the bridge, no verdict is on disk and the receipt proves the prompt
 was never accepted, the round is requeued — a missing prompt is a *delivery*
 fault, so redelivery of the exact dispatched bytes comes before anything
 expensive. Every requeue draws on the `[daemon] max_self_requeues` budget per
-head; exhausting it ends in a loud failure and an operator unwedge, never a
-loop.
+head, and its replacement waits 2 minutes before it dispatches (8 after the
+second requeue at the head; a requeue onto fresh work waits for nothing).
+Exhausting the budget ends in a loud failure, never a loop.
+
+**Who clears a FAILED_LOUD incident.** Every incident is loud the same way —
+the `review_failed_loud` anomaly, the board row, the Slack FAILED_LOUD message,
+status.json and its line in `qcr status` — and holds the PR's review until it clears. What clears it
+depends on its cause (`TransientFailureCause` in `src/state.ts`). A transient
+cause with nothing posted waits on the automatic retry ladder (`retry_wait`:
+15 minutes, doubling to 6 hours, reset by a round that finishes), at any
+stage, and the board, `qcr status`, the inbox line and Slack say when it is due; `u` still
+retries at once. The transient causes are a provider failure (a dropped
+connection, a rate limit, an overload — `provider_unavailable` when the
+worker's own requeues were spent on it; and a required lens pass still missing
+after the self-requeues when every failure recorded for it was one of those),
+an infrastructure stage or a dead or
+wedged session exhausted after its self-requeues, a posting with no receipt at
+all once its requeue cap is spent, an exhausted deferred POST whose marker
+GitHub was read for and does not hold, and an ordinary delivery whose window
+ran out before it sent any POST or wrote any receipt. "Nothing posted" is proven, not
+assumed, and the proof takes one of two forms. For every cause it means the
+round's preflight posted nothing, it has no confirmed posting linkage and
+nothing is pending delivery; beyond that, ordinary unconfirmed work proves it
+by the absence of any posting receipt for the key, while an exhausted
+deferred delivery — whose `deferred` receipt is still there by construction —
+proves it by a marker read that inspected every review GitHub returned and
+found none carrying the key (a read that failed, or threw part-way, proves
+nothing). Everything else — a POST that may have landed, evidence that
+contradicts the round, a malformed verdict, a posted round with no verdict, a
+round with no posting key, a worker failure only an operator cures (a refused
+login, a spent usage window), a PR the worker breaker parked — waits for an
+operator (`operator_unwedge`); a park set while a retry waits hands the
+incident to the operator when the retry falls due. The ladder's generation is
+the head's, whatever the class of each failure. Due, a round's retry
+republishes ordinary queued work (only a pre-fanout stall binds its
+fanout-first instruction to the successor); a failed wake's retry hands the
+same command back to the supervisor's bounded replay, and that retry delivers
+the command once even when `session_command_max_start_retries` allows no
+immediate replay. A failed wake's
+incident is as loud as a round's: its `review_failed_loud` wake reaches the
+inbox and Slack names it as conversation work.
 
 ## 6. CI and withheld approvals
 
@@ -616,8 +666,16 @@ should a later change ever make one possible, is the WAKE anomaly
 **Self-requeue.** Round-level recovery lives in `src/verdicts.ts selfRequeue()`
 and covers a dead session, a live-but-wedged session (killed first, then
 rebirthed), a lost prompt, a `head_moved` ending, an infrastructure stage
-failure, and a `NEEDS_HUMAN` with no passes. Every mode is bounded by
-`[daemon] max_self_requeues` per head; prompt *redelivery* is bounded
+failure, a `NEEDS_HUMAN` with no passes, and a finished round whose review
+never reached GitHub. Every mode is bounded by `[daemon] max_self_requeues`
+per head, and backs off: the replacement round is held from dispatch for 2
+minutes after the first requeue at a head and 8 after the second
+(`SELF_REQUEUE_BACKOFF_MIN`; the `round_self_requeued` event carries the
+not-before time, and any newer trigger lifts it — a push, an operator's `u`,
+or a person's request, read from the lifecycle log because a request on a row
+already queued keeps the row's FIFO `trigger_ts`; an operator's `u` on such a
+row logs `self_requeue_backoff_lifted`). A `head_moved` requeue, or
+one onto a fresher head, is new work and waits for nothing; prompt *redelivery* is bounded
 separately by `[daemon] max_prompt_redeliveries`, because re-sending the exact
 bytes to a live session is far cheaper than cancelling a round. A live session
 with no order is idle, not wedged — killing it is not the recovery.

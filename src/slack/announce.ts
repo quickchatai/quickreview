@@ -506,11 +506,14 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   // ---- unprompted causes -------------------------------------------------
 
   /** Overdue / malformed: both return the PR to its standing-verdict state
-   * (never a park) and neither implies an approval. A
-   * round-less anomaly has nothing to say and stays silent. */
+   * (never a park) and neither implies an approval. A round-less anomaly has
+   * nothing to say and stays silent — except a FAILED_LOUD incident of
+   * conversation work (a failed wake, no round), which holds the PR's review
+   * as any incident does and is announced by its incident id. */
   async anomaly(a: AnomalyAnnouncement): Promise<void> {
-    if (a.round_no === null || !this.enabled) return;
-    const { cause, text } = this.anomalyMessage({ ...a, round_no: a.round_no });
+    if (!this.enabled) return;
+    if (a.round_no === null && !(a.kind === "failed_loud" && a.incident_id)) return;
+    const { cause, text } = this.anomalyMessage(a);
     if (!causePolicy(this.deps.cfg, cause).enabled) return;
     // An incident already announced is announced again when it reopens (or
     // fails again before it recovered): its one message — which a recovery
@@ -573,11 +576,13 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   }
 
   /** An anomaly's policy cause and its message, chosen once by its kind. */
-  private anomalyMessage(a: AnomalyAnnouncement & { round_no: number }): {
+  private anomalyMessage(a: AnomalyAnnouncement): {
     cause: string;
     text: string;
   } {
     const { cfg } = this.deps;
+    // Only a failed wake's incident reaches here without a round.
+    const roundNo = a.round_no ?? 0;
     switch (a.kind) {
       case "overdue":
         return {
@@ -585,22 +590,37 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
           text: causeMessage(cfg, {
             cause: "round.overdue",
             pr: a.pr,
-            round_no: a.round_no,
+            round_no: roundNo,
             deadline_min: a.deadline_min,
           }),
         };
-      case "failed_loud":
+      case "failed_loud": {
+        // A transient failure with nothing posted waits on its automatic
+        // retry: the message says when, and that u need not wait for it.
+        const failure = this.deps.store.openReviewFailure(a.pr);
+        const retryAt =
+          failure &&
+          (a.incident_id === undefined || failure.incident_id === a.incident_id) &&
+          failure.next_action === "retry_wait" &&
+          failure.next_retry_at
+            ? failure.next_retry_at
+            : null;
+        const what =
+          a.round_no === null ? "conversation work (a failed wake)" : `round ${a.round_no}`;
         return {
           cause: "review.failed_loud",
-          text: `⛔ #${a.pr} round ${a.round_no} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`,
+          text: retryAt
+            ? `⛔ #${a.pr} ${what} exhausted its immediate recovery — review work is still owed. Automatic retry at ${retryAt.slice(11, 16)}Z; u on the board retries now.`
+            : `⛔ #${a.pr} ${what} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`,
         };
+      }
       case "malformed":
         return {
           cause: "round.malformed_verdict",
           text: causeMessage(cfg, {
             cause: "round.malformed_verdict",
             pr: a.pr,
-            round_no: a.round_no,
+            round_no: roundNo,
           }),
         };
     }

@@ -237,7 +237,7 @@ function progress(): RoundProgressSnapshot {
 
 function wire(
   live = false,
-  adapter: FakeAdapter = new FakeAdapter(),
+  adapter: VerdictAdapter = new FakeAdapter(),
 ): { watcher: VerdictWatcher; supervisor: SessionCommandSupervisor } {
   const hooks: SessionHooks = {
     async dispatchRound() {},
@@ -617,6 +617,60 @@ describe("a deferred posting", () => {
     expect(postings()).toBe(0);
   });
 
+  function exhausted(): void {
+    writeDeferred("REQUEST_CHANGES", "failed");
+    store.adoptPostingRetry({
+      posting_key: key,
+      pr: PR,
+      round_no: 5,
+      head_sha: HEAD,
+      first_failed_at: "2026-01-15T08:52:58.000Z",
+      now: "2026-01-15T08:52:58.000Z",
+    });
+    store.settlePostingRetry(key, "exhausted", "GitHub 502 ×3", "2026-01-15T09:29:00.000Z");
+  }
+  const readingAdapter = (reviews: unknown[]): VerdictAdapter => {
+    const a = new FakeAdapter() as FakeAdapter & {
+      listReviewsFull: VerdictAdapter["listReviewsFull"];
+    };
+    a.listReviewsFull = async () => reviews as never;
+    return a;
+  };
+
+  it("an exhausted retry whose marker GitHub read and does not hold waits on the automatic retry", async () => {
+    exhausted();
+    const { supervisor } = wire(true, readingAdapter([]));
+    set("2026-01-15T09:30:00.000Z");
+    await supervisor.scan();
+    expect(round5()).toMatchObject({ status: "cancelled" });
+    expect(store.openReviewFailure(PR)).toMatchObject({ next_action: "retry_wait" });
+  });
+
+  // MUTATION: set `reconciled = true` before the reviews are inspected in
+  // postingProof (and drop its reset in the catch) — a search that threw
+  // part-way reads as proven absence and the exhausted delivery retries
+  // itself; this fails.
+  it("an exhausted retry whose marker search threw part-way stays the operator's", async () => {
+    exhausted();
+    const malformed = {
+      id: 1,
+      user: cfg.github.bot_login,
+      user_type: "Bot",
+      state: "COMMENTED",
+      body: null,
+      commit_id: HEAD,
+      submitted_at: "2026-01-15T09:00:00Z",
+    };
+    const { supervisor } = wire(true, readingAdapter([malformed]));
+    set("2026-01-15T09:30:00.000Z");
+    await supervisor.scan();
+    expect(round5()).toMatchObject({ status: "cancelled" });
+    expect(store.openReviewFailure(PR)).toMatchObject({
+      next_action: "operator_unwedge",
+      next_retry_at: null,
+    });
+  });
+
   // The production incident: the approval's CI pre-check could not read the
   // checks, so the session's post deferred it before any attempt
   // (`deferUnattempted`). The verdict APPROVE the session then commits must
@@ -749,19 +803,16 @@ describe("a deferred posting", () => {
 describe("an ordinary delivery whose window ran out", () => {
   const key = roundPostingKey(PR, 5, HEAD);
   const dir = () => join(root, "state", "posting-receipts");
+  const payload = {
+    commit_id: HEAD,
+    event: "REQUEST_CHANGES",
+    body: `Review\n\n${postingMarker(key)}`,
+  };
+  const sha = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 
-  // The outbox's ordinary replay tried, never confirmed, and its window
-  // passed: the job is failed with `exhausted_at`, the `prepared` receipt of
-  // its last POST kept. GitHub reads, and shows no marker.
-  // MUTATION: drop the `exhausted_at` check from postingProof — this fails (requeued).
-  it("fails the round loud (FAILED_LOUD hold), never a requeue, the uncertain POST said", async () => {
+  /** The outbox's failed job, its window spent, after `attempts` POSTs. */
+  function exhaustedJob(attempts: number): void {
     mkdirSync(dir(), { recursive: true });
-    const payload = {
-      commit_id: HEAD,
-      event: "REQUEST_CHANGES",
-      body: `Review\n\n${postingMarker(key)}`,
-    };
-    const sha = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     writeFileSync(
       join(dir(), `pr-${PR}-round-5.outbox.json`),
       JSON.stringify({
@@ -776,15 +827,23 @@ describe("an ordinary delivery whose window ran out", () => {
         payload,
         payload_sha256: sha,
         status: "failed",
-        attempts: 2,
+        attempts,
         created_at: "2026-01-15T08:52:57.000Z",
         next_attempt_at: "2026-01-15T09:50:00.000Z",
-        attempted_at: "2026-01-15T09:40:00.000Z",
+        ...(attempts > 0 ? { attempted_at: "2026-01-15T09:40:00.000Z" } : {}),
         exhausted_at: "2026-01-15T09:52:57.000Z",
         last_error:
           "posting retry exhausted: not delivered within 60 min of being queued; last: GitHub 502",
       }),
     );
+  }
+
+  // The outbox's ordinary replay tried, never confirmed, and its window
+  // passed: the job is failed with `exhausted_at`, the `prepared` receipt of
+  // its last POST kept. GitHub reads, and shows no marker.
+  // MUTATION: drop the `exhausted_at` check from postingProof — this fails (requeued).
+  it("fails the round loud (FAILED_LOUD hold), never a requeue, the uncertain POST said", async () => {
+    exhaustedJob(2);
     writeFileSync(
       join(dir(), `pr-${PR}-round-5.json`),
       JSON.stringify({
@@ -812,6 +871,29 @@ describe("an ordinary delivery whose window ran out", () => {
     expect(failure).toBeDefined();
     expect(failure!.detail).toContain("was not delivered");
     expect(failure!.detail).toContain("a POST was attempted");
+    // The `prepared` receipt says a POST may have landed: one negative read
+    // never makes it unposted, so the incident is the operator's, not the
+    // automatic retry ladder's.
+    // MUTATION: set the ordinary exhausted proof's `unposted` to `reconciled` — this fails.
+    expect(failure!.next_action).not.toBe("retry_wait");
+    expect(postings()).toBe(0);
+  });
+
+  // The window ran out before any POST (every attempt waited on GitHub), and
+  // no receipt of any status was written: nothing was posted, so the loud
+  // incident waits on the automatic retry ladder.
+  // MUTATION: set the ordinary exhausted proof's `unposted` to `false` — this fails.
+  it("with no POST sent and no receipt, fails loud onto the automatic retry ladder", async () => {
+    exhaustedJob(0);
+    const github = new ReadingAdapter();
+    const { supervisor } = wire(true, github);
+    set("2026-01-15T09:55:00.000Z");
+    await supervisor.scan();
+    expect(round5()).toMatchObject({ status: "cancelled" });
+    expect(count("round_self_requeued")).toBe(0);
+    const failure = store.openReviewFailure(PR);
+    expect(failure!.detail).toContain("no POST was sent");
+    expect(failure!.next_action).toBe("retry_wait");
     expect(postings()).toBe(0);
   });
 

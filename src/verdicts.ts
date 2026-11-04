@@ -28,6 +28,12 @@ import {
   type SweepStatus,
 } from "@quickchatai/pi-quickreview/src/sweepstatus.js";
 import { jobPath, pendingPosting, readPostingJob } from "./posting-outbox.js";
+import { newestSnapshotQueuedAt } from "./posting-journal.js";
+import {
+  isOperatorWorkerFailure,
+  isProviderTransient,
+  isProviderTransientPassError,
+} from "./providerfailure.js";
 
 export { sweepStatusOf, type SweepStatus };
 import {
@@ -84,7 +90,13 @@ import { VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
-import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } from "./state.js";
+import {
+  isLoudCancelCause,
+  type CancelCause,
+  type RoundRow,
+  type StateStore,
+  type TransientFailureCause,
+} from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import {
   findingsRecordPath,
@@ -106,7 +118,9 @@ import {
 } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   guardedNoopMatchesMark,
+  postingKeyAnyHead,
   postingMarker,
+  postingReceiptPath,
   readPostingReceipt,
   receiptMatchesVerdict,
   retrySoftenedApproval,
@@ -148,7 +162,8 @@ type SelfRequeueMode =
   | "head_moved"
   | "required_pass_missing"
   | "infrastructure_active"
-  | "infrastructure_settled";
+  | "infrastructure_settled"
+  | "posting_unconfirmed";
 
 /**
  * How long a round end waits for its transcripts. The reads are
@@ -220,12 +235,53 @@ function stageFailure(outcome: "verdict" | "ended" | "failed"): RoundRecoveryDis
   return outcome === "verdict" ? "retryable" : outcome === "ended" ? "settled" : "failed_loud";
 }
 
+/** How long a self-requeued round's replacement waits before it may
+ * dispatch: 2 minutes after the first requeue at a head, 8 after the second
+ * (and any after it). The failure that caused it — a provider blip, a dead
+ * session, a posting that never went out — is rarely cured in the second an
+ * immediate redispatch would take. A requeue onto a fresh head (`head_moved`,
+ * a successor) is new work and waits for nothing. Dispatch holds the queued
+ * row until then (`StateStore.selfRequeueNotBefore`); any newer trigger lifts
+ * it. */
+export const SELF_REQUEUE_BACKOFF_MIN: readonly number[] = [2, 8];
+
+function selfRequeueBackoffMin(attempt: number): number {
+  const steps = SELF_REQUEUE_BACKOFF_MIN;
+  return steps[Math.min(Math.max(0, attempt - 1), steps.length - 1)]!;
+}
+
+/** A failed posting proof, as far as the failure's class is concerned. */
+interface PostingProofFailure {
+  failure?: "unconfirmed" | "ambiguous" | "contradicted" | "exhausted";
+  unposted?: boolean;
+}
+
+/** The transient cause a failed posting proof proves, or undefined: only an
+ * `unconfirmed` or `exhausted` failure whose evidence says nothing reached
+ * GitHub. */
+function transientPostingCause(
+  proof: PostingProofFailure | undefined,
+): TransientFailureCause | undefined {
+  if (proof?.unposted !== true) return undefined;
+  if (proof.failure === "unconfirmed") return "posting_unconfirmed";
+  if (proof.failure === "exhausted") return "posting_exhausted_unposted";
+  return undefined;
+}
+
+/** What an opened FAILED_LOUD incident is waiting for, in words. */
+function retryNote(failure: { next_action: string; next_retry_at: string | null }): string {
+  return failure.next_action === "retry_wait" && failure.next_retry_at
+    ? `automatic retry scheduled for ${failure.next_retry_at} (u retries immediately)`
+    : "press u to recover";
+}
+
 /** A self-requeue's measurement mode: the two that come from a verdict file
  * are the sweep's; the rest come from the deadline tick or the supervisor. */
 function measureModeForRequeue(mode: SelfRequeueMode): MeasureMode {
   return mode === "head_moved" ||
     mode === "needs_human_incomplete" ||
-    mode === "required_pass_missing"
+    mode === "required_pass_missing" ||
+    mode === "posting_unconfirmed"
     ? "inline"
     : "background";
 }
@@ -239,6 +295,7 @@ const SELF_REQUEUE_CAUSE: Record<SelfRequeueMode, CancelCause> = {
   required_pass_missing: "incomplete_round",
   infrastructure_active: "infrastructure_failure",
   infrastructure_settled: "infrastructure_failure",
+  posting_unconfirmed: "posting_unconfirmed",
 };
 
 export interface VerdictAdapter {
@@ -354,7 +411,10 @@ export type InfrastructureStage =
   | "passes_incomplete"
   | "parent_finalize"
   | "settled_without_verdict"
-  | "running_hard_bound";
+  | "running_hard_bound"
+  /** The round's worker failed its turn on a transient provider failure (the
+   * connection, a rate limit, an overload) and its requeues were spent. */
+  | "provider_unavailable";
 
 /** Every path that may close a round from its posting receipt rather than
  * from a verdict file (a guard-2 no-op, or a review already posted). */
@@ -1467,8 +1527,17 @@ export class VerdictWatcher {
      *     retry is over without a confirmed review — its window spent, a
      *     guard refused it, or its handoff is unreadable. A POST may have
      *     been sent (by the session, or by the retry after a deferral made
-     *     before any attempt), so never a requeue: every path fails it loud. */
+     *     before any attempt), so never a requeue: every path fails it loud.
+     *     An ordinary delivery whose window ran out (its outbox job failed
+     *     with `exhausted_at`) is the same failure. */
     failure?: "unconfirmed" | "ambiguous" | "contradicted" | "exhausted";
+    /** On an `unconfirmed` or `exhausted` failure: the evidence says nothing
+     * reached GitHub. `unconfirmed`: no posting receipt of any status exists
+     * for the round. `exhausted`: for a deferred receipt, GitHub was read and
+     * no review carries the marker; for an ordinary delivery, it sent no POST
+     * and no receipt of any status exists. Such a failure is transient (`TransientFailureCause`): it fails
+     * loud, and waits on the automatic retry rather than an operator. */
+    unposted?: boolean;
   }> {
     if (!round.posting_key) return { kind: "legacy" };
     const expectedHead = verdict?.head_sha ?? round.posting_key.split(":").slice(3).join(":");
@@ -1563,13 +1632,15 @@ export class VerdictWatcher {
       try {
         const marker = postingMarker(round.posting_key);
         const reviews = await this.deps.adapter.listReviewsFull(round.pr);
-        reconciled = true;
         const matches = reviews.filter(
           (review) =>
             ownLogins(this.deps.cfg.github).includes(review.user) &&
             review.commit_id?.toLowerCase() === expectedHead.toLowerCase() &&
             review.body.includes(marker),
         );
+        // GitHub was read only once every review was inspected: a search that
+        // threw part-way is no proof of absence.
+        reconciled = true;
         if (matches.length > 1)
           return {
             kind: "failed",
@@ -1670,6 +1741,7 @@ export class VerdictWatcher {
           return { kind: "confirmed", receipt: synthetic };
         }
       } catch (error) {
+        reconciled = false;
         this.log(
           `posting receipt reconciliation failed for #${round.pr} round ${round.round_no}`,
           error,
@@ -1703,6 +1775,9 @@ export class VerdictWatcher {
         kind: "failed",
         detail: `deferred posting for ${round.posting_key} was not delivered${ledger ? ` (${ledger.status} after ${ledger.attempts} attempt(s)${ledger.last_error ? `: ${ledger.last_error}` : ""})` : " (no retry on record)"}`,
         failure: "exhausted",
+        // The marker read above ran and found nothing: whatever POST was
+        // sent, if any, never landed.
+        unposted: reconciled,
       };
     }
     // The ordinary delivery's window ran out (its job is failed with
@@ -1731,13 +1806,24 @@ export class VerdictWatcher {
             : "; no POST was sent"
         }`,
         failure: "exhausted",
+        // Ordinary work proves nothing posted by receipt absence: a POST
+        // writes `prepared` first, and that receipt stays, so one that may
+        // have landed never reads as unposted however the marker read went.
+        unposted:
+          !attempted &&
+          !existsSync(postingReceiptPath(this.postingReceiptDir(), round.pr, round.round_no)) &&
+          !this.postingLinked(round),
       };
     }
 
+    // The grace runs from the posting's own start: its receipt's, else the
+    // newest delivery snapshot queued for the key (one a guard withdrew
+    // included), else the round's. A round that queued its review late in a
+    // long run is given the grace from that moment, not from its dispatch.
     const origin =
       receiptIdentityOk && receipt && receipt.status !== "skipped"
         ? receipt.prepared_at
-        : round.started_at;
+        : (this.postingQueuedAt(round) ?? round.started_at);
     const graceS =
       this.deps.postingReceiptGraceS ??
       this.deps.cfg.daemon.posting_receipt_grace_s ??
@@ -1753,7 +1839,74 @@ export class VerdictWatcher {
       kind: "failed",
       detail: `no confirmed posting receipt for ${round.posting_key} after ${graceS}s`,
       failure: postMayHaveLanded ? "ambiguous" : "unconfirmed",
+      ...(postMayHaveLanded
+        ? {}
+        : {
+            // No receipt of any status, and no posting linkage a stage probe
+            // persisted from GitHub (which writes no receipt file).
+            unposted:
+              !existsSync(postingReceiptPath(this.postingReceiptDir(), round.pr, round.round_no)) &&
+              !this.postingLinked(round),
+          }),
     };
+  }
+
+  /** When this round's newest delivery snapshot for its key was queued, as
+   * the posting journal reads it (a withdrawn snapshot included). */
+  private postingQueuedAt(round: RoundRow): string | undefined {
+    if (!round.posting_key) return undefined;
+    return newestSnapshotQueuedAt(
+      this.postingReceiptDir(),
+      round.pr,
+      round.round_no,
+      round.posting_key,
+    );
+  }
+
+  /** The round carries durable posting linkage (`posted_at` or
+   * `gh_review_id`), read fresh: a marker reconcile — a stage probe's, say —
+   * found its review on GitHub and persisted it without a receipt file. A
+   * known-posted round is never redone. */
+  private postingLinked(round: RoundRow): boolean {
+    const row = this.deps.store.db
+      .prepare("SELECT posted_at, gh_review_id FROM rounds WHERE id = ?")
+      .get(round.id) as { posted_at: string | null; gh_review_id: number | null } | undefined;
+    return row !== undefined && (row.posted_at !== null || row.gh_review_id !== null);
+  }
+
+  /** Nothing of this round's review reached GitHub, on the evidence this
+   * daemon holds: the round has a posting key, no posting receipt of any
+   * status exists for it (the shell writes `prepared` before any POST), and
+   * no delivery is pending for it. A round with no key proves nothing. */
+  private nothingPosted(round: RoundRow): boolean {
+    if (!round.posting_key || this.postingLinked(round)) return false;
+    const dir = this.postingReceiptDir();
+    if (existsSync(postingReceiptPath(dir, round.pr, round.round_no))) return false;
+    return !pendingPosting(dir, round.pr, round.round_no, round.posting_key);
+  }
+
+  /** The transient cause of a round's failure: the provider's when the
+   * failure's own words say so, or the PR's worker last failed on a transient
+   * provider failure since the round started (a dead or stuck worker); the
+   * caller's otherwise. None when the failure, or the worker's last failure
+   * since the round started, is one only an operator cures (a refused login,
+   * a spent usage window: `isOperatorWorkerFailure`) — retrying cannot fix
+   * credentials, so that incident stays the operator's. */
+  private transientCause(
+    round: RoundRow | undefined,
+    detail: string,
+    otherwise: TransientFailureCause,
+  ): TransientFailureCause | undefined {
+    if (isOperatorWorkerFailure(detail)) return undefined;
+    if (isProviderTransient(detail)) return "provider_transient";
+    if (round) {
+      const worker = this.deps.store.workerBreaker(round.pr);
+      if (worker?.last_failure_at && worker.last_failure_at >= round.started_at) {
+        if (isOperatorWorkerFailure(worker.last_error)) return undefined;
+        if (isProviderTransient(worker.last_error)) return "provider_transient";
+      }
+    }
+    return otherwise;
   }
 
   /**
@@ -1929,6 +2082,13 @@ export class VerdictWatcher {
    * posting proof failed. That round is done but never settled, its PR left
    * where the interrupted apply stopped, and nothing else will repair it — so
    * it stays loud: the incident opens, with nothing to cancel.
+   *
+   * `proof`: the failed posting proof, when one decided this. An
+   * `unconfirmed` or `exhausted` failure whose evidence says nothing reached
+   * GitHub (`unposted`) is transient: the incident waits on the automatic
+   * retry ladder instead of an operator. Every other — a posting that may
+   * have landed, one that disagrees with the round, a posted round with no
+   * verdict — stays the operator's.
    */
   private async failPostingProof(
     round: RoundRow,
@@ -1936,6 +2096,7 @@ export class VerdictWatcher {
     stage = "posting_receipt",
     measure: MeasureMode = "inline",
     resumed = false,
+    proof?: PostingProofFailure,
   ): Promise<boolean> {
     const { store, cfg, adapter } = this.deps;
     const fresh = this.runningRound(round.pr, round.round_no);
@@ -1976,6 +2137,7 @@ export class VerdictWatcher {
         const owed = this.oweMeasurement(round);
         const command = store.sessionCommandForRound(round.pr, round.round_no);
         const successor = store.successorFor(round.pr);
+        const cause = transientPostingCause(proof);
         const failure = store.openReviewFailure({
           pr: round.pr,
           command_id: command?.id ?? null,
@@ -1986,12 +2148,13 @@ export class VerdictWatcher {
           detail,
           attempts: command?.attempt ?? 1,
           retry_cap: 0,
+          ...(cause ? { cause, nothing_posted: true } : {}),
         });
         store.logAnomaly(
           "review_failed_loud",
           round.pr,
           round.round_no,
-          `posting receipt: ${detail}; work remains owed as ${failure.incident_id}`,
+          `posting receipt: ${detail}; work remains owed as ${failure.incident_id}; ${retryNote(failure)}`,
         );
         return { owed, failure };
       })
@@ -2026,10 +2189,11 @@ export class VerdictWatcher {
     round: RoundRow,
     detail: string,
     stage: string,
+    proof?: PostingProofFailure,
   ): Promise<"verdict" | "ended" | "failed"> {
     const outcome = await this.withVerdictSlot(round.pr, round.round_no, async () => {
       if (this.verdictFilePresent(round.pr, round.round_no)) return "verdict" as const;
-      return (await this.failPostingProof(round, detail, stage, "background"))
+      return (await this.failPostingProof(round, detail, stage, "background", false, proof))
         ? ("failed" as const)
         : ("ended" as const);
     });
@@ -2249,6 +2413,37 @@ export class VerdictWatcher {
           });
           return "applied";
         }
+        // Nothing reached GitHub — no posting receipt of any status, nothing
+        // pending delivery — so a redo cannot post twice: the round is
+        // requeued through the capped self-requeue, as the stage limits treat
+        // the same evidence. Past the cap it fails loud below, and the
+        // incident waits on the automatic retry (nothing was posted).
+        if (
+          proof.failure === "unconfirmed" &&
+          proof.unposted === true &&
+          claimedStatus === "running" &&
+          this.stillRunning(round) &&
+          round.posting_key &&
+          !this.postingLinked(round) &&
+          !pendingPosting(this.postingReceiptDir(), round.pr, round.round_no, round.posting_key)
+        ) {
+          store.logEvent("posting_unconfirmed_requeue", v.pr, {
+            round_id: round.id,
+            round_no: v.round_no,
+            posting_key: round.posting_key,
+            detail: proof.detail ?? null,
+          });
+          if (await this.selfRequeue(round, "posting_unconfirmed")) {
+            await this.safe(
+              () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
+              `remove ${cfg.github.in_progress_label} on #${v.pr}`,
+            );
+            this.log(
+              `verdicts: #${v.pr} round ${v.round_no} posted nothing (no receipt for ${round.posting_key}) — requeued, not held`,
+            );
+            return "applied";
+          }
+        }
         // A round ended while the proof awaited GitHub (an operator's `u`)
         // owes nothing here: the claim inside refuses it.
         return (await this.failPostingProof(
@@ -2257,6 +2452,7 @@ export class VerdictWatcher {
           "posting_receipt",
           "inline",
           claimedStatus === "done",
+          proof,
         ))
           ? "failed"
           : "applied";
@@ -3514,12 +3710,18 @@ export class VerdictWatcher {
    * that lost its cancel), and a round a verdict, a receipt settlement or an
    * operator ended meanwhile is left as it stands — no transition, no
    * incident over whatever replaced it. The read, the mark, the transition
-   * and the incident land in one turn, before the first await. */
+   * and the incident land in one turn, before the first await.
+   *
+   * `cause`: the overdue round's transient cause, when its immediate
+   * recovery was spent on one (a dead or wedged session past its
+   * self-requeues). With nothing posted the incident waits on the automatic
+   * retry ladder instead of `u`. A malformed verdict never has one. */
   private async handleAnomaly(
     pr: number,
     roundNo: number | null,
     message: string,
     kind: "malformed" | "overdue",
+    cause?: TransientFailureCause,
   ): Promise<void> {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(pr, roundNo ?? undefined);
@@ -3574,6 +3776,9 @@ export class VerdictWatcher {
       detail: message,
       attempts: command?.attempt ?? 1,
       retry_cap: cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES,
+      ...(kind === "overdue" && cause && round
+        ? { cause, nothing_posted: this.nothingPosted(round) }
+        : {}),
     });
     store.logEvent(kind === "overdue" ? "round_overdue" : "verdict_malformed", pr, {
       round_id: round?.id ?? null,
@@ -3603,7 +3808,9 @@ export class VerdictWatcher {
         `ANOMALY (${kind}) — PR #${pr}${roundNo !== null ? ` round ${roundNo}` : ""}`,
         message,
         `No review was produced: work remains owed as ${failure.incident_id} (never an approve). No reviewer was requested on GitHub.`,
-        "Press u on the board to clear the FAILED_LOUD hold and rerun, or restart the session deliberately.",
+        failure.next_action === "retry_wait" && failure.next_retry_at
+          ? `Nothing was posted and the cause is transient: an automatic retry is scheduled for ${failure.next_retry_at}. Press u on the board to retry now.`
+          : "Press u on the board to clear the FAILED_LOUD hold and rerun, or restart the session deliberately.",
         ...(pendingViolations && pendingViolations.length > 0
           ? [
               `Also: exec-policy violations were audited on this PR — ${pendingViolations.join(" · ")}`,
@@ -3611,11 +3818,14 @@ export class VerdictWatcher {
           : []),
       ].join("\n"),
     );
+    // An incident on the automatic retry ladder is announced as FAILED_LOUD,
+    // under its policy and with its retry time, like every other one; a hold
+    // for the operator keeps the deadline's own message.
     await this.announceSafe((a) =>
       a.anomaly({
         pr,
         round_no: roundNo,
-        kind,
+        kind: failure.next_action === "retry_wait" ? "failed_loud" : kind,
         deadline_min: cfg.daemon.round_deadline_min,
         incident_id: failure.incident_id,
       }),
@@ -3843,6 +4053,14 @@ export class VerdictWatcher {
       if (!command) return "retryable";
       const successor = this.deps.store.successorFor(pr);
       const reason = `round ${roundNo} failed a bounded daemon→Pi infrastructure stage before any merits verdict`;
+      // Exhausted immediate recovery is transient (a provider outage, a
+      // stage that may pass on a later attempt): with nothing posted, the
+      // debt waits on the automatic retry ladder. A worker failure only an
+      // operator cures (a refused login) has no cause and stays theirs.
+      const cause: TransientFailureCause | undefined =
+        stage === "provider_unavailable"
+          ? "provider_transient"
+          : this.transientCause(round, detail, "infrastructure_exhausted");
       const failure = this.deps.store.terminalizeInfrastructureReviewFailure({
         pr,
         command_id: command.id,
@@ -3854,6 +4072,7 @@ export class VerdictWatcher {
         attempts: cap,
         retry_cap: cap,
         summary: `infrastructure recovery exhausted after ${cap} self-requeue(s) — ${reason}`,
+        ...(cause ? { cause, nothing_posted: this.nothingPosted(round) } : {}),
       });
       if (!failure) {
         // An operator/verdict/concurrent recovery won the exact terminal CAS.
@@ -3886,11 +4105,7 @@ export class VerdictWatcher {
         "review_failed_loud",
         pr,
         roundNo,
-        `${stage}: ${detail}; work remains owed as ${failure.incident_id}; ${
-          failure.next_action === "retry_wait" && failure.next_retry_at
-            ? `automatic retry scheduled for ${failure.next_retry_at} (u retries immediately)`
-            : "press u to recover"
-        }`,
+        `${stage}: ${detail}; work remains owed as ${failure.incident_id}; ${retryNote(failure)}`,
       );
       // No round owns the review any more: the in-progress label comes off,
       // as on every other terminal path.
@@ -4031,6 +4246,7 @@ export class VerdictWatcher {
             round,
             proof.detail ?? "settled without a posting receipt",
             "posting_receipt",
+            proof,
           ),
         );
       }
@@ -4085,6 +4301,7 @@ export class VerdictWatcher {
           round,
           proof.detail ?? "posting receipt contradicted",
           "posting_receipt",
+          proof,
         ),
       );
     }
@@ -4246,11 +4463,22 @@ export class VerdictWatcher {
       );
       return true;
     }
+    // Past the cap the gap is transient only when every missing pass failed,
+    // and failed on the provider (the connection, a rate limit, an overload):
+    // the same passes later succeed, so with nothing posted the incident
+    // waits on the automatic retry ladder. A pass that never ran, timed out
+    // or failed on anything else stays the operator's.
+    const providerGap =
+      gap.missing.length > 0 &&
+      gap.missing.every(
+        (m) => m.errors.length > 0 && m.errors.every((e) => isProviderTransientPassError(e)),
+      );
     await this.handleAnomaly(
       v.pr,
       v.round_no,
       `round ${v.round_no} is missing required pass(es) ${missing} and could not be self-requeued — cap exhausted or no running round; nothing was posted`,
       "overdue",
+      providerGap ? "provider_transient" : undefined,
     );
     return true;
   }
@@ -4362,8 +4590,17 @@ export class VerdictWatcher {
     const row = store.getPr(round.pr);
     const head = row?.head_sha ?? "";
     const cap = this.selfRequeueCap();
-    const attempt = store.selfRequeueCount(round.pr, head) + 1;
-    const exhausted = this.selfRequeueSpent(round.pr, head);
+    // A posting that never went out, or a required pass that failed, spends
+    // a budget of its own too, one a replacement's fanout does not renew
+    // (`persistentRequeueCount`).
+    const spent = Math.max(
+      store.selfRequeueCount(round.pr, head),
+      mode === "posting_unconfirmed" || mode === "required_pass_missing"
+        ? store.persistentRequeueCount(round.pr, head, mode)
+        : 0,
+    );
+    const attempt = spent + 1;
+    const exhausted = spent >= cap;
     const infrastructure = mode === "infrastructure_active" || mode === "infrastructure_settled";
     if (exhausted) {
       store.logEvent("self_requeue_cap_exhausted", round.pr, {
@@ -4389,7 +4626,9 @@ export class VerdictWatcher {
                 ? `round ${round.round_no} ended head_moved (guard 5): the PR advanced mid-round and the session correctly posted nothing — redispatching against the fresh head; the session is healthy and was not killed`
                 : mode === "infrastructure_active" || mode === "infrastructure_settled"
                   ? `round ${round.round_no} failed a bounded daemon→Pi infrastructure stage before any merits verdict — redispatching through the ordinary pump`
-                  : `round ${round.round_no} verdicted NEEDS_HUMAN without executing any passes — the review was not done, so it is redone rather than handed to a person`;
+                  : mode === "posting_unconfirmed"
+                    ? `round ${round.round_no} finished but its review never reached GitHub (no posting receipt, nothing pending delivery) — redispatching rather than holding it for an operator`
+                    : `round ${round.round_no} verdicted NEEDS_HUMAN without executing any passes — the review was not done, so it is redone rather than handed to a person`;
     if (mode === "infrastructure_active" && !this.deps.hooks.killSession) {
       store.logEvent("session_recovery_kill_unavailable", round.pr, {
         round_id: round.id,
@@ -4462,6 +4701,18 @@ export class VerdictWatcher {
         `round ${round.round_no} stopped dead inside its deadline window (${round.started_at} → ${round.deadline_at}) and was cancelled; self-requeue attempt ${attempt}/${cap}`,
       );
     }
+    // The replacement waits out its backoff unless it is new work: a moved
+    // head, or a successor at a fresher head than the round reviewed.
+    const reviewedHead =
+      round.head_sha ?? (round.posting_key ? postingKeyAnyHead(round.posting_key) : head);
+    const queued = store.getPr(round.pr);
+    const notBefore =
+      mode !== "head_moved" &&
+      publication.queued &&
+      queued &&
+      publication.target_head_sha === reviewedHead
+        ? new Date(this.now().getTime() + selfRequeueBackoffMin(attempt) * 60_000).toISOString()
+        : undefined;
     store.logEvent("round_self_requeued", round.pr, {
       cancel_cause: cause,
       round_id: round.id,
@@ -4471,6 +4722,13 @@ export class VerdictWatcher {
       cap,
       mode,
       reason,
+      ...(notBefore && queued
+        ? {
+            not_before: notBefore,
+            queued_head_sha: queued.head_sha,
+            queued_trigger_ts: queued.trigger_ts,
+          }
+        : {}),
     });
     await this.closeMeasurement(owed, measureModeForRequeue(mode));
     if (!publication.queued) {
@@ -4482,7 +4740,7 @@ export class VerdictWatcher {
       return true;
     }
     this.log(
-      `verdicts: SELF-REQUEUE #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — ${reason}`,
+      `verdicts: SELF-REQUEUE #${round.pr} round ${round.round_no} attempt ${attempt}/${cap}${notBefore ? ` (dispatch not before ${notBefore})` : ""} — ${reason}`,
     );
     await this.safe(
       async () =>
@@ -4490,7 +4748,7 @@ export class VerdictWatcher {
           [
             `SELF-REQUEUE (recovery) — PR #${round.pr} round ${round.round_no}, attempt ${attempt}/${cap}`,
             reason,
-            "The daemon cancelled the round and re-queued the PR for a fresh dispatch through the normal path. No GitHub state was touched.",
+            `The daemon cancelled the round and re-queued the PR for a fresh dispatch through the normal path${notBefore ? `, not before ${notBefore}` : ""}. No GitHub state was touched.`,
             "This is a recovery path, not a normal one — if it recurs on the same PR, investigate the cause the line above names.",
           ].join("\n"),
           "anomaly",
@@ -4693,6 +4951,7 @@ export class VerdictWatcher {
             round,
             proof.detail ?? "round ended without posting confirmation",
             "posting_receipt",
+            proof,
           );
           continue;
         }
@@ -4718,16 +4977,23 @@ export class VerdictWatcher {
       overdue.push(round.pr);
       const spent =
         expensive && this.selfRequeueSpent(round.pr, store.getPr(round.pr)?.head_sha ?? "");
+      const message =
+        `round ${round.round_no} passed its deadline (${round.deadline_at}); started ${round.started_at}` +
+        (spent
+          ? " — the self-requeue cap is exhausted"
+          : expensive
+            ? " — recovery could not proceed (session not stopped or no recovery hook); parking"
+            : "");
+      // A dead or wedged session whose self-requeues are spent is an
+      // infrastructure stage exhausted (the provider's, when the worker last
+      // failed on it): transient. A session that could not be stopped, or a
+      // round with no liveness signal, stays the operator's.
       await this.handleAnomaly(
         round.pr,
         round.round_no,
-        `round ${round.round_no} passed its deadline (${round.deadline_at}); started ${round.started_at}` +
-          (spent
-            ? " — the self-requeue cap is exhausted; parking"
-            : expensive
-              ? " — recovery could not proceed (session not stopped or no recovery hook); parking"
-              : ""),
+        message,
         "overdue",
+        spent ? this.transientCause(round, "", "infrastructure_exhausted") : undefined,
       );
     }
     return overdue;
