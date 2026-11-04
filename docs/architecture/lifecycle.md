@@ -491,8 +491,9 @@ worker's own requeues were spent on it; and a required lens pass still missing
 after the self-requeues when every failure recorded for it was one of those),
 an infrastructure stage or a dead or
 wedged session exhausted after its self-requeues, a posting with no receipt at
-all once its requeue cap is spent, and an exhausted deferred POST whose marker
-GitHub was read for and does not hold. "Nothing posted" is proven, not
+all once its requeue cap is spent, an exhausted deferred POST whose marker
+GitHub was read for and does not hold, and an ordinary delivery whose window
+ran out before it sent any POST or wrote any receipt. "Nothing posted" is proven, not
 assumed, and the proof takes one of two forms. For every cause it means the
 round's preflight posted nothing, it has no confirmed posting linkage and
 nothing is pending delivery; beyond that, ordinary unconfirmed work proves it

@@ -42,10 +42,13 @@ automatically promote old dry-run obligations to live ones.
   that wait is over. The failed job carries `exhausted_at`, the terminal proof
   the verdict watcher's posting proof reads as `exhausted`: loud on every
   path, never a requeue. A `prepared` receipt beside it stays, so a POST that
-  may have landed still reads as uncertain, never as "not posted". An attempt
-  held before any POST (`pr-unreadable`: the PR or the approval's CI could not
-  be read) counts in the job's `unposted_attempts`, so the failure says a POST
-  was attempted only when one was.
+  may have landed still reads as uncertain, never as "not posted": the
+  incident stays the operator's. An attempt held before any POST
+  (`pr-unreadable`: the PR or the approval's CI could not be read) counts in
+  the job's `unposted_attempts`, so the failure says a POST was attempted only
+  when one was. Only a job that sent no POST and left no receipt of any status
+  proves nothing posted, and that incident waits on the automatic retry ladder
+  (`posting_exhausted_unposted`).
 - Rate limits respect `Retry-After` / rate-limit reset when the adapter can
   read them, on the POST and on the marker read alike. Network errors, 408 and
   5xx retain the obligation. Every outcome is classified once

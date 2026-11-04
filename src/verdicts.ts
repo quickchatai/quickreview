@@ -1532,8 +1532,9 @@ export class VerdictWatcher {
     failure?: "unconfirmed" | "ambiguous" | "contradicted" | "exhausted";
     /** On an `unconfirmed` or `exhausted` failure: the evidence says nothing
      * reached GitHub. `unconfirmed`: no posting receipt of any status exists
-     * for the round. `exhausted`: GitHub was read and no review carries the
-     * marker. Such a failure is transient (`TransientFailureCause`): it fails
+     * for the round. `exhausted`: for a deferred receipt, GitHub was read and
+     * no review carries the marker; for an ordinary delivery, it sent no POST
+     * and no receipt of any status exists. Such a failure is transient (`TransientFailureCause`): it fails
      * loud, and waits on the automatic retry rather than an operator. */
     unposted?: boolean;
   }> {
@@ -1804,9 +1805,13 @@ export class VerdictWatcher {
             : "; no POST was sent"
         }`,
         failure: "exhausted",
-        // As for the exhausted deferred retry: only a marker read that ran
-        // and found nothing proves the review never landed.
-        unposted: reconciled,
+        // Ordinary work proves nothing posted by receipt absence: a POST
+        // writes `prepared` first, and that receipt stays, so one that may
+        // have landed never reads as unposted however the marker read went.
+        unposted:
+          !attempted &&
+          !existsSync(postingReceiptPath(this.postingReceiptDir(), round.pr, round.round_no)) &&
+          !this.postingLinked(round),
       };
     }
 

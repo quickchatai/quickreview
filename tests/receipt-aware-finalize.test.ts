@@ -803,19 +803,16 @@ describe("a deferred posting", () => {
 describe("an ordinary delivery whose window ran out", () => {
   const key = roundPostingKey(PR, 5, HEAD);
   const dir = () => join(root, "state", "posting-receipts");
+  const payload = {
+    commit_id: HEAD,
+    event: "REQUEST_CHANGES",
+    body: `Review\n\n${postingMarker(key)}`,
+  };
+  const sha = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 
-  // The outbox's ordinary replay tried, never confirmed, and its window
-  // passed: the job is failed with `exhausted_at`, the `prepared` receipt of
-  // its last POST kept. GitHub reads, and shows no marker.
-  // MUTATION: drop the `exhausted_at` check from postingProof — this fails (requeued).
-  it("fails the round loud (FAILED_LOUD hold), never a requeue, the uncertain POST said", async () => {
+  /** The outbox's failed job, its window spent, after `attempts` POSTs. */
+  function exhaustedJob(attempts: number): void {
     mkdirSync(dir(), { recursive: true });
-    const payload = {
-      commit_id: HEAD,
-      event: "REQUEST_CHANGES",
-      body: `Review\n\n${postingMarker(key)}`,
-    };
-    const sha = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     writeFileSync(
       join(dir(), `pr-${PR}-round-5.outbox.json`),
       JSON.stringify({
@@ -830,15 +827,23 @@ describe("an ordinary delivery whose window ran out", () => {
         payload,
         payload_sha256: sha,
         status: "failed",
-        attempts: 2,
+        attempts,
         created_at: "2026-01-15T08:52:57.000Z",
         next_attempt_at: "2026-01-15T09:50:00.000Z",
-        attempted_at: "2026-01-15T09:40:00.000Z",
+        ...(attempts > 0 ? { attempted_at: "2026-01-15T09:40:00.000Z" } : {}),
         exhausted_at: "2026-01-15T09:52:57.000Z",
         last_error:
           "posting retry exhausted: not delivered within 60 min of being queued; last: GitHub 502",
       }),
     );
+  }
+
+  // The outbox's ordinary replay tried, never confirmed, and its window
+  // passed: the job is failed with `exhausted_at`, the `prepared` receipt of
+  // its last POST kept. GitHub reads, and shows no marker.
+  // MUTATION: drop the `exhausted_at` check from postingProof — this fails (requeued).
+  it("fails the round loud (FAILED_LOUD hold), never a requeue, the uncertain POST said", async () => {
+    exhaustedJob(2);
     writeFileSync(
       join(dir(), `pr-${PR}-round-5.json`),
       JSON.stringify({
@@ -866,6 +871,29 @@ describe("an ordinary delivery whose window ran out", () => {
     expect(failure).toBeDefined();
     expect(failure!.detail).toContain("was not delivered");
     expect(failure!.detail).toContain("a POST was attempted");
+    // The `prepared` receipt says a POST may have landed: one negative read
+    // never makes it unposted, so the incident is the operator's, not the
+    // automatic retry ladder's.
+    // MUTATION: set the ordinary exhausted proof's `unposted` to `reconciled` — this fails.
+    expect(failure!.next_action).not.toBe("retry_wait");
+    expect(postings()).toBe(0);
+  });
+
+  // The window ran out before any POST (every attempt waited on GitHub), and
+  // no receipt of any status was written: nothing was posted, so the loud
+  // incident waits on the automatic retry ladder.
+  // MUTATION: set the ordinary exhausted proof's `unposted` to `false` — this fails.
+  it("with no POST sent and no receipt, fails loud onto the automatic retry ladder", async () => {
+    exhaustedJob(0);
+    const github = new ReadingAdapter();
+    const { supervisor } = wire(true, github);
+    set("2026-01-15T09:55:00.000Z");
+    await supervisor.scan();
+    expect(round5()).toMatchObject({ status: "cancelled" });
+    expect(count("round_self_requeued")).toBe(0);
+    const failure = store.openReviewFailure(PR);
+    expect(failure!.detail).toContain("no POST was sent");
+    expect(failure!.next_action).toBe("retry_wait");
     expect(postings()).toBe(0);
   });
 
