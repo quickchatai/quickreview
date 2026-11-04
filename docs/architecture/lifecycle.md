@@ -215,8 +215,11 @@ a round already running never gets a second.
 
 **Building the round.** For a PR that survives both:
 
-1. consume both triggers and add the in-progress label;
-2. read `base_ref` and the PR body in one `getPr`, and the changed files once;
+1. read `base_ref`, the PR body and the labels in one `getPr` — a failed read
+   defers the dispatch (below), never a round without its base fetch and
+   intent lens;
+2. consume both triggers, add the in-progress label, and read the changed
+   files once;
 3. plan the passes (`buildPassPlan`) and open the round row
    (`store.startRound`) with the diffstat, the plan and the validator tier;
 4. **prepare the worktree before building the order** — fetch the PR head and
@@ -240,6 +243,14 @@ The round is provisional until that handoff completes: if anything before it
 throws, the round row is discarded rather than left orphaned. If the durable
 session command was already persisted, the round is *retained* instead and the
 bounded supervisor owns its recovery.
+
+**Per-PR backoff.** A dispatch that fails before any round owns the review
+leaves the PR queued, and the pump would otherwise retry the whole attempt every
+tick. `src/dispatchbackoff.ts` holds the PR back instead: 30 s after the first
+failure, doubling to 30 min, never shorter than a GitHub `Retry-After`. The
+fourth consecutive failure raises one `dispatch_failing` anomaly; any dispatch
+of the PR that ends without failing clears the streak. The streak is per daemon
+process, so a restart retries at once.
 
 ### Lens selection and tiers
 
