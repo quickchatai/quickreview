@@ -256,6 +256,8 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   private readonly ambiguousIncidents = new Set<string>();
   /** Tail of each posting lane (one per PR, else one per idem key). */
   private readonly lanes = new Map<string, Promise<unknown>>();
+  /** Tail of each PR's announcement lane (`inPrOrder`). */
+  private readonly announcements = new Map<number, Promise<unknown>>();
   /** Corrections to one incident execute in order, including recovery edits. */
   private readonly incidentEdits = new Map<string, Promise<unknown>>();
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
@@ -380,6 +382,26 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     return result.ts;
   }
 
+  /**
+   * The order a PR's lifecycle announcements are made in — a round's pickup,
+   * its verdict, an anomaly, a supersede — is the order they were CALLED in,
+   * whoever calls: dispatch and the verdict watcher both fire and forget, and
+   * the lane is reserved synchronously on the call, so neither waits on
+   * Slack and a later round's pickup can never overtake the verdict or
+   * alert called before it. The whole announcement runs in the lane, an
+   * incident's edit included, not just its post.
+   */
+  private inPrOrder(pr: number, fn: () => Promise<void>): Promise<void> {
+    const prev = this.announcements.get(pr) ?? Promise.resolve();
+    const run = prev.then(fn);
+    const tail = run.catch(() => undefined);
+    this.announcements.set(pr, tail);
+    void tail.then(() => {
+      if (this.announcements.get(pr) === tail) this.announcements.delete(pr);
+    });
+    return run;
+  }
+
   /** Lifecycle gate: the cause's own switch, nothing more (see header). */
   private lifecycleEnabled(cause: string): boolean {
     if (!this.enabled) return false;
@@ -448,7 +470,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * never be a re-round — that guard keeps a replayed first round silent
    * instead of inventing a 🔄 line for it.
    */
-  async roundStarted(a: RoundAnnouncement): Promise<void> {
+  roundStarted(a: RoundAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.roundStartedNow(a));
+  }
+
+  private async roundStartedNow(a: RoundAnnouncement): Promise<void> {
     if (!this.enabled) return;
     const { store, cfg } = this.deps;
     // A previously FAILED pickup (ok = 0) is retried by `post`, so it does not
@@ -487,7 +513,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
   /** The verdict, in-thread. Never `reply_broadcast`, whatever
    * `broadcast_verdicts` says — the seam has no broadcast parameter at all. */
-  async verdict(a: VerdictAnnouncement): Promise<void> {
+  verdict(a: VerdictAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.verdictNow(a));
+  }
+
+  private async verdictNow(a: VerdictAnnouncement): Promise<void> {
     if (!this.lifecycleEnabled(LIFECYCLE_CAUSES.verdict)) return;
     const author = a.author ?? this.deps.store.getPr(a.pr)?.author ?? "";
     await this.post({
@@ -507,7 +537,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   }
 
   /** A round outlived by a newer one. Wording per AGENTS.md invariant 2. */
-  async superseded(a: SupersededAnnouncement): Promise<void> {
+  superseded(a: SupersededAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.supersededNow(a));
+  }
+
+  private async supersededNow(a: SupersededAnnouncement): Promise<void> {
     if (!this.lifecycleEnabled(LIFECYCLE_CAUSES.superseded)) return;
     await this.post({
       idemKey: `superseded:${a.pr}:${a.old_round_no}`,
@@ -524,7 +558,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * nothing to say and stays silent — except a FAILED_LOUD incident of
    * conversation work (a failed wake, no round), which holds the PR's review
    * as any incident does and is announced by its incident id. */
-  async anomaly(a: AnomalyAnnouncement): Promise<void> {
+  anomaly(a: AnomalyAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.anomalyNow(a));
+  }
+
+  private async anomalyNow(a: AnomalyAnnouncement): Promise<void> {
     if (!this.enabled) return;
     if (a.round_no === null && !(a.kind === "failed_loud" && a.incident_id)) return;
     const { cause, text } = this.anomalyMessage(a);
