@@ -778,7 +778,14 @@ describe("post.review live", () => {
       ),
     });
     // Only the validation text reaches the wire, never the rest of the answer.
-    await expect(ask(true)).rejects.not.toMatchObject({ message: /documentation_url/ });
+    // (Read the message itself: a negated toMatchObject over a thrown error
+    // passes or fails on the error's shape, not on this text.)
+    const again = await ask(true).then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(again?.message).toMatch(/Pull request review thread line must be part of the diff/);
+    expect(again?.message).not.toMatch(/documentation_url|Unprocessable Entity/);
     expect(receipt()).toBeUndefined();
     expect(rig.journal.readJob(PR, 1)).toBeUndefined();
     expect(readdirSync(receiptsDir()).some((f) => f.includes(".withdrawn-"))).toBe(true);
