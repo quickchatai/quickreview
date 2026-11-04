@@ -735,6 +735,14 @@ and the same never-twice ledger. Which half a candidate belongs to is decided by
 the **call site**: `deliverEscalations()` takes the two groups as separate
 arguments, so a session cannot label itself as a rule to buy an exemption.
 
+The facts a rule reads (the changed paths, the labels, the failing checks)
+come off GitHub reads, and a read that fails is **unknown**, never an empty
+list that would silently keep every rule keyed on it from firing. An unknown
+fact a configured rule or a session candidate needs defers the whole
+evaluation (`escalation_facts_unavailable`, with the cause): the round's owed
+escalation work is retried five minutes later, and a later round of the PR
+answers it instead when one exists (`escalation_evaluation_superseded`).
+
 Two delivery shapes. `comment` (the default) posts a gated `create_review`
 COMMENT with `reviewPurpose: "escalation"` — the same mechanically-authored
 gated comment the migration pre-check uses. `review_request` additionally makes
