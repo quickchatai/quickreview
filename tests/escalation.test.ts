@@ -500,6 +500,115 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     rmSync(dir, { recursive: true, force: true });
   });
 
+  // A read GitHub refuses outright (a 404 or 403, `rejected` by the shared
+  // classifier) is refused again on every retry, so deferring on it would
+  // re-defer every five minutes for ever. It is a known absence instead: said
+  // once, read as `[]`, and the evaluation proceeds on the facts it has.
+  // MUTATION: drop the `rejected` branch from escalationFactFailed — the 404
+  // defers the evaluation, the path rule never delivers (createReview stays at
+  // 0) and the owed work stays open; this fails.
+  it("a fact GitHub refuses is a known absence — the evaluation proceeds", async () => {
+    const s = new StateStore(":memory:");
+    const dir = mkdtempSync(join(tmpdir(), "qcr-esc-rejected-"));
+    let reviews = 0;
+    let prReads = 0;
+    const adapter: VerdictAdapter = {
+      async addLabel() {
+        return { executed: true };
+      },
+      async removeLabel() {
+        return { executed: true };
+      },
+      async listPrFiles() {
+        return [{ filename: "a.py" }];
+      },
+      async getPr() {
+        prReads++;
+        throw new GitHubRequestError("GET", "/repos/o/r/pulls/45", 404, "Not Found");
+      },
+      async createReview() {
+        reviews++;
+        return { executed: true };
+      },
+    };
+    const hooks: SessionHooks = {
+      async dispatchRound() {},
+      async inject() {},
+      async archiveAndClose() {},
+    };
+    s.setAnomalySink(() => {});
+    s.upsertPr({
+      number: 45,
+      state: "reviewing",
+      head_sha: HEAD,
+      title: "T",
+      author: "a",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    s.startRound(45, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    writeFileSync(
+      join(dir, "pr-45-round-1.json"),
+      JSON.stringify({
+        pr: 45,
+        round_no: 1,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        finished_at: "2026-08-31T12:00:00Z",
+      }),
+    );
+    let clock = new Date("2026-08-31T12:00:00Z");
+    const w = new VerdictWatcher({
+      cfg: {
+        ...cfg,
+        escalation: on({
+          targets: ["teammate-one"],
+          rules: [
+            // Needs the labels, so the refused read matters to the decision.
+            { name: "flagged", to: "teammate-one", why: "w", labels: ["needs-eyes"] },
+            { name: "all", to: "teammate-one", why: "w", paths: ["**"] },
+          ],
+        }),
+      },
+      store: s,
+      adapter,
+      hooks,
+      verdictDir: dir,
+      root: dir,
+      usage: {},
+      partialWrite: { windowMs: 0 },
+      ledgerCheckDelayMs: 0,
+      now: () => clock,
+    });
+    await w.sweep();
+    await w.idle();
+    expect(s.roundsFor(45)[0]!.verdict).toBe("APPROVE");
+    // Decided now: the path rule fires; the label rule reads no labels.
+    expect(reviews).toBeGreaterThan(0);
+    const events = (kind: string) =>
+      s.db.prepare("SELECT payload FROM events WHERE kind = ?").all(kind) as Array<{
+        payload: string;
+      }>;
+    expect(events("escalation_facts_unavailable")).toHaveLength(0);
+    const rejected = events("escalation_fact_rejected");
+    expect(rejected).toHaveLength(1);
+    expect(JSON.parse(rejected[0]!.payload)).toMatchObject({ fact: "labels", status: 404 });
+    const owed = s.db
+      .prepare("SELECT completed_at FROM round_work WHERE kind = 'escalations'")
+      .get() as { completed_at: string | null };
+    expect(owed.completed_at).not.toBeNull();
+    // Nothing is owed, so nothing asks GitHub again.
+    const readsAfterDecision = prReads;
+    clock = new Date(clock.getTime() + ESCALATION_FACTS_RETRY_MS);
+    await w.sweep();
+    await w.idle();
+    expect(prReads).toBe(readsAfterDecision);
+    expect(events("escalation_fact_rejected")).toHaveLength(1);
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("a malformed escalations array never rejects the verdict it rides on", () => {
     for (const bad of ["nonsense", 7, { target: "x" }, [1, 2, 3]]) {
       const parsed = normalizeSessionEscalations(bad);
