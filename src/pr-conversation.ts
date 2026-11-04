@@ -450,9 +450,12 @@ export class PrConversation {
           const failure = postingFailure(err);
           if (failure.kind === "transient" || failure.kind === "rate_limited") {
             // GitHub is down or slowing us, or the PR state could not be
-            // read: nothing was posted. The long bounded schedule, GitHub's
-            // retry-after honoured, and no strike spent; the terminal path
-            // only once the schedule is spent.
+            // read. A timeout or a 5xx on the POST itself leaves the delivery
+            // unknown — the comment may already have landed — so the next
+            // attempt's read-before-post (the marker search above) decides,
+            // and must stay. The long bounded schedule, GitHub's retry-after
+            // honoured, and no strike spent; the terminal path only once the
+            // schedule is spent.
             const transient = o.transient_attempts + 1;
             const delay = transientRetryDelayMs(transient, failure.retryAfterMs);
             this.update(
