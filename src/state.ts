@@ -771,6 +771,18 @@ export interface WebhookInboxRow {
   received_at: string;
   attempted_at: string | null;
   next_attempt_at: string | null;
+  /** Failed fulfilment attempts so far; drives the capped backoff. */
+  attempts: number;
+}
+
+/** The first wait after an accepted webhook's fulfilment fails. */
+export const WEBHOOK_RETRY_BASE_MS = 30_000;
+/** The longest wait the doubling reaches. */
+export const WEBHOOK_RETRY_MAX_MS = 30 * 60_000;
+
+/** The wait after the `attempts`-th failed fulfilment: 30 s doubling to 30 min. */
+export function webhookRetryDelayMs(attempts: number): number {
+  return Math.min(WEBHOOK_RETRY_MAX_MS, WEBHOOK_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1));
 }
 
 const SCHEMA = `
@@ -1943,6 +1955,10 @@ export class StateStore {
       // and a review captured before the column is unknown — the miner then
       // never reads it as a request for changes.
       "ALTER TABLE pr_comments ADD COLUMN review_state TEXT",
+      // Failed fulfilment attempts of an accepted webhook: the retry backs
+      // off on it and raises one anomaly at a threshold. A row from before
+      // the column starts at 0, which only means its next wait is short.
+      "ALTER TABLE webhook_inbox ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
     ])
       this.addColumn(ddl);
     this.migrateBotCommentNamespaces();
@@ -6518,12 +6534,31 @@ export class StateStore {
       .immediate();
   }
 
-  deferWebhookDelivery(guid: string, error: string, now: number): void {
-    this.db
-      .prepare(
-        "UPDATE webhook_inbox SET attempted_at=?,next_attempt_at=?,last_error=? WHERE guid=?",
-      )
-      .run(new Date(now).toISOString(), new Date(now + 30_000).toISOString(), error, guid);
+  /** A failed fulfilment: count it and push the next attempt out on the
+   * capped backoff (`webhookRetryDelayMs`). Returns the attempts so far, 0
+   * when the row is gone. */
+  deferWebhookDelivery(guid: string, error: string, now: number): number {
+    return this.db
+      .transaction(() => {
+        const row = this.db
+          .prepare("SELECT attempts FROM webhook_inbox WHERE guid=?")
+          .get(guid) as { attempts: number } | undefined;
+        if (!row) return 0;
+        const attempts = row.attempts + 1;
+        this.db
+          .prepare(
+            "UPDATE webhook_inbox SET attempted_at=?,next_attempt_at=?,last_error=?,attempts=? WHERE guid=?",
+          )
+          .run(
+            new Date(now).toISOString(),
+            new Date(now + webhookRetryDelayMs(attempts)).toISOString(),
+            error,
+            attempts,
+            guid,
+          );
+        return attempts;
+      })
+      .immediate();
   }
 
   completeWebhookDelivery(guid: string): void {

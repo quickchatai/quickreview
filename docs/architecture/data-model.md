@@ -75,6 +75,7 @@ a database property rather than a convention.
 | Table | Purpose | Key columns | Principal methods |
 | --- | --- | --- | --- |
 | `deliveries` | webhook delivery dedupe | `guid` (PK), `event`, `action` | `recordDelivery` |
+| `webhook_inbox` | accepted webhook payloads owed fulfilment, replayable after a crash or a failed callback; a failure is retried on a capped backoff (30 s doubling to 30 min) and the fifth raises one `webhook_delivery_failing` anomaly | `guid` (PK), `event`, `action`, `payload`, `interpretation`, `local_result`, `attempted_at`, `next_attempt_at`, `last_error`, `attempts` | `acceptWebhookDelivery`, `readyWebhookInbox`, `deferWebhookDelivery`, `completeWebhookDelivery` |
 | `events` | the append-only daemon event log the CLI, TUI and digest read | `id` (PK), `ts`, `kind`, `pr`, `payload` | `logEvent`, `recentEvents`, `eventsOn`, `anomalies` |
 | `pr_comments` | a local copy of every human comment on a tracked PR (identity is GitHub's own `(source, comment_id)`) | `id` (PK), `pr`, `source`, `comment_id`, `author`, `body`, `tagged`, `captured_via`, `review_state` | `recordPrComment`, `prComments`, `hasPrComment` |
 | `feedback_signals` | the tuning-loop ledger: tagged comments plus behavioural signals, deduped per kind | `id` (PK), `kind`, `pr`, `comment_id`, `review_id`, `scope`, `day` | `recordFeedbackSignal`, `feedbackCommentsForDay` |
