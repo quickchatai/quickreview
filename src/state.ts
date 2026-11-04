@@ -288,6 +288,10 @@ export type CancelCause =
   /** The daemon→Pi parent failed a finite start/finish stage before a merits
    * verdict existed. Loud: infrastructure failed, review still owed. */
   | "infrastructure_failure"
+  /** The round finished, but its review has no posting receipt at all and
+   * nothing is pending delivery: nothing reached GitHub, so it was
+   * redispatched rather than held for an operator. */
+  | "posting_unconfirmed"
   /** A newer round on the same PR outlived this one. Benign. */
   | "superseded"
   /** An operator unwedge lever (`rerun-round` / `restart-session`). */
@@ -309,6 +313,7 @@ export const CANCEL_CAUSES: readonly CancelCause[] = [
   "head_moved",
   "incomplete_round",
   "infrastructure_failure",
+  "posting_unconfirmed",
   "superseded",
   "operator",
   "no_new_evidence",
@@ -340,6 +345,7 @@ export const CANCEL_CAUSE_LABEL: Record<CancelCause, string> = {
   head_moved: "head moved",
   incomplete_round: "incomplete round",
   infrastructure_failure: "infrastructure failure",
+  posting_unconfirmed: "posting unconfirmed",
   superseded: "superseded",
   no_new_evidence: "nothing new to post (guard 2)",
   operator: "operator",
