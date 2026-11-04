@@ -5,8 +5,8 @@ to, whether that family ships, and the public run index built from it.
 The catalogue is a JSON file kept beside the release tooling (not in this
 repository): one entry per run family with its member units (run dirs,
 scoring dirs, top-level trees), its location, what it was for, the model it
-billed, its judges, the claims it backs, `ship` and `hf_tables`. The
-exporters read it as the source of truth for what ships:
+billed, its judges, `ship` and `hf_tables` (a unit's claim groups come from
+the claims manifest, never from here). The exporters read it as the source of truth for what ships:
 
   ship = "yes"           in the run archive, the slim bundle and the HF tables;
   ship = "archive-only"  in the run archive only (SWE-PRBench);
@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import scrub_extra as SX
 
@@ -67,7 +67,6 @@ class Catalogue:
                                for u in data.get("uncertain") or []])
         self.data = data
         self.families: Dict[str, dict] = {f["id"]: f for f in data["families"]}
-        self.claims: Dict[str, str] = data.get("claims") or {}
         self._unit: Dict[Tuple[str, str], List[str]] = {}
         for f in data["families"]:
             for kind in location_kinds(f.get("location", "")):
@@ -237,9 +236,6 @@ def index_rows(cat: Catalogue, roots: Dict[str, str], remap: Dict[str, Optional[
                 commit = rj.get("qcr_commit")
                 if recorded is not None:
                     recorded[archive_prefix(kind, name)] = commit
-                claims = f.get("claims")
-                claim_ids = [c.strip() for c in claims.split(",")] if isinstance(claims, str) and claims != "none" else (
-                    list(claims) if isinstance(claims, list) else [])
                 rows.append({
                     "unit": name, "path": archive_prefix(kind, name), "family": f["id"],
                     "family_title": f.get("title"), "ship": f.get("ship"), "benchmark": f.get("benchmark"),
@@ -249,7 +245,9 @@ def index_rows(cat: Catalogue, roots: Dict[str, str], remap: Dict[str, Optional[
                     **commit_fields(commit, remap, evidence),
                     "arm_config": f.get("arm_config"), "model_billed": f.get("model_billed"),
                     "judges": f.get("judges"), "purpose": f.get("purpose"), "notes": f.get("notes"),
-                    "claims": claim_ids, "hf_tables": Catalogue.hf_tables(f),
+                    # the claim groups come from bench/aacr/claims.json's q keys alone (hf_export.link_claims,
+                    # which also fills RUNS-INDEX.json's); the catalogue's own claim labels are not a source
+                    "claims": [], "hf_tables": Catalogue.hf_tables(f),
                     "archive_volumes": list(volume_of(f["id"])) if volume_of else [],
                 })
     rows.sort(key=lambda r: (r["family"], r["path"]))
@@ -304,6 +302,3 @@ def withheld_rows(cat: Catalogue) -> List[dict]:
              "members": list(f.get("members") or []), "location": f.get("location")}
             for f in cat.withheld_families()]
 
-
-def claims_index(cat: Catalogue, ids: Iterable[str]) -> Dict[str, str]:
-    return {i: cat.claims[i] for i in sorted(set(ids)) if i in cat.claims}

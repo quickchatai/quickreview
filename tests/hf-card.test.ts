@@ -10,7 +10,9 @@
 //      the judge-coverage checks fail when a judge's rows reach past what the
 //      card says it scored;
 //   4. every public page that cites run data links the published dataset and
-//      no longer says the data is unpublished.
+//      no longer says the data is unpublished;
+//   5. the claim ids the card's table names are the claims manifest's groups,
+//      never a hand-written label.
 
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -113,6 +115,27 @@ describe("the card describes every config", () => {
       if (m) for (const n of m[1]!.matchAll(/`([a-z_]+)`/g)) described.add(n[1]!);
     }
     expect(configs.filter((c) => !described.has(c))).toEqual([]);
+  });
+});
+
+describe("the card's claim ids are the manifest's groups", () => {
+  // MUTATION: put `qr:max-anecdote` (a retired hand-written label) back into the card's claim table — this fails
+  it("names in the claim table's id column only groups bench/aacr/claims.json declares", () => {
+    const groups = Object.keys(
+      (
+        JSON.parse(readFileSync("bench/aacr/claims.json", "utf8")) as {
+          groups: Record<string, unknown>;
+        }
+      ).groups,
+    );
+    // the first table of the section: its header row to the first line that is not a table row
+    const table = CARD.split("\n| Published claim | Claim id |")[1]!.split("\n\n")[0]!;
+    const ids = table
+      .split("\n")
+      .filter((l) => l.startsWith("| "))
+      .flatMap((l) => [...(l.split(" | ")[1] ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1]!));
+    expect(ids.length).toBeGreaterThan(30);
+    expect(ids.filter((x) => !groups.includes(x))).toEqual([]);
   });
 });
 

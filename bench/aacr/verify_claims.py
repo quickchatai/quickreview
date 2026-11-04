@@ -547,6 +547,14 @@ def main() -> int:
             for ch in checks_of(q):
                 if ch not in manifest["checks"]:
                     lint["errors"].append(f"claim {c['id']}: check {ch!r} is not in `checks`")
+    # a claim's group is a declared one with a description: the HF tables' claim links and the archive's
+    # RUNS-INDEX.json name groups only, and describe each from `groups` (hf_export.claims_described)
+    groups = manifest.get("groups") or {}
+    for g in sorted({c["group"] for c in manifest["claims"] if c.get("group")}):
+        if g not in groups:
+            lint["errors"].append(f"group {g!r}: claims name it and `groups` does not declare it")
+        elif not str(groups[g].get("what") or "").strip():
+            lint["errors"].append(f"group {g!r}: no `what` in `groups` (the description RUNS-INDEX.json prints)")
     for ch, spec in manifest["checks"].items():
         for s in spec.get("scripts", []):
             if not (repo / s).exists():

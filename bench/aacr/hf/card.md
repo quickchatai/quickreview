@@ -100,10 +100,13 @@ and listed in the manifest as quotes, not as claims.
 
 ## What is in here, and which claim each part backs
 
-The claim ids in the second column are the ones the `runs` config lists per
-run directory (`runs.claims`). Volume names drop the `quickreview-runs-`
-prefix and the `.tar.zst` suffix. The scripts are in the QuickReview
-repository under `bench/aacr/`.
+The claim ids in the second column are claim groups of the repository's
+`bench/aacr/claims.json`, which describes each one (`groups`). The `runs`
+config lists a group on each run directory its claims' recompute keys read
+(`runs.claims`); a group whose keys read only the answer key, a set, a
+published number or a script's output (the `do:*` groups) is on no run.
+Volume names drop the `quickreview-runs-` prefix and the `.tar.zst` suffix.
+The scripts are in the QuickReview repository under `bench/aacr/`.
 
 | Published claim | Claim id | Tables | Archive volumes | Recomputed by |
 |---|---|---|---|---|
@@ -120,7 +123,7 @@ repository under `bench/aacr/`.
 | AACR-Bench's own metric and the reference-label study (`tab:aacr`, `tab:labels-sol`) | `bench:final-tables`, `bench:sol-study` | `aacr_matches`, `aacr_references`, `aacr_reference_labels` | `aacr-final-comparison-g61`, `answer-key` | `validation.json` |
 | Harvested Copilot 2025 reviews (`tab:copilot2025`) | `bench:tab:copilot2025` | `arms` (`copilot-2025-upstream`, links only, and the arms below the table), `reviews`, `defect_verdicts`, `comment_verdicts`, `aacr_matches` | `aacr-upstream-copilot`, `aacr-gpt6sol-study`, `aacr-v2-default-rerun`, `aacr-final-comparison-g61`, `aacr-claude-code-opus55` | `final/score.sh` (its `tab:copilot2025` call) on the slim bundle; `verify_claims.py` from the tables |
 | README Martian chart and table; benchmark paper `tab:martianfinal` and the golden-comment audit | `readme:martian`, `bench:tab:martianfinal` | `martian_prs`, `martian_goldens`, `martian_reviews`, `martian_verdicts`, `martian_scores` | `martian-final`, `analysis` | Martian's scorer on the slim bundle (`verify_slim.py`); `validation.json` |
-| Martian development rounds, posting policies, judge noise (`tab:martianraw`, `fig:martianpolicy`) | `bench:tab:martianraw`, `bench:fig:martianpolicy`, `bench:martian-judge-noise` | `martian_scores`, `martian_verdicts` | `martian-tuning-rounds`, `martian-posting-variants`, `martian-judge-calibration` | Martian's scorer on the slim bundle |
+| Martian development rounds, posting policies, judge noise (`tab:martianraw`, `fig:martianpolicy`) | `bench:tab:martianraw`, `bench:tab:martianfinal` (the judge-noise numbers) | `martian_scores`, `martian_verdicts` | `martian-tuning-rounds`, `martian-posting-variants`, `martian-judge-calibration` | Martian's scorer on the slim bundle |
 | README Qodo chart and table; benchmark paper `tab:qodo` | `readme:qodo`, `bench:tab:qodo` | `qodo_prs`, `qodo_issues`, `qodo_reviews`, `qodo_verdicts` (QuickReview's two builds: `work_dir` and `tool` `final1-qodo-pr100` and `quickreview-frozen`, `ext-r6-qodo-pr100` and `quickreview-2026-10-02`) | `qodo-final`, `qodo-r6-and-vendors` | our scorer, `ext/qodo_judge.py`, on the slim bundle (`verify_slim.py --qodo-gt`; Qodo publishes none); `validation.json` |
 | README "Judged side by side" (pairwise Elo) and its chart | `readme:elo` | `elo_judgments`, `elo_ratings` | `elo-pairwise`; the reviews: `ccvq-hard20-claude-max-sonnet`, `ccvq-claude-code-high`, `ccvq-quickreview-on-claude`, `martian-final`, `openmodels-glm53-full`, `openmodels-dsv41f-mix` | `recompute/elo_ratings.py --check-ratings` |
 | `docs/DIGITALOCEAN.md`: speed and cost table, the smokes, the review time limit | `do:speed`, `do:glm-smoke`, `do:gemma-smoke`, `do:timeouts` | none (archive only) | `openmodels-smokes`, `openmodels-gpt61-baselines`, `openmodels-glm53-full`, `openmodels-driver`, `aacr-frozen-build` | `recompute/do_speed.py` |
@@ -128,7 +131,7 @@ repository under `bench/aacr/`.
 | Benchmark paper `tab:martiantiers` (QuickReview on Martian by its own severity) | `bench:tab:martiantiers`, `bench:tab:martianfinal` | `martian_goldens` | `analysis` (`analysis/relabel/martian_tiers.labels.jsonl`, its prompt, `LABELS.json`; the blind `tune20` classification), `martian-posting-variants`, `martian-tuning-rounds` | `relabel/martian_tiers.py --compute` |
 | QuickReview paper: the validator's kills and the lost-credit attribution | `qr:mechanism`, `qr:tab:final` | `defects`, `reviews`, `defect_verdicts` | `analysis` (`analysis/relabel/lost_credit.labels.jsonl`, its prompt, `LABELS.json`), `aacr-gpt6sol-study` | `relabel/lost_credit.py --compute` |
 | QuickReview paper: tuning appendix (prompt iterations, levers, lenses) | `qr:app:tuning` | `arms`, `defect_verdicts` | `aacr-dev-iterations`, `aacr-dev-levers-presets` | `verify_claims.py` (its table checks, `recompute/claim_metrics.py`); `recompute/missed_defects.py` |
-| QuickReview paper: the max preset example | `qr:max-anecdote` | `arms` (`quickreview-max-g61`) | `aacr-g61-smokes` | `compare.py` |
+| QuickReview paper: the max preset example | `qr:basemodel` | `arms` (`quickreview-max-g61`) | `aacr-g61-smokes` | `compare.py` |
 
 `tab:copilot2025`'s rows are these arms, on the 19 PRs that have a
 `copilot-2025-upstream` review (`final/copilot19.txt`):
@@ -146,8 +149,8 @@ repository under `bench/aacr/`.
 | Codex CLI | `codex-medium-sol` |
 | Copilot 2025 (upstream) | `copilot-2025-upstream` |
 
-The claim ids are derived from `bench/aacr/claims.json`: a run or an arm
-carries every claim group whose recompute keys read it (`runs.claims`,
+The claim ids come from `bench/aacr/claims.json` alone: a run or an arm
+carries exactly the claim groups whose recompute keys read it (`runs.claims`,
 `arms.paper_tables`, `arms.in_paper`), and `validation.json` lists the run
 families and archive volumes of each group whose keys name a run (a group
 whose keys read only the key, a set or a published number lists none). A
@@ -190,9 +193,10 @@ runs = load_dataset("{{REPO_ID}}", "runs", split="test")
   the archive and its volume (`archive_volumes`), its family and the family's
   title, the benchmark and PR set, the number of cases, start and end times,
   the reviewer configuration (`arm_config`), the model it billed
-  (`model_billed`), its judges, what it was for (`purpose`), the published
-  claims it backs (`claims`, the ids above) and the tables that hold its rows
-  (`hf_tables`). `qcr_commit` is the QuickReview commit the run's image was
+  (`model_billed`), its judges, what it was for (`purpose`), the claim
+  groups whose recompute keys read it (`claims`, the ids above) and the
+  tables that hold its rows (`hf_tables`). `qcr_commit` is the QuickReview
+  commit the run's image was
   built from (for a third-party tool's run, the harness around that tool). The
   repository's history was rewritten before publication, so the ids the runs
   recorded are not in the public history: `qcr_commit` names the public main
@@ -213,7 +217,8 @@ runs = load_dataset("{{REPO_ID}}", "runs", split="test")
   `qcr_commit`, `qcr_commit_on_public_main`, `qcr_commit_match` and
   `qcr_commit_dirty` all null. The archive's `run.json` and
   `case-summary.json` files carry the same remap, and its `RUNS-INDEX.json`
-  holds the same rows, plus the families that were withheld.
+  holds the same rows, plus the families that were withheld and a
+  description of each claim group the rows carry.
 
 **The answer key (AACR-Bench, 185 PRs)**
 
@@ -256,7 +261,7 @@ runs = load_dataset("{{REPO_ID}}", "runs", split="test")
   its run family, the model it billed, its primary judge (`judge`) and every
   judge with verdicts for it (`judges`). `in_paper` marks the configurations
   a published number reads (a claim's key in `claims.json`), and
-  `paper_tables` names their tables and claim groups. The final comparison is eight
+  `paper_tables` names the claim groups that read them. The final comparison is eight
   configurations: `quickreview-default-g61`, `quickreview-low-g61`,
   `pireview-panel-high-g61`, `ocr-high-g61`, `codex-high-g61`,
   `opencode-native-pr-g61`, `pragent-g61` and `claude-code-opus55` (the other

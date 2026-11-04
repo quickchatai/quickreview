@@ -66,10 +66,11 @@
 //      QuickReview's style carries a third-party tool's name;
 //  24. every Martian scoring dir's `runs.judges` states its judge's settings
 //      from its own record;
-//  25. `arms.paper_tables`, `arms.in_paper` and `runs.claims` follow the claims
-//      manifest's q keys (a level word is never an arm), the archive's
-//      RUNS-INDEX.json holds the runs table's rows, and a Qodo verdict ships
-//      only beside its review;
+//  25. `arms.paper_tables`, `arms.in_paper` and `runs.claims` are exactly the
+//      claim groups the claims manifest's q keys derive (no hand-written
+//      label; a level word is never an arm), the archive's RUNS-INDEX.json
+//      holds the runs table's rows and describes each group it carries from
+//      the manifest's `groups`, and a Qodo verdict ships only beside its review;
 //  26. the export's load check reads the folder it wrote, through a cache of
 //      its own (load_counts), never an earlier export's.
 
@@ -715,7 +716,9 @@ describe("release_catalogue and export_runs: what ships", () => {
     expect(r["elo/plan-a/packs/u1.txt"]).toMatch(/^regenerable: Elo packs/);
   });
 
-  it("indexes every shipped unit with its run.json facts, and lists withheld families", () => {
+  // MUTATION: in release_catalogue.index_rows, read the family's own `claims` labels again — this fails
+  //           (the catalogue's hand-written "c:one" comes back; claim groups come from claims.json alone)
+  it("indexes every shipped unit with its run.json facts and no catalogue claim label, and lists withheld families", () => {
     const r = pyModule(
       "release_catalogue",
       "c = h.Catalogue.load(sys.argv[1])\n" +
@@ -734,7 +737,7 @@ describe("release_catalogue and export_runs: what ships", () => {
       true,
       "same",
       false,
-      ["c:one"],
+      [],
       ["runs", "reviews"],
     ]);
     expect(r).toContainEqual(["elo", "elo", null, null, null, null, null, [], []]);
@@ -2068,6 +2071,8 @@ describe("hf_export: what a re-judge needs", () => {
   // MUTATION: in sync_run_index, write "judges" alone (drop "claims" from RUN_INDEX_DERIVED) — this fails
   // MUTATION: in sync_run_index, match a row by its unit name instead of its path — this fails (two units share one)
   // MUTATION: make run_index_problems compare only the row sets — this fails
+  // MUTATION: in sync_run_index, leave the top-level claims as export_runs wrote them (drop the claims_described line) — this fails
+  // MUTATION: in run_index_problems, skip the top-level claims comparison — this fails
   it("writes the runs table's derived fields into RUNS-INDEX.json, row by path, and checks every field", () => {
     const idx = join(tmp, "run-index", "RUNS-INDEX.json");
     const unit = (path: string, claims: string[], judges: string | null = null) => ({
@@ -2093,27 +2098,106 @@ describe("hf_export: what a re-judge needs", () => {
     );
     const r = py(
       "runs = json.loads(sys.argv[2])\n" +
-        "before = h.run_index_problems(json.load(open(sys.argv[1])), runs)\n" +
-        "h.sync_run_index(sys.argv[1], runs)\n" +
+        "groups = {'g:m': {'what': 'the m table'}, 'g:a': {'what': 'the a figure'}, 'do:a': {'what': 'a doc'}, 'g:z': {}}\n" +
+        "before = h.run_index_problems(json.load(open(sys.argv[1])), runs, groups)\n" +
+        "h.sync_run_index(sys.argv[1], runs, groups)\n" +
         "doc = json.load(open(sys.argv[1]))\n" +
-        "after = h.run_index_problems(doc, runs)\n" +
-        "runs[1]['set'] = 't'; runs.append({'unit': 'r2', 'path': 'runs/r2'})\n" +
-        "print(json.dumps({'before': before, 'after': after, 'other': h.run_index_problems(doc, runs),\n" +
-        "  'claims': [u['claims'] for u in doc['units']], 'keys': list(doc)}))",
+        "after = h.run_index_problems(doc, runs, groups)\n" +
+        "described = dict(doc['claims'])\n" +
+        "doc['claims']['g:old'] = 'x'; doc['claims']['g:a'] = 'stale'\n" +
+        "stale = h.run_index_problems(doc, runs, groups)\n" +
+        "runs[1]['set'] = 't'; runs[1]['claims'] = ['g:z']; runs.append({'unit': 'r2', 'path': 'runs/r2'})\n" +
+        "print(json.dumps({'before': before, 'after': after, 'stale': stale, 'other': h.run_index_problems(doc, runs, groups),\n" +
+        "  'claims': [u['claims'] for u in doc['units']], 'keys': list(doc), 'described': described}))",
       idx,
       JSON.stringify([
-        unit("runs/w.martian", ["old", "g:m"], "fam. This scoring dir: m"),
+        unit("runs/w.martian", ["g:m"], "fam. This scoring dir: m"),
         unit("x", ["g:a"]),
         unit("open-models/x", ["do:a"]),
       ]),
     );
     expect(r).toEqual({
-      before: ["runs/w.martian: claims", "runs/w.martian: judges", "x: claims"],
+      before: [
+        "runs/w.martian: claims",
+        "runs/w.martian: judges",
+        "x: claims",
+        "claims: do:a not described",
+        "claims: g:a not described",
+        "claims: g:m not described",
+      ],
       after: [],
-      other: ["runs/r2: only in runs", "x: set"],
-      claims: [["old", "g:m"], ["g:a"], ["do:a"]],
+      stale: [
+        "claims: g:old described, carried by no unit",
+        "claims: g:a is not the manifest's description",
+      ],
+      other: [
+        "runs/r2: only in runs",
+        "x: claims",
+        "x: set",
+        "claims: g:z not described",
+        "claims: g:a described, carried by no unit",
+        "claims: g:old described, carried by no unit",
+        "claims: g:z has no description in the manifest's groups",
+      ],
+      claims: [["g:m"], ["g:a"], ["do:a"]],
       keys: ["note", "units", "withheld", "claims"],
+      described: { "do:a": "a doc", "g:a": "the a figure", "g:m": "the m table" },
     });
+  });
+
+  // MUTATION: in link_claims, keep a row's earlier labels beside the derived groups — this fails
+  // MUTATION: in claim_link_problems, report only the groups a row lacks (drop the "(no claim reads it)" direction) — this fails
+  // MUTATION: in claim_link_problems, drop the in_paper comparison — this fails
+  it("gives arms and runs the claim groups their q keys derive and nothing else, and checks both ways", () => {
+    const manifest = join(tmp, "derived-only", "claims.json");
+    put(
+      manifest,
+      JSON.stringify({
+        claims: [
+          { group: "g:aacr", q: "aacr:qr-a:found" },
+          { group: "g:m", q: "martian:m1|quickreview-frozen:core_tp" },
+        ],
+      }),
+    );
+    const r = py(
+      "import types\n" +
+        "h.CLAIMS_MANIFEST = sys.argv[1]\n" +
+        "arms = [{'arm_id': 'qr-a', 'runs': ['r1'], 'paper_tables': ['benchmark: tab:final'], 'in_paper': True},\n" +
+        "        {'arm_id': 'dev', 'runs': ['d1'], 'paper_tables': ['quickreview: an anecdote'], 'in_paper': True}]\n" +
+        "runs = [{'unit': u, 'claims': c} for u, c in (('r1', ['g:aacr', 'bench:fig:policy']), ('d1', ['qr:anecdote']), ('m1', []), ('m1.martian', []))]\n" +
+        "t = {'arms': arms, 'runs': runs, 'martian_scores': [{'work_dir': 'm1'}]}\n" +
+        "claims = json.load(open(sys.argv[1]))['claims']\n" +
+        "before = h.claim_link_problems(t, claims)\n" +
+        "h.Exporter.link_claims(types.SimpleNamespace(tables=t))\n" +
+        "print(json.dumps({'before': before, 'after': h.claim_link_problems(t, claims),\n" +
+        "  'arms': [(a['arm_id'], a['paper_tables'], a['in_paper']) for a in arms], 'runs': [(x['unit'], x['claims']) for x in runs]}))",
+      manifest,
+    ) as Record<string, unknown>;
+    expect(r.before).toEqual({
+      arms: [
+        "dev: in_paper",
+        "dev: quickreview: an anecdote (no claim reads it)",
+        "qr-a: benchmark: tab:final (no claim reads it)",
+        "qr-a: g:aacr",
+      ],
+      runs: [
+        "d1: qr:anecdote (no claim reads it)",
+        "m1.martian: g:m",
+        "m1: g:m",
+        "r1: bench:fig:policy (no claim reads it)",
+      ],
+    });
+    expect(r.after).toEqual({ arms: [], runs: [] });
+    expect(r.arms).toEqual([
+      ["qr-a", ["g:aacr"], true],
+      ["dev", [], false],
+    ]);
+    expect(r.runs).toEqual([
+      ["r1", ["g:aacr"]],
+      ["d1", []],
+      ["m1", ["g:m"]],
+      ["m1.martian", ["g:m"]],
+    ]);
   });
 
   // MUTATION: drop the VERDICTS_NEED filter from release_catalogue.Catalogue.hf_tables — this fails

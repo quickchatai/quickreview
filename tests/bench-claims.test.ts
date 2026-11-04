@@ -103,6 +103,37 @@ describe("the claims manifest against the published text", () => {
     expect(readme.filter((c) => !c.q)).toEqual([]);
   });
 
+  // MUTATION: drop the undeclared-group check from verify_claims.py's lint (the `groups` loop) — this fails
+  // MUTATION: remove "bench-readme" from claims.json's `groups` — this fails (the lint test above too)
+  it("declares and describes every claim group the claims name, and fails one it does not", () => {
+    const used = [
+      ...new Set(MANIFEST.claims.map((c) => (c as { group?: string }).group).filter(Boolean)),
+    ];
+    const groups = MANIFEST["groups"] as Record<string, { what?: string }>;
+    expect(used.filter((g) => !groups[g!]?.what)).toEqual([]);
+    const t = readmeTree("groups", readFileSync(join(ROOT, "README.md"), "utf8"));
+    const m = JSON.parse(readFileSync(t.manifest, "utf8")) as Manifest;
+    const g = (m.claims[0] as { group?: string }).group!;
+    const plant = (name: string, f: (gs: Record<string, { what?: string }>) => void): string => {
+      const gs = JSON.parse(JSON.stringify(m["groups"])) as Record<string, { what?: string }>;
+      f(gs);
+      const path = join(t.repo, `${name}.json`);
+      writeFileSync(path, JSON.stringify({ ...m, groups: gs }));
+      const r = run(["--lint", "--repo", t.repo, "--manifest", path]);
+      return `${r.code} ${r.out
+        .split("\n")
+        .filter((l) => l.startsWith("MANIFEST:"))
+        .join("|")}`;
+    };
+    expect(plant("ok", () => {})).toBe("0 ");
+    expect(plant("undeclared", (gs) => delete gs[g])).toBe(
+      `1 MANIFEST: group '${g}': claims name it and \`groups\` does not declare it`,
+    );
+    expect(plant("undescribed", (gs) => delete gs[g]!.what)).toBe(
+      `1 MANIFEST: group '${g}': no \`what\` in \`groups\` (the description RUNS-INDEX.json prints)`,
+    );
+  });
+
   it("fails a README with one more benchmark number than the manifest lists", () => {
     const real = readFileSync(join(ROOT, "README.md"), "utf8");
     const ok = readmeTree("readme-ok", real);

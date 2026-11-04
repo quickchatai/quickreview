@@ -1260,10 +1260,10 @@ def write_index(out: Path, proc: Processor, a):
     if proc.om:
         roots.update({"om-runs": str(proc.om / "runs"), "om-top": str(proc.om)})
     rows = RC.index_rows(proc.cat, roots, remap, lambda fid: vols.get(fid, []), evidence=evidence)
-    claim_ids = {c for r in rows for c in r["claims"]}
     doc = {"note": "One row per shipped unit (a run dir, a scoring dir, or a top-level tree) of the QuickReview "
                    "benchmark runs: its run family, what the family was for, the model it billed, its judges, the "
-                   "public claims it backs, its build commit (`qcr_commit`: the public main commit the "
+                   "claim groups whose recompute keys in bench/aacr/claims.json read it (`claims`; the top-level "
+                   "`claims` describes each group), its build commit (`qcr_commit`: the public main commit the "
                    "recorded one became after the repository's history rewrite, `qcr_commit_on_public_main` true, "
                    "and `qcr_commit_match` how it was matched: `same` by the rewrite's commit maps, `ancestor` "
                    "the nearest kept ancestor of a commit the rewrite dropped because it changed only unpublished "
@@ -1274,7 +1274,10 @@ def write_index(out: Path, proc: Processor, a):
                    "not committed, not necessarily the commit itself; a unit that recorded no commit has all four "
                    "fields null) and the archive volume(s) holding it. `withheld` lists every family left out "
                    "and why.",
-           "units": rows, "withheld": RC.withheld_rows(proc.cat), "claims": RC.claims_index(proc.cat, claim_ids)}
+           "units": rows, "withheld": RC.withheld_rows(proc.cat),
+           # filled by hf_export.py --archive from the claims manifest (sync_run_index), with each unit's
+           # claims and its Martian judge settings
+           "claims": {}}
     (out / "RUNS-INDEX.json").write_text(json.dumps(scrub_json(doc), indent=1, ensure_ascii=False) + "\n")
     print(f"wrote {out / 'RUNS-INDEX.json'}: {len(rows)} units")
 
@@ -1346,7 +1349,7 @@ logs are not here: each JSONL one ships as a numbers-only extract (see
 {nfiles:,} files in {len(rows)} volumes, one per run family, {total / (1 << 20):.0f} MiB compressed.
 
 `RUNS-INDEX.json` is the run index: one row per run directory with its family,
-what it was for, the model it billed, its judges, the public claims it backs,
+what it was for, the model it billed, its judges, the claim groups that read it,
 its build commit (on public main where the history rewrite maps it) and its
 volume.
 

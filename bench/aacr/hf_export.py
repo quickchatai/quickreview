@@ -32,8 +32,9 @@ What it writes (no model call, nothing uploaded; the run dirs are only read):
 
 With --archive (the run archive folder, after `export_runs.py readme` wrote it) it
 also writes the runs table's derived fields (each Martian scoring dir's judge
-settings, the claim groups) into that folder's RUNS-INDEX.json, which the
-validation then checks row for row against the runs table.
+settings, the claim groups) into that folder's RUNS-INDEX.json, with a description
+of each claim group from bench/aacr/claims.json's `groups`, which the validation
+then checks row for row against the runs table.
 
 Third-party text: AACR reference comments (Apache-2.0), Martian golden
 comments (MIT) and Qodo's issues (MIT) are copied; vendor bot comments (the
@@ -418,41 +419,37 @@ def aacr_arms() -> list[dict]:
     """Every AACR arm, in the order the card lists them."""
     arms: dict[str, dict] = {}
 
-    def add(aid, name, runs, study, tables, scope="all185", **kw):
+    def add(aid, name, runs, study, scope="all185", **kw):
+        # no paper labels here: `paper_tables` and `in_paper` come from the claims manifest alone (link_claims)
         if aid in arms:
             arms[aid]["studies"].append(study)
-            arms[aid]["paper_tables"] += [t for t in tables if t not in arms[aid]["paper_tables"]]
             if arms[aid]["runs"] != runs:
                 raise SystemExit(f"arm {aid}: two run lists")
             return
         arms[aid] = {"arm_id": aid, "benchmark": "aacr", "display_name": name, "runs": runs,
-                     "studies": [study], "paper_tables": list(tables), "scope": scope,
+                     "studies": [study], "paper_tables": [], "scope": scope,
                      "link_only": kw.get("link_only", False), "note": kw.get("note", ""),
                      "judges": list(kw.get("judges", PAPER_JUDGES))}
 
     add("quickreview-frozen", "QuickReview frozen build (e32f0cf, gpt-6.1-sol)", _sets("final1"),
-        "frozen build", ["benchmark: tab:finalbuild", "quickreview: The frozen build"])
+        "frozen build")
     for name, runs in read_arms_file(os.path.join(HERE, "final", "arms.txt")):
-        add(FINAL_IDS[name], name, runs, "final comparison (best-shot, gpt-6.1-sol)",
-            ["benchmark: tab:final, tab:ci, tab:grades, tab:lang, tab:aacr, tab:costfinal, tab:selection"])
+        add(FINAL_IDS[name], name, runs, "final comparison (best-shot, gpt-6.1-sol)")
     for name, runs in read_arms_file(os.path.join(HERE, "final", "arms-gpt6sol.txt")):
-        add(SOL_IDS[name], name, runs,
-            "earlier study (as shipped, gpt-6-sol; two judges)",
-            ["benchmark: tab:sol-summary, tab:ci-sol, tab:grades-sol, tab:persets, tab:persets2"])
+        add(SOL_IDS[name], name, runs, "earlier study (as shipped, gpt-6-sol; two judges)")
     add("quickreview-default-sol-rerun", "QuickReview default, gpt-6-sol, current build (9106a64)", _sets("v2-default"),
-        "stability: full reproduction", ["benchmark: tab:sol-summary", "quickreview: tab:bm185, tab:stab"])
+        "stability: full reproduction")
     add("quickreview-luna", "QuickReview default on gpt-6-luna", _sets("all-luna"),
-        "base models", ["quickreview: tab:bm185, tab:bm40"])
+        "base models")
     add("quickreview-opus55", "QuickReview default on Claude Opus 5.5 (40 PRs)", _sets("opus", SETS[:4]),
-        "base models", ["quickreview: tab:bm40, tab:bmsplit"], scope="runs")
+        "base models", scope="runs")
     add("quickreview-max-g61", "QuickReview max preset, gpt-6.1-sol (smoke10 only)", ["g61max-smoke-smoke10"],
-        "base models", ["quickreview: max preset anecdote"], scope="runs")
+        "base models", scope="runs")
     for k in range(1, 5):
         add(f"quickreview-stab-r{k}", f"QuickReview default, gpt-6-sol, stability run {k}",
-            [f"stab-r{k}-{s}" for s in ("dev10", "fresh10", "rest145")], "stability: repeat runs",
-            ["benchmark: tab:stab-sol", "quickreview: tab:stab"], scope="runs")
+            [f"stab-r{k}-{s}" for s in ("dev10", "fresh10", "rest145")], "stability: repeat runs", scope="runs")
     add("copilot-2025-upstream", "Copilot 2025 (upstream, harvested)", _sets("upstream-copilot2025"),
-        "upstream Copilot reviews (not a controlled arm)", ["benchmark: tab:copilot2025"], scope="runs",
+        "upstream Copilot reviews (not a controlled arm)", scope="runs",
         link_only=True, note="Vendor bot comments: text not redistributed; each review row links the original review.")
     fair = [
         ("pireview-high-sol-s40", "pi-review high (S40)", "fair-pireview-high-rest145"),
@@ -468,11 +465,9 @@ def aacr_arms() -> list[dict]:
         ("pragent-g61-s40", "PR-Agent on gpt-6.1-sol (S40)", "fair-pragent-g61-rest145"),
     ]
     for aid, name, run in fair:
-        add(aid, name, [run], "best-shot selection on S40 (gpt-6-sol unless named)",
-            ["benchmark: tab:bestshot, tab:transfer"], scope="runs")
+        add(aid, name, [run], "best-shot selection on S40 (gpt-6-sol unless named)", scope="runs")
     for name, runs in read_arms_file(os.path.join(HERE, "final", "arms-open-models.txt")):
-        add(OPEN_IDS[name], name, runs, "other models (open-weight, DigitalOcean)", ["README: Other models"],
-            judges=(OPEN_JUDGE,))
+        add(OPEN_IDS[name], name, runs, "other models (open-weight, DigitalOcean)", judges=(OPEN_JUDGE,))
     return list(arms.values())
 
 
@@ -685,16 +680,20 @@ def claim_links(claims: list[dict], arms: list[dict], runs: list[dict], martian_
 
 
 def claim_link_problems(t: dict[str, list[dict]], claims: list[dict]) -> dict[str, list[str]]:
-    """The tables against the manifest's q keys: `arms`, every arm a claim reads that is not
-    `in_paper` or does not list the claim's group in `paper_tables`; `runs`, every run index unit a
-    claim reads whose `claims` lacks the group."""
+    """The tables against the manifest's q keys, both ways: `arms`, every arm whose `paper_tables` is not
+    exactly the groups of the claims that read it (a group missing, or a label no claim reads it under)
+    or whose `in_paper` is not whether any claim reads it; `runs`, every run index unit whose `claims` is
+    not exactly the groups of the claims that read it."""
     martian = {s["work_dir"] for s in t.get("martian_scores") or [] if s.get("work_dir")}
     by_arm, by_unit = claim_links(claims, t["arms"], t["runs"], martian)
-    arms = {a["arm_id"]: a for a in t["arms"]}
-    runs = {r["unit"]: r for r in t["runs"]}
-    return {"arms": sorted(f"{a}: {g}" for a, gs in by_arm.items() for g in gs
-                           if not arms[a]["in_paper"] or g not in (arms[a]["paper_tables"] or [])),
-            "runs": sorted(f"{u}: {g}" for u, gs in by_unit.items() for g in gs if g not in (runs[u]["claims"] or []))}
+
+    def diff(name, have, want):
+        have, want = set(have or []), set(want)
+        return [f"{name}: {g}" for g in sorted(want - have)] + [f"{name}: {g} (no claim reads it)" for g in sorted(have - want)]
+    arms = [x for a in t["arms"] for x in diff(a["arm_id"], a["paper_tables"], by_arm.get(a["arm_id"], ()))
+            + ([f"{a['arm_id']}: in_paper"] if bool(a["in_paper"]) != bool(by_arm.get(a["arm_id"])) else [])]
+    runs = [x for r in t["runs"] for x in diff(r["unit"], r["claims"], by_unit.get(r["unit"], ()))]
+    return {"arms": sorted(arms), "runs": sorted(runs)}
 
 
 def claim_groups(t: dict[str, list[dict]], claims: list[dict]) -> dict[str, dict]:
@@ -711,13 +710,21 @@ def claim_groups(t: dict[str, list[dict]], claims: list[dict]) -> dict[str, dict
 
 
 # the run index fields this export derives (build_runs: a Martian scoring dir's judge settings;
-# link_claims: the claim groups), which export_runs.py's RUNS-INDEX.json takes from the catalogue alone
+# link_claims: the claim groups), which export_runs.py's RUNS-INDEX.json does not hold (it writes the
+# catalogue's family judges and no claims)
 RUN_INDEX_DERIVED = ("judges", "claims")
 
 
-def sync_run_index(path: str, runs: list[dict]) -> None:
+def claims_described(runs: list[dict], groups: dict) -> dict[str, str | None]:
+    """RUNS-INDEX.json's top-level `claims`: every claim group a run carries, with the manifest's
+    description of it (`groups.<id>.what`; None for a group the manifest does not declare)."""
+    return {g: (groups.get(g) or {}).get("what") for g in sorted({g for r in runs for g in r.get("claims") or []})}
+
+
+def sync_run_index(path: str, runs: list[dict], groups: dict) -> None:
     """Write the runs table's derived fields into the archive's RUNS-INDEX.json units, so the index
-    holds the same rows as the table (run_index_problems checks every field). A row is its `path`: two
+    holds the same rows as the table (run_index_problems checks every field), and describe each claim
+    group the units carry from the manifest's `groups` (claims_described). A row is its `path`: two
     units can share a name (`ext-images` and `open-models/ext-images`)."""
     with open(path) as f:
         doc = json.load(f)
@@ -725,13 +732,16 @@ def sync_run_index(path: str, runs: list[dict]) -> None:
     for u in doc["units"]:
         if u["path"] in by:
             u.update({k: by[u["path"]][k] for k in RUN_INDEX_DERIVED})
+    doc["claims"] = claims_described(runs, groups)
     with open(path, "w") as f:
         f.write(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
 
 
-def run_index_problems(index: dict, runs: list[dict]) -> list[str]:
+def run_index_problems(index: dict, runs: list[dict], groups: dict) -> list[str]:
     """The archive's RUNS-INDEX.json units against the runs table, row by `path`: a row on one side only,
-    a path on two rows, or a field whose value differs."""
+    a path on two rows, or a field whose value differs; and its top-level `claims` against the groups
+    the rows carry: a group carried and not described, described and not carried, or with no
+    description in the manifest."""
     rows, idx = list(runs), list(index.get("units") or [])
     by = {r["path"]: r for r in rows}
     units = {u["path"]: u for u in idx}
@@ -741,6 +751,11 @@ def run_index_problems(index: dict, runs: list[dict]) -> list[str]:
     out += [f"{u}: only in runs" for u in sorted(set(by) - set(units))]
     for u in sorted(set(units) & set(by)):
         out += [f"{u}: {k}" for k in sorted(set(units[u]) | set(by[u])) if units[u].get(k) != by[u].get(k)]
+    want, have = claims_described(rows, groups), index.get("claims") or {}
+    out += [f"claims: {g} not described" for g in sorted(set(want) - set(have))]
+    out += [f"claims: {g} described, carried by no unit" for g in sorted(set(have) - set(want))]
+    out += [f"claims: {g} has no description in the manifest's groups" for g, w in want.items() if not w]
+    out += [f"claims: {g} is not the manifest's description" for g in sorted(set(want) & set(have)) if have[g] != want[g]]
     return out
 
 
@@ -1480,17 +1495,17 @@ class Exporter:
 
     # --- the claims each arm and run backs, from the manifest's q keys ------------
     def link_claims(self):
-        """`arms.paper_tables` and `runs.claims` gain every claim group whose q keys read the arm or the
-        run (claim_links; the hand-written labels stay), and `arms.in_paper` is true for any arm a
-        claim reads."""
+        """`arms.paper_tables` and `runs.claims` are the claim groups whose q keys read the arm or the
+        run (claim_links), and nothing else: no hand-written label is a source. `arms.in_paper` is true
+        for any arm a claim reads."""
         claims = json.load(open(CLAIMS_MANIFEST))["claims"]
         martian = {s["work_dir"] for s in self.tables.get("martian_scores") or [] if s.get("work_dir")}
         by_arm, by_unit = claim_links(claims, self.tables["arms"], self.tables.get("runs") or [], martian)
         for a in self.tables["arms"]:
-            a["paper_tables"] = list(a["paper_tables"]) + sorted(by_arm.get(a["arm_id"], set()) - set(a["paper_tables"]))
+            a["paper_tables"] = sorted(by_arm.get(a["arm_id"], set()))
             a["in_paper"] = bool(a["paper_tables"])
         for r in self.tables.get("runs") or []:
-            r["claims"] = list(r["claims"]) + sorted(by_unit.get(r["unit"], set()) - set(r["claims"]))
+            r["claims"] = sorted(by_unit.get(r["unit"], set()))
 
     # --- every table holds only the families the catalogue gives it --------------
     def filter_by_family(self):
@@ -2063,9 +2078,11 @@ def rejudge_column_checks(t: dict[str, list[dict]]) -> list[dict]:
     if t.get("arms") and t.get("runs"):
         links = claim_link_problems(t, json.load(open(CLAIMS_MANIFEST))["claims"])
         # MUTATION: drop ex.link_claims() from main — both fail
-        check("arms: every arm a claim's q key reads is in_paper and lists the claim's group in paper_tables",
-              links["arms"][:20], [])
-        check("runs: every run a claim's q key reads lists the claim's group in claims", links["runs"][:20], [])
+        # MUTATION: in link_claims, keep a row's earlier labels beside the derived groups — both fail
+        check("arms: every arm's paper_tables is exactly the groups of the claims whose q keys read it, and it is "
+              "in_paper exactly when one does", links["arms"][:20], [])
+        check("runs: every run's claims is exactly the groups of the claims whose q keys read it",
+              links["runs"][:20], [])
     have = {(r["work_dir"], r["tool"]) for r in t["qodo_reviews"]}
     # MUTATION: drop the VERDICTS_NEED filter from release_catalogue.Catalogue.hf_tables — this fails
     check("qodo_verdicts: every (work_dir, tool) has its reviews",
@@ -2570,10 +2587,12 @@ def main():
         checks += figure_checks(out)
     if a.archive:
         idx = os.path.join(os.path.abspath(os.path.expanduser(a.archive)), "RUNS-INDEX.json")
-        sync_run_index(idx, tables["runs"])
-        bad = run_index_problems(json.load(open(idx)), tables["runs"])
-        # MUTATION: drop the sync_run_index call — this fails (the index keeps the catalogue's claims and judges)
-        checks.append({"check": "archive RUNS-INDEX.json: every unit equals its runs row, field for field",
+        groups = json.load(open(CLAIMS_MANIFEST))["groups"]
+        sync_run_index(idx, tables["runs"], groups)
+        bad = run_index_problems(json.load(open(idx)), tables["runs"], groups)
+        # MUTATION: drop the sync_run_index call — this fails (the index keeps no claims and the catalogue's judges)
+        checks.append({"check": "archive RUNS-INDEX.json: every unit equals its runs row, field for field, and its "
+                                "claims describe exactly the groups the units carry",
                        "got": bad[:20], "want": [], "ok": not bad})
     NT.write_licences(out)
     open(os.path.join(out, "NOTICE"), "w").write(dataset_notice())

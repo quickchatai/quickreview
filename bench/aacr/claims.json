@@ -692,6 +692,7 @@
  },
  "groups": {
   "bench:bestshot": {
+   "what": "benchmark.tex tab:bestshot, tab:transfer, fig:configsens, sec:selection (best-shot configuration search on the 40-PR selection set)",
    "families": [
     "aacr-bestshot-search",
     "aacr-final-comparison-g61"
@@ -702,6 +703,7 @@
    ]
   },
   "bench:final-tables": {
+   "what": "benchmark.tex tab:final, tab:ci, tab:grades, tab:lang, tab:aacr, tab:costfinal, tab:selection, tab:persetsfinal, fig:sev, fig:twoscores, fig:cost, fig:halves (the eight-reviewer comparison on gpt-6.1-sol)",
    "families": [
     "aacr-claude-code-opus55",
     "aacr-final-comparison-g61",
@@ -714,6 +716,7 @@
    ]
   },
   "bench:sol-study": {
+   "what": "benchmark.tex tab:sol-summary, tab:primary-sol, tab:second-sol, tab:ci-sol, tab:grades-sol, tab:persets, tab:persets2, tab:labels-sol, tab:aacrclean-sol, tab:halves-sol, tab:indep-sol, fig:indep-sol (the earlier gpt-6-sol study, two judges)",
    "families": [
     "aacr-claude-code-opus55",
     "aacr-gpt6sol-study",
@@ -726,6 +729,7 @@
    ]
   },
   "bench:tab:copilot2025": {
+   "what": "benchmark.tex tab:copilot2025 (harvested upstream GitHub Copilot reviews)",
    "families": [
     "aacr-upstream-copilot"
    ],
@@ -734,6 +738,7 @@
    ]
   },
   "bench:tab:finalbuild": {
+   "what": "benchmark.tex tab:finalbuild and sec:finalbuild prose (frozen build on 185 PRs, CIs)",
    "families": [
     "aacr-frozen-build"
    ],
@@ -742,6 +747,7 @@
    ]
   },
   "bench:tab:martianfinal": {
+   "what": "benchmark.tex tab:martianfinal, fig:martianlb, 'The frozen build' and 'The same third-party harnesses' paragraphs, the Martian audit tables/figures (tab:martianaudit, tab:martianext, tab:martiansens, tab:martianpending, tab:martiantiers, fig:martianrvt, fig:martianstrength, fig:martianblock)",
    "families": [
     "analysis",
     "martian-final"
@@ -752,6 +758,7 @@
    ]
   },
   "bench:tab:martianraw": {
+   "what": "benchmark.tex tab:martianraw and the 'All 50 PRs' paragraph (default as posted, rounds 3 and 4, frozen posting policy, snappy; re-judged comparators)",
    "families": [
     "martian-judge-calibration",
     "martian-posting-variants",
@@ -764,6 +771,7 @@
    ]
   },
   "bench:tab:qodo": {
+   "what": "benchmark.tex tab:qodo and sec:qodo (frozen build, 2026-10-02 build, nine vendors re-judged, three third-party harnesses)",
    "families": [
     "qodo-final",
     "qodo-r6-and-vendors"
@@ -774,6 +782,7 @@
    ]
   },
   "bench:tab:stab-sol": {
+   "what": "benchmark.tex tab:stab-sol (stability repeats)",
    "families": [
     "aacr-stability-repeats"
    ],
@@ -782,6 +791,7 @@
    ]
   },
   "do:gemma-smoke": {
+   "what": "DIGITALOCEAN.md:37-42 Gemma 4 smoke 2026-10-13 19:57: 9 of 10 clean, one unparseable findings record",
    "families": [
     "openmodels-driver",
     "openmodels-smokes"
@@ -792,6 +802,7 @@
    ]
   },
   "do:glm-smoke": {
+   "what": "DIGITALOCEAN.md:132-146 GLM smoke 2026-10-13: 10/10 ok, $3.31, median ~28 min, slowest 54 min; and the 17:23 smoke whose six lenses failed",
    "families": [
     "openmodels-driver",
     "openmodels-smokes"
@@ -802,6 +813,7 @@
    ]
   },
   "do:speed": {
+   "what": "bench/aacr/docs/DIGITALOCEAN.md:45-56 'Why the open models take longer': minutes, output tokens, replies, generation speed and $/PR on the same 10 PRs for GPT-6.1 Sol (final1), GLM-5.3 Flash, DeepSeek V4.1 Flash, Gemma 4 31B",
    "families": [
     "aacr-frozen-build",
     "openmodels-driver",
@@ -816,6 +828,7 @@
    ]
   },
   "do:timeouts": {
+   "what": "DIGITALOCEAN.md:77-80 GLM-5.3 Flash takes 54-66 min on the largest AACR PRs; 5 of the first 10 PRs of the 2026-10-14 full run timed out at 75 min",
    "families": [
     "openmodels-driver",
     "openmodels-glm53-full"
@@ -826,6 +839,7 @@
    ]
   },
   "qr:app:tuning": {
+   "what": "quickreview.tex app:tuning prose numbers (prompt iterations 1-5: 49-54.5 of 97; max effort 24.5 of 34 on smoke10; levers 30.5 -> 45.5 of 67 and 20.5 -> 25.0 of 29; tests lens 27 / 26.5 of 29; code-quality lenses ~3 problems on 9 PRs) and tab:chron. NOT among the 391 table cells the 10-05 slim bundle verified",
    "families": [
     "aacr-dev-iterations",
     "aacr-dev-levers-presets"
@@ -836,6 +850,7 @@
    ]
   },
   "qr:basemodel": {
+   "what": "quickreview.tex tab:bmarms, tab:bm185, tab:bm40, tab:bmsplit (QuickReview default on gpt-6-sol current/original, gpt-6.1-sol, gpt-6-luna, Claude Opus 5.5)",
    "families": [
     "aacr-final-comparison-g61",
     "aacr-gpt6sol-study",
@@ -852,6 +867,7 @@
    ]
   },
   "qr:mechanism": {
+   "what": "quickreview.tex sec:cost mechanism numbers (pass counts, lens shares, cost split, per-lens attribution, validator dispositions; tab:dispositions, tab:lenscost) from the gpt-6-sol default run",
    "families": [
     "aacr-gpt6sol-study"
    ],
@@ -860,6 +876,7 @@
    ]
   },
   "qr:tab:final": {
+   "what": "quickreview.tex tab:final, tab:ci, tab:grades, tab:lenscost, tab:designs, tab:panel40 (build b2ce03a, the final comparison)",
    "families": [
     "aacr-claude-code-opus55",
     "aacr-final-comparison-g61"
@@ -870,6 +887,7 @@
    ]
   },
   "qr:tab:frozen": {
+   "what": "quickreview.tex sec:frozen / tab:frozen (frozen build e32f0cf on 185 PRs)",
    "families": [
     "aacr-frozen-build"
    ],
@@ -878,6 +896,7 @@
    ]
   },
   "qr:tab:stab": {
+   "what": "quickreview.tex tab:stab (stability)",
    "families": [
     "aacr-stability-repeats",
     "aacr-v2-default-rerun"
@@ -888,6 +907,7 @@
    ]
   },
   "readme:aacr": {
+   "what": "README.md, 'AACR-Bench, verified defects' paragraph and the full AACR-Bench table: the frozen build (461 of 520) against six third-party reviewers on 185 PRs",
    "families": [
     "aacr-claude-code-opus55",
     "aacr-final-comparison-g61",
@@ -902,6 +922,7 @@
    ]
   },
   "readme:aacr-ci": {
+   "what": "README.md paired-bootstrap lead (+8.3 [+1.9, +14.6] over the panel); benchmark.tex tab:ci and the finalbuild CIs; quickreview.tex tab:ci and tab:frozen CIs. Recomputed today only by analysis/external-benchmarks-2026-10-02/paper-data/final_tables.py inside the archive",
    "families": [
     "aacr-final-comparison-g61",
     "aacr-frozen-build",
@@ -914,6 +935,7 @@
    ]
   },
   "readme:elo": {
+   "what": "README.md 'Judged side by side': pairwise Elo of 8 configurations on the 20 hardest Martian PRs, 596 verdicts, judges agree 56%, Opus 1628 vs Claude Code high 1518, 29 of 40, Claude Code max 1666, about $4 / $20 per PR (numbers hard-coded in showcase/readme_charts.py:85-100)",
    "families": [
     "elo-pairwise",
     "ccvq-claude-code-high",
@@ -932,6 +954,7 @@
    ]
   },
   "readme:heldout-aacr": {
+   "what": "README.md 'Tuning and held-out PRs': frozen build 83% on the 20 held-out AACR PRs (holdout10 + fresh10) vs next best 72%",
    "families": [
     "aacr-frozen-build"
    ],
@@ -940,6 +963,7 @@
    ]
   },
   "readme:heldout-martian": {
+   "what": "README.md held-out Martian: 43 of 52 real goldens on test30 (computed only by the archive's ext-bench/audit_score.py)",
    "families": [
     "analysis",
     "martian-final"
@@ -950,6 +974,7 @@
    ]
   },
   "readme:heldout-qodo": {
+   "what": "README.md held-out Qodo: 31 PRs, 60.3% recall, F1 53.0 vs qodo-exhaustive 51.3 (computed only in the archive's analysis; no HF column marks the 31 PRs)",
    "families": [
     "analysis",
     "qodo-final"
@@ -960,6 +985,7 @@
    ]
   },
   "readme:martian": {
+   "what": "README.md Martian chart and table: 50 PRs, Core profile, gpt-6.1-sol judge; 75 of 86 audited real goldens",
    "families": [
     "analysis",
     "martian-final"
@@ -970,6 +996,7 @@
    ]
   },
   "readme:other-models": {
+   "what": "README.md 'Other models' table: frozen build GPT-6.1 Sol, DeepSeek V4.1 Flash 451.5 (87%) $0.74, GLM-5.3 Flash 435 (84%) $0.52, GPT-6 Luna 147, Claude Opus 5.5 119.5/126 on 40 PRs; plus 'on the same 40 PRs as Opus, the frozen build finds 33/28/44'",
    "families": [
     "aacr-frozen-build",
     "aacr-luna-basemodel",
@@ -992,6 +1019,7 @@
    ]
   },
   "readme:qodo": {
+   "what": "README.md Qodo PR-Review-Bench chart and table: 100 PRs, 580 injected issues",
    "families": [
     "qodo-final",
     "qodo-r6-and-vendors"
@@ -1002,6 +1030,7 @@
    ]
   },
   "readme:same-model": {
+   "what": "README.md 'Same model, two reviewers' chart: Opus 5.5 on 40 PRs (QuickReview vs Claude Code), GPT-6.1 Sol on 185 (frozen build vs Codex CLI high), GPT-6 Sol on 185 (QuickReview default vs Codex CLI as shipped)",
    "families": [
     "aacr-claude-code-opus55",
     "aacr-final-comparison-g61",
@@ -1018,34 +1047,42 @@
    ]
   },
   "card:judges": {
+   "what": "the dataset card's Judges section: each judge's role, the two defect judges' agreement and the Qodo double pass",
    "families": [],
    "archive": []
   },
   "card:key": {
+   "what": "the dataset card's answer-key numbers (185 PRs, 520 defects, 3,093 exclusions, 1,418 references) and the key's construction in benchmark.tex, METHODOLOGY.md and THREATS-TO-VALIDITY.md",
    "families": [],
    "archive": []
   },
   "card:martian": {
+   "what": "the dataset card's Martian section (50 PRs, the goldens and their audit)",
    "families": [],
    "archive": []
   },
   "card:qodo": {
+   "what": "the dataset card's Qodo PR-Review-Bench section (100 PRs, 580 issues)",
    "families": [],
    "archive": []
   },
   "do:projection": {
+   "what": "bench/aacr/docs/DIGITALOCEAN.md: the projected cost of a full run on the open models",
    "families": [],
    "archive": []
   },
   "do:sets": {
+   "what": "bench/aacr/docs/DIGITALOCEAN.md: the PR sets the open-model runs cover (185 PRs across smoke10, dev10, holdout10, fresh10 and rest145)",
    "families": [],
    "archive": []
   },
   "readme:cost": {
+   "what": "README.md: the frozen build's cost and time per PR on each benchmark at list prices",
    "families": [],
    "archive": []
   },
   "bench:tab:martiantiers": {
+   "what": "benchmark.tex tab:martiantiers and its paragraph (QuickReview on Martian by its own severity: the blind tune20 classification of extracted candidates)",
    "families": [
     "analysis",
     "martian-posting-variants",
@@ -1055,6 +1092,21 @@
     "quickreview-runs-analysis.tar.zst",
     "quickreview-runs-martian-posting-variants.tar.zst",
     "quickreview-runs-martian-tuning-rounds.tar.zst"
+   ]
+  },
+  "bench-readme": {
+   "what": "bench/aacr/README.md: the benchmark's scale and sets (185 runnable PRs, 520 defects, 1,418 AACR references, the set table), the final comparison's table and charts, run time and the spread of repeat runs",
+   "families": [
+    "aacr-claude-code-opus55",
+    "aacr-dev-iterations",
+    "aacr-final-comparison-g61",
+    "aacr-gpt6sol-study"
+   ],
+   "archive": [
+    "quickreview-runs-aacr-claude-code-opus55.tar.zst",
+    "quickreview-runs-aacr-dev-iterations.tar.zst",
+    "quickreview-runs-aacr-final-comparison-g61.tar.zst",
+    "quickreview-runs-aacr-gpt6sol-study.tar.zst"
    ]
   }
  },
