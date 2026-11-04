@@ -104,7 +104,8 @@ The claim ids in the second column are claim groups of the repository's
 `bench/aacr/claims.json`, which describes each one (`groups`). The `runs`
 config lists a group on each run directory its claims' recompute keys read
 (`runs.claims`); a group whose keys read only the answer key, a set, a
-published number or a script's output (the `do:*` groups) is on no run.
+published number or a script's output is on no run (`card:martian`,
+`do:speed`, `do:glm-smoke`, `do:gemma-smoke`, `do:timeouts`, `do:sets`).
 Volume names drop the `quickreview-runs-` prefix and the `.tar.zst` suffix.
 The scripts are in the QuickReview repository under `bench/aacr/`.
 
