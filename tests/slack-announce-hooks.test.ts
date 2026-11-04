@@ -386,12 +386,14 @@ describe("verdict hooks", () => {
     expect(slack.posts).toHaveLength(0);
     release();
     await w.idle();
+    const kind = (text: string): string =>
+      text.startsWith("♻️") ? "superseded" : text.startsWith("⏱") ? "overdue" : text;
     const texts = (root: string) =>
-      slack.posts.filter((p) => p.thread_ts === root).map((p) => p.text.slice(0, 2));
+      slack.posts.filter((p) => p.thread_ts === root).map((p) => kind(p.text));
     // #5263: round 1 superseded, then round 2 overdue — in the order they
     // were decided.
-    expect(texts("1699999999.0001")).toEqual(["♻️", "⏱"]);
-    expect(texts("1699999999.0002")).toEqual(["⏱"]);
+    expect(texts("1699999999.0001")).toEqual(["superseded", "overdue"]);
+    expect(texts("1699999999.0002")).toEqual(["overdue"]);
   });
 
   it("applies verdicts unchanged with no announcer, and survives a Slack outage", async () => {

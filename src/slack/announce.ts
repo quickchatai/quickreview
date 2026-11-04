@@ -227,6 +227,18 @@ export function scanNotPickedUp(
   }));
 }
 
+/**
+ * The announcement an open incident's alert was made with, from the stage the
+ * incident records: the round deadline and a malformed verdict open incidents
+ * of their own (verdicts.ts records them as `round_deadline` and
+ * `malformed_verdict`); every other stage is an exhausted recovery.
+ */
+export function incidentAnnouncementKind(stage: string): AnomalyAnnouncement["kind"] {
+  if (stage === "round_deadline") return "overdue";
+  if (stage === "malformed_verdict") return "malformed";
+  return "failed_loud";
+}
+
 export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   private heartbeatTimer: unknown = null;
   private lastConnections = 1;
@@ -800,16 +812,20 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * An AMBIGUOUS claim (claimed, no ts, not in flight here) is never
    * re-posted: Slack may have accepted it, and the no-duplicate rule is the
    * ledger's whole point. It is logged once per process instead.
+   *
+   * The re-post says what the original would have said: the incident's
+   * recorded stage names its cause (`incidentAnnouncementKind`).
    */
-  private async announceOwedIncidents(): Promise<void> {
+  private owedIncidentAlerts(): AnomalyAnnouncement[] {
     const { store, cfg } = this.deps;
     let open;
     try {
       open = store.openReviewFailures();
     } catch (err) {
       this.log("slack: open incidents unreadable — owed alerts not checked", err);
-      return;
+      return [];
     }
+    const owed: AnomalyAnnouncement[] = [];
     for (const failure of open) {
       if (failure.round_no === null) continue;
       const id = failure.incident_id;
@@ -823,18 +839,15 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
         }
         continue;
       }
-      try {
-        await this.anomaly({
-          pr: failure.pr,
-          round_no: failure.round_no,
-          kind: "failed_loud",
-          deadline_min: cfg.daemon.round_deadline_min,
-          incident_id: id,
-        });
-      } catch (err) {
-        this.log(`slack: owed alert for ${id} failed`, err);
-      }
+      owed.push({
+        pr: failure.pr,
+        round_no: failure.round_no,
+        kind: incidentAnnouncementKind(failure.stage),
+        deadline_min: cfg.daemon.round_deadline_min,
+        incident_id: id,
+      });
     }
+    return owed;
   }
 
   // ---- pinned heartbeat --------------------------------------------------
@@ -848,7 +861,14 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     if (!this.enabled) return undefined;
     const { store, cfg, slack } = this.deps;
     for (const owed of store.owedSlackReopenings()) await this.retryReopening(owed);
-    await this.announceOwedIncidents();
+    // Collected synchronously: a heartbeat with nothing owed adds no await.
+    for (const owed of this.owedIncidentAlerts()) {
+      try {
+        await this.anomaly(owed);
+      } catch (err) {
+        this.log(`slack: owed alert for ${owed.incident_id} failed`, err);
+      }
+    }
     const refreshedAt = this.now();
     // The banner names only a JUST-recovered incident; the incident message's
     // correction is owed until Slack accepts it, whatever the tick cadence —
