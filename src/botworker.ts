@@ -130,14 +130,14 @@ import { MAX_REPLY_CHARS, operatorMayPost } from "./operatormessage.js";
 import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import { newestSessionFile } from "./sessionjsonl.js";
-import { WORKER_EXIT_PROVIDER, isProviderTransient } from "./providerfailure.js";
+import { WORKER_EXIT_AUTH, WORKER_EXIT_PROVIDER, isProviderTransient } from "./providerfailure.js";
 
 export const EXIT = {
   ok: 0,
   failed: 1,
   usage: 2,
   handshake: 3,
-  auth: 4,
+  auth: WORKER_EXIT_AUTH,
   session: 5,
   aborted: 6,
   /** The turn was ended by a transient provider failure (the connection, a
@@ -159,6 +159,14 @@ export const EXIT = {
  * `[daemon] round_deadline_min` (75 by default). Provider-level retries stay
  * off, as there: they would hide quota and usage-limit errors from pi. An
  * operator's `retry` in the agent dir's settings.json still wins.
+ *
+ * A lens pass runs under the shorter per-pass deadline (`[engine]
+ * lens_pass_deadline_min`, 8 by default), which can end it while pi is still
+ * waiting out this policy. Its failure then names the provider error pi was
+ * retrying (packages/pi-plugin/src/engine/lens/deadline.ts
+ * `passTimeoutMessage`), so a required pass the outage kept from completing
+ * still reads as a transient provider failure (src/providerfailure.ts
+ * `isProviderTransientPassError`).
  */
 export const BOT_RETRY = {
   enabled: true,

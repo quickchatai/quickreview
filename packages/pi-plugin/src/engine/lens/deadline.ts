@@ -35,9 +35,42 @@ export function minutesText(ms: number): string {
   return Number.isInteger(min) ? String(min) : String(Number(min.toFixed(3)));
 }
 
-/** The failure text a pass that timed out twice returns in its slot. */
-export function passTimeoutMessage(agent: string, deadlineMs: number): string {
-  return `pass ${agent} timed out after ${minutesText(deadlineMs)} min (retried once)`;
+/** The failure text a pass that timed out twice returns in its slot. When
+ * the deadline ended it while pi was still retrying a provider error
+ * (`providerError`, the last one pi announced and never recovered from), the
+ * text names that error: a sustained provider outage outlasts the per-pass
+ * deadline, and the timeout alone would hide what the pass was waiting on. */
+export function passTimeoutMessage(
+  agent: string,
+  deadlineMs: number,
+  providerError?: string,
+): string {
+  const base = `pass ${agent} timed out after ${minutesText(deadlineMs)} min (retried once)`;
+  const error = providerError?.replace(/\s+/g, " ").trim().slice(0, 300);
+  return error ? `${base} while the provider was failing: ${error}` : base;
+}
+
+/**
+ * The provider error a session is retrying, read off pi's session events:
+ * `auto_retry_start` names the error pi is about to retry, and an
+ * `auto_retry_end` that succeeded clears it. Fed every event of every attempt
+ * of one pass, so the error survives the deadline's own retry.
+ */
+export class ProviderRetryWatch {
+  private error: string | undefined;
+
+  feed(event: unknown): void {
+    if (typeof event !== "object" || event === null) return;
+    const e = event as { type?: unknown; errorMessage?: unknown; success?: unknown };
+    if (e.type === "auto_retry_start" && typeof e.errorMessage === "string")
+      this.error = e.errorMessage;
+    else if (e.type === "auto_retry_end" && e.success === true) this.error = undefined;
+  }
+
+  /** The provider error still being retried, if any. */
+  last(): string | undefined {
+    return this.error;
+  }
 }
 
 /**

@@ -69,7 +69,7 @@ import {
   type CacheLease,
 } from "./cache-run.js";
 import { LensActivityTracker, type LensActivity } from "./activity.js";
-import { passTimeoutMessage, runUnderDeadline } from "./deadline.js";
+import { ProviderRetryWatch, passTimeoutMessage, runUnderDeadline } from "./deadline.js";
 import { leafCache } from "./leaf-cache.js";
 import type { AgentRegistry, LensAgent } from "./registry.js";
 import { localPermits, type Permit, type Permits } from "./permits.js";
@@ -615,6 +615,9 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         errorMessage,
         extra,
       );
+    // The provider error pi is retrying, across both attempts: a timeout
+    // while it retries names it (`passTimeoutMessage`).
+    const providerRetry = new ProviderRetryWatch();
     const tell = (): void => {
       if (request.onActivity === undefined) return;
       try {
@@ -673,6 +676,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         session = await config.host.makeSession(spec);
         sessionId = session.sessionId;
         unhear = session.subscribe((event) => {
+          providerRetry.feed(event);
           if (activity.feed(event)) tell();
         });
         if (config.live !== undefined) {
@@ -763,7 +767,10 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       return fail(`lens session failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     if (outcome === "timed_out")
-      return fail(passTimeoutMessage(agent.name, config.deadlineMs as number), { timedOut: true });
+      return fail(
+        passTimeoutMessage(agent.name, config.deadlineMs as number, providerRetry.last()),
+        { timedOut: true },
+      );
 
     const stopReason = outcome.stopReason;
     const errorMessage = outcome.failure ?? outcome.errorMessage;
