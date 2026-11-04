@@ -149,6 +149,24 @@ export const EXIT = {
   terminated: 143,
 } as const;
 
+/**
+ * pi's agent-level retry for the bot's own sessions (the round's and every
+ * lens pass's). pi's default (3 attempts, at most a minute apart) gives up
+ * inside two minutes, shorter than a provider's ordinary overload or
+ * rate-limit window, and the turn is then lost to a worker failure. This is
+ * the benchmark sandbox's patience (`BENCH_RETRY`): 5 s doubling to a 2-minute
+ * cap over 10 attempts, about 13 minutes per request, which stays well inside
+ * `[daemon] round_deadline_min` (75 by default). Provider-level retries stay
+ * off, as there: they would hide quota and usage-limit errors from pi. An
+ * operator's `retry` in the agent dir's settings.json still wins.
+ */
+export const BOT_RETRY = {
+  enabled: true,
+  maxRetries: 10,
+  baseDelayMs: 5_000,
+  maxAgentDelayMs: 120_000,
+} as const;
+
 /** The most rounds of `wakes.take` one worker serves: wakes that arrive while it
  * delivers are served too, but a flood cannot keep a round open for ever. */
 const MAX_WAKE_PASSES = 20;
@@ -479,7 +497,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
           ...credentialPaths(env, spec.env),
         ],
         credentials: auth.credentials,
-        settings: agentDirSettings(spec.agent_dir),
+        settings: { retry: BOT_RETRY, ...agentDirSettings(spec.agent_dir) },
       });
       // The lens cap is the daemon's, over every worker: a pass asks the broker.
       const permits = brokerPermits(client, (m) => log(`botworker: ${m}`));
