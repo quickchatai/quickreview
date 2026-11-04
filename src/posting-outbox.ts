@@ -32,6 +32,7 @@ import {
   postingReceiptPath,
   readPostingReceipt,
   roundPostingKey,
+  withheldApprovalPosted,
   type PostingReceipt,
 } from "./posting-receipt.js";
 
@@ -591,14 +592,10 @@ export class PostingOutbox {
       gh_review_id: review.id,
       gh_commit_id: review.commit_id,
       gh_state: state,
-      // An APPROVE that GitHub holds as a COMMENT was withheld for CI by the
-      // daemon's delivery: its CI pre-check saw CI not green and asked for the
-      // COMMENT, or guard 4 softened it on the gate (the session's own post
-      // refuses a red-CI approval before the gate, so only a daemon delivery
-      // posts it this way): the withheld-approval shape. Not in person mode,
-      // where every review is a COMMENT by rule.
+      // An APPROVE that GitHub holds as a COMMENT was withheld for CI on the
+      // gate (posting-receipt.ts `withheldApprovalPosted`).
       ...(deliveredBy ||
-      (j.intended_event === "APPROVE" && event === "COMMENT" && !this.deps.personMode)
+      withheldApprovalPosted(j.intended_event, event, this.deps.personMode === true)
         ? { delivered_by: "daemon_retry" as const }
         : {}),
       ...(this.deps.personMode ? { person_mode: true as const } : {}),
@@ -779,8 +776,8 @@ export class PostingOutbox {
       }
       if (matches.length === 1) {
         // `daemon_retry` either way: an APPROVE found as a COMMENT can only
-        // be an earlier attempt's withheld approval (the CI pre-check's, or
-        // the gate's softening) whose answer was lost.
+        // be an earlier attempt's withheld approval (guard 4's softening)
+        // whose answer was lost.
         if (this.confirm(path, j, matches[0]!, "daemon_retry"))
           d.ledger.settlePostingRetry(j.posting_key, "confirmed", null, iso());
         else exhaust("GitHub holds a contradictory review for this posting key");

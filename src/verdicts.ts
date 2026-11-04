@@ -110,6 +110,7 @@ import {
   readPostingReceipt,
   receiptMatchesVerdict,
   retrySoftenedApproval,
+  withheldApprovalPosted,
   type GuardedNoopReceipt,
   type PostingReceipt,
 } from "./posting-receipt.js";
@@ -1608,7 +1609,16 @@ export class VerdictWatcher {
             head_sha: expectedHead,
             intended_event: verifiedIntent?.intended_event ?? actualEvent,
             actual_event: actualEvent,
-            ...(verifiedIntent?.status === "deferred"
+            // A deferred receipt is the daemon's delivery; an APPROVE found as
+            // a COMMENT is a withheld approval, read as the outbox's own
+            // confirmation reads it, whichever delivery posted it.
+            ...(verifiedIntent &&
+            (verifiedIntent.status === "deferred" ||
+              withheldApprovalPosted(
+                verifiedIntent.intended_event,
+                actualEvent,
+                isPersonMode(this.deps.cfg.github),
+              ))
               ? { delivered_by: "daemon_retry" as const }
               : {}),
             status: "confirmed",

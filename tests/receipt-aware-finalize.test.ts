@@ -815,3 +815,85 @@ describe("an ordinary delivery whose window ran out", () => {
     expect(postings()).toBe(0);
   });
 });
+
+describe("an ordinary delivery of an approval withheld for CI", () => {
+  const key = roundPostingKey(PR, 5, HEAD);
+  const dir = () => join(root, "state", "posting-receipts");
+
+  // The outbox's ordinary delivery sent the APPROVE; guard 4 withheld it (CI
+  // not green) and GitHub holds the COMMENT, but the answer was lost: the
+  // receipt is still the `prepared` one recording APPROVE. The watcher finds
+  // the marker first and reads it as the outbox's confirmation would.
+  // MUTATION: drop the withheldApprovalPosted clause from the watcher's synthetic receipt — this fails (contradicted).
+  it("the marker found before the outbox confirms lands as a withheld approval, not a contradiction", async () => {
+    mkdirSync(dir(), { recursive: true });
+    const payload = { commit_id: HEAD, event: "APPROVE", body: `Ok\n\n${postingMarker(key)}` };
+    const sha = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    writeFileSync(
+      join(dir(), `pr-${PR}-round-5.outbox.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        repo: cfg.github.repo,
+        mode: "live",
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: "APPROVE",
+        payload,
+        payload_sha256: sha,
+        status: "pending",
+        attempts: 1,
+        created_at: "2026-01-15T08:52:57.000Z",
+        next_attempt_at: "2026-01-15T08:56:00.000Z",
+        attempted_at: "2026-01-15T08:53:00.000Z",
+      }),
+    );
+    writeFileSync(
+      join(dir(), `pr-${PR}-round-5.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        marker: postingMarker(key),
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: "APPROVE",
+        actual_event: "APPROVE",
+        status: "prepared",
+        payload_sha256: sha,
+        prepared_at: "2026-01-15T08:53:00.000Z",
+      }),
+    );
+    writeFileSync(
+      join(verdictDir, `pr-${PR}-round-5.json`),
+      JSON.stringify({
+        pr: PR,
+        round_no: 5,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        summary: "done",
+        passes: [{ name: "pass-baseline", tier: "sol-med", findings: 0 }],
+        finished_at: "2026-01-15T08:53:30Z",
+      }),
+    );
+    const github = new ReadingAdapter();
+    github.reviews = [
+      {
+        id: REVIEW_ID,
+        user: cfg.github.bot_login,
+        state: "COMMENTED",
+        body: `Ok\n\n${postingMarker(key)}`,
+        commit_id: HEAD,
+        submitted_at: "2026-01-15T08:53:01.000Z",
+      },
+    ];
+    const { watcher } = wire(true, github);
+    set("2026-01-15T08:54:00.000Z");
+    expect(await watcher.sweep()).toEqual([`pr-${PR}-round-5.json`]);
+    expect(round5()).toMatchObject({ status: "done", verdict: "APPROVE", posted_event: "COMMENT" });
+    expect(store.approvalWithheld(PR)?.head_sha).toBe(HEAD);
+    expect(store.openReviewFailure(PR)).toBeUndefined();
+    expect(count("posting_receipt_reconciled")).toBe(1);
+  });
+});
