@@ -428,6 +428,10 @@ export class OpenVikingSupervisor {
     if (health.reachable) this.lastError = undefined;
     this.notReadyPolls = this.health.reachable && !this.health.ready ? this.notReadyPolls + 1 : 0;
     this.checkLiveness(child, health);
+    // A liveness stop whose child exits at once has already run the exit
+    // path (cache cleared, respawn scheduled): this probe describes nothing
+    // tracked any more.
+    if (this.child !== child) return;
     this.proc = this.childPid !== undefined ? this.sampler.sample(this.childPid) : undefined;
     if (this.health.ready && !wasReady) {
       try {
