@@ -179,6 +179,17 @@ mid-round cannot leave the tree ahead of the prompt.
 `checkoutAt` (normal) and a full `ensureWorktree` (only when no prepare step
 ran).
 
+Every git command the manager runs that reaches the network — the clone, the
+round's fetch, the ref-lag fetch and the fetch on miss — is bounded
+(`networkGitExec`): a wall-clock timeout (120 s for a fetch, 600 s for the
+clone), git's low-speed abort (`http.lowSpeedLimit=1000`,
+`http.lowSpeedTime=60`) and `GIT_TERMINAL_PROMPT=0`. The dispatch pump is one
+promise and webhook fulfilment waits on it, so a fetch that hung would stall
+both. A clone that fails is removed, so a half-written `.git` never passes for
+a finished clone. These settings are per invocation and name no program or
+path; the `DAEMON_GIT_PINS` ride the environment unchanged
+(docs/exec-boundary.md).
+
 The manager is read-only with respect to the reviewed repo: it clones, fetches,
 resets, lists and removes. Nothing here commits, pushes, or writes a branch.
 Other read-only helpers on it serve specific daemon checks —
