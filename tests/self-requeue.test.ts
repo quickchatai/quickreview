@@ -295,7 +295,10 @@ describe("bounded infrastructure-stage recovery", () => {
     expect(store.getPr(295)?.state).toBe("queued");
   });
 
-  it("returns non-prepass exhaustion to the ordinary operator recovery path, stops Pi, and frees round capacity", async () => {
+  // MUTATION: pass `cause` from recoverInfrastructureFailure's exhaustion
+  // without `nothing_posted: this.nothingPosted(round)` (or with true) — a round
+  // whose posting nothing can prove retries itself; this fails.
+  it("returns non-prepass exhaustion of a round with no posting key (nothing provable) to the operator recovery path, stops Pi, and frees round capacity", async () => {
     reviewingRound(291);
     commandForRound(291, 1);
     const { hooks } = hooksWith(true);
@@ -324,6 +327,81 @@ describe("bounded infrastructure-stage recovery", () => {
       attempts: DEFAULT_MAX_SELF_REQUEUES,
       next_action: "operator_unwedge",
     });
+  });
+});
+
+describe("exhausted infrastructure recovery with nothing posted retries itself", () => {
+  // MUTATION: drop `cause`/`nothing_posted` from recoverInfrastructureFailure's
+  // terminalizeInfrastructureReviewFailure call — the debt is operator_unwedge; this fails.
+  it("a keyed round with no posting receipt waits on the automatic retry at any stage", async () => {
+    const roundId = reviewingRound(296);
+    store.stampPostingKey(roundId, "v1:296:1:abc123");
+    commandForRound(296, 1);
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++)
+      store.logEvent("round_self_requeued", 296, { head_sha: "abc123" });
+    const v = watcher(hooks);
+
+    expect(
+      await v.recoverInfrastructureFailure(296, 1, "running_hard_bound", "fixed bound exhausted"),
+    ).toBe("exhausted");
+    expect(store.openReviewFailure(296)).toMatchObject({
+      stage: "running_hard_bound",
+      next_action: "retry_wait",
+      next_retry_at: new Date(clock.getTime() + 15 * 60_000).toISOString(),
+    });
+    expect(events("review_failed_loud").at(-1)!.payload).toMatchObject({
+      cause: "infrastructure_exhausted",
+    });
+    // Loud: the anomaly names the automatic retry.
+    expect(
+      store.anomalies().some(
+        (a) => a.kind === "review_failed_loud" && a.detail.includes("automatic retry scheduled"),
+      ),
+    ).toBe(true);
+  });
+
+  it("a provider outage is named truthfully: stage provider_unavailable, cause provider_transient", async () => {
+    const roundId = reviewingRound(297);
+    store.stampPostingKey(roundId, "v1:297:1:abc123");
+    commandForRound(297, 1);
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++)
+      store.logEvent("round_self_requeued", 297, { head_sha: "abc123" });
+    const v = watcher(hooks);
+
+    expect(
+      await v.recoverInfrastructureFailure(
+        297,
+        1,
+        "provider_unavailable",
+        "round: the provider failed the turn: 529 overloaded; requeued 3 times already",
+      ),
+    ).toBe("exhausted");
+    expect(store.openReviewFailure(297)).toMatchObject({
+      stage: "provider_unavailable",
+      next_action: "retry_wait",
+    });
+    expect(events("review_failed_loud").at(-1)!.payload).toMatchObject({
+      cause: "provider_transient",
+    });
+  });
+
+  it("a posting receipt of any status keeps the operator's hold", async () => {
+    const roundId = reviewingRound(298);
+    store.stampPostingKey(roundId, "v1:298:1:abc123");
+    commandForRound(298, 1);
+    mkdirSync(join(dir, "state", "posting-receipts"), { recursive: true });
+    writeFileSync(join(dir, "state", "posting-receipts", "pr-298-round-1.json"), "{}");
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++)
+      store.logEvent("round_self_requeued", 298, { head_sha: "abc123" });
+    const v = watcher(hooks);
+    await v.recoverInfrastructureFailure(298, 1, "running_hard_bound", "fixed bound exhausted");
+    expect(store.openReviewFailure(298)).toMatchObject({ next_action: "operator_unwedge" });
   });
 });
 

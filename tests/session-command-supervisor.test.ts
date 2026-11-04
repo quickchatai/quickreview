@@ -245,6 +245,83 @@ it("leaves the bridge its deferred settlement acknowledgement before fencing it"
   expect(Date.parse(store.getSessionCommand(id)!.next_check_at)).toBeGreaterThan(clock.getTime());
 });
 
+describe("a transient provider failure", () => {
+  const PROVIDER_429 = "wake: the provider failed the turn: 429 Too Many Requests";
+
+  function failWith(id: string, failure: string): void {
+    store.db.prepare("UPDATE session_commands SET failure=? WHERE id=?").run(failure, id);
+  }
+
+  // MUTATION: drop the backoff branch at the top of recoverNonRound — the wake
+  // is replayed into the provider that just refused it; this fails.
+  it("replays a failed wake with backoff: not before 2 minutes, then at once", async () => {
+    const { id } = seedWakeCommand({ status: "failed", attempt: 1 });
+    failWith(id, PROVIDER_429);
+    const retry = vi.fn(async () => "retried" as const);
+    const s = supervisor(hooks({ retrySessionCommand: retry })).supervisor;
+
+    await s.scan();
+    expect(retry).not.toHaveBeenCalled();
+    expect(store.getSessionCommand(id)).toMatchObject({
+      status: "failed",
+      recovery_attempts: 0,
+      next_check_at: new Date(clock.getTime() + 2 * 60_000).toISOString(),
+    });
+    expect(store.recentEvents(20).some((e) => e.kind === "session_command_nonround_backoff")).toBe(
+      true,
+    );
+
+    clock = new Date(clock.getTime() + 2 * 60_000);
+    await s.scan();
+    expect(retry).toHaveBeenCalledWith(id, PROVIDER_429);
+  });
+
+  // MUTATION: drop `cause`/`nothing_posted` from recoverNonRound's
+  // openReviewFailure — the PR's next round is held for an operator; this fails.
+  it("exhausted, it waits on the automatic retry ladder, not an operator", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 3 });
+    failWith(id, PROVIDER_429);
+    store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id=?").run(id);
+    const kill = vi.fn(async () => {});
+
+    await supervisor(hooks({ killSession: kill })).supervisor.scan();
+
+    expect(kill).toHaveBeenCalled();
+    expect(store.openReviewFailure(pr)).toMatchObject({
+      command_id: id,
+      stage: "session_command",
+      next_action: "retry_wait",
+      next_retry_at: new Date(clock.getTime() + 15 * 60_000).toISOString(),
+    });
+    expect(store.anomalies().at(-1)?.detail).toContain("replayed again automatically");
+  });
+
+  it("any other exhausted wake failure still needs the operator", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 3 });
+    store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id=?").run(id);
+    await supervisor(hooks({ killSession: vi.fn(async () => {}) })).supervisor.scan();
+    expect(store.openReviewFailure(pr)).toMatchObject({ next_action: "operator_unwedge" });
+  });
+
+  // MUTATION: drop the provider_unavailable branch in inspect — a provider
+  // outage is reported as a session that exceeded its running bound; this fails.
+  it("a round command failed by the provider is reported as provider_unavailable", async () => {
+    const { id, pr } = seedRoundCommand({ status: "running", started: true });
+    store.failActiveSessionCommand(
+      id,
+      "round: the provider failed the turn: fetch failed; requeued 3 times already",
+    );
+    const { supervisor: s, onRoundFailure } = supervisor(hooks());
+    await s.scan();
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      1,
+      "provider_unavailable",
+      expect.stringContaining("the provider failed the turn"),
+    );
+  });
+});
+
 describe("bounded round-stage supervision", () => {
   it(
     "replays a started ordinary wake at its hard bound instead of making it a permanent blocker",

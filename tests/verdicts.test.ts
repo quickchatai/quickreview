@@ -12,6 +12,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -177,6 +178,14 @@ function stampPosting(
   const key = roundPostingKey(pr, roundNo, head);
   store.stampPostingKey(round.id, key);
   return { roundId: round.id, key, receiptDir: join(dir, "state", "posting-receipts") };
+}
+
+/** Spend the PR's per-head self-requeue budget at the fixture head, so a
+ * finished round whose review never reached GitHub fails loud instead of
+ * being requeued (verdicts.ts, the apply's `posting_unconfirmed` requeue). */
+function spendSelfRequeues(pr: number, head = "abc123"): void {
+  for (let i = 0; i < (cfg.daemon.max_self_requeues ?? 2); i++)
+    store.logEvent("round_self_requeued", pr, { head_sha: head });
 }
 
 function writePostingReceipt(
@@ -1111,6 +1120,7 @@ describe("measured round usage", () => {
     it("a posting-receipt failure's reads wait behind its FAILED_LOUD incident", async () => {
       const roundId = reviewingRound(126);
       stampPosting(126, 1);
+      spendSelfRequeues(126);
       const gated = gatedTranscripts(126, [modelLine(), jsonlLine(10, 1)]);
       const handled = watcher({ postingReceiptGraceS: 0, usage: gated.usage }).handleFile(
         write(126, 1, verdictFile({ pr: 126 })),
@@ -1342,9 +1352,107 @@ describe("confirmed round posting receipts", () => {
     expect(adapter.calls).toEqual([]);
   });
 
-  it("fails loud after the finite receipt grace instead of trusting or reposting", async () => {
+  // MUTATION: drop the `posting_unconfirmed` requeue from the verdict apply —
+  // the round is held FAILED_LOUD for an operator over a review that never
+  // went out (the stuck-for-hours shape); this fails.
+  it("a finished round whose review has no receipt at all is requeued through the capped self-requeue, not held", async () => {
+    reviewingRound(180);
+    stampPosting(180, 1);
+
+    expect(
+      await watcher({ postingReceiptGraceS: 0 }).handleFile(
+        write(180, 1, verdictFile({ pr: 180 })),
+      ),
+    ).toBe(true);
+
+    expect(store.roundsFor(180)[0]).toMatchObject({
+      status: "cancelled",
+      cancel_cause: "posting_unconfirmed",
+      verdict: null,
+    });
+    expect(store.openReviewFailure(180)).toBeUndefined();
+    expect(store.getPr(180)?.state).toBe("queued");
+    expect(store.reviewedHead(180)).toBeUndefined();
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) c FROM events WHERE kind='round_self_requeued' AND pr=180")
+        .get(),
+    ).toMatchObject({ c: 1 });
+  });
+
+  // MUTATION: count a prepared receipt as "nothing posted" in postingProof's
+  // `unposted` — a POST that may have landed is redone; this fails.
+  it("a prepared receipt is never requeued from the apply: it may have landed", async () => {
+    reviewingRound(179);
+    const { key } = stampPosting(179, 1);
+    writePostingReceipt(179, 1, key, "APPROVE", {
+      status: "prepared",
+      confirmed_at: undefined,
+      gh_review_id: undefined,
+      gh_commit_id: undefined,
+      gh_state: undefined,
+    });
+
+    expect(
+      await watcher({ postingReceiptGraceS: 0 }).handleFile(
+        write(179, 1, verdictFile({ pr: 179 })),
+      ),
+    ).toBe(true);
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) c FROM events WHERE kind='round_self_requeued' AND pr=179")
+        .get(),
+    ).toMatchObject({ c: 0 });
+    expect(store.openReviewFailure(179)).toMatchObject({ stage: "posting_receipt", work_owed: 1 });
+  });
+
+  // MUTATION: take the grace origin from round.started_at again in postingProof —
+  // a review queued just now is judged against the round's dispatch; this fails.
+  it("the receipt grace runs from the newest delivery snapshot for the key, a withdrawn one included", async () => {
+    reviewingRound(178);
+    const { key, receiptDir } = stampPosting(178, 1);
+    // The round started long ago; its approval was queued, then withdrawn by a
+    // guard, a minute before now.
+    store.db
+      .prepare("UPDATE rounds SET started_at = ? WHERE pr = 178")
+      .run(new Date(Date.now() - 3 * 3_600_000).toISOString());
+    mkdirSync(receiptDir, { recursive: true });
+    const payload = {
+      commit_id: "abc123",
+      event: "APPROVE",
+      body: `LGTM\n\n${postingMarker(key)}`,
+    };
+    const job = {
+      version: 1,
+      posting_key: key,
+      repo: cfg.github.repo,
+      mode: "dryrun",
+      pr: 178,
+      round_no: 1,
+      head_sha: "abc123",
+      intended_event: "APPROVE",
+      payload,
+      payload_sha256: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
+      status: "pending",
+      attempts: 0,
+      created_at: new Date(Date.now() - 60_000).toISOString(),
+      next_attempt_at: new Date(Date.now() - 60_000).toISOString(),
+    };
+    writeFileSync(
+      join(receiptDir, "pr-178-round-1.outbox.json.withdrawn-20261104T000000000000Z"),
+      JSON.stringify(job),
+    );
+    const name = write(178, 1, verdictFile({ pr: 178 }));
+
+    expect(await watcher({ postingReceiptGraceS: 120 }).handleFile(name)).toBe(false);
+    expect(store.roundsFor(178)[0]?.status).toBe("running");
+    expect(existsSync(join(dir, name))).toBe(true);
+  });
+
+  it("past the self-requeue cap it fails loud instead of trusting or reposting", async () => {
     reviewingRound(182);
     stampPosting(182, 1);
+    spendSelfRequeues(182);
 
     expect(
       await watcher({ postingReceiptGraceS: 0 }).handleFile(
@@ -3549,6 +3657,7 @@ describe("guarded no-op settlement", () => {
     standingMark(512);
     reviewingRound(512);
     stampPosting(512, 1);
+    spendSelfRequeues(512);
     expect(
       await watcher({ postingReceiptGraceS: 0 }).handleFile(
         write(512, 1, verdictFile({ pr: 512 })),
@@ -4764,6 +4873,7 @@ describe("ownership after awaits: a round some other path ended owes nothing", (
   it("a posting failure owes its FAILED_LOUD incident before its label call", async () => {
     reviewingRound(700);
     stampPosting(700, 1);
+    spendSelfRequeues(700);
     let owedAtLabel: number | undefined;
     adapter.removeLabel = async (n, label) => {
       adapter.calls.push(`removeLabel:${n}:${label}`);
