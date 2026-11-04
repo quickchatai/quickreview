@@ -116,6 +116,22 @@ describe("the rated judges come from the plan", () => {
     }
   });
 
+  // MUTATION: drop the missing-repository refusal from elo_data._git — this fails (a CalledProcessError instead)
+  it("pack names a missing git clone and says how to make it, rather than failing inside git", () => {
+    const d = mkdtempSync(join(tmpdir(), "elo-git-"));
+    try {
+      const r = pyRun(
+        `import elo_data; elo_data._git(${JSON.stringify(join(d, "discourse.git"))}, "diff", "a", "b")`,
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain(`no git repository at ${join(d, "discourse.git")}`);
+      expect(r.stderr).toContain("git init --bare");
+      expect(r.stderr).not.toContain("CalledProcessError");
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
   it("both published plans name their two rated judges", () => {
     for (const f of ["martian-hard20-all-gpt.json", "martian-hard20-ccvq.json"]) {
       const plan = JSON.parse(read(join("plans", f)));

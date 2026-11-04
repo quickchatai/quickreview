@@ -32,10 +32,17 @@ two runs in --gain (by default the two published builds,
 final1-qodo-pr100|quickreview-frozen and ext-r6-qodo-pr100|quickreview-2026-10-02,
 when both are scored) it adds the first's held-out recall gain over the
 second with the papers' paired bootstrap.
+
+When your judge judged only some of a run's PRs (a sample), both columns,
+the held-out PRs and the gain are counted over the PRs your judge judged
+(its issues, its comments), and the header says how many; --whole-run keeps
+every PR of the run, where a PR your judge did not judge has no hit (so its
+numbers are not comparable with ours).
 """
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -102,6 +109,15 @@ def verdict_rows(data: str, extra: str, judge: str) -> List[dict]:
     return out
 
 
+def on_prs(t: cm.Tables, urls: set) -> cm.Tables:
+    """The tables with the Qodo issues, reviews and verdicts of `urls` alone."""
+    view = copy.copy(t)
+    view._t = dict(t._t)
+    for name in ("qodo_issues", "qodo_reviews", "qodo_verdicts"):
+        view._t[name] = [r for r in t(name) if r["pr_url"] in urls]
+    return view
+
+
 def run_scores(t: cm.Tables, run: str, judge: str) -> Dict[str, Optional[float]]:
     q = cm.Qodo(t)
     work, _, tool = run.partition("|")
@@ -135,11 +151,14 @@ def fmt(v: Optional[float], m: str) -> str:
 def render(res: dict, judge: str) -> str:
     out = []
     for run, r in res["runs"].items():
-        out += [f"{run}", f"| metric | {judge} | {OURS} |", "|---|---:|---:|"]
+        head = f"{run}: {r['prs']} of its {r['run_prs']} PRs judged by {judge}"
+        if r["sample"]:
+            head += f"; both columns over those {r['prs']} PRs (--whole-run: every PR)"
+        out += [head, f"| metric | {judge} | {OURS} |", "|---|---:|---:|"]
         out += [f"| {m} | {fmt(r[judge][m], m)} | {fmt(r[OURS][m], m)} |" for m in METRICS]
         for j in (judge, OURS):
             h = r["heldout"][j]
-            out.append(f"held-out {res['heldout_set']} ({len(res['heldout_prs'])} PRs), {j}: {h['hits']}/{h['issues']} "
+            out.append(f"held-out {res['heldout_set']} ({r['heldout_prs']} PRs), {j}: {h['hits']}/{h['issues']} "
                        f"recall {fmt(h['recall'], 'recall')}  precision {fmt(h['precision'], 'precision')}  "
                        f"F1 {fmt(h['f1'], 'f1')}")
         out.append("")
@@ -147,7 +166,8 @@ def render(res: dict, judge: str) -> str:
         g = res["gain"]
         for j in (judge, OURS):
             d = g[j]
-            out.append(f"held-out recall gain, {g['x']} over {g['y']}, {j}: {d['diff']:+.1f} [{d['lo']:+.1f}, {d['hi']:+.1f}]")
+            out.append(f"held-out recall gain ({g['heldout_prs']} PRs), {g['x']} over {g['y']}, {j}: "
+                       f"{d['diff']:+.1f} [{d['lo']:+.1f}, {d['hi']:+.1f}]")
     return "\n".join(out).rstrip()
 
 
@@ -160,6 +180,8 @@ def main() -> None:
     ap.add_argument("--gain", help="X,Y (two WORK|TOOL runs): X's held-out recall gain over Y")
     ap.add_argument("--sets-dir", default=H.SETS)
     ap.add_argument("--resamples", type=int, default=H.AB.RESAMPLES)
+    ap.add_argument("--whole-run", action="store_true",
+                    help="count every PR of the run even when your judge judged only some (those have no hit)")
     ap.add_argument("--json", help="also write every number to this JSON file")
     a = ap.parse_args()
     if not has_table(a.verdicts, "qodo_verdicts"):
@@ -172,22 +194,34 @@ def main() -> None:
     if missing:
         sys.exit(f"no {a.judge} verdicts for run(s) {missing}")
     urls = H.set_urls(H.QODO_HELDOUT, a.sets_dir)
+    # the PRs your judge judged: a run's sample both columns are counted over, unless it judged all its PRs
+    mine = {run: {v["pr_url"] for v in t("qodo_verdicts") if f"{v['work_dir']}|{v['tool']}" == run
+                  and v["judge"] == a.judge} for run in runs}
+    whole = {run: {r["pr_url"] for r in t("qodo_reviews") if f"{r['work_dir']}|{r['tool']}" == run} for run in runs}
+    scope = {run: mine[run] if not a.whole_run and not whole[run] <= mine[run] else None for run in runs}
     res: dict = {"judge": a.judge, "heldout_set": f"sets/{H.QODO_HELDOUT}.json", "heldout_prs": urls, "runs": {}}
     for run in runs:
-        r: Dict[str, dict] = {}
+        view = on_prs(t, scope[run]) if scope[run] is not None else t
+        held = [u for u in urls if scope[run] is None or u in scope[run]]
+        r: Dict[str, dict] = {"prs": len(mine[run]), "run_prs": len(whole[run]), "sample": scope[run] is not None,
+                              "heldout_prs": len(held)}
         for j in (a.judge, OURS):
             try:
-                r[j] = run_scores(t, run, j)
+                r[j] = run_scores(view, run, j)
             except cm.KeyError_:
                 r[j] = {m: None for m in METRICS}  # ours never judged this run: unknown
-        r["heldout"] = {j: heldout(t, run, j, urls) for j in (a.judge, OURS)}
+        r["heldout"] = {j: heldout(view, run, j, held) for j in (a.judge, OURS)}
         res["runs"][run] = r
     pair: Tuple[str, ...] = tuple(a.gain.split(",")) if a.gain else (BUILDS if all(b in runs for b in BUILDS) else ())
     if pair:
         if len(pair) != 2 or any(p not in runs for p in pair):
             sys.exit(f"--gain wants two of the scored runs {runs}, got {list(pair)}")
-        res["gain"] = {"x": pair[0], "y": pair[1],
-                       **{j: gain(t, pair[0], pair[1], j, urls, a.resamples) for j in (a.judge, OURS)}}
+        both = set.intersection(*(scope[p] if scope[p] is not None else whole[p] for p in pair))
+        sampled = any(scope[p] is not None for p in pair)
+        view = on_prs(t, both) if sampled else t
+        held = [u for u in urls if not sampled or u in both]
+        res["gain"] = {"x": pair[0], "y": pair[1], "heldout_prs": len(held),
+                       **{j: gain(view, pair[0], pair[1], j, held, a.resamples) for j in (a.judge, OURS)}}
     print(render(res, a.judge))
     if a.json:
         with open(a.json, "w") as f:

@@ -23,12 +23,14 @@
 //   7. another judge's verdicts: score_verdicts, qodo_scores, martian_scores and
 //      --judge on aacr_bootstrap and heldout score them beside ours and refuse
 //      what the release cannot place; score_verdicts --select scores only the PRs
-//      a claim's selector names; elo_ratings rates the plan's judges;
-//   8. judge_prompt equals defects.ts judgePrompt() on the same inputs.
+//      a claim's selector names; a judge of some PRs is scored beside ours on
+//      those PRs alone; elo_ratings rates the plan's judges;
+//   8. judge_prompt equals defects.ts judgePrompt() on the same inputs, refuses
+//      a link-only review and writes no prompt the judge was never given.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -313,6 +315,25 @@ describe("elo_ratings", () => {
       JSON.stringify(JUDGMENTS),
     );
     expect(r).toEqual(["B", { gpt: 1, opus: 0 }, 4, 2]);
+  });
+
+  // MUTATION: make elo_ratings.displaced return {} — this fails
+  // MUTATION: in displaced, count a unit whose other judges hold a judgment at the current hash — this fails
+  it("names a judge whose newer prompt set the others' judgments of a unit aside", () => {
+    const repacked = {
+      ...JUDGMENTS,
+      third: [
+        row("third", "u1", "p1", "other", "2026-01-03T00:00:00Z", "A"),
+        row("third", "u2", "p2", "s2", "2026-01-03T00:00:01Z", "A"),
+      ],
+    };
+    const r = py(
+      "elo_ratings",
+      "print(json.dumps([h.displaced(json.loads(sys.argv[1])), h.displaced(json.loads(sys.argv[2]))]))",
+      JSON.stringify(JUDGMENTS),
+      JSON.stringify(repacked),
+    );
+    expect(r).toEqual([{}, { third: 1 }]);
   });
 
   // MUTATION: hard-code the rated judges as ("gpt", "opus") again in elo_ratings — this fails
@@ -792,12 +813,21 @@ describe("another judge's verdicts", () => {
         strict: prf(core[0]!, core[1]!, core[2]!),
       }).flatMap(([p, v]) => Object.entries(v).map(([k, x]) => [`${p}_${k}`, x])),
     );
-  jsonl(D, "martian_scores", [{ ...MW, judge: QJ, ...stored([2, 4, 1], [1, 4, 1]) }]);
+  jsonl(D, "martian_scores", [
+    { ...MW, judge: QJ, ...stored([2, 4, 1], [1, 4, 1]) },
+    { work_dir: "calib.martian", tool: "quickreview", judge: QJ, ...stored([1, 1, 1], [1, 1, 1]) },
+  ]);
   jsonl(MINE, "martian_verdicts", [mv("m1", 0, true), mv("m1", 1, false), mv("m2", 0, true)]);
   jsonl(MINE, "martian_reviews", [
     { ...MW, pr_url: "m1", fp: 1 },
     { ...MW, pr_url: "m2", fp: 0 },
   ]);
+  // A sample: the other judge on p1, q1 and m1 alone.
+  const PART = join(tmp, "rejudge-part");
+  jsonl(PART, "defect_verdicts", [dv("p1", "d1", "found"), dv("p1", "d2", "missed")]);
+  jsonl(PART, "qodo_verdicts", [qv(QF, "q1", 0, 0), qv(QF, "q1", 1, 1)]);
+  jsonl(PART, "martian_verdicts", [mv("m1", 0, true), mv("m1", 1, false)]);
+  jsonl(PART, "martian_reviews", [{ ...MW, pr_url: "m1", fp: 1 }]);
   mkdirSync(SETS, { recursive: true });
   const set = (name: string, cases: object[]) =>
     writeFileSync(join(SETS, `${name}.json`), JSON.stringify({ cases }));
@@ -854,6 +884,42 @@ describe("another judge's verdicts", () => {
     expect(r.select).toBe("pr=p1");
     expect(r.arms[F]["my-judge"]).toMatchObject({ found: 1, defects: 2, recall: 50 });
     expect(r.arms[F][J]).toMatchObject({ found: 1.5, defects: 2, recall: 75 });
+  });
+
+  // MUTATION: in score_verdicts.score, never treat a judge of some PRs as a sample (no pr= restriction) — this fails
+  // MUTATION: in score_verdicts.score, build Judges over the whole tables (drop only_judged_on) — this fails
+  it("score_verdicts: a judge of some PRs is scored beside ours on those PRs, and --select narrows the agreement", () => {
+    const r = json("score_verdicts.py", "--data", D, "--verdicts", PART, "--judge", "my-judge")
+      .arms[F];
+    expect(r).toMatchObject({ reviews: 1, reference_reviews: 3, sample: true });
+    expect(r["my-judge"]).toMatchObject({ found: 1, defects: 2, recall: 50 });
+    expect(r[J]).toMatchObject({ found: 1.5, defects: 2, recall: 75 });
+    const whole = json(
+      "score_verdicts.py",
+      "--data",
+      D,
+      "--verdicts",
+      PART,
+      "--judge",
+      "my-judge",
+      "--whole-run",
+    ).arms[F];
+    expect(whole.sample).toBe(false);
+    expect(whole["my-judge"]).toMatchObject({ found: 1, defects: 4, recall: 25 });
+    expect(whole[J]).toMatchObject({ found: 2.5, recall: 62.5 });
+    const sel = json(
+      "score_verdicts.py",
+      "--data",
+      D,
+      "--verdicts",
+      MINE,
+      "--judge",
+      "my-judge",
+      "--select",
+      "pr=p1",
+    ).arms[F];
+    expect(sel.reviews).toBe(1);
+    expect(sel.agreement).toMatchObject({ pairs: 2, c_pairs: 1 });
   });
 
   // MUTATION: drop the published-label check in tables.with_judge — this fails
@@ -929,6 +995,58 @@ describe("another judge's verdicts", () => {
     ).toMatch(/credits two issues/);
   });
 
+  // MUTATION: in qodo_scores.main, never scope a run to the PRs the judge judged (scope None for every run) — this fails
+  it("qodo_scores: a judge of some PRs is scored beside ours on those PRs' issues and comments", () => {
+    const run = (...extra: string[]) =>
+      json(
+        "qodo_scores.py",
+        "--data",
+        D,
+        "--verdicts",
+        PART,
+        "--judge",
+        "my-judge",
+        "--sets-dir",
+        SETS,
+        "--resamples",
+        "50",
+        ...extra,
+      ).runs["final1-qodo-pr100|quickreview-frozen"];
+    const f = run();
+    expect(f).toMatchObject({ prs: 1, run_prs: 2, sample: true, heldout_prs: 1 });
+    expect(f["my-judge"]).toMatchObject({ hits: 1, comments: 2, recall: 50, precision: 50 });
+    expect(f[QJ]).toMatchObject({ hits: 1, comments: 2, recall: 50 });
+    expect(f.heldout["my-judge"]).toMatchObject({ hits: 1, issues: 2 });
+    const whole = run("--whole-run");
+    expect(whole.sample).toBe(false);
+    expect(whole["my-judge"]).toMatchObject({ hits: 1, comments: 3 });
+    expect(whole["my-judge"].recall).toBeCloseTo(100 / 3);
+  });
+
+  // MUTATION: in martian_scores.main, count ours over every PR on a sample (drop `mine if sample`) — this fails
+  // MUTATION: drop the not_recomputed listing from martian_scores.main — this fails
+  it("martian_scores: a judge of some PRs is scored beside ours on those PRs; ours names what it cannot recompute", () => {
+    const r = json("martian_scores.py", "--data", D, "--verdicts", PART, "--judge", "my-judge")
+      .runs["final1-martian50|quickreview"];
+    expect(r).toMatchObject({ prs: 1, reference_prs: 2, sample: true, stored: null });
+    expect(r["my-judge"]).toMatchObject({ all_tp: 1, all_fp: 1, all_fn: 1 });
+    expect(r["gpt-6.1-sol"]).toMatchObject({ all_tp: 2, all_fp: 3, all_fn: 0 });
+    const whole = json(
+      "martian_scores.py",
+      "--data",
+      D,
+      "--verdicts",
+      PART,
+      "--judge",
+      "my-judge",
+      "--whole-run",
+    ).runs["final1-martian50|quickreview"];
+    expect(whole["gpt-6.1-sol"]).toMatchObject({ all_tp: 2, all_fp: 4, all_fn: 1 });
+    expect(json("martian_scores.py", "--data", D).not_recomputed).toEqual([
+      "calib.martian|quickreview",
+    ]);
+  });
+
   // MUTATION: count Core's tp over every golden (drop PROFILES' exclusion in martian_scores.counts) — this fails
   it("martian_scores: our stored scores recompute, and the new judge's are counted the same way", () => {
     const ours = json("martian_scores.py", "--data", D).runs["final1-martian50|quickreview"];
@@ -980,6 +1098,26 @@ describe("another judge's verdicts", () => {
     expect(
       refused("heldout.py", "--data", D, "--sets-dir", SETS, "--aacr-arms", F, "--verdicts", MINE),
     ).toMatch(/--verdicts needs --judge/);
+  });
+
+  // MUTATION: keep the papers' eight arms as heldout's default under --judge — this fails (AACR unknown)
+  it("heldout --judge with no --aacr-arms scores the arms that judge judged", () => {
+    const r = json(
+      "heldout.py",
+      "--data",
+      D,
+      "--sets-dir",
+      SETS,
+      "--resamples",
+      "50",
+      "--fixed-set",
+      "--judge",
+      "my-judge",
+      "--verdicts",
+      MINE,
+    );
+    expect(Object.keys(r.aacr.found)).toEqual([F]);
+    expect(r.aacr.found[F].found).toBe(2);
   });
 });
 
@@ -1069,6 +1207,14 @@ describe("judge_prompt", () => {
     },
     { arm_id: "A", instance_id: "o__r@2222222", verdict: null, body: null, comments: [] },
     { arm_id: "A", instance_id: "o__r@3333333", verdict: null, body: null, comments: [] },
+    {
+      arm_id: "L",
+      instance_id: "o__r@1111111",
+      verdict: null,
+      body: null,
+      source_url: "https://example.invalid/pull/1",
+      comments: [{ ...comments[0], text: null }],
+    },
   ]);
   mkdirSync(join(AK, "fresh10-code", "o__r@2222222"), { recursive: true });
   writeFileSync(
@@ -1137,6 +1283,21 @@ describe("judge_prompt", () => {
       { verdict: null, body: null, comments: [] },
     );
     expect(prompt("o__r@2222222")).toBe(empty + "\n");
+  });
+
+  // MUTATION: drop the link-only refusal from judge_prompt.Prompts.prompt — this fails
+  // MUTATION: in judge_prompt.main, write a prompt for every review of the arm under --all — this fails
+  it("refuses a link-only review, and --all leaves out the reviews the judge was never asked about", () => {
+    const run = (...args: string[]) =>
+      execFileSync("python3", ["-I", join(RECOMPUTE, "judge_prompt.py"), "--data", D, ...args], {
+        stdio: ["ignore", "pipe", "pipe"],
+      }).toString();
+    expect(() => run("--arm", "L", "--pr", "o__r@1111111")).toThrow(/link-only/);
+    const out = join(tmp, "prompt-all");
+    expect(run("--arm", "A", "--all", "--out-dir", out)).toMatch(
+      /wrote 1 prompts of A .* left out 2 reviews/,
+    );
+    expect(readdirSync(out)).toEqual(["o__r@1111111.txt"]);
   });
 
   // MUTATION: fall back to prs.base_commit when no merge base is found — this fails

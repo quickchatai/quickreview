@@ -28,14 +28,18 @@ claim_metrics.Judges: on every key defect of the reviews both judged (no row =
 missed; percent and Cohen's kappa) and on the comments both graded.
 --select narrows the PRs as a claim's key does (claim_metrics.Aacr's SEL, `&`-joined):
 `arm=copilot-2025-upstream` scores the 19 PRs of tab:copilot2025, `set=holdout10+fresh10`
-the held-out sets. Without it every PR of the arm counts, and a PR your judge
-did not judge counts as missed.
+the held-out sets; the review count and the agreement are over the same PRs. When
+your judge judged only some of the PRs ours judged (a sample), both columns are
+counted over your judge's PRs alone, and the header says how many of ours that is;
+--whole-run counts every PR of the arm instead, where a PR your judge did not judge
+counts as missed (so its numbers are not comparable with ours).
 `aacr_bootstrap.py --verdicts DIR --judge LABEL` gives the intervals and
 `heldout.py --verdicts DIR --judge LABEL --fixed-set` the held-out PRs.
 """
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -121,15 +125,40 @@ class WithJudge(cm.Tables):
         self.judged = judged
 
 
-def score(tables: WithJudge, judge: str, arms: Sequence[str], select: str = "") -> Dict[str, dict]:
-    aacr, judges = cm.Aacr(tables), cm.Judges(tables)
-    sel = f"~{select}" if select else ""
+def judged_prs(tables: cm.Tables, arm: str, judge: str) -> set:
+    """The PRs of an arm a judge has a defect or comment verdict on."""
+    return {r["instance_id"] for t in ("defect_verdicts", "comment_verdicts") for r in tables(t)
+            if r["arm_id"] == arm and r["judge"] == judge}
+
+
+def only_judged_on(tables: WithJudge, judge: str, keep: set) -> cm.Tables:
+    """The tables with `judge` left in `reviews.judged_by` only on the (arm, PR) reviews in `keep`, so the
+    agreement pairs only those."""
+    view = copy.copy(tables)
+    view._t = dict(tables._t)
+    view._t["reviews"] = [r if judge not in (r["judged_by"] or []) or (r["arm_id"], r["instance_id"]) in keep
+                          else dict(r, judged_by=[j for j in r["judged_by"] if j != judge]) for r in tables("reviews")]
+    return view
+
+
+def score(tables: WithJudge, judge: str, arms: Sequence[str], select: str = "",
+          whole_run: bool = False) -> Dict[str, dict]:
+    aacr = cm.Aacr(tables)
     out = {}
     for arm in arms:
         ref = aacr.judge_of(arm)
-        row: Dict[str, dict] = {"reference_judge": ref, "reviews": sum(1 for a, _ in tables.judged if a == arm)}
+        chosen = aacr.select(arm, select)[0] if select else None
+        mine = {i for a, i in tables.judged if a == arm and (chosen is None or i in chosen)}
+        ours = {i for i in judged_prs(tables, arm, ref) if chosen is None or i in chosen}
+        # a sample: both columns over the PRs your judge judged, never yours over them and ours over all
+        sample = not whole_run and bool(mine) and not ours <= mine
+        sel = "&".join(x for x in (select, "pr=" + "+".join(sorted(mine)) if sample else "") if x)
+        sel = f"~{sel}" if sel else ""
+        row: Dict[str, dict] = {"reference_judge": ref, "reviews": len(mine), "reference_reviews": len(ours),
+                                "sample": sample}
         for j in (judge, ref):
             row[j] = {m: aacr.value(f"{arm}@{j}{sel}:{m}") for m, _ in METRICS}
+        judges = cm.Judges(only_judged_on(tables, judge, {(arm, i) for i in mine}))
         agree: Dict[str, Optional[float]] = {}
         for m, _ in AGREEMENT:
             try:
@@ -155,7 +184,10 @@ def render(res: Dict[str, dict], judge: str) -> str:
     out = []
     for arm, r in res.items():
         ref = r["reference_judge"]
-        out += [f"{arm}: {r['reviews']} reviews judged by {judge}", f"| metric | {judge} | {ref} |", "|---|---:|---:|"]
+        head = f"{arm}: {r['reviews']} reviews judged by {judge}, {r['reference_reviews']} by {ref}"
+        if r["sample"]:
+            head += f"; both columns over the {r['reviews']} PRs {judge} judged (--whole-run: every PR)"
+        out += [head, f"| metric | {judge} | {ref} |", "|---|---:|---:|"]
         out += [f"| {name} | {fmt(r[judge][m], m)} | {fmt(r[ref][m], m)} |" for m, name in METRICS]
         out.append("agreement with " + ref + ": " + ", ".join(f"{name} {fmt(r['agreement'][m], m)}"
                                                             for m, name in AGREEMENT))
@@ -171,6 +203,8 @@ def main() -> None:
     ap.add_argument("--arms", help="arm ids, comma-separated (default: every arm your judge judged)")
     ap.add_argument("--select", default="", help="the PRs to score, a claim_metrics.Aacr selector "
                     "(arm=copilot-2025-upstream, set=a+b, pr=<id>; default: every PR of the arm)")
+    ap.add_argument("--whole-run", action="store_true",
+                    help="count every PR of the arm even when your judge judged only some (those count as missed)")
     ap.add_argument("--json", help="also write every number to this JSON file")
     a = ap.parse_args()
     if not has_table(a.verdicts, "defect_verdicts"):
@@ -181,7 +215,7 @@ def main() -> None:
     missing = [x for x in arms if x not in have]
     if missing:
         sys.exit(f"no {a.judge} verdicts for arm(s) {missing}")
-    res = score(t, a.judge, arms, a.select)
+    res = score(t, a.judge, arms, a.select, a.whole_run)
     print(render(res, a.judge))
     if a.json:
         with open(a.json, "w") as f:

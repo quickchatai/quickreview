@@ -58,12 +58,20 @@ and what it refuses.
     judge_prompt.py --data <hf-dataset> --arm ARM --pr IID [--answer-key <unpacked archive>]   # our AACR judge's prompt
 
 `--select` takes a claim key's PR selector: `arm=copilot-2025-upstream` scores
-the Copilot 2025 table's PRs, `set=holdout10+fresh10` two sets. Without it every
-PR of the arm counts, and one your judge did not judge counts as missed.
+the Copilot 2025 table's PRs, `set=holdout10+fresh10` two sets; the review count
+and the agreement cover the same PRs.
 `judge_prompt.py --all --out-dir DIR` writes every prompt of an arm.
 
-`martian_scores.py --data <hf-dataset>` alone recomputes our judge's 196
-stored Martian scores from the verdict tables and fails on any difference.
+`martian_scores.py --data <hf-dataset>` alone recomputes every stored Martian
+score of our judge whose reviews ship from the verdict tables, fails on any
+difference, and names the stored scores it cannot recompute (no
+`martian_reviews` rows).
+
+When your judge judged only some of the PRs ours did (a sample),
+`score_verdicts.py`, `qodo_scores.py` and `martian_scores.py` count both
+columns over your judge's PRs and say so in the header; `--whole-run` counts
+every PR of the run instead, where a PR your judge did not judge counts as
+missed, so those numbers are not comparable with ours.
 
 ## The held-out Qodo set
 

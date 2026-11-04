@@ -30,6 +30,13 @@ table has them, else the answer-key volume's `<set>-code/<id>/meta.json` under
 neither is refused, never guessed: `prs.base_commit` is not the merge base on
 most PRs.
 
+A link-only review (`reviews.source_url` set: a third-party tool's text the
+release links instead of copying, such as Copilot 2025's) is refused: its
+comments' text is not in the tables, and re-judging it needs the restored run
+directories (the card's "What is not here"). `--all` writes no prompt for a
+review the judge was never asked about (no comments, and no defect in the PR's
+key) and says how many it left out.
+
 `review_hash` (in the frozen and open-model arms' judge files) cannot serve as
 a public check: it was taken before the name rewrite. Use this prompt, and
 compare yours with it.
@@ -162,6 +169,9 @@ class Prompts:
         review = self.reviews.get((arm, iid))
         if review is None:
             raise SystemExit(f"no review of {iid} by arm {arm!r} in the reviews table")
+        if review.get("source_url") is not None or any(c.get("text") is None for c in review.get("comments") or []):
+            raise SystemExit(f"{arm} on {iid} is link-only: its text is not in the tables ({review.get('source_url')}); "
+                             "restore the run directories and judge it from them")
         p, merge_base, title = self.pr_inputs(iid)
         return prompt(p, merge_base, title, self.defects.get(iid, []), self.excluded.get(iid, []), review)
 
@@ -186,10 +196,13 @@ def main() -> None:
         sys.exit("--all writes one file per PR: give --out-dir")
     os.makedirs(a.out_dir, exist_ok=True)
     ids = sorted(i for arm, i in p.reviews if arm == a.arm)
-    for iid in ids:
+    # the judge was never asked about a review with no comments of a PR with no defects
+    asked = [i for i in ids if p.reviews[(a.arm, i)].get("comments") or p.defects.get(i)]
+    for iid in asked:
         with open(os.path.join(a.out_dir, f"{iid}.txt"), "w") as f:
             f.write(p.prompt(a.arm, iid))
-    print(f"wrote {len(ids)} prompts of {a.arm} to {a.out_dir}")
+    print(f"wrote {len(asked)} prompts of {a.arm} to {a.out_dir}; left out {len(ids) - len(asked)} reviews the judge "
+          "was never asked about (no comments, no defect in the key)")
 
 
 if __name__ == "__main__":

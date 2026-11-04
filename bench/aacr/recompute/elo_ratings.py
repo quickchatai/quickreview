@@ -19,7 +19,11 @@ it. This script reads only what ships and fits with the same code
     judgment over the rated judges (every judge gets the identical prompt); a
     judgment at any other hash is stale, as `elo.py report` sets aside a
     judgment whose prompt changed since. Each judge's judgment of a unit is
-    then its first `ok` row at the current hash (`Run.final`);
+    then its first `ok` row at the current hash (`Run.final`). A judge whose
+    latest judgment of a unit carries a prompt the other judges were never
+    given would set theirs aside: the script warns, naming the judge and the
+    units (a new judge must be given the published prompts, its
+    `prompt_sha256` equal to the `elo_judgments` rows');
   - per judge, its table; the judges' agreement on the overall winner (per
     pair when there are more than two); and the "Combined" table, every unit
     every judge answered counted once per judge (`cmd_report`'s pooling), with
@@ -65,6 +69,25 @@ def current_hashes(judgments: Dict[str, List[dict]]) -> Dict[str, str]:
             if r.get("status") == "ok" and (r["id"] not in latest or r["at"] > latest[r["id"]]["at"]):
                 latest[r["id"]] = r
     return {i: r["prompt_sha256"] for i, r in latest.items()}
+
+
+def displaced(judgments: Dict[str, List[dict]]) -> Dict[str, int]:
+    """judge -> the units where its latest judgment set the current prompt hash and left another rated judge
+    that judged the unit with no judgment at that hash: a judge given a different prompt (a re-pack, another
+    plan's packs) sets the other judges' judgments aside as stale and moves every table."""
+    cur = current_hashes(judgments)
+    ok = {j: [r for r in rows if r.get("status") == "ok"] for j, rows in judgments.items()}
+    latest: Dict[str, tuple] = {}
+    for j, rows in ok.items():
+        for r in rows:
+            if r["id"] not in latest or r["at"] > latest[r["id"]][1]:
+                latest[r["id"]] = (j, r["at"])
+    out: Dict[str, int] = {}
+    for u, (j, _) in latest.items():
+        if any(k != j and any(r["id"] == u for r in rows) and not any(r["id"] == u and r.get("prompt_sha256") == cur[u]
+                                                                       for r in rows) for k, rows in ok.items()):
+            out[j] = out.get(j, 0) + 1
+    return out
 
 
 def finals(judgments: Dict[str, List[dict]]) -> Dict[str, Dict[str, dict]]:
@@ -211,7 +234,14 @@ def main() -> None:
     rat = ratings(plan, judgments)
     fin = finals(judgments)
     print(render(plan, rat, {j: len(v) for j, v in fin.items()}, stale_count(judgments)))
-    res = {"ratings": rat}
+    moved = displaced(judgments)
+    for j, n in sorted(moved.items()):
+        # a judge must be given the prompts the others were: its prompt_sha256 equal to theirs (elo_judgments)
+        print(f"WARNING: {j}'s prompt differs from the other judges' on {n} unit(s) and, judged last, set those "
+              "units' current prompt: the others' judgments of them are stale and every table above moved. "
+              "Judge with the same prompts (prompt_sha256 equal to the published elo_judgments rows).",
+              file=sys.stderr)
+    res = {"ratings": rat, "displaced": moved}
     if a.runs_dir:
         res["costs"] = costs(plan, a.runs_dir)
         print("\n$ per PR (list price), mean / median over the plan's PRs:")

@@ -67,7 +67,9 @@
 //  24. every Martian scoring dir's `runs.judges` states its judge's settings
 //      from its own record;
 //  25. `arms.paper_tables`, `arms.in_paper` and `runs.claims` follow the claims
-//      manifest's q keys, and a Qodo verdict ships only beside its review;
+//      manifest's q keys (a level word is never an arm), the archive's
+//      RUNS-INDEX.json holds the runs table's rows, and a Qodo verdict ships
+//      only beside its review;
 //  26. the export's load check reads the folder it wrote, through a cache of
 //      its own (load_counts), never an earlier export's.
 
@@ -1818,11 +1820,15 @@ describe("verify_slim.summary_failures: the bundle check fails on what it finds"
 describe("hf_export: what a re-judge needs", () => {
   // MUTATION: in priority_confidence, take the last footer entry on the line instead of the first — this fails
   // MUTATION: drop the `/(\d…)` alternative (the older `_(P1/0.99, …)_` footer) from PRIORITY_RE — this fails
-  it("reads QuickReview's priority and confidence from either footer form, the first entry of a merged footer", () => {
+  // MUTATION: revert PRIORITY_RE to the `_P<n>` forms alone (no `nit`, no bare confidence) — this fails
+  // MUTATION: drop the `(?:^|_)` anchor from PRIORITY_RE — this fails (prose "with confidence 1" reads as a footer)
+  it("reads QuickReview's priority and confidence from every footer form, the first entry of a merged footer", () => {
     const r = py(
       "xs = ['[blocker] a\\n\\n_P1 · confidence 0.99 · lens pass-baseline_', '[nit] b _(P3/0.88, pass-style)_. more',\n" +
         "  'c\\n\\n_P2 · confidence 0.98 · lens x_; _P3 · confidence 0.95 · lens y_', 'P1 in prose, confidence 1',\n" +
-        "  'see _P2 · confidence 0.9_ above\\n\\n_P3 · confidence 0.5 · lens z_']\n" +
+        "  'see _P2 · confidence 0.9_ above\\n\\n_P3 · confidence 0.5 · lens z_',\n" +
+        "  '[nit] d\\n\\n_nit · confidence 0.96 · lens pass-maintainability_', 'e\\n\\n_confidence 0.85 · plausible · lens x_',\n" +
+        "  'f\\n\\nP0 · confidence 1.0 · lens pass-validate', 'it is ASCII with confidence 1, so it enters'] \n" +
         "print(json.dumps([h.priority_confidence(x) for x in xs]))",
     );
     expect(r).toEqual([
@@ -1831,6 +1837,10 @@ describe("hf_export: what a re-judge needs", () => {
       ["P2", 0.98],
       [null, null],
       ["P3", 0.5],
+      ["nit", 0.96],
+      [null, 0.85],
+      ["P0", 1.0],
+      [null, null],
     ]);
   });
 
@@ -2031,6 +2041,81 @@ describe("hf_export: what a re-judge needs", () => {
     ]);
   });
 
+  // MUTATION: in cited, match a script key's segments against the arm ids with no LEVEL_WORDS test — this fails
+  // MUTATION: in cited, drop the key_build alias reading (KEY_BUILD's `low` stays unlinked) — this fails
+  // MUTATION: in cited, read a key_build alias under a `…_by_severity` segment as its arm — this fails
+  // MUTATION: in cited, skip the key check's `arm=` selector — this fails
+  it("never reads a level word as an arm, reads key_build's aliases as their arms and the key's arm= selector", () => {
+    const r = py(
+      "ids = ('low', 'ocr', 'quickreview-low-sol', 'ocr-medium-sol', 'lev1', 'qr-a')\n" +
+        "arms = [{'arm_id': a, 'runs': []} for a in ids]\n" +
+        "claims = [{'group': 'g:sev', 'q': 'martian_ext:unlisted_only_quickreview_by_severity/low'},\n" +
+        "  {'group': 'g:lens', 'q': 'lens_credit:unique_by_severity/sweep/low'},\n" +
+        "  {'group': 'g:kb', 'q': '{key_build:first_key/candidates_by_run/low} + {key_build:prov/raised/ocr}'},\n" +
+        "  {'group': 'g:kbsev', 'q': 'key_build:own_seeding/dropped_by_severity/low'},\n" +
+        "  {'group': 'g:key', 'q': '{key:prs~arm=lev1} + {key:prs~set=rest145}'}, {'group': 'g:tok', 'q': 'tokens:qr-a/all/cache_share'}]\n" +
+        "a, u = h.claim_links(claims, arms, [], set())\n" +
+        "print(json.dumps({k: sorted(v) for k, v in sorted(a.items())}))",
+    );
+    expect(r).toEqual({
+      lev1: ["g:key"],
+      "ocr-medium-sol": ["g:kb"],
+      "qr-a": ["g:tok"],
+      "quickreview-low-sol": ["g:kb"],
+    });
+  });
+
+  // MUTATION: in sync_run_index, write "judges" alone (drop "claims" from RUN_INDEX_DERIVED) — this fails
+  // MUTATION: in sync_run_index, match a row by its unit name instead of its path — this fails (two units share one)
+  // MUTATION: make run_index_problems compare only the row sets — this fails
+  it("writes the runs table's derived fields into RUNS-INDEX.json, row by path, and checks every field", () => {
+    const idx = join(tmp, "run-index", "RUNS-INDEX.json");
+    const unit = (path: string, claims: string[], judges: string | null = null) => ({
+      unit: path.split("/").pop(),
+      path,
+      family: "f",
+      judges,
+      claims,
+      set: "s",
+    });
+    put(
+      idx,
+      JSON.stringify({
+        note: "n",
+        units: [
+          unit("runs/w.martian", ["old"], "fam"),
+          unit("x", []),
+          unit("open-models/x", ["do:a"]),
+        ],
+        withheld: [],
+        claims: {},
+      }),
+    );
+    const r = py(
+      "runs = json.loads(sys.argv[2])\n" +
+        "before = h.run_index_problems(json.load(open(sys.argv[1])), runs)\n" +
+        "h.sync_run_index(sys.argv[1], runs)\n" +
+        "doc = json.load(open(sys.argv[1]))\n" +
+        "after = h.run_index_problems(doc, runs)\n" +
+        "runs[1]['set'] = 't'; runs.append({'unit': 'r2', 'path': 'runs/r2'})\n" +
+        "print(json.dumps({'before': before, 'after': after, 'other': h.run_index_problems(doc, runs),\n" +
+        "  'claims': [u['claims'] for u in doc['units']], 'keys': list(doc)}))",
+      idx,
+      JSON.stringify([
+        unit("runs/w.martian", ["old", "g:m"], "fam. This scoring dir: m"),
+        unit("x", ["g:a"]),
+        unit("open-models/x", ["do:a"]),
+      ]),
+    );
+    expect(r).toEqual({
+      before: ["runs/w.martian: claims", "runs/w.martian: judges", "x: claims"],
+      after: [],
+      other: ["runs/r2: only in runs", "x: set"],
+      claims: [["old", "g:m"], ["g:a"], ["do:a"]],
+      keys: ["note", "units", "withheld", "claims"],
+    });
+  });
+
   // MUTATION: drop the VERDICTS_NEED filter from release_catalogue.Catalogue.hf_tables — this fails
   it("lists a family's Qodo verdicts only beside its Qodo reviews", () => {
     const r = pyModule(
@@ -2051,6 +2136,7 @@ describe("hf_export: what a re-judge needs", () => {
   // MUTATION: make martian_score_problems return [] — this fails
   // MUTATION: in rejudge_column_checks, drop "verbosity" from the judges keys — this fails
   // MUTATION: in rejudge_column_checks, skip the qodo_verdicts orphan count — this fails
+  // MUTATION: make _footer_conf return False — this fails (a footer's confidence left null)
   it("fails each re-judge column check on a planted fault and passes the clean tables", () => {
     const r = py(`
 import copy
@@ -2085,6 +2171,8 @@ out = {'clean': failed(base)}
 out['merge_base'] = plant(lambda t: t['prs'][0].update(merge_base=None))
 out['raw'] = plant(lambda t: t['reviews'][0]['comments'][0].update(raw_text='[nit] Do y\\n\\n_P3 · confidence 0.9 · lens l_'))
 out['priority'] = plant(lambda t: t['reviews'][0]['comments'][0].update(priority='P1'))
+out['nit_unread'] = plant(lambda t: t['reviews'][0]['comments'].append({'id': 'C2', 'tag': 'nit', 'text': 'z\\n\\n_nit · confidence 0.9 · lens l_',
+                                                                         'raw_text': '[nit] z\\n\\n_nit · confidence 0.9 · lens l_', 'priority': None, 'confidence': None}))
 out['link'] = plant(lambda t: t['reviews'][2]['comments'][0].update(raw_text='vendor text'))
 out['beyond'] = plant(lambda t: t['martian_reviews'][0].update(comments_beyond_first_page=[]))
 out['styled_martian'] = plant(lambda t: [x.update(tool='claude-code') for x in t['martian_reviews'][:1] + t['martian_verdicts'] + t['martian_scores'][:1]])
@@ -2101,6 +2189,10 @@ print(json.dumps(out))
     expect(only("merge_base")).toEqual(["prs: every PR has its merge base (40"]);
     expect(only("raw")).toEqual(["reviews: every comment's raw_text st"]);
     expect(only("priority")).toEqual(["reviews: every comment's raw_text st"]);
+    expect(only("nit_unread")).toEqual([
+      "reviews: every comment whose last li",
+      "reviews: every comment's raw_text st",
+    ]);
     expect(only("link")).toEqual(["reviews: a link-only arm's comment r"]);
     expect(only("beyond")).toEqual(["martian_reviews: the first page hold"]);
     expect(only("styled_martian")).toEqual(["no QuickReview-styled review carries"]);

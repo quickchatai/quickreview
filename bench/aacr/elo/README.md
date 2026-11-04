@@ -117,7 +117,13 @@ $E/judge-gpt.sh stop
   `bench/aacr/artifacts/open-models/runs`, which a clone does not have, so
   set both of its `run_dirs` entries to the absolute path of the unpacked
   `open-models/runs` before `elo.py init` (or in the run directory's
-  `plan.json` after it).
+  `plan.json` after it). `pack` reads each PR from a bare clone per Martian
+  project, `<git_cache>/<project>.git` (the plan's `git_cache`, by default
+  `ext-cache/martian` beside the runs directory; the project is the set's
+  `martian.project`), which the archive does not ship: create each with
+  `git init --bare`, then fetch every PR's `expect_merge_base` and
+  `head_commit` from `https://github.com/<fetch_repo>.git` (the fields of the
+  plan's set, `sets/martian50.json`). `pack` names a missing clone and stops.
 - **The rated judges are the plan's.** `judges` names them, in order: `gpt`,
   `opus`, `deepseek`, or any other name with a `base_url` (an
   OpenAI-compatible Chat Completions endpoint), `model`, `effort`,
@@ -173,7 +179,8 @@ and its smoke plan are published in the Hugging Face dataset
 
 The packs are not published: they are whole files of the reviewed
 repositories. `elo.py pack` rebuilds them from the public repositories at the
-commits in `units.jsonl`, and `packs.jsonl` lists the files each pack held.
+commits in the plan's set (`expect_merge_base`, `head_commit`), and
+`packs.jsonl` lists the files each pack held.
 Without packs, `elo.py report` cannot run, so
 [`../recompute/elo_ratings.py`](../recompute/elo_ratings.py) refits the
 ratings from the judgments alone, with the same Bradley-Terry code and seed;

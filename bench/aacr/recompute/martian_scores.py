@@ -14,9 +14,11 @@ candidates, fn = goldens not matched, with Core leaving out the goldens Martian
 categorises `style` and `speculative` and Strict also `doc_defect`, `test_gap`
 and `perf`; precision, recall, F1 and F2 (beta 2). This script makes that count
 from the published tables (claim_metrics.PROFILES), so it reproduces every
-stored `martian_scores` row of our judge (gpt-6.1-sol) from `martian_verdicts`
-(per golden, `matched`), `martian_reviews` (per PR, `fp`) and
-`martian_goldens` (`category`), and scores your judge's answers the same way.
+stored `martian_scores` row of our judge (gpt-6.1-sol) whose reviews ship
+from `martian_verdicts` (per golden, `matched`), `martian_reviews` (per PR,
+`fp`) and `martian_goldens` (`category`), names the stored rows it cannot
+recompute (no `martian_reviews` rows: re-judged calibration dirs and
+open-model smokes), and scores your judge's answers the same way.
 
 DIR holds your judge's answers as two tables shaped like the published ones:
 `martian_verdicts` (work_dir, tool, pr_url, golden_index, matched) and
@@ -29,7 +31,10 @@ whose review the release does not ship. Without DIR it recomputes our judge's
 runs and checks them against the stored scores.
 
 --half recounts on one half's PRs (a committed set file, as claim_metrics'
-`WORK|TOOL~HALF` keys do).
+`WORK|TOOL~HALF` keys do). When your judge judged only some of the PRs ours
+judged (a sample), our column is counted over your judge's PRs too, and the
+header says how many of ours that is; --whole-run counts ours over all of its
+PRs instead (so the two columns cover different PRs).
 """
 from __future__ import annotations
 
@@ -142,7 +147,12 @@ def render(res: dict, judge: str) -> str:
     out = []
     cols = [judge] + ([f"{OURS} (recomputed)", f"{OURS} (stored)"] if judge != OURS else ["stored"])
     for run, r in res["runs"].items():
-        out += [f"{run}" + (f" ~{res['half']}" if res["half"] else "") + f": {r['prs']} PRs",
+        head = f"{run}" + (f" ~{res['half']}" if res["half"] else "") + f": {r['prs']} PRs judged by {judge}"
+        if judge != OURS:
+            head += f", {r['reference_prs']} by {OURS}"
+        if r["sample"]:
+            head += f"; both columns over the {r['prs']} PRs {judge} judged (--whole-run: all of ours)"
+        out += [head,
                 "| profile | " + " | ".join(cols) + " |", "|---|" + "---:|" * len(cols)]
         for p in PROFILES:
             for f in ("precision", "recall", "f1", "f2", "tp", "fp", "fn"):
@@ -164,6 +174,8 @@ def main() -> None:
     ap.add_argument("--runs", help="WORK|TOOL, comma-separated (default: every run the judge judged)")
     ap.add_argument("--half", help="recount on one half's PRs: a set file name (martian-test30, martian-tune20)")
     ap.add_argument("--sets-dir", default=SETS)
+    ap.add_argument("--whole-run", action="store_true",
+                    help="count our judge over all its PRs even when yours judged only some")
     ap.add_argument("--json", help="also write every number to this JSON file")
     a = ap.parse_args()
     if bool(a.verdicts) != bool(a.judge):
@@ -190,18 +202,27 @@ def main() -> None:
     res: dict = {"judge": judge, "half": a.half, "runs": {}}
     for run in runs:
         work, _, tool = run.partition("|")
-        r: dict = {"prs": len({x["pr_url"] for x in rs if x["work_dir"] == work and x["tool"] == tool
-                              and x["judge"] == judge and (urls is None or x["pr_url"] in urls)})}
+        prs_of = lambda j: {x["pr_url"] for x in rs if x["work_dir"] == work and x["tool"] == tool  # noqa: E731
+                            and x["judge"] == j and (urls is None or x["pr_url"] in urls)}
+        mine, ours = prs_of(judge), prs_of(OURS)
+        # a sample: ours over the PRs your judge judged, never yours over them and ours over all
+        sample = judge != OURS and not a.whole_run and bool(ours) and not ours <= mine
+        r: dict = {"prs": len(mine), "reference_prs": len(ours), "sample": sample}
         r[judge] = metrics(counts(goldens, vs, rs, work, tool, judge, urls))
-        ours_rows = any(x["work_dir"] == work and x["tool"] == tool and x["judge"] == OURS for x in rs)
         if judge != OURS:
-            r[OURS] = metrics(counts(goldens, vs, rs, work, tool, OURS, urls)) if ours_rows else None
-        r["stored"] = stored(scores, work, tool) if urls is None else None
+            r[OURS] = (metrics(counts(goldens, vs, rs, work, tool, OURS, mine if sample else urls))
+                       if ours and (not sample or mine & ours) else None)
+        r["stored"] = stored(scores, work, tool) if urls is None and not sample else None
         mine = r[OURS] if judge != OURS else r[judge]
         if r["stored"] is not None and mine is not None:
             r["stored_equal"] = all(abs(mine[k] - r["stored"][k]) < 1e-6 for k in r["stored"])
         res["runs"][run] = r
     print(render(res, judge))
+    if not a.verdicts and not a.half and not a.runs:
+        gone = sorted({f"{x['work_dir']}|{x['tool']}" for x in scores if x["judge"] == OURS} - set(have))
+        res["not_recomputed"] = gone
+        print(f"\nrecomputed {len(runs)} stored {OURS} scores; {len(gone)} have no martian_reviews rows and are "
+              "not recomputed: " + (", ".join(gone) or "none"))
     if not a.verdicts and not a.half:
         bad = [run for run, r in res["runs"].items() if r.get("stored_equal") is False]
         if bad:

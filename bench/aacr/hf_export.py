@@ -5,7 +5,8 @@
         --runs-dir <runs dir>/runs \\
         --aacr-dataset <AACR-Bench v1.0 dataset/positive_samples.json> \\
         --out <runs dir>/release/hf-dataset \\
-        --repo-id <org>/<name> [--archive-url URL] [--generated DIR] [--no-figures] [--no-load-check]
+        --repo-id <org>/<name> [--archive-url URL] [--archive DIR] [--generated DIR] [--no-figures]
+        [--no-load-check]
 
 What it writes (no model call, nothing uploaded; the run dirs are only read):
 
@@ -28,6 +29,11 @@ What it writes (no model call, nothing uploaded; the run dirs are only read):
   LICENSES/MIT-*.txt     Martian's and Qodo's MIT licence texts (notices.py),
   validation.json        every count and headline number recomputed FROM THE
                          WRITTEN TABLES, against the papers' values.
+
+With --archive (the run archive folder, after `export_runs.py readme` wrote it) it
+also writes the runs table's derived fields (each Martian scoring dir's judge
+settings, the claim groups) into that folder's RUNS-INDEX.json, which the
+validation then checks row for row against the runs table.
 
 Third-party text: AACR reference comments (Apache-2.0), Martian golden
 comments (MIT) and Qodo's issues (MIT) are copied; vendor bot comments (the
@@ -201,20 +207,25 @@ def scrub_obj(obj, counts: collections.Counter | None = None):
 
 TAG_RE = re.compile(r"^\s*\[([a-z][a-z ]*)\]\s*", re.I)
 FOOTER_RE = re.compile(r"\n*_P\d[^\n]*_\s*$")
-# QuickReview's own priority and confidence, as its comment footer prints them: `_P1 · confidence 0.99 · lens …_`
-# (and the older `_(P1/0.99, pass-…)_`); a third-party tool's comment has neither
-PRIORITY_RE = re.compile(r"_\(?P(\d)(?: · confidence (\d+(?:\.\d+)?)|/(\d+(?:\.\d+)?))")
+# QuickReview's own priority and confidence, as its comment footer prints them (src/posting.ts:
+# `_<severity> · confidence 0.99 · lens …_`, the severity P0..P4 or `nit`, and one build's bare
+# `_confidence 0.85 · …_` and unitalicised `P3 · confidence 0.99 · lens …`), and the older
+# `_(P1/0.99, pass-…)_`; an entry starts a line or follows `_`, so prose ("with confidence 1") is
+# never one, and a third-party tool's comment has none. FOOTER_RE strips only the `_P<n>…_` form
+# from the judge's text: the others stayed in what the judge read
+PRIORITY_RE = re.compile(r"(?m)(?:^|_)\(?(?:(P\d)/(\d+(?:\.\d+)?)|(?:(P\d|nit) · )?confidence (\d+(?:\.\d+)?))")
 
 
 def priority_confidence(raw: str) -> tuple[str | None, float | None]:
-    """A comment's QuickReview priority ("P1".."P3") and confidence from its footer: the first
-    footer entry on the last line that has one (a merged comment's footer can name two)."""
+    """A comment's QuickReview priority ("P0".."P4", "nit", or None for a footer that prints none)
+    and confidence from its footer: the first footer entry on the last line that has one (a merged
+    comment's footer can name two)."""
     hits = list(PRIORITY_RE.finditer(raw or ""))
     if not hits:
         return None, None
     last_line = raw.count("\n", 0, hits[-1].start())
     m = next(h for h in hits if raw.count("\n", 0, h.start()) == last_line)
-    return f"P{m.group(1)}", float(m.group(2) or m.group(3))
+    return m.group(1) or m.group(3), float(m.group(2) or m.group(4))
 
 
 def _read_json(path):
@@ -596,10 +607,21 @@ def _dirs_of(work: str, suffix: str, units: set) -> set:
     return {u for u in (work, base, base + suffix) if u in units}
 
 
+# the severity, effort and tier words a script's JSON key uses as path segments
+LEVEL_WORDS = {"nit", "low", "medium", "high", "xhigh", "max", "critical", "minimal"}
+
+
+def key_build_arms() -> dict:
+    """recompute/key_build.py STUDY: its candidate-key reviewer names and the study arm each stands for."""
+    sys.path.insert(0, os.path.join(HERE, "recompute"))
+    import key_build
+    return key_build.STUDY
+
+
 def cited(check: str, key: str, arm_ids: set, units: set, martian_dirs: set) -> tuple[set, set]:
     """(arm ids, run index units) one q-key reference reads (recompute/claim_metrics.py's key
     grammar for the table checks; for a script's JSON key, every path segment that is an arm id or a
-    run index unit)."""
+    run index unit, never a level word, key_build's reviewer aliases read as their arms)."""
     head = key.rpartition(":")[0]
     arms, runs = set(), set()
     if check == "aacr":
@@ -622,11 +644,22 @@ def cited(check: str, key: str, arm_ids: set, units: set, martian_dirs: set) -> 
     elif check == "qodo":
         if head != "issues":
             runs |= _dirs_of(head.partition("|")[0], ".qodo", units)
-    elif check not in ("key", "sets"):
+    elif check == "key":  # claim_metrics.Key: only its `arm=` selector reads an arm's reviews
+        for part in key.partition("~")[2].split("&"):
+            k, _, v = part.partition("=")
+            if k == "arm":
+                arms.add(v)
+    elif check != "sets":
         segs = [x.strip() for x in re.split(r"[|/]", key)] + [x for x in re.split(r"[|:]", key)]
         if check == "elo" and "elo" in units:
             runs.add("elo")
-        arms |= {x for x in segs if x in arm_ids}
+        # a script's level words are never an arm (the development arm `low` is also a severity and an
+        # effort), and key_build names the earlier study's reviewers by alias (`low` is quickreview-low-sol,
+        # except under a `…_by_severity` segment)
+        alias = key_build_arms() if check == "key_build" else {}
+        parts = key.split("/")
+        arms |= {alias[x] for i, x in enumerate(parts) if x in alias and not (i and "severity" in parts[i - 1])}
+        arms |= {x for x in segs if x in arm_ids and x not in LEVEL_WORDS and x not in alias}
         runs |= {x for x in segs if x in units}
     return arms & arm_ids, runs & units
 
@@ -675,6 +708,40 @@ def claim_groups(t: dict[str, list[dict]], claims: list[dict]) -> dict[str, dict
             out[g]["families"].add(fam[u][0])
             out[g]["volumes"].update(fam[u][1])
     return {g: {k: sorted(v) for k, v in d.items()} for g, d in sorted(out.items())}
+
+
+# the run index fields this export derives (build_runs: a Martian scoring dir's judge settings;
+# link_claims: the claim groups), which export_runs.py's RUNS-INDEX.json takes from the catalogue alone
+RUN_INDEX_DERIVED = ("judges", "claims")
+
+
+def sync_run_index(path: str, runs: list[dict]) -> None:
+    """Write the runs table's derived fields into the archive's RUNS-INDEX.json units, so the index
+    holds the same rows as the table (run_index_problems checks every field). A row is its `path`: two
+    units can share a name (`ext-images` and `open-models/ext-images`)."""
+    with open(path) as f:
+        doc = json.load(f)
+    by = {r["path"]: r for r in runs}
+    for u in doc["units"]:
+        if u["path"] in by:
+            u.update({k: by[u["path"]][k] for k in RUN_INDEX_DERIVED})
+    with open(path, "w") as f:
+        f.write(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
+
+
+def run_index_problems(index: dict, runs: list[dict]) -> list[str]:
+    """The archive's RUNS-INDEX.json units against the runs table, row by `path`: a row on one side only,
+    a path on two rows, or a field whose value differs."""
+    rows, idx = list(runs), list(index.get("units") or [])
+    by = {r["path"]: r for r in rows}
+    units = {u["path"]: u for u in idx}
+    out = [f"{p}: on two rows" for p, n in collections.Counter([r["path"] for r in rows] + [u["path"] for u in idx]).items()
+           if n > 2 or (n == 2 and (p not in by or p not in units))]
+    out += [f"{u}: only in RUNS-INDEX.json" for u in sorted(set(units) - set(by))]
+    out += [f"{u}: only in runs" for u in sorted(set(by) - set(units))]
+    for u in sorted(set(units) & set(by)):
+        out += [f"{u}: {k}" for k in sorted(set(units[u]) | set(by[u])) if units[u].get(k) != by[u].get(k)]
+    return out
 
 
 # ext_judge.py's verbosity: its log does not record it, and ext.sh starts it without --verbosity
@@ -1923,6 +1990,10 @@ def martian_score_problems(t: dict[str, list[dict]]) -> list[str]:
     return bad
 
 
+def _footer_conf(line: str) -> bool:
+    return bool(re.search(r"confidence \d", line)) and ("·" in line or line.startswith("_"))
+
+
 def rejudge_column_checks(t: dict[str, list[dict]]) -> list[dict]:
     """The columns a re-judge needs, checked from the tables: every PR's merge base and title; every
     review comment's raw text, priority and confidence agreeing with the judge's view of it; the
@@ -1954,6 +2025,12 @@ def rejudge_column_checks(t: dict[str, list[dict]]) -> list[dict]:
     check("reviews: every comment's raw_text strips to its tag and text, and its priority and confidence are its footer's",
           bad[:20], [])
     check("reviews: a link-only arm's comment raw_text is withheld", link[:20], [])
+    # read apart from PRIORITY_RE: a last line printing `· confidence N` (or `_confidence N`) is a footer,
+    # whatever severity word it carries
+    unread = [f"{r['arm_id']}/{r['instance_id']}/{c['id']}" for r in t["reviews"] for c in r["comments"] or []
+              if c.get("confidence") is None and _footer_conf((c.get("raw_text") or "").rstrip().rpartition("\n")[2])]
+    # MUTATION: revert PRIORITY_RE to the `_P<n> · confidence` and `_(P<n>/…)` forms alone — this fails (the nit footers)
+    check("reviews: every comment whose last line is a footer printing a confidence has that confidence", unread[:20], [])
     beyond = []
     for r in t["martian_reviews"]:
         n, more = r.get("n_posted_inline"), r.get("comments_beyond_first_page") or []
@@ -2443,6 +2520,8 @@ def main():
     ap.add_argument("--open-models", help="the open-model benchmark dir (its runs/ hold the open-model runs)")
     ap.add_argument("--catalogue", help="the run catalogue (release_catalogue.py): which families ship and which "
                     "tables each has rows in; without it only the 10-05 arms and scoring dirs are exported")
+    ap.add_argument("--archive", help="the run archive folder (export_runs.py's --out): its RUNS-INDEX.json units "
+                    "get the runs table's derived judges and claims, and the validation checks the two agree")
     ap.add_argument("--commit-remap", help="JSON {recorded qcr_commit: public main commit or null}, for the runs table")
     ap.add_argument("--elo-dir", help="the Elo runs (one dir per plan: plan.json, judgments/); default <runs>/../elo")
     ap.add_argument("--repo-ref", default="main",
@@ -2489,6 +2568,13 @@ def main():
               + ex.raw_text_checks(tables))
     if not a.no_figures:
         checks += figure_checks(out)
+    if a.archive:
+        idx = os.path.join(os.path.abspath(os.path.expanduser(a.archive)), "RUNS-INDEX.json")
+        sync_run_index(idx, tables["runs"])
+        bad = run_index_problems(json.load(open(idx)), tables["runs"])
+        # MUTATION: drop the sync_run_index call — this fails (the index keeps the catalogue's claims and judges)
+        checks.append({"check": "archive RUNS-INDEX.json: every unit equals its runs row, field for field",
+                       "got": bad[:20], "want": [], "ok": not bad})
     NT.write_licences(out)
     open(os.path.join(out, "NOTICE"), "w").write(dataset_notice())
     render_card(a, out, sizes, checks, ex.counts, tables.get("runs"))

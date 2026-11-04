@@ -67700,7 +67700,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "| `gpt-6.1-sol` | GPT-6.1 Sol, low effort, medium verbosity |",
+   "anchor": "| `gpt-6.1-sol` | GPT-6.1 Sol, low effort, medium verbosity (`ext_judge.py`'s default) |",
    "tokens": [
     "0",
     "2",
@@ -67725,6 +67725,14 @@
     "2025"
    ],
    "why": "a year"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "here\") and our pipeline run on the restored run directories (Tier 2 in",
+   "tokens": [
+    "2"
+   ],
+   "why": "list numbering"
   },
   {
    "file": "bench/aacr/hf/card.md",

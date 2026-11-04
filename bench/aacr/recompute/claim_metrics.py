@@ -14,7 +14,7 @@ aacr     ARM[@JUDGE][~SEL]:METRIC
          SEL narrows the PRs (and so the key), `&`-joined:
            all (default) | own (the PRs the arm has a review of) | s40 | o145
            | set=a+b (the `prs.set` names) | lang=<language> | kind=<pr_category>
-           | lines=<lo>-<hi> (change_line_count, inclusive) | arm=<arm id> (that arm's PRs) | pr=<instance id>
+           | lines=<lo>-<hi> (change_line_count, inclusive) | arm=<arm id> (that arm's PRs) | pr=<instance id>[+<instance id>…]
            | refcat=<AACR reference category> (the aacr_* metrics over those references only)
            | rlabel=<label reality> (the aacr_* metrics over the labelled references of that reality only)
            | done=<arm id> (the PRs that arm's review completed, status ok) | run=<run> (the arm's reviews from that run)
@@ -189,7 +189,7 @@ class Aacr(Provider):
             elif k == "lang":
                 keep &= {i for i, p in prs.items() if p["language"] == v}
             elif k == "pr":
-                keep &= {v}
+                keep &= set(v.split("+"))
             elif k == "kind":
                 keep &= {i for i, p in prs.items() if p["pr_category"] == v}
             elif k == "lines":

@@ -148,9 +148,10 @@ repository under `bench/aacr/`.
 
 The claim ids are derived from `bench/aacr/claims.json`: a run or an arm
 carries every claim group whose recompute keys read it (`runs.claims`,
-`arms.paper_tables`, `arms.in_paper`), and `validation.json` lists each
-group's run families and archive volumes. A claim's `q` key names its exact
-rows.
+`arms.paper_tables`, `arms.in_paper`), and `validation.json` lists the run
+families and archive volumes of each group whose keys name a run (a group
+whose keys read only the key, a set or a published number lists none). A
+claim's `q` key names its exact rows.
 
 The other run families back no published number and ship anyway: the fast
 option of the frozen build, the v1.0.7 re-baseline, the review-efficiency
@@ -273,9 +274,15 @@ runs = load_dataset("{{REPO_ID}}", "runs", split="test")
   minutes, and the number of comments AACR-Bench's harness scored. A comment's
   `text` is what the judge read: QuickReview's tag (`[blocker]`, `[question]`,
   `[nit]`) moved to `tag`, and its footer (priority, confidence and lens, in
-  italics) removed. `raw_text` is the comment as posted, after the release's
-  name rewrite ("Names rewritten"), and `priority` and `confidence` are read
-  from its footer (null when it has none, as for every other reviewer). A
+  italics) removed when it starts with the priority (`_P1 · …_`). A footer of
+  another form (`_nit · confidence … · lens …_`, a bare `_confidence …_`, or
+  one not in italics) was not removed: the judge read it, and it stays in
+  `text`. `raw_text` is the comment as the run's result file holds it, after
+  the release's name rewrite ("Names rewritten"): QuickReview's comment as it
+  posted it, a third-party harness's finding text, and Claude Code's summary
+  and failure scenario, which it never posted. `priority` (`P0` to `P4`, or
+  `nit`) and `confidence` are read from QuickReview's footer in every form;
+  both are null for a comment with no footer, as for every other reviewer. A
   link-only arm's `raw_text` is null. The archive has the review as it was
   written: `results/all/<id>.json` (`content`), `cases/<id>/comments.json`,
   `review.md` and `findings-record.json`.
@@ -327,7 +334,7 @@ the two open-model arms (51 in all), and a few in arms no paper reports.
 
 - `qodo_prs`, `qodo_issues` — the 580 injected issues (MIT; 309 functional,
   271 rule violations). `qodo_prs.base_commit` and `head_commit` are the real
-  GitHub commits: the PR's head and its merge-base, whose trees are the trees
+  GitHub commits: the PR's merge-base and its head, whose trees are the trees
   our runs reviewed. The runs reviewed them as replay commits, the same trees
   under a synthetic author, date and message so the reviewer could not read
   the PR's history; those ids never existed on GitHub. The run files carry
@@ -343,7 +350,9 @@ the two open-model arms (51 in all), and a few in arms no paper reports.
   published builds are the rows with `work_dir` and `tool`
   `final1-qodo-pr100` and `quickreview-frozen` (the frozen build), and
   `ext-r6-qodo-pr100` and `quickreview-2026-10-02`, 100 reviews each.
-  `qodo_reviews.comments` is exactly what our judge was sent. The two builds
+  `qodo_reviews.comments` holds what our judge was sent: `ask()` in
+  `bench/aacr/ext/qodo_judge.py` builds the message from it and cuts a long
+  comment's text and a long issue's code (its limits are there). The two builds
   were sent their deleted-line comments differently: the frozen build's 12
   were re-anchored to the new side and judged, and the 2026-10-02 build's 18
   were left out (2 of them on held-out PRs). So the rise in rule violations
@@ -383,7 +392,7 @@ labels in the first column.
 | `gpt-6-sol-high-repeat` | GPT-6 Sol, high effort | the primary judge run again, on the same seven arms and 30 PRs, for self-consistency. |
 | `gpt-6.1-sol-high` | GPT-6.1 Sol, high effort | the open-model runs (GLM-5.3 Flash, DeepSeek V4.1 Flash, the DigitalOcean smokes) and the GPT-6.1 Sol baselines copied beside them. |
 | AACR-Bench's harness | GPT-6 Sol, low effort, three rounds | `aacr_matches` for every arm the papers report. Early development arms (prompt iterations, smokes, end-to-end checks; none in the papers) ran it with GPT-5.6 Terra at low effort, or with a single round. `arms.aacr_judge` names the model and rounds per arm. |
-| `gpt-6.1-sol` | GPT-6.1 Sol, low effort, medium verbosity | every row of `martian_verdicts` and `qodo_verdicts`. One judge, served by the ChatGPT Codex backend through `bench/aacr/ext/ext_judge.py`. The backend rejects a sampling temperature, so the bridge drops the harnesses' temperature 0 (and, on one Martian smoke, some requests' `max_completion_tokens`). On Martian the same model also extracts and merges the candidates (steps 2 and 2.5). Each Martian scoring dir's `runs.judges` row states these settings from its request log. |
+| `gpt-6.1-sol` | GPT-6.1 Sol, low effort, medium verbosity (`ext_judge.py`'s default) | every row of `martian_verdicts` and `qodo_verdicts`. One judge, served by the ChatGPT Codex backend through `bench/aacr/ext/ext_judge.py`. The backend rejects a sampling temperature, so the bridge drops the harnesses' temperature 0 (and, on one Martian smoke, some requests' `max_completion_tokens`). On Martian the same model also extracts and merges the candidates (steps 2 and 2.5). Each Martian scoring dir's `runs.judges` row states the model, effort, backend and dropped request keys from its request log (one dir has none, and says so), and the verbosity as `ext_judge.py`'s default, which no log records. |
 | Elo: `gpt-6.1-sol` and `claude-opus-5-5` | GPT-6.1 Sol and Claude Opus 5.5, both at xhigh | the pairwise judgments, 298 each in the ratings, pooled into 596. The two pick the same overall winner in 56% of the comparisons both judged. |
 
 The primary AACR judge's prompt is `judgePrompt()` in `src/bench/defects.ts`.
@@ -394,7 +403,7 @@ for any arm and PR from these tables. `review_hash` in the archive's judge
 files is not a public check: it was taken before the name rewrite. The Qodo
 judge was asked twice on the 10 PRs of `ext-r6-qodo-smoke10`, every tool's
 review: 222 of the 223 matches of the first pass recur in the second (the
-run's `scores.md`). So the final comparison, the frozen build, the open-model rows, Martian and
+run's `scores.md`). The final comparison, the frozen build, the open-model rows, Martian and
 Qodo each rest on one judge from the GPT family. The two judges agree closely
 on defect verdicts where both ran (3,593 of 3,640 pairs) and much less on
 pairwise preference. `validation.json` checks this coverage against the
@@ -438,8 +447,10 @@ Martian, Qodo and Elo judges are the ones named here.
 - **The Elo `packs/`** are left out. They are whole files of the reviewed
   repositories, cut to each PR, and some are under AGPL or source-available
   licences. `bench/aacr/elo/elo.py pack` rebuilds them from the public
-  repositories at the commits in `units.jsonl`, and `packs.jsonl` lists the
-  files each pack held. `recompute/elo_ratings.py` refits the ratings from the
+  repositories at the commits of the plan's set (`expect_merge_base` and
+  `head_commit`), read from bare clones the archive does not ship
+  (`bench/aacr/elo/README.md` says how to make them), and `packs.jsonl` lists
+  the files each pack held. `recompute/elo_ratings.py` refits the ratings from the
   judgments alone, with no pack.
 - **Third-party text** is linked, not copied: the vendor review comments
   Martian publishes (and its `published-benchmark_data.json`), the reviews of
@@ -621,19 +632,23 @@ can judge it with your own judge and score that judge's answers the way we
 scored ours, with no model call of ours. Write your answers as tables shaped
 like ours (`.parquet` or `.jsonl`, in a directory `DIR`, no `judge` column),
 pick a label no published row carries (`LABEL`), and run the scorer. It
-prints your judge's numbers beside our judge's on the same reviews. Each
+prints your judge's numbers beside our judge's on the same reviews: when your
+judge judged only some of a run's PRs, both columns are counted over those
+PRs, and the header says how many (`--whole-run` counts every PR instead, a PR
+your judge did not judge counting as missed, so the two columns are then not
+comparable). Each
 script's docstring gives the columns and what it refuses. `D` is this
 dataset, and the scripts are in the repository's `bench/aacr/recompute/`;
 run them as `uv run --no-project --with pyarrow python <script>`.
 
 **AACR-Bench.** Input: the `reviews` rows of an arm (`arms.arm_id`, or the arm
-a claim's `q` key names), its `comments` (`C1`, `C2`, …) as the judge read
-them. Answer key: the PR's `defects`, and its `exclusions` (the rejected
+a claim's `q` key names): the review's `verdict`, `body` and `comments` (`C1`,
+`C2`, …) as the judge read them. Answer key: the PR's `defects`, and its `exclusions` (the rejected
 claims our judge was also shown). The code: `prs.repo`, diff
 `prs.merge_base..prs.head_commit`, and the PR's `title`. Our judge's prompt
 is `judgePrompt()` in `src/bench/defects.ts`; `judge_prompt.py --data $D
 --arm ARM --pr ID` prints the one our judge received, and `--all --out-dir
-OUT` every one of an arm. Output: `defect_verdicts` (arm_id, instance_id,
+OUT` every one of an arm that our judge received. Output: `defect_verdicts` (arm_id, instance_id,
 defect_id, verdict: found, partial or missed) and, optionally,
 `comment_verdicts` (arm_id, instance_id, comment_id, grade, defect_id,
 new_defect). Score:
@@ -650,10 +665,16 @@ and `tool` as a claim's key names them (the frozen build: `final1-martian50`,
 which Martian's pipeline reads. Answer key: `martian_goldens`. Our judge is
 Martian's own steps 2, 2.5 and 3 at `e616e84`, on GPT-6.1 Sol; their prompts
 are in Martian's repository, and `bench/aacr/ext/ext_judge.py`'s docstring
-gives the commands to run them on your model with no docker. Output:
-`martian_verdicts` (work_dir, tool, pr_url, golden_index, matched) and
-`martian_reviews` (work_dir, tool, pr_url, fp: the PR's unmatched
-candidates). Score:
+gives the commands to run them with no docker (through its bridge for a
+Responses API model, or with `MARTIAN_BASE_URL` set straight to a Chat
+Completions endpoint). Output: `martian_verdicts` (work_dir, tool, pr_url,
+golden_index, matched) and `martian_reviews` (work_dir, tool, pr_url, fp: the
+PR's unmatched candidates). Martian's pipeline writes
+`results/<model>/evaluations.json` instead; the export mapped it so: a
+matched golden's `golden_index` is that of the `martian_goldens` row of the
+PR whose `comment` equals its `golden_comment`, `fp` is the PR's `fp` (the
+number of its `false_positives`), and the tool takes the table's name (the
+frozen build's `quickreview` is `quickreview-frozen`). Score:
 
 ```sh
 martian_scores.py --data $D --verdicts DIR --judge LABEL [--runs WORK|TOOL] [--half martian-test30]
@@ -664,11 +685,17 @@ any difference.
 
 **Qodo.** Input: `qodo_reviews` with `work_dir` and `tool`
 `final1-qodo-pr100` and `quickreview-frozen` (the frozen build), or
-`ext-r6-qodo-pr100` and `quickreview-2026-10-02`; `comments` is exactly what
-our judge was sent. Answer key: `qodo_issues`. Our judge's prompt is `SYSTEM`
-in `bench/aacr/ext/qodo_judge.py`; the code, not the judge, applies the
-location rule (`located()`). Output: `qodo_verdicts` (work_dir, tool, pr_url,
-issue_index, matched, comment_index). Score:
+`ext-r6-qodo-pr100` and `quickreview-2026-10-02`; `comments` holds what our
+judge was sent. Answer key: `qodo_issues`. Our judge's prompt is `SYSTEM` in
+`bench/aacr/ext/qodo_judge.py`, and `ask()` there builds the user message
+(it cuts long comment text and issue code); the code, not the judge, applies
+the location rule (`located()`). Output: `qodo_verdicts` (work_dir, tool,
+pr_url, issue_index, matched, comment_index). `qodo_judge.py` writes
+`judgements.jsonl` instead; the export mapped it so: per PR and tool the last
+first-pass row without an error, one verdict per issue of the PR in
+`qodo_issues`, `matched` when a row of its `matches` names the issue and
+`comment_index` that row's `comment`, `work_dir` the run's, and the tool the
+table's name. Score:
 
 ```sh
 qodo_scores.py --data $D --verdicts DIR --judge LABEL [--runs WORK|TOOL,...]
@@ -686,13 +713,20 @@ score_verdicts.py --data $D --verdicts DIR --judge LABEL --select arm=copilot-20
     --arms quickreview-default-sol,quickreview-default-sol-rerun,quickreview-default-g61,quickreview-low-sol
 ```
 
-Copilot's own text is link-only: restore it first ("What is not here").
+Copilot's own text is link-only, and `judge_prompt.py` refuses a link-only
+review: re-judging Copilot's own reviews needs them restored ("What is not
+here") and our pipeline run on the restored run directories (Tier 2 in
+`bench/aacr/README.md`).
 
 **Elo.** Input: the plan's run directory in the archive (`elo/martian-hard20-all-gpt/`:
 `plan.json`, `units.jsonl`, `judgments/`) and the reviews it pairs, which are
 also in `martian_reviews`. Our two judges' prompt is built by
-`bench/aacr/elo/elo.py pack` from the reviewed repositories, and each
-`elo_judgments` row carries its `prompt_sha256`. Point the plan's `run_dirs`
+`bench/aacr/elo/elo.py pack` from bare clones of the reviewed repositories,
+which the archive does not ship (`bench/aacr/elo/README.md` says how to make
+them), and each `elo_judgments` row carries its `prompt_sha256`. Give your
+judge the same prompts: its `prompt_sha256` must equal the row's, or the
+latest judgment sets the unit's prompt and the others' judgments of it go
+stale (`elo_ratings.py` warns). Point the plan's `run_dirs`
 at the unpacked archive and add your judge under the plan's `judges`
 (`bench/aacr/elo/README.md` says how). Output: the judgments `elo.py run`
 writes. Score:
@@ -703,6 +737,9 @@ elo_ratings.py D --runs-dir <archive>/runs --runs-dir <archive>/open-models/runs
 ```
 
 Both rate every judge the plan names, and give each pair's agreement.
+`--runs-dir` prices a configuration only when its run directory is whole:
+run `bench/aacr/ext/restore_copies.py` over the unpacked volumes first,
+the open-model volumes included.
 
 To re-run our own judge instead, see `bench/aacr/README.md` ("Reproduce",
 Tier 2) and `bench/aacr/ext/ext.sh`; set `EXT_JUDGE_MODEL` to judge Martian

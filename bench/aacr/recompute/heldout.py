@@ -84,7 +84,7 @@ def aacr(prs: Sequence[str], defects: List[dict], verdicts: List[dict], arms: Se
     return {"prs": len(keep), "defects": n,
             "found": {a: {"found": found[a], "recall": 100 * found[a] / n if n else None} for a in arms},
             "next_best": best,
-            "lead": {a: boot["pairs"]["recall"][f"{frozen} | {a}"] for a in others}}
+            "lead": {a: boot["pairs"]["recall"][f"{frozen} | {a}"] for a in others} if frozen in arms else {}}
 
 
 # ---------------------------------------------------------------- Martian
@@ -192,7 +192,9 @@ def render(res: dict) -> str:
     j = res.get("judges") or {}
     out = []
     if a is None:
-        out.append(f"AACR-Bench, holdout10 + fresh10: no {j.get('aacr')} verdicts of the arms — unknown")
+        miss = res.get("aacr_missing") or []
+        out.append(f"AACR-Bench, holdout10 + fresh10: no {j.get('aacr')} verdicts of "
+                   + (f"the arm(s) {', '.join(miss)}" if miss else "any arm") + " — unknown (--aacr-arms names the arms)")
     else:
         out.append(f"AACR-Bench, holdout10 + fresh10: {a['prs']} PRs, {a['defects']:g} defects (partial ½)"
                    + (f", judge {j['aacr']}" if j else ""))
@@ -232,7 +234,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", required=True, help="the Hugging Face dataset dir (or its data/ dir)")
     ap.add_argument("--sets-dir", default=SETS)
-    ap.add_argument("--aacr-arms", default=",".join(AB.DEFAULT_ARMS))
+    ap.add_argument("--aacr-arms", help="the AACR arms, comma-separated (default: the papers' eight; with --judge, "
+                                        "those of them your judge judged, else every arm it judged)")
     ap.add_argument("--resamples", type=int, default=AB.RESAMPLES)
     ap.add_argument("--json", help="also write every number to this JSON file")
     ap.add_argument("--write-qodo-set", action="store_true",
@@ -268,10 +271,14 @@ def main() -> None:
     prs = sorted(r["instance_id"] for r in load_table(D, "prs") if r["instance_id"] in keep)
     if len(prs) != len(keep):
         sys.exit(f"prs table lacks {sorted(keep - set(prs))}")
-    arms = [x for x in a.aacr_arms.split(",") if x]
     have = {v["arm_id"] for v in dv if v["judge"] == judges["aacr"]}
+    if a.aacr_arms:
+        arms = [x for x in a.aacr_arms.split(",") if x]
+    else:
+        arms = list(AB.DEFAULT_ARMS) if not a.judge else ([x for x in AB.DEFAULT_ARMS if x in have] or sorted(have))
     res: dict = {"aacr": aacr(prs, load_table(D, "defects"), dv, arms, b=a.resamples, judge=judges["aacr"])
-                 if set(arms) <= have or not a.judge else None}
+                 if arms and (set(arms) <= have or not a.judge) else None,
+                 "aacr_missing": sorted(set(arms) - have) if a.judge else []}
 
     # Martian
     halves = {"test30": set_urls("martian-test30", S), "tune20": set_urls("martian-tune20", S)}
