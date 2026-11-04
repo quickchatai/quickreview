@@ -451,8 +451,11 @@ describe("drain auto-lift", () => {
     try {
       expect(store.drainState()).toMatchObject({ draining: true, reason: "worker_failures" });
       expect(eventKinds(store)).not.toContain("drain_lifted");
-      // The webhook stays stopped under it.
-      expect(delivery(store, labeledPayload(), "pull_request", "wf-g1").reason).toBe("draining");
+      // No work starts under it: a delivery is held in the durable inbox,
+      // unprepared, for after the lift (a breaker drain never drops one).
+      expect(delivery(store, labeledPayload(), "pull_request", "wf-g1").reason).toBe(
+        "draining-held",
+      );
       expect(store.liftDrain("operator").changed).toBe(true);
       expect(store.drainState().draining).toBe(false);
     } finally {

@@ -967,11 +967,14 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
       expect(store.approvalWithheld(5180)).toMatchObject({ head_sha: HEAD });
       expect(store.getPr(5180)?.state).toBe("queued");
 
+      // The next pump past the failed dispatch's backoff.
+      const later = new Date(Date.now() + 60_000);
       const orders = await dispatchOnce({
         cfg,
         store,
         adapter: new DispatchFake(),
         hooks: h.hooks,
+        now: () => later,
       });
       expect(orders).toHaveLength(1);
       expect(orders[0]!.head_sha).toBe(HEAD);
