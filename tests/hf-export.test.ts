@@ -67,7 +67,9 @@
 //  24. every Martian scoring dir's `runs.judges` states its judge's settings
 //      from its own record;
 //  25. `arms.paper_tables`, `arms.in_paper` and `runs.claims` follow the claims
-//      manifest's q keys, and a Qodo verdict ships only beside its review.
+//      manifest's q keys, and a Qodo verdict ships only beside its review;
+//  26. the export's load check reads the folder it wrote, through a cache of
+//      its own (load_counts), never an earlier export's.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -2107,5 +2109,51 @@ print(json.dumps(out))
     expect(only("scores")).toEqual(["martian_scores: every scoring dir's "]);
     expect(only("judges")).toEqual(["runs: every Martian scoring dir's ju"]);
     expect(only("orphan")).toEqual(["qodo_verdicts: every (work_dir, tool"]);
+  });
+});
+
+describe("hf_export.load_counts", () => {
+  // The export's own load check: the loader's default cache is keyed by the
+  // folder's name and the card's file patterns, not the files, so a re-export
+  // to the same path was answered from the first export's cache. The fake
+  // loader keys its cache the same way (one file per config name) and says
+  // whether each read found that cache empty.
+  // MUTATION: drop cache_dir=cache from load_counts' load_dataset call — this fails
+  it("reads every config through a cache made for that check, never an earlier one", () => {
+    const fake = join(tmp, "fake-datasets");
+    put(
+      join(fake, "datasets.py"),
+      [
+        "import os",
+        "calls = []",
+        "class _Rows:",
+        "    def __init__(self, n):",
+        "        self.num_rows = n",
+        "def load_dataset(path, name, split=None, cache_dir=None):",
+        "    cache = cache_dir or os.environ['FAKE_DEFAULT_CACHE']",
+        "    os.makedirs(cache, exist_ok=True)",
+        "    hit = os.path.join(cache, name)",
+        "    calls.append({'name': name, 'split': split, 'fresh': not os.path.exists(hit)})",
+        "    open(hit, 'w').close()",
+        "    return _Rows(len(name))",
+      ].join("\n") + "\n",
+    );
+    const got = pyEnv(
+      { FAKE_DEFAULT_CACHE: join(tmp, "fake-default-cache") },
+      "hf_export",
+      "sys.path.insert(0, sys.argv[1]); import datasets\n" +
+        "a = h.load_counts('/data/out', ['prs', 'runs']); b = h.load_counts('/data/out', ['prs'])\n" +
+        "print(json.dumps({'a': a, 'b': b, 'calls': datasets.calls}))",
+      fake,
+    );
+    expect(got).toEqual({
+      a: { prs: 3, runs: 4 },
+      b: { prs: 3 },
+      calls: [
+        { name: "prs", split: "test", fresh: true },
+        { name: "runs", split: "test", fresh: true },
+        { name: "prs", split: "test", fresh: true },
+      ],
+    });
   });
 });

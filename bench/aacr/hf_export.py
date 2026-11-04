@@ -1582,6 +1582,15 @@ CONFIGS = ["defects", "exclusions", "prs", "aacr_references", "aacr_reference_la
            "qodo_verdicts", "elo_judgments", "elo_ratings", "runs", "aacr_candidates", "pr_diffstats"]
 
 
+def load_counts(out: str, configs: list[str] | None = None) -> dict[str, int]:
+    """Each config's rows as `datasets.load_dataset` reads the folder, through a cache made for this call:
+    the loader's default cache is keyed by the folder's name and the card's file patterns, not the files,
+    so an earlier export to the same path would answer with its own rows (and its own columns)."""
+    import datasets
+    with tempfile.TemporaryDirectory(prefix="hf-load-") as cache:
+        return {n: datasets.load_dataset(out, n, split="test", cache_dir=cache).num_rows for n in configs or CONFIGS}
+
+
 def write_parquet(tables: dict[str, list[dict]], out: str) -> dict[str, int]:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -2484,12 +2493,7 @@ def main():
     open(os.path.join(out, "NOTICE"), "w").write(dataset_notice())
     render_card(a, out, sizes, checks, ex.counts, tables.get("runs"))
     leaks = leak_scan(out)
-    load = {}
-    if not a.no_load_check:
-        import datasets
-        for n in CONFIGS:
-            ds = datasets.load_dataset(out, n, split="test")
-            load[n] = ds.num_rows
+    load = {} if a.no_load_check else load_counts(out)
     report = {"rows": sizes, "checks": checks, "failed": [c for c in checks if not c["ok"]],
               "coverage": coverage(tables, ex.cat),
               "claim_groups": claim_groups(tables, json.load(open(CLAIMS_MANIFEST))["claims"]),
