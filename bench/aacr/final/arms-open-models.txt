@@ -1,0 +1,2 @@
+DeepSeek V4.1 Flash (mostly low effort)=dsv41f-full-smoke10,dsv41f-full-dev10,dsv41f-mix-holdout10,dsv41f-mix-fresh10,dsv41f-mix-rest145
+GLM-5.3 Flash=glm53-full-smoke10,glm53-full-dev10,glm53-full-holdout10,glm53-full-fresh10,glm53-full-rest145

@@ -22,6 +22,9 @@ NAME="qcr-elo-judge-gpt"
 # ext.sh's default judge image (pi099-ext) fails `cli.js auth` with a missing
 # module; this image's does not.
 JIMG="${QCR_EXT_JUDGE_IMAGE:-qcr-bench:openbench-599732ba-ext}"
+# Where the image keeps the bench CLI (the auth step): the bench images build it
+# under /opt/quickreview/sandbox; the release and companion images under /opt/qcr.
+JCLI="${QCR_EXT_JUDGE_CLI:-/opt/quickreview/sandbox/dist/src/bench/cli.js}"
 AUTH_VOLUME="${QCR_BENCH_AUTH_VOLUME:-companion-pihome}"
 AUTH_MODE="${QCR_BENCH_AUTH:-login}"
 OPENAI_ENV="${QCR_BENCH_OPENAI_ENV:-$AACR/openai.env}"
@@ -59,7 +62,7 @@ case "$cmd" in
       [[ "$AUTH_MODE" == login ]] || die "QCR_BENCH_AUTH must be login | api-key"
       cred=(--mount "type=volume,src=$AUTH_VOLUME,dst=/pi-agent-src,volume-subpath=agent,readonly"
         --mount "type=tmpfs,dst=/pi-agent-src/sessions")
-      auth_step="node /opt/quickreview/sandbox/dist/src/bench/cli.js auth --need-min 120"
+      auth_step="node $JCLI auth --need-min 120"
     fi
     docker run -d --rm --name "$NAME" \
       --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 4096 --user "$(id -u):$(id -g)" \

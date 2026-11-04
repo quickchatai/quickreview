@@ -143,9 +143,10 @@ judges pick the same winner only 56% of the time, which is why they are
 pooled. On the 20 Martian PRs where QuickReview on GPT-6.1 Sol or DeepSeek did
 worst, QuickReview on Opus 5.5 (six of its lenses on GPT-6 Luna) beat Claude
 Code's `/code-review` at high effort on Opus 5.5 in 29 of 40 verdicts, at more
-than ten times its cost (about $4 per PR). Only Claude Code's max mode (Opus
+than ten times its cost ($4.61 per PR on average). Only Claude Code's max mode (Opus
 5.5 directing Sonnet 5.5 agents, about $20 per PR) ranks higher, by a margin
-inside the intervals.
+inside the intervals. Every judgment, with both judges' reasoning, is in the
+dataset's `elo_judgments` table.
 
 **Other models.** QuickReview's models are configurable. On AACR-Bench
 it holds most of its recall on cheap open models, and it falls apart on a
@@ -163,10 +164,13 @@ The best third-party reviewer at each severity finds 81 of 90 high (Codex
 CLI), 119 of 145 medium and 148.5 of 285 low (both the pi-review panel). The
 open-model rows ran a later build (mid-October, with cost changes made after
 the freeze) and a later judge; DeepSeek ran at low reasoning effort on 143 of
-its PRs, and GLM's review was missing a lens pass on 7. The GPT-6 Luna and
+its PRs and lost one lens pass on 5 PRs. On GLM, one lens pass was lost on 1 PR
+and the validator on 2, and on 7 more a lens pass ran but is missing from the
+review's record of executed passes. The GPT-6 Luna and
 Opus rows ran a September build; on the same 40 PRs as Opus, the frozen
 GPT-6.1 Sol build finds 33 of 34 high, 28 of 31 medium and 44 of 61 low. Read
-the table as directional.
+the table as directional. The open-model runs, their reviews and their
+verdicts are in the [dataset](https://huggingface.co/datasets/quickchatai/quickreview-bench).
 
 <details>
 <summary>The full tables</summary>
@@ -222,9 +226,15 @@ F1 53.0, level with qodo-exhaustive's 51.3.
 validity: [*Measuring whether a code review finds the real
 defects*](bench/aacr/paper/benchmark.pdf) and [*QuickReview: a multi-pass
 automated code reviewer*](bench/aacr/paper/quickreview.pdf).
+Every run behind these numbers is published as the Hugging Face dataset
+[quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench): the answer
+key, every review and verdict, the Elo judgments, and the run directories
+with a numbers-only extract in place of each raw session log. [`bench/aacr/recompute/`](bench/aacr/recompute/README.md)
+rebuilds each number from it with no model call, and
 [`bench/aacr/README.md`](bench/aacr/README.md#reproduce) shows how to
-re-score the runs with no keys, re-judge them, or re-run the benchmark on
-your own keys; the run archive will be published separately. Costs are list
+re-score the runs with no keys, re-judge them with our judge or
+[your own](bench/aacr/README.md#re-judge-with-your-own-judge), or re-run the
+benchmark on your own keys. Costs are list
 prices; on a ChatGPT plan they are quota, not a bill. The charts are drawn
 by `bench/aacr/showcase/readme_charts.py`.
 

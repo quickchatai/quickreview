@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The external benchmarks' judge endpoint: gpt-6.1-sol behind an
 OpenAI-compatible Chat Completions route, for the Martian and SWE-PRBench
-harnesses' OWN judge clients (bench/aacr/EXTERNAL-BENCHMARKS.md).
+harnesses' OWN judge clients (ext.sh starts it; qodo_judge.py asks it too).
 
 It is codex_bridge.py (the loopback bridge the OCR/OpenCode/PR-Agent arms
 already use) with three differences, all about being a judge rather than an
@@ -29,6 +29,25 @@ refresh-disabled copy of the pi login (codex_bridge.load_credentials refuses
 anything else) — or, on the API-key route (QCR_BENCH_AUTH=api-key),
 OPENAI_API_KEY from the environment against the public API, exactly as
 codex_bridge does it.
+
+The host-only route, no docker (a re-judge of the published Martian rows,
+with your key and your model; `--upstream` points at any Responses API):
+
+    QCR_BENCH_AUTH=api-key OPENAI_API_KEY=... python3 bench/aacr/ext/ext_judge.py \
+        --port 8765 --model MODEL --effort low --probe-temperature --log judge.jsonl &
+    # in a checkout of withmartian/code-review-benchmark at e616e84 (offline/),
+    # results/benchmark_data.json holding the rows to judge (the run archive's
+    # runs/<run>.martian/results/, or martian_ingest.py --out), run as ext.sh does:
+    export MARTIAN_API_KEY=local MARTIAN_BASE_URL=http://127.0.0.1:8765/v1 MARTIAN_MODEL=MODEL
+    python -m code_review_benchmark.step2_extract_comments --tool quickreview
+    python -m code_review_benchmark.step2_5_dedup_candidates
+    python -m code_review_benchmark.step3_judge_comments --dedup-groups results/MODEL/dedup_groups.json
+    python -m analysis.score_profiles --results-dir results --model MODEL --all-profiles --beta 2
+
+The bridge is what makes Martian's client work with a model that refuses its
+temperature 0 (gpt-6.1-sol does): it drops the key and logs that it did. It
+imports codex_bridge.py from beside it (the image) or from bench/aacr/ (a
+checkout).
 """
 from __future__ import annotations
 
@@ -40,7 +59,8 @@ import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Beside it in the image; one directory up in a checkout (the host-only route).
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parent.parent)]
 import codex_bridge as cb  # noqa: E402
 
 

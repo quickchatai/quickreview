@@ -38,6 +38,14 @@ byte-for-byte; no tool is run.
 Every other field of a record is the published one (golden comments, titles,
 source file). Run-dir files are read without following symlinks (the run dir
 was written by a review sandbox).
+
+A run taken from the release's archive must be restored first: a file the
+archive stores once (a posting-policy variant's case-summary.json is its source
+run's) is listed in the run's SOURCE-COPIES.json, and ext/restore_copies.py
+copies it back. A run whose listed copies are missing, or a case dir with no
+case-summary.json, is refused rather than scored as a silent review; --interim
+(ext.sh's EXT_WORK_TAG, a run still in progress) scores a case dir with no
+summary yet as silent, as before.
 """
 from __future__ import annotations
 
@@ -64,10 +72,29 @@ def read_nofollow(p: Path) -> str | None:
         return f.read()
 
 
-def quickreview_comments(case_dir: Path) -> tuple[list[dict], dict]:
+def case_summary(case_dir: Path, interim: bool = False) -> str | None:
+    """A case's case-summary.json; a case dir without one is an unrestored
+    archive copy, never a silent review (no dir at all: the case never ran;
+    `interim`: a case still running)."""
+    raw = read_nofollow(case_dir / "case-summary.json")
+    if raw is None and case_dir.is_dir() and not interim:
+        sys.exit(f"{case_dir}: no case-summary.json — a run from the release's archive needs its copies "
+                 "restored first (bench/aacr/ext/restore_copies.py)")
+    return raw
+
+
+def unrestored(run: Path) -> list[str]:
+    """The files the run's SOURCE-COPIES.json lists that are not in the run dir."""
+    raw = read_nofollow(run / "SOURCE-COPIES.json")
+    if raw is None:
+        return []
+    return sorted(rel for rel in json.loads(raw).get("files", {}) if not (run / rel).exists())
+
+
+def quickreview_comments(case_dir: Path, interim: bool = False) -> tuple[list[dict], dict]:
     """The three endpoints' items for one case, and what was dropped."""
     outcome_raw = read_nofollow(case_dir / "outcome.json")
-    summary_raw = read_nofollow(case_dir / "case-summary.json")
+    summary_raw = case_summary(case_dir, interim)
     summary = json.loads(summary_raw) if summary_raw else {}
     status = summary.get("status")
     if status != "ok" or outcome_raw is None:
@@ -89,10 +116,10 @@ def quickreview_comments(case_dir: Path) -> tuple[list[dict], dict]:
                    "body": bool(body), "verdict": outcome.get("verdict")}
 
 
-def arm_comments(run: Path, instance_id: str) -> tuple[list[dict], dict]:
+def arm_comments(run: Path, instance_id: str, interim: bool = False) -> tuple[list[dict], dict]:
     """A third-party arm's review, as the defect judge reads it (module doc)."""
     case_dir = run / "cases" / instance_id
-    summary_raw = read_nofollow(case_dir / "case-summary.json")
+    summary_raw = case_summary(case_dir, interim)
     summary = json.loads(summary_raw) if summary_raw else {}
     status = summary.get("status")
     result_raw = read_nofollow(run / "results" / "all" / f"{instance_id}.json")
@@ -124,13 +151,21 @@ def main() -> None:
     ap.add_argument("--arm", default="qcr", choices=sorted(ARM_TOOLS),
                     help="the bench arm that reviewed (qcr = QuickReview's own case files)")
     ap.add_argument("--no-quickreview", action="store_true", help="re-judged tools only (calibration)")
+    ap.add_argument("--interim", action="store_true",
+                    help="a run still in progress: a case dir with no case-summary.json yet is silent, not refused")
     args = ap.parse_args()
 
+    if not args.no_quickreview:
+        missing = unrestored(args.run)
+        if missing:
+            sys.exit(f"{args.run}: {len(missing)} file(s) its SOURCE-COPIES.json lists are missing (first: {missing[0]}) "
+                     "— restore the archive's copies first (bench/aacr/ext/restore_copies.py)")
     published = json.loads(args.published.read_text())
     cases = json.loads(args.set.read_text())["cases"]
     rejudge = [t for t in args.rejudge.split(",") if t]
     tool = ARM_TOOLS[args.arm]
-    read = quickreview_comments if args.arm == "qcr" else (lambda d: arm_comments(args.run, d.name))
+    read = ((lambda d: quickreview_comments(d, args.interim)) if args.arm == "qcr"
+            else (lambda d: arm_comments(args.run, d.name, args.interim)))
     out: dict = {}
     report = []
     for c in cases:

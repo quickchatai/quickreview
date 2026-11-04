@@ -8,6 +8,19 @@ may list a lens whose child failed — so the gate and the reports read this.
 import json
 from pathlib import Path
 
+# The run archive and the slim re-score bundle keep each case's transcript with
+# every text removed under this name (bench/aacr/session_logs.py prune_pi); a
+# reader given a case's pi-events.jsonl falls back to it when the full file is
+# absent. The pruned lines keep every field read here (the error as a class).
+PRUNED = "pi-events.pruned.jsonl"
+
+
+def events_file(events: Path) -> Path:
+    """`events`, or the slim bundle's pruned transcript beside it when only that exists."""
+    if not events.is_file() and (events.parent / PRUNED).is_file():
+        return events.parent / PRUNED
+    return events
+
 
 def lens(agent: str) -> str:
     """`pass-x--tier`, folding a doubled tier suffix (`pass-x--tier--tier`)."""
@@ -17,6 +30,7 @@ def lens(agent: str) -> str:
 def finals(events: Path) -> dict:
     """lens → {"stop": stopReason, "error": message, "launches": n} of its last result."""
     out: dict = {}
+    events = events_file(events)
     if not events.is_file():
         return out
     for line in events.open():
@@ -31,7 +45,9 @@ def finals(events: Path) -> dict:
         for r in ((e.get("result") or {}).get("details") or {}).get("results") or []:
             k = lens(r.get("agent"))
             prev = out.get(k, {"launches": 0})
-            out[k] = {"stop": r.get("stopReason"), "error": r.get("errorMessage") or (r.get("stderr") or "")[:200],
+            # the pruned extract keeps a closed error class in place of the message text
+            out[k] = {"stop": r.get("stopReason"),
+                      "error": r.get("errorMessage") or r.get("errorClass") or (r.get("stderr") or "")[:200],
                       "launches": prev["launches"] + 1}
     return out
 

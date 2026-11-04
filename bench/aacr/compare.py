@@ -52,6 +52,12 @@ LEVERS16 = {
 }
 
 
+# What the run archive puts in place of a third-party tool's review text
+# (export_runs.py `omitted`; src/bench/defects.ts OMITTED_TEXT). The release's
+# own judgements were made on the real text before the export; any other
+# judge's were made on the placeholder, so they are refused, never scored.
+OMITTED_TEXT = "[third-party text omitted"
+RELEASE_JUDGES = ("gpt-6-sol-high", "gpt-6.1-sol-high", "claude-opus-5-5")
 LIMITED = set()  # (iid, defect id) carrying a benchmark_limitation note
 ERRORED = set()  # (run, iid) whose judgement is an error file — never scored as misses
 
@@ -94,6 +100,7 @@ SLIM_COST_KEY = "bench_cost_usd"
 
 LENS_TOOLS = ("lens", "lens_wave", "subagent", "launch_plan")
 LEDGER_FILE = "lens-ledger.jsonl"
+PRUNED_EVENTS = "pi-events.pruned.jsonl"
 
 
 def _num(v):
@@ -110,15 +117,34 @@ def pi_cost(case_dir):
     assistant message, each lens tool call's children (a call counts its
     largest live figure until its end replaces it; a result with an `id` counts
     once), then lens-ledger.jsonl lines for runs no tool result reported."""
-    total = 0.0
-    owner = {}
-    per_call = {}
-    ev = os.path.join(case_dir, "pi-events.jsonl")
+    ev = events_path(case_dir)
     ledger = os.path.join(case_dir, LEDGER_FILE)
     lines = list(open(ev))
     if os.path.exists(ledger):
         lines += list(open(ledger))
+    return pi_cost_lines(lines)
+
+
+def events_path(case_dir):
+    """A case's pi event stream: `pi-events.jsonl`, or the run archive's and
+    slim bundle's numbers-only extract `pi-events.pruned.jsonl` (export_runs.py,
+    session_logs.prune_pi), which keeps every field pi_cost reads; None when
+    the case has neither."""
+    for name in ("pi-events.jsonl", PRUNED_EVENTS):
+        p = os.path.join(case_dir, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def pi_cost_lines(lines):
+    """pi_cost over the event and ledger lines themselves."""
+    total = 0.0
+    owner = {}
+    per_call = {}
     for line in lines:
+        if isinstance(line, bytes):
+            line = line.decode("utf-8", "replace")
         if not line.startswith("{"):
             continue
         try:
@@ -161,7 +187,7 @@ def pi_cost(case_dir):
 
 def usd_and_minutes(case_dir):
     usd = None
-    ev = os.path.join(case_dir, "pi-events.jsonl")
+    ev = events_path(case_dir) or os.path.join(case_dir, "pi-events.jsonl")
     if os.path.exists(ev):
         usd = pi_cost(case_dir)
     s = os.path.join(case_dir, "case-summary.json")
@@ -179,7 +205,7 @@ def usd_and_minutes(case_dir):
     if not os.path.exists(ev) and summary.get("arm") == "claude" and summary.get("cost_usd") is not None:
         # The Claude Code arm: its own total_cost_usd (API-price equivalent).
         usd = summary["cost_usd"]
-    if not os.path.exists(ev) and SLIM_COST_KEY in summary:
+    if not os.path.exists(os.path.join(case_dir, "pi-events.jsonl")) and SLIM_COST_KEY in summary:
         # A slim-bundle case (no transcript): the price the export computed from
         # the full case dir with this same function, for every arm.
         usd = summary[SLIM_COST_KEY]
@@ -187,11 +213,27 @@ def usd_and_minutes(case_dir):
     return usd, mins
 
 
+def omitted_review(runs_dir, run, iid):
+    """The first file of a case's review that holds the release's placeholder, or None."""
+    for rel in (os.path.join("results", "all", f"{iid}.json"), os.path.join("cases", iid, "comments.json"),
+                os.path.join("cases", iid, "review.md")):
+        p = os.path.join(runs_dir, run, rel)
+        if os.path.exists(p) and OMITTED_TEXT in open(p, encoding="utf-8", errors="replace").read():
+            return rel
+    return None
+
+
 def judgement(runs_dir, run, iid, version, judge_model):
     """One case's round-1 judgement in one run, or None (absent or errored)."""
     f = os.path.join(runs_dir, run, "judge", f"v{version}-{judge_model}", f"{iid}.r1.json")
     if not os.path.exists(f):
         return None
+    if judge_model not in RELEASE_JUDGES:
+        bad = omitted_review(runs_dir, run, iid)
+        if bad:
+            sys.exit(f"{run}/{bad} holds the release's \"{OMITTED_TEXT}, sha256:…]\" placeholder: a {judge_model} "
+                     "judgement of this case judged the placeholder, not the review. Restore the tool's text "
+                     "(harvest_upstream.py --fetch) and judge again")
     j = json.load(open(f))
     if j.get("error"):
         ERRORED.add((run, iid))

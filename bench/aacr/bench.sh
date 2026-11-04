@@ -687,6 +687,14 @@ case "$cmd" in
   eval)
     need_image
     d="$(run_dir)"
+    # A run from the release's archive carries a placeholder where a third-party
+    # tool's text was (export_runs.py `omitted`): the harness would score the
+    # placeholder as the tool's comment. Refused, as reviewForJudge refuses it
+    # (grep -r follows no symlink; the run dir's own results/ must not be one).
+    if [[ -d "$d/results/all" && ! -L "$d/results" && ! -L "$d/results/all" ]] \
+      && grep -rqF '[third-party text omitted' "$d/results/all"; then
+      die "$d/results/all holds the release's \"[third-party text omitted, sha256:…]\" placeholders, not the tool's text: restore it (bench/aacr/harvest_upstream.py --fetch) before eval"
+    fi
     rounds="${ROUNDS:-$([[ "$JUDGE" == mock ]] && echo 1 || echo 3)}"
     judge_args
     envs+=(-e "BENCH_ARM=$ARM" -e "QCR_EVAL_SHARDS=$SHARDS")

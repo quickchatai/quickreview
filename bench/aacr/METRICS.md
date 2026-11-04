@@ -101,7 +101,7 @@ it is not a defect count, for three reasons we measured:
 
 A fourth problem is where the references came from. The dataset marks
 26% of them human, rewritten by an LLM. On our 185 PRs at least 80 of those
-362 "human" references (22%) are rewrites of comments an AI review bot
+361 "human" references (22%) are rewrites of comments an AI review bot
 posted on the original PR: GitHub Copilot 23, CodeRabbit 20, cubic 20,
 Sourcery 5, LlamaPReview 4, Gemini Code Assist 4, Ellipsis 3, Cursor Bugbot 1
 (`bot_references.json`). On this metric such a bot is credited for

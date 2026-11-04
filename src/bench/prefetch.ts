@@ -13,7 +13,7 @@
 // case for the PR's title/body/base branch and degrades to "unavailable"
 // under the 60 req/h anonymous limit rather than blocking.
 //
-// External benchmarks (bench/aacr/EXTERNAL-BENCHMARKS.md) add three things,
+// External benchmarks (bench/aacr/ext/ext.sh, `prefetch`) add three things,
 // each driven by a field of the case and absent from every AACR-Bench case:
 //   - `fetch_repo`/`fetch_pr`: fetch the commits (and ask the API) from a
 //     public fork rather than `repo` — Martian's benchmark forks;

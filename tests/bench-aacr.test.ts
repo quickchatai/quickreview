@@ -1878,6 +1878,20 @@ describe("report and result bookkeeping", () => {
       ...over,
     }) as unknown as OcrCaseSummary;
 
+  // MUTATION: point REFERENCE_REPORT_PREAMBLE at bench/aacr/EXTERNAL-BENCHMARKS.md again — this fails (no such file)
+  it("every repository path a report's preamble names exists in the tree", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-report-paths-"));
+    try {
+      const paths = [renderReport(set, tmp, [c]), renderReport(martian, tmp, [c])]
+        .map((r) => r.split("\n").find((l) => l.startsWith("_What this measures:")) ?? "")
+        .flatMap((l) => [...l.matchAll(/bench\/aacr\/[\w/-]+(?:\.[A-Za-z]+)?/g)].map((m) => m[0]));
+      expect(paths.length).toBeGreaterThan(2);
+      expect(paths.filter((p) => !existsSync(join(ROOT, p)))).toEqual([]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("a report names the dataset its set is pinned to, and the AACR preamble opens only an AACR-Bench report", () => {
     const tmp = mkdtempSync(join(tmpdir(), "bench-report-ds-"));
     try {

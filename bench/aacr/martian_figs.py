@@ -8,6 +8,7 @@
     uv run bench/aacr/martian_figs.py
 
 No review, judge or annotation run is made here. Inputs:
+  charts/martian-tiers.json  martian_tiers.py --compute over the release (the severity figure)
   charts/martian-data.json   derived once from the golden audit labels and the stored
                              Martian evaluations (golden per-item buckets, real-golden
                              credits per tool, the "all blocking found" counts)
@@ -306,10 +307,23 @@ def fig_leaderboard():
     save(fig, "leaderboard")
 
 
-# 8 — where QuickReview is strong: its own severity tiers, real-defect share vs Martian's precision
-TIERS = [("P0–P1", 38, 32, 4, 1, 1), ("P2", 46, 19, 22, 4, 1), ("P3", 18, 8, 10, 0, 0), ("nit", 68, 10, 44, 14, 0)]
-CUM = [("P0–P1 only", 84, 26.4, "2.4/PR"), ("P0–P2", 61, 21.2, "6.0/PR"),
-       ("everything", 41, 19.2, "9.4/PR")]
+# 8 — where QuickReview is strong: its own severity tiers, real-defect share vs Martian's precision.
+# charts/martian-tiers.json is `relabel/martian_tiers.py --compute --json` over the release (tab:martiantiers);
+# the one unmapped candidate (left block, mv-r1-asposted: the labeller found no posted comment that states
+# it) counts only in the "everything" real share; the right block's runs have none.
+_MT = json.load(open(os.path.join(OUT, "martian-tiers.json")))
+_L, _R = _MT["left"], _MT["right"]
+TIERS = [(t.replace("-", "–"), _L[t]["n"], _L[t]["real"], _L[t]["minor"], _L[t]["dup"], _L[t]["wrong"])
+         for t in ("P0-P1", "P2", "P3", "nit")]
+
+
+def _real_pct(tiers):
+    return round(100 * sum(_L[t]["real"] for t in tiers) / sum(_L[t]["n"] for t in tiers))
+
+
+CUM = [("P0–P1 only", _real_pct(["P0-P1"]), _R["P0-P1 only"]["precision"], f"{_R['P0-P1 only']['per_pr']:.1f}/PR"),
+       ("P0–P2", _real_pct(["P0-P1", "P2"]), _R["P0-P2"]["precision"], f"{_R['P0-P2']['per_pr']:.1f}/PR"),
+       ("everything", _real_pct(list(_L)), _R["everything"]["precision"], f"{_R['everything']['per_pr']:.1f}/PR")]
 
 
 def fig_strength():

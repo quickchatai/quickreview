@@ -245,6 +245,33 @@ describe("compare.py", () => {
     expect(out).toContain("1 judgement(s) are ERROR files");
   });
 
+  // MUTATION: drop the `judge_model not in RELEASE_JUDGES` refusal in compare.py's judgement() — this fails
+  it("another judge's judgement of a placeholder review is refused; the release's own judgement still scores", async () => {
+    judgement("c", A, found(["D1"]));
+    judgement("c", B, found([]));
+    for (const id of [A, B]) {
+      const d = join(runs, "c", "judge", "v1-my-judge");
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, `${id}.r1.json`), JSON.stringify(found(["D1"])));
+    }
+    mkdirSync(join(runs, "c", "results", "all"), { recursive: true });
+    writeFileSync(
+      join(runs, "c", "results", "all", `${A}.json`),
+      JSON.stringify({
+        review: {
+          comments: [{ content: "[third-party text omitted, sha256:0123456789abcdef; see u]" }],
+        },
+      }),
+    );
+    const err = await compare("--judge-model", "my-judge", "c=c").catch(
+      (e: { stderr: string }) => e,
+    );
+    expect(String((err as { stderr: string }).stderr)).toMatch(
+      /results\/all\/.*holds the release's .*placeholder: a my-judge judgement/,
+    );
+    expect(await compare("c=c")).toContain("| c | 1/3 |");
+  });
+
   it("the OCR arm is priced from its bridge tokens at pi's rates, not $0", async () => {
     judgement("o", A, found(["D1"]));
     judgement("o", B, found([]));

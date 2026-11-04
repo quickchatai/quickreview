@@ -8,9 +8,9 @@ Mining two external benchmark runs (a working note, not in the public repo; its 
 found two separate costs that both get called "duplicates":
 
 1. **Duplicates that get posted.** About 10–11% of what we post repeats an issue
-   already posted: Martian 11% of candidates, a SWE-PRBench redundancy of 0.11,
-   10% of our unmatched Qodo comments. One root cause is posted at several sites,
-   or two lenses' versions of one issue survive the merge. A reader pays for each.
+   already posted: Martian 11% of candidates and 10% of our unmatched Qodo
+   comments. One root cause is posted at several sites, or two lenses'
+   versions of one issue survive the merge. A reader pays for each.
 2. **Rediscovery inside a round.** The lenses raise 666 findings that the session
    merges into 456 posted ones, so about 59% of all lens output re-finds something
    another lens already found. That is compute and wall time, not visible noise.

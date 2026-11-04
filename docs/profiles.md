@@ -867,8 +867,8 @@ bar); the quality lenses on a test-only change with enough test code; the
 sweep reads changed prose when code changes and fills its groups source
 first.
 
-**The narrowing check (`bench/aacr/trigger_check.py`, 395 stored PR reviews:
-AACR rest145, Martian tune20 + test30, Qodo pr100, SWE-PRBench eval100;
+**The narrowing check (`bench/aacr/trigger_check.py`, the stored PR reviews of
+AACR rest145, Martian tune20 + test30, Qodo pr100 and SWE-PRBench eval100;
 unique real findings from `bench/aacr/lens_yield.py --cases-json`):**
 
 | Lens | Planned | NONE now | Candidate narrowing | NONE after | Unique-real cases kept |

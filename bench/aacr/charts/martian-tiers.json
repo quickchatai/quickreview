@@ -1,0 +1,115 @@
+{
+ "left": {
+  "P0-P1": {
+   "n": 38,
+   "real": 32,
+   "minor": 4,
+   "dup": 1,
+   "wrong": 1,
+   "real_pct": 84.21052631578948
+  },
+  "P2": {
+   "n": 45,
+   "real": 19,
+   "minor": 21,
+   "dup": 4,
+   "wrong": 1,
+   "real_pct": 42.22222222222222
+  },
+  "P3": {
+   "n": 19,
+   "real": 8,
+   "minor": 10,
+   "dup": 1,
+   "wrong": 0,
+   "real_pct": 42.10526315789474
+  },
+  "nit": {
+   "n": 67,
+   "real": 10,
+   "minor": 44,
+   "dup": 13,
+   "wrong": 0,
+   "real_pct": 14.925373134328359
+  },
+  "unmapped": {
+   "n": 1,
+   "real": 0,
+   "minor": 1,
+   "dup": 0,
+   "wrong": 0,
+   "real_pct": 0.0
+  }
+ },
+ "right": {
+  "P0-P1 only": {
+   "per_pr": 2.14,
+   "precision": 28.971962616822427,
+   "recall": 19.62025316455696,
+   "f2": 20.974289580514206,
+   "tp": 31,
+   "fp": 76,
+   "candidates": 107,
+   "core_goldens": 158,
+   "prs": 50
+  },
+  "blockers only": {
+   "per_pr": 4.06,
+   "precision": 22.772277227722775,
+   "recall": 29.11392405063291,
+   "f2": 27.577937649880095,
+   "tp": 46,
+   "fp": 156,
+   "candidates": 203,
+   "core_goldens": 158,
+   "prs": 50
+  },
+  "P0-P2": {
+   "per_pr": 5.92,
+   "precision": 22.2972972972973,
+   "recall": 41.77215189873418,
+   "f2": 35.560344827586206,
+   "tp": 66,
+   "fp": 230,
+   "candidates": 296,
+   "core_goldens": 158,
+   "prs": 50
+  },
+  "everything": {
+   "per_pr": 9.38,
+   "precision": 19.230769230769234,
+   "recall": 56.9620253164557,
+   "f2": 40.909090909090914,
+   "tp": 90,
+   "fp": 378,
+   "candidates": 469,
+   "core_goldens": 158,
+   "prs": 50
+  }
+ },
+ "links": {
+  "mv-r1-asposted.martian": {
+   "overlap": 165,
+   "label": 5
+  },
+  "ext-default3-martian-tune20.martian": {
+   "overlap": 168,
+   "label": 2
+  },
+  "ext-r4-martian-test30.martian": {
+   "overlap": 285,
+   "label": 14
+  }
+ },
+ "labels": 21,
+ "label_file": {
+  "rows": 21,
+  "model": [
+   "gpt-6.1-sol"
+  ],
+  "effort": [
+   "xhigh"
+  ],
+  "prompt_sha256": "b399bc24212f0a42ba0c66accb7393641d23cc7b1e8f7a3668d103c35ada5042"
+ }
+}

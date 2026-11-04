@@ -272,6 +272,14 @@ def fence(text: str, lang: str = "") -> str:
 
 
 def _git(git_dir: str, *args: str) -> str:
+    if not os.path.isdir(git_dir):
+        # load_martian's clone path: elo.py pack has no clone of its own, and the archive ships none
+        raise SystemExit(
+            f"no git repository at {git_dir}: `elo.py pack` reads each PR's diff and files from one bare clone per "
+            "Martian project, <git_cache>/<project>.git (the plan's `git_cache`, default <runs>/../ext-cache/martian; "
+            "the project is the set's `martian.project`). Create it with `git init --bare <path>`, then, for each PR "
+            "of the plan's set (sets/martian50.json) in that project, `git --git-dir <path> fetch --no-tags "
+            "https://github.com/<fetch_repo>.git <expect_merge_base> <head_commit>`.")
     out = subprocess.run(["git", "--git-dir", git_dir, *args], capture_output=True, check=True)
     return out.stdout.decode("utf-8", errors="replace")
 
