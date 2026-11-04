@@ -589,11 +589,24 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
             deadline_min: a.deadline_min,
           }),
         };
-      case "failed_loud":
+      case "failed_loud": {
+        // A transient failure with nothing posted waits on its automatic
+        // retry: the message says when, and that u need not wait for it.
+        const failure = this.deps.store.openReviewFailure(a.pr);
+        const retryAt =
+          failure &&
+          (a.incident_id === undefined || failure.incident_id === a.incident_id) &&
+          failure.next_action === "retry_wait" &&
+          failure.next_retry_at
+            ? failure.next_retry_at
+            : null;
         return {
           cause: "review.failed_loud",
-          text: `⛔ #${a.pr} round ${a.round_no} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`,
+          text: retryAt
+            ? `⛔ #${a.pr} round ${a.round_no} exhausted its immediate recovery — review work is still owed. Automatic retry at ${retryAt.slice(11, 16)}Z; u on the board retries now.`
+            : `⛔ #${a.pr} round ${a.round_no} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`,
         };
+      }
       case "malformed":
         return {
           cause: "round.malformed_verdict",
