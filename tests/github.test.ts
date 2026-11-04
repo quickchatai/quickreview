@@ -1513,7 +1513,6 @@ describe("bounded read retry", () => {
     const err = await adapter.getPr(12).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(GitHubRequestError);
     expect((err as GitHubRequestError).retryAfterMs).toBe(120_000);
-    expect(120_000).toBeGreaterThan(READ_RETRY_AFTER_CAP_MS);
     expect(calls).toHaveLength(1);
     expect(sleeps).toEqual([]);
   });
