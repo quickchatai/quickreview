@@ -1403,7 +1403,12 @@ describe("confirmed round posting receipts", () => {
         .prepare("SELECT COUNT(*) c FROM events WHERE kind='round_self_requeued' AND pr=179")
         .get(),
     ).toMatchObject({ c: 0 });
-    expect(store.openReviewFailure(179)).toMatchObject({ stage: "posting_receipt", work_owed: 1 });
+    expect(store.openReviewFailure(179)).toMatchObject({
+      stage: "posting_receipt",
+      work_owed: 1,
+      next_action: "operator_unwedge",
+      next_retry_at: null,
+    });
   });
 
   // MUTATION: take the grace origin from round.started_at again in postingProof —
@@ -1453,6 +1458,18 @@ describe("confirmed round posting receipts", () => {
     reviewingRound(182);
     stampPosting(182, 1);
     spendSelfRequeues(182);
+    // The round's own command: the transient class is proven against it.
+    store.createSessionCommand({
+      id: "cmd-182",
+      pr: 182,
+      session: "pr-182",
+      kind: "round",
+      round_no: 1,
+      payload_sha256: "a".repeat(64),
+      payload_path: "/payload/cmd-182.md",
+      inject_path: "/inject/cmd-182.md",
+      next_check_at: new Date().toISOString(),
+    });
 
     expect(
       await watcher({ postingReceiptGraceS: 0 }).handleFile(
@@ -1461,7 +1478,13 @@ describe("confirmed round posting receipts", () => {
     ).toBe(true);
 
     expect(store.roundsFor(182)[0]).toMatchObject({ status: "cancelled", verdict: null });
-    expect(store.openReviewFailure(182)).toMatchObject({ stage: "posting_receipt", work_owed: 1 });
+    // Nothing reached GitHub, so the hold is the automatic retry ladder's.
+    expect(store.openReviewFailure(182)).toMatchObject({
+      stage: "posting_receipt",
+      work_owed: 1,
+      next_action: "retry_wait",
+    });
+    expect(store.openReviewFailure(182)?.next_retry_at).not.toBeNull();
     expect(store.reviewedHead(182)).toBeUndefined();
   });
 
