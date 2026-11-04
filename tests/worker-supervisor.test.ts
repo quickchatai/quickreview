@@ -282,6 +282,31 @@ describe("the worker's life", () => {
     expect(r.store.getSessionCommand(row.id)!.status).toBe("acked");
   });
 
+  // MUTATION: drop the WORKER_EXIT_PROVIDER branch from decideOutcome (it then
+  // requeues at once as "exited 7"), or the not_before skip from launchPending —
+  // the provider that just refused the turn is asked again at once; this fails.
+  it("requeues a turn a transient provider failure ended, and launches nothing before its backoff", async () => {
+    let t = Date.now();
+    const r = await rig({ mode: "provider-fail", now: () => t });
+    const row = r.submit();
+    await r.sup.launch(row.id);
+    await until(finished(r.sup));
+    const back = r.store.getSessionCommand(row.id)!;
+    expect(back).toMatchObject({ status: "pending", recovery_attempts: 1 });
+    expect(back.not_before).toBe(new Date(t + 2 * 60_000).toISOString());
+    expect(r.events("worker_exited")[0]).toMatchObject({ outcome: "requeue", code: 7 });
+    expect(r.events("worker_requeue_backoff")[0]).toMatchObject({ command_id: row.id });
+    // A provider blip never parks the PR.
+    expect(r.store.workerBreaker(PR)?.parked_at ?? null).toBeNull();
+
+    expect(await r.sup.launchPending()).toEqual([]);
+    t += 2 * 60_000;
+    r.sup["deps"].extraEnv = { ...r.sup["deps"].extraEnv, FAKE_WORKER_MODE: "ok" };
+    expect(await r.sup.launchPending()).toHaveLength(1);
+    await until(finished(r.sup));
+    expect(r.store.getSessionCommand(row.id)!.status).toBe("acked");
+  });
+
   it("stops requeueing once the bound is spent", async () => {
     const r = await rig({ mode: "crash", limits: { maxRequeues: 1 } });
     const row = r.submit();
@@ -809,6 +834,7 @@ describe("what an exit means", () => {
     [{ code: 75 }, "requeue"],
     [{ code: 76 }, "requeue"],
     [{ code: 143 }, "requeue"],
+    [{ code: 7, failedReason: "round: the provider failed the turn: fetch failed" }, "requeue"],
     [{ code: null, signal: "SIGKILL" as const }, "requeue"],
     [{ code: 0, killedFor: "wall_clock" as const }, "failed"],
     [{ code: 143, killedFor: "operator" as const }, "failed"],
@@ -819,6 +845,15 @@ describe("what an exit means", () => {
     [{ code: null, spawnError: "spawn ENOENT" }, "failed"],
   ])("%j is %s", (over, kind) => {
     expect(decideOutcome({ ...base, ...over }).kind).toBe(kind);
+  });
+
+  it("only a provider exit asks for the provider backoff", () => {
+    expect(decideOutcome({ ...base, code: 7, failedReason: "x" })).toEqual({
+      kind: "requeue",
+      reason: "x",
+      backoff: "provider",
+    });
+    expect(decideOutcome({ ...base, code: 75 })).not.toHaveProperty("backoff");
   });
 });
 

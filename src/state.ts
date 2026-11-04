@@ -672,7 +672,8 @@ const SESSION_COMMAND_COLUMNS_SQL = `(
   failure        TEXT,
   est_usd        REAL,
   lens_usd       REAL,
-  usage_final    INTEGER NOT NULL DEFAULT 0
+  usage_final    INTEGER NOT NULL DEFAULT 0,
+  not_before     TEXT
 )`;
 
 const SESSION_COMMAND_INDEXES_SQL = `
@@ -1614,6 +1615,10 @@ export interface SessionCommandRow {
   /** 1 once the worker's closing report arrived: `est_usd` is the whole command's
    * spend. Before it, a figure is a partial (and a crashed worker never closes). */
   usage_final: number;
+  /** A worker command requeued after a transient provider failure: no worker
+   * is launched for it before this time (src/workersupervisor.ts). Null = at
+   * once. */
+  not_before: string | null;
 }
 
 export interface SupervisorLeaseRow {
@@ -1900,6 +1905,10 @@ export class StateStore {
       "ALTER TABLE session_commands ADD COLUMN est_usd REAL",
       "ALTER TABLE session_commands ADD COLUMN lens_usd REAL",
       "ALTER TABLE session_commands ADD COLUMN usage_final INTEGER NOT NULL DEFAULT 0",
+      // A worker command requeued after a transient provider failure waits
+      // for this time before a worker is launched for it. Nullable, additive:
+      // NULL launches at once, as every row before the column did.
+      "ALTER TABLE session_commands ADD COLUMN not_before TEXT",
       // Durable circuit-breaker generation and due time. Nullable due
       // means this failure remains in the operator-owned classes.
       "ALTER TABLE review_failures ADD COLUMN retry_epoch INTEGER NOT NULL DEFAULT 0",
@@ -2095,11 +2104,11 @@ export class StateStore {
           (id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
            status, owner_token, attempt, recovery_attempts, unknown_checks, redeliveries,
            created_at, updated_at, next_check_at, started_at, settled_at, failed_at, failure,
-           est_usd, lens_usd, usage_final)
+           est_usd, lens_usd, usage_final, not_before)
         SELECT id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
            status, owner_token, attempt, recovery_attempts, unknown_checks, redeliveries,
            created_at, updated_at, next_check_at, started_at, settled_at, failed_at, failure,
-           est_usd, lens_usd, usage_final
+           est_usd, lens_usd, usage_final, not_before
           FROM session_commands_before_cancelled;
         DROP TABLE session_commands_before_cancelled;
         ${SESSION_COMMAND_INDEXES_SQL}
@@ -3988,7 +3997,14 @@ export class StateStore {
    * Spends one `recovery_attempts`, the bound the supervisor reads. A round's
    * command is only handed back while its round still runs.
    */
-  requeueWorkerCommand(id: string, ownerToken: string | null, nextCheckAt: string): boolean {
+  /** `notBefore`: no worker is launched for the requeued command before this
+   * time (a transient provider failure's backoff); omitted = at once. */
+  requeueWorkerCommand(
+    id: string,
+    ownerToken: string | null,
+    nextCheckAt: string,
+    notBefore: string | null = null,
+  ): boolean {
     const ts = this.ts();
     return (
       this.db
@@ -3996,7 +4012,7 @@ export class StateStore {
           `UPDATE session_commands
             SET status='pending', owner_token=NULL, updated_at=@ts, next_check_at=@next,
                 unknown_checks=0, started_at=NULL, failure=NULL,
-                recovery_attempts=recovery_attempts+1
+                recovery_attempts=recovery_attempts+1, not_before=@not_before
           WHERE id=@id AND status='running'
             AND (@owner IS NULL OR owner_token=@owner)
             AND (kind != 'round' OR EXISTS (
@@ -4004,7 +4020,8 @@ export class StateStore {
                WHERE r.pr = session_commands.pr AND r.round_no = session_commands.round_no
                  AND r.status = 'running'))`,
         )
-        .run({ id, owner: ownerToken, ts, next: nextCheckAt }).changes === 1
+        .run({ id, owner: ownerToken, ts, next: nextCheckAt, not_before: notBefore }).changes ===
+      1
     );
   }
 

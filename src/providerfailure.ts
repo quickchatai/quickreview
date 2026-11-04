@@ -47,6 +47,11 @@ export function isProviderTransient(error: string | null | undefined): boolean {
   return kind === "transport" || kind === "rate_limited" || kind === "overloaded";
 }
 
+/** The exit code of a worker whose turn a transient provider failure ended
+ * (src/botworker.ts `EXIT.provider`). Named here because the worker supervisor
+ * that reads it is a daemon module and never imports the worker. */
+export const WORKER_EXIT_PROVIDER = 7;
+
 /** The waits before each retry of work a transient provider failure stopped:
  * the first retry after 2 minutes, then 8, then 30, then 30 again. */
 export const PROVIDER_BACKOFF_MIN: readonly number[] = [2, 8, 30];

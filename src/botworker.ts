@@ -130,6 +130,7 @@ import { MAX_REPLY_CHARS, operatorMayPost } from "./operatormessage.js";
 import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { verifiedPayload } from "./session-command-payload.js";
 import { newestSessionFile } from "./sessionjsonl.js";
+import { WORKER_EXIT_PROVIDER, isProviderTransient } from "./providerfailure.js";
 
 export const EXIT = {
   ok: 0,
@@ -139,6 +140,10 @@ export const EXIT = {
   auth: 4,
   session: 5,
   aborted: 6,
+  /** The turn was ended by a transient provider failure (the connection, a
+   * rate limit, an overload; src/providerfailure.ts): the daemon requeues the
+   * command with backoff rather than failing it. */
+  provider: WORKER_EXIT_PROVIDER,
   lost: 75,
   fenced: 76,
   terminated: 143,
@@ -562,20 +567,20 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       checkpoint();
       if (r.timedOut) throw new Stop(EXIT.failed, `${what}: the wall-clock cap ran out`);
       if (r.capped) throw new Stop(EXIT.failed, `${what}: the dollar cap was reached`);
-      if (r.streamError)
-        throw new Stop(
-          EXIT.failed,
-          `${what}: output stream failed: ${r.streamError.slice(0, 300)}`,
-        );
+      // A transient provider failure (the connection, a rate limit, an
+      // overload) exits `provider`: the same turn later succeeds, so the daemon
+      // requeues it with backoff. Any other ends the command `failed`.
+      if (r.streamError) {
+        const reason = `${what}: output stream failed: ${r.streamError.slice(0, 300)}`;
+        throw new Stop(isProviderTransient(reason) ? EXIT.provider : EXIT.failed, reason);
+      }
       // A provider failure ends the turn as an assistant message, not as a throw.
       if (watch.lastError !== undefined) {
         const refused = classifyAuthFailure(watch.lastError);
-        throw new Stop(
-          EXIT.failed,
-          refused
-            ? `${what}: the provider refused the login: ${refused.message}`
-            : `${what}: the provider failed the turn: ${watch.lastError}`,
-        );
+        if (refused)
+          throw new Stop(EXIT.failed, `${what}: the provider refused the login: ${refused.message}`);
+        const reason = `${what}: the provider failed the turn: ${watch.lastError}`;
+        throw new Stop(isProviderTransient(reason) ? EXIT.provider : EXIT.failed, reason);
       }
       if (r.code !== 0)
         throw new Stop(EXIT.failed, `${what}: the turn failed${lastLineOf(spec.stderr_file)}`);
