@@ -2118,6 +2118,57 @@ describe("a transient failure with nothing posted waits on the automatic retry l
     expect(open(5608, r)).toMatchObject({ retry_epoch: 0 });
   });
 
+  const park = (pr: number) =>
+    store.recordWorkerFailure(pr, {
+      commandId: "c",
+      error: "the worker exited 1",
+      at: clock.toISOString(),
+      parkAfter: 1,
+    });
+
+  // MUTATION: drop `!this.isWorkerParked(arg.pr)` from `automatic` in
+  // openReviewFailure — a parked PR is promised a retry no worker can run; this fails.
+  it("a PR the worker breaker parked is the operator's at once", () => {
+    const r = failedRound(5612);
+    park(5612);
+    expect(open(5612, r)).toMatchObject({ next_action: "operator_unwedge", next_retry_at: null });
+  });
+
+  // MUTATION: drop the isWorkerParked check from activateDueReviewFailureRetries —
+  // the retry republishes work the park refuses to launch, again and again; this fails.
+  it("a park set while the retry waited hands the incident to the operator when it falls due", () => {
+    const r = failedRound(5613);
+    const failure = open(5613, r);
+    expect(failure.next_action).toBe("retry_wait");
+    park(5613);
+    clock = new Date(failure.next_retry_at!);
+    expect(store.activateDueReviewFailureRetries(clock.toISOString())).toEqual([]);
+    expect(store.openReviewFailure(5613)).toMatchObject({
+      work_owed: 1,
+      next_action: "operator_unwedge",
+      next_retry_at: null,
+    });
+    expect(store.getSessionCommand(r.commandId)?.status).toBe("failed");
+  });
+
+  // MUTATION: read only the fanout-first instruction's epoch for a pre-fanout
+  // stall in openReviewFailure (drop the transientRetryEpoch term) — the wait
+  // falls back to 15 minutes when the failure class changes; this fails.
+  it("the ladder's generation carries across a change of failure class at the same head", () => {
+    let r = failedRound(5614);
+    const first = open(5614, r, { stage: "provider_unavailable", cause: "provider_transient" });
+    clock = new Date(first.next_retry_at!);
+    store.activateDueReviewFailureRetries(clock.toISOString());
+
+    // The successor stalls before its first lens: no fanout-first instruction
+    // was bound to it (a provider retry binds none), yet it is the second
+    // failure at this head with no round finished.
+    r = failedRound(5614);
+    const second = open(5614, r, { stage: "first_pass_start", cause: undefined });
+    expect(second).toMatchObject({ next_action: "retry_wait", retry_epoch: 1 });
+    expect(Date.parse(second.next_retry_at!) - clock.getTime()).toBe(30 * 60_000);
+  });
+
   it("a failed wake retries by handing its own command back to the supervisor's replay", () => {
     store.upsertPr(prRow(5609, { state: "tracked", head_sha: "wake-head" }));
     store.createSessionCommand({

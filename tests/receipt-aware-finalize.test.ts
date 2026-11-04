@@ -237,7 +237,7 @@ function progress(): RoundProgressSnapshot {
 
 function wire(
   live = false,
-  adapter: FakeAdapter = new FakeAdapter(),
+  adapter: VerdictAdapter = new FakeAdapter(),
 ): { watcher: VerdictWatcher; supervisor: SessionCommandSupervisor } {
   const hooks: SessionHooks = {
     async dispatchRound() {},
@@ -615,6 +615,60 @@ describe("a deferred posting", () => {
     expect(failure).toBeDefined();
     expect(failure!.detail).toContain("exhausted after 0 attempt(s): GitHub 502 ×3");
     expect(postings()).toBe(0);
+  });
+
+  function exhausted(): void {
+    writeDeferred("REQUEST_CHANGES", "failed");
+    store.adoptPostingRetry({
+      posting_key: key,
+      pr: PR,
+      round_no: 5,
+      head_sha: HEAD,
+      first_failed_at: "2026-01-15T08:52:58.000Z",
+      now: "2026-01-15T08:52:58.000Z",
+    });
+    store.settlePostingRetry(key, "exhausted", "GitHub 502 ×3", "2026-01-15T09:29:00.000Z");
+  }
+  const readingAdapter = (reviews: unknown[]): VerdictAdapter => {
+    const a = new FakeAdapter() as FakeAdapter & {
+      listReviewsFull: VerdictAdapter["listReviewsFull"];
+    };
+    a.listReviewsFull = async () => reviews as never;
+    return a;
+  };
+
+  it("an exhausted retry whose marker GitHub read and does not hold waits on the automatic retry", async () => {
+    exhausted();
+    const { supervisor } = wire(true, readingAdapter([]));
+    set("2026-01-15T09:30:00.000Z");
+    await supervisor.scan();
+    expect(round5()).toMatchObject({ status: "cancelled" });
+    expect(store.openReviewFailure(PR)).toMatchObject({ next_action: "retry_wait" });
+  });
+
+  // MUTATION: set `reconciled = true` before the reviews are inspected in
+  // postingProof (and drop its reset in the catch) — a search that threw
+  // part-way reads as proven absence and the exhausted delivery retries
+  // itself; this fails.
+  it("an exhausted retry whose marker search threw part-way stays the operator's", async () => {
+    exhausted();
+    const malformed = {
+      id: 1,
+      user: cfg.github.bot_login,
+      user_type: "Bot",
+      state: "COMMENTED",
+      body: null,
+      commit_id: HEAD,
+      submitted_at: "2026-01-15T09:00:00Z",
+    };
+    const { supervisor } = wire(true, readingAdapter([malformed]));
+    set("2026-01-15T09:30:00.000Z");
+    await supervisor.scan();
+    expect(round5()).toMatchObject({ status: "cancelled" });
+    expect(store.openReviewFailure(PR)).toMatchObject({
+      next_action: "operator_unwedge",
+      next_retry_at: null,
+    });
   });
 
   // The production incident: the approval's CI pre-check could not read the

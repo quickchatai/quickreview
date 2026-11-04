@@ -326,6 +326,11 @@ function applyEventTransaction(
       to,
       event: name,
       reason: opts.reason ?? null,
+      // Who asked: a person's request (label, team request, manual) or the
+      // reconcile poll's. A queued row keeps its first trigger_ts for FIFO,
+      // so this is how a fresh request is told from the one already queued
+      // (StateStore.selfRequeueNotBefore).
+      ...(event.type === "trigger" ? { source: event.source } : {}),
     });
   }
   return { pr, from, to, changed };

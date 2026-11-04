@@ -28,7 +28,11 @@ import {
   type SweepStatus,
 } from "@quickchatai/pi-quickreview/src/sweepstatus.js";
 import { jobPath, pendingPosting, readPostingJob } from "./posting-outbox.js";
-import { isProviderTransient, isProviderTransientPassError } from "./providerfailure.js";
+import {
+  isOperatorWorkerFailure,
+  isProviderTransient,
+  isProviderTransientPassError,
+} from "./providerfailure.js";
 
 export { sweepStatusOf, type SweepStatus };
 import {
@@ -1623,13 +1627,15 @@ export class VerdictWatcher {
       try {
         const marker = postingMarker(round.posting_key);
         const reviews = await this.deps.adapter.listReviewsFull(round.pr);
-        reconciled = true;
         const matches = reviews.filter(
           (review) =>
             ownLogins(this.deps.cfg.github).includes(review.user) &&
             review.commit_id?.toLowerCase() === expectedHead.toLowerCase() &&
             review.body.includes(marker),
         );
+        // GitHub was read only once every review was inspected: a search that
+        // threw part-way is no proof of absence.
+        reconciled = true;
         if (matches.length > 1)
           return {
             kind: "failed",
@@ -1730,6 +1736,7 @@ export class VerdictWatcher {
           return { kind: "confirmed", receipt: synthetic };
         }
       } catch (error) {
+        reconciled = false;
         this.log(
           `posting receipt reconciliation failed for #${round.pr} round ${round.round_no}`,
           error,
@@ -1826,9 +1833,11 @@ export class VerdictWatcher {
       ...(postMayHaveLanded
         ? {}
         : {
-            unposted: !existsSync(
-              postingReceiptPath(this.postingReceiptDir(), round.pr, round.round_no),
-            ),
+            // No receipt of any status, and no posting linkage a stage probe
+            // persisted from GitHub (which writes no receipt file).
+            unposted:
+              !existsSync(postingReceiptPath(this.postingReceiptDir(), round.pr, round.round_no)) &&
+              !this.postingLinked(round),
           }),
     };
   }
@@ -1858,12 +1867,23 @@ export class VerdictWatcher {
     return newest;
   }
 
+  /** The round carries durable posting linkage (`posted_at` or
+   * `gh_review_id`), read fresh: a marker reconcile — a stage probe's, say —
+   * found its review on GitHub and persisted it without a receipt file. A
+   * known-posted round is never redone. */
+  private postingLinked(round: RoundRow): boolean {
+    const row = this.deps.store.db
+      .prepare("SELECT posted_at, gh_review_id FROM rounds WHERE id = ?")
+      .get(round.id) as { posted_at: string | null; gh_review_id: number | null } | undefined;
+    return row !== undefined && (row.posted_at !== null || row.gh_review_id !== null);
+  }
+
   /** Nothing of this round's review reached GitHub, on the evidence this
    * daemon holds: the round has a posting key, no posting receipt of any
    * status exists for it (the shell writes `prepared` before any POST), and
    * no delivery is pending for it. A round with no key proves nothing. */
   private nothingPosted(round: RoundRow): boolean {
-    if (!round.posting_key) return false;
+    if (!round.posting_key || this.postingLinked(round)) return false;
     const dir = this.postingReceiptDir();
     if (existsSync(postingReceiptPath(dir, round.pr, round.round_no))) return false;
     return !pendingPosting(dir, round.pr, round.round_no, round.posting_key);
@@ -1872,21 +1892,23 @@ export class VerdictWatcher {
   /** The transient cause of a round's failure: the provider's when the
    * failure's own words say so, or the PR's worker last failed on a transient
    * provider failure since the round started (a dead or stuck worker); the
-   * caller's otherwise. */
+   * caller's otherwise. None when the failure, or the worker's last failure
+   * since the round started, is one only an operator cures (a refused login,
+   * a spent usage window: `isOperatorWorkerFailure`) — retrying cannot fix
+   * credentials, so that incident stays the operator's. */
   private transientCause(
     round: RoundRow | undefined,
     detail: string,
     otherwise: TransientFailureCause,
-  ): TransientFailureCause {
+  ): TransientFailureCause | undefined {
+    if (isOperatorWorkerFailure(detail)) return undefined;
     if (isProviderTransient(detail)) return "provider_transient";
     if (round) {
       const worker = this.deps.store.workerBreaker(round.pr);
-      if (
-        worker?.last_failure_at &&
-        worker.last_failure_at >= round.started_at &&
-        isProviderTransient(worker.last_error)
-      )
-        return "provider_transient";
+      if (worker?.last_failure_at && worker.last_failure_at >= round.started_at) {
+        if (isOperatorWorkerFailure(worker.last_error)) return undefined;
+        if (isProviderTransient(worker.last_error)) return "provider_transient";
+      }
     }
     return otherwise;
   }
@@ -2406,6 +2428,7 @@ export class VerdictWatcher {
           claimedStatus === "running" &&
           this.stillRunning(round) &&
           round.posting_key &&
+          !this.postingLinked(round) &&
           !pendingPosting(this.postingReceiptDir(), round.pr, round.round_no, round.posting_key)
         ) {
           store.logEvent("posting_unconfirmed_requeue", v.pr, {
@@ -4033,8 +4056,9 @@ export class VerdictWatcher {
       const reason = `round ${roundNo} failed a bounded daemon→Pi infrastructure stage before any merits verdict`;
       // Exhausted immediate recovery is transient (a provider outage, a
       // stage that may pass on a later attempt): with nothing posted, the
-      // debt waits on the automatic retry ladder.
-      const cause: TransientFailureCause =
+      // debt waits on the automatic retry ladder. A worker failure only an
+      // operator cures (a refused login) has no cause and stays theirs.
+      const cause: TransientFailureCause | undefined =
         stage === "provider_unavailable"
           ? "provider_transient"
           : this.transientCause(round, detail, "infrastructure_exhausted");
@@ -4049,8 +4073,7 @@ export class VerdictWatcher {
         attempts: cap,
         retry_cap: cap,
         summary: `infrastructure recovery exhausted after ${cap} self-requeue(s) — ${reason}`,
-        cause,
-        nothing_posted: this.nothingPosted(round),
+        ...(cause ? { cause, nothing_posted: this.nothingPosted(round) } : {}),
       });
       if (!failure) {
         // An operator/verdict/concurrent recovery won the exact terminal CAS.
@@ -4568,8 +4591,14 @@ export class VerdictWatcher {
     const row = store.getPr(round.pr);
     const head = row?.head_sha ?? "";
     const cap = this.selfRequeueCap();
-    const attempt = store.selfRequeueCount(round.pr, head) + 1;
-    const exhausted = this.selfRequeueSpent(round.pr, head);
+    // A posting that never went out spends its own budget too, one a
+    // replacement's fanout does not renew (`postingRequeueCount`).
+    const spent = Math.max(
+      store.selfRequeueCount(round.pr, head),
+      mode === "posting_unconfirmed" ? store.postingRequeueCount(round.pr, head) : 0,
+    );
+    const attempt = spent + 1;
+    const exhausted = spent >= cap;
     const infrastructure = mode === "infrastructure_active" || mode === "infrastructure_settled";
     if (exhausted) {
       store.logEvent("self_requeue_cap_exhausted", round.pr, {
