@@ -20,13 +20,14 @@ import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   jobPath as postingJobPath,
   readPostingJob,
@@ -109,6 +110,39 @@ function readObject(path: string, what: string): Record<string, unknown> | undef
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new JournalError(`existing ${what} must be a nonempty object`);
   return Object.keys(value).length === 0 ? undefined : (value as Record<string, unknown>);
+}
+
+/** A withdrawn snapshot keeps its job's name and this infix, then the stamp
+ * of its withdrawal: `<job>.withdrawn-<stamp>`. */
+const WITHDRAWN_INFIX = ".withdrawn-";
+
+/** When this round's newest delivery snapshot for `key` was queued (its
+ * `created_at`): the live outbox job's, or a withdrawn one's, what a guard
+ * that refused the queued post leaves behind (`PostingJournal.withdraw`).
+ * Undefined when no snapshot names the key or the directory cannot be read. */
+export function newestSnapshotQueuedAt(
+  dir: string,
+  pr: number,
+  round: number,
+  key: string,
+): string | undefined {
+  const live = postingJobPath(dir, pr, round);
+  const paths = [live];
+  try {
+    const prefix = `${basename(live)}${WITHDRAWN_INFIX}`;
+    for (const name of readdirSync(dirname(live)))
+      if (name.startsWith(prefix)) paths.push(join(dirname(live), name));
+  } catch {
+    return undefined;
+  }
+  let newest: string | undefined;
+  for (const path of paths) {
+    const job = readPostingJob(path);
+    if (job?.posting_key !== key) continue;
+    if (newest === undefined || Date.parse(job.created_at) > Date.parse(newest))
+      newest = job.created_at;
+  }
+  return newest;
 }
 
 export interface JournalOptions {
@@ -285,7 +319,7 @@ export class PostingJournal {
       .toISOString()
       .replace(/[-:.]/g, "")
       .replace(/(\d{3})Z$/, "$1000Z");
-    renameSync(path, `${path}.withdrawn-${stamp}`);
+    renameSync(path, `${path}${WITHDRAWN_INFIX}${stamp}`);
   }
 
   // ---- the receipt ---------------------------------------------------------

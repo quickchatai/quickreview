@@ -12,7 +12,6 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,6 +21,7 @@ import { StateStore, type ReviewedHeadRow } from "../src/state.js";
 import { fingerprintRoundIntegrity } from "../src/execboundary.js";
 import { githubCloneDir } from "../src/config.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
+import { PostingJournal } from "../src/posting-journal.js";
 import type {
   PassPlanEntry,
   SessionHooks,
@@ -1421,32 +1421,19 @@ describe("confirmed round posting receipts", () => {
     store.db
       .prepare("UPDATE rounds SET started_at = ? WHERE pr = 178")
       .run(new Date(Date.now() - 3 * 3_600_000).toISOString());
-    mkdirSync(receiptDir, { recursive: true });
-    const payload = {
-      commit_id: "abc123",
-      event: "APPROVE",
-      body: `LGTM\n\n${postingMarker(key)}`,
-    };
-    const job = {
-      version: 1,
-      posting_key: key,
-      repo: cfg.github.repo,
-      mode: "dryrun",
+    // The guard's withdrawal, through the journal that owns the snapshot files.
+    const queuedAt = () => new Date(Date.now() - 60_000);
+    const journal = new PostingJournal({ dir: receiptDir, repo: cfg.github.repo, now: queuedAt });
+    journal.enqueue({
+      key,
       pr: 178,
-      round_no: 1,
-      head_sha: "abc123",
-      intended_event: "APPROVE",
-      payload,
-      payload_sha256: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
-      status: "pending",
-      attempts: 0,
-      created_at: new Date(Date.now() - 60_000).toISOString(),
-      next_attempt_at: new Date(Date.now() - 60_000).toISOString(),
-    };
-    writeFileSync(
-      join(receiptDir, "pr-178-round-1.outbox.json.withdrawn-20261104T000000000000Z"),
-      JSON.stringify(job),
-    );
+      round: 1,
+      head: "abc123",
+      event: "APPROVE",
+      mode: "dryrun",
+      payload: { commit_id: "abc123", event: "APPROVE", body: `LGTM\n\n${postingMarker(key)}` },
+    });
+    journal.withdraw(178, 1, key);
     const name = write(178, 1, verdictFile({ pr: 178 }));
 
     expect(await watcher({ postingReceiptGraceS: 120 }).handleFile(name)).toBe(false);

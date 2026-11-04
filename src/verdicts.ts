@@ -28,6 +28,7 @@ import {
   type SweepStatus,
 } from "@quickchatai/pi-quickreview/src/sweepstatus.js";
 import { jobPath, pendingPosting, readPostingJob } from "./posting-outbox.js";
+import { newestSnapshotQueuedAt } from "./posting-journal.js";
 import {
   isOperatorWorkerFailure,
   isProviderTransient,
@@ -45,7 +46,7 @@ import {
   watch,
   type FSWatcher,
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import type { InboxWriter } from "./companioninbox.js";
 import {
   checkOutcome,
@@ -1842,29 +1843,16 @@ export class VerdictWatcher {
     };
   }
 
-  /** When this round's newest delivery snapshot for its key was queued: the
-   * live outbox job's, or a withdrawn one's (`<job>.withdrawn-<stamp>`, what
-   * a guard that refused the queued approval leaves). Undefined when none
-   * names the key or the directory cannot be read. */
+  /** When this round's newest delivery snapshot for its key was queued, as
+   * the posting journal reads it (a withdrawn snapshot included). */
   private postingQueuedAt(round: RoundRow): string | undefined {
     if (!round.posting_key) return undefined;
-    const live = jobPath(this.postingReceiptDir(), round.pr, round.round_no);
-    const paths = [live];
-    try {
-      const prefix = `${basename(live)}.withdrawn-`;
-      for (const name of readdirSync(dirname(live)))
-        if (name.startsWith(prefix)) paths.push(join(dirname(live), name));
-    } catch {
-      return undefined;
-    }
-    let newest: string | undefined;
-    for (const path of paths) {
-      const job = readPostingJob(path);
-      if (job?.posting_key !== round.posting_key) continue;
-      if (newest === undefined || Date.parse(job.created_at) > Date.parse(newest))
-        newest = job.created_at;
-    }
-    return newest;
+    return newestSnapshotQueuedAt(
+      this.postingReceiptDir(),
+      round.pr,
+      round.round_no,
+      round.posting_key,
+    );
   }
 
   /** The round carries durable posting linkage (`posted_at` or
