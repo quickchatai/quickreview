@@ -364,6 +364,26 @@ describe("a transient provider failure", () => {
     expect(store.getSessionCommand(id)?.recovery_attempts).toBe(1);
   });
 
+  // MUTATION: await the announcement in recoverNonRound again — a Slack that
+  // never answers holds the supervisor's scan; this fails (times out).
+  it("a Slack that never answers does not hold the scan", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 3 });
+    failWith(id, PROVIDER_429);
+    store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id=?").run(id);
+    const anomaly = vi.fn((_a: AnomalyAnnouncement) => new Promise<void>(() => {}));
+    await new SessionCommandSupervisor({
+      cfg: baseCfg,
+      store,
+      hooks: hooks({ killSession: vi.fn(async () => {}) }),
+      verdictDir,
+      onRoundFailure: vi.fn<RoundFailureHandler>(async () => "requeued"),
+      announce: { anomaly },
+      now: () => clock,
+    }).scan();
+    expect(anomaly).toHaveBeenCalledTimes(1);
+    expect(store.openReviewFailure(pr)).toBeDefined();
+  });
+
   it("any other exhausted wake failure still needs the operator", async () => {
     const { id, pr } = seedWakeCommand({ status: "failed", attempt: 3 });
     store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id=?").run(id);

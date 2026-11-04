@@ -1058,18 +1058,24 @@ export class SessionCommandSupervisor {
           : "press u to recover"
       }`,
     );
+    // Slack is a side channel: the inbox wake and the durable debt stand
+    // whatever it answers. Fire-and-forget, as the verdict watcher's
+    // announcements are: a slow Slack never holds the supervisor's scan, and
+    // the announcer orders the PR's announcements by when they were called.
     const announce = this.deps.announce;
     if (announce) {
       try {
-        await announce.anomaly({
-          pr: command.pr,
-          round_no: null,
-          kind: "failed_loud",
-          deadline_min: this.deps.cfg.daemon.round_deadline_min,
-          incident_id: failure.incident_id,
-        });
+        void announce
+          .anomaly({
+            pr: command.pr,
+            round_no: null,
+            kind: "failed_loud",
+            deadline_min: this.deps.cfg.daemon.round_deadline_min,
+            incident_id: failure.incident_id,
+          })
+          .catch(() => {});
       } catch {
-        // Slack is a side channel: the inbox wake and the durable debt stand.
+        // A throw before the announcement's promise exists: the same side channel.
       }
     }
   }
