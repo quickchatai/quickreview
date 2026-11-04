@@ -352,9 +352,15 @@ ordinary wake that failed on the provider is replayed with the same backoff
 rather than at once, and when its replays are spent its debt waits on the
 automatic retry ladder instead of `u`. The breaker never parks a PR for a
 transient provider failure (it feeds the drain only on a repeat), and a spent
-usage window feeds the drain without parking. The worker's own pi sessions
-retry a provider for about 13 minutes per request (`BOT_RETRY`) before any of
-this; an operator's `retry` in the agent dir's settings.json wins.
+usage window feeds the drain without parking. The breaker classifies the
+whole failure text, not its 300-character display cut. The worker's own pi
+sessions retry a provider for about 13 minutes per request (`BOT_RETRY`)
+before any of this; an operator's `retry` in the agent dir's settings.json
+wins. A lens pass's shorter per-pass deadline can end it while pi still
+retries; its failure then names the provider error pi was retrying, so a
+required pass an outage kept from completing still reads as transient. A
+login the worker's own check refused fails in words that keep the incident
+the operator's.
 
 `src/daemon.ts` runs `roundStages.scan()` once at startup (off the critical
 path) and on the deadline tick.
