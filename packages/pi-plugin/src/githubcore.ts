@@ -3,13 +3,15 @@
 // (src/github.ts, which re-exports these).
 
 /** A GitHub request that came back refused: the method, path and status, and
- * how long GitHub asked us to wait, when it said. */
+ * how long GitHub asked us to wait, when it said. `detail` is GitHub's own
+ * answer, apart from the request line: what a classification reads, so a
+ * path that happens to say "rate-limit" never makes a refusal look like one. */
 export class GitHubRequestError extends Error {
   constructor(
     readonly method: string,
     readonly path: string,
     readonly status: number,
-    detail: string,
+    readonly detail: string,
     readonly retryAfterMs?: number,
   ) {
     super(`${method} ${path} → ${status}: ${detail}`);
@@ -126,6 +128,12 @@ function messageOf(e: unknown): string {
   return typeof e === "string" ? e : String(e);
 }
 
+/** A message with every `METHOD /path` request line taken out, so the
+ * evidence a classification reads is the answer, not the URL asked for. */
+function withoutRequestLine(text: string): string {
+  return text.replace(/\b(?:GET|POST|PUT|PATCH|DELETE|HEAD)\s+\S+/g, "");
+}
+
 /** A status-bearing answer: the kind its status means. */
 function kindOfStatus(status: number, text: string): GitHubFailureKind {
   if (status >= 500 || status === 408) return "transient";
@@ -163,8 +171,11 @@ export function classifyGitHubFailure(err: unknown): GitHubFailure {
   ) {
     const s = status as number;
     const retryAfterMs = field(err, "retryAfterMs");
+    // The response's own words, never the request line: the method and path
+    // are ours, and a repository or branch name may say anything.
+    const answer = field(err, "detail");
     return {
-      kind: kindOfStatus(s, messageOf(err)),
+      kind: kindOfStatus(s, typeof answer === "string" ? answer : withoutRequestLine(messageOf(err))),
       status: s,
       ...(typeof retryAfterMs === "number" ? { retryAfterMs } : {}),
       detail,
@@ -185,7 +196,7 @@ export function classifyGitHubFailure(err: unknown): GitHubFailure {
   if (err instanceof TypeError && /fetch failed|terminated|network/i.test(err.message))
     return { kind: "transient", detail };
 
-  const text = messageOf(err);
+  const text = withoutRequestLine(messageOf(err));
   if (/graphql_rate_limit|\bRATE_LIMITED?\b/.test(text)) return { kind: "rate_limited", detail };
   const statusText = /(?:graphql|github|http|status|→)[^\n]{0,24}?\b([1-5]\d\d)\b/i.exec(text);
   if (statusText) {
