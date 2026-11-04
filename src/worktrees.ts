@@ -387,7 +387,11 @@ const NETWORK_GIT_TIMEOUTS: Readonly<Record<string, number>> = {
  * webhook delivery that waits on it. A network command gets three
  * per-invocation settings:
  *   - a wall-clock timeout (`timeoutMs`; the caller's own wins), after
- *     which the child is killed and the command fails like any other;
+ *     which the command fails like any other. git runs in its own process
+ *     group (`ownProcessGroup`), so the kill takes the ssh transport or
+ *     credential helper git started with it; and the call settles within a
+ *     short grace even if a descendant still holds git's output open
+ *     (`EXEC_SETTLE_GRACE_MS`), so the caller is bounded, not just git;
  *   - git's low-speed abort, `GIT_NETWORK_CONFIG`;
  *   - `GIT_TERMINAL_PROMPT=0`, so a credential git cannot find is a failed
  *     command, never a prompt that waits forever on a terminal nobody has.
@@ -407,10 +411,15 @@ export function networkGitExec(run: ExecFn): ExecFn {
     return run(cmd, [...GIT_NETWORK_CONFIG, ...args], {
       ...opts,
       timeoutMs: opts.timeoutMs ?? timeoutMs,
+      ownProcessGroup: true,
       env: { ...(opts.env ?? process.env), GIT_TERMINAL_PROMPT: "0" },
     });
   };
 }
+
+/** The base clone in flight per destination path, shared by every manager
+ * in the process (`ensureBaseClone`). */
+const BASE_CLONES = new Map<string, Promise<string>>();
 
 export class WorktreeManager {
   readonly root: string;
@@ -438,15 +447,30 @@ export class WorktreeManager {
     return join(this.root, prWorktreeRel(pr));
   }
 
-  /** Clone the base repo if it is not there yet. Idempotent. */
+  /** Clone the base repo if it is not there yet. Idempotent, and one clone
+   * per destination at a time: every caller that finds no clone (a round's
+   * preparation and a session's revival can) waits on the one in flight
+   * instead of starting a second into a directory the first is filling. */
   async ensureBaseClone(): Promise<string> {
     // Only when the clone sits directly under root — the one shape the
     // anchored `/<name>/` rule describes.
     if (resolve(dirname(this.basePath)) === resolve(this.root))
       ensureLocallyIgnored(this.root, basename(this.basePath));
     if (existsSync(join(this.basePath, ".git"))) return this.basePath;
+    const key = resolve(this.basePath);
+    const inFlight = BASE_CLONES.get(key);
+    if (inFlight) return inFlight;
+    const clone = this.cloneBase().finally(() => BASE_CLONES.delete(key));
+    BASE_CLONES.set(key, clone);
+    return clone;
+  }
+
+  private async cloneBase(): Promise<string> {
     mkdirSync(this.root, { recursive: true });
-    const preexisting = existsSync(this.basePath);
+    // What the destination held before this clone (a mounted clone directory
+    // is there, empty, before the first clone): none of it is this clone's
+    // to remove. `null`: there was no destination at all.
+    const before = existsSync(this.basePath) ? new Set(readdirSync(this.basePath)) : null;
     try {
       await runOrThrow(this.run, "git", ["clone", this.cloneUrl, this.basePath], {
         cwd: this.root,
@@ -454,14 +478,17 @@ export class WorktreeManager {
     } catch (err) {
       // A clone killed by its timeout cannot clean up after itself, and the
       // half-written `.git` it leaves would pass the existence check above
-      // as a finished clone. The next attempt starts from nothing instead.
-      // Only what this clone created is removed: the whole directory, or,
-      // in one that was already there, the `.git` it began (the check above
-      // proved there was none).
-      rmSync(preexisting ? join(this.basePath, ".git") : this.basePath, {
-        recursive: true,
-        force: true,
-      });
+      // as a finished clone; files it checked out beside it would make every
+      // later clone refuse a nonempty destination. The next attempt starts
+      // from nothing instead. Only what this clone created is removed (no
+      // other clone of this destination runs meanwhile, `BASE_CLONES`): the
+      // whole directory when there was none, else each entry that was not
+      // there before — the directory itself, a mount point, stays.
+      if (before === null) rmSync(this.basePath, { recursive: true, force: true });
+      else if (existsSync(this.basePath))
+        for (const name of readdirSync(this.basePath))
+          if (!before.has(name))
+            rmSync(join(this.basePath, name), { recursive: true, force: true });
       throw err;
     }
     return this.basePath;

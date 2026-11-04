@@ -183,10 +183,17 @@ Every git command the manager runs that reaches the network — the clone, the
 round's fetch, the ref-lag fetch and the fetch on miss — is bounded
 (`networkGitExec`): a wall-clock timeout (120 s for a fetch, 600 s for the
 clone), git's low-speed abort (`http.lowSpeedLimit=1000`,
-`http.lowSpeedTime=60`) and `GIT_TERMINAL_PROMPT=0`. The dispatch pump is one
-promise and webhook fulfilment waits on it, so a fetch that hung would stall
-both. A clone that fails is removed, so a half-written `.git` never passes for
-a finished clone. These settings are per invocation and name no program or
+`http.lowSpeedTime=60`) and `GIT_TERMINAL_PROMPT=0`. git runs in its own
+process group, so the timeout kills the ssh transport or credential helper it
+started too, and the call settles within a short grace
+(`EXEC_SETTLE_GRACE_MS`) even if a descendant still holds git's output open.
+The dispatch pump is one promise and webhook fulfilment waits on it, so a
+fetch that hung would stall both. One clone runs per destination at a time:
+every caller that finds no clone waits on the one in flight. A clone that
+fails leaves nothing of its own behind, so a half-written `.git` never passes
+for a finished clone: the whole directory when it made it, else only the
+entries it added, so a mounted destination stays and stays empty for the
+retry. These settings are per invocation and name no program or
 path; the `DAEMON_GIT_PINS` ride the environment unchanged
 (docs/exec-boundary.md).
 

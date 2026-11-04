@@ -15,7 +15,21 @@ export interface ExecOpts {
   /** Stops the command: the child is killed and the call rejects with the
    * signal's AbortError. */
   signal?: AbortSignal;
+  /** Start the child as the leader of its own process group, so the
+   * timeout kills every process it started with it (a transport or
+   * credential helper the child spawned), not the child alone. Off by
+   * default: a child in its own group also leaves the terminal's, so an
+   * interactive Ctrl-C no longer reaches it. */
+  ownProcessGroup?: boolean;
 }
+
+/**
+ * How long a timed-out command may take to report its exit before the call
+ * settles without it. Node reports `close` only once every holder of the
+ * child's output pipes is gone, and a descendant that escaped the kill can
+ * hold them for ever: the timeout bounds the caller, not just the child.
+ */
+export const EXEC_SETTLE_GRACE_MS = 2_000;
 
 export interface ExecResult {
   code: number;
@@ -46,21 +60,53 @@ export const nodeExec: ExecFn = (cmd, args, opts = {}) =>
       env: opts.env,
       stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       ...(opts.signal ? { signal: opts.signal, killSignal: "SIGKILL" as const } : {}),
+      ...(opts.ownProcessGroup ? { detached: true } : {}),
     });
     let stdout = "";
     let stderr = "";
     let timer: NodeJS.Timeout | undefined;
-    if (opts.timeoutMs) timer = setTimeout(() => child.kill("SIGKILL"), opts.timeoutMs);
+    let grace: NodeJS.Timeout | undefined;
+    let settled = false;
+    const settle = (finish: () => void): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (grace) clearTimeout(grace);
+      finish();
+    };
+    const kill = (): void => {
+      // The negative pid names the child's whole process group.
+      if (opts.ownProcessGroup && child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+          return;
+        } catch {
+          // The group is gone already; the child alone is still signalled.
+        }
+      }
+      child.kill("SIGKILL");
+    };
+    if (opts.timeoutMs) {
+      const timeoutMs = opts.timeoutMs;
+      timer = setTimeout(() => {
+        kill();
+        grace = setTimeout(() => {
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          settle(() =>
+            resolvePromise({
+              code: -1,
+              stdout,
+              stderr: `${stderr}${stderr && !stderr.endsWith("\n") ? "\n" : ""}${cmd}: killed after ${timeoutMs} ms; its output was still held open`,
+            }),
+          );
+        }, EXEC_SETTLE_GRACE_MS);
+      }, timeoutMs);
+    }
     child.stdout?.on("data", (d) => (stdout += String(d)));
     child.stderr?.on("data", (d) => (stderr += String(d)));
-    child.on("error", (err) => {
-      if (timer) clearTimeout(timer);
-      reject(err);
-    });
-    child.on("close", (code) => {
-      if (timer) clearTimeout(timer);
-      resolvePromise({ code: code ?? -1, stdout, stderr });
-    });
+    child.on("error", (err) => settle(() => reject(err)));
+    child.on("close", (code) => settle(() => resolvePromise({ code: code ?? -1, stdout, stderr })));
     if (opts.input !== undefined) {
       child.stdin?.write(opts.input);
       child.stdin?.end();
