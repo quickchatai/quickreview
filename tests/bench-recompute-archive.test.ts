@@ -392,6 +392,7 @@ describe("claim_metrics", () => {
   const B = "https://example.invalid/not-in-test30/1";
 
   // MUTATION: drop the profile's category exclusion in Martian._counts — the style golden counts and this fails
+  // MUTATION: drop `r["judge"] == judge` from Martian._counts' martian_reviews filter — this fails
   it("recounts a Martian score on one half under the profile's golden categories", () => {
     const d = join(tmp, "martian-tables");
     jsonl(join(d, "martian_goldens.jsonl"), [
@@ -414,9 +415,11 @@ describe("claim_metrics", () => {
       v(A, 2, false),
       v(B, 0, true),
     ]);
+    // Another judge's fp on the same review never adds to this judge's count.
     jsonl(join(d, "martian_reviews.jsonl"), [
-      { work_dir: "w", tool: "t", pr_url: A, fp: 3 },
-      { work_dir: "w", tool: "t", pr_url: B, fp: 10 },
+      { work_dir: "w", tool: "t", judge: "gpt-6.1-sol", pr_url: A, fp: 3 },
+      { work_dir: "w", tool: "t", judge: "other", pr_url: A, fp: 100 },
+      { work_dir: "w", tool: "t", judge: "gpt-6.1-sol", pr_url: B, fp: 10 },
     ]);
     const r = py(
       "import claim_metrics as CM; m = CM.Martian(CM.Tables(sys.argv[1]))\n" +

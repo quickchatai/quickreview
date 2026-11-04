@@ -6,8 +6,9 @@
   elo.py repack D [--pr IID ...] [--dry-run]
                                     re-pack from the current packing code; says
                                     which PRs changed and what that invalidates
-  elo.py run D [--rounds N] [--judge gpt|opus|both] [--no-wait]
-                                    judge round 0, then adaptive rounds
+  elo.py run D [--rounds N] [--judge JUDGE|both] [--no-wait]
+                                    judge round 0, then adaptive rounds (both:
+                                    every judge the plan names)
   elo.py report D                   ratings per judge → D/REPORT.md, D/ratings.json
   elo.py show D --x RUN --y RUN [--judge J] [--pr IID]
                                     the judge's explanations for one matchup
@@ -21,9 +22,11 @@ judgment units (units.jsonl: PR + which run is Review A and which Review B),
 every judge's answers (judgments/<judge>.jsonl, append-only, explanations
 included), and the Opus batches (batches.jsonl). Everything is resumable:
 `run` first collects what is in flight, then retries what failed (≤ 3
-attempts), then schedules the next round. Both judges judge every unit with
-the same prompt, so their tables are comparable and their agreement is
-measured. A judgment counts only while its recorded prompt sha256 equals the
+attempts), then schedules the next round. The rated judges are the plan's
+(`judges`, in its order; gpt and opus when it names none): gpt, opus, or a
+judge on any OpenAI-compatible endpoint (a `base_url`, `model`, `env_file`
+and `key_var`). Every judge judges every unit with the same prompt, so their
+tables are comparable and their agreement is measured. A judgment counts only while its recorded prompt sha256 equals the
 unit's current prompt (the instructions, the packed context, the two
 rendered reviews): re-packing a PR sets its old judgments aside, for every
 judge, and its units are judged again. See bench/aacr/elo/README.md.
@@ -49,7 +52,6 @@ import elo_judge as J  # noqa: E402
 import elo_rating as R  # noqa: E402
 
 MAX_ATTEMPTS = 3
-JUDGES = ("gpt", "opus")
 # Opus 5.5 at Batch API prices, $ per million tokens: half of the standard
 # $4 input / $20 output / $8 one-hour cache write / $0.20 cache read.
 OPUS_BATCH_USD = {"input": 2.0, "output": 10.0, "cache_write_1h": 4.0, "cache_read": 0.10}
@@ -103,6 +105,7 @@ class Run:
         self.d = d
         self.plan = json.loads((d / "plan.json").read_text())
         self.runs: List[str] = self.plan["runs"]
+        self.judges = R.rated_judges(self.plan)
         self._cases: Optional[Dict[str, D.Case]] = None
         # Per process: a PR's packed context and a unit's current prompt hash.
         # `repack` drops a PR's entries when it rewrites the pack.
@@ -293,18 +296,33 @@ def cmd_pack(a) -> None:
 
 
 def make_judges(run: Run, which: str):
+    """`which`: one judge by name, or `both` for every judge the plan rates. A name other than gpt,
+    opus and deepseek is a judge on an OpenAI-compatible endpoint, configured under the plan's
+    `judges.<name>` (base_url, model, effort, env_file, key_var, max_tokens)."""
     cfg = run.plan.get("judges", {})
     out = {}
-    if which in ("gpt", "both"):
+    named = run.judges if which == "both" else (which,)
+    for name in named:
+        if name in ("gpt", "opus", "deepseek"):
+            continue
+        c = cfg.get(name)
+        if not c or not c.get("base_url"):
+            raise SystemExit(f"judge {name!r}: the plan names no such judge with a base_url "
+                             f"(its judges: {', '.join(run.judges)})")
+        out[name] = J.OpenAICompatJudge(name, c["base_url"], c["model"], c.get("effort", "xhigh"),
+                                        Path(c.get("env_file") or D.AACR / f"{name}.env"),
+                                        c.get("key_var", "OPENAI_API_KEY"), c.get("max_tokens", 16000),
+                                        timeout_s=c.get("timeout_s", 3600))
+    if "gpt" in named:
         g = cfg.get("gpt", {})
         out["gpt"] = J.GptJudge(g.get("url", "http://127.0.0.1:8790"), g.get("model", "gpt-6.1-sol"),
                                 g.get("effort", "xhigh"))
-    if which in ("opus", "both"):
+    if "opus" in named:
         o = cfg.get("opus", {})
         env = Path(o.get("env_file") or D.AACR / "claude.env")
         out["opus"] = J.OpusJudge(env, o.get("model", "claude-opus-5-5"), o.get("effort", "xhigh"),
                                   o.get("max_tokens", 128000))
-    if which == "deepseek":
+    if "deepseek" in named:
         d = cfg.get("deepseek", {})
         out["deepseek"] = J.OpenAICompatJudge(
             "deepseek", d.get("base_url", "https://inference.do-ai.run/v1"), d.get("model", "deepseek-v4.1-flash"),
@@ -316,26 +334,28 @@ def make_judges(run: Run, which: str):
     return out
 
 
-def run_gpt(run: Run, judge: J.GptJudge, workers: int) -> None:
-    try:
-        h = judge.health()
-    except Exception as e:  # noqa: BLE001 - any failure means the judge is not up
-        log(f"gpt judge not reachable at {judge.url} ({e}); start it: bench/aacr/elo/judge-gpt.sh start")
-        return
-    if h.get("effort") and h["effort"] != judge.effort or h.get("model") and h["model"] != judge.model:
-        raise SystemExit(f"the judge container runs {h.get('model')} at {h.get('effort')}, the plan says "
-                         f"{judge.model} at {judge.effort}; restart it with the plan's settings")
-    todo = run.pending("gpt", set())
+def run_gpt(run: Run, judge, workers: int, name: str = "gpt") -> None:
+    """A judge answering one call at a time (gpt, or a plan's OpenAI-compatible judge), `workers` at once."""
+    if name == "gpt":
+        try:
+            h = judge.health()
+        except Exception as e:  # noqa: BLE001 - any failure means the judge is not up
+            log(f"gpt judge not reachable at {judge.url} ({e}); start it: bench/aacr/elo/judge-gpt.sh start")
+            return
+        if h.get("effort") and h["effort"] != judge.effort or h.get("model") and h["model"] != judge.model:
+            raise SystemExit(f"the judge container runs {h.get('model')} at {h.get('effort')}, the plan says "
+                             f"{judge.model} at {judge.effort}; restart it with the plan's settings")
+    todo = run.pending(name, set())
     if not todo:
         return
-    log(f"gpt: {len(todo)} judgments, {workers} at a time")
+    log(f"{name}: {len(todo)} judgments, {workers} at a time")
 
     def one(u: dict) -> None:
         ctx, rev = run.context(u["pr"]), run.reviews(u)
         res = judge.judge(ctx, rev)
         # The hash of what was SENT, so a pack rewritten mid-call is caught.
-        run.record("gpt", u, res, judge.model, judge.effort, J.prompt_sha(ctx, rev))
-        log(f"gpt {u['id']} {u['pr']}: {res['status']}"
+        run.record(name, u, res, judge.model, judge.effort, J.prompt_sha(ctx, rev))
+        log(f"{name} {u['id']} {u['pr']}: {res['status']}"
             + (f" → {res['verdict']['overall']['winner']}" if res["status"] == "ok" else f" ({res.get('error', '')[:160]})"))
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -422,8 +442,8 @@ def cmd_run(a) -> None:
             log(f"round 0: {len(new)} judgments per judge")
         for attempt in range(MAX_ATTEMPTS):
             threads = []
-            if "gpt" in judges:
-                t = threading.Thread(target=run_gpt, args=(run, judges["gpt"], a.gpt_workers))
+            for name in [j for j in judges if j != "opus"]:  # gpt and any plan judge: one call at a time
+                t = threading.Thread(target=run_gpt, args=(run, judges[name], a.gpt_workers, name))
                 t.start()
                 threads.append(t)
             if "opus" in judges and a.opus_live:
@@ -533,7 +553,7 @@ def usage_summary(rows: List[dict], judge: str) -> str:
     long_ = 0
     for r in rows:
         u = r.get("usage") or {}
-        if judge == "gpt":
+        if judge != "opus":  # Chat Completions usage: gpt and any OpenAI-compatible plan judge
             tot["input"] += int(u.get("prompt_tokens") or 0)
             tot["cached"] += int((u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
             tot["output"] += int(u.get("completion_tokens") or 0)
@@ -550,7 +570,7 @@ def usage_summary(rows: List[dict], judge: str) -> str:
     s = ", ".join(f"{k} {v:,}" for k, v in tot.items())
     if judge == "opus":
         s += f" (≈ ${usd:,.2f}: Batch API prices for batch calls, regular prices for live ones)"
-    else:
+    elif judge == "gpt":
         s += (f" (≈ ${usd:,.2f} API-equivalent at gpt-6.1-sol API prices"
               f"{f', {long_} call(s) past {GPT_LONG_INPUT:,} input tokens at the long-context rate' if long_ else ''}; "
               f"the ChatGPT login route bills quota, not dollars)")
@@ -601,7 +621,7 @@ def cmd_report(a) -> None:
         out += ["| configuration | run |", "|---|---|"] + [f"| {labels.get(r, r)} | `{r}` |" for r in run.runs] + [""]
     ratings: Dict[str, dict] = {}
     units = run.units()
-    for j in JUDGES:
+    for j in run.judges:
         rows = [r for rs in run.judgments(j).values() for r in rs]
         if not rows:
             continue
@@ -628,34 +648,27 @@ def cmd_report(a) -> None:
             tc = R.table(run.runs, run.games(j, c), seed=seed)
             ratings[j]["categories"][c] = tc
             out += [f"### {c}", ""] + fmt_table(tc, labels) + [""]
-    if all(j in ratings for j in JUDGES):
-        fg, fo = run.final("gpt"), run.final("opus")
-        both = sorted(set(fg) & set(fo))
-        out += ["## Judge agreement", "", f"Units both judges answered: {len(both)}.", "",
-                "| verdict | same winner | opposite winners |", "|---|---:|---:|"]
-        for c in (None,) + J.CATEGORIES:
-            pick = (lambda v: v["overall"]["winner"]) if c is None else (lambda v, c=c: v["categories"][c]["winner"])
-            ag = R.agreement([(pick(fg[i]["verdict"]), pick(fo[i]["verdict"])) for i in both])
-            if ag["n"]:
-                out.append(f"| {c or 'overall'} | {ag['same_rate']:.0%} | {ag['opposite_rate']:.0%} |")
-                ratings.setdefault("agreement", {})[c or "overall"] = ag
-        out.append("")
-    if all(j in ratings for j in JUDGES):
-        fg, fo = run.final("gpt"), run.final("opus")
-        both = sorted(set(fg) & set(fo))
-
-        def pooled(cat: Optional[str]) -> List[R.Game]:
-            out_: List[R.Game] = []
-            for i in both:
-                for row in (fg[i], fo[i]):
-                    v = row["verdict"]
-                    w = (v["categories"][cat] if cat else v["overall"])["winner"]
-                    out_.append((row["pr"], row["a"], row["b"], {"A": 1.0, "B": 0.0, "tie": 0.5}[w]))
-            return out_
-        tc = R.table(run.runs, pooled(None), seed=seed)
+    judges = run.judges
+    if len(judges) > 1 and all(j in ratings for j in judges):
+        fin = {j: run.final(j) for j in judges}
+        ag = R.judge_agreement(fin, judges, J.CATEGORIES)
+        pairs = {f"{judges[0]}|{judges[1]}": ag} if len(judges) == 2 else ag
+        for pair, per in pairs.items():
+            x, _, y = pair.partition("|")
+            both = sorted(set(fin[x]) & set(fin[y]))
+            out += ["## Judge agreement" + ("" if len(judges) == 2 else f": {x} and {y}"), "",
+                    f"Units both judges answered: {len(both)}.", "",
+                    "| verdict | same winner | opposite winners |", "|---|---:|---:|"]
+            out += [f"| {c} | {a['same_rate']:.0%} | {a['opposite_rate']:.0%} |" for c, a in per.items()]
+            out.append("")
+        if ag:
+            ratings["agreement"] = ag
+        pooled = R.pooled_units(fin, judges)
+        tc = R.table(run.runs, R.pooled_games(fin, judges), seed=seed)
         ratings["combined"] = {"overall": tc, "categories": {}}
-        out += ["## Combined (both judges, equal weight)", "",
-                f"Every unit both judges answered counts once per judge ({len(both)} units).", ""]
+        every = "both judges" if len(judges) == 2 else f"all {len(judges)} judges"
+        out += [f"## Combined ({every}, equal weight)", "",
+                f"Every unit {every} answered counts once per judge ({len(pooled)} units).", ""]
         out += fmt_table(tc, labels) + [""]
         for g in tc["gaps"]:
             out.append(f"- {labels.get(g['upper'], g['upper'])} over {labels.get(g['lower'], g['lower'])}: "
@@ -663,7 +676,7 @@ def cmd_report(a) -> None:
                        f"{' — separated' if g['separated'] else ' — not separated'}")
         out += [""] + fmt_pairs(tc, labels) + [""]
         for c in J.CATEGORIES:
-            tcc = R.table(run.runs, pooled(c), seed=seed)
+            tcc = R.table(run.runs, R.pooled_games(fin, judges, c), seed=seed)
             ratings["combined"]["categories"][c] = tcc
             out += [f"### combined {c}", ""] + fmt_table(tcc, labels) + [""]
     out += ["Explanations: `elo.py show <dir> --x <run> --y <run>` (every judgment is kept in `judgments/`).", ""]
@@ -695,16 +708,16 @@ def cmd_repack(a) -> None:
         # A new context changes the prompt of every unit on this PR, so every
         # judgment counting on one of them stops counting.
         on_pr = {u["id"] for u in units if u["pr"] == pr}
-        n = {j: len(on_pr & set(run.final(j))) for j in JUDGES}
+        n = {j: len(on_pr & set(run.final(j))) for j in run.judges}
         lost.update(n)
         changed.append(pr)
         if not a.dry_run:
             run.write_pack(pr, packed, repacked_at=now())
         size = f"new pack, ~{packed['tokens']} tok" if old is None else f"~{D.tokens(old)} → ~{packed['tokens']} tok"
         log(f"{'would re-pack' if a.dry_run else 're-packed'} {pr} ({size}); judgments no longer counting: "
-            + ", ".join(f"{j} {n[j]}" for j in JUDGES))
+            + ", ".join(f"{j} {n[j]}" for j in run.judges))
     log(f"{len(changed)} of {len(prs)} PR(s) {'would change' if a.dry_run else 'changed'}; judgments set aside: "
-        + ", ".join(f"{j} {lost[j]}" for j in JUDGES))
+        + ", ".join(f"{j} {lost[j]}" for j in run.judges))
 
 
 def _ts(text: str) -> float:
@@ -718,7 +731,7 @@ def cmd_audit(a) -> None:
     run = Run(Path(a.dir))
     units = run.units()
     log(f"{len(units)} units")
-    for j in JUDGES:
+    for j in run.judges:
         js = run.judgments(j)
         rows = [r for rs in js.values() for r in rs]
         if not rows:
@@ -760,7 +773,7 @@ def cmd_audit(a) -> None:
 
 def cmd_show(a) -> None:
     run = Run(Path(a.dir))
-    for j in ([a.judge] if a.judge else JUDGES):
+    for j in ([a.judge] if a.judge else run.judges):
         for row in sorted(run.final(j).values(), key=lambda r: r["id"]):
             if {row["a"], row["b"]} != {a.x, a.y} or (a.pr and row["pr"] != a.pr):
                 continue
@@ -1135,7 +1148,7 @@ def main() -> None:
     p = sub.add_parser("audit"); p.add_argument("dir")
     p.add_argument("--bridge-log", help="the GPT judge bridge's judge.jsonl")
     p = sub.add_parser("run"); p.add_argument("dir")
-    p.add_argument("--judge", choices=("gpt", "opus", "both"), default="both")
+    p.add_argument("--judge", default="both", help="one judge the plan names, or both (every judge it names)")
     p.add_argument("--rounds", type=int, default=None, help="stop after N rounds (1 = round 0 only)")
     p.add_argument("--gpt-workers", type=int, default=4)
     p.add_argument("--no-wait", action="store_true", help="submit the Opus batch and return")
@@ -1150,7 +1163,7 @@ def main() -> None:
     p.add_argument("--workers", type=int, default=4)
     p = sub.add_parser("report"); p.add_argument("dir")
     p = sub.add_parser("show"); p.add_argument("dir"); p.add_argument("--x", required=True); p.add_argument("--y", required=True)
-    p.add_argument("--judge", choices=JUDGES); p.add_argument("--pr"); p.add_argument("--reasoning", action="store_true")
+    p.add_argument("--judge"); p.add_argument("--pr"); p.add_argument("--reasoning", action="store_true")
     a = ap.parse_args()
     {"init": cmd_init, "pack": cmd_pack, "repack": cmd_repack, "run": cmd_run, "report": cmd_report,
      "show": cmd_show, "audit": cmd_audit, "live": cmd_live, "schedule": cmd_schedule}[a.cmd](a)

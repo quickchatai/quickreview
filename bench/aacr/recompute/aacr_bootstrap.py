@@ -2,6 +2,7 @@
 """AACR-Bench bootstrap intervals and paired differences, from the published tables.
 
     python3 bench/aacr/recompute/aacr_bootstrap.py --data <hf-dataset> [--arms a,b,...] [--seed N] [--json OUT]
+        [--judge LABEL [--verdicts DIR]]
 
 (`uv run --no-project --with pyarrow python ...` when the tables are parquet.)
 
@@ -33,6 +34,9 @@ then B's, each by `rng.choice` over its own half, from one
 `random.Random(seed)`; the interval is the sorted values at index 125 and 4874.
 Credit is the published `defect_verdicts.credit` (found 1, partial ½) of
 the primary judge, `gpt-6-sol-high`; a defect with no verdict row counts 0.
+`--judge LABEL` reads another judge's rows instead: a published one
+(`gpt-6.1-sol-high`, `claude-opus-5-5`), or your own with `--verdicts DIR`
+(DIR's `defect_verdicts`, checked and labelled as score_verdicts.py does).
 
 Inputs (configs of the Hugging Face dataset): `prs` (the 185 PR ids),
 `defects` (severity), `defect_verdicts` (credit), `reviews` (cost_usd of the
@@ -101,13 +105,14 @@ def ratio(d: Dict[str, Dict[str, Tuple[float, float]]], ids: Iterable[str], m: s
 
 
 def bootstrap(prs: Sequence[str], defects: List[dict], verdicts: List[dict], arms: Sequence[str],
-              b: int = RESAMPLES, seed: int = SEED) -> dict:
+              b: int = RESAMPLES, seed: int = SEED, judge: str = JUDGE) -> dict:
     """{"intervals": arm -> metric -> {point, lo, hi}, "pairs": metric -> "x | y" -> {diff, lo, hi}}, in percent."""
     samples = resamples(prs, b, seed)
-    per = {a: per_pr(prs, defects, verdicts, a) for a in arms}
+    per = {a: per_pr(prs, defects, verdicts, a, judge) for a in arms}
     vals = {a: {m: [ratio(per[a], s, m) for s in samples] for m in METRICS} for a in arms}
     point = {a: {m: ratio(per[a], prs, m) for m in METRICS} for a in arms}
-    out = {"resamples": b, "seed": seed, "prs": len(prs), "intervals": {}, "pairs": {m: {} for m in METRICS}}
+    out = {"resamples": b, "seed": seed, "judge": judge, "prs": len(prs), "intervals": {},
+           "pairs": {m: {} for m in METRICS}}
     for a in arms:
         out["intervals"][a] = {}
         for m in METRICS:
@@ -126,12 +131,13 @@ def bootstrap(prs: Sequence[str], defects: List[dict], verdicts: List[dict], arm
 
 
 def halves(sets: Dict[str, str], defects: List[dict], verdicts: List[dict], arms: Sequence[str],
-           a_sets: Sequence[str], b_sets: Sequence[str], b: int = HALVES_RESAMPLES, seed: int = SEED) -> dict:
+           a_sets: Sequence[str], b_sets: Sequence[str], b: int = HALVES_RESAMPLES, seed: int = SEED,
+           judge: str = JUDGE) -> dict:
     """The first arm's margin over the mean of the others on half A minus on half B, in points, with its
     95% interval (PRs resampled within each half)."""
     ha = sorted(i for i, s in sets.items() if s in a_sets)
     hb = sorted(i for i, s in sets.items() if s in b_sets)
-    per = {x: per_pr(ha + hb, defects, verdicts, x) for x in arms}
+    per = {x: per_pr(ha + hb, defects, verdicts, x, judge) for x in arms}
 
     def margin(ids: Sequence[str]) -> float:
         r = [ratio(per[x], ids, "recall") for x in arms]
@@ -149,7 +155,7 @@ def halves(sets: Dict[str, str], defects: List[dict], verdicts: List[dict], arms
 
 
 def costs(prs: Sequence[str], defects: List[dict], verdicts: List[dict], reviews: List[dict],
-          arms: Sequence[str]) -> Dict[str, dict]:
+          arms: Sequence[str], judge: str = JUDGE) -> Dict[str, dict]:
     """Per arm: list cost of its judged reviews over the PRs, per PR, per defect found and per high found.
     None (unknown, never zero) when a judged review's cost is missing."""
     keep = set(prs)
@@ -160,7 +166,7 @@ def costs(prs: Sequence[str], defects: List[dict], verdicts: List[dict], reviews
             out[a] = None
             continue
         total = sum(r["cost_usd"] for r in rows)
-        d = per_pr(prs, defects, verdicts, a)
+        d = per_pr(prs, defects, verdicts, a, judge)
         found = sum(v["recall"][0] for v in d.values())
         high = sum(v["high"][0] for v in d.values())
         out[a] = {"usd_total": total, "usd_per_pr": total / len(rows), "reviews": len(rows),
@@ -171,7 +177,7 @@ def costs(prs: Sequence[str], defects: List[dict], verdicts: List[dict], reviews
 
 def render(res: dict, cost: Dict[str, dict], arms: Sequence[str]) -> str:
     iv = res["intervals"]
-    lines = [f"AACR-Bench, {res['prs']} PRs, judge {JUDGE}; {res['resamples']:,} resamples, seed {res['seed']}.", "",
+    lines = [f"AACR-Bench, {res['prs']} PRs, judge {res['judge']}; {res['resamples']:,} resamples, seed {res['seed']}.", "",
              "| Arm | Recall [95% CI] | High [95% CI] | High+medium [95% CI] | Weighted [95% CI] | $/defect | $/high |",
              "|---|---|---|---|---|---|---|"]
     for a in arms:
@@ -200,23 +206,31 @@ def main() -> None:
     ap.add_argument("--json", help="also write every number to this JSON file")
     ap.add_argument("--halves", help="A:B, each a +-joined list of prs.set names: the first arm's margin on A minus on B")
     ap.add_argument("--halves-resamples", type=int, default=HALVES_RESAMPLES)
+    ap.add_argument("--judge", default=JUDGE, help=f"the judge whose defect verdicts are scored (default {JUDGE})")
+    ap.add_argument("--verdicts", help="a dir holding your judge's defect_verdicts, labelled --judge (score_verdicts.py)")
     a = ap.parse_args()
     arms = [x for x in a.arms.split(",") if x]
     prs = sorted(r["instance_id"] for r in load_table(a.data, "prs"))
     defects = load_table(a.data, "defects")
-    verdicts = load_table(a.data, "defect_verdicts")
-    known = {v["arm_id"] for v in verdicts if v["judge"] == JUDGE}
+    if a.verdicts:
+        if a.judge == JUDGE:
+            sys.exit("--verdicts needs --judge LABEL: your judge's own label")
+        from score_verdicts import defect_rows  # noqa: E402 - only for another judge's verdicts
+        verdicts = defect_rows(a.data, a.verdicts, a.judge)
+    else:
+        verdicts = load_table(a.data, "defect_verdicts")
+    known = {v["arm_id"] for v in verdicts if v["judge"] == a.judge}
     missing = [x for x in arms if x not in known]
     if missing:
-        sys.exit(f"no {JUDGE} verdicts for arm(s) {missing}")
-    res = bootstrap(prs, defects, verdicts, arms, b=a.resamples, seed=a.seed)
-    res["costs"] = costs(prs, defects, verdicts, load_table(a.data, "reviews"), arms)
+        sys.exit(f"no {a.judge} verdicts for arm(s) {missing}")
+    res = bootstrap(prs, defects, verdicts, arms, b=a.resamples, seed=a.seed, judge=a.judge)
+    res["costs"] = costs(prs, defects, verdicts, load_table(a.data, "reviews"), arms, a.judge)
     print(render(res, res["costs"], arms))
     if a.halves:
         ha, _, hb = a.halves.partition(":")
         sets = {r["instance_id"]: r["set"] for r in load_table(a.data, "prs")}
         res["halves"] = halves(sets, defects, verdicts, arms, ha.split("+"), hb.split("+"),
-                               b=a.halves_resamples, seed=a.seed)
+                               b=a.halves_resamples, seed=a.seed, judge=a.judge)
         h = res["halves"]
         print(f"\nHalves: {arms[0]}'s margin over the mean of the others, {h['a']} ({h['prs_a']} PRs) "
               f"{h['margin_a']:.1f} minus {h['b']} ({h['prs_b']}) {h['margin_b']:.1f} = {h['diff']:+.1f} "

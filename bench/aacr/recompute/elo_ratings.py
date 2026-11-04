@@ -12,14 +12,18 @@ which re-derives each unit's current prompt hash from the packs, cannot run on
 it. This script reads only what ships and fits with the same code
 (`bench/aacr/elo/elo_rating.py`, the plan's seed):
 
+  - the rated judges are the plan's own (`judges`, in its order: gpt and opus
+    for the published runs; elo_rating.rated_judges), so a third judge named
+    in a plan is rated beside them with no code change;
   - a unit's CURRENT prompt is the prompt hash of its most recent `ok`
-    judgment over the plan's judges (gpt, opus: both judges get the identical
-    prompt); a judgment at any other hash is stale, as `elo.py report` sets
-    aside a judgment whose prompt changed since. Each judge's judgment of a
-    unit is then its first `ok` row at the current hash (`Run.final`);
-  - per judge, its table; the judges' agreement on the overall winner; and the
-    "Combined" table, every unit both judges answered counted once per judge
-    (`cmd_report`'s pooling), with every pair's gap interval and direct record.
+    judgment over the rated judges (every judge gets the identical prompt); a
+    judgment at any other hash is stale, as `elo.py report` sets aside a
+    judgment whose prompt changed since. Each judge's judgment of a unit is
+    then its first `ok` row at the current hash (`Run.final`);
+  - per judge, its table; the judges' agreement on the overall winner (per
+    pair when there are more than two); and the "Combined" table, every unit
+    every judge answered counted once per judge (`cmd_report`'s pooling), with
+    every pair's gap interval and direct record.
 
 With --check-ratings it compares the refit with the `ratings.json` the run's
 `elo.py report` wrote and fails on any difference. With --runs-dir (the run
@@ -42,7 +46,6 @@ AACR = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(AACR, "elo"))
 import elo_rating as R  # noqa: E402
 
-JUDGES = ("gpt", "opus")  # elo.py JUDGES: the two judges the report rates and pools
 CATEGORIES = ("recall", "precision", "finding_quality", "writing")  # elo_judge.CATEGORIES
 SCORE = {"A": 1.0, "B": 0.0, "tie": 0.5}
 
@@ -94,33 +97,21 @@ def games(final: Dict[str, dict], category: Optional[str] = None) -> List[tuple]
 def ratings(plan: dict, judgments: Dict[str, List[dict]]) -> dict:
     """The `ratings.json` structure elo.py report writes, refit from the judgments."""
     runs, seed = plan["runs"], int(plan.get("seed", 1))
+    judges = R.rated_judges(plan)
     fin = finals(judgments)
     out: Dict[str, dict] = {}
-    for j in JUDGES:
+    for j in judges:
         if not fin.get(j):
             continue
         out[j] = {"overall": R.table(runs, games(fin[j]), seed=seed),
                   "categories": {c: R.table(runs, games(fin[j], c), seed=seed) for c in CATEGORIES}}
-    if all(fin.get(j) for j in JUDGES):
-        fg, fo = fin["gpt"], fin["opus"]
-        both = sorted(set(fg) & set(fo))
-        for c in (None,) + CATEGORIES:
-            def pick(v, c=c):
-                return v["overall"]["winner"] if c is None else v["categories"][c]["winner"]
-            ag = R.agreement([(pick(fg[i]["verdict"]), pick(fo[i]["verdict"])) for i in both])
-            if ag["n"]:
-                out.setdefault("agreement", {})[c or "overall"] = ag
-
-        def pooled(cat: Optional[str]) -> List[tuple]:
-            g = []
-            for i in both:
-                for row in (fg[i], fo[i]):
-                    v = row["verdict"]
-                    g.append((row["pr"], row["a"], row["b"],
-                              SCORE[(v["categories"][cat] if cat else v["overall"])["winner"]]))
-            return g
-        out["combined"] = {"overall": R.table(runs, pooled(None), seed=seed),
-                           "categories": {c: R.table(runs, pooled(c), seed=seed) for c in CATEGORIES}}
+    if len(judges) > 1 and all(fin.get(j) for j in judges):
+        ag = R.judge_agreement(fin, judges, CATEGORIES)
+        if ag:
+            out["agreement"] = ag
+        out["combined"] = {"overall": R.table(runs, R.pooled_games(fin, judges), seed=seed),
+                           "categories": {c: R.table(runs, R.pooled_games(fin, judges, c), seed=seed)
+                                          for c in CATEGORIES}}
     return out
 
 
@@ -168,7 +159,7 @@ def chart(plan: dict, rat: dict) -> dict:
     return {
         "source": f"elo/{plan['name']} (refit by bench/aacr/recompute/elo_ratings.py; both judges pooled)",
         "games": t["games"], "prs": t["prs"],
-        "agreement_overall": rat["agreement"]["overall"]["same_rate"],
+        "agreement_overall": rat["agreement"]["overall"]["same_rate"],  # a two-judge plan's
         "rows": [{"run": r["player"], "label": labels.get(r["player"], r["player"]), "elo": r["elo"],
                   "lo": r["lo"], "hi": r["hi"], "w": r["w"], "t": r["t"], "l": r["l"]} for r in t["rows"]],
         "pairs": [{"upper": g["upper"], "lower": g["lower"], "gap": g["gap"], "lo": g["lo"], "hi": g["hi"],
@@ -180,10 +171,14 @@ def render(plan: dict, rat: dict, fin_counts: Dict[str, int], stale: Dict[str, i
     labels = plan.get("labels") or {}
     out = [f"Pairwise Elo — {plan['name']}: " + ", ".join(f"{j} {fin_counts[j]} judgments ({stale.get(j, 0)} stale)"
                                                           for j in fin_counts)]
+    judges = R.rated_judges(plan)
     if "agreement" in rat:
-        ag = rat["agreement"]["overall"]
-        out.append(f"Judges pick the same overall winner on {ag['same']} of {ag['n']} units ({ag['same_rate']:.0%}).")
-    for key in [j for j in JUDGES if j in rat] + (["combined"] if "combined" in rat else []):
+        pairs = {f"{judges[0]}|{judges[1]}": rat["agreement"]} if len(judges) == 2 else rat["agreement"]
+        for pair, per in pairs.items():
+            ag = per["overall"]
+            who = "Judges" if len(judges) == 2 else f"Judges {pair.replace('|', ' and ')}"
+            out.append(f"{who} pick the same overall winner on {ag['same']} of {ag['n']} units ({ag['same_rate']:.0%}).")
+    for key in [j for j in judges if j in rat] + (["combined"] if "combined" in rat else []):
         t = rat[key]["overall"]
         out += ["", f"{key}: {t['games']} games over {t['prs']} PRs", "| configuration | Elo | 95% CI | W-T-L |",
                 "|---|---:|---|---|"]
@@ -209,9 +204,10 @@ def main() -> None:
     a = ap.parse_args()
     with open(os.path.join(a.dir, "plan.json")) as f:
         plan = json.load(f)
-    judgments = {j: read_jsonl(os.path.join(a.dir, "judgments", f"{j}.jsonl")) for j in JUDGES}
+    judges = R.rated_judges(plan)
+    judgments = {j: read_jsonl(os.path.join(a.dir, "judgments", f"{j}.jsonl")) for j in judges}
     if not any(judgments.values()):
-        sys.exit(f"{a.dir}: no judgments/{{{','.join(JUDGES)}}}.jsonl")
+        sys.exit(f"{a.dir}: no judgments/{{{','.join(judges)}}}.jsonl")
     rat = ratings(plan, judgments)
     fin = finals(judgments)
     print(render(plan, rat, {j: len(v) for j, v in fin.items()}, stale_count(judgments)))

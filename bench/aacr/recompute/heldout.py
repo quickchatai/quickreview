@@ -3,6 +3,7 @@
 
     python3 bench/aacr/recompute/heldout.py --data <hf-dataset> [--json OUT]
     python3 bench/aacr/recompute/heldout.py --data <hf-dataset> --write-qodo-set   # regenerate sets/qodo-heldout31.json
+    python3 bench/aacr/recompute/heldout.py --data <hf-dataset> --fixed-set --judge LABEL [--verdicts DIR]
 
 (`uv run --no-project --with pyarrow python ...` when the tables are parquet.) No model call.
 README.md "Tuning and held-out PRs" and benchmark.tex (Table tab:finalbuild, the Martian
@@ -28,6 +29,14 @@ Qodo — the 31 PRs in no mined or validation set: every PR of qodo-pr100 except
   hit is a semantic match whose comment lies within 5 lines of the issue; precision = hits
   / comments, recall = hits / issues, F1. The recall difference's interval is the papers'
   paired bootstrap over these 31 PRs (sorted URLs, Random(20261001), 10,000 resamples).
+
+Another judge: `--judge LABEL` scores every part with that judge's verdicts (a published
+label, or your own with `--verdicts DIR`: DIR's defect_verdicts, martian_verdicts and
+qodo_verdicts, each optional, checked and labelled as score_verdicts.py, martian_scores.py
+and qodo_scores.py do); a part with no verdicts of that judge is reported as unknown. The Qodo
+set is a fact of the published judge's verdicts, so `--fixed-set` reads the committed
+sets/qodo-heldout31.json and derives nothing; without it the derivation always uses the
+published judge (gpt-6.1-sol), whatever --judge says.
 """
 from __future__ import annotations
 
@@ -64,12 +73,12 @@ def set_urls(name: str, sets_dir: str = SETS) -> List[str]:
 # ---------------------------------------------------------------- AACR
 
 def aacr(prs: Sequence[str], defects: List[dict], verdicts: List[dict], arms: Sequence[str],
-         frozen: str = FROZEN_AACR, b: int = AB.RESAMPLES) -> dict:
+         frozen: str = FROZEN_AACR, b: int = AB.RESAMPLES, judge: str = AB.JUDGE) -> dict:
     keep = sorted(prs)
-    per = {a: AB.per_pr(keep, defects, verdicts, a) for a in arms}
+    per = {a: AB.per_pr(keep, defects, verdicts, a, judge) for a in arms}
     n = sum(v["recall"][1] for v in per[arms[0]].values())
     found = {a: sum(v["recall"][0] for v in per[a].values()) for a in arms}
-    boot = AB.bootstrap(keep, defects, verdicts, arms, b=b)
+    boot = AB.bootstrap(keep, defects, verdicts, arms, b=b, judge=judge)
     others = [a for a in arms if a != frozen]
     best = max(others, key=lambda a: found[a]) if others else None
     return {"prs": len(keep), "defects": n,
@@ -128,9 +137,10 @@ def qodo_heldout_urls(all_urls: Sequence[str], issues: List[dict], verdicts: Lis
             "kept": sorted(u for u in all_urls if u not in out)}
 
 
-def qodo_score(urls: Iterable[str], tool: str, issues: List[dict], verdicts: List[dict], reviews: List[dict]) -> dict:
+def qodo_score(urls: Iterable[str], tool: str, issues: List[dict], verdicts: List[dict], reviews: List[dict],
+               judge: str = QODO_JUDGE) -> dict:
     keep = set(urls)
-    hits = qodo_hits(verdicts)
+    hits = qodo_hits(verdicts, judge)
     n = sum(1 for i in issues if i["pr_url"] in keep)
     tp = sum(1 for i in issues if i["pr_url"] in keep and hits.get((tool, i["pr_url"], i["issue_index"]), (0, 0))[1])
     rows = [r for r in reviews if r["tool"] == tool and r["pr_url"] in keep]
@@ -144,10 +154,10 @@ def qodo_score(urls: Iterable[str], tool: str, issues: List[dict], verdicts: Lis
 
 
 def qodo_paired(urls: Sequence[str], x: str, y: str, issues: List[dict], verdicts: List[dict],
-                b: int = AB.RESAMPLES, seed: int = AB.SEED) -> dict:
+                b: int = AB.RESAMPLES, seed: int = AB.SEED, judge: str = QODO_JUDGE) -> dict:
     """x's recall minus y's, with the papers' paired bootstrap over the PRs (sorted)."""
     ids = sorted(urls)
-    hits = qodo_hits(verdicts)
+    hits = qodo_hits(verdicts, judge)
     per = {t: {u: (sum(1 for i in issues if i["pr_url"] == u and hits.get((t, u, i["issue_index"]), (0, 0))[1]),
                    sum(1 for i in issues if i["pr_url"] == u)) for u in ids} for t in (x, y)}
 
@@ -179,23 +189,42 @@ def heldout_set_doc(cases: List[dict], derived: dict, pr100: dict) -> dict:
 
 def render(res: dict) -> str:
     a, m, q = res["aacr"], res["martian"], res["qodo"]
-    out = [f"AACR-Bench, holdout10 + fresh10: {a['prs']} PRs, {a['defects']:g} defects (partial ½)"]
-    for t, v in sorted(a["found"].items(), key=lambda kv: -kv[1]["found"]):
-        lead = a["lead"].get(t)
-        out.append(f"  {t}: {v['found']:g} ({v['recall']:.0f}%)"
-                   + (f"   frozen lead {lead['diff']:+.1f} [{lead['lo']:+.1f}, {lead['hi']:+.1f}]" if lead else ""))
-    out.append(f"  next best: {a['next_best']}")
-    out += ["", f"Martian, real goldens ({m['real']}; " + ", ".join(f"{h} {n}" for h, n in m["real_by_half"].items()) + ")"]
-    for t, v in sorted(m["tools"].items(), key=lambda kv: -kv[1]["test30"]):
-        out.append(f"  {t}: {v['real_found']} — test30 {v['test30']}, tune20 {v['tune20']}")
-    out += ["", f"Qodo, {QODO_HELDOUT}: {len(q['set'])} PRs ({q['derived']['vendor_caught_misses']} vendor-caught misses "
-                f"on {q['derived']['miss_prs']} PRs excluded, and {', '.join(QODO_VALIDATION_SETS)})"]
+    j = res.get("judges") or {}
+    out = []
+    if a is None:
+        out.append(f"AACR-Bench, holdout10 + fresh10: no {j.get('aacr')} verdicts of the arms — unknown")
+    else:
+        out.append(f"AACR-Bench, holdout10 + fresh10: {a['prs']} PRs, {a['defects']:g} defects (partial ½)"
+                   + (f", judge {j['aacr']}" if j else ""))
+        for t, v in sorted(a["found"].items(), key=lambda kv: -kv[1]["found"]):
+            lead = a["lead"].get(t)
+            out.append(f"  {t}: {v['found']:g} ({v['recall']:.0f}%)"
+                       + (f"   frozen lead {lead['diff']:+.1f} [{lead['lo']:+.1f}, {lead['hi']:+.1f}]" if lead else ""))
+        out.append(f"  next best: {a['next_best']}")
+    if m is None:
+        out += ["", f"Martian: no {j.get('martian')} verdicts — unknown"]
+    else:
+        out += ["", f"Martian, real goldens ({m['real']}; " + ", ".join(f"{h} {n}" for h, n in m["real_by_half"].items())
+                + ")" + (f", judge {j['martian']}" if j else "")]
+        for t, v in sorted(m["tools"].items(), key=lambda kv: -kv[1]["test30"]):
+            out.append(f"  {t}: {v['real_found']} — test30 {v['test30']}, tune20 {v['tune20']}")
+    if q is None:
+        out += ["", f"Qodo: no {j.get('qodo')} verdicts — unknown"]
+        return "\n".join(out)
+    if q["derived"] is None:
+        out += ["", f"Qodo, {QODO_HELDOUT}: {len(q['set'])} PRs (the committed set, --fixed-set)"
+                + (f", judge {j['qodo']}" if j else "")]
+    else:
+        out += ["", f"Qodo, {QODO_HELDOUT}: {len(q['set'])} PRs ({q['derived']['vendor_caught_misses']} vendor-caught misses "
+                    f"on {q['derived']['miss_prs']} PRs excluded, and {', '.join(QODO_VALIDATION_SETS)})"
+                + (f", judge {j['qodo']}" if j else "")]
     for s in q["scores"].values():
         p = "unknown" if s["precision"] is None else f"{s['precision']:.1f}"
         f1 = "unknown" if s["f1"] is None else f"{s['f1']:.1f}"
         out.append(f"  {s['tool']}: {s['hits']}/{s['issues']} recall {s['recall']:.1f}  precision {p}  F1 {f1}")
     d = q["recall_gain"]
-    out.append(f"  recall gain, frozen over the 2026-10-02 build: {d['diff']:+.1f} [{d['lo']:+.1f}, {d['hi']:+.1f}]")
+    if d is not None:
+        out.append(f"  recall gain, frozen over the 2026-10-02 build: {d['diff']:+.1f} [{d['lo']:+.1f}, {d['hi']:+.1f}]")
     return "\n".join(out)
 
 
@@ -208,8 +237,31 @@ def main() -> None:
     ap.add_argument("--json", help="also write every number to this JSON file")
     ap.add_argument("--write-qodo-set", action="store_true",
                     help=f"(re)write sets/{QODO_HELDOUT}.json from the derivation instead of checking it")
+    ap.add_argument("--fixed-set", action="store_true",
+                    help=f"score the committed sets/{QODO_HELDOUT}.json as it is; derive and check nothing")
+    ap.add_argument("--judge", help=f"score with this judge's verdicts (default: the published judges, "
+                                    f"{AB.JUDGE} on AACR, {QODO_JUDGE} on Martian and Qodo)")
+    ap.add_argument("--verdicts", help="a dir of your judge's defect_verdicts / martian_verdicts / qodo_verdicts, "
+                                       "labelled --judge")
     a = ap.parse_args()
     D, S = a.data, a.sets_dir
+    if a.verdicts and not a.judge:
+        sys.exit("--verdicts needs --judge LABEL: your judge's own label")
+    if a.write_qodo_set and a.fixed_set:
+        sys.exit("--write-qodo-set derives the set; --fixed-set reads it as committed: pick one")
+    judges = {"aacr": a.judge or AB.JUDGE, "martian": a.judge or MARTIAN_JUDGE, "qodo": a.judge or QODO_JUDGE}
+    dv, mv, qv = load_table(D, "defect_verdicts"), load_table(D, "martian_verdicts"), load_table(D, "qodo_verdicts")
+    if a.verdicts:  # your judge's rows, checked and labelled as each benchmark's scorer does
+        from tables import has_table  # noqa: E402
+        if has_table(a.verdicts, "defect_verdicts"):
+            from score_verdicts import defect_rows  # noqa: E402
+            dv = defect_rows(D, a.verdicts, a.judge)
+        if has_table(a.verdicts, "martian_verdicts"):
+            from martian_scores import verdict_rows as martian_rows  # noqa: E402
+            mv = martian_rows(D, a.verdicts, a.judge)
+        if has_table(a.verdicts, "qodo_verdicts"):
+            from qodo_scores import verdict_rows as qodo_rows  # noqa: E402
+            qv = qodo_rows(D, a.verdicts, a.judge)
 
     # AACR
     keep = {c["instance_id"] for s in ("holdout10", "fresh10") for c in set_cases(s, S)}
@@ -217,33 +269,47 @@ def main() -> None:
     if len(prs) != len(keep):
         sys.exit(f"prs table lacks {sorted(keep - set(prs))}")
     arms = [x for x in a.aacr_arms.split(",") if x]
-    res = {"aacr": aacr(prs, load_table(D, "defects"), load_table(D, "defect_verdicts"), arms, b=a.resamples)}
+    have = {v["arm_id"] for v in dv if v["judge"] == judges["aacr"]}
+    res: dict = {"aacr": aacr(prs, load_table(D, "defects"), dv, arms, b=a.resamples, judge=judges["aacr"])
+                 if set(arms) <= have or not a.judge else None}
 
     # Martian
     halves = {"test30": set_urls("martian-test30", S), "tune20": set_urls("martian-tune20", S)}
-    res["martian"] = martian(load_table(D, "martian_goldens"), load_table(D, "martian_verdicts"), halves)
+    res["martian"] = (martian(load_table(D, "martian_goldens"), mv, halves, judges["martian"])
+                      if any(v["judge"] == judges["martian"] for v in mv) else None)
 
     # Qodo
-    issues, qv, qr = load_table(D, "qodo_issues"), load_table(D, "qodo_verdicts"), load_table(D, "qodo_reviews")
-    pr100 = json.load(open(os.path.join(S, "qodo-pr100.json")))
-    derived = qodo_heldout_urls([c["pr_url"] for c in pr100["cases"]], issues, qv,
-                                [set_urls(s, S) for s in QODO_VALIDATION_SETS])
+    issues, qr = load_table(D, "qodo_issues"), load_table(D, "qodo_reviews")
     path = os.path.join(S, f"{QODO_HELDOUT}.json")
-    if a.write_qodo_set:
-        cases = [c for c in pr100["cases"] if c["pr_url"] in set(derived["kept"])]
-        doc = heldout_set_doc(cases, derived, pr100)
-        doc["references"] = sum(1 for i in issues if i["pr_url"] in set(derived["kept"]))
-        with open(path, "w") as f:
-            f.write(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
-        print(f"wrote {path}: {len(cases)} PRs")
+    derived = None
+    if not a.fixed_set:  # the set is a fact of the PUBLISHED judge's verdicts, whatever --judge says
+        pr100 = json.load(open(os.path.join(S, "qodo-pr100.json")))
+        derived = qodo_heldout_urls([c["pr_url"] for c in pr100["cases"]], issues, qv,
+                                    [set_urls(s, S) for s in QODO_VALIDATION_SETS])
+        if a.write_qodo_set:
+            cases = [c for c in pr100["cases"] if c["pr_url"] in set(derived["kept"])]
+            doc = heldout_set_doc(cases, derived, pr100)
+            doc["references"] = sum(1 for i in issues if i["pr_url"] in set(derived["kept"]))
+            with open(path, "w") as f:
+                f.write(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
+            print(f"wrote {path}: {len(cases)} PRs")
     committed = set_urls(QODO_HELDOUT, S)
-    if sorted(committed) != derived["kept"]:
+    if derived is not None and sorted(committed) != derived["kept"]:
         sys.exit(f"sets/{QODO_HELDOUT}.json disagrees with the derivation: only committed "
                  f"{sorted(set(committed) - set(derived['kept']))}, only derived {sorted(set(derived['kept']) - set(committed))}")
-    tools = [FROZEN_QODO, EARLIER_QODO, "qodo-exhaustive", "augment"]
-    res["qodo"] = {"set": sorted(committed), "derived": {k: v for k, v in derived.items() if k != "kept"},
-                   "scores": {t: qodo_score(committed, t, issues, qv, qr) for t in tools},
-                   "recall_gain": qodo_paired(committed, FROZEN_QODO, EARLIER_QODO, issues, qv, b=a.resamples)}
+    jq = judges["qodo"]
+    judged = {v["tool"] for v in qv if v["judge"] == jq}
+    if not judged:
+        res["qodo"] = None
+    else:
+        tools = [t for t in (FROZEN_QODO, EARLIER_QODO, "qodo-exhaustive", "augment") if t in judged]
+        res["qodo"] = {"set": sorted(committed),
+                       "derived": None if derived is None else {k: v for k, v in derived.items() if k != "kept"},
+                       "scores": {t: qodo_score(committed, t, issues, qv, qr, jq) for t in tools},
+                       "recall_gain": qodo_paired(committed, FROZEN_QODO, EARLIER_QODO, issues, qv, b=a.resamples, judge=jq)
+                       if {FROZEN_QODO, EARLIER_QODO} <= judged else None}
+    if a.judge:
+        res["judges"] = judges
     print(render(res))
     if a.json:
         with open(a.json, "w") as f:

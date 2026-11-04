@@ -56,6 +56,11 @@
       "model": "gpt-6.1-sol",
       "effort": "xhigh",
       "url": "http://127.0.0.1:8790"
+    },
+    "opus": {
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "max_tokens": 128000
     }
   },
   "max_prompt_tokens": 400000,

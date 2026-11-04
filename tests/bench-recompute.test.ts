@@ -18,7 +18,11 @@
 //   5. do_speed: a reply counts (and is timed) only when a message follows it;
 //   6. the committed data behind the README: the Elo chart's file is what the
 //      README's alt text and prose say, and the held-out Qodo set is 31 PRs of
-//      qodo-pr100 in no validation set.
+//      qodo-pr100 in no validation set;
+//   7. another judge's verdicts: score_verdicts, qodo_scores, martian_scores and
+//      --judge on aacr_bootstrap and heldout score them beside ours and refuse
+//      what the release cannot place; elo_ratings rates the plan's judges;
+//   8. judge_prompt equals defects.ts judgePrompt() on the same inputs.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -26,6 +30,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { judgePrompt, type Defect } from "../src/bench/defects.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RECOMPUTE = join(ROOT, "bench", "aacr", "recompute");
@@ -307,6 +312,31 @@ describe("elo_ratings", () => {
     );
     expect(r).toEqual(["B", { gpt: 1, opus: 0 }, 4, 2]);
   });
+
+  // MUTATION: hard-code the rated judges as ("gpt", "opus") again in elo_ratings — this fails
+  it("rates the judges the plan names: a third judge gets its table, every pair its agreement, all of them the pool", () => {
+    const third = {
+      ...JUDGMENTS,
+      third: [
+        row("third", "u1", "p1", "new", "2026-01-03T00:00:00Z", "A"),
+        row("third", "u2", "p2", "s2", "2026-01-03T00:00:01Z", "A"),
+      ],
+    };
+    const r = py(
+      "elo_ratings",
+      "j = json.loads(sys.argv[1]); p = {'runs': ['x', 'y'], 'seed': 1, 'judges': {'gpt': {}, 'opus': {}, 'third': {}}}\n" +
+        "rat = h.ratings(p, j); one = h.ratings({'runs': ['x', 'y'], 'seed': 1, 'judges': {'gpt': {}}}, j)\n" +
+        "print(json.dumps([sorted(k for k in rat if k not in ('agreement', 'combined')), {k: v['overall']['same'] for k, v in rat['agreement'].items()},\n" +
+        "  rat['combined']['overall']['games'], sorted(one)]))",
+      JSON.stringify(third),
+    );
+    expect(r).toEqual([
+      ["gpt", "opus", "third"],
+      { "gpt|opus": 2, "gpt|third": 1, "opus|third": 1 },
+      6,
+      ["gpt"],
+    ]);
+  });
 });
 
 describe("open_models", () => {
@@ -498,5 +528,537 @@ describe("the committed data behind the README", () => {
         s,
       ).toEqual([]);
     }
+  });
+});
+
+// Another judge's verdicts on the published reviews (score_verdicts, qodo_scores,
+// martian_scores, and --judge on aacr_bootstrap and heldout): one fixture
+// release, our verdicts in it, the other judge's answers in their own dir
+// with no judge column, scored side by side; the scorers refuse what the
+// release cannot place.
+describe("another judge's verdicts", () => {
+  const D = join(tmp, "rejudge");
+  const MINE = join(tmp, "rejudge-mine");
+  const SETS = join(tmp, "rejudge-sets");
+  const F = "quickreview-frozen";
+  const QF = { work_dir: "final1-qodo-pr100", tool: "quickreview-frozen" };
+  const QE = { work_dir: "ext-r6-qodo-pr100", tool: "quickreview-2026-10-02" };
+  const MW = { work_dir: "final1-martian50", tool: "quickreview" };
+  const QJ = "gpt-6.1-sol";
+  const dv = (instance_id: string, defect_id: string, verdict: string, judge?: string) => ({
+    arm_id: F,
+    ...(judge ? { judge } : {}),
+    instance_id,
+    defect_id,
+    verdict,
+    credit: { found: 1, partial: 0.5, missed: 0 }[verdict],
+  });
+  const cv = (instance_id: string, grade: string, judge?: string) => ({
+    arm_id: F,
+    ...(judge ? { judge } : {}),
+    instance_id,
+    comment_id: "C1",
+    grade,
+    defect_id: null,
+    new_defect: false,
+  });
+  const qv = (
+    run: object,
+    pr_url: string,
+    issue_index: number,
+    comment_index: number | null,
+    judge?: string,
+  ) => ({
+    ...run,
+    ...(judge ? { judge } : {}),
+    pr_url,
+    issue_index,
+    matched: comment_index !== null,
+    comment_index,
+  });
+  const mv = (pr_url: string, golden_index: number, matched: boolean, judge?: string) => ({
+    ...MW,
+    ...(judge ? { judge } : {}),
+    pr_url,
+    golden_index,
+    matched,
+  });
+  const c = (index: number, path: string, line: number) => ({
+    index,
+    path,
+    start: line,
+    end: line,
+    body: `c${index}`,
+  });
+  // Ours: p1/d1 found, p1/d2 partial, p2/d1 found, p3/d1 no row (2.5 of 4);
+  // mine: p1/d2 missed, p3/d1 found (3 of 4). Two of the four pairs agree.
+  jsonl(D, "prs", PRS);
+  jsonl(D, "arms", [{ arm_id: F, judge: J }]);
+  jsonl(D, "defects", DEFECTS);
+  jsonl(
+    D,
+    "reviews",
+    ["p1", "p2", "p3"].map((i) => ({
+      arm_id: F,
+      instance_id: i,
+      judged: true,
+      judged_by: [J],
+      comments: [{ id: "C1" }],
+      n_comments: 1,
+      cost_usd: 1,
+      minutes: 1,
+      run: "r",
+      status: "ok",
+    })),
+  );
+  jsonl(D, "defect_verdicts", [
+    dv("p1", "d1", "found", J),
+    dv("p1", "d2", "partial", J),
+    dv("p2", "d1", "found", J),
+  ]);
+  jsonl(D, "comment_verdicts", [
+    cv("p1", "correct-valuable", J),
+    cv("p2", "incorrect", J),
+    cv("p3", "correct-minor", J),
+  ]);
+  jsonl(MINE, "defect_verdicts", [
+    dv("p1", "d1", "found"),
+    dv("p1", "d2", "missed"),
+    dv("p2", "d1", "found"),
+    dv("p3", "d1", "found"),
+  ]);
+  jsonl(MINE, "comment_verdicts", [
+    cv("p1", "correct-valuable"),
+    cv("p2", "correct-minor"),
+    cv("p3", "correct-minor"),
+  ]);
+  // Qodo: three issues on two PRs; the frozen build's second comment on q1 names
+  // the rule issue 39 lines away (a semantic match, never a hit at N=5).
+  jsonl(D, "qodo_issues", [
+    {
+      pr_url: "q1",
+      issue_index: 0,
+      functional: true,
+      file_path: "a.py",
+      start_line: 10,
+      end_line: 12,
+    },
+    {
+      pr_url: "q1",
+      issue_index: 1,
+      functional: false,
+      file_path: "b.py",
+      start_line: 1,
+      end_line: 1,
+    },
+    {
+      pr_url: "q2",
+      issue_index: 0,
+      functional: true,
+      file_path: "c.py",
+      start_line: 5,
+      end_line: 5,
+    },
+  ]);
+  const rev = (run: object, pr_url: string, comments: object[]) => ({
+    ...run,
+    pr_url,
+    comments,
+    n_comments: comments.length,
+    cost_usd: null,
+    minutes: null,
+  });
+  jsonl(D, "qodo_reviews", [
+    rev(QF, "q1", [c(0, "a.py", 11), c(1, "b.py", 40)]),
+    rev(QF, "q2", [c(0, "c.py", 5)]),
+    rev(QE, "q1", [c(0, "a.py", 11)]),
+    rev(QE, "q2", []),
+  ]);
+  const loc = (row: object, n5: boolean) => ({ ...row, located_n5: n5, located_same_file: n5 });
+  jsonl(D, "qodo_verdicts", [
+    loc(qv(QF, "q1", 0, 0, QJ), true),
+    loc(qv(QF, "q1", 1, null, QJ), false),
+    loc(qv(QF, "q2", 0, null, QJ), false),
+    loc(qv(QE, "q1", 0, 0, QJ), true),
+    loc(qv(QE, "q1", 1, null, QJ), false),
+    loc(qv(QE, "q2", 0, null, QJ), false),
+  ]);
+  jsonl(MINE, "qodo_verdicts", [
+    qv(QF, "q1", 0, 0),
+    qv(QF, "q1", 1, 1),
+    qv(QF, "q2", 0, 0),
+    qv(QE, "q1", 0, 0),
+    qv(QE, "q1", 1, null),
+    qv(QE, "q2", 0, null),
+  ]);
+  // Martian: m1 has a bug and a style golden, m2 a bug; ours matched both of m1's.
+  jsonl(D, "martian_goldens", [
+    { pr_url: "m1", golden_index: 0, category: "bug", audit_bucket: "real" },
+    { pr_url: "m1", golden_index: 1, category: "style", audit_bucket: "real" },
+    { pr_url: "m2", golden_index: 0, category: "bug", audit_bucket: "real" },
+  ]);
+  jsonl(D, "martian_reviews", [
+    { ...MW, judge: QJ, pr_url: "m1", fp: 3 },
+    { ...MW, judge: QJ, pr_url: "m2", fp: 1 },
+  ]);
+  jsonl(D, "martian_verdicts", [
+    mv("m1", 0, true, QJ),
+    mv("m1", 1, true, QJ),
+    mv("m2", 0, false, QJ),
+  ]);
+  // Our stored scores, from Martian's formulas over the counts above (tp, fp, fn).
+  const prf = (tp: number, fp: number, fn: number) => {
+    const p = tp / (tp + fp);
+    const r = tp / (tp + fn);
+    return {
+      tp,
+      fp,
+      fn,
+      precision: p,
+      recall: r,
+      f1: (2 * p * r) / (p + r),
+      f2: (5 * p * r) / (4 * p + r),
+    };
+  };
+  const stored = (all: number[], core: number[]) =>
+    Object.fromEntries(
+      Object.entries({
+        all: prf(all[0]!, all[1]!, all[2]!),
+        core: prf(core[0]!, core[1]!, core[2]!),
+        strict: prf(core[0]!, core[1]!, core[2]!),
+      }).flatMap(([p, v]) => Object.entries(v).map(([k, x]) => [`${p}_${k}`, x])),
+    );
+  jsonl(D, "martian_scores", [{ ...MW, judge: QJ, ...stored([2, 4, 1], [1, 4, 1]) }]);
+  jsonl(MINE, "martian_verdicts", [mv("m1", 0, true), mv("m1", 1, false), mv("m2", 0, true)]);
+  jsonl(MINE, "martian_reviews", [
+    { ...MW, pr_url: "m1", fp: 1 },
+    { ...MW, pr_url: "m2", fp: 0 },
+  ]);
+  mkdirSync(SETS, { recursive: true });
+  const set = (name: string, cases: object[]) =>
+    writeFileSync(join(SETS, `${name}.json`), JSON.stringify({ cases }));
+  set("holdout10", [{ instance_id: "p1" }]);
+  set("fresh10", [{ instance_id: "p2" }]);
+  set("martian-test30", [{ pr_url: "m1" }]);
+  set("martian-tune20", [{ pr_url: "m2" }]);
+  set("qodo-heldout31", [{ pr_url: "q1" }, { pr_url: "q2" }]);
+
+  const script = (name: string, ...args: string[]) =>
+    execFileSync("python3", ["-I", join(RECOMPUTE, name), ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+    }).toString();
+  const refused = (name: string, ...args: string[]): string => {
+    try {
+      script(name, ...args);
+      return "";
+    } catch (e) {
+      return String((e as { stderr: Buffer }).stderr);
+    }
+  };
+  const json = (name: string, ...args: string[]) => {
+    const out = join(tmp, `${name}.${args.length}.json`);
+    script(name, ...args, "--json", out);
+    return JSON.parse(readFileSync(out, "utf8"));
+  };
+
+  // MUTATION: drop the judged_by append in score_verdicts.WithJudge (no review is "both judged") — this fails
+  // MUTATION: label your rows with the arm's own judge instead of --judge (score_verdicts.defect_rows via with_judge) — this fails
+  it("score_verdicts: recall, precision and agreement under the new judge, beside ours", () => {
+    const r = json("score_verdicts.py", "--data", D, "--verdicts", MINE, "--judge", "my-judge")
+      .arms[F];
+    expect(r.reviews).toBe(3);
+    expect(r["my-judge"]).toMatchObject({ found: 3, defects: 4, recall: 75, correct: 100 });
+    expect(r[J]).toMatchObject({ found: 2.5, recall: 62.5 });
+    expect(r[J].correct).toBeCloseTo(200 / 3);
+    expect(r.agreement).toMatchObject({ pairs: 4, pct: 50, c_pairs: 3 });
+    expect(r.agreement.c_pct).toBeCloseTo(200 / 3);
+  });
+
+  // MUTATION: drop the published-label check in tables.with_judge — this fails
+  // MUTATION: drop the credit check in score_verdicts.defect_rows — this fails
+  it("score_verdicts refuses a used label, a defect not in the key and a credit that is not the verdict's", () => {
+    expect(refused("score_verdicts.py", "--data", D, "--verdicts", MINE, "--judge", J)).toMatch(
+      /already labels published defect_verdicts rows/,
+    );
+    const bad = join(tmp, "rejudge-bad");
+    jsonl(bad, "defect_verdicts", [dv("p1", "d9", "found")]);
+    expect(refused("score_verdicts.py", "--data", D, "--verdicts", bad, "--judge", "x")).toMatch(
+      /not in the key/,
+    );
+    jsonl(bad, "defect_verdicts", [{ ...dv("p1", "d1", "found"), credit: 0.5 }]);
+    expect(refused("score_verdicts.py", "--data", D, "--verdicts", bad, "--judge", "x")).toMatch(
+      /credit 0.5 is not the credit of 'found'/,
+    );
+  });
+
+  // MUTATION: drop `judge=judge` from aacr_bootstrap's per_pr call in bootstrap() — this fails
+  it("aacr_bootstrap --judge scores that judge's verdicts", () => {
+    const r = json(
+      "aacr_bootstrap.py",
+      "--data",
+      D,
+      "--arms",
+      F,
+      "--resamples",
+      "50",
+      "--judge",
+      "my-judge",
+      "--verdicts",
+      MINE,
+    );
+    expect(r.judge).toBe("my-judge");
+    expect(r.intervals[F].recall.point).toBeCloseTo(75);
+    const ours = json("aacr_bootstrap.py", "--data", D, "--arms", F, "--resamples", "50");
+    expect(ours.intervals[F].recall.point).toBeCloseTo(62.5);
+  });
+
+  // MUTATION: drop `and v["judge"] == judge` from claim_metrics.Qodo — this fails (our hits become the union)
+  // MUTATION: trust a supplied located_n5 instead of computing it in qodo_scores.verdict_rows — this fails
+  it("qodo_scores: hits under the location rule, per judge, on the run and on the committed held-out set", () => {
+    const r = json(
+      "qodo_scores.py",
+      "--data",
+      D,
+      "--verdicts",
+      MINE,
+      "--judge",
+      "my-judge",
+      "--sets-dir",
+      SETS,
+      "--resamples",
+      "50",
+    );
+    const f = r.runs["final1-qodo-pr100|quickreview-frozen"];
+    expect(f["my-judge"]).toMatchObject({ hits: 2, comments: 3 });
+    expect(f["my-judge"].recall).toBeCloseTo(200 / 3);
+    expect(f["my-judge"].recall_semantic).toBeCloseTo(100);
+    expect(f[QJ]).toMatchObject({ hits: 1, comments: 3 });
+    expect(f.heldout["my-judge"]).toMatchObject({ hits: 2, issues: 3 });
+    expect(r.gain["my-judge"].diff).toBeCloseTo(100 / 3);
+    expect(r.gain[QJ].diff).toBeCloseTo(0);
+    const bad = join(tmp, "rejudge-bad-q");
+    jsonl(bad, "qodo_verdicts", [{ ...qv(QF, "q1", 1, 1), located_n5: true }]);
+    expect(
+      refused("qodo_scores.py", "--data", D, "--verdicts", bad, "--judge", "x", "--sets-dir", SETS),
+    ).toMatch(/located_n5 True disagrees with the comment's location/);
+    jsonl(bad, "qodo_verdicts", [qv(QF, "q1", 0, 0), qv(QF, "q1", 1, 0)]);
+    expect(
+      refused("qodo_scores.py", "--data", D, "--verdicts", bad, "--judge", "x", "--sets-dir", SETS),
+    ).toMatch(/credits two issues/);
+  });
+
+  // MUTATION: count Core's tp over every golden (drop PROFILES' exclusion in martian_scores.counts) — this fails
+  it("martian_scores: our stored scores recompute, and the new judge's are counted the same way", () => {
+    const ours = json("martian_scores.py", "--data", D).runs["final1-martian50|quickreview"];
+    expect(ours.stored_equal).toBe(true);
+    const r = json("martian_scores.py", "--data", D, "--verdicts", MINE, "--judge", "my-judge")
+      .runs["final1-martian50|quickreview"];
+    expect(r["my-judge"]).toMatchObject({
+      all_tp: 2,
+      all_fp: 1,
+      all_fn: 1,
+      core_tp: 2,
+      core_fn: 0,
+      core_recall: 100,
+    });
+    expect(r["gpt-6.1-sol"]).toMatchObject({ core_tp: 1, core_fp: 4 });
+    const bad = join(tmp, "rejudge-bad-m");
+    jsonl(bad, "martian_verdicts", [mv("m2", 5, true)]);
+    jsonl(bad, "martian_reviews", [{ ...MW, pr_url: "m2", fp: 0 }]);
+    expect(refused("martian_scores.py", "--data", D, "--verdicts", bad, "--judge", "x")).toMatch(
+      /a golden the PR does not have/,
+    );
+  });
+
+  // MUTATION: re-derive the Qodo set under --fixed-set (it needs qodo-pr100.json, which this sets dir lacks) — this fails
+  // MUTATION: score heldout's Qodo part with QODO_JUDGE whatever --judge says — this fails
+  it("heldout --fixed-set --judge scores every part with the new judge on the committed sets", () => {
+    const r = json(
+      "heldout.py",
+      "--data",
+      D,
+      "--sets-dir",
+      SETS,
+      "--aacr-arms",
+      F,
+      "--resamples",
+      "50",
+      "--fixed-set",
+      "--judge",
+      "my-judge",
+      "--verdicts",
+      MINE,
+    );
+    expect(r.judges).toEqual({ aacr: "my-judge", martian: "my-judge", qodo: "my-judge" });
+    expect(r.aacr.found[F].found).toBe(2); // p1/d1 + p2/d1; ours is 2.5
+    expect(r.martian.tools.quickreview).toEqual({ real_found: 2, test30: 1, tune20: 1 });
+    expect(r.qodo.derived).toBeNull();
+    expect(r.qodo.scores["quickreview-frozen"]).toMatchObject({ hits: 2, issues: 3 });
+    expect(r.qodo.recall_gain.diff).toBeCloseTo(100 / 3);
+    expect(
+      refused("heldout.py", "--data", D, "--sets-dir", SETS, "--aacr-arms", F, "--verdicts", MINE),
+    ).toMatch(/--verdicts needs --judge/);
+  });
+});
+
+const D_ = (id: string): Defect => ({
+  id,
+  title: `defect ${id}`,
+  statement: `what ${id} breaks`,
+  sites: [{ path: "a.py", from_line: 10, to_line: 12, role: "cause" }],
+  kind: "bug",
+  severity: "high",
+  evidence: "a.py:10",
+});
+
+// judge_prompt.py is the Python reference of the AACR defect judge's prompt,
+// rebuilt from the tables: it must equal src/bench/defects.ts judgePrompt()
+// (unchanged since the judging) on the same inputs, byte for byte.
+describe("judge_prompt", () => {
+  const D = join(tmp, "prompt");
+  const AK = join(tmp, "prompt-key");
+  const sites = [{ path: "a.py", from_line: 10, to_line: 12, role: "cause" }];
+  const defect = (defect_id: string, extra: object = {}) => ({
+    instance_id: "o__r@1111111",
+    defect_id,
+    title: `defect ${defect_id}`,
+    statement: `what ${defect_id} breaks`,
+    sites,
+    kind: "bug",
+    severity: "high",
+    ...extra,
+  });
+  const long = "x".repeat(700);
+  const comments = [
+    {
+      id: "C1",
+      path: "a.py",
+      line: 11,
+      end_line: 12,
+      deleted_line: false,
+      tag: "blocker",
+      text: "It breaks",
+    },
+    {
+      id: "C2",
+      path: "old.py",
+      line: 4,
+      end_line: 4,
+      deleted_line: true,
+      tag: "nit",
+      text: "Removed guard",
+    },
+    {
+      id: "C3",
+      path: null,
+      line: null,
+      end_line: null,
+      deleted_line: false,
+      tag: null,
+      text: "No anchor",
+    },
+  ];
+  jsonl(D, "prs", [
+    {
+      instance_id: "o__r@1111111",
+      repo: "o/r",
+      head_commit: "hd1",
+      merge_base: "mb1",
+      title: "Fix it",
+    },
+    { instance_id: "o__r@2222222", repo: "o/r", head_commit: "hd2" },
+    { instance_id: "o__r@3333333", repo: "o/r", head_commit: "hd3" },
+  ]);
+  jsonl(D, "defects", [
+    defect("D1", { counts_if: "must name the None return" }),
+    defect("D2", { severity: "low" }),
+  ]);
+  jsonl(D, "exclusions", [
+    { instance_id: "o__r@1111111", index: 1, source: "lens b", reason: long },
+    { instance_id: "o__r@1111111", index: 0, source: "lens a", reason: "pre-existing" },
+  ]);
+  jsonl(D, "reviews", [
+    {
+      arm_id: "A",
+      instance_id: "o__r@1111111",
+      verdict: "REQUEST_CHANGES",
+      body: "The body.",
+      comments,
+    },
+    { arm_id: "A", instance_id: "o__r@2222222", verdict: null, body: null, comments: [] },
+    { arm_id: "A", instance_id: "o__r@3333333", verdict: null, body: null, comments: [] },
+  ]);
+  mkdirSync(join(AK, "fresh10-code", "o__r@2222222"), { recursive: true });
+  writeFileSync(
+    join(AK, "fresh10-code", "o__r@2222222", "meta.json"),
+    JSON.stringify({ instance_id: "o__r@2222222", merge_base: "mb2", title: "From meta" }),
+  );
+  const prompt = (pr: string) =>
+    execFileSync(
+      "python3",
+      [
+        "-I",
+        join(RECOMPUTE, "judge_prompt.py"),
+        "--data",
+        D,
+        "--arm",
+        "A",
+        "--pr",
+        pr,
+        "--answer-key",
+        AK,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    ).toString();
+
+  // MUTATION: render a deleted-line comment's anchor without " (deleted line)" in judge_prompt.where — this fails
+  // MUTATION: order the exclusions by table order instead of `index` in judge_prompt.Prompts — this fails
+  // MUTATION: cut an exclusion's reason at 500 instead of MAX_EXCLUDED_REASON (600) — this fails
+  it("equals defects.ts judgePrompt() on the same PR, defects, rejected claims and review", () => {
+    const ts = judgePrompt(
+      { instance_id: "o__r@1111111", repo: "o/r", title: "Fix it", merge_base: "mb1", head: "hd1" },
+      [
+        { ...D_("D1"), notes: "must name the None return" },
+        { ...D_("D2"), severity: "low" },
+      ],
+      {
+        verdict: "REQUEST_CHANGES",
+        body: "The body.",
+        comments: [
+          { id: "C1", path: "a.py", line: 11, end_line: 12, tag: "blocker", text: "It breaks" },
+          {
+            id: "C2",
+            path: "old.py (deleted line)",
+            line: 4,
+            end_line: 4,
+            tag: "nit",
+            text: "Removed guard",
+          },
+          { id: "C3", path: null, line: null, end_line: null, tag: null, text: "No anchor" },
+        ],
+      },
+      [
+        { source: "lens a", reason: "pre-existing" },
+        { source: "lens b", reason: long },
+      ],
+    );
+    expect(prompt("o__r@1111111")).toBe(ts + "\n");
+    const empty = judgePrompt(
+      {
+        instance_id: "o__r@2222222",
+        repo: "o/r",
+        title: "From meta",
+        merge_base: "mb2",
+        head: "hd2",
+      },
+      [],
+      { verdict: null, body: null, comments: [] },
+    );
+    expect(prompt("o__r@2222222")).toBe(empty + "\n");
+  });
+
+  // MUTATION: fall back to prs.base_commit when no merge base is found — this fails
+  it("refuses a PR whose merge base it cannot find, never guessing prs.base_commit", () => {
+    expect(() => prompt("o__r@3333333")).toThrow(/no merge base/);
   });
 });

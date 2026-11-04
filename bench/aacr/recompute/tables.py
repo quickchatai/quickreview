@@ -36,6 +36,25 @@ def load_table(path: str, name: str) -> List[Dict]:
     raise SystemExit(f"table {name!r} not found: neither {pq_path} nor {jl_path}")
 
 
+def has_table(path: str, name: str) -> bool:
+    d = data_dir_of(path)
+    return any(os.path.exists(os.path.join(d, f"{name}.{ext}")) for ext in ("parquet", "jsonl"))
+
+
+def with_judge(published: List[Dict], extra: str, name: str, judge: str, optional: bool = False) -> List[Dict]:
+    """`published` (one table's rows) plus a new judge's rows of the same table
+    from the directory `extra` (`<name>.parquet` or `.jsonl`, the published
+    table's columns; a `judge` column is optional), each labelled `judge`. The
+    label must be new: one the published rows already carry would pool two
+    judges' verdicts under one name. With `optional`, a table `extra` lacks
+    adds nothing."""
+    if judge in {r.get("judge") for r in published}:
+        raise SystemExit(f"judge label {judge!r} already labels published {name} rows: give your judge a new label")
+    if optional and not has_table(extra, name):
+        return list(published)
+    return list(published) + [dict(r, judge=judge) for r in load_table(extra, name)]
+
+
 def percentile_ci(values: List[float]) -> tuple:
     """The papers' percentile 95% interval over B resamples: the sorted values
     at index int(0.025*B) and int(0.975*B)-1 (250 and 9749 for B=10,000)."""

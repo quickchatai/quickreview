@@ -100,6 +100,42 @@ it("a deleted-line comment whose body carries padding is judged once, not again 
   expect(reviewForJudge(run, id).comments).toHaveLength(1);
 });
 
+// MUTATION: drop any one of the three refuseOmitted calls in reviewForJudge — this fails
+it("refuses the release's third-party placeholder wherever the judge would read it", () => {
+  const PH =
+    "[third-party text omitted, sha256:6d936598a57df79d; see https://github.com/o/r/pull/1]";
+  const id = "o__r@1234567";
+  const fresh = (): string => {
+    const run = mkdtempSync(join(tmpdir(), "bench-omitted-"));
+    mkdirSync(join(run, "results/all"), { recursive: true });
+    mkdirSync(join(run, "cases", id), { recursive: true });
+    writeFileSync(
+      join(run, "results/all", `${id}.json`),
+      JSON.stringify({
+        review: { comments: [{ path: "a.py", start_line: 3, content: "real text" }] },
+      }),
+    );
+    return run;
+  };
+  const scored = fresh();
+  writeFileSync(
+    join(scored, "results/all", `${id}.json`),
+    JSON.stringify({ review: { comments: [{ path: "a.py", start_line: 3, content: PH }] } }),
+  );
+  expect(() => reviewForJudge(scored, id)).toThrow(/a comment in results\/all is a .*placeholder/);
+  const left = fresh();
+  writeFileSync(
+    join(left, "cases", id, "comments.json"),
+    JSON.stringify([{ path: "a.py", line: 4, side: "LEFT", body: PH }]),
+  );
+  expect(() => reviewForJudge(left, id)).toThrow(/comments\.json is a .*placeholder/);
+  const body = fresh();
+  writeFileSync(join(body, "cases", id, "review.md"), `Summary\n\n${PH}\n`);
+  expect(() => reviewForJudge(body, id)).toThrow(/review\.md is a .*placeholder/);
+  // The real text is judged as before.
+  expect(reviewForJudge(fresh(), id).comments[0]).toMatchObject({ text: "real text" });
+});
+
 const SET = {
   set: "t",
   version: "1",

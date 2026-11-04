@@ -45,7 +45,8 @@ their reasons: tracker ticket.
   tools they are inert, and pi's own Codex client sends them the same way, so
   the bridge is left as it is.
 - **Two judges, rated separately, with an identical prompt:** gpt-6.1-sol at
-  xhigh and Claude Opus 5.5 at xhigh. Every judgment records the prompt's
+  xhigh and Claude Opus 5.5 at xhigh (the plan's `judges`; a plan may name
+  another). Every judgment records the prompt's
   sha256 (the instructions, the packed context and the two rendered reviews,
   as sent).
 - **A judgment counts only at its unit's current prompt.** If its
@@ -108,6 +109,26 @@ python3 $E/elo.py audit $D [--bridge-log <judge-log dir>/judge.jsonl]
 $E/judge-gpt.sh stop
 ```
 
+- **From the published archive.** Unpack every volume into one directory, as
+  the archive's README does; `QCR_BENCH_RUNS_DIR` is its `runs/`. A plan's
+  `run_dirs` maps a run to the directory holding `<run>.martian` when it is
+  not there: a relative path is read from the repository root, an absolute
+  one as it is. `martian-hard20-all-gpt` keeps the two open-model runs under
+  `bench/aacr/artifacts/open-models/runs`, which a clone does not have, so
+  set both of its `run_dirs` entries to the absolute path of the unpacked
+  `open-models/runs` before `elo.py init` (or in the run directory's
+  `plan.json` after it).
+- **The rated judges are the plan's.** `judges` names them, in order: `gpt`,
+  `opus`, `deepseek`, or any other name with a `base_url` (an
+  OpenAI-compatible Chat Completions endpoint), `model`, `effort`,
+  `max_tokens`, and its key as `key_var` in an `env_file` (default
+  `bench/aacr/<name>.env`). `run --judge both` runs every one of them;
+  `report` and [`../recompute/elo_ratings.py`](../recompute/elo_ratings.py)
+  give each its own table, the agreement of every pair, and the pooled table
+  over the units all of them answered. A plan that names no judges rates gpt
+  and opus. A third judge on a published plan: add it under `judges` in the
+  run directory's `plan.json`, run `elo.py run D --judge <name>` (the packs
+  first: `elo.py pack D`), then `elo.py report D`.
 - **Resuming.** `run` picks up where it stopped. It first collects any Opus
   batch still in flight, then retries failed judgments (at most 3 attempts
   each), then schedules the next round. Use `--judge gpt|opus` to run one

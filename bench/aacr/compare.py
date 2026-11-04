@@ -52,6 +52,12 @@ LEVERS16 = {
 }
 
 
+# What the run archive puts in place of a third-party tool's review text
+# (export_runs.py `omitted`; src/bench/defects.ts OMITTED_TEXT). The release's
+# own judgements were made on the real text before the export; any other
+# judge's were made on the placeholder, so they are refused, never scored.
+OMITTED_TEXT = "[third-party text omitted"
+RELEASE_JUDGES = ("gpt-6-sol-high", "gpt-6.1-sol-high", "claude-opus-5-5")
 LIMITED = set()  # (iid, defect id) carrying a benchmark_limitation note
 ERRORED = set()  # (run, iid) whose judgement is an error file — never scored as misses
 
@@ -207,11 +213,27 @@ def usd_and_minutes(case_dir):
     return usd, mins
 
 
+def omitted_review(runs_dir, run, iid):
+    """The first file of a case's review that holds the release's placeholder, or None."""
+    for rel in (os.path.join("results", "all", f"{iid}.json"), os.path.join("cases", iid, "comments.json"),
+                os.path.join("cases", iid, "review.md")):
+        p = os.path.join(runs_dir, run, rel)
+        if os.path.exists(p) and OMITTED_TEXT in open(p, encoding="utf-8", errors="replace").read():
+            return rel
+    return None
+
+
 def judgement(runs_dir, run, iid, version, judge_model):
     """One case's round-1 judgement in one run, or None (absent or errored)."""
     f = os.path.join(runs_dir, run, "judge", f"v{version}-{judge_model}", f"{iid}.r1.json")
     if not os.path.exists(f):
         return None
+    if judge_model not in RELEASE_JUDGES:
+        bad = omitted_review(runs_dir, run, iid)
+        if bad:
+            sys.exit(f"{run}/{bad} holds the release's \"{OMITTED_TEXT}, sha256:…]\" placeholder: a {judge_model} "
+                     "judgement of this case judged the placeholder, not the review. Restore the tool's text "
+                     "(harvest_upstream.py --fetch) and judge again")
     j = json.load(open(f))
     if j.get("error"):
         ERRORED.add((run, iid))

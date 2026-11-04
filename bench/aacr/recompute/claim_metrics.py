@@ -67,7 +67,8 @@ martian  WORK[+WORK...]|TOOL[@JUDGE][~HALF]:METRIC  (JUDGE default gpt-6.1-sol; 
          goldens[~HALF]:real|notreal|disputed|total|prs|blocking|blocking_<bucket> (Critical/High goldens)
          dirs:<prefix>  the scoring dirs whose name starts with prefix and score quickreview; extracted_total
          dirsmax:<prefix>:METRIC  the best {core,strict,all}_* score of quickreview over those dirs (judge gpt-6.1-sol)
-qodo     WORK|TOOL:METRIC  METRIC: hits comments per_pr precision recall f1 recall_functional
+qodo     WORK|TOOL[@JUDGE]:METRIC  (JUDGE default gpt-6.1-sol; the comments are the judge-free qodo_reviews)
+         METRIC: hits comments per_pr precision recall f1 recall_functional
          recall_rule (the primary rule, N=5), the same with _samefile or _semantic (no location), usd min_mean prs
          issues:total|functional|rule|prs|repos
 elo      PLAN|TABLE|CATEGORY|RUN:elo|lo|hi|w|t|l|games|prs   (the published ratings table)
@@ -616,7 +617,8 @@ class Martian(Provider):
         import json as _json
         setf = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sets", half + ".json")
         urls = {c["pr_url"] for c in _json.load(open(setf))["cases"]}
-        reviews = [r for r in self.t("martian_reviews") if r["work_dir"] == work and r["tool"] == tool and r["pr_url"] in urls]
+        reviews = [r for r in self.t("martian_reviews") if r["work_dir"] == work and r["tool"] == tool
+                   and r["judge"] == judge and r["pr_url"] in urls]  # fp is the judge's: one judge's rows
         if not reviews:
             raise KeyError_(f"no martian reviews of {work}|{tool} on {half}")
         prs = {r["pr_url"] for r in reviews}
@@ -664,10 +666,13 @@ class Qodo(Provider):
             return {"total": len(issues), "functional": sum(1 for i in issues.values() if i["functional"]),
                     "rule": sum(1 for i in issues.values() if not i["functional"])}[metric]
         work, _, tool = head.partition("|")
-        vs = [v for v in self.t("qodo_verdicts") if v["work_dir"] == work and v["tool"] == tool]
+        tool, _, judge = tool.partition("@")
+        judge = judge or "gpt-6.1-sol"
+        # One judge's verdicts only: two judges' matches on the same reviews must never pool into one hit set.
+        vs = [v for v in self.t("qodo_verdicts") if v["work_dir"] == work and v["tool"] == tool and v["judge"] == judge]
         rows = [r for r in self.t("qodo_reviews") if r["work_dir"] == work and r["tool"] == tool]
         if not vs or not rows:
-            raise KeyError_(f"no qodo verdicts or reviews for {work}|{tool}")
+            raise KeyError_(f"no qodo verdicts or reviews for {work}|{tool}@{judge}")
         same = metric.endswith("_samefile")
         sem = metric.endswith("_semantic")
         m = metric[:-9] if same or sem else metric

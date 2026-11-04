@@ -40,13 +40,32 @@ only the volumes they read, into `--work`) or an already unpacked archive.
 release's numbers-only extract (`*.pruned.jsonl`): usage, timestamps and
 outcomes, no prompt or model text.
 
+## Another judge's verdicts
+
+These score your own judge's answers on QuickReview's published reviews,
+beside ours, with no model call. DIR holds your answers as tables shaped like
+the published ones (`.parquet` or `.jsonl`, no `judge` column needed); LABEL
+is a name no published row carries. Each script's docstring gives the columns
+and what it refuses.
+
+    score_verdicts.py --data <hf-dataset> --verdicts DIR --judge LABEL [--arms a,b]   # AACR: recall, precision, agreement
+    aacr_bootstrap.py --data <hf-dataset> --verdicts DIR --judge LABEL [--arms a,b]   # AACR intervals
+    qodo_scores.py --data <hf-dataset> --verdicts DIR --judge LABEL [--runs WORK|TOOL,...]
+    martian_scores.py --data <hf-dataset> --verdicts DIR --judge LABEL [--runs WORK|TOOL,...] [--half martian-test30]
+    heldout.py --data <hf-dataset> --fixed-set --verdicts DIR --judge LABEL   # the committed held-out sets
+    judge_prompt.py --data <hf-dataset> --arm ARM --pr IID [--answer-key <unpacked archive>]   # our AACR judge's prompt
+
+`martian_scores.py --data <hf-dataset>` alone recomputes our judge's 196
+stored Martian scores from the verdict tables and fails on any difference.
+
 ## The held-out Qodo set
 
 `sets/qodo-heldout31.json` defines the 31 Qodo PRs that no step of the frozen
 build's development used. Each script's docstring states the full rule.
 `heldout.py` derives the set again from the published verdicts and fails if
 the derivation and the committed file disagree. `--write-qodo-set` regenerates
-the file.
+the file; `--fixed-set` scores the committed file as it is (another judge's
+verdicts cannot re-derive it).
 
 ## The open-model arms
 
