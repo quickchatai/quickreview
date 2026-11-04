@@ -33,6 +33,9 @@ import scrub_extra as SX
 
 KINDS = ("runs", "om-runs", "om-top", "top")
 SHIPS = ("yes", "archive-only")
+# verdict tables published only beside the reviews they grade: a Qodo verdict's metric needs its review's
+# comment count (precision = hits / comments), so a family whose reviews do not ship has no Qodo verdicts
+VERDICTS_NEED = {"qodo_verdicts": "qodo_reviews"}
 
 
 def location_kinds(location: str) -> Tuple[str, ...]:
@@ -96,10 +99,12 @@ class Catalogue:
     @staticmethod
     def hf_tables(family: Optional[dict]) -> List[str]:
         """The HF configs the family has rows in (catalogue `hf_tables`, the
-        "(new)" marks dropped)."""
+        "(new)" marks dropped). A table that VERDICTS_NEED gives a prerequisite
+        is left out when the family lists the verdicts without it."""
         if not Catalogue.hf_ships(family):
             return []
-        return [re.sub(r"\s*\(new\)$", "", t).strip() for t in family.get("hf_tables") or []]
+        tables = [re.sub(r"\s*\(new\)$", "", t).strip() for t in family.get("hf_tables") or []]
+        return [t for t in tables if VERDICTS_NEED.get(t, t) in tables]
 
     @staticmethod
     def withheld_reason(family: Optional[dict]) -> str:

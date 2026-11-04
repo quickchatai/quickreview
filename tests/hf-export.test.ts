@@ -56,7 +56,18 @@
 //  21. `qodo_prs` publishes the real GitHub commits (the leak-proof block's
 //      merge-base and head), never a harness replay id, which it keeps in
 //      `replay_*`; and a repository whose licence changed between its PRs
-//      (the redis fork) gets each PR's own licence.
+//      (the redis fork) gets each PR's own licence;
+//  22. what a re-judge needs: each AACR PR's merge base and title (the answer
+//      key's meta.json), each comment's text as the run's files hold it
+//      (`raw_text`) with QuickReview's priority and confidence, a Martian
+//      review's inline comments beyond the page Martian read;
+//  23. a Martian scoring dir's reviews keep their run's own tool name (a
+//      mislabelled ingest is relabelled, its scores merged), and no review in
+//      QuickReview's style carries a third-party tool's name;
+//  24. every Martian scoring dir's `runs.judges` states its judge's settings
+//      from its own record;
+//  25. `arms.paper_tables`, `arms.in_paper` and `runs.claims` follow the claims
+//      manifest's q keys, and a Qodo verdict ships only beside its review.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -190,6 +201,9 @@ describe("hf_export.review_for_judge", () => {
         deleted_line: false,
         tag: "blocker",
         text: "Crash on empty input",
+        raw_text: "[blocker] Crash on empty input\n\n_P1 · confidence 1.00_",
+        priority: "P1",
+        confidence: 1,
       },
       {
         id: "C2",
@@ -199,6 +213,9 @@ describe("hf_export.review_for_judge", () => {
         deleted_line: false,
         tag: null,
         text: "plain note",
+        raw_text: "plain note",
+        priority: null,
+        confidence: null,
       },
       {
         id: "C3",
@@ -208,7 +225,17 @@ describe("hf_export.review_for_judge", () => {
         deleted_line: true,
         tag: "question",
         text: "Was this removal intended?",
+        raw_text: "[question] Was this removal intended?\n\n_P2 · x_",
+        priority: null,
+        confidence: null,
       },
+    ]);
+    // the files read again in the same order: what the export's raw_text check compares
+    const again = py("print(json.dumps(h.archive_texts(sys.argv[1], sys.argv[2])))", run, id);
+    expect(again).toEqual([
+      "[blocker] Crash on empty input\n\n_P1 · confidence 1.00_",
+      "plain note",
+      "[question] Was this removal intended?\n\n_P2 · x_",
     ]);
   });
 
@@ -1783,5 +1810,302 @@ describe("verify_slim.summary_failures: the bundle check fails on what it finds"
       "compare.py b: 2 diff lines",
       "study DIFFER from",
     ]);
+  });
+});
+
+describe("hf_export: what a re-judge needs", () => {
+  // MUTATION: in priority_confidence, take the last footer entry on the line instead of the first — this fails
+  // MUTATION: drop the `/(\d…)` alternative (the older `_(P1/0.99, …)_` footer) from PRIORITY_RE — this fails
+  it("reads QuickReview's priority and confidence from either footer form, the first entry of a merged footer", () => {
+    const r = py(
+      "xs = ['[blocker] a\\n\\n_P1 · confidence 0.99 · lens pass-baseline_', '[nit] b _(P3/0.88, pass-style)_. more',\n" +
+        "  'c\\n\\n_P2 · confidence 0.98 · lens x_; _P3 · confidence 0.95 · lens y_', 'P1 in prose, confidence 1',\n" +
+        "  'see _P2 · confidence 0.9_ above\\n\\n_P3 · confidence 0.5 · lens z_']\n" +
+        "print(json.dumps([h.priority_confidence(x) for x in xs]))",
+    );
+    expect(r).toEqual([
+      ["P1", 0.99],
+      ["P3", 0.88],
+      ["P2", 0.98],
+      [null, null],
+      ["P3", 0.5],
+    ]);
+  });
+
+  // MUTATION: in pr_meta, read the case's base_commit as its merge_base — this fails
+  it("reads each key PR's title and merge base from the answer key's case dirs", () => {
+    const src = join(tmp, "pr-meta");
+    const meta = (iid: string, title: string, base: string, mb: string) =>
+      JSON.stringify({
+        instance_id: iid,
+        title,
+        base_commit: base.repeat(40),
+        merge_base: mb.repeat(40),
+      });
+    put(
+      join(src, "rest145-code", "o__r@1111111", "meta.json"),
+      meta("o__r@1111111", "Fix it", "a", "b"),
+    );
+    put(
+      join(src, "orig40-code", "o__s@2222222", "meta.json"),
+      meta("o__s@2222222", "Other", "c", "c"),
+    );
+    put(join(src, "fresh10-code", "gt-A.json"), "{}");
+    put(join(src, "runs", "x", "meta.json"), meta("o__t@3333333", "not a key dir", "d", "e"));
+    const r = py("print(json.dumps(h.pr_meta(sys.argv[1])))", src);
+    expect(r).toEqual({
+      "o__r@1111111": { title: "Fix it", merge_base: "b".repeat(40) },
+      "o__s@2222222": { title: "Other", merge_base: "c".repeat(40) },
+    });
+  });
+
+  // MUTATION: return {} from ingest_relabels — this fails
+  // MUTATION: in ingest_relabels, relabel a `rejudged-*` tool too — this fails
+  // MUTATION: in ingest_relabels, relabel a tool when any one of its reviews carries the run's note — this fails
+  it("relabels a run's reviews that its ingest recorded under another tool's name, never a vendor's", () => {
+    const note = (tool: string, run: string) =>
+      `https://x/pull/1 (${tool}, bench run ${run}; not posted)`;
+    const bench = {
+      u1: {
+        reviews: [
+          { tool: "claude-code", pr_url: note("claude-code", "fast1-m50") },
+          { tool: "rejudged-claude-code", pr_url: note("rejudged-claude-code", "fast1-m50") },
+          { tool: "mixed", pr_url: note("mixed", "fast1-m50") },
+        ],
+      },
+      u2: {
+        reviews: [
+          { tool: "quickreview", pr_url: note("quickreview", "fast1-m50") },
+          { tool: "claude-code", pr_url: note("claude-code", "fast1-m50") },
+          { tool: "mixed", pr_url: "https://github.com/o/r/pull/2" },
+        ],
+      },
+    };
+    const r = py(
+      "b = json.loads(sys.argv[1])\n" +
+        "print(json.dumps([h.ingest_relabels(b, 'fast1-m50', 'quickreview'), h.ingest_relabels(b, 'other', 'quickreview'),\n" +
+        "  h.ingest_relabels(b, 'fast1-m50', None)]))",
+      JSON.stringify(bench),
+    );
+    expect(r).toEqual([{ "claude-code": "quickreview" }, {}, {}]);
+  });
+
+  // MUTATION: in merge_scores, average the two precisions instead of recomputing from the summed counts — this fails
+  it("merges two score records over disjoint PRs as Martian's scorer would score them together", () => {
+    const r = py(
+      "a = {'core': {'tp': 1, 'fp': 3, 'fn': 1, 'precision': 0.25, 'recall': 0.5, 'prs': 1}}\n" +
+        "b = {'core': {'tp': 9, 'fp': 1, 'fn': 9, 'precision': 0.9, 'recall': 0.5, 'prs': 49}}\n" +
+        "print(json.dumps(h.merge_scores(a, b)['core']))",
+    ) as Record<string, number>;
+    expect([r.tp, r.fp, r.fn, r.prs]).toEqual([10, 4, 10, 50]);
+    expect(r.precision).toBeCloseTo(10 / 14, 12);
+    expect(r.recall).toBeCloseTo(0.5, 12);
+    expect(r.f1).toBeCloseTo((2 * (10 / 14) * 0.5) / (10 / 14 + 0.5), 12);
+    expect(r.f2).toBeCloseTo((5 * (10 / 14) * 0.5) / (4 * (10 / 14) + 0.5), 12);
+  });
+
+  // MUTATION: in posted_beyond_page, slice from 0 instead of MI.GITHUB_PAGE — this fails
+  it("gives the inline comments beyond Martian's 30-item page: QuickReview's posted ones, an arm's findings", () => {
+    const run = join(tmp, "beyond");
+    const id = "o__r@4444444";
+    const posted = Array.from({ length: 33 }, (_, i) => ({
+      path: "a.py",
+      line: i + 1,
+      side: "RIGHT",
+      body: i === 31 ? "" : `c${i + 1}`,
+    }));
+    put(join(run, "cases", id, "comments.json"), JSON.stringify(posted));
+    const rows = Array.from({ length: 32 }, (_, i) => ({
+      path: "b.py",
+      start_line: i,
+      end_line: i === 31 ? null : i + 1,
+      content: ` f${i + 1} `,
+    }));
+    put(join(run, "results", "all", `${id}.json`), JSON.stringify({ review: { comments: rows } }));
+    const r = py(
+      "print(json.dumps([h.posted_beyond_page(sys.argv[1], sys.argv[2], None), h.posted_beyond_page(sys.argv[1], sys.argv[2], 'pragent')]))",
+      run,
+      id,
+    );
+    expect(r).toEqual([
+      [
+        { path: "a.py", line: 31, body: "c31" },
+        { path: "a.py", line: 33, body: "c33" },
+      ],
+      [
+        { path: "b.py", line: 31, body: "f31" },
+        { path: "b.py", line: 31, body: "f32" },
+      ],
+    ]);
+  });
+
+  // MUTATION: drop the dropped-key clause from martian_judge_settings — this fails
+  // MUTATION: in martian_judge_settings, count the temperature probe as a call — this fails
+  it("states a Martian scoring dir's judge from its own record: model, effort, verbosity, backend, dropped keys", () => {
+    const d = join(tmp, "mjudge", "w.martian");
+    put(
+      join(d, "judge", "JUDGE.txt"),
+      "gpt-6.1-sol, reasoning effort low, via bench/aacr/ext/ext_judge.py (ChatGPT login, refresh-disabled copy)\n",
+    );
+    const call = (dropped: string[]) =>
+      JSON.stringify({
+        model: "gpt-6.1-sol",
+        served_model: "gpt-6.1-sol",
+        effort: "low",
+        dropped,
+        status: 200,
+      });
+    put(
+      join(d, "judge", "judge.jsonl"),
+      [
+        JSON.stringify({
+          probe: "temperature",
+          accepted: false,
+          status: 400,
+          model: "gpt-6.1-sol",
+          effort: "low",
+        }),
+        call(["temperature"]),
+        call(["max_completion_tokens", "temperature"]),
+        call(["temperature"]),
+        "",
+      ].join("\n"),
+    );
+    put(
+      join(d, "judge", "container.log"),
+      "ext-judge on 0.0.0.0:8765 → https://chatgpt.com/backend-api/codex/responses (gpt-6.1-sol, effort low, max in flight 64) t\n",
+    );
+    const bare = join(tmp, "mjudge", "bare.martian");
+    put(
+      join(bare, "judge", "JUDGE.txt"),
+      "gpt-6.1-sol, reasoning effort low, via ext_judge.py (ChatGPT login)",
+    );
+    const r = py(
+      "print(json.dumps([h.martian_judge_settings(p) for p in sys.argv[1:]]))",
+      d,
+      bare,
+      join(tmp, "mjudge", "none"),
+    ) as (string | null)[];
+    expect(r[0]).toBe(
+      "gpt-6.1-sol served all 3 calls of Martian's steps 2, 2.5 and 3 (extraction, de-duplication, judging); " +
+        "reasoning effort low; verbosity medium (ext_judge.py's default; the judge was started without --verbosity); " +
+        "backend https://chatgpt.com/backend-api/codex/responses (ChatGPT login, refresh-disabled copy); " +
+        "dropped by the bridge before the upstream: max_completion_tokens (1 of 3 requests), temperature (3 of 3 requests); " +
+        "the upstream rejects temperature: the start probe got HTTP 400",
+    );
+    expect(r[1]).toContain("no request log in this dir");
+    expect(r[2]).toBeNull();
+  });
+
+  // MUTATION: in cited, drop the `arm=`/`done=` selector arms — this fails
+  // MUTATION: in claim_links, stop adding an arm's runs to its units — this fails
+  // MUTATION: in cited, scan a martian key's segments for arm ids like a script's key — this fails (the tool label
+  //           quickreview-frozen is also an AACR arm id)
+  it("links each claim group to the arms and runs its q keys read", () => {
+    const r = py(
+      "arms = [{'arm_id': a, 'runs': rs} for a, rs in (('qr-a', ['r1', 'r2']), ('cp', ['c1']), ('x', ['x1']), ('quickreview-frozen', ['f1']))]\n" +
+        "runs = [{'unit': u} for u in ('r1', 'r2', 'c1', 'x1', 'f1', 'm1', 'm1.martian', 'q1', 'q1.qodo', 'elo', 'ccvq-run')]\n" +
+        "claims = [{'group': 'g:aacr', 'q': '{aacr:qr-a~own:found} / {aacr:cp~own&arm=x:recall}'},\n" +
+        "  {'group': 'g:m', 'q': 'martian:m1|quickreview-frozen:core_tp'}, {'group': 'g:q', 'q': 'qodo:q1|quickreview:recall'},\n" +
+        "  {'group': 'g:boot', 'q': 'bootstrap:pairs/high/qr-a | cp/diff'}, {'group': 'g:elo', 'q': 'elo:plan|combined|overall|ccvq-run:elo'},\n" +
+        "  {'group': 'g:key', 'q': 'key:prs'}, {'q': 'aacr:qr-a:found'}, {'group': 'g:dirs', 'q': '{martian:dirs:m} - 1'}]\n" +
+        "a, u = h.claim_links(claims, arms, runs, {'m1', 'z1'})\n" +
+        "print(json.dumps([{k: sorted(v) for k, v in sorted(a.items())}, {k: sorted(v) for k, v in sorted(u.items())}]))",
+    );
+    expect(r).toEqual([
+      { cp: ["g:aacr", "g:boot"], "qr-a": ["g:aacr", "g:boot"], x: ["g:aacr"] },
+      {
+        c1: ["g:aacr", "g:boot"],
+        "ccvq-run": ["g:elo"],
+        elo: ["g:elo"],
+        m1: ["g:dirs", "g:m"],
+        "m1.martian": ["g:dirs", "g:m"],
+        q1: ["g:q"],
+        "q1.qodo": ["g:q"],
+        r1: ["g:aacr", "g:boot"],
+        r2: ["g:aacr", "g:boot"],
+        x1: ["g:aacr"],
+      },
+    ]);
+  });
+
+  // MUTATION: drop the VERDICTS_NEED filter from release_catalogue.Catalogue.hf_tables — this fails
+  it("lists a family's Qodo verdicts only beside its Qodo reviews", () => {
+    const r = pyModule(
+      "release_catalogue",
+      "f = lambda t: h.Catalogue.hf_tables({'ship': 'yes', 'hf_tables': t})\n" +
+        "print(json.dumps([f(['runs (new)', 'qodo_verdicts', 'martian_verdicts']), f(['qodo_reviews', 'qodo_verdicts'])]))",
+    );
+    expect(r).toEqual([
+      ["runs", "martian_verdicts"],
+      ["qodo_reviews", "qodo_verdicts"],
+    ]);
+  });
+
+  // MUTATION: in rejudge_column_checks, drop the priority_confidence comparison — this fails
+  // MUTATION: in rejudge_column_checks, drop the judge_view comparison (raw_text against tag and text) — this fails
+  // MUTATION: in rejudge_column_checks, compare len(more) with n alone (not n - 30) — this fails
+  // MUTATION: in rejudge_column_checks, check martian_reviews only for the QuickReview style (skip qodo_reviews and reviews) — this fails
+  // MUTATION: make martian_score_problems return [] — this fails
+  // MUTATION: in rejudge_column_checks, drop "verbosity" from the judges keys — this fails
+  // MUTATION: in rejudge_column_checks, skip the qodo_verdicts orphan count — this fails
+  it("fails each re-judge column check on a planted fault and passes the clean tables", () => {
+    const r = py(`
+import copy
+def counts(**k): return {f'{p}_{x}': k.get(f'{p}_{x}', 0) for p in ('all', 'core', 'strict') for x in ('tp', 'fp', 'fn')}
+qr = {'id': 'C1', 'tag': 'nit', 'text': 'Do x', 'raw_text': '[nit] Do x\\n\\n_P3 · confidence 0.9 · lens l_', 'priority': 'P3', 'confidence': 0.9}
+base = dict(
+  prs=[{'instance_id': 'p1', 'base_commit': 'b' * 40, 'merge_base': 'a' * 40, 'title': 'T'}],
+  reviews=[{'arm_id': 'quickreview-x', 'instance_id': 'p1', 'source_url': None, 'comments': [qr]},
+           {'arm_id': 'claude-code-opus55', 'instance_id': 'p1', 'source_url': None,
+            'comments': [{'id': 'C1', 'tag': None, 'text': 'note', 'raw_text': 'note', 'priority': None, 'confidence': None}]},
+           {'arm_id': 'copilot-2025-upstream', 'instance_id': 'p1', 'source_url': 'https://x',
+            'comments': [{'id': 'C1', 'tag': None, 'text': None, 'raw_text': None, 'priority': None, 'confidence': None}]}],
+  martian_goldens=[{'pr_url': 'u', 'golden_index': 0, 'category': 'logic'}, {'pr_url': 'u', 'golden_index': 1, 'category': 'style'}],
+  martian_reviews=[{'work_dir': 'w', 'tool': 'quickreview', 'judge': 'j', 'pr_url': 'u', 'vendor_link_only': False, 'fp': 1,
+                    'comments': [{'path': 'a', 'line': 1, 'body': '[nit] x _P3 · confidence 0.9_'}] * 30 + [{'path': None, 'line': None, 'body': 'b'}],
+                    'n_posted_inline': 32, 'comments_beyond_first_page': [{'path': 'a', 'line': 2, 'body': 'y'}] * 2},
+                   {'work_dir': 'w', 'tool': 'rejudged-cubic-v2', 'judge': 'j', 'pr_url': 'u', 'vendor_link_only': True, 'fp': 0,
+                    'comments': [], 'n_posted_inline': None, 'comments_beyond_first_page': []}],
+  martian_verdicts=[{'work_dir': 'w', 'tool': 'quickreview', 'judge': 'j', 'pr_url': 'u', 'golden_index': 0, 'matched': True},
+                    {'work_dir': 'w', 'tool': 'quickreview', 'judge': 'j', 'pr_url': 'u', 'golden_index': 1, 'matched': False}],
+  martian_scores=[{'work_dir': 'w', 'tool': 'quickreview', 'judge': 'j', **counts(all_tp=1, all_fp=1, all_fn=1, core_tp=1, core_fp=1, strict_tp=1, strict_fp=1)},
+                  {'work_dir': None, 'tool': 'claude-code', 'judge': 'published: m', **counts()}],
+  qodo_reviews=[{'work_dir': 'qw', 'tool': 'quickreview', 'comments': [{'body': '[nit] y _(P3/0.9, pass-a)_'}]}],
+  qodo_verdicts=[{'work_dir': 'qw', 'tool': 'quickreview'}],
+  runs=[{'unit': 'w.martian', 'claims': [], 'judges': 'fam. This scoring dir: m; reasoning effort low; verbosity medium; backend b; dropped by the bridge: t'},
+        {'unit': 'r1', 'claims': [], 'judges': None}],
+  arms=[{'arm_id': 'quickreview-x', 'runs': ['r1'], 'in_paper': False, 'paper_tables': []}])
+def failed(t): return sorted(c['check'][:36] for c in h.rejudge_column_checks(t) if not c['ok'])
+def plant(f):
+    t = copy.deepcopy(base); f(t); return failed(t)
+out = {'clean': failed(base)}
+out['merge_base'] = plant(lambda t: t['prs'][0].update(merge_base=None))
+out['raw'] = plant(lambda t: t['reviews'][0]['comments'][0].update(raw_text='[nit] Do y\\n\\n_P3 · confidence 0.9 · lens l_'))
+out['priority'] = plant(lambda t: t['reviews'][0]['comments'][0].update(priority='P1'))
+out['link'] = plant(lambda t: t['reviews'][2]['comments'][0].update(raw_text='vendor text'))
+out['beyond'] = plant(lambda t: t['martian_reviews'][0].update(comments_beyond_first_page=[]))
+out['styled_martian'] = plant(lambda t: [x.update(tool='claude-code') for x in t['martian_reviews'][:1] + t['martian_verdicts'] + t['martian_scores'][:1]])
+out['styled_qodo'] = plant(lambda t: [x.update(tool='coderabbit') for x in t['qodo_reviews'] + t['qodo_verdicts']])
+out['styled_aacr'] = plant(lambda t: t['reviews'][1]['comments'][0].update(raw_text='[nit] note\\n\\n_P1 · confidence 1.0_', tag='nit', priority='P1', confidence=1.0))
+out['scores'] = plant(lambda t: t['martian_scores'][0].update(core_tp=2))
+out['judges'] = plant(lambda t: t['runs'][0].update(judges='fam. This scoring dir: m; reasoning effort low; backend b; dropped by the bridge: t'))
+out['orphan'] = plant(lambda t: t['qodo_verdicts'].append({'work_dir': 'qw2', 'tool': 'quickreview'}))
+print(json.dumps(out))
+`) as Record<string, string[]>;
+    const mb = "prs: PRs whose merge base is not bas"; // the pinned count of the real key (150), never 1 here
+    expect(r.clean).toEqual([mb]);
+    const only = (k: string) => r[k]!.filter((x) => x !== mb);
+    expect(only("merge_base")).toEqual(["prs: every PR has its merge base (40"]);
+    expect(only("raw")).toEqual(["reviews: every comment's raw_text st"]);
+    expect(only("priority")).toEqual(["reviews: every comment's raw_text st"]);
+    expect(only("link")).toEqual(["reviews: a link-only arm's comment r"]);
+    expect(only("beyond")).toEqual(["martian_reviews: the first page hold"]);
+    expect(only("styled_martian")).toEqual(["no QuickReview-styled review carries"]);
+    expect(only("styled_qodo")).toEqual(["no QuickReview-styled review carries"]);
+    expect(only("styled_aacr")).toEqual(["no QuickReview-styled review carries"]);
+    expect(only("scores")).toEqual(["martian_scores: every scoring dir's "]);
+    expect(only("judges")).toEqual(["runs: every Martian scoring dir's ju"]);
+    expect(only("orphan")).toEqual(["qodo_verdicts: every (work_dir, tool"]);
   });
 });

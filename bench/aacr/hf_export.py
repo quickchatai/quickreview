@@ -62,6 +62,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "ext"))
 import compare  # noqa: E402
 import key_data as KD  # noqa: E402
+import martian_ingest as MI  # noqa: E402
 import notices as NT  # noqa: E402
 import release_catalogue as RC  # noqa: E402
 import scrub_extra as SX  # noqa: E402
@@ -200,6 +201,20 @@ def scrub_obj(obj, counts: collections.Counter | None = None):
 
 TAG_RE = re.compile(r"^\s*\[([a-z][a-z ]*)\]\s*", re.I)
 FOOTER_RE = re.compile(r"\n*_P\d[^\n]*_\s*$")
+# QuickReview's own priority and confidence, as its comment footer prints them: `_P1 · confidence 0.99 · lens …_`
+# (and the older `_(P1/0.99, pass-…)_`); a third-party tool's comment has neither
+PRIORITY_RE = re.compile(r"_\(?P(\d)(?: · confidence (\d+(?:\.\d+)?)|/(\d+(?:\.\d+)?))")
+
+
+def priority_confidence(raw: str) -> tuple[str | None, float | None]:
+    """A comment's QuickReview priority ("P1".."P3") and confidence from its footer: the first
+    footer entry on the last line that has one (a merged comment's footer can name two)."""
+    hits = list(PRIORITY_RE.finditer(raw or ""))
+    if not hits:
+        return None, None
+    last_line = raw.count("\n", 0, hits[-1].start())
+    m = next(h for h in hits if raw.count("\n", 0, h.start()) == last_line)
+    return f"P{m.group(1)}", float(m.group(2) or m.group(3))
 
 
 def _read_json(path):
@@ -234,9 +249,27 @@ def _num(v):
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
+def judge_view(raw: str) -> tuple[str | None, str]:
+    """(tag, text) of a comment as the judge read it: the `[tag]` moved out, the footer stripped."""
+    m = TAG_RE.match(raw)
+    return (m.group(1).lower() if m else None), FOOTER_RE.sub("", TAG_RE.sub("", raw, count=1)).strip()
+
+
+def _comment(cid: str, path, line, end, deleted: bool, raw: str) -> dict:
+    tag, text = judge_view(raw)
+    prio, conf = priority_confidence(raw)
+    return {"id": cid, "path": path if isinstance(path, str) else None, "line": line,
+            "end_line": end if end is not None else line, "deleted_line": deleted, "tag": tag, "text": text,
+            "raw_text": raw, "priority": prio, "confidence": conf}
+
+
 def review_for_judge(run_dir: str, iid: str) -> list[dict]:
     """The comments as the judge numbered them: the scored result file's rows,
-    then the posted comments on DELETED lines (side LEFT) appended last."""
+    then the posted comments on DELETED lines (side LEFT) appended last. Each
+    carries the judge's view (`tag`, `text`) and the comment as the run's
+    files hold it (`raw_text`: the result row's `content`, the deleted-line
+    comment's posted `body`), with QuickReview's `priority` and `confidence`
+    read from its footer."""
     scored = _read_json(os.path.join(run_dir, "results", "all", f"{iid}.json"))
     rows = None
     if isinstance(scored, dict):
@@ -249,27 +282,48 @@ def review_for_judge(run_dir: str, iid: str) -> list[dict]:
         raw = r.get("content") if isinstance(r.get("content"), str) else ""
         if not raw.strip():
             continue
-        m = TAG_RE.match(raw)
-        line = _num(r.get("start_line"))
-        end = _num(r.get("end_line"))
-        out.append({"id": f"C{len(out) + 1}", "path": r.get("path") if isinstance(r.get("path"), str) else None,
-                    "line": line, "end_line": end if end is not None else line, "deleted_line": False,
-                    "tag": m.group(1).lower() if m else None,
-                    "text": FOOTER_RE.sub("", TAG_RE.sub("", raw, count=1)).strip()})
+        out.append(_comment(f"C{len(out) + 1}", r.get("path"), _num(r.get("start_line")), _num(r.get("end_line")),
+                            False, raw))
+    for r in _left_comments(run_dir, iid):
+        out.append(_comment(f"C{len(out) + 1}", r.get("path"), _num(r.get("line")), None, True, r["body"]))
+    return out
+
+
+def _left_comments(run_dir: str, iid: str) -> list[dict]:
+    """The posted comments on DELETED lines (side LEFT) with a body, in the order posted."""
     posted = _read_json(os.path.join(run_dir, "cases", iid, "comments.json"))
-    for r in posted if isinstance(posted, list) else []:
-        r = r if isinstance(r, dict) else {}
-        if not isinstance(r.get("side"), str) or r["side"].upper() != "LEFT":
-            continue
-        raw = r.get("body") if isinstance(r.get("body"), str) else ""
-        if not raw.strip():
-            continue
-        m = TAG_RE.match(raw)
-        line = _num(r.get("line"))
-        out.append({"id": f"C{len(out) + 1}", "path": r.get("path") if isinstance(r.get("path"), str) else None,
-                    "line": line, "end_line": line, "deleted_line": True,
-                    "tag": m.group(1).lower() if m else None,
-                    "text": FOOTER_RE.sub("", TAG_RE.sub("", raw, count=1)).strip()})
+    return [r for r in (posted if isinstance(posted, list) else []) if isinstance(r, dict)
+            and isinstance(r.get("side"), str) and r["side"].upper() == "LEFT"
+            and isinstance(r.get("body"), str) and r["body"].strip()]
+
+
+def archive_texts(run_dir: str, iid: str) -> list[str]:
+    """Every comment's text as the run's files hold it, in the judge's numbering, read straight from
+    the files (the result file's `review.comments[].content`, else a Claude Code result's
+    summary and failure scenario, then the deleted-line comments' `body`): what `raw_text` must equal."""
+    scored = _read_json(os.path.join(run_dir, "results", "all", f"{iid}.json"))
+    review = scored.get("review") if isinstance(scored, dict) else None
+    rows = review.get("comments") if isinstance(review, dict) else None
+    if rows is None:
+        texts = [r["content"] for r in _claude_rows(scored) or []]
+    else:
+        texts = [r["content"] for r in rows if isinstance(r, dict) and isinstance(r.get("content"), str)
+                 and r["content"].strip()]
+    return texts + [r["body"] for r in _left_comments(run_dir, iid)]
+
+
+def pr_meta(src: str) -> dict[str, dict]:
+    """Each key PR's title and merge base, from the answer key's case dirs beside the runs
+    (`<code dir>/<instance id>/meta.json`, shipped in the answer-key volume). The merge base is the
+    commit the reviewer and the defect judge diffed the head against (GitHub's compare
+    `merge_base_commit`); `base_commit`, the base branch's tip when the PR was taken, differs from
+    it on most PRs."""
+    out: dict[str, dict] = {}
+    for code in KD.CODE_DIRS:
+        for f in sorted(glob.glob(os.path.join(src, code, "*", "meta.json"))):
+            m = _read_json(f)
+            if isinstance(m, dict) and m.get("instance_id"):
+                out[m["instance_id"]] = {"title": m.get("title"), "merge_base": m.get("merge_base")}
     return out
 
 
@@ -309,6 +363,9 @@ SOL_IDS = {  # bench/aacr/final/arms-gpt6sol.txt name -> arm id
     "Claude Code (Opus 5.5)": "claude-code-opus55",
 }
 
+
+# the papers' third-party AACR arms (their tools' own comments, never QuickReview's)
+THIRD_PARTY_ARMS = {a for a in (*FINAL_IDS.values(), *SOL_IDS.values()) if not a.startswith("quickreview")}
 
 OPEN_IDS = {  # bench/aacr/final/arms-open-models.txt name -> arm id
     "DeepSeek V4.1 Flash (mostly low effort)": "quickreview-deepseek-v41-flash",
@@ -460,6 +517,218 @@ def rpf(found: float, total: float, generated: float) -> tuple[float, float, flo
 
 
 # ---------------------------------------------------------------------------
+# Martian: the tool a scoring dir's reviews are labelled with, its scores, the posted page
+# ---------------------------------------------------------------------------
+
+def ingest_relabels(bench: dict, run: str, arm_tool: str | None) -> dict[str, str]:
+    """{recorded tool: the run's own tool} for a Martian scoring dir whose ingest recorded a bench
+    run's reviews under another name: every review of the tool carries martian_ingest's note "bench
+    run <run>; not posted" in its pr_url, so it is the review `run` wrote, and `arm_tool` (the run's
+    `<run>.arm.json` arm through martian_ingest.ARM_TOOLS) is its tool. A re-judged vendor review
+    (`rejudged-*`, Martian's published text) is never relabelled."""
+    if not arm_tool:
+        return {}
+    seen: dict[str, bool] = {}
+    for v in bench.values():
+        for r in (v or {}).get("reviews") or []:
+            t = r.get("tool")
+            if not t or t == arm_tool or t.startswith("rejudged-"):
+                continue
+            seen[t] = seen.get(t, True) and f"bench run {run};" in (r.get("pr_url") or "")
+    return {t: arm_tool for t, ours in seen.items() if ours}
+
+
+SCORE_KEYS = ("precision", "recall", "f1", "f2", "tp", "fp", "fn")
+
+
+def merge_scores(a: dict, b: dict) -> dict:
+    """Two of Martian's score records ({profile: {tp, fp, fn, precision, ...}}) over disjoint PRs as
+    one: the counts summed, the rates recomputed as its scorer does (micro-averaged, F-beta)."""
+    out = {}
+    for prof in sorted(set(a) | set(b)):
+        x, y = a.get(prof) or {}, b.get(prof) or {}
+        tp, fp, fn = (int(x.get(k) or 0) + int(y.get(k) or 0) for k in ("tp", "fp", "fn"))
+        p = tp / (tp + fp) if tp + fp else 0.0
+        r = tp / (tp + fn) if tp + fn else 0.0
+        out[prof] = {"precision": p, "recall": r, "f1": 2 * p * r / (p + r) if p + r else 0.0,
+                     "f2": 5 * p * r / (4 * p + r) if p + r else 0.0, "tp": tp, "fp": fp, "fn": fn,
+                     "prs": int(x.get("prs") or 0) + int(y.get("prs") or 0)}
+    return out
+
+
+def posted_beyond_page(run_dir: str, iid: str, arm: str | None) -> list[dict]:
+    """The inline comments a review had beyond the first page Martian's step 1 reads
+    (martian_ingest.GITHUB_PAGE): QuickReview's posted ones (`cases/<id>/comments.json`, in the order
+    posted), a third-party arm's located findings (`results/all/<id>.json`); the same fields as the
+    page's items."""
+    if arm in (None, "qcr"):
+        inline = _read_json(os.path.join(run_dir, "cases", iid, "comments.json"))
+        rows = inline[MI.GITHUB_PAGE:] if isinstance(inline, list) else []
+        return [{"path": c.get("path"), "line": c.get("line"), "body": c.get("body")}
+                for c in rows if isinstance(c, dict) and c.get("body")]
+    res = _read_json(os.path.join(run_dir, "results", "all", f"{iid}.json"))
+    rows = [c for c in (((res or {}).get("review") or {}).get("comments") or [])
+            if isinstance(c, dict) and str(c.get("content") or "").strip()] if isinstance(res, dict) else []
+    return [{"path": c.get("path"), "line": c.get("end_line") or c.get("start_line"), "body": str(c["content"]).strip()}
+            for c in rows[MI.GITHUB_PAGE:]]
+
+
+# ---------------------------------------------------------------------------
+# Which rows each published number reads: the claims manifest's q keys
+# ---------------------------------------------------------------------------
+
+CLAIMS_MANIFEST = os.path.join(HERE, "claims.json")
+_QREF = re.compile(r"\{([a-z_]+):([^{}]+)\}")  # verify_claims.refs_of's grammar
+
+
+def q_refs(q: str) -> list[tuple[str, str]]:
+    """(check, key) of every reference in a claim's q: `{check:key}` in an expression, else the whole q."""
+    found = _QREF.findall(q or "")
+    if found:
+        return found
+    check, _, key = (q or "").partition(":")
+    return [(check, key)] if key else []
+
+
+def _dirs_of(work: str, suffix: str, units: set) -> set:
+    """The run index units of a Martian or Qodo `work_dir`: the review run and its scoring dir(s)."""
+    base = work.split(suffix)[0]
+    return {u for u in (work, base, base + suffix) if u in units}
+
+
+def cited(check: str, key: str, arm_ids: set, units: set, martian_dirs: set) -> tuple[set, set]:
+    """(arm ids, run index units) one q-key reference reads (recompute/claim_metrics.py's key
+    grammar for the table checks; for a script's JSON key, every path segment that is an arm id or a
+    run index unit)."""
+    head = key.rpartition(":")[0]
+    arms, runs = set(), set()
+    if check == "aacr":
+        names, _, sel = head.partition("~")
+        arms |= set(names.partition("@")[0].split("+"))
+        for part in sel.split("&"):
+            k, _, v = part.partition("=")
+            (arms if k in ("arm", "done") else runs if k == "run" else set()).add(v)
+    elif check == "judges":
+        parts = head.split("|")
+        arms |= set(parts[2].split("+")) if len(parts) > 2 else set()
+    elif check == "martian":
+        if head == "dirs" or head.startswith("dirsmax:"):
+            pre = key.rpartition(":")[2] if head == "dirs" else head[len("dirsmax:"):]
+            works = {w for w in martian_dirs if w.startswith(pre)}
+        else:
+            works = set() if head.startswith("goldens") else set(head.partition("~")[0].partition("|")[0].split("+")) - {"-"}
+        for w in works:
+            runs |= _dirs_of(w, ".martian", units)
+    elif check == "qodo":
+        if head != "issues":
+            runs |= _dirs_of(head.partition("|")[0], ".qodo", units)
+    elif check not in ("key", "sets"):
+        segs = [x.strip() for x in re.split(r"[|/]", key)] + [x for x in re.split(r"[|:]", key)]
+        if check == "elo" and "elo" in units:
+            runs.add("elo")
+        arms |= {x for x in segs if x in arm_ids}
+        runs |= {x for x in segs if x in units}
+    return arms & arm_ids, runs & units
+
+
+def claim_links(claims: list[dict], arms: list[dict], runs: list[dict], martian_dirs: set) -> tuple[dict, dict]:
+    """({arm id: claim groups}, {run index unit: claim groups}): the groups of the claims whose q keys
+    read the arm or the unit, an arm's runs included. A claim with no group links nothing."""
+    arm_ids, units = {a["arm_id"] for a in arms}, {r["unit"] for r in runs}
+    arm_runs = {a["arm_id"]: set(a.get("runs") or []) for a in arms}
+    by_arm, by_unit = collections.defaultdict(set), collections.defaultdict(set)
+    for c in claims:
+        g = c.get("group")
+        if not g:
+            continue
+        for check, key in q_refs(c.get("q") or ""):
+            a, u = cited(check, key, arm_ids, units, martian_dirs)
+            for x in a:
+                by_arm[x].add(g)
+                u |= arm_runs[x] & units
+            for x in u:
+                by_unit[x].add(g)
+    return dict(by_arm), dict(by_unit)
+
+
+def claim_link_problems(t: dict[str, list[dict]], claims: list[dict]) -> dict[str, list[str]]:
+    """The tables against the manifest's q keys: `arms`, every arm a claim reads that is not
+    `in_paper` or does not list the claim's group in `paper_tables`; `runs`, every run index unit a
+    claim reads whose `claims` lacks the group."""
+    martian = {s["work_dir"] for s in t.get("martian_scores") or [] if s.get("work_dir")}
+    by_arm, by_unit = claim_links(claims, t["arms"], t["runs"], martian)
+    arms = {a["arm_id"]: a for a in t["arms"]}
+    runs = {r["unit"]: r for r in t["runs"]}
+    return {"arms": sorted(f"{a}: {g}" for a, gs in by_arm.items() for g in gs
+                           if not arms[a]["in_paper"] or g not in (arms[a]["paper_tables"] or [])),
+            "runs": sorted(f"{u}: {g}" for u, gs in by_unit.items() for g in gs if g not in (runs[u]["claims"] or []))}
+
+
+def claim_groups(t: dict[str, list[dict]], claims: list[dict]) -> dict[str, dict]:
+    """{claim group: its families and archive volumes}, from the units its claims' q keys read."""
+    martian = {s["work_dir"] for s in t.get("martian_scores") or [] if s.get("work_dir")}
+    _, by_unit = claim_links(claims, t["arms"], t["runs"], martian)
+    fam = {r["unit"]: (r["family"], r.get("archive_volumes") or []) for r in t["runs"]}
+    out = collections.defaultdict(lambda: {"families": set(), "volumes": set()})
+    for u, gs in by_unit.items():
+        for g in gs:
+            out[g]["families"].add(fam[u][0])
+            out[g]["volumes"].update(fam[u][1])
+    return {g: {k: sorted(v) for k, v in d.items()} for g, d in sorted(out.items())}
+
+
+# ext_judge.py's verbosity: its log does not record it, and ext.sh starts it without --verbosity
+EXT_JUDGE_VERBOSITY = "medium"
+_UPSTREAM = re.compile(r"ext-judge on \S+ → (\S+) \(")
+
+
+def martian_judge_settings(scoring_dir: str) -> str | None:
+    """A Martian scoring dir's judge as its own files record it (`judge/JUDGE.txt`, the bridge's
+    per-request log `judge/judge.jsonl`, `judge/container.log`): the model that served every call of
+    Martian's steps 2, 2.5 and 3, the reasoning effort, the verbosity, the backend, and every request
+    key the bridge dropped with how often. None when the dir holds no judge record."""
+    d = os.path.join(scoring_dir, "judge")
+    try:
+        head = open(os.path.join(d, "JUDGE.txt")).read().strip()
+    except OSError:
+        return None
+    calls, served, effort, dropped, probe = 0, collections.Counter(), collections.Counter(), collections.Counter(), None
+    try:
+        lines = open(os.path.join(d, "judge.jsonl")).read().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if r.get("probe") == "temperature":
+            probe = r
+            continue
+        calls += 1
+        served[r.get("served_model") or r.get("model")] += 1
+        effort[r.get("effort")] += 1
+        dropped.update(r.get("dropped") or [])
+    try:
+        m = _UPSTREAM.search(open(os.path.join(d, "container.log")).read())
+    except OSError:
+        m = None
+    if not calls:
+        return f"{head}; no request log in this dir (judge.jsonl holds no call)"
+    out = [f"{' / '.join(sorted(map(str, served)))} served all {calls:,} calls of Martian's steps 2, 2.5 and 3 "
+           "(extraction, de-duplication, judging)",
+           f"reasoning effort {' / '.join(sorted(map(str, effort)))}",
+           f"verbosity {EXT_JUDGE_VERBOSITY} (ext_judge.py's default; the judge was started without --verbosity)",
+           f"backend {m.group(1) if m else 'not recorded'} ({head.rpartition('(')[2].rstrip(')') or 'login not recorded'})"]
+    why = (f"; the upstream rejects temperature: the start probe got HTTP {probe.get('status')}"
+           if probe and probe.get("accepted") is False else "")
+    out.append("dropped by the bridge before the upstream: "
+               + ", ".join(f"{k} ({n:,} of {calls:,} requests)" for k, n in sorted(dropped.items())) + why
+               if dropped else "no request key dropped")
+    return "; ".join(out)
+
+
+# ---------------------------------------------------------------------------
 # Reading the runs (only under main; needs the runs dir).
 # ---------------------------------------------------------------------------
 
@@ -475,6 +744,7 @@ class Exporter:
         self.notes: list[str] = []
         self.tables: dict[str, list[dict]] = {}
         self.commits: tuple[dict, dict, dict] | None = None
+        self.review_src: dict[tuple[str, str], str] = {}  # (published arm id, PR) -> the run dir its review was read from
         self.aacr_judges: dict[str, str] = {}
         self.key = {}  # iid -> {"set", "version", "case"}
         for s in SETS:
@@ -492,6 +762,14 @@ class Exporter:
         if self.om_runs and not os.path.exists(p) and os.path.exists(os.path.join(self.om_runs, run)):
             return os.path.join(self.om_runs, run)
         return p
+
+    @staticmethod
+    def unit_dir(path: str, roots: dict) -> str:
+        """A run index row's source dir, from its archive path (release_catalogue.archive_prefix)."""
+        for kind, pre in (("om-runs", "open-models/runs/"), ("om-top", "open-models/"), ("runs", "runs/")):
+            if path.startswith(pre):
+                return os.path.join(roots.get(kind) or "", path[len(pre):])
+        return os.path.join(roots.get("top") or "", path)
 
     def family(self, run: str) -> dict | None:
         if self.cat is None:
@@ -574,12 +852,15 @@ class Exporter:
             for c in json.load(open(os.path.join(HERE, "sets", f"{s}.json")))["cases"]:
                 meta[c["instance_id"]] = c
         prs, defects, excl = [], [], []
+        judged = pr_meta(os.path.dirname(self.runs_dir))
         for iid, k in self.key.items():
             m, c = meta[iid], k["case"]
+            j = judged.get(iid) or {}
             sev = collections.Counter(x["severity"] for x in c["defects"])
             prs.append({
                 "instance_id": iid, "set": k["set"], "key_version": str(k["version"]), "repo": m["repo"],
-                "pr_number": m["pr"], "pr_url": m["pr_url"], "base_commit": m["base_commit"],
+                "pr_number": m["pr"], "pr_url": m["pr_url"], "title": self.S(j.get("title")),
+                "base_commit": m["base_commit"], "merge_base": j.get("merge_base"),
                 "head_commit": m["head_commit"], "language": m["language"], "pr_category": m["pr_category"],
                 "change_line_count": m["change_line_count"], "aacr_references": m["references"],
                 "in_s40": iid in sel40, "pr_summary": self.S(c.get("pr_summary")),
@@ -703,10 +984,12 @@ class Exporter:
                     ids = [r.get("id") for r in summary.get("reviews") or [] if r.get("id")]
                     source_url = " ".join(f"{pr_url}#pullrequestreview-{i}" for i in ids) or pr_url
                     for c in comments:
-                        c["text"] = None
+                        c["text"] = c["raw_text"] = None
                 a_ref = aacr_rows.get(iid)
                 judged_by = [jlabel(lb) for lb in arm["judges"] if src and self.judgement(src, iid, lb)]
                 fid = self.family_id(src)
+                if src:  # by the published arm id: a generic arm's id is its run's name, which the rewrite may change
+                    self.review_src[(scrub(arm["arm_id"]), iid)] = src
                 reviews.append(self.S({
                     "arm_id": arm["arm_id"], "instance_id": iid, "set": self.key[iid]["set"], "run": src,
                     "judged": judged, "status": summary.get("status"), "verdict": summary.get("verdict"),
@@ -857,19 +1140,34 @@ class Exporter:
             self.notes.append(f"martian {wd}: no results/<judge>/evaluations.json")
             return
         primary = this_judge if this_judge in judges else judges[0]
+        bench = _read_json(os.path.join(path, "results", "benchmark_data.json")) or {}
+        run = wd.split(".martian")[0]
+        run_dir = self.rd(run)
+        arm = (_read_json(run_dir + ".arm.json") or {}).get("arm")
+        relabel = ingest_relabels(bench, run, MI.ARM_TOOLS.get(arm))
+        for t, to in sorted(relabel.items()):
+            self.notes.append(f"martian {wd}: tool {t!r} relabelled {to!r} (its reviews are run {run}'s, arm {arm})")
+
+        def label(tool):
+            tool = relabel.get(tool, tool)
+            return rename.get(tool, tool)
+        this = {}
         for tool, sc in ((ms.get("this_run") or {}).get("scores") or {}).items():
-            scores.append({"tool": rename.get(tool, tool), "judge": this_judge or primary, "work_dir": work,
+            # a relabelled tool's scores join its run's own tool's: one row per tool, as Martian scores one tool
+            this[label(tool)] = merge_scores(this[label(tool)], sc) if label(tool) in this else sc
+        for name, sc in this.items():
+            scores.append({"tool": name, "judge": this_judge or primary, "work_dir": work,
                            "run_family": fid,
-                           **{f"{prof}_{k}": v.get(k) for prof, v in sc.items() for k in ("precision", "recall", "f1", "f2", "tp", "fp", "fn")}})
+                           **{f"{prof}_{k}": v.get(k) for prof, v in sc.items() for k in SCORE_KEYS}})
         for judge, by in (ms.get("published") or {}).items():
             if paper and work != "final1-martian50":
                 continue
             for tool, sc in by["scores"].items():
                 scores.append({"tool": tool, "judge": f"published: {judge}", "work_dir": None if paper else work,
                                "run_family": fid,
-                               **{f"{prof}_{k}": v.get(k) for prof, v in sc.items() for k in ("precision", "recall", "f1", "f2", "tp", "fp", "fn")}})
-        bench = _read_json(os.path.join(path, "results", "benchmark_data.json")) or {}
-        run_dir = self.rd(wd.split(".martian")[0])
+                               **{f"{prof}_{k}": v.get(k) for prof, v in sc.items() for k in SCORE_KEYS}})
+        report = {r.get("pr"): r for r in _read_json(os.path.join(path, "results", "ingest-report.json")) or []
+                  if isinstance(r, dict)}
         tools_here = set()
         for judge in judges:
             evals = json.load(open(os.path.join(path, "results", judge, "evaluations.json")))
@@ -877,20 +1175,27 @@ class Exporter:
                 for tool, e in evals[u].items():
                     tools_here.add(tool)
                     vendor = tool.startswith("rejudged-")
-                    name = rename.get(tool, tool)
+                    name = label(tool)
                     if judge == primary:
                         rv = next((r for r in (bench.get(u) or {}).get("reviews") or [] if r["tool"] == tool), {})
                         iid = set_by_url.get(u)
                         usd = mins = None
-                        own = not vendor and (paper or tool == "quickreview" or len([t for t in evals[u] if not t.startswith("rejudged-")]) == 1)
+                        own = not vendor and (paper or relabel.get(tool, tool) == "quickreview"
+                                              or len([t for t in evals[u] if not t.startswith("rejudged-")]) == 1)
                         if own and iid and os.path.isdir(os.path.join(run_dir, "cases", iid)):
                             usd, mins = compare.usd_and_minutes(os.path.join(run_dir, "cases", iid))
                         comments = [] if vendor else [{"path": c.get("path"), "line": c.get("line"), "body": c.get("body")}
                                                       for c in rv.get("review_comments") or []]
+                        # the inline comments the review had (QuickReview: posted), of which Martian's step 1
+                        # read the first page; the rest, from the run's own files
+                        posted = None if vendor else (report.get(u) or {}).get("inline_total")
+                        beyond = (posted_beyond_page(run_dir, iid, arm if arm else None)
+                                  if posted is not None and posted > MI.GITHUB_PAGE and iid else [])
                         reviews.append(self.S({
                             "tool": name, "pr_url": u, "work_dir": work, "vendor_link_only": vendor,
                             "source_url": rv.get("pr_url") if vendor else None, "comments": comments,
                             "n_comments": len(rv.get("review_comments") or []),
+                            "n_posted_inline": posted, "comments_beyond_first_page": beyond,
                             "extracted_candidates": e.get("total_candidates"),
                             "unmatched_candidates": None if vendor else [fp.get("candidate") for fp in e.get("false_positives") or []],
                             "tp": e.get("tp"), "fp": e.get("fp"), "fn": e.get("fn"), "skipped": e.get("skipped"),
@@ -1014,7 +1319,8 @@ class Exporter:
                 continue
             plan = json.load(open(pj))
             labels = plan.get("labels") or {}
-            judgments = {j: ER.read_jsonl(os.path.join(jd, f"{j}.jsonl")) for j in ER.JUDGES}
+            judges = ER.R.rated_judges(plan)  # the plan's own rated judges (elo_rating.rated_judges)
+            judgments = {j: ER.read_jsonl(os.path.join(jd, f"{j}.jsonl")) for j in judges}
             fin = ER.finals(judgments)
             used = {(j, r["id"], r["at"]) for j, by in fin.items() for r in by.values()}
             for f in sorted(os.listdir(jd)):
@@ -1041,7 +1347,7 @@ class Exporter:
                 continue
             rat = ER.ratings(plan, judgments)
             self.elo_refits[plan_name] = rat
-            for table in [j for j in ER.JUDGES if j in rat] + (["combined"] if "combined" in rat else []):
+            for table in [j for j in judges if j in rat] + (["combined"] if "combined" in rat else []):
                 for cat_name, t in [("overall", rat[table]["overall"])] + list(rat[table]["categories"].items()):
                     for r in t["rows"]:
                         rats.append(self.S({"plan": plan_name, "table": table, "category": cat_name,
@@ -1075,10 +1381,49 @@ class Exporter:
         recorded: dict = {}
         rows = RC.index_rows(self.cat, roots, remap, lambda fid: [f"quickreview-runs-{fid}.tar.zst"], recorded,
                              evidence)
+        for r in rows:
+            # a Martian scoring dir's judge, from its own record (the family's `judges` names it only)
+            if ".martian" in r["unit"]:
+                got = martian_judge_settings(self.unit_dir(r["path"], roots))
+                if got:
+                    r["judges"] = f"{r['judges']}. This scoring dir: {got}" if r.get("judges") else got
         self.tables["runs"] = [self.S({k: v for k, v in r.items()}) for r in rows]
         # the recorded build ids, never published, by the row's published path: the validation
         # checks every published commit and its flags against them (RC.commit_problems)
         self.commits = ({scrub(k): v for k, v in recorded.items()}, remap, evidence)
+
+    # --- checks that need the run dirs ---------------------------------------------
+    def raw_text_checks(self, t: dict[str, list[dict]]) -> list[dict]:
+        """Every written review's `raw_text`, in order, against the comments read again from the run's
+        files (archive_texts) through the same scrub; a link-only arm's is withheld (null)."""
+        bad = []
+        for r in t["reviews"]:
+            src = self.review_src.get((r["arm_id"], r["instance_id"]))
+            got = [c["raw_text"] for c in r["comments"] or []]
+            if r["source_url"] is not None:  # link-only: the vendor's text is not redistributed
+                want = [None] * len(got)
+            else:
+                want = [scrub(x) for x in archive_texts(self.rd(src), r["instance_id"])] if src else []
+            if got != want:
+                bad.append(f"{r['arm_id']}/{r['instance_id']}")
+        # MUTATION: write the judge's `text` (or raw.strip()) as raw_text in _comment — this fails
+        return [{"check": "reviews: every comment's raw_text is the run's text (result row content, deleted-line "
+                          "body) as the archive holds it, after the release's rewrite", "got": bad[:20],
+                 "want": [], "ok": not bad}]
+
+    # --- the claims each arm and run backs, from the manifest's q keys ------------
+    def link_claims(self):
+        """`arms.paper_tables` and `runs.claims` gain every claim group whose q keys read the arm or the
+        run (claim_links; the hand-written labels stay), and `arms.in_paper` is true for any arm a
+        claim reads."""
+        claims = json.load(open(CLAIMS_MANIFEST))["claims"]
+        martian = {s["work_dir"] for s in self.tables.get("martian_scores") or [] if s.get("work_dir")}
+        by_arm, by_unit = claim_links(claims, self.tables["arms"], self.tables.get("runs") or [], martian)
+        for a in self.tables["arms"]:
+            a["paper_tables"] = list(a["paper_tables"]) + sorted(by_arm.get(a["arm_id"], set()) - set(a["paper_tables"]))
+            a["in_paper"] = bool(a["paper_tables"])
+        for r in self.tables.get("runs") or []:
+            r["claims"] = list(r["claims"]) + sorted(by_unit.get(r["unit"], set()) - set(r["claims"]))
 
     # --- every table holds only the families the catalogue gives it --------------
     def filter_by_family(self):
@@ -1534,6 +1879,114 @@ def judge_coverage_checks(t: dict[str, list[dict]]) -> list[dict]:
     return checks
 
 
+# what the answer key's case dirs record of the PRs: the merge base differs from `base_commit` on 150
+MERGE_BASE_DIFFERS = 150
+SHA1 = re.compile(r"^[0-9a-f]{40}$")
+# a review that prints QuickReview's own footer (`_P1 · confidence …_`, `_(P1/0.99, …)_`)
+QR_STYLED = re.compile(r"_\(?P\d(?: · confidence |/)\d")
+# Martian's profiles: the golden categories each leaves out (claim_metrics.PROFILES, its scorer's Core and Strict)
+MARTIAN_PROFILES = {"all": frozenset(), "core": frozenset({"style", "speculative"}),
+                    "strict": frozenset({"style", "speculative", "doc_defect", "test_gap", "perf"})}
+
+
+def martian_score_problems(t: dict[str, list[dict]]) -> list[str]:
+    """Every scoring dir's own score row (not Martian's published ones) whose tp/fp/fn under each
+    profile differ from the counts of its per-golden verdicts and its reviews' false positives."""
+    cat = {(g["pr_url"], g["golden_index"]): g["category"] for g in t["martian_goldens"]}
+    hit, prs, fp = collections.defaultdict(set), collections.defaultdict(set), collections.Counter()
+    for v in t["martian_verdicts"]:
+        if v["matched"]:
+            hit[(v["work_dir"], v["tool"], v["judge"])].add((v["pr_url"], v["golden_index"]))
+    for r in t["martian_reviews"]:
+        k = (r["work_dir"], r["tool"], r["judge"])
+        prs[k].add(r["pr_url"])
+        fp[k] += r["fp"] or 0
+    bad = []
+    for s in t["martian_scores"]:
+        k = (s["work_dir"], s["tool"], s["judge"])
+        if k not in prs:
+            continue  # no review rows (Martian's published scores; a family whose reviews do not ship)
+        for p, out in MARTIAN_PROFILES.items():
+            tp = sum(1 for h in hit[k] if cat[h] not in out)
+            fn = sum(1 for (u, _), c in cat.items() if u in prs[k] and c not in out) - tp
+            if (tp, fp[k], fn) != (s[f"{p}_tp"], s[f"{p}_fp"], s[f"{p}_fn"]):
+                bad.append(f"{k[0]}|{k[1]}@{k[2]} {p}")
+    return bad
+
+
+def rejudge_column_checks(t: dict[str, list[dict]]) -> list[dict]:
+    """The columns a re-judge needs, checked from the tables: every PR's merge base and title; every
+    review comment's raw text, priority and confidence agreeing with the judge's view of it; the
+    Martian reviews' inline comments beyond the page Martian read; no QuickReview review under a
+    third-party tool's name; Martian scores that recount from their verdicts; the Martian scoring dirs'
+    judge settings; every claim's arms and runs linked to its group; no Qodo verdict without its review."""
+    checks = []
+
+    def check(what, got, want):
+        checks.append({"check": what, "got": got, "want": want, "ok": got == want})
+
+    prs = t["prs"]
+    # MUTATION: drop "merge_base" (or "title") from build_key's prs row — this fails
+    check("prs: every PR has its merge base (40 hex) and its title",
+          sum(1 for p in prs if not SHA1.match(p.get("merge_base") or "") or not (p.get("title") or "").strip()), 0)
+    check("prs: PRs whose merge base is not base_commit", sum(1 for p in prs if p.get("merge_base") != p["base_commit"]),
+          MERGE_BASE_DIFFERS)
+    bad, link = [], []
+    for r in t["reviews"]:
+        for c in r["comments"] or []:
+            raw = c.get("raw_text")
+            if r["source_url"] is not None:
+                if raw is not None:
+                    link.append(f"{r['arm_id']}/{r['instance_id']}/{c['id']}")
+                continue
+            # MUTATION: in _comment, take priority_confidence(text) instead of the raw text — this fails
+            if raw is None or judge_view(raw) != (c["tag"], c["text"]) or priority_confidence(raw) != (c["priority"], c["confidence"]):
+                bad.append(f"{r['arm_id']}/{r['instance_id']}/{c['id']}")
+    check("reviews: every comment's raw_text strips to its tag and text, and its priority and confidence are its footer's",
+          bad[:20], [])
+    check("reviews: a link-only arm's comment raw_text is withheld", link[:20], [])
+    beyond = []
+    for r in t["martian_reviews"]:
+        n, more = r.get("n_posted_inline"), r.get("comments_beyond_first_page") or []
+        page = sum(1 for c in r["comments"] or [] if c.get("path") is not None)
+        if r["vendor_link_only"] and (n is not None or more):
+            beyond.append(f"{r['work_dir']}|{r['tool']} {r['pr_url']}: vendor")
+        elif n is not None and (page != min(n, MI.GITHUB_PAGE) or len(more) != max(n - MI.GITHUB_PAGE, 0)):
+            beyond.append(f"{r['work_dir']}|{r['tool']} {r['pr_url']}: {page}+{len(more)} of {n}")
+    # MUTATION: in posted_beyond_page, slice from 0 instead of MI.GITHUB_PAGE — this fails
+    check("martian_reviews: the first page holds min(n_posted_inline, 30) inline comments and "
+          "comments_beyond_first_page the rest", beyond[:20], [])
+    styled = sorted({f"martian_reviews {r['work_dir']}|{r['tool']}" for r in t["martian_reviews"]
+                     if not r["tool"].startswith("quickreview") and any(QR_STYLED.search(c.get("body") or "") for c in r["comments"] or [])}
+                    | {f"qodo_reviews {r['work_dir']}|{r['tool']}" for r in t["qodo_reviews"]
+                       if not r["tool"].startswith("quickreview") and any(QR_STYLED.search(c.get("body") or "") for c in r["comments"] or [])}
+                    | {f"reviews {r['arm_id']}" for r in t["reviews"] if r["arm_id"] in THIRD_PARTY_ARMS
+                       and any(c.get("priority") for c in r["comments"] or [])})
+    # MUTATION: return {} from ingest_relabels — fast1-martian50's 49 reviews keep tool claude-code and this fails
+    check("no QuickReview-styled review carries a third-party tool's label (martian_reviews, qodo_reviews, the "
+          "papers' third-party AACR arms)", styled, [])
+    # MUTATION: in _martian_dir, keep a relabelled tool's scores as a second row instead of merge_scores — this fails
+    check("martian_scores: every scoring dir's own score recounts from its verdicts and its reviews' false positives",
+          martian_score_problems(t)[:20], [])
+    keys = ("reasoning effort", "verbosity", "backend", "dropped")
+    unstated = [r["unit"] for r in t["runs"] if ".martian" in r["unit"] and "no request log" not in (r["judges"] or "")
+                and not all(k in (r["judges"] or "") for k in keys)]
+    # MUTATION: skip the martian_judge_settings pass in build_runs — this fails
+    check("runs: every Martian scoring dir's judges states the effort, verbosity, backend and dropped request keys",
+          unstated[:20], [])
+    if t.get("arms") and t.get("runs"):
+        links = claim_link_problems(t, json.load(open(CLAIMS_MANIFEST))["claims"])
+        # MUTATION: drop ex.link_claims() from main — both fail
+        check("arms: every arm a claim's q key reads is in_paper and lists the claim's group in paper_tables",
+              links["arms"][:20], [])
+        check("runs: every run a claim's q key reads lists the claim's group in claims", links["runs"][:20], [])
+    have = {(r["work_dir"], r["tool"]) for r in t["qodo_reviews"]}
+    # MUTATION: drop the VERDICTS_NEED filter from release_catalogue.Catalogue.hf_tables — this fails
+    check("qodo_verdicts: every (work_dir, tool) has its reviews",
+          sorted({f"{v['work_dir']}|{v['tool']}" for v in t["qodo_verdicts"] if (v["work_dir"], v["tool"]) not in have}), [])
+    return checks
+
+
 # the answer key's build, as the `*-code` dirs record it (key_data.py)
 KEY_BUILD = {"first_prs": 141, "first_rows": 2221, "extended_rows": 1527}
 
@@ -1594,6 +2047,7 @@ def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_r
         check(f"{aid}: $/PR", round(statistics.mean(c), 2) if c else None, usd, 0.006)
     checks += judge_coverage_checks(t)
     checks += key_data_checks(t)
+    checks += rejudge_column_checks(t)
     # the card's statements about these columns: every Martian and Qodo PR names its repository's
     # licence, and every Martian golden its half (the set files fill the audit's gaps)
     for n in ("martian_prs", "qodo_prs"):
@@ -2016,12 +2470,14 @@ def main():
     print("Qodo …", flush=True); ex.build_qodo()
     print("Elo, run index, key data …", flush=True); ex.build_elo(); ex.build_runs(); ex.build_key_data()
     ex.filter_by_family()
+    ex.link_claims()
     sizes = write_parquet(ex.tables, out)
     if not a.no_figures:
         print("figures, keys, reports …", flush=True)
         figures(a, out, ex.counts, ex.notes)
     tables = read_parquet(out)
-    checks = validate(tables) + validate_release(tables, ex.cat, ex.elo_refits, a.elo_dir, ex.commits)
+    checks = (validate(tables) + validate_release(tables, ex.cat, ex.elo_refits, a.elo_dir, ex.commits)
+              + ex.raw_text_checks(tables))
     if not a.no_figures:
         checks += figure_checks(out)
     NT.write_licences(out)
@@ -2036,6 +2492,7 @@ def main():
             load[n] = ds.num_rows
     report = {"rows": sizes, "checks": checks, "failed": [c for c in checks if not c["ok"]],
               "coverage": coverage(tables, ex.cat),
+              "claim_groups": claim_groups(tables, json.load(open(CLAIMS_MANIFEST))["claims"]),
               "scrub_counts": dict(ex.counts), "leaks": leaks, "load_dataset": load, "notes": ex.notes}
     json.dump(report, open(os.path.join(out, "validation.json"), "w"), indent=1, default=str)
     print(json.dumps({k: v for k, v in report.items() if k != "checks"}, indent=1, default=str))
