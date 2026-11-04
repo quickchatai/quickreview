@@ -88,7 +88,7 @@ import {
   prepareDependencySources,
   renderDependencyNote,
 } from "@quickchatai/pi-quickreview/src/depsources.js";
-import { fileImprovementPr, fileIssue, gitRunner, type FileOutcome } from "./improvements.js";
+import { daemonGitRun, fileImprovementPr, fileIssue, type FileOutcome } from "./improvements.js";
 import { homeProfileLookup } from "./install.js";
 import { hostFacts, type HostFacts, type RunHostStatus } from "./runhost.js";
 import {
@@ -155,7 +155,6 @@ import {
   templateFileForOrder,
 } from "@quickchatai/pi-quickreview/src/templates.js";
 import { assertOrderFitsHost } from "@quickchatai/pi-quickreview/src/launchvocab.js";
-import { nodeExec } from "./tmux.js";
 import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { versionInfo } from "./version.js";
 import { WebhookHealer } from "./webhookheal.js";
@@ -281,8 +280,9 @@ export function buildParts(
 
 // Exit-code checked, cwd mandatory: a runner that ignored git's exit or
 // defaulted to the daemon's own cwd (a repo with no remote) would leave the
-// improvement channel unable to push without saying so.
-const gitRun = gitRunner(nodeExec);
+// improvement channel unable to push without saying so. Pinned: it works in
+// the reviewed repo's base clone (`daemonGitRun`).
+const gitRun = daemonGitRun;
 
 /** The status.json a previous run left, or undefined (first boot, unreadable). */
 function readPreviousStatus(path: string): string | undefined {

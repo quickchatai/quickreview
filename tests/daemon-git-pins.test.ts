@@ -7,6 +7,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import { daemonGitRun, gitRunner } from "../src/improvements.js";
+import { SRC_DIRS } from "./helpers/source-trees.js";
 import { nodeExec } from "../src/tmux.js";
 import { DAEMON_GIT_PINS, pinnedGitExec } from "../src/worktrees.js";
 
@@ -62,5 +65,41 @@ describe("the daemon's git pins", () => {
       const res = await pinnedGitExec("git", ["config", "--get", k], { cwd: repo });
       expect(res.stdout.trim()).toBe(v);
     }
+  });
+
+  it("the improvement channel's runner carries the pins (its git works in the reviewed repo's base clone)", async () => {
+    await daemonGitRun(["worktree", "add", "-q", join(dir, "wt3"), "main", "--detach"], repo);
+    expect(existsSync(hook)).toBe(false);
+    for (const [k, v] of DAEMON_GIT_PINS)
+      expect((await daemonGitRun(["config", "--get", k], repo)).trim()).toBe(v);
+    // The same call through an unpinned runner runs the hook: the check above bites.
+    await gitRunner(nodeExec)(
+      ["worktree", "add", "-q", join(dir, "wt4"), "main", "--detach"],
+      repo,
+    );
+    expect(existsSync(hook)).toBe(true);
+  });
+});
+
+// MUTATION: build the daemon's improvement runner as `gitRunner(nodeExec)` in
+// src/wire.ts (or pass any exec other than `pinnedGitExec` to a `gitRunner`
+// call anywhere in either source tree) — this fails. It reads every call, not the name: the
+// declaration `gitRunner(exec: ExecFn)` is the one site it skips.
+describe("every daemon git runner is pinned", () => {
+  const root = join(import.meta.dirname, "..");
+  const files = (d: string): string[] =>
+    readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? files(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : [],
+    );
+  it("a gitRunner in either source tree is only ever built over pinnedGitExec", () => {
+    const calls: string[] = [];
+    for (const f of SRC_DIRS.flatMap((d) => files(join(root, d)))) {
+      for (const m of readFileSync(f, "utf8").matchAll(/\bgitRunner\(\s*([^)]*?)\s*\)/g)) {
+        if (/^exec\s*:/.test(m[1]!)) continue; // the declaration
+        calls.push(`${f}: ${m[1]}`);
+      }
+    }
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.filter((c) => !c.endsWith(": pinnedGitExec"))).toEqual([]);
   });
 });
