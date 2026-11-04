@@ -761,6 +761,18 @@ export type EscalationRecoveryInput = Omit<
   "phase" | "last_error" | "next_attempt_at" | "updated_at"
 >;
 
+/** A base-advance recheck owed after a failed read (`owed_base_rechecks`). */
+export interface OwedBaseRecheckRow {
+  pr: number;
+  branch: string;
+  before_sha: string;
+  after_sha: string;
+  attempts: number;
+  next_attempt_at: string;
+  last_error: string | null;
+  created_at: string;
+}
+
 export interface WebhookInboxRow {
   guid: string;
   event: string;
@@ -1041,6 +1053,20 @@ CREATE TABLE IF NOT EXISTS rechecks (
   reason       TEXT,
   created_at   TEXT NOT NULL,
   PRIMARY KEY (pr, fingerprint)
+);
+-- A base-advance recheck question whose reads failed: owed, and asked again
+-- at next_attempt_at by the reconcile pass (retryOwedBaseRechecks), so a
+-- transient GitHub error never drops it. One row per PR and advance.
+CREATE TABLE IF NOT EXISTS owed_base_rechecks (
+  pr              INTEGER NOT NULL,
+  branch          TEXT NOT NULL,
+  before_sha      TEXT NOT NULL,
+  after_sha       TEXT NOT NULL,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT NOT NULL,
+  last_error      TEXT,
+  created_at      TEXT NOT NULL,
+  PRIMARY KEY (pr, after_sha)
 );
 -- Rendered non-push questions remain owed independently of capped active wakes.
 CREATE TABLE IF NOT EXISTS recheck_deliveries (
@@ -6390,6 +6416,67 @@ export class StateStore {
         .prepare("DELETE FROM recheck_deliveries WHERE pr=? AND fingerprint=?")
         .run(pr, fingerprint);
     })();
+  }
+
+  /** Owe a base-advance recheck whose reads failed: insert, or count one
+   * more failed attempt; the next one is due `retryMs` from now. Returns
+   * the attempts so far. */
+  oweBaseRecheck(
+    pr: number,
+    advance: { branch: string; before: string; after: string },
+    error: string,
+    retryAfterMs: (attempts: number) => number,
+  ): number {
+    return this.db
+      .transaction(() => {
+        const prior = this.owedBaseRecheck(pr, advance.after);
+        const attempts = (prior?.attempts ?? 0) + 1;
+        const now = this.now().getTime();
+        const due = new Date(now + retryAfterMs(attempts)).toISOString();
+        this.db
+          .prepare(
+            `INSERT INTO owed_base_rechecks
+               (pr, branch, before_sha, after_sha, attempts, next_attempt_at, last_error, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(pr, after_sha) DO UPDATE SET
+               attempts = excluded.attempts, next_attempt_at = excluded.next_attempt_at,
+               last_error = excluded.last_error`,
+          )
+          .run(
+            pr,
+            advance.branch,
+            advance.before,
+            advance.after,
+            attempts,
+            due,
+            error.slice(0, 500),
+            this.ts(),
+          );
+        return attempts;
+      })
+      .immediate();
+  }
+
+  owedBaseRecheck(pr: number, after: string): OwedBaseRecheckRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM owed_base_rechecks WHERE pr = ? AND after_sha = ?")
+      .get(pr, after) as OwedBaseRecheckRow | undefined;
+  }
+
+  /** Owed base-advance rechecks due at `now`, oldest first. */
+  dueBaseRechecks(now: string): OwedBaseRecheckRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM owed_base_rechecks WHERE next_attempt_at <= ? ORDER BY next_attempt_at, pr",
+      )
+      .all(now) as OwedBaseRecheckRow[];
+  }
+
+  /** The owed question is answered (asked, or nothing left to ask). */
+  settleBaseRecheck(pr: number, after: string): void {
+    this.db
+      .prepare("DELETE FROM owed_base_rechecks WHERE pr = ? AND after_sha = ?")
+      .run(pr, after);
   }
 
   /** The receipt guard's read (docs/archiving.md §8.1): the PR's

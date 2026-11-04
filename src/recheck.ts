@@ -1117,10 +1117,16 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     // goes on with the delta UNREAD and the session is told so. A base advance
     // is NOT asked unread: almost every one touches no PR-owned file, and
     // waking a session on an advance nobody could classify is the delta-blind
-    // staleness check the recheck exists to avoid. It upholds, with this
-    // anomaly row as its record — nothing asks it again.
+    // staleness check the recheck exists to avoid. Nor is it dropped: the
+    // question is owed (`owed_base_rechecks`) and the reconcile pass asks it
+    // again on a backoff (`retryOwedBaseRechecks`).
     const askUnread = ciIsAdverse(req.ci?.conclusion);
     log(`recheck: #${req.pr} delta read failed`, err);
+    let owedAt = "";
+    if (req.trigger === "base_advance" && req.base && !askUnread) {
+      store.oweBaseRecheck(req.pr, req.base, String(err), baseRecheckRetryMs);
+      owedAt = store.owedBaseRecheck(req.pr, req.base.after)?.next_attempt_at ?? "";
+    }
     store.logEvent("recheck_delta_failed", req.pr, {
       trigger: req.trigger,
       error: String(err),
@@ -1136,7 +1142,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
         askUnread
           ? "asked with the delta unread"
           : req.trigger === "base_advance"
-            ? "upheld unread; nothing asks this base advance again"
+            ? `owed; the reconcile pass asks this base advance again${owedAt ? ` at ${owedAt}` : ""}`
             : "the reconcile push backstop asks again"
       }`,
     );
@@ -1398,7 +1404,10 @@ export async function runBaseAdvance(
         if (ref.state === "closed" || ref.merged) continue;
         if (ref.base_ref && ref.base_ref !== advance.branch) continue;
       } catch (err) {
-        log(`recheck: #${row.number} base ref lookup failed`, err);
+        // Whether this PR targets the branch is unknown, so the question is
+        // owed rather than dropped: the reconcile pass asks it again.
+        log(`recheck: #${row.number} base ref lookup failed — owed`, err);
+        deps.store.oweBaseRecheck(row.number, advance, String(err), baseRecheckRetryMs);
         continue;
       }
     }
@@ -1408,6 +1417,88 @@ export async function runBaseAdvance(
     );
   }
   return out;
+}
+
+/** The wait before an owed base-advance recheck is asked again, after its
+ * `attempts`-th failed try: 2 min doubling to 1 h. It is never given up. */
+export function baseRecheckRetryMs(attempts: number): number {
+  return Math.min(60 * 60_000, 2 * 60_000 * 2 ** Math.max(0, attempts - 1));
+}
+
+/**
+ * Ask the owed base-advance rechecks that are due (`owed_base_rechecks`):
+ * the reconcile pass's backstop for a base advance whose reads failed, the
+ * way the push backstop re-asks a push. Each is settled once it is asked or
+ * there is nothing left to ask (the PR closed, lost its standing approval,
+ * no longer targets the branch); a failed read again leaves it owed on the
+ * longer wait. Never throws for one PR.
+ */
+export async function retryOwedBaseRechecks(deps: RecheckDeps): Promise<number> {
+  const { store, cfg } = deps;
+  const log = deps.log ?? ((): void => {});
+  const now = deps.now ?? ((): Date => new Date());
+  let asked = 0;
+  for (const owed of store.dueBaseRechecks(now().toISOString())) {
+    // A drain defers the question; it stays owed and due.
+    if (store.drainState().draining) break;
+    const advance = { branch: owed.branch, before: owed.before_sha, after: owed.after_sha };
+    const settle = (why: string): void => {
+      store.settleBaseRecheck(owed.pr, owed.after_sha);
+      store.logEvent("recheck_base_owed_settled", owed.pr, {
+        branch: owed.branch,
+        after: owed.after_sha,
+        attempts: owed.attempts,
+        why,
+      });
+    };
+    try {
+      if (!cfg.recheck.enabled || !cfg.recheck.on_base_advance) {
+        settle("disabled");
+        continue;
+      }
+      const row = store.getPr(owed.pr);
+      if (!row || row.state === "closed") {
+        settle("pr-not-open");
+        continue;
+      }
+      if (standingVerdict(store.reviewedHead(owed.pr)) !== "APPROVE") {
+        settle("no-standing-approval");
+        continue;
+      }
+      if (deps.adapter.getPr) {
+        let ref: Awaited<ReturnType<RecheckAdapter["getPr"]>>;
+        try {
+          ref = await deps.adapter.getPr(owed.pr);
+        } catch (err) {
+          store.oweBaseRecheck(owed.pr, advance, String(err), baseRecheckRetryMs);
+          log(`recheck: #${owed.pr} owed base recheck — base ref lookup failed again`, err);
+          continue;
+        }
+        if (ref.state === "closed" || ref.merged) {
+          settle("pr-not-open");
+          continue;
+        }
+        if (ref.base_ref && ref.base_ref !== owed.branch) {
+          settle("other-base");
+          continue;
+        }
+      }
+      const outcome = await runRecheck(deps, {
+        pr: owed.pr,
+        trigger: "base_advance",
+        base: advance,
+      });
+      if (outcome.action === "noop" && outcome.reason === "draining") continue;
+      // A failed read again counted one more attempt: still owed.
+      const still = store.owedBaseRecheck(owed.pr, owed.after_sha);
+      if (still && still.attempts > owed.attempts) continue;
+      settle(outcome.action === "noop" ? outcome.reason : "asked");
+      asked++;
+    } catch (err) {
+      log(`recheck: #${owed.pr} owed base recheck failed`, err);
+    }
+  }
+  return asked;
 }
 
 // ---- the decision file ----------------------------------------------------
