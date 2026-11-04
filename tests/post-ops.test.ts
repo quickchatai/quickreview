@@ -30,7 +30,13 @@ import {
   roundPostingKey,
   type PostingReceipt,
 } from "../src/posting-receipt.js";
-import type { PostOutcome } from "../src/postops.js";
+import { ownerRecord } from "../src/posting-journal.js";
+import {
+  IN_FLIGHT_LINE,
+  replyPostMarker,
+  validationText,
+  type PostOutcome,
+} from "../src/postops.js";
 import {
   SECURITY_PASSES_UNKNOWN_LINE,
   securityPassIncompleteLine,
@@ -741,22 +747,209 @@ describe("post.review live", () => {
     expect(receipt()).toMatchObject({ status: "confirmed", gh_review_id: 777 });
   });
 
-  it("leaves the receipt prepared when GitHub explicitly refuses the post", async () => {
+  // A 4xx is a known outcome: GitHub refused the review and nothing landed.
+  // MUTATION: drop the `f.kind === "rejected"` branch in submit — this fails
+  // (the receipt stays prepared and the corrected re-post is refused).
+  it("a 422 is a rejection: nothing landed, GitHub's validation text, and the corrected re-post is accepted", async () => {
     rig.gh.failReviewPost = 422;
-    const body = rig.write(`pr-${PR}-round-1-review.md`, "bad");
+    rig.gh.failReviewBody = JSON.stringify({
+      message: "Unprocessable Entity",
+      errors: ["Pull request review thread line must be part of the diff"],
+      documentation_url: "https://docs.github.com/rest",
+    });
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "bad anchor");
+    const comments = rig.write(`pr-${PR}-round-1-comments.json`, COMMENTS);
     const c = await rig.connect("c-round");
-    await refusedWith(
-      c.request("post.review", { pr: PR, event: "COMMENT", body_file: body }, { pr: PR }),
-      "post_failed",
-    );
-    expect(receipt()).toMatchObject({ status: "prepared" });
-    // The daemon keeps GitHub's answer; the wire carries only status and route.
-    expect(rig.logs.some((l) => l.includes("upstream trouble"))).toBe(true);
-    // Never a duplicate POST over an unknown outcome.
+    const ask = (withComments: boolean) =>
+      c.request<PostOutcome>(
+        "post.review",
+        {
+          pr: PR,
+          event: "COMMENT",
+          body_file: body,
+          ...(withComments ? { comments_file: comments } : {}),
+        },
+        { pr: PR },
+      );
+    await expect(ask(true)).rejects.toMatchObject({
+      code: "post_rejected",
+      message: expect.stringMatching(
+        /Pull request review thread line must be part of the diff.*Nothing was posted; fix the named comment \(or move it into the body\) and run the same script again/,
+      ),
+    });
+    // Only the validation text reaches the wire, never the rest of the answer.
+    await expect(ask(true)).rejects.not.toMatchObject({ message: /documentation_url/ });
+    expect(receipt()).toBeUndefined();
+    expect(rig.journal.readJob(PR, 1)).toBeUndefined();
+    expect(readdirSync(receiptsDir()).some((f) => f.includes(".withdrawn-"))).toBe(true);
+    // The corrected review (the comment moved into the body) posts under the same key.
     rig.gh.failReviewPost = null;
+    const out = await ask(false);
+    expect(out.status).toBe("posted");
+    expect(receipt()).toMatchObject({ status: "confirmed", posting_key: KEY });
+  });
+
+  it("validationText reads errors[].message, plain strings, and a cut-short answer", () => {
+    const err = (detail: string) =>
+      new GitHubRequestError("POST", "/repos/o/r/pulls/7/reviews", 422, detail);
+    expect(
+      validationText(
+        err(JSON.stringify({ message: "x", errors: [{ resource: "R", message: "line\u0007bad" }] })),
+      ),
+    ).toBe("line bad");
+    expect(validationText(err('{"message":"x","errors":["first","sec'))).toBe("first");
+    expect(validationText(err("upstream trouble"))).toBe("(GitHub gave no validation detail)");
+  });
+
+  // MUTATION: drop `|| kind === "rate_limited"` from unanswered() — this fails.
+  it("a rate-limited POST is handed to the daemon like an unanswered one", async () => {
+    rig.gh.failReviewPost = 429;
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "later");
+    const c = await rig.connect("c-round");
+    const out = await c.request<PostOutcome>(
+      "post.review",
+      { pr: PR, event: "COMMENT", body_file: body },
+      { pr: PR },
+    );
+    expect(out.status).toBe("deferred");
+    expect(receipt()).toMatchObject({ status: "deferred" });
+    expect(rig.journal.readJob(PR, 1)).toMatchObject({ status: "pending" });
+  });
+
+  // MUTATION: drop the `res.blocked === "pr-unreadable"` deferral in submit — this fails.
+  it("a gate that cannot read the PR defers the post: nothing sent, the outbox owns it", async () => {
+    rig.gh.failPr = 502;
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "x");
+    const c = await rig.connect("c-round");
+    const out = await c.request<PostOutcome>(
+      "post.review",
+      { pr: PR, event: "COMMENT", body_file: body },
+      { pr: PR },
+    );
+    expect(out.status).toBe("deferred");
+    expect(out.lines.join("\n")).toMatch(/Do NOT post again/);
+    expect(rig.gh.posts()).toEqual([]);
+    expect(receipt()).toMatchObject({ status: "deferred", defer_reason: /^pr-unreadable/ });
+    expect(rig.journal.readJob(PR, 1)).toMatchObject({ status: "pending" });
+  });
+
+  // MUTATION: drop the TERMINAL_REFUSALS withdraw in submit — this fails.
+  it.each([
+    ["pr-merged", () => (rig.gh.pr.merged = true)],
+    ["pr-closed", () => (rig.gh.pr.state = "closed")],
+    ["head-drift", () => (rig.gh.pr.head = MOVED)],
+  ] as const)("a %s refusal takes the queued job back", async (reason, arrange) => {
+    arrange();
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "x");
+    const c = await rig.connect("c-round");
     await expect(
       c.request("post.review", { pr: PR, event: "COMMENT", body_file: body }, { pr: PR }),
-    ).rejects.toMatchObject({ code: "blocked", message: /still unknown/ });
+    ).rejects.toMatchObject({ code: "blocked", message: new RegExp(reason) });
+    expect(receipt()).toBeUndefined();
+    expect(rig.journal.readJob(PR, 1)).toBeUndefined();
+  });
+
+  // MUTATION: throw the lock's JournalError as `blocked` in wrap — this fails.
+  it("a posting already in flight for the round answers in_flight, never a second POST", async () => {
+    mkdirSync(receiptsDir(), { recursive: true });
+    const lock = `${join(receiptsDir(), `pr-${PR}-round-1.json`)}.lock`;
+    mkdirSync(lock);
+    writeFileSync(join(lock, "pid"), ownerRecord(process.pid) ?? String(process.pid));
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "x");
+    const c = await rig.connect("c-round");
+    const out = await c.request<PostOutcome>(
+      "post.review",
+      { pr: PR, event: "COMMENT", body_file: body },
+      { pr: PR },
+    );
+    expect(out.status).toBe("in_flight");
+    expect(out.lines[0]).toContain(IN_FLIGHT_LINE);
+    expect(rig.gh.posts()).toEqual([]);
+  });
+});
+
+// The approval's CI pre-check, live: the production incident. A checks read
+// that fails transiently (after the adapter's own retries) must neither post
+// nor be lost: the approval is deferred to the daemon, which re-reads CI.
+describe("post.approval live: the CI pre-check", () => {
+  beforeEach(async () => {
+    rig = await build(false);
+    roundCommand();
+  });
+  const approve = async () => {
+    const body = rig.write(`pr-${PR}-round-1-approve.md`, "LGTM");
+    const c = await rig.connect("c-round");
+    return c.request<PostOutcome>("post.approval", { pr: PR, body_file: body }, { pr: PR });
+  };
+  const withdrawn = () =>
+    existsSync(receiptsDir()) && readdirSync(receiptsDir()).some((f) => f.includes(".withdrawn-"));
+
+  // MUTATION: withdraw before the retryable check in postReview (the old
+  // bare catch) — this fails.
+  it.each([502, "network"] as const)(
+    "checks read %s: deferred, a deferred receipt, the job still pending, nothing withdrawn",
+    async (failure) => {
+      rig.gh.failChecks = failure;
+      const out = await approve();
+      expect(out.status).toBe("deferred");
+      expect(out.lines.join("\n")).toMatch(
+        /CI checks at 68b8040 could not be read[\s\S]*re-reads CI before every attempt[\s\S]*Do NOT post again/,
+      );
+      expect(rig.gh.posts()).toEqual([]);
+      expect(receipt()).toMatchObject({
+        status: "deferred",
+        intended_event: "APPROVE",
+        actual_event: "APPROVE",
+        defer_reason: expect.stringMatching(/^ci-unreadable: /),
+      });
+      const job = readPostingJob(rig.journal.jobPath(PR, 1))!;
+      expect(job).toMatchObject({ status: "pending", posting_key: KEY, mode: "live" });
+      expect(job.deferred_at).toBeTruthy();
+      expect(job.attempted_at).toBeUndefined(); // nothing that "may have landed"
+      expect(withdrawn()).toBe(false);
+      // The session asking again is told it is deferred.
+      rig.gh.failChecks = null;
+      expect((await approve()).status).toBe("deferred");
+      expect(rig.gh.posts()).toEqual([]);
+    },
+  );
+
+  it("checks read 404: blocked with a next step, the queued approval withdrawn", async () => {
+    rig.gh.failChecks = 404;
+    await expect(approve()).rejects.toMatchObject({
+      code: "blocked",
+      message: expect.stringMatching(/pr-unreadable: .*refused the read.*post-review\.sh/),
+    });
+    expect(rig.gh.posts()).toEqual([]);
+    expect(receipt()).toBeUndefined();
+    expect(withdrawn()).toBe(true);
+  });
+
+  it("green CI: the approval is posted", async () => {
+    const out = await approve();
+    expect(out.status).toBe("posted");
+    expect(receipt()).toMatchObject({ status: "confirmed", actual_event: "APPROVE" });
+    expect(rig.gh.posts()[0]!.body).toMatchObject({ event: "APPROVE", commit_id: HEAD });
+  });
+
+  // MUTATION: restore the `throw` in approval()'s trigger-step catch — this fails.
+  it("a trigger step that fails after the approval is a line, never a refusal", async () => {
+    rig.gh.failDeletes = 500;
+    const out = await approve();
+    expect(out.status).toBe("posted");
+    expect(out.lines.filter((l) => /the approval is posted, but/.test(l))).toHaveLength(2);
+  });
+
+  it("a checks read past the deadline is transient: deferred", async () => {
+    await rig.server.stop();
+    rig.store.close();
+    rmSync(rig.root, { recursive: true, force: true });
+    rig = await buildRig(false, clients, { readDeadlineMs: 50 });
+    roundCommand();
+    rig.gh.failChecks = "hang";
+    const out = await approve();
+    expect(out.status).toBe("deferred");
+    expect(receipt()).toMatchObject({ defer_reason: /^ci-unreadable: .*did not answer within/ });
   });
 });
 
@@ -842,7 +1035,7 @@ describe("post.reply", () => {
       expect.objectContaining({
         kind: "create_review_comment_reply",
         path: `/repos/${REPO}/pulls/${PR}/comments/9001/replies`,
-        body: { body: "thanks, fixed" },
+        body: { body: `thanks, fixed\n\n${replyPostMarker(PR, 9001, "thanks, fixed")}` },
         pr: PR,
       }),
     ]);
@@ -877,13 +1070,63 @@ describe("post.reply live", () => {
       expect.objectContaining({
         method: "POST",
         path: `/pulls/${PR}/comments/9001/replies`,
-        body: { body: "thanks, fixed" },
+        body: { body: `thanks, fixed\n\n${replyPostMarker(PR, 9001, "thanks, fixed")}` },
       }),
     ]);
     // the reconcile's ungated-review audit reads this to excuse the reply's
     // wrapper review (execboundary.ts isGatedReplyWrapper)
     expect(rig.store.isBotComment(9100, "review_comment")).toBe(true);
     expect(rig.store.botCommentIds(PR)).toContain(9100);
+  });
+
+  const reply = async () => {
+    const body = rig.write(`pr-${PR}-reply.md`, "thanks, fixed");
+    const c = await rig.connect("c-answer");
+    return c.request<PostOutcome>(
+      "post.reply",
+      { pr: PR, comment_id: 9001, body_file: body },
+      { pr: PR },
+    );
+  };
+  const replyPosts = () => rig.gh.posts().filter((p) => /\/replies$/.test(p.path));
+
+  // MUTATION: skip the findReply before the POST — this fails (two POSTs).
+  it("the same reply run twice is posted once", async () => {
+    expect((await reply()).status).toBe("posted");
+    const again = await reply();
+    expect(again.status).toBe("already_confirmed");
+    expect(again.lines[0]).toMatch(/already posted/);
+    expect(replyPosts()).toHaveLength(1);
+  });
+
+  // MUTATION: drop the findReply after an unanswered POST — this fails.
+  it("an unanswered POST whose reply landed answers already posted", async () => {
+    rig.gh.failReplyPost = "network";
+    rig.gh.replyLandsOnFailure = true;
+    const out = await reply();
+    expect(out.status).toBe("already_confirmed");
+    expect(rig.store.isBotComment(9100, "review_comment")).toBe(true);
+    expect(replyPosts()).toHaveLength(1);
+  });
+
+  it("an unanswered POST whose reply is not there says so; the re-run posts it once", async () => {
+    rig.gh.failReplyPost = 502;
+    await expect(reply()).rejects.toMatchObject({
+      code: "post_failed",
+      message: /not on GitHub: nothing was posted/,
+    });
+    rig.gh.failReplyPost = null;
+    expect((await reply()).status).toBe("posted");
+    expect(replyPosts()).toHaveLength(2);
+  });
+
+  it("a reply check that cannot read GitHub posts nothing and says do NOT retry", async () => {
+    rig.gh.failComments = 500;
+    await expect(reply()).rejects.toMatchObject({
+      code: "post_failed",
+      message: /do NOT retry/,
+    });
+    expect(replyPosts()).toEqual([]);
   });
 });
 

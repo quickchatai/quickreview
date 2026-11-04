@@ -15,8 +15,11 @@
 // never cached, so a revoked or replaced capability is never used twice.
 //
 // Exit code 0: the daemon posted, recorded the post in dry-run, found it
-// already confirmed, or took the delivery over (deferred). Anything else
-// prints the daemon's typed refusal and exits 1.
+// already confirmed, took the delivery over (deferred), or another attempt in
+// the daemon owns the round's posting right now (in flight). A review or an
+// approval this client stopped waiting for is in flight too: the daemon goes on
+// and records its outcome, so the session is told not to post again. Anything
+// else prints the daemon's typed refusal and exits 1.
 import { resolve } from "node:path";
 import { connectFromEnv, type IpcEnv } from "./client.js";
 import { IpcError } from "./protocol.js";
@@ -58,8 +61,21 @@ const processIo: ShimIo = {
   stderr: (t) => void process.stderr.write(t),
 };
 
-/** A posting call can include GitHub's own 60 s deadline and a marker read. */
-const POST_TIMEOUT_MS = 150_000;
+/**
+ * How long the client waits for the daemon's answer. The worst case of one
+ * post: the daemon's own reads are capped at 20 s each (the approval's CI
+ * pre-check, the marker read; postops.ts `POSTING_READ_DEADLINE_MS`), and
+ * the posting guards' reads on the gate (the PR, the reviews, the checks)
+ * each have the adapter's bounded retry, 3 attempts of up to 60 s plus about
+ * 4 s of backoff; then the POST itself, up to 60 s. 2 × 20 + 3 × 184 + 60 ≈
+ * 650 s. Past this the post is still running in the daemon, which records
+ * its outcome: the client answers "in flight", never "failed".
+ */
+export const POST_TIMEOUT_MS = 720_000;
+
+/** What a review or an approval answers when this client stopped waiting. */
+const IN_FLIGHT =
+  "a posting for this round is in flight in the daemon; do NOT post again — finish the round normally (verdict file as decided)";
 
 /** The round identity a keyed round's host carries in env. */
 function roundClaims(env: IpcEnv): Record<string, unknown> {
@@ -136,6 +152,7 @@ export async function runPostShim(
   args: readonly string[],
   env: IpcEnv = process.env,
   io: ShimIo = processIo,
+  opts: { timeoutMs?: number } = {},
 ): Promise<number> {
   if (!Object.hasOwn(KINDS, kind)) {
     io.stderr(`postshim: unknown kind ${kind} (review, approval or reply)\n`);
@@ -145,10 +162,28 @@ export async function runPostShim(
   let client;
   try {
     const { pr, body } = postRequest(kind as PostShimKind, args, env);
-    client = await connectFromEnv("shim", env, { timeoutMs: POST_TIMEOUT_MS });
-    const out = await client.request<Outcome>(k.op, body, { pr });
-    for (const line of Array.isArray(out?.lines) ? out.lines : []) io.stdout(`${String(line)}\n`);
-    return 0;
+    client = await connectFromEnv("shim", env, { timeoutMs: opts.timeoutMs ?? POST_TIMEOUT_MS });
+    try {
+      const out = await client.request<Outcome>(k.op, body, { pr });
+      for (const line of Array.isArray(out?.lines) ? out.lines : [])
+        io.stdout(`${String(line)}\n`);
+      return 0;
+    } catch (e) {
+      // The request reached the daemon and no answer came in time: the post
+      // goes on there. A review or an approval is the round's posting, which
+      // the daemon records; a reply's outcome is simply unknown.
+      if (e instanceof IpcError && e.code === "timeout") {
+        if (kind === "reply") {
+          io.stderr(
+            `${k.prefix}: timeout: the daemon did not answer in time; whether the reply was posted is unknown — do NOT retry\n`,
+          );
+          return 1;
+        }
+        io.stdout(`${IN_FLIGHT}\n`);
+        return 0;
+      }
+      throw e;
+    }
   } catch (e) {
     const err = e instanceof IpcError ? e : new IpcError("internal", String(e));
     io.stderr(`${k.prefix}: ${err.code}: ${err.message}\n`);

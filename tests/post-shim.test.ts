@@ -18,7 +18,8 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCapabilityFd } from "../src/ipc/capability.js";
 import type { IpcClient } from "../src/ipc/client.js";
-import { postRequest, runPostShim } from "../src/ipc/postshim.js";
+import { POST_TIMEOUT_MS, postRequest, runPostShim } from "../src/ipc/postshim.js";
+import { ownerRecord } from "../src/posting-journal.js";
 import { postingMarker } from "../src/posting-receipt.js";
 import {
   HEAD,
@@ -198,6 +199,45 @@ describe("the client posts through a daemon", () => {
       }
     }
     expect(dryrunRecords(rig)).toEqual([]);
+  });
+
+  // MUTATION: throw the lock's JournalError as `blocked` in postops wrap — this fails.
+  it("a posting already in flight in the daemon: exit 0, told not to post again", async () => {
+    const dir = join(rig.state, "posting-receipts");
+    mkdirSync(join(dir, `pr-${PR}-round-1.json.lock`), { recursive: true });
+    writeFileSync(
+      join(dir, `pr-${PR}-round-1.json.lock`, "pid"),
+      ownerRecord(process.pid) ?? String(process.pid),
+    );
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "x");
+    const code = await runPostShim("review", [String(PR), "COMMENT", body], envFor("c-round"), io);
+    expect({ code, err }).toEqual({ code: 0, err: "" });
+    expect(out).toMatch(/in flight in the daemon; do NOT post again — finish the round normally/);
+    expect(dryrunRecords(rig)).toEqual([]);
+  });
+
+  // MUTATION: drop the `e.code === "timeout"` branch in runPostShim — this fails.
+  it("a post the client stopped waiting for is in flight; a reply's outcome is unknown", async () => {
+    const hang = { roles: ["worker", "shim"] as const, handle: () => new Promise(() => {}) };
+    rig.server.register("post.approval", hang);
+    rig.server.register("post.reply", hang);
+    const body = rig.write(`pr-${PR}-round-1-approve.md`, "ok");
+    expect(
+      await runPostShim("approval", [String(PR), body], envFor("c-round"), io, { timeoutMs: 100 }),
+    ).toBe(0);
+    expect(out).toMatch(/in flight in the daemon; do NOT post again/);
+    const reply = rig.write(`pr-${PR}-reply.md`, "thanks");
+    expect(
+      await runPostShim("reply", [String(PR), "9001", reply], envFor("c-round"), io, {
+        timeoutMs: 100,
+      }),
+    ).toBe(1);
+    expect(err).toMatch(/^reply-thread: timeout: .*unknown — do NOT retry/);
+  });
+
+  it("the client waits long enough for the posting path's worst case", () => {
+    // 2 capped daemon reads (20 s), 3 guard reads (3 × 60 s + backoff), the POST (60 s).
+    expect(POST_TIMEOUT_MS).toBeGreaterThanOrEqual(2 * 20_000 + 3 * 184_000 + 60_000);
   });
 
   it("exits 1 with no capability on the fd, and 2 for an unknown kind", async () => {

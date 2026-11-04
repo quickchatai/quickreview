@@ -44,6 +44,22 @@ export class FakeGitHub {
   ];
   /** When set, the review POST answers with this status. */
   failReviewPost: number | "network" | null = null;
+  /** The body a failed review POST answers with. */
+  failReviewBody = "upstream trouble";
+  /** When set, the PR read answers with this status. */
+  failPr: number | null = null;
+  /** When set, every DELETE (the approval's trigger steps) answers with this status. */
+  failDeletes: number | null = null;
+  /** When set, the check-runs read answers with this status (or no answer). */
+  failChecks: number | "network" | "hang" | null = null;
+  /** The PR's inline review comments, newest last; a posted reply joins them. */
+  comments: Array<Record<string, unknown>> = [];
+  /** When set, the review-comments read answers with this status. */
+  failComments: number | null = null;
+  /** When set, the reply POST answers with this status (or no answer). */
+  failReplyPost: number | "network" | null = null;
+  /** The reply POST lands on GitHub even though it fails (its answer lost). */
+  replyLandsOnFailure = false;
   calls: Array<{ method: string; path: string; body?: any }> = [];
   posts(): Array<{ method: string; path: string; body?: any }> {
     return this.calls.filter((c) => c.method !== "GET");
@@ -57,6 +73,8 @@ export class FakeGitHub {
     this.calls.push({ method, path, ...(body !== undefined ? { body } : {}) });
     const json = (x: unknown, status = 200) => new Response(JSON.stringify(x), { status });
     let m: RegExpExecArray | null;
+    if (method === "GET" && this.failPr !== null && /^\/pulls\/\d+$/.test(path))
+      return new Response("pr unavailable", { status: this.failPr });
     if (method === "GET" && (m = /^\/pulls\/(\d+)$/.exec(path)))
       return json({
         number: Number(m[1]),
@@ -69,14 +87,24 @@ export class FakeGitHub {
       });
     if (method === "GET" && /^\/pulls\/\d+\/reviews$/.test(path))
       return json(this.reviews.slice((Number(u.searchParams.get("page")) - 1) * 100));
-    if (method === "GET" && /\/check-runs$/.test(path))
+    if (method === "GET" && /\/check-runs$/.test(path)) {
+      if (this.failChecks === "network") throw new TypeError("fetch failed");
+      if (this.failChecks === "hang") return new Promise<Response>(() => {});
+      if (this.failChecks !== null)
+        return new Response("checks unavailable", { status: this.failChecks });
       return json({ total_count: this.checks.length, check_runs: this.checks });
+    }
+    if (method === "GET" && /^\/pulls\/\d+\/comments$/.test(path)) {
+      if (this.failComments !== null)
+        return new Response("comments unavailable", { status: this.failComments });
+      return json([...this.comments].reverse());
+    }
     if (method === "GET" && /\/status$/.test(path)) return json({ total_count: 0, statuses: [] });
     if (method === "GET" && /\/requested_reviewers$/.test(path)) return json({ teams: [] });
     if (method === "POST" && /^\/pulls\/\d+\/reviews$/.test(path)) {
       if (this.failReviewPost === "network") throw new TypeError("fetch failed");
       if (this.failReviewPost !== null)
-        return new Response("upstream trouble", { status: this.failReviewPost });
+        return new Response(this.failReviewBody, { status: this.failReviewPost });
       const state =
         body.event === "APPROVE"
           ? "APPROVED"
@@ -91,9 +119,25 @@ export class FakeGitHub {
         comments: (body.comments ?? []).map((_: unknown, i: number) => ({ id: 7000 + i })),
       });
     }
-    if (method === "POST" && /\/replies$/.test(path))
-      return json({ id: 9100, html_url: `https://github.com/${REPO}/pull/${PR}#r9100` });
-    if (method === "DELETE") return new Response(null, { status: 204 });
+    if (method === "POST" && /\/replies$/.test(path)) {
+      const reply = {
+        id: 9100 + this.comments.length,
+        user: { login: BOT },
+        body: body.body,
+        in_reply_to_id: Number(/comments\/(\d+)\/replies$/.exec(path)?.[1]),
+      };
+      if (this.failReplyPost !== null) {
+        if (this.replyLandsOnFailure) this.comments.push(reply);
+        if (this.failReplyPost === "network") throw new TypeError("fetch failed");
+        return new Response("upstream trouble", { status: this.failReplyPost });
+      }
+      this.comments.push(reply);
+      return json({ ...reply, html_url: `https://github.com/${REPO}/pull/${PR}#r${reply.id}` });
+    }
+    if (method === "DELETE")
+      return this.failDeletes !== null
+        ? new Response("delete refused", { status: this.failDeletes })
+        : new Response(null, { status: 204 });
     return json({ message: `unscripted ${method} ${path}` }, 404);
   };
 }
@@ -122,7 +166,11 @@ export interface Rig {
   ): Promise<IpcClient>;
 }
 
-export async function buildRig(dryRun: boolean, clients: IpcClient[]): Promise<Rig> {
+export async function buildRig(
+  dryRun: boolean,
+  clients: IpcClient[],
+  opts: { readDeadlineMs?: number } = {},
+): Promise<Rig> {
   const root = mkdtempSync(join(tmpdir(), "po-"));
   mkdirSync(join(root, "state"), { recursive: true });
   mkdirSync(join(root, "verdict"), { recursive: true });
@@ -142,7 +190,11 @@ export async function buildRig(dryRun: boolean, clients: IpcClient[]): Promise<R
     dryrun,
     (intent: MutationIntent): Promise<unknown> => adapter.executeMutation(intent),
   );
-  const adapter: GitHubAdapter = new GitHubAdapter(cfg, minter, gate, gh.fetch as never);
+  // The adapter's read retry sleeps on nothing: a failing read is retried at once.
+  const adapter: GitHubAdapter = new GitHubAdapter(cfg, minter, gate, gh.fetch as never, undefined, {
+    sleep: async () => {},
+    checkRestartMs: 0,
+  });
   gate.setGuard(
     makePostingGuard({ store, adapter, botLogin: cfg.github.bot_login, guards: cfg.guards }),
   );
@@ -167,6 +219,7 @@ export async function buildRig(dryRun: boolean, clients: IpcClient[]): Promise<R
     botLogins: [BOT],
     log: (m) => logs.push(m),
     roundOf: (id) => rounds.get(id) ?? null,
+    ...(opts.readDeadlineMs !== undefined ? { readDeadlineMs: opts.readDeadlineMs } : {}),
   });
   await server.start();
   const r: Rig = {
