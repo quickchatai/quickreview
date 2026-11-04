@@ -1405,7 +1405,11 @@ export class GitHubAdapter {
       body: string;
       comments?: unknown[];
     },
-    options?: { purpose?: ReviewPurpose; postingRetry?: string },
+    options?: {
+      purpose?: ReviewPurpose;
+      postingRetry?: string;
+      approvalCiWithheld?: MutationIntent["approvalCiWithheld"];
+    },
   ): Promise<GateResult> {
     return this.gate.execute({
       kind: "create_review",
@@ -1416,6 +1420,9 @@ export class GitHubAdapter {
       pr: n,
       reviewPurpose: options?.purpose,
       ...(options?.postingRetry !== undefined ? { postingRetry: options.postingRetry } : {}),
+      ...(options?.approvalCiWithheld !== undefined
+        ? { approvalCiWithheld: options.approvalCiWithheld }
+        : {}),
     });
   }
 

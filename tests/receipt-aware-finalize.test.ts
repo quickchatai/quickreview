@@ -666,13 +666,14 @@ describe("a deferred posting", () => {
     expect(github.reads).toBe(0);
   });
 
-  // The daemon's CI pre-check read red: the delivery itself asks the gate for
-  // the COMMENT with the approval withheld (no second CI read relied on), and
-  // the apply records the withheld approval exactly as for guard 4's softening.
-  // MUTATION: post the original APPROVE when withApprovalCiPrecheck reads red — this fails.
+  // The daemon's CI pre-check read red: the delivery carries that state to the
+  // gate with the APPROVE, guard 4 withholds on it (no second CI read relied
+  // on), and the apply records the withheld approval as for any guard 4
+  // softening.
+  // MUTATION: post the APPROVE without the carried state when withApprovalCiPrecheck reads red — this fails.
   it("an APPROVE whose retry's CI pre-check read red lands, through the real outbox, as a withheld approval", async () => {
     writeDeferred("APPROVE");
-    const asked: Array<PostingJob["payload"]> = [];
+    const asked: Array<[PostingJob["payload"]["event"], string | undefined]> = [];
     const outbox = new PostingOutbox({
       dir: dir(),
       repo: cfg.github.repo,
@@ -701,15 +702,15 @@ describe("a deferred posting", () => {
             },
             pr,
             payload,
-            // The gate posts what it is asked for; GitHub answers in kind.
-            async (p) => {
-              asked.push(p);
+            // The gate withholds on a carried state, as guard 4 does.
+            async (p, ci) => {
+              asked.push([p.event, ci]);
               return {
                 executed: true,
                 response: {
                   id: REVIEW_ID,
                   commit_id: HEAD,
-                  state: p.event === "APPROVE" ? "APPROVED" : "COMMENTED",
+                  state: p.event === "APPROVE" && ci === undefined ? "APPROVED" : "COMMENTED",
                 },
               };
             },
@@ -722,7 +723,7 @@ describe("a deferred posting", () => {
     verdictFile("APPROVE");
     set("2026-01-15T08:57:00.000Z");
     await outbox.tick();
-    expect(asked.map((p) => p.event)).toEqual(["COMMENT"]);
+    expect(asked).toEqual([["APPROVE", "red"]]);
     expect(await watcher.sweep()).toEqual([`pr-${PR}-round-5.json`]);
     expect(round5()).toMatchObject({ status: "done", verdict: "APPROVE", posted_event: "COMMENT" });
     expect(store.approvalWithheld(PR)?.head_sha).toBe(HEAD);

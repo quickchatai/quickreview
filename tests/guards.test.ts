@@ -337,6 +337,65 @@ describe("guard 2 — the same head is never reviewed twice", () => {
     expect(store.approvalWithheld(5180)).toMatchObject({ head_sha: HEAD, ci_state: "red" });
   });
 
+  // The daemon delivery's CI pre-check read red and carries it with the
+  // APPROVE (`approvalCiWithheld`): guard 2 still reads an approval, and
+  // guard 4 withholds on the carried state with no read of its own — here a
+  // read would say green.
+  // MUTATION: drop `intent.approvalCiWithheld ??` from guard 4's read — this fails.
+  it.each([
+    ["the ordinary delivery", {}],
+    ["the deferred retry", { postingRetry: `v1:5180:2:${HEAD}` }],
+  ])(
+    "%s: an approval carrying CI the pre-check read red is withheld at a stamped head, no second read",
+    async (_route, extra) => {
+      const { gate, adapter, executor } = harness();
+      await gate.execute(reviewIntent("COMMENT"));
+      executor.mockClear();
+      const listChecks = vi.fn(async () => [
+        { name: "ci", source: "check_run" as const, status: "completed", conclusion: "success" },
+      ]);
+      (adapter as FakeGuardAdapter & { listChecks: GuardAdapter["listChecks"] }).listChecks =
+        listChecks;
+
+      const result = await gate.execute({
+        ...reviewIntent("APPROVE", HEAD, `Approved\n\n<!-- qcr-post:v1:5180:2:${HEAD} -->`),
+        approvalCiWithheld: "red",
+        ...extra,
+      });
+
+      expect(result).toMatchObject({ executed: true });
+      expect(listChecks).not.toHaveBeenCalled();
+      const sent = executor.mock.calls[0]![0] as MutationIntent;
+      expect((sent.body as { event: string }).event).toBe("COMMENT");
+      expect((sent.body as { body: string }).body).toMatch(/Approval is withheld/);
+      expect(store.approvalWithheld(5180)).toMatchObject({ head_sha: HEAD, ci_state: "red" });
+    },
+  );
+
+  it.each([
+    ["a green state", { ...reviewIntent("APPROVE"), approvalCiWithheld: "green" as never }],
+    [
+      "a mechanical purpose",
+      {
+        ...reviewIntent("COMMENT"),
+        approvalCiWithheld: "red" as const,
+        reviewPurpose: "escalation" as const,
+      },
+    ],
+    [
+      "another kind",
+      {
+        ...reviewIntent("APPROVE"),
+        approvalCiWithheld: "red" as const,
+        kind: "create_issue_comment" as const,
+      },
+    ],
+  ])("admission refuses approvalCiWithheld on %s", async (_label, intent) => {
+    const { gate, executor } = harness();
+    await expect(gate.execute(intent)).rejects.toThrow(/approvalCiWithheld/);
+    expect(executor).not.toHaveBeenCalled();
+  });
+
   it("lets the review through again after an author reply", async () => {
     const { gate, executor } = harness();
     await gate.execute(reviewIntent("REQUEST_CHANGES"));

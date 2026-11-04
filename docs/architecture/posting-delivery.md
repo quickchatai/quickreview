@@ -126,10 +126,13 @@ the row before its first GitHub call (a crash never repeats one), then:
    field to a substantive `create_review` carrying the key's marker at the
    key's head, and it exempts guard 5 only: the review posts at its ORIGINAL
    commit_id. Guards 3, 1, 2 and 4 bind as on any gated review. An APPROVE
-   whose CI pre-check read red posts as the COMMENT with the approval
-   withheld, and the confirmed receipt (`delivered_by: "daemon_retry"`) makes
-   the verdict apply as a withheld approval. Dry-run suppresses it like
-   anything else.
+   whose CI pre-check read red goes to the gate as the APPROVE, carrying the
+   state it read (`approvalCiWithheld`, admitted only on a substantive
+   `create_review` with a state that is not green): guard 2 reads an approval,
+   and guard 4 withholds it on that state with no read of its own, posting the
+   COMMENT. The confirmed receipt (`delivered_by: "daemon_retry"`) makes the
+   verdict apply as a withheld approval. Dry-run suppresses it like anything
+   else.
 
 An attempt that sends no POST — a failed marker read, a delivery whose own
 reads could not read the PR or its CI (`pr-unreadable`), a rate-limited POST —

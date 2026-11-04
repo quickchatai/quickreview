@@ -426,8 +426,8 @@ describe("a deferred APPROVE and its CI pre-check", () => {
     listChecks.mockReset();
     post.mockReset();
     deliver.mockImplementation((pr: number, payload: PostingJob["payload"], postingKey: string) =>
-      withApprovalCiPrecheck({ listChecks, enabled: true }, pr, payload, (asked) =>
-        post(pr, asked, postingKey),
+      withApprovalCiPrecheck({ listChecks, enabled: true }, pr, payload, (asked, ci) =>
+        post(pr, asked, postingKey, ci),
       ),
     );
   });
@@ -457,29 +457,36 @@ describe("a deferred APPROVE and its CI pre-check", () => {
     });
   });
 
-  // MUTATION: post the original payload when the pre-check reads red — this fails.
-  it("red CI the pre-check saw is carried to the gate: the COMMENT with the approval withheld", async () => {
+  // MUTATION: post the payload without the carried state when the pre-check reads red — this fails.
+  it("red CI the pre-check saw is carried to the gate with the approval as asked", async () => {
     listChecks.mockResolvedValue([
       { name: "ci", source: "check_run", status: "completed", conclusion: "failure" },
     ]);
-    // The gate posts what it was asked for; its own CI read (guard 4) is not
-    // relied on, so a second read that fails open cannot turn this into an
-    // approval.
-    post.mockImplementation(async (_pr: number, p: PostingJob["payload"]) => ({
-      executed: true,
-      response: {
-        id: 92,
-        commit_id: head,
-        state: p.event === "APPROVE" ? "APPROVED" : "COMMENTED",
-      },
-    }));
+    // The gate withholds on the carried state as guard 4 does; its own CI
+    // read is not relied on, so a second read that fails open cannot turn
+    // this into an approval (tests/guards.test.ts pins the real guard).
+    post.mockImplementation(
+      async (_pr: number, p: PostingJob["payload"], _key: string, ci?: string) => ({
+        executed: true,
+        response: {
+          id: 92,
+          commit_id: head,
+          state: p.event === "APPROVE" && ci === undefined ? "APPROVED" : "COMMENTED",
+        },
+      }),
+    );
     at(4);
     await worker().tick();
     expect(post).toHaveBeenCalledTimes(1);
-    const asked = post.mock.calls[0]![1] as PostingJob["payload"];
-    expect(asked).toMatchObject({ commit_id: head, event: "COMMENT" });
+    const [, asked, , carried] = post.mock.calls[0]! as [
+      number,
+      PostingJob["payload"],
+      string,
+      string,
+    ];
+    expect(asked).toMatchObject({ commit_id: head, event: "APPROVE" });
     expect(asked.body).toContain(postingMarker(key));
-    expect(asked.body).toMatch(/Approval is withheld because CI is not green/);
+    expect(carried).toBe("red");
     const receipt = readPostingReceipt(dir, 12, 1) as PostingReceipt;
     expect(receipt).toMatchObject({
       status: "confirmed",
@@ -497,17 +504,17 @@ describe("a deferred APPROVE and its CI pre-check", () => {
       { name: "ci", source: "check_run", status: "in_progress", conclusion: null },
     ]);
     await withApprovalCiPrecheck({ listChecks, enabled: true }, 12, payload, post);
-    expect(post.mock.calls[0]![0]).toMatchObject({ event: "COMMENT" });
+    expect(post.mock.calls[0]).toEqual([payload, "pending"]);
     listChecks.mockResolvedValue([]);
     await withApprovalCiPrecheck({ listChecks, enabled: true }, 12, payload, post);
-    expect(post.mock.calls[1]![0]).toMatchObject({ event: "APPROVE" });
+    expect(post.mock.calls[1]).toEqual([payload]);
     await withApprovalCiPrecheck(
       { listChecks, enabled: true, noChecksIsRed: true },
       12,
       payload,
       post,
     );
-    expect(post.mock.calls[2]![0]).toMatchObject({ event: "COMMENT" });
+    expect(post.mock.calls[2]).toEqual([payload, "none"]);
   });
 
   it("a COMMENT, or an install that does not block approvals on CI, reads no checks", async () => {

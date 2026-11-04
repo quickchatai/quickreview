@@ -954,21 +954,24 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // Every daemon delivery of an APPROVE carries the CI pre-check: CI
       // that cannot be read holds the delivery (`pr-unreadable`, no POST,
       // retried), so an approval is never posted over unknown CI. CI that
-      // the pre-check reads red is carried forward: the delivery asks the
-      // gate for the COMMENT with the approval withheld (guard 4's shape),
-      // never relying on a second read there that fails open. The receipt
-      // says so (`delivered_by: daemon_retry`) and the verdict apply reads it
-      // as `approval_withheld`, so a red-CI approval never loops on a refusal.
+      // the pre-check reads red is carried forward: the APPROVE goes to the
+      // gate with that state (`approvalCiWithheld`), and guard 4 withholds it
+      // without a second read there that fails open. The receipt says so
+      // (`delivered_by: daemon_retry`) and the verdict apply reads it as
+      // `approval_withheld`, so a red-CI approval never loops on a refusal.
       createReview: (pr, payload) =>
-        withApprovalCiPrecheck(approvalPrecheck, pr, payload, (asked) =>
-          adapter.createReview(pr, asked),
+        withApprovalCiPrecheck(approvalPrecheck, pr, payload, (asked, ci) =>
+          adapter.createReview(pr, asked, ci ? { approvalCiWithheld: ci } : undefined),
         ),
       listReviewsFull: (pr) => adapter.listReviewsFull(pr),
       // The deferred-posting retry: through the gate, whose guards bind as
       // on any review; only guard 5 is exempt, via `postingRetry`.
       createDeferredReview: (pr, payload, postingKey) =>
-        withApprovalCiPrecheck(approvalPrecheck, pr, payload, (asked) =>
-          adapter.createReview(pr, asked, { postingRetry: postingKey }),
+        withApprovalCiPrecheck(approvalPrecheck, pr, payload, (asked, ci) =>
+          adapter.createReview(pr, asked, {
+            postingRetry: postingKey,
+            ...(ci ? { approvalCiWithheld: ci } : {}),
+          }),
         ),
     },
     hooks: botHost,

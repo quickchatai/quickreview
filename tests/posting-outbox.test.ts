@@ -346,13 +346,14 @@ describe("an ordinary APPROVE delivery and its CI pre-check", () => {
     save();
     listChecks.mockReset();
     gatePost.mockReset();
-    // The gate answers with what it was asked for.
-    gatePost.mockImplementation(async (p: PostingJob["payload"]) => ({
+    // The gate answers as guard 4 does: an approval carrying a CI state that
+    // is not green is withheld, as a COMMENT.
+    gatePost.mockImplementation(async (p: PostingJob["payload"], ci?: string) => ({
       executed: true,
       response: {
         id: 78,
         commit_id: head,
-        state: p.event === "APPROVE" ? "APPROVED" : "COMMENTED",
+        state: p.event === "APPROVE" && ci === undefined ? "APPROVED" : "COMMENTED",
       },
     }));
     createReview.mockImplementation((pr: number, payload: PostingJob["payload"]) =>
@@ -360,17 +361,18 @@ describe("an ordinary APPROVE delivery and its CI pre-check", () => {
     );
   });
 
-  // MUTATION: post the original payload when the pre-check reads red — this fails.
-  it("red CI the pre-check saw posts the withheld COMMENT, confirmed as a withheld approval", async () => {
+  // The approval goes to the gate AS an approval (guard 2's exemption holds)
+  // with the red state carried, so guard 4 withholds it with no read of its own.
+  // MUTATION: post the payload without the carried state when the pre-check reads red — this fails.
+  it("red CI the pre-check saw is carried to the gate, confirmed as a withheld approval", async () => {
     listChecks.mockResolvedValue([
       { name: "ci", source: "check_run", status: "completed", conclusion: "failure" },
     ]);
     await worker().tick();
     expect(gatePost).toHaveBeenCalledTimes(1);
-    const asked = gatePost.mock.calls[0]![0] as PostingJob["payload"];
-    expect(asked.event).toBe("COMMENT");
-    expect(asked.body).toContain(postingMarker(key));
-    expect(asked.body).toMatch(/Approval is withheld because CI is not green/);
+    const [asked, carried] = gatePost.mock.calls[0]! as [PostingJob["payload"], string];
+    expect(asked).toEqual(job.payload);
+    expect(carried).toBe("red");
     const receipt = readPostingReceipt(dir, 12, 1) as PostingReceipt;
     expect(receipt).toMatchObject({
       status: "confirmed",
@@ -386,7 +388,7 @@ describe("an ordinary APPROVE delivery and its CI pre-check", () => {
       { name: "ci", source: "check_run", status: "completed", conclusion: "success" },
     ]);
     await worker().tick();
-    expect(gatePost).toHaveBeenCalledWith(expect.objectContaining({ event: "APPROVE" }));
+    expect(gatePost.mock.calls[0]).toEqual([expect.objectContaining({ event: "APPROVE" })]);
     expect(readPostingReceipt(dir, 12, 1)).toMatchObject({ actual_event: "APPROVE" });
   });
 

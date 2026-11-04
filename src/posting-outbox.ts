@@ -18,10 +18,9 @@ import { join } from "node:path";
 import {
   ciBlocksApproval,
   classifyCi,
-  withholdApproval,
   type CheckSummary,
 } from "@quickchatai/pi-quickreview/src/cigate.js";
-import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
+import type { GateResult, MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import {
   classifyGitHubFailure,
   type GitHubFailure,
@@ -215,12 +214,15 @@ export function deliverablePosting(
  *    POST sent, GitHub's requested wait carried along, so the delivery is
  *    retried later and an APPROVE is never posted over CI nobody could read;
  *  - CI is not green (red, pending, or none where that counts as red): the
- *    delivery asks the gate for the COMMENT with the approval withheld —
- *    the shape guard 4's softening gives — so a red CI this read SAW is never
- *    lost to a second read on the gate that fails open. Never a block, so a
- *    red-CI approval cannot loop on a refusal; the outbox's confirmation and
- *    the verdict apply read it as the withheld approval (`daemon_retry`,
- *    `approval_withheld`) exactly as they read guard 4's;
+ *    APPROVE goes to the gate as asked, carrying the state this read saw
+ *    (`approvalCiWithheld`), and guard 4 withholds the approval on it with no
+ *    read of its own — so a red CI this read SAW is never lost to a second
+ *    read that fails open, and every guard reads the approval as an approval
+ *    (guard 2's unchanged-head exemption, guard 4's withheld mark). Never a
+ *    block, so a red-CI approval cannot loop on a refusal; the outbox's
+ *    confirmation and the verdict apply read the COMMENT as the withheld
+ *    approval (`daemon_retry`, `approval_withheld`), as for any guard 4
+ *    softening;
  *  - CI is green: the APPROVE goes to the gate as asked.
  */
 export async function withApprovalCiPrecheck(
@@ -235,7 +237,10 @@ export async function withApprovalCiPrecheck(
   },
   pr: number,
   payload: PostingJob["payload"],
-  post: (payload: PostingJob["payload"]) => Promise<GateResult>,
+  post: (
+    payload: PostingJob["payload"],
+    approvalCiWithheld?: MutationIntent["approvalCiWithheld"],
+  ) => Promise<GateResult>,
 ): Promise<DeliveryResult> {
   if (payload.event !== "APPROVE" || !o.enabled) return post(payload);
   const at = payload.commit_id.slice(0, 7);
@@ -253,10 +258,9 @@ export async function withApprovalCiPrecheck(
       ...(f.retryAfterMs !== undefined ? { retryAfterMs: f.retryAfterMs } : {}),
     };
   }
-  if (ciBlocksApproval(ci, { noChecksIsRed: o.noChecksIsRed === true })) {
-    o.log?.(`#${pr}: approval delivery withheld — CI ${ci} at ${at}; posting the COMMENT`);
-    const softened = withholdApproval(payload, ci, payload.commit_id);
-    return post({ ...payload, event: "COMMENT", body: softened.body ?? payload.body });
+  if (ci !== "green" && ciBlocksApproval(ci, { noChecksIsRed: o.noChecksIsRed === true })) {
+    o.log?.(`#${pr}: approval delivery withheld — CI ${ci} at ${at}; guard 4 posts the COMMENT`);
+    return post(payload, ci);
   }
   return post(payload);
 }
