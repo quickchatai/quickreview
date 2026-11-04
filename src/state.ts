@@ -6474,9 +6474,7 @@ export class StateStore {
 
   /** The owed question is answered (asked, or nothing left to ask). */
   settleBaseRecheck(pr: number, after: string): void {
-    this.db
-      .prepare("DELETE FROM owed_base_rechecks WHERE pr = ? AND after_sha = ?")
-      .run(pr, after);
+    this.db.prepare("DELETE FROM owed_base_rechecks WHERE pr = ? AND after_sha = ?").run(pr, after);
   }
 
   /** The receipt guard's read (docs/archiving.md §8.1): the PR's
@@ -6627,9 +6625,8 @@ export class StateStore {
   deferWebhookDelivery(guid: string, error: string, now: number): number {
     return this.db
       .transaction(() => {
-        const row = this.db
-          .prepare("SELECT attempts FROM webhook_inbox WHERE guid=?")
-          .get(guid) as { attempts: number } | undefined;
+        const row = this.db.prepare("SELECT attempts FROM webhook_inbox WHERE guid=?").get(guid) as
+          { attempts: number } | undefined;
         if (!row) return 0;
         const attempts = row.attempts + 1;
         this.db
