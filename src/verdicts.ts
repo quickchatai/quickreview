@@ -28,7 +28,7 @@ import {
   type SweepStatus,
 } from "@quickchatai/pi-quickreview/src/sweepstatus.js";
 import { jobPath, pendingPosting, readPostingJob } from "./posting-outbox.js";
-import { isProviderTransient } from "./providerfailure.js";
+import { isProviderTransient, isProviderTransientPassError } from "./providerfailure.js";
 
 export { sweepStatusOf, type SweepStatus };
 import {
@@ -4398,11 +4398,22 @@ export class VerdictWatcher {
       );
       return true;
     }
+    // Past the cap the gap is transient only when every missing pass failed,
+    // and failed on the provider (the connection, a rate limit, an overload):
+    // the same passes later succeed, so with nothing posted the incident
+    // waits on the automatic retry ladder. A pass that never ran, timed out
+    // or failed on anything else stays the operator's.
+    const providerGap =
+      gap.missing.length > 0 &&
+      gap.missing.every(
+        (m) => m.errors.length > 0 && m.errors.every((e) => isProviderTransientPassError(e)),
+      );
     await this.handleAnomaly(
       v.pr,
       v.round_no,
       `round ${v.round_no} is missing required pass(es) ${missing} and could not be self-requeued — cap exhausted or no running round; nothing was posted`,
       "overdue",
+      providerGap ? "provider_transient" : undefined,
     );
     return true;
   }

@@ -35,6 +35,13 @@ const TRANSPORT =
 export function providerFailureKind(error: string): ProviderFailureKind | undefined {
   const message = PROVIDER_FAILURE.exec(error)?.[1];
   if (message === undefined) return undefined;
+  return providerMessageKind(message);
+}
+
+/** What the provider's own error message says, unwrapped: a lens pass's
+ * recorded failure (its `errorMessage`, as round-progress keeps it) is the
+ * provider's words with no worker prefix. */
+export function providerMessageKind(message: string): ProviderFailureKind {
   const kind = modelErrorKind(message);
   if (kind !== "other") return kind;
   return TRANSPORT.test(message) ? "transport" : "other";
@@ -45,6 +52,17 @@ export function providerFailureKind(error: string): ProviderFailureKind | undefi
 export function isProviderTransient(error: string | null | undefined): boolean {
   if (!error) return false;
   const kind = providerFailureKind(error);
+  return kind === "transport" || kind === "rate_limited" || kind === "overloaded";
+}
+
+/** A lens pass's recorded failure is a transient provider failure: either
+ * the worker's wording of one, or the provider's bare message reading as the
+ * connection, a rate limit or an overload. A timeout, a crash or an empty
+ * error is not. */
+export function isProviderTransientPassError(error: string | null | undefined): boolean {
+  if (!error) return false;
+  if (isProviderTransient(error)) return true;
+  const kind = providerMessageKind(error);
   return kind === "transport" || kind === "rate_limited" || kind === "overloaded";
 }
 
