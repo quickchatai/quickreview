@@ -630,7 +630,9 @@ process `host` (`"127.0.0.1"` — loopback only, the port is never published),
 `queue_concurrency` (`2`); supervision `health_interval_s` (`30`),
 `health_timeout_ms` (`6000`; clamped 100…20000 —
 `/ready` runs an embedding), `restart_backoff_ms` (array,
-`[1000, 2000, 5000, 15000, 30000, 60000]`), `restart_reset_after_s` (`120`);
+`[1000, 2000, 5000, 15000, 30000, 60000]`), `restart_reset_after_s` (`120`),
+the liveness restart's `liveness_failures` (`3`; `0` switches it off),
+`liveness_span_s` (`90`) and `liveness_startup_grace_s` (`300`);
 embeddings `embedding_provider` (`"local"`), `embedding_model`
 (`"bge-small-en-v1.5-f16"` under local), `embedding_dimension` (`384` under
 local), `embedding_key_file`; the local English embedder

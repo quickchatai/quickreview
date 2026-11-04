@@ -392,6 +392,130 @@ describe("OpenVikingSupervisor", () => {
     expect(clock.fireLast()).toBe(1000); // ladder reset, not stuck at the ceiling
   });
 
+  // An exit-only supervisor never restarts a server that runs but no longer
+  // answers. The liveness restart: N failed /health probes over a minimum
+  // span stop the child, and its exit walks the usual ladder.
+  describe("the liveness restart", () => {
+    function live(over: Partial<OpenVikingConfig> = {}) {
+      let clockMs = 0;
+      let answering = true;
+      const clock = new FakeClock();
+      const children: FakeChild[] = [];
+      const lines: string[] = [];
+      const reported: string[] = [];
+      const sup = new OpenVikingSupervisor({
+        cfg: cfg({ restart_backoff_ms: [1000], ...over }),
+        log: (msg) => lines.push(msg),
+        spawn: () => {
+          const c = new FakeChild(2000 + children.length);
+          children.push(c);
+          return c;
+        },
+        exists: () => true,
+        schedule: clock.schedule,
+        now: () => new Date(clockMs),
+        fetchFn: async (url) => {
+          if (!answering) throw new Error("The operation was aborted due to timeout");
+          return url.endsWith("/health") ? jsonRes(200, { version: "0.4.15" }) : jsonRes(200, {});
+        },
+        onLivenessRestart: (detail) => reported.push(detail),
+      });
+      return {
+        sup,
+        clock,
+        children,
+        lines,
+        reported,
+        at: (ms: number) => (clockMs = ms),
+        answer: (on: boolean) => (answering = on),
+      };
+    }
+
+    // MUTATION: drop the `checkLiveness` call from poll — the hung child is
+    // never killed and `killed` stays empty.
+    it("stops a running server after 3 failed probes spanning 90 s, then restarts it on the ladder", async () => {
+      const h = live();
+      h.sup.start();
+      await h.sup.poll(); // answered once: it is serving
+      h.answer(false);
+      for (const t of [30_000, 60_000, 90_000]) {
+        h.at(t);
+        await h.sup.poll();
+      }
+      // 3 failures over 60 s: not yet.
+      expect(h.children[0]!.killed).toEqual([]);
+      h.at(120_000);
+      await h.sup.poll();
+      expect(h.children[0]!.killed).toEqual(["SIGTERM"]);
+      expect(h.reported).toHaveLength(1);
+      expect(h.reported[0]).toContain("failed 4 /health probes over 90s");
+      expect(h.lines.some((l) => l.includes("liveness restart"))).toBe(true);
+      expect(h.sup.status().liveness_restarts).toBe(1);
+      // The exit walks the ordinary ladder and a new child comes up.
+      expect(h.clock.fireLast()).toBe(1000);
+      expect(h.children).toHaveLength(2);
+    });
+
+    it("a probe that answers resets the count", async () => {
+      const h = live();
+      h.sup.start();
+      await h.sup.poll();
+      h.answer(false);
+      h.at(30_000);
+      await h.sup.poll();
+      h.at(60_000);
+      await h.sup.poll();
+      h.answer(true);
+      h.at(90_000);
+      await h.sup.poll();
+      h.answer(false);
+      h.at(120_000);
+      await h.sup.poll();
+      h.at(150_000);
+      await h.sup.poll();
+      expect(h.children[0]!.killed).toEqual([]);
+      expect(h.reported).toEqual([]);
+    });
+
+    it("a server still starting is not judged until it answered once or the grace passed", async () => {
+      const h = live({ liveness_startup_grace_s: 300 });
+      h.answer(false);
+      h.sup.start();
+      for (let t = 0; t < 300_000; t += 30_000) {
+        h.at(t);
+        await h.sup.poll();
+      }
+      expect(h.children[0]!.killed).toEqual([]);
+      for (const t of [300_000, 330_000, 360_000, 390_000]) {
+        h.at(t);
+        await h.sup.poll();
+      }
+      expect(h.children[0]!.killed).toEqual(["SIGTERM"]);
+    });
+
+    it("0 failures switches it off, and a remote endpoint is never restarted", async () => {
+      const off = live({ liveness_failures: 0 });
+      off.sup.start();
+      await off.sup.poll();
+      off.answer(false);
+      for (let t = 30_000; t <= 600_000; t += 30_000) {
+        off.at(t);
+        await off.sup.poll();
+      }
+      expect(off.children[0]!.killed).toEqual([]);
+
+      const remote = live({ endpoint: "remote" });
+      remote.sup.start();
+      remote.answer(false);
+      for (let t = 30_000; t <= 600_000; t += 30_000) {
+        remote.at(t);
+        await remote.sup.poll();
+      }
+      expect(remote.children).toHaveLength(0);
+      expect(remote.reported).toEqual([]);
+    });
+  });
+
   it("caches the last health sample — status() is synchronous and never awaits", async () => {
     const h = harness(
       {},
