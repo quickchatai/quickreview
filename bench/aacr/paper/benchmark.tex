@@ -2737,7 +2737,12 @@ Sonnet 4.5, GPT-5.2) and none of them is the model our runs use, so the same
 judge re-scores the \emph{published} comments of three published tools
 (cubic-v2 and qodo-extended-v2, first and second on the Core leaderboard, and
 Claude Code) on the same PRs, byte for byte from Martian's committed data; no
-third-party tool was run. On ten PRs the re-judge of identical comments moves
+third-party tool was run. The judge runs at low reasoning effort and medium
+verbosity through the ChatGPT Codex backend (\code{bench/aacr/ext/ext\_judge.py}),
+which rejects a sampling temperature, so the bridge drops the temperature 0
+Martian's client sends (and, on one smoke, some requests'
+\code{max\_completion\_tokens}); the same model also extracts and merges the
+candidates (steps 2 and 2.5). On ten PRs the re-judge of identical comments moves
 by up to 4.3 F1 points from one pass to the next, sits 0.9--6.3 F1 points
 below the published Opus 4.5 scores of the same comments, and keeps their
 order. The other tools appear with Martian's published Opus 4.5
@@ -3318,7 +3323,8 @@ Sections~\ref{sec:martianstrong} and~\ref{sec:martianblocking}.
 
 \paragraph{Data.} The case sets, the converter and the scoring wrapper
 ship in \code{bench/aacr/ext/}, with the full golden audit's per-comment
-verdicts in \code{ext/martian-tuning/golden-audit-full.json}; the figures of
+verdicts in \code{ext/martian-tuning/golden-audit-full.json} and its
+investigators' prompt beside them (\code{golden-audit-prompt.md}); the figures of
 this section are drawn by \code{bench/aacr/martian\_figs.py} from
 \code{charts/martian-data.json}. The analysis notes behind this section
 (method and deviations, the posting-policy leaderboard, the golden mining, the
@@ -3349,7 +3355,9 @@ its frozen build (Section~\ref{sec:finalbuild}), \code{default}, on
 gpt-6.1-sol, offline; nothing was posted. The nine vendors' inline review
 comments were read with anonymous public API calls; they are the vendors'
 January 2026 runs at default settings. The judge (gpt-6.1-sol at low
-reasoning) receives, per PR and tool, the PR's issues and the tool's inline
+reasoning effort and medium verbosity, through the same bridge as on
+Martian, which drops the request's temperature 0) receives, per PR and
+tool, the PR's issues and the tool's inline
 comments and returns which comment states which issue, one to one; code then
 checks location. The primary rule counts a match when the comment is on the
 issue's file and its lines overlap the issue's within five lines; ``same

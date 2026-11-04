@@ -580,6 +580,13 @@ the scoring is on record, not hidden. Its script is in the session transcript.
   the builds that produced the runs (`2d2036f`, `1ad710b`) and HEAD. The one
   later change in `defects.ts` is `reviewForJudge`, which reads the Claude Code
   arm's prose-parsed view (§6.5) instead of its empty structured file.
+- **Rebuilt from the dataset:** `reviewForJudge` changed again after the
+  judging: `c4c07764b` drops a `[check this]` prefix, so today's code renders
+  a few published reviews differently (a later deleted-line de-duplication
+  needs a file the published runs never wrote). The public main's code from `34164fe0e` to `839e26454` builds exactly the
+  prompts behind the published verdicts, and
+  `bench/aacr/recompute/judge_prompt.py` prints the one for any arm and PR
+  from the dataset's tables.
 - **Run on two model families:** this same prompt, byte for byte, was also run
   on `claude-opus-5-5` (Anthropic) over the same 1,295 reviews, with verdicts
   stored apart under `v<defect-set version>-claude-opus-5-5`. The two judges

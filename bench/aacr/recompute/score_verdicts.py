@@ -2,7 +2,7 @@
 """Score another judge's AACR verdicts on QuickReview's published reviews, beside ours.
 
     python3 bench/aacr/recompute/score_verdicts.py --data <hf-dataset> --verdicts DIR --judge LABEL
-        [--arms a,b,...] [--json OUT]
+        [--arms a,b,...] [--select SEL] [--json OUT]
 
 (`uv run --no-project --with pyarrow python ...` when the tables are parquet.) No model call.
 
@@ -26,6 +26,10 @@ graded and the share graded correct (correct-valuable or correct-minor, the
 papers' precision) or incorrect; and the two judges' agreement from
 claim_metrics.Judges: on every key defect of the reviews both judged (no row =
 missed; percent and Cohen's kappa) and on the comments both graded.
+--select narrows the PRs as a claim's key does (claim_metrics.Aacr's SEL, `&`-joined):
+`arm=copilot-2025-upstream` scores the 19 PRs of tab:copilot2025, `set=holdout10+fresh10`
+the held-out sets. Without it every PR of the arm counts, and a PR your judge
+did not judge counts as missed.
 `aacr_bootstrap.py --verdicts DIR --judge LABEL` gives the intervals and
 `heldout.py --verdicts DIR --judge LABEL --fixed-set` the held-out PRs.
 """
@@ -117,14 +121,15 @@ class WithJudge(cm.Tables):
         self.judged = judged
 
 
-def score(tables: WithJudge, judge: str, arms: Sequence[str]) -> Dict[str, dict]:
+def score(tables: WithJudge, judge: str, arms: Sequence[str], select: str = "") -> Dict[str, dict]:
     aacr, judges = cm.Aacr(tables), cm.Judges(tables)
+    sel = f"~{select}" if select else ""
     out = {}
     for arm in arms:
         ref = aacr.judge_of(arm)
         row: Dict[str, dict] = {"reference_judge": ref, "reviews": sum(1 for a, _ in tables.judged if a == arm)}
         for j in (judge, ref):
-            row[j] = {m: aacr.value(f"{arm}@{j}:{m}") for m, _ in METRICS}
+            row[j] = {m: aacr.value(f"{arm}@{j}{sel}:{m}") for m, _ in METRICS}
         agree: Dict[str, Optional[float]] = {}
         for m, _ in AGREEMENT:
             try:
@@ -164,6 +169,8 @@ def main() -> None:
     ap.add_argument("--verdicts", required=True, help="the dir holding your judge's defect_verdicts (and comment_verdicts)")
     ap.add_argument("--judge", required=True, help="your judge's label (one no published row carries)")
     ap.add_argument("--arms", help="arm ids, comma-separated (default: every arm your judge judged)")
+    ap.add_argument("--select", default="", help="the PRs to score, a claim_metrics.Aacr selector "
+                    "(arm=copilot-2025-upstream, set=a+b, pr=<id>; default: every PR of the arm)")
     ap.add_argument("--json", help="also write every number to this JSON file")
     a = ap.parse_args()
     if not has_table(a.verdicts, "defect_verdicts"):
@@ -174,11 +181,11 @@ def main() -> None:
     missing = [x for x in arms if x not in have]
     if missing:
         sys.exit(f"no {a.judge} verdicts for arm(s) {missing}")
-    res = score(t, a.judge, arms)
+    res = score(t, a.judge, arms, a.select)
     print(render(res, a.judge))
     if a.json:
         with open(a.json, "w") as f:
-            json.dump({"judge": a.judge, "arms": res}, f, indent=1)
+            json.dump({"judge": a.judge, "select": a.select or "all", "arms": res}, f, indent=1)
 
 
 if __name__ == "__main__":

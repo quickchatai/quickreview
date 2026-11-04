@@ -26,7 +26,9 @@ given as `<name>.jsonl`, which is how the tests feed small fixtures.
 | Where the low preset's lost credit went; the default's killed or withheld findings stating a defect it missed, and the recall bound | quickreview.tex §"The validator removes little", §"What the compute buys" | `../relabel/lost_credit.py --archive <archive> --data <hf-dataset> --compute` | archive `analysis/relabel/lost_credit.labels.jsonl` (+ prompt), `findings-record.json`; HF `defects`, `reviews`, `defect_verdicts` |
 | pi-review's panel read with confirmed findings only | quickreview.tex §"What the vote does", tab:panel40 | `panel_confirmed.py --archive <archive> --data <hf-dataset>` | archive `pireview-meta.json`; HF `defect_verdicts`, `comment_verdicts` |
 | The missed-defect analysis behind the levers | quickreview.tex appendix "Tuning" | `missed_defects.py --archive <archive> --data <hf-dataset>` | archive `analysis/2026-09-26-missed-defects/miss-G*.json` |
-| Copilot's harvested 2025 reviews | benchmark.tex §"Copilot 2025, harvested" | `copilot_harvest.py --archive <archive> --data <hf-dataset>` | archive `runs/upstream-copilot2025-*/cases/` |
+| Copilot's harvested 2025 reviews: the PRs, the findings by source, the earlier-push lines kept | benchmark.tex §"Copilot 2025, harvested" | `copilot_harvest.py --archive <archive> --data <hf-dataset>` | archive `runs/upstream-copilot2025-*/cases/` |
+| The Copilot 2025 table: every arm on the 19 PRs Copilot reviewed | benchmark.tex tab:copilot2025 | `../final/score.sh` (its tab:copilot2025 call: `compare.py --cases "$(cat final/copilot19.txt)" --exclude-refs bot_references.json`, the arms in `final/arms-copilot2025.txt`) on the slim bundle; from the tables, `claim_metrics.py`'s `aacr` keys with `~arm=copilot-2025-upstream` | slim `runs/`; HF `reviews`, `defect_verdicts`, `comment_verdicts`, `aacr_matches` |
+| What a judge was given where it differs from what was posted: AACR comments listed twice, Qodo's deleted-line comments per build, the Martian posting policies that shorten text, SWE-PRBench's judged answers; the Qodo judge's double pass | the dataset card, METHODOLOGY.md §6, benchmark.tex §"External check: Qodo's PR-Review-Bench" | `judged_inputs.py --archive <archive> --data <hf-dataset>` | HF `reviews`; archive `runs/{final1,ext-r6}-qodo-pr100/`, `<run>.qodo/judgements.jsonl`, `runs/*/VARIANT.json`, `runs/ext-r5-sweprbench-eval100*/` |
 | The 2026-10-13 GLM smoke's lens timeouts | `docs/DIGITALOCEAN.md` | `smoke_lenses.py --archive <archive>` | archive `open-models/runs/glm53-smoke-7879ddc5-glm-*` |
 | Martian's published Opus 4.5 judgements against the golden audit | benchmark.tex tab:martianaudit (right block) | `martian_published.py --martian <checkout> --data <hf-dataset>` | third-party: Martian's repository at e616e84 (`--martian`); HF `martian_goldens` |
 
@@ -48,12 +50,17 @@ the published ones (`.parquet` or `.jsonl`, no `judge` column needed); LABEL
 is a name no published row carries. Each script's docstring gives the columns
 and what it refuses.
 
-    score_verdicts.py --data <hf-dataset> --verdicts DIR --judge LABEL [--arms a,b]   # AACR: recall, precision, agreement
+    score_verdicts.py --data <hf-dataset> --verdicts DIR --judge LABEL [--arms a,b] [--select SEL]   # AACR: recall, precision, agreement
     aacr_bootstrap.py --data <hf-dataset> --verdicts DIR --judge LABEL [--arms a,b]   # AACR intervals
     qodo_scores.py --data <hf-dataset> --verdicts DIR --judge LABEL [--runs WORK|TOOL,...]
     martian_scores.py --data <hf-dataset> --verdicts DIR --judge LABEL [--runs WORK|TOOL,...] [--half martian-test30]
     heldout.py --data <hf-dataset> --fixed-set --verdicts DIR --judge LABEL   # the committed held-out sets
     judge_prompt.py --data <hf-dataset> --arm ARM --pr IID [--answer-key <unpacked archive>]   # our AACR judge's prompt
+
+`--select` takes a claim key's PR selector: `arm=copilot-2025-upstream` scores
+the Copilot 2025 table's PRs, `set=holdout10+fresh10` two sets. Without it every
+PR of the arm counts, and one your judge did not judge counts as missed.
+`judge_prompt.py --all --out-dir DIR` writes every prompt of an arm.
 
 `martian_scores.py --data <hf-dataset>` alone recomputes our judge's 196
 stored Martian scores from the verdict tables and fails on any difference.

@@ -30,7 +30,7 @@ PUBLISHED = [
     ("Mistral Small", 0.131, 0.080, 0.091, 0.106, 0.257, 0.251),
     ("Llama 3.3 70B", 0.088, 0.071, 0.065, 0.079, 0.223, 0.417),
 ]
-PRICE = {"in": 2.0, "cached": 0.10, "out": 10.0}  # gpt-6.1-sol list $/M (FULL-BENCHMARK.md)
+PRICE = {"in": 2.0, "cached": 0.10, "out": 10.0}  # gpt-6.1-sol list $/M (compare.py's CODEX_RATES)
 
 
 def set_label(work: Path, set_name: str | None = None) -> str:

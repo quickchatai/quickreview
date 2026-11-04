@@ -31,7 +31,12 @@
 //  11. copilot_harvest, smoke_lenses, martian_published: an earlier push's line is
 //      kept only when the harvest mapped it; a lens's timeout is read from its
 //      error class; a published credit naming no listed golden is left out.
-//  12. relabel: the two labelling passes' unit tests (bench/aacr/relabel/test_relabel.py)
+//  12. judged_inputs: a deleted-line comment counts as listed twice only beside a
+//      new-side copy of the same text; a Qodo deleted-line comment is judged or left
+//      out by whether the judge was sent its body; a posting-policy run shortens text
+//      only in a title style; a SWE-PRBench PR differs when its bodies differ; the
+//      double pass counts only the reviews judged twice.
+//  13. relabel: the two labelling passes' unit tests (bench/aacr/relabel/test_relabel.py)
 //      run under python3, and every committed label row names the model that wrote
 //      it and the sha256 of the committed prompt it was asked with.
 
@@ -672,6 +677,122 @@ describe("copilot_harvest, smoke_lenses, martian_published", () => {
       join(tmp, "martian-src"),
     );
     expect(r).toEqual([{ tool: 1 }, 2, 1, 50, 1]);
+  });
+});
+
+describe("judged_inputs", () => {
+  // MUTATION: count every deleted-line comment in aacr_double (drop the same-text new-side twin test) — this fails
+  // MUTATION: count a Qodo deleted-line comment as judged whatever the judge was sent (drop the body test) — this fails
+  // MUTATION: count every posting-policy run as shortened (drop the SHORT_STYLES test) — this fails
+  // MUTATION: compare a SWE-PRBench PR's comment counts instead of its bodies — this fails
+  // MUTATION: count a review the judge answered once in the double pass (drop the 1-and-2 test) — this fails
+  it("counts what each judge was given where it differs from the post, and the double pass", () => {
+    const root = join(tmp, "judged-inputs");
+    const sets = join(root, "sets");
+    const runs = join(root, "runs");
+    write(join(sets, "qodo-pr100.json"), {
+      cases: [
+        { instance_id: "Q1", pr_url: "u1" },
+        { instance_id: "Q2", pr_url: "u2" },
+      ],
+    });
+    write(join(sets, "qodo-heldout31.json"), { cases: [{ pr_url: "u2" }] });
+    const sent = (pr: string, bodies: string[]) => ({
+      pr,
+      tool: "quickreview",
+      pass: 1,
+      comments: bodies.map((body) => ({ body })),
+      matches: [],
+    });
+    // the frozen build: Q1's deleted-line comment "l" was sent (re-anchored); the
+    // 2026-10-02 build: Q2's "m" was not; a vendor row sending "m" does not count
+    write(join(runs, "final1-qodo-pr100", "cases", "Q1", "comments.json"), [
+      { side: "LEFT", body: "l" },
+      { side: "RIGHT", body: "r" },
+    ]);
+    jsonl(join(runs, "final1-qodo-pr100.qodo", "judgements.jsonl"), [sent("u1", ["l", "r"])]);
+    write(join(runs, "ext-r6-qodo-pr100", "cases", "Q2", "comments.json"), [
+      { side: "LEFT", body: "m" },
+    ]);
+    jsonl(join(runs, "ext-r6-qodo-pr100.qodo", "judgements.jsonl"), [
+      sent("u2", []),
+      { ...sent("u2", ["m"]), tool: "vendor" },
+    ]);
+    write(join(runs, "mv-a", "VARIANT.json"), { policy: { style: "title+1" } });
+    write(join(runs, "mv-b", "VARIANT.json"), { policy: { style: "full" } });
+    write(join(runs, "mv-c", "VARIANT.json"), { policy: {} });
+    // SWE-PRBench: S1's answer adds a body the post lacks; S2's has the same count but another body; S3 is equal
+    write(join(runs, "ext-r5-sweprbench-eval100.sweprbench", "quickreview-answers.json"), {
+      k1: { instance_id: "S1", comments: [{ body: "a" }, { body: "b" }] },
+      k2: { instance_id: "S2", comments: [{ body: "c" }] },
+      k3: { instance_id: "S3", comments: [{ body: "e" }] },
+    });
+    for (const [id, bodies] of [
+      ["S1", ["a"]],
+      ["S2", ["d"]],
+      ["S3", ["e"]],
+    ] as const)
+      write(
+        join(runs, "ext-r5-sweprbench-eval100", "cases", id, "comments.json"),
+        bodies.map((body) => ({ body })),
+      );
+    const judged = (pr: string, tool: string, pass: number, m: [number, number][]) => ({
+      pr,
+      tool,
+      pass,
+      matches: m.map(([comment, issue]) => ({ comment, issue })),
+    });
+    jsonl(join(runs, "ext-r6-qodo-smoke10.qodo", "judgements.jsonl"), [
+      judged("u1", "t", 1, [
+        [0, 1],
+        [1, 2],
+      ]),
+      judged("u1", "t", 2, [[0, 1]]),
+      judged("u1", "once", 1, [[0, 0]]),
+    ]);
+    const reviews = [
+      {
+        arm_id: "A",
+        comments: [
+          { id: "C1", deleted_line: false, text: "t" },
+          { id: "C2", deleted_line: true, text: "t" },
+          { id: "C3", deleted_line: true, text: "u" },
+        ],
+      },
+    ];
+    const r = py(
+      "import judged_inputs as J, pathlib\n" +
+        "print(json.dumps(J.compute(pathlib.Path(sys.argv[1]), json.loads(sys.argv[3]), pathlib.Path(sys.argv[2]))))",
+      root,
+      sets,
+      JSON.stringify(reviews),
+    ) as Record<string, unknown>;
+    expect(r.aacr_double).toEqual({ A: 1 });
+    expect(r.qodo_left).toEqual({
+      "final1-qodo-pr100": {
+        left: 1,
+        judged: 1,
+        judged_heldout: 0,
+        left_out: 0,
+        left_out_heldout: 0,
+      },
+      "ext-r6-qodo-pr100": {
+        left: 1,
+        judged: 0,
+        judged_heldout: 0,
+        left_out: 1,
+        left_out_heldout: 1,
+      },
+    });
+    expect(r.martian_variants).toMatchObject({ runs: 3, shortened: 1 });
+    expect(r.sweprbench).toEqual({ prs: 3, judged_ne_posted: 2, added: 2, dropped: 1 });
+    expect(r.qodo_double_pass).toEqual({
+      run: "ext-r6-qodo-smoke10",
+      reviews: 1,
+      pass1: 2,
+      pass2: 1,
+      both: 1,
+    });
   });
 });
 

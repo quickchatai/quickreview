@@ -53,11 +53,14 @@ summary carries `bench_cost_usd` instead — the same number, computed from the
 full event stream by `compare.py`'s own `usd_and_minutes` when the bundle was
 cut (null = unpriced) — so both re-score to the same cent. Still keyless and offline once the image exists:
 `bench.sh build`, then `bench.sh judge-report` / `results` / `report` (all
-`--network none`).
+`--network none`). With the dataset's tables alone, no bundle and no docker,
+[`verify_claims.py`](recompute/README.md#every-published-number-the-claims-manifest)
+`--data <dataset> --partial` recomputes every published number they hold.
 
-**Tier 2 — re-judge the saved reviews.** Take the full run archive (each case
-also carries `comments.json`, `findings-record.json` and `review.md`, what the
-judge reads), `bench.sh build`, `bench.sh prefetch --set <set>` (anonymous
+**Tier 2 — re-judge the saved reviews.** Take the full run archive (the
+judge reads each case's `results/all/<id>.json`, the deleted-line comments in
+`comments.json`, the verdict in `case-summary.json` and the body in
+`review.md`), `bench.sh build`, `bench.sh prefetch --set <set>` (anonymous
 github.com clones into a docker volume), and a model credential:
 
 ```sh
@@ -72,6 +75,9 @@ On your own key the verdicts land under a label of their own
 re-judge never mixes with — or `--resume`s over — the published verdicts.
 AACR-Bench's own metric takes any OpenAI-compatible endpoint the same way:
 `bench.sh eval --judge openai` with `bench/aacr/judge.env` (below).
+
+To judge the published reviews with a judge of your own, without our
+harness, see "Re-judge with your own judge" below.
 
 **Tier 3 — a full re-run.** Build each arm's image (`bench.sh build --arm
 <arm>`), prefetch, review every set with `arm.sh` (`final/run-selection.sh` and
@@ -113,6 +119,55 @@ The published runs' `qcr_commit` values are remapped to public main commits
 (the dataset card's `runs` table describes `qcr_commit_on_public_main`,
 `qcr_commit_match` and `qcr_commit_dirty`); a run you make records your own
 checkout's commit.
+
+## Re-judge with your own judge
+
+Every QuickReview review behind a published number is in the dataset's
+tables, so any judge can grade it. Write your judge's answers as tables
+shaped like ours (`.parquet` or `.jsonl` in a directory `DIR`, no `judge`
+column), pick a label no published row carries (`LABEL`), and run the scorer
+in [`recompute/`](recompute/README.md#another-judges-verdicts) (`uv run
+--no-project --with pyarrow python <script>`). It prints your judge's numbers
+beside ours on the same reviews; each script's docstring gives the columns.
+The dataset card's section of the same name says the same per benchmark.
+
+- **AACR-Bench.** Input: the arm's `reviews` rows (the comments `C1`, `C2`, …
+  as the judge read them; `raw_text` as posted). Answer key: the PR's
+  `defects`, and its `exclusions`, which our judge was also shown. Code: diff
+  `prs.merge_base..prs.head_commit`. Our judge's prompt: `judgePrompt()` in
+  `src/bench/defects.ts`; `judge_prompt.py --data D --arm ARM --pr ID`
+  prints the one it received. Output: `defect_verdicts` (and optionally
+  `comment_verdicts`). Score: `score_verdicts.py --data D --verdicts DIR
+  --judge LABEL`; `aacr_bootstrap.py` and `heldout.py --fixed-set` take the
+  same `--verdicts DIR --judge LABEL`.
+- **Martian.** Input: QuickReview's `martian_reviews` rows (the frozen build:
+  `final1-martian50`, `quickreview-frozen`), or the archive's
+  `runs/<run>.martian/results/benchmark_data.json`. Answer key:
+  `martian_goldens`. Our judge: Martian's own pipeline at `e616e84` on
+  GPT-6.1 Sol; [`ext/ext_judge.py`](ext/ext_judge.py)'s docstring runs it on
+  your model with no docker. Output: `martian_verdicts` and the per-PR `fp`
+  of `martian_reviews`. Score: `martian_scores.py --data D --verdicts DIR
+  --judge LABEL`.
+- **Qodo.** Input: `qodo_reviews` of `final1-qodo-pr100` / `quickreview-frozen`
+  or `ext-r6-qodo-pr100` / `quickreview-2026-10-02`, exactly what our judge
+  was sent. Answer key: `qodo_issues`. Our judge's prompt: `SYSTEM` in
+  [`ext/qodo_judge.py`](ext/qodo_judge.py). Output: `qodo_verdicts`. Score:
+  `qodo_scores.py --data D --verdicts DIR --judge LABEL`, which also scores
+  the held-out set, `sets/qodo-heldout31.json`.
+- **Copilot 2025.** Input: the arms of `tab:copilot2025` (the card maps each
+  row to its arm) on the PRs of `copilot-2025-upstream`
+  ([`final/copilot19.txt`](final/copilot19.txt)). Judge and output as for
+  AACR-Bench. Score: `score_verdicts.py ... --select
+  arm=copilot-2025-upstream`. Copilot's own text is link-only; the card says
+  how to restore it.
+- **Elo.** Input: the plan's run directory in the archive and the reviews it
+  pairs. Add your judge under the plan's `judges`, then `elo.py pack`,
+  `run --judge NAME` and `report` ([`elo/README.md`](elo/README.md)), or
+  refit with `recompute/elo_ratings.py`. Each judgment's `prompt_sha256`
+  checks the prompt.
+
+To re-run our own judge instead: Tier 2 above for AACR-Bench, and
+[`ext/ext.sh`](ext/ext.sh) with `EXT_JUDGE_MODEL` for Martian and Qodo.
 
 ## Results
 

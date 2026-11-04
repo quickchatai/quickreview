@@ -17,11 +17,13 @@
 //      UNRECORDED;
 //   5. do_speed: a reply counts (and is timed) only when a message follows it;
 //   6. the committed data behind the README: the Elo chart's file is what the
-//      README's alt text and prose say, and the held-out Qodo set is 31 PRs of
-//      qodo-pr100 in no validation set;
+//      README's alt text and prose say, the held-out Qodo set is 31 PRs of
+//      qodo-pr100 in no validation set, and final/score.sh prints tab:copilot2025
+//      on its 19 PRs from the arms the other tables use;
 //   7. another judge's verdicts: score_verdicts, qodo_scores, martian_scores and
 //      --judge on aacr_bootstrap and heldout score them beside ours and refuse
-//      what the release cannot place; elo_ratings rates the plan's judges;
+//      what the release cannot place; score_verdicts --select scores only the PRs
+//      a claim's selector names; elo_ratings rates the plan's judges;
 //   8. judge_prompt equals defects.ts judgePrompt() on the same inputs.
 
 import { afterAll, describe, expect, it } from "vitest";
@@ -503,6 +505,68 @@ describe("the committed data behind the README", () => {
     expect(README).toContain(`in ${w} of ${w + t + l} verdicts`);
   });
 
+  // MUTATION: drop the tab:copilot2025 call from bench/aacr/final/score.sh — this fails
+  // MUTATION: drop its --exclude-refs (the table's AACR columns are the bot-reference-free ones) — this fails
+  // MUTATION: give a row of final/arms-copilot2025.txt other runs than the same arm in arms.txt or arms-gpt6sol.txt — this fails
+  it("final/score.sh prints tab:copilot2025: its 19 PRs, bot references removed, the arms the other tables use", () => {
+    const FINAL_DIR = join(ROOT, "bench", "aacr", "final");
+    const bin = join(tmp, "score-bin");
+    const log = join(tmp, "score-uv.log");
+    mkdirSync(bin, { recursive: true });
+    // a stand-in uv: one line per call, its arguments joined by a tab
+    writeFileSync(
+      join(bin, "uv"),
+      `#!/bin/sh
+(IFS='	'; printf '%s\n' "$*") >> "${log}"
+`,
+      {
+        mode: 0o755,
+      },
+    );
+    writeFileSync(log, "");
+    execFileSync(join(FINAL_DIR, "score.sh"), [], {
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        QCR_BENCH_RUNS_DIR: tmp,
+        QCR_CHARTS_OUT: join(tmp, "score-charts"),
+      },
+    });
+    const cases = readFileSync(join(FINAL_DIR, "copilot19.txt"), "utf8").trim();
+    const calls = readFileSync(log, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => l.split("\t"));
+    const call = calls.find((c) => c[3] === cases);
+    expect(call, "a compare.py call on copilot19.txt").toBeDefined();
+    expect(call!.slice(0, 3)).toEqual(["run", `${FINAL_DIR}/../compare.py`, "--cases"]);
+    expect(call!.slice(4, 6)).toEqual(["--exclude-refs", `${FINAL_DIR}/../bot_references.json`]);
+    const lines = (name: string): string[] =>
+      readFileSync(join(FINAL_DIR, name), "utf8").split("\n").filter(Boolean);
+    const rows = lines("arms-copilot2025.txt");
+    expect(call!.slice(6)).toEqual(rows);
+    const ids = cases.split("+").flatMap((g) => g.split(":")[1]!.split(","));
+    expect(ids).toHaveLength(19);
+    expect(new Set(ids).size).toBe(19);
+    // Each QuickReview and comparator row is the arm another table prints under the same runs.
+    const runs = (line: string): string => line.slice(line.indexOf("=") + 1);
+    const byName = (name: string): Map<string, string> =>
+      new Map(lines(name).map((l) => [l.slice(0, l.indexOf("=")), runs(l)]));
+    const sol = byName("arms-gpt6sol.txt");
+    const fin = byName("arms.txt");
+    const want = new Map<string, string | undefined>([
+      ["QuickReview default", sol.get("QuickReview default")],
+      ["QuickReview default, gpt-6.1-sol", fin.get("QuickReview default")],
+      ["QuickReview low", sol.get("QuickReview low")],
+      ...["Claude Code (Opus 5.5)", "open-code-review", "pi-review", "OpenCode", "Codex CLI"].map(
+        (n): [string, string | undefined] => [n, sol.get(n)],
+      ),
+    ]);
+    const got = byName("arms-copilot2025.txt");
+    for (const [name, r] of want) expect(got.get(name), name).toBe(r);
+    expect(rows).toHaveLength(10);
+  });
+
   // MUTATION: add a qodo-rules30 PR to bench/aacr/sets/qodo-heldout31.json — this fails
   it("the held-out Qodo set is 31 PRs of qodo-pr100 in no validation set", () => {
     const urls = (name: string): string[] =>
@@ -772,6 +836,24 @@ describe("another judge's verdicts", () => {
     expect(r[J].correct).toBeCloseTo(200 / 3);
     expect(r.agreement).toMatchObject({ pairs: 4, pct: 50, c_pairs: 3 });
     expect(r.agreement.c_pct).toBeCloseTo(200 / 3);
+  });
+
+  // MUTATION: build score_verdicts.score's keys without the --select selector — this fails
+  it("score_verdicts --select scores only the PRs the selector names, ours and the new judge's alike", () => {
+    const r = json(
+      "score_verdicts.py",
+      "--data",
+      D,
+      "--verdicts",
+      MINE,
+      "--judge",
+      "my-judge",
+      "--select",
+      "pr=p1",
+    );
+    expect(r.select).toBe("pr=p1");
+    expect(r.arms[F]["my-judge"]).toMatchObject({ found: 1, defects: 2, recall: 50 });
+    expect(r.arms[F][J]).toMatchObject({ found: 1.5, defects: 2, recall: 75 });
   });
 
   // MUTATION: drop the published-label check in tables.with_judge — this fails

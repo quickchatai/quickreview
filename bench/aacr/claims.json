@@ -661,6 +661,33 @@
     "hf:defect_verdicts"
    ],
    "doc": "where the low preset's lost credit went and what the default's validator dropped, on the gpt-6-sol AACR runs: posted comments and killed or withheld findings within five lines of each defect, as the shipped gpt-6.1-sol labels say they relate to it (same, related, different); reads the label file the archive ships and checks every row's model and prompt sha256; no model call"
+  },
+  "judged_inputs": {
+   "kind": "json",
+   "needs": "hf+archive",
+   "scripts": [
+    "bench/aacr/recompute/judged_inputs.py"
+   ],
+   "args": [
+    "--archive",
+    "{archive}",
+    "--data",
+    "{hf}",
+    "--work",
+    "{work}",
+    "--json",
+    "{out}"
+   ],
+   "data": [
+    "hf:reviews",
+    "archive:runs/{final1,ext-r6}-qodo-pr100/cases/<id>/comments.json",
+    "archive:runs/<run>.qodo/judgements.jsonl",
+    "archive:runs/<run>/VARIANT.json",
+    "archive:runs/ext-r5-sweprbench-eval100{,.sweprbench}/",
+    "repo:bench/aacr/sets/qodo-pr100.json",
+    "repo:bench/aacr/sets/qodo-heldout31.json"
+   ],
+   "doc": "what a judge was given where it differs from what was posted (AACR comments listed twice, Qodo's deleted-line comments, Martian's text-shortening posting policies, SWE-PRBench's judged answers), and the Qodo judge's double pass"
   }
  },
  "groups": {
@@ -54777,6 +54804,166 @@
    "data": [
     "archive:quickreview-runs-martian-posting-variants.tar.zst"
    ]
+  },
+  {
+   "id": "card.card:key.38",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "`tab:copilot2025`'s rows are these arms, on the 19 PRs that have a",
+   "value": "19",
+   "group": "card:key",
+   "q": "key:prs~arm=copilot-2025-upstream"
+  },
+  {
+   "id": "card.card:key.39",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "both copies, and both count: 12, 15 and 24 comments in the frozen build and",
+   "value": "12",
+   "group": "card:key",
+   "q": "judged_inputs:aacr_double/quickreview-frozen"
+  },
+  {
+   "id": "card.card:key.40",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "both copies, and both count: 12, 15 and 24 comments in the frozen build and",
+   "value": "15",
+   "group": "card:key",
+   "q": "judged_inputs:aacr_double/quickreview-glm-53-flash"
+  },
+  {
+   "id": "card.card:key.41",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "both copies, and both count: 12, 15 and 24 comments in the frozen build and",
+   "value": "24",
+   "group": "card:key",
+   "q": "judged_inputs:aacr_double/quickreview-deepseek-v41-flash"
+  },
+  {
+   "id": "card.card:key.42",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "the two open-model arms (51 in all), and a few in arms no paper reports.",
+   "value": "51",
+   "group": "card:key",
+   "q": "{judged_inputs:aacr_double/quickreview-frozen} + {judged_inputs:aacr_double/quickreview-glm-53-flash} + {judged_inputs:aacr_double/quickreview-deepseek-v41-flash}"
+  },
+  {
+   "id": "card.card:martian.6",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "filters of stored reviews. 5 of the 56 also shorten each comment, to its",
+   "value": "5",
+   "group": "card:martian",
+   "q": "judged_inputs:martian_variants/shortened"
+  },
+  {
+   "id": "card.card:martian.7",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "filters of stored reviews. 5 of the 56 also shorten each comment, to its",
+   "value": "56",
+   "group": "card:martian",
+   "q": "judged_inputs:martian_variants/runs"
+  },
+  {
+   "id": "card.card:qodo.5",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "`ext-r6-qodo-pr100` and `quickreview-2026-10-02`, 100 reviews each.",
+   "value": "100",
+   "group": "card:qodo",
+   "q": "min({qodo:final1-qodo-pr100|quickreview-frozen:prs}, {qodo:ext-r6-qodo-pr100|quickreview-2026-10-02:prs})"
+  },
+  {
+   "id": "card.card:qodo.6",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "were sent their deleted-line comments differently: the frozen build's 12",
+   "value": "12",
+   "group": "card:qodo",
+   "q": "judged_inputs:qodo_left/final1-qodo-pr100/judged"
+  },
+  {
+   "id": "card.card:qodo.7",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "were re-anchored to the new side and judged, and the 2026-10-02 build's 18",
+   "value": "18",
+   "group": "card:qodo",
+   "q": "judged_inputs:qodo_left/ext-r6-qodo-pr100/left_out"
+  },
+  {
+   "id": "card.card:qodo.8",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "were left out (2 of them on held-out PRs). So the rise in rule violations",
+   "value": "2",
+   "group": "card:qodo",
+   "q": "judged_inputs:qodo_left/ext-r6-qodo-pr100/left_out_heldout"
+  },
+  {
+   "id": "card.card:qodo.9",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "found, 14.8% to 37.6%, compares builds under slightly different inputs.",
+   "value": "14.8%",
+   "group": "card:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|quickreview-2026-10-02:recall_rule"
+  },
+  {
+   "id": "card.card:qodo.10",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "found, 14.8% to 37.6%, compares builds under slightly different inputs.",
+   "value": "37.6%",
+   "group": "card:qodo",
+   "q": "qodo:final1-qodo-pr100|quickreview-frozen:recall_rule"
+  },
+  {
+   "id": "card.card:judges.8",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "judge was asked twice on the 10 PRs of `ext-r6-qodo-smoke10`, every tool's",
+   "value": "10",
+   "group": "card:judges",
+   "q": "qodo:ext-r6-qodo-smoke10|quickreview:prs"
+  },
+  {
+   "id": "card.card:judges.9",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "review: 222 of the 223 matches of the first pass recur in the second (the",
+   "value": "222",
+   "group": "card:judges",
+   "q": "judged_inputs:qodo_double_pass/both"
+  },
+  {
+   "id": "card.card:judges.10",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "review: 222 of the 223 matches of the first pass recur in the second (the",
+   "value": "223",
+   "group": "card:judges",
+   "q": "judged_inputs:qodo_double_pass/pass1"
+  },
+  {
+   "id": "card.card:key.43",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(`quickreview-answers.json`) differ from the posted ones on 8 of its 100",
+   "value": "8",
+   "group": "card:key",
+   "q": "judged_inputs:sweprbench/judged_ne_posted"
+  },
+  {
+   "id": "card.card:key.44",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(`quickreview-answers.json`) differ from the posted ones on 8 of its 100",
+   "value": "100",
+   "group": "card:key",
+   "q": "judged_inputs:sweprbench/prs"
+  },
+  {
+   "id": "card.card:key.45",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "PRs: 5 add a finding the review posted in its body, and 3 leave out a",
+   "value": "5",
+   "group": "card:key",
+   "q": "judged_inputs:sweprbench/added"
+  },
+  {
+   "id": "card.card:key.46",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "PRs: 5 add a finding the review posted in its body, and 3 leave out a",
+   "value": "3",
+   "group": "card:key",
+   "q": "judged_inputs:sweprbench/dropped"
   }
  ],
  "not_claims": [
@@ -66179,7 +66366,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "**Tier 2 — re-judge the saved reviews.** Take the full run archive (each case",
+   "anchor": "**Tier 2 — re-judge the saved reviews.** Take the full run archive (the",
    "tokens": [
     "2"
    ],
@@ -67486,6 +67673,107 @@
     "93%"
    ],
    "why": "a correction note: the value the page printed before and the value it prints now; each new value is a claim where its own page prints it"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Copilot 2025 (upstream) | `copilot-2025-upstream` |",
+   "tokens": [
+    "2025"
+   ],
+   "why": "a year"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "- A QuickReview row's `comments` are what Martian's step 1 reads from",
+   "tokens": [
+    "1"
+   ],
+   "why": "a step number of Martian's pipeline, or its configuration"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "GitHub: the first 30 inline comments (one API page) and the review body.",
+   "tokens": [
+    "30"
+   ],
+   "why": "a step number of Martian's pipeline, or its configuration"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| `gpt-6.1-sol` | GPT-6.1 Sol, low effort, medium verbosity |",
+   "tokens": [
+    "0",
+    "2",
+    "2.5"
+   ],
+   "why": "a step number of Martian's pipeline, or its configuration"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "Martian's own steps 2, 2.5 and 3 at `e616e84`, on GPT-6.1 Sol; their prompts",
+   "tokens": [
+    "2",
+    "2.5",
+    "3"
+   ],
+   "why": "a step number of Martian's pipeline, or its configuration"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "**Copilot 2025 (`tab:copilot2025`).** Input: the arms in the table under",
+   "tokens": [
+    "2025"
+   ],
+   "why": "a year"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "Tier 2) and `bench/aacr/ext/ext.sh`; set `EXT_JUDGE_MODEL` to judge Martian",
+   "tokens": [
+    "2"
+   ],
+   "why": "list numbering"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "- **Copilot 2025.** Input: the arms of `tab:copilot2025` (the card maps each",
+   "tokens": [
+    "2025"
+   ],
+   "why": "a year"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "To re-run our own judge instead: Tier 2 above for AACR-Bench, and",
+   "tokens": [
+    "2"
+   ],
+   "why": "list numbering"
+  },
+  {
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "which rejects a sampling temperature, so the bridge drops the temperature 0",
+   "tokens": [
+    "0"
+   ],
+   "why": "configuration or a method parameter"
+  },
+  {
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "candidates (steps 2 and 2.5). On ten PRs the re-judge of identical comments moves",
+   "tokens": [
+    "2",
+    "2.5"
+   ],
+   "why": "a step number of Martian's pipeline, or its configuration"
+  },
+  {
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Martian, which drops the request's temperature 0) receives, per PR and",
+   "tokens": [
+    "0"
+   ],
+   "why": "configuration or a method parameter"
   }
  ]
 }

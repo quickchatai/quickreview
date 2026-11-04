@@ -6,7 +6,7 @@ vendor runs Qodo published — so the comparison is apples to apples.
         [--run RUN_DIR | --reviews QODO_REVIEWS --review-key WORK|TOOL] --endpoint URL --out WORK
         [--model M] [--judge-label L] [--resume] [--only-tools a,b] [--noise N] [--concurrency 8]
 
-Qodo publishes no judge, prompt or scorer (EXTERNAL-BENCHMARKS.md §3), only the
+Qodo publishes no judge, prompt or scorer (the benchmark paper's section on Qodo), only the
 rule its blog states: a hit is a comment that accurately describes a
 ground-truth issue AND whose file/line points at the issue's source; any other
 comment is a false positive; only inline comments are judged. This applies

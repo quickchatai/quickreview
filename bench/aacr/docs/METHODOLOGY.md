@@ -256,6 +256,18 @@ never reached are not judged. Three CI-gate defects (a lint rule, stale generate
 SQL, clippy) carry a `benchmark_limitation` note: a read-only review can find
 them only by knowing the repo's CI; they are scored and also reported apart.
 
+**The judge's prompt, rebuilt.** The prompt is `judgePrompt()` in
+`src/bench/defects.ts`, built from `reviewForJudge()`'s view of the review.
+The public main's code from commit `34164fe0e` to `839e26454` builds exactly
+the prompts behind every published primary-judge verdict of a QuickReview arm;
+later commits render a few reviews differently. `recompute/judge_prompt.py`
+prints that prompt for any arm and PR from the dataset's tables, and equals
+the prompt the judge received apart from the release's name rewrite. The
+`review_hash` in some judge files is not a public check: it was taken before
+the name rewrite. A deleted-line comment the review also re-anchored to the
+new side appears twice in what the judge read, and both copies were graded
+and count (the dataset card gives the counts).
+
 **Second defect judge** (`claude-opus-5-5`). The same judge prompt, the same
 inputs and the same parser, run on Anthropic's model over the same 1,295
 reviews (7 reviewers × 185 PRs).

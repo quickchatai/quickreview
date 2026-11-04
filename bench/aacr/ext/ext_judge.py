@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The external benchmarks' judge endpoint: gpt-6.1-sol behind an
 OpenAI-compatible Chat Completions route, for the Martian and SWE-PRBench
-harnesses' OWN judge clients (bench/aacr/EXTERNAL-BENCHMARKS.md).
+harnesses' OWN judge clients (ext.sh starts it; qodo_judge.py asks it too).
 
 It is codex_bridge.py (the loopback bridge the OCR/OpenCode/PR-Agent arms
 already use) with three differences, all about being a judge rather than an

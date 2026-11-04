@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # External benchmarks for QuickReview — Martian's offline code-review benchmark
 # and SWE-PRBench — each scored by ITS OWN evaluation code, unmodified, with
-# QuickReview plugged in as one more tool. The benchmark paper's external-benchmark
-# section (bench/aacr/paper/benchmark.pdf) is the design, the deviations and the
-# results; this script is every command.
+# QuickReview plugged in as one more tool, and Qodo's PR-Review-Bench under our
+# judge (Qodo publishes none). The benchmark paper's sections on Martian and Qodo
+# (bench/aacr/paper/benchmark.pdf) are their design, deviations and results; the
+# SWE-PRBench runs back no published number (their results are in the run
+# archive). This script is every command.
 #
 #   ext.sh build                      the three images (reviewer overlay, Martian, SWE-PRBench)
 #   ext.sh prefetch SET               per-case stores for SET (martian-*, sweprbench-*), from the

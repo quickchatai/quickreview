@@ -1865,6 +1865,11 @@ recompute/do_speed.py and openmodels/lensfinal.py read `{PRUNED_EVENTS}`
 when a case has no `pi-events.jsonl`. SWE-PRBench run data is in the archive
 only.
 
+A review here is `results/all/<iid>.json`, the comments the scorers read. The
+review body (`review.md`), the comments as posted (`comments.json`, the
+deleted-line ones among them) and `findings-record.json` are in the archive
+only.
+
 Licence: Apache-2.0, as the run archive (its README carries the AACR notice,
 the modified-work statement and the citations).
 """

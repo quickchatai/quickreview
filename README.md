@@ -232,8 +232,9 @@ key, every review and verdict, the Elo judgments, and the run directories
 with a numbers-only extract in place of each raw session log. [`bench/aacr/recompute/`](bench/aacr/recompute/README.md)
 rebuilds each number from it with no model call, and
 [`bench/aacr/README.md`](bench/aacr/README.md#reproduce) shows how to
-re-score the runs with no keys, re-judge them, or re-run the benchmark on
-your own keys. Costs are list
+re-score the runs with no keys, re-judge them with our judge or
+[your own](bench/aacr/README.md#re-judge-with-your-own-judge), or re-run the
+benchmark on your own keys. Costs are list
 prices; on a ChatGPT plan they are quota, not a bill. The charts are drawn
 by `bench/aacr/showcase/readme_charts.py`.
 
