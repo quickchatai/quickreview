@@ -7,6 +7,7 @@ import {
   StateStore,
   buildStatusSnapshot,
   writeStatusJson,
+  type OpenReviewFailureInput,
   type StatusSnapshot,
 } from "../src/state.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -1958,6 +1959,208 @@ describe("durable FAILED_LOUD review obligations", () => {
 
     expect(store.recoverReviewFailure(5470, "operator-rerun")?.work_owed).toBe(0);
     expect(store.getPr(5470)).toMatchObject({ state: "queued", head_sha: "pushed-head" });
+  });
+});
+
+describe("a transient failure with nothing posted waits on the automatic retry ladder", () => {
+  /** A finished round of `pr` whose command failed and whose round ended, as
+   * every failure path leaves it before it opens the debt. */
+  function failedRound(
+    pr: number,
+    over: { preflight?: "none" | "dryrun" | "refused" | "executed" | "ambiguous"; posted?: boolean } = {},
+  ): { roundId: number; roundNo: number; commandId: string } {
+    store.upsertPr(prRow(pr, { state: "reviewing", head_sha: `head-${pr}` }));
+    const roundId = store.startRound(pr, "re-review", ["pass-baseline"], 75);
+    const roundNo = store.roundsFor(pr).find((r) => r.id === roundId)!.round_no;
+    store.stampPostingKey(roundId, `v1:${pr}:${roundNo}:head-${pr}`);
+    if (over.preflight && over.preflight !== "none")
+      store.recordRoundPreflightPosting(roundId, over.preflight);
+    if (over.posted)
+      store.confirmRoundPosting(roundId, {
+        posting_key: `v1:${pr}:${roundNo}:head-${pr}`,
+        actual_event: "APPROVE",
+        gh_review_id: 77,
+        gh_commit_id: `head-${pr}`,
+        confirmed_at: clock.toISOString(),
+      });
+    const commandId = `cmd-${pr}-${roundNo}`;
+    store.createSessionCommand({
+      id: commandId,
+      pr,
+      session: `pr-${pr}`,
+      kind: "round",
+      round_no: roundNo,
+      payload_sha256: "f".repeat(64),
+      payload_path: `/payload/${commandId}.md`,
+      inject_path: `/inject/${commandId}.md`,
+      next_check_at: clock.toISOString(),
+    });
+    store.failPendingSessionCommand(commandId, "the provider failed the turn: 429");
+    store.markRoundCancelled(roundId, "provider unavailable", "infrastructure_failure");
+    return { roundId, roundNo, commandId };
+  }
+
+  const open = (
+    pr: number,
+    r: { roundId: number; roundNo: number; commandId: string },
+    over: Partial<OpenReviewFailureInput> = {},
+  ) =>
+    store.openReviewFailure({
+      pr,
+      command_id: r.commandId,
+      round_id: r.roundId,
+      round_no: r.roundNo,
+      head_sha: `head-${pr}`,
+      stage: "running_hard_bound",
+      detail: "exhausted",
+      attempts: 2,
+      retry_cap: 2,
+      cause: "infrastructure_exhausted",
+      nothing_posted: true,
+      ...over,
+    });
+
+  // MUTATION: drop `transient` from `automatic` in openReviewFailure — every
+  // stage but first_pass_start goes back to operator_unwedge; this fails.
+  it.each([
+    ["running_hard_bound", "infrastructure_exhausted"],
+    ["command_start", "infrastructure_exhausted"],
+    ["round_deadline", "infrastructure_exhausted"],
+    ["provider_unavailable", "provider_transient"],
+    ["posting_receipt", "posting_unconfirmed"],
+    ["posting_receipt", "posting_exhausted_unposted"],
+  ] as const)("at stage %s, cause %s, the debt waits 15 minutes for its automatic retry", (stage, cause) => {
+    const r = failedRound(5600);
+    expect(open(5600, r, { stage, cause })).toMatchObject({
+      work_owed: 1,
+      stage,
+      next_action: "retry_wait",
+      retry_epoch: 0,
+      next_retry_at: "2026-08-13T09:15:00.000Z",
+    });
+    // Loud all the while: the FAILED_LOUD event carries the cause.
+    const loud = store
+      .eventsOn("2026-08-13")
+      .filter((e) => e.kind === "review_failed_loud")
+      .map((e) => JSON.parse(e.payload!));
+    expect(loud.at(-1)).toMatchObject({ cause, next_action: "retry_wait" });
+  });
+
+  // MUTATION: drop the preflight / posted_at / gh_review_id checks from
+  // transientRetryProven — a round that may have posted retries itself; this fails.
+  it("anything that may have posted, or no cause, stays the operator's", () => {
+    const cases: Array<[number, Parameters<typeof failedRound>[1], Parameters<typeof open>[2]]> = [
+      [5601, { preflight: "executed" }, {}],
+      [5602, { preflight: "ambiguous" }, {}],
+      [5603, { posted: true }, {}],
+      [5604, {}, { nothing_posted: false }],
+      [5605, {}, { cause: undefined }],
+    ];
+    for (const [pr, round, over] of cases) {
+      const r = failedRound(pr, round);
+      expect(open(pr, r, over), String(pr)).toMatchObject({
+        next_action: "operator_unwedge",
+        next_retry_at: null,
+      });
+    }
+  });
+
+  it("is not granted to a failure whose command is not the round's", () => {
+    const r = failedRound(5606);
+    expect(open(5606, r, { command_id: "cmd-someone-else" })).toMatchObject({
+      next_action: "operator_unwedge",
+    });
+  });
+
+  // MUTATION: restore `failure.stage !== "first_pass_start"` as a refusal in
+  // activateDueReviewFailureRetries — the due debt never activates; this fails.
+  it("activates at any stage as ordinary queued work, binding no fanout-first instruction", () => {
+    const r = failedRound(5607);
+    const failure = open(5607, r);
+    clock = new Date(failure.next_retry_at!);
+    expect(store.activateDueReviewFailureRetries(clock.toISOString())).toEqual([
+      expect.objectContaining({
+        pr: 5607,
+        stage: "running_hard_bound",
+        target_round_no: r.roundNo + 1,
+        retry_epoch: 1,
+      }),
+    ]);
+    expect(store.openReviewFailure(5607)).toBeUndefined();
+    expect(store.getSessionCommand(r.commandId)?.status).toBe("cancelled");
+    expect(store.getPr(5607)).toMatchObject({ state: "queued", head_sha: "head-5607" });
+    expect(store.roundRecoveryInstruction(5607, r.roundNo + 1)).toBeUndefined();
+  });
+
+  // MUTATION: make transientRetryEpoch always return 0 — the ladder never doubles; this fails.
+  it("doubles the wait on each repeat at the same head, and a finished round resets it", () => {
+    let r = failedRound(5608);
+    clock = new Date(open(5608, r).next_retry_at!);
+    store.activateDueReviewFailureRetries(clock.toISOString());
+
+    r = failedRound(5608);
+    const second = open(5608, r);
+    expect(second).toMatchObject({ retry_epoch: 1 });
+    expect(Date.parse(second.next_retry_at!) - clock.getTime()).toBe(30 * 60_000);
+    clock = new Date(second.next_retry_at!);
+    store.activateDueReviewFailureRetries(clock.toISOString());
+
+    // A round that finishes is progress: the next failure starts the ladder again.
+    const done = store.startRound(5608, "re-review", ["pass-baseline"], 75);
+    store.finishRound(done, "APPROVE", null, "ok");
+    r = failedRound(5608);
+    expect(open(5608, r)).toMatchObject({ retry_epoch: 0 });
+  });
+
+  it("a failed wake retries by handing its own command back to the supervisor's replay", () => {
+    store.upsertPr(prRow(5609, { state: "tracked", head_sha: "wake-head" }));
+    store.createSessionCommand({
+      id: "wake-5609",
+      pr: 5609,
+      session: "pr-5609",
+      kind: "wake",
+      round_no: null,
+      payload_sha256: "d".repeat(64),
+      payload_path: "/payload/wake-5609.md",
+      inject_path: "/inject/wake-5609.md",
+      next_check_at: clock.toISOString(),
+    });
+    store.failPendingSessionCommand("wake-5609", "wake: the provider failed the turn: fetch failed");
+    store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id='wake-5609'").run();
+    const failure = store.openReviewFailure({
+      pr: 5609,
+      command_id: "wake-5609",
+      round_id: null,
+      round_no: null,
+      head_sha: "wake-head",
+      stage: "session_command",
+      detail: "replays exhausted",
+      attempts: 2,
+      retry_cap: 2,
+      cause: "provider_transient",
+      nothing_posted: true,
+    });
+    expect(failure).toMatchObject({ next_action: "retry_wait", next_retry_at: "2026-08-13T09:15:00.000Z" });
+    // While the debt stands the command is never replayed.
+    expect(store.dueSessionCommands("2026-08-13T10:00:00.000Z").map((c) => c.id)).toEqual([]);
+
+    clock = new Date(failure.next_retry_at!);
+    expect(store.activateDueReviewFailureRetries(clock.toISOString())).toEqual([
+      expect.objectContaining({
+        pr: 5609,
+        target_round_no: null,
+        replayed_command_id: "wake-5609",
+        retry_epoch: 1,
+      }),
+    ]);
+    expect(store.openReviewFailure(5609)).toBeUndefined();
+    // The same obligation, its replay allowance reset and due now.
+    expect(store.getSessionCommand("wake-5609")).toMatchObject({
+      status: "failed",
+      recovery_attempts: 0,
+      next_check_at: clock.toISOString(),
+    });
+    expect(store.dueSessionCommands(clock.toISOString()).map((c) => c.id)).toEqual(["wake-5609"]);
   });
 });
 
