@@ -244,7 +244,14 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
       webhookSecret: secret,
       hostname: cfg.server.hostname,
       post: async (url, headers, body) => {
-        const res = await fetch(url, { method: "POST", headers, body });
+        // Bounded: a tunnel that accepts the connection and never answers
+        // must not hang the checklist.
+        const res = await fetch(url, {
+          method: "POST",
+          headers,
+          body,
+          signal: AbortSignal.timeout(10_000),
+        });
         return { status: res.status, text: await res.text() };
       },
     },
