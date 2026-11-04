@@ -38,8 +38,7 @@ describe("classifyGitHubFailure — one classification of a thrown GitHub call",
         .kind,
     ).toBe("rate_limited");
     expect(
-      classifyGitHubFailure(rest(403, '{"message":"Resource not accessible by integration"}'))
-        .kind,
+      classifyGitHubFailure(rest(403, '{"message":"Resource not accessible by integration"}')).kind,
     ).toBe("rejected");
   });
 
@@ -115,8 +114,7 @@ describe("classifyGitHubFailure — one classification of a thrown GitHub call",
       classifyGitHubFailure(new Error('graphql errors: [{"code":"graphql_rate_limit"}]')).kind,
     ).toBe("rate_limited");
     expect(
-      classifyGitHubFailure(new Error('graphql errors: [{"message":"Something went wrong"}]'))
-        .kind,
+      classifyGitHubFailure(new Error('graphql errors: [{"message":"Something went wrong"}]')).kind,
     ).toBe("transient");
   });
 

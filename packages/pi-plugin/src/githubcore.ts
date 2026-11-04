@@ -98,7 +98,7 @@ function sanitizeDetail(text: string): string {
   const clean = text
     .replace(/\s+/g, " ")
     .replace(/\b(gh[pousr]_|github_pat_)[A-Za-z0-9_]+/g, "$1***")
-    .replace(/\b(bearer|token)\s+[A-Za-z0-9._\-]{8,}/gi, "$1 ***")
+    .replace(/\b(bearer|token)\s+[A-Za-z0-9._-]{8,}/gi, "$1 ***")
     .trim();
   return clean.length > DETAIL_CAP ? `${clean.slice(0, DETAIL_CAP - 1)}…` : clean;
 }

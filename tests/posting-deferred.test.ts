@@ -432,10 +432,15 @@ describe("a deferred APPROVE and its CI pre-check", () => {
     const send = vi.fn(async () => posted);
     const payload = { commit_id: head, event: "COMMENT" as const, body: "x" };
     await withApprovalCiPrecheck({ listChecks, enabled: true }, 12, payload, send);
-    await withApprovalCiPrecheck({ listChecks, enabled: false }, 12, {
-      ...payload,
-      event: "APPROVE",
-    }, send);
+    await withApprovalCiPrecheck(
+      { listChecks, enabled: false },
+      12,
+      {
+        ...payload,
+        event: "APPROVE",
+      },
+      send,
+    );
     expect(listChecks).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledTimes(2);
   });

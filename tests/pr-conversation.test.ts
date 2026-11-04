@@ -413,7 +413,9 @@ describe("blocked author's PR conversation", () => {
   it("a run of 502s does not fail the answer: the long schedule, no strike, then the anomaly", async () => {
     await conversation.accept(objection);
     answer();
-    list.mockRejectedValue(new GitHubRequestError("GET", "/repos/o/r/issues/77/comments", 502, "Bad Gateway"));
+    list.mockRejectedValue(
+      new GitHubRequestError("GET", "/repos/o/r/issues/77/comments", 502, "Bad Gateway"),
+    );
     // About 1, 2, 5, 15, 30, 60, 60 minutes: seven waits, eight attempts.
     for (const waitMin of [1, 2, 5, 15, 30, 60, 60]) {
       await conversation.sweep();
@@ -457,7 +459,9 @@ describe("blocked author's PR conversation", () => {
   it("a refusal (4xx) still spends one of three strikes", async () => {
     await conversation.accept(objection);
     answer();
-    list.mockRejectedValue(new GitHubRequestError("GET", "/repos/o/r/issues/77/comments", 404, "Not Found"));
+    list.mockRejectedValue(
+      new GitHubRequestError("GET", "/repos/o/r/issues/77/comments", 404, "Not Found"),
+    );
     for (let i = 0; i < 3; i++) {
       advance(3 * 60_000);
       await conversation.sweep();

@@ -647,7 +647,7 @@ export class PostingOutbox {
         j.unposted_attempts = unposted + 1;
         if (this.now().getTime() >= ceiling) {
           exhaust(
-            `GitHub could not be read for ${Math.round(d.windowMs * DEFERRED_READ_WINDOW_FACTOR / 60_000)} min after the first failure (no POST sent); last: ${detail}`,
+            `GitHub could not be read for ${Math.round((d.windowMs * DEFERRED_READ_WINDOW_FACTOR) / 60_000)} min after the first failure (no POST sent); last: ${detail}`,
           );
           return;
         }

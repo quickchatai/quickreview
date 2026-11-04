@@ -191,10 +191,17 @@ export async function buildRig(
     (intent: MutationIntent): Promise<unknown> => adapter.executeMutation(intent),
   );
   // The adapter's read retry sleeps on nothing: a failing read is retried at once.
-  const adapter: GitHubAdapter = new GitHubAdapter(cfg, minter, gate, gh.fetch as never, undefined, {
-    sleep: async () => {},
-    checkRestartMs: 0,
-  });
+  const adapter: GitHubAdapter = new GitHubAdapter(
+    cfg,
+    minter,
+    gate,
+    gh.fetch as never,
+    undefined,
+    {
+      sleep: async () => {},
+      checkRestartMs: 0,
+    },
+  );
   gate.setGuard(
     makePostingGuard({ store, adapter, botLogin: cfg.github.bot_login, guards: cfg.guards }),
   );

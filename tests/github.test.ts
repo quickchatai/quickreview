@@ -72,7 +72,14 @@ function build(
   let adapter!: GitHubAdapter;
   const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent));
   const adapterCfg: Config = { ...cfg, github: { ...cfg.github, ...githubOverride } };
-  adapter = new GitHubAdapter(adapterCfg, minter, gate, rec.fetchFn, "https://api.github.com", INSTANT);
+  adapter = new GitHubAdapter(
+    adapterCfg,
+    minter,
+    gate,
+    rec.fetchFn,
+    "https://api.github.com",
+    INSTANT,
+  );
   return { adapter, calls: rec.calls };
 }
 
@@ -1300,7 +1307,14 @@ describe("GitHubAdapter in person mode (auth = user)", () => {
     let adapter!: GitHubAdapter;
     const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent));
     const personCfg: Config = { ...cfg, github: { ...cfg.github, ...PERSON } };
-    adapter = new GitHubAdapter(personCfg, userToken, gate, rec.fetchFn, "https://api.github.com", INSTANT);
+    adapter = new GitHubAdapter(
+      personCfg,
+      userToken,
+      gate,
+      rec.fetchFn,
+      "https://api.github.com",
+      INSTANT,
+    );
     return { adapter, calls: rec.calls };
   }
 
@@ -1416,7 +1430,7 @@ describe("bounded read retry", () => {
     /** The body read itself fails (a deadline that fired mid-stream). */
     bodyAborts?: boolean;
     /** fetch rejects instead of answering. */
-    throws?: unknown;
+    throws?: Error;
   }
 
   function scripted(responses: Scripted[], dryRun = true) {
@@ -1520,7 +1534,10 @@ describe("bounded read retry", () => {
   it("a 502 does not inherit the rate-limit window's reset (x-ratelimit-reset is on every answer)", async () => {
     const resetInAnHour = String(Math.floor(Date.now() / 1000) + 3600);
     const { adapter, calls } = scripted([
-      { status: 502, headers: { "x-ratelimit-reset": resetInAnHour, "x-ratelimit-remaining": "4999" } },
+      {
+        status: 502,
+        headers: { "x-ratelimit-reset": resetInAnHour, "x-ratelimit-remaining": "4999" },
+      },
     ]);
     const err = (await adapter.getPr(12).catch((e: unknown) => e)) as GitHubRequestError;
     expect(err.status).toBe(502);
@@ -1550,14 +1567,20 @@ describe("bounded read retry", () => {
   });
 
   it("a REST write through the gate is sent once, never retried", async () => {
-    const { adapter, calls, sleeps } = scripted([{ status: 502 }, { status: 200, payload: [] }], false);
+    const { adapter, calls, sleeps } = scripted(
+      [{ status: 502 }, { status: 200, payload: [] }],
+      false,
+    );
     await expect(adapter.addLabel(3, "x")).rejects.toThrow("502");
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
     expect(sleeps).toEqual([]);
   });
 
   it("a GraphQL mutation is sent once, never retried", async () => {
-    const { adapter, calls, sleeps } = scripted([{ status: 502 }, { status: 200, payload: { data: {} } }], false);
+    const { adapter, calls, sleeps } = scripted(
+      [{ status: 502 }, { status: 200, payload: { data: {} } }],
+      false,
+    );
     const intent: MutationIntent = {
       kind: "resolve_own_review_thread",
       method: "POST",
@@ -1589,7 +1612,12 @@ describe("bounded read retry", () => {
     const down = scripted([{ status: 504, headers: { "retry-after": "2" } }]);
     const err = await down.adapter.prReviewHistory(7, "bot").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(GitHubRequestError);
-    expect(err).toMatchObject({ method: "POST", path: "/graphql", status: 504, retryAfterMs: 2000 });
+    expect(err).toMatchObject({
+      method: "POST",
+      path: "/graphql",
+      status: 504,
+      retryAfterMs: 2000,
+    });
     expect(down.calls).toHaveLength(3);
   });
 });
@@ -1632,7 +1660,11 @@ describe("listChecks on a moving snapshot", () => {
       random: () => 0.5,
       checkRestartMs: 2000,
     });
-    return { adapter, sleeps, checkRunCalls: () => calls.filter((c) => c.includes("/check-runs?")) };
+    return {
+      adapter,
+      sleeps,
+      checkRunCalls: () => calls.filter((c) => c.includes("/check-runs?")),
+    };
   }
 
   it("a count that drifts, then settles, is read again from page 1 and answers whole", async () => {

@@ -964,9 +964,7 @@ describe("structured thread decision", () => {
     let now = new Date("2026-08-26T09:00:00Z");
     const resolveOwnReviewThread = vi
       .fn()
-      .mockRejectedValue(
-        new GitHubRequestError("POST", "/graphql", 502, "Bad Gateway"),
-      );
+      .mockRejectedValue(new GitHubRequestError("POST", "/graphql", 502, "Bad Gateway"));
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
       adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
@@ -1037,7 +1035,13 @@ describe("structured thread decision", () => {
     const name = "pr-77-thread-4000-comment-5001.json";
     writeFileSync(
       join(root, name),
-      JSON.stringify({ pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "" }),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "",
+      }),
     );
     expect(await watcher.handleFile(name)).toBe(false);
     expect(ledger.retry(5001)).toMatchObject({ attempts: 1, transient_attempts: 0 });

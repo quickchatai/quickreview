@@ -524,7 +524,9 @@ class PostOps {
   /** Classify a failed read and log its real cause. */
   private readFailure(pr: number, what: string, err: unknown): GitHubFailure {
     const f = classifyGitHubFailure(err);
-    this.log(`post: #${pr} ${what} failed (${f.kind}${f.status ? ` ${f.status}` : ""}): ${f.detail}`);
+    this.log(
+      `post: #${pr} ${what} failed (${f.kind}${f.status ? ` ${f.status}` : ""}): ${f.detail}`,
+    );
     return f;
   }
 
@@ -553,15 +555,22 @@ class PostOps {
     pr: number,
     head: string,
     event: ReviewEvent,
-  ): Promise<{ state: "skip" | "green" | "red" } | { state: "unreadable"; failure: GitHubFailure }> {
+  ): Promise<
+    { state: "skip" | "green" | "red" } | { state: "unreadable"; failure: GitHubFailure }
+  > {
     if (event !== "APPROVE" || !this.d.cfg.guards.block_approve_on_red_ci) return { state: "skip" };
     let checks: Awaited<ReturnType<PostAdapter["listChecks"]>>;
     try {
       checks = await this.within(this.d.adapter.listChecks(head), "the checks read");
     } catch (err) {
-      return { state: "unreadable", failure: this.readFailure(pr, `checks read at ${head.slice(0, 7)}`, err) };
+      return {
+        state: "unreadable",
+        failure: this.readFailure(pr, `checks read at ${head.slice(0, 7)}`, err),
+      };
     }
-    return ciBlocksApproval(classifyCi(checks), { noChecksIsRed: this.d.cfg.guards.no_checks_is_red })
+    return ciBlocksApproval(classifyCi(checks), {
+      noChecksIsRed: this.d.cfg.guards.no_checks_is_red,
+    })
       ? { state: "red" }
       : { state: "green" };
   }

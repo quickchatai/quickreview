@@ -254,9 +254,7 @@ export class PingPongLedger {
     const streak = this.breaker().rate_limit_streak + 1;
     const delays = [60, 120, 240, 480, 900];
     const ladderMs = delays[Math.min(streak - 1, delays.length - 1)]! * 1000;
-    const openUntil = new Date(
-      now.getTime() + Math.max(ladderMs, retryAfterMs ?? 0),
-    ).toISOString();
+    const openUntil = new Date(now.getTime() + Math.max(ladderMs, retryAfterMs ?? 0)).toISOString();
     this.db
       .prepare(
         `INSERT INTO pingpong_decision_breaker (singleton, state, open_until, rate_limit_streak, last_error, updated_at)

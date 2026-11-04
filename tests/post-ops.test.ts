@@ -794,7 +794,9 @@ describe("post.review live", () => {
       new GitHubRequestError("POST", "/repos/o/r/pulls/7/reviews", 422, detail);
     expect(
       validationText(
-        err(JSON.stringify({ message: "x", errors: [{ resource: "R", message: "line\u0007bad" }] })),
+        err(
+          JSON.stringify({ message: "x", errors: [{ resource: "R", message: "line\u0007bad" }] }),
+        ),
       ),
     ).toBe("line bad");
     expect(validationText(err('{"message":"x","errors":["first","sec'))).toBe("first");
@@ -835,9 +837,9 @@ describe("post.review live", () => {
 
   // MUTATION: drop the TERMINAL_REFUSALS withdraw in submit — this fails.
   it.each([
-    ["pr-merged", () => (rig.gh.pr.merged = true)],
-    ["pr-closed", () => (rig.gh.pr.state = "closed")],
-    ["head-drift", () => (rig.gh.pr.head = MOVED)],
+    ["pr-merged", (): void => void (rig.gh.pr.merged = true)],
+    ["pr-closed", (): void => void (rig.gh.pr.state = "closed")],
+    ["head-drift", (): void => void (rig.gh.pr.head = MOVED)],
   ] as const)("a %s refusal takes the queued job back", async (reason, arrange) => {
     arrange();
     const body = rig.write(`pr-${PR}-round-1-review.md`, "x");

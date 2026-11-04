@@ -602,7 +602,11 @@ describe("a deferred posting", () => {
   // MUTATION: write the deferral as a `prepared` receipt in deferUnattempted — this fails.
   it("a verdict APPROVE over an approval deferred before any attempt (CI unreadable) waits", async () => {
     const journal = new PostingJournal({ dir: dir(), repo: cfg.github.repo });
-    const payload = { commit_id: HEAD, event: "APPROVE" as const, body: `LGTM\n\n${postingMarker(key)}` };
+    const payload = {
+      commit_id: HEAD,
+      event: "APPROVE" as const,
+      body: `LGTM\n\n${postingMarker(key)}`,
+    };
     const ident = { key, pr: PR, round: 5, head: HEAD };
     journal.enqueue({ ...ident, event: "APPROVE", mode: "live", payload });
     journal.deferUnattempted({

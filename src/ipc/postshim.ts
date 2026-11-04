@@ -165,8 +165,7 @@ export async function runPostShim(
     client = await connectFromEnv("shim", env, { timeoutMs: opts.timeoutMs ?? POST_TIMEOUT_MS });
     try {
       const out = await client.request<Outcome>(k.op, body, { pr });
-      for (const line of Array.isArray(out?.lines) ? out.lines : [])
-        io.stdout(`${String(line)}\n`);
+      for (const line of Array.isArray(out?.lines) ? out.lines : []) io.stdout(`${String(line)}\n`);
       return 0;
     } catch (e) {
       // The request reached the daemon and no answer came in time: the post

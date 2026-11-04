@@ -289,7 +289,9 @@ describe("TokenMinter", () => {
     const flaky = (async (url: string | URL) => {
       const u = String(url);
       if (u.endsWith("/app/installations"))
-        return ++installs === 1 ? jsonResponse({ message: "bad gateway" }, 502) : jsonResponse([{ id: 42 }]);
+        return ++installs === 1
+          ? jsonResponse({ message: "bad gateway" }, 502)
+          : jsonResponse([{ id: 42 }]);
       if (++mints === 1) throw new TypeError("fetch failed", { cause: { code: "ECONNRESET" } });
       return jsonResponse({ token: "ghs_after_retry", expires_at: "2026-08-13T13:00:00Z" }, 201);
     }) as unknown as FetchFn;
@@ -312,7 +314,13 @@ describe("TokenMinter", () => {
       mints++;
       return jsonResponse({ message: "Bad credentials" }, 401);
     }) as unknown as FetchFn;
-    const err = await new TokenMinter(secretsDir, refusing, "https://api.github.com", () => T0, INSTANT)
+    const err = await new TokenMinter(
+      secretsDir,
+      refusing,
+      "https://api.github.com",
+      () => T0,
+      INSTANT,
+    )
       .installationToken()
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(GitHubRequestError);

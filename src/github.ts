@@ -697,7 +697,9 @@ export class GitHubAdapter {
    * query, then one more per further page of either connection. Returns null
    * when the PR is gone. */
   async prReviewHistory(n: number, author: string): Promise<PrReviewHistory | null> {
-    const data = await this.graphqlRead<{ repository?: { pullRequest?: RawPrHistory | null } | null }>(
+    const data = await this.graphqlRead<{
+      repository?: { pullRequest?: RawPrHistory | null } | null;
+    }>(
       `query ($owner: String!, $repo: String!, $number: Int!, $author: String!) {
         repository(owner: $owner, name: $repo) {
           pullRequest(number: $number) {
@@ -716,7 +718,9 @@ export class GitHubAdapter {
     // follow the cursors, or the importer silently loses the NEWEST ones.
     const vars = { owner: this.owner, repo: this.repo, number: n, author };
     const reviews = await walkConnection(pr.reviews, async (after) => {
-      const d = await this.graphqlRead<{ repository?: { pullRequest?: RawPrHistory | null } | null }>(
+      const d = await this.graphqlRead<{
+        repository?: { pullRequest?: RawPrHistory | null } | null;
+      }>(
         `query ($owner: String!, $repo: String!, $number: Int!, $author: String!, $after: String!) {
           repository(owner: $owner, name: $repo) {
             pullRequest(number: $number) {
@@ -729,7 +733,9 @@ export class GitHubAdapter {
       return d.repository?.pullRequest?.reviews;
     });
     const timeline = await walkConnection(pr.timelineItems, async (after) => {
-      const d = await this.graphqlRead<{ repository?: { pullRequest?: RawPrHistory | null } | null }>(
+      const d = await this.graphqlRead<{
+        repository?: { pullRequest?: RawPrHistory | null } | null;
+      }>(
         `query ($owner: String!, $repo: String!, $number: Int!, $after: String!) {
           repository(owner: $owner, name: $repo) {
             pullRequest(number: $number) {
@@ -1062,7 +1068,8 @@ export class GitHubAdapter {
    * throws IncompleteReadError (transient: the durable layers above retry).
    */
   private async completeCheckPages<T>(path: string, field: string): Promise<T[]> {
-    const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const sleep =
+      this.options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     const random = this.options.random ?? Math.random;
     const base = this.options.checkRestartMs ?? CHECK_RESTART_MS;
     for (let pass = 0; ; pass++) {
