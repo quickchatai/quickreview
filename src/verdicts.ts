@@ -1,5 +1,7 @@
 import {
+  deferRoundWork,
   enqueueRoundWork,
+  laterRoundWork,
   pendingRoundWork,
   finishRoundWork,
   type RoundWork,
@@ -59,6 +61,7 @@ import {
   resumeEscalations,
   type EscalationDeps,
   evaluateEscalationRules,
+  normalizeScope,
   normalizeSessionEscalations,
   type EscalationFacts,
 } from "./escalation.js";
@@ -86,6 +89,7 @@ import {
 import { estimateUsd, type ModelPricing } from "./usage.js";
 import { TranscriptIndex } from "./transcriptindex.js";
 import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
+import { classifyGitHubFailure } from "@quickchatai/pi-quickreview/src/githubcore.js";
 import { VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
@@ -173,6 +177,10 @@ type SelfRequeueMode =
  * behind its own accounting.
  */
 export const USAGE_BUDGET_MS = 120_000;
+
+/** How long an escalation evaluation deferred on an unreadable fact waits
+ * before it is evaluated again (the verdict sweep runs the owed work). */
+export const ESCALATION_FACTS_RETRY_MS = 5 * 60_000;
 
 /** How many unreadable paths the `round_usage_unknown` event names. */
 const UNREADABLE_LISTED = 10;
@@ -2163,7 +2171,7 @@ export class VerdictWatcher {
       () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
       `remove ${cfg.github.in_progress_label} on #${round.pr}`,
     );
-    await this.announceSafe((a) =>
+    this.announceSafe((a) =>
       a.anomaly({
         pr: round.pr,
         round_no: round.round_no,
@@ -2664,7 +2672,7 @@ export class VerdictWatcher {
     // Slack, in-thread and never broadcast. duration_s is computed
     // inside finishRound, so it is read back off the row rather than recomputed.
     const finished = round ? store.roundsFor(v.pr).find((r) => r.id === round.id) : undefined;
-    await this.announceSafe((a) =>
+    this.announceSafe((a) =>
       a.verdict({
         pr: v.pr,
         round_no: v.round_no,
@@ -2840,7 +2848,29 @@ export class VerdictWatcher {
         const parsed = validateVerdict(JSON.parse(work.payload));
         if (!parsed.ok || !parsed.verdict || parsed.verdict.outcome === "head_moved")
           throw new Error(`unreadable escalation intent ${work.key}`);
-        await this.deliverEscalations(parsed.verdict);
+        if (laterRoundWork(this.deps.store, "escalations", work.pr, work.round_no)) {
+          // A later round has its own evaluation, on its own facts: this
+          // one is obsolete, and settled before it can deliver anything (a
+          // deferred one would otherwise notify a person about candidates
+          // the later round no longer raised).
+          this.deps.store.logEvent("escalation_evaluation_superseded", work.pr, {
+            round_no: work.round_no,
+          });
+        } else if ((await this.deliverEscalations(parsed.verdict)) === "deferred") {
+          // A later round of the PR evaluates its own facts: this one is
+          // answered by it. Otherwise the evaluation is owed again later.
+          const later = this.deps.store
+            .roundsFor(work.pr)
+            .some((r) => r.round_no > work.round_no && r.backfilled !== 1);
+          if (!later) {
+            const due = new Date(this.now().getTime() + ESCALATION_FACTS_RETRY_MS);
+            deferRoundWork(this.deps.store, work.key, due.toISOString());
+            return;
+          }
+          this.deps.store.logEvent("escalation_evaluation_superseded", work.pr, {
+            round_no: work.round_no,
+          });
+        }
       }
       finishRoundWork(this.deps.store, work.key, this.now().toISOString());
     } catch (err) {
@@ -2926,23 +2956,71 @@ export class VerdictWatcher {
     }, "escalation delivery recovery");
   }
 
-  private async deliverEscalations(v: MeritsVerdictFile): Promise<void> {
+  /**
+   * Evaluate and deliver the round's escalations. `"deferred"` when a fact
+   * a configured rule (or a session candidate) depends on could not be read:
+   * nothing is decided on it, and the caller owes the evaluation again.
+   */
+  private async deliverEscalations(v: MeritsVerdictFile): Promise<"done" | "deferred"> {
     const cfg = this.deps.cfg.escalation;
-    if (!cfg.enabled) return;
+    if (!cfg.enabled) return "done";
     const { store, adapter } = this.deps;
-    if (!adapter.createReview) return; // no gated posting route ⇒ nothing to deliver through
+    if (!adapter.createReview) return "done"; // no gated posting route ⇒ nothing to deliver through
 
-    // --- the facts. Every read is best-effort: a fact we cannot see means
-    // the rules keyed on it do not fire, never that the round is disturbed.
+    // --- the facts. A fact that could not be read is UNKNOWN (null), never
+    // an empty list: `[]` would silently keep every rule keyed on it from
+    // firing (honest-unknown). An unknown fact a rule or a session
+    // candidate needs defers the whole evaluation — the round's owed
+    // escalation work is retried, or the next round decides — and the
+    // round itself is never disturbed. A read GitHub refused outright (a
+    // `rejected` 4xx) is not unknown but a known absence, `[]`, so a
+    // permanent refusal never defers the evaluation for ever
+    // (`escalationFactFailed`).
+    const causes: Record<string, string> = {};
+    const paths = await this.escalationPaths(v.pr, causes);
+    const labels = await this.escalationLabels(v.pr, causes);
+    const failingChecks = await this.escalationFailingChecks(v.pr, v.head_sha, causes);
+    const sessionCandidates = cfg.session_judgement ? (v.escalations ?? []) : [];
+    const needed = {
+      // Only what can carry a path needs the changed paths: a path rule's
+      // predicate, a severity rule (its finding's anchor is checked against
+      // them), and a session candidate whose scope names a path (the
+      // path-in-diff check). A label or failing-check rule, and a pathless
+      // candidate, decide and deliver without them.
+      changed_paths:
+        cfg.rules.some((r) => r.paths.length > 0 || r.min_severity !== "") ||
+        sessionCandidates.some(
+          (c) => normalizeScope((c as { scope?: unknown } | null)?.scope)?.path !== undefined,
+        ),
+      labels: cfg.rules.some((r) => r.labels.length > 0),
+      failing_checks: cfg.rules.some((r) => r.failing_checks.length > 0),
+    };
+    const unknown = [
+      ...(paths === null && needed.changed_paths ? ["changed_paths"] : []),
+      ...(labels === null && needed.labels ? ["labels"] : []),
+      ...(failingChecks === null && needed.failing_checks ? ["failing_checks"] : []),
+    ];
+    if (unknown.length > 0) {
+      store.logEvent("escalation_facts_unavailable", v.pr, {
+        round_no: v.round_no,
+        head_sha: v.head_sha,
+        facts: unknown,
+        causes,
+      });
+      this.log(
+        `escalation: #${v.pr} round ${v.round_no} not evaluated — ${unknown.join(", ")} unreadable; evaluation deferred`,
+      );
+      return "deferred";
+    }
     const facts: EscalationFacts = {
-      changed_paths: await this.escalationPaths(v.pr),
-      labels: await this.escalationLabels(v.pr),
+      changed_paths: paths ?? [],
+      labels: labels ?? [],
       findings: this.escalationFindings(
         v.pr,
         v.round_no,
         cfg.rules.some((r) => r.min_severity !== ""),
       ),
-      failing_checks: await this.escalationFailingChecks(v.pr, v.head_sha),
+      failing_checks: failingChecks ?? [],
     };
 
     // The two groups stay separate because they have different trust: the
@@ -2965,16 +3043,17 @@ export class VerdictWatcher {
         `escalation: rule "${rule.name}" fired on #${v.pr} but produced nothing — ${refusal}`,
       );
     });
-    const sessionCandidates = cfg.session_judgement ? (v.escalations ?? []) : [];
-    if (ruleRequests.length === 0 && sessionCandidates.length === 0) return;
+    if (ruleRequests.length === 0 && sessionCandidates.length === 0) return "done";
     await deliverEscalations(this.escalationDeliveryDeps()!, {
       pr: v.pr,
       verdict: v.verdict,
       head_sha: v.head_sha,
       round_no: v.round_no,
-      // The path-in-diff check's input. An unreadable
-      // listing is `[]`, which refuses every path-bearing scope rather than
-      // waving it through — the safe direction, same as every other fact.
+      // The path-in-diff check's input. An unreadable listing gets here
+      // only when nothing to deliver carries a path (the evaluation is
+      // deferred above otherwise), and a daemon wired with no listing route
+      // at all passes `[]`: either refuses every path-bearing scope rather
+      // than waving it through.
       changed_paths: facts.changed_paths,
       // Whether the round's own review actually reached GitHub, from the
       // posting receipt: the note must not claim a posting no confirmed
@@ -2985,6 +3064,7 @@ export class VerdictWatcher {
       ruleRequests,
       sessionCandidates,
     });
+    return "done";
   }
 
   /**
@@ -3003,23 +3083,33 @@ export class VerdictWatcher {
     }
   }
 
-  private async escalationPaths(pr: number): Promise<string[]> {
+  /** The PR's changed paths; null when the read failed transiently (its
+   * cause in `causes`), `[]` when GitHub refused it (`escalationFactFailed`).
+   * A daemon with no listing route has `[]`: nothing can ever be known
+   * there, so nothing waits for it. */
+  private async escalationPaths(
+    pr: number,
+    causes: Record<string, string>,
+  ): Promise<string[] | null> {
     if (!this.deps.adapter.listPrFiles) return [];
     try {
       return (await this.deps.adapter.listPrFiles(pr)).map((f) => f.filename).filter(Boolean);
     } catch (err) {
-      this.log(`escalation: file listing failed on #${pr}`, err);
-      return [];
+      return this.escalationFactFailed(pr, "changed_paths", err, causes);
     }
   }
 
-  private async escalationLabels(pr: number): Promise<string[]> {
+  /** The PR's labels; null when the read failed transiently (its cause in
+   * `causes`), `[]` when GitHub refused it (`escalationFactFailed`). */
+  private async escalationLabels(
+    pr: number,
+    causes: Record<string, string>,
+  ): Promise<string[] | null> {
     if (!this.deps.adapter.getPr) return [];
     try {
       return (await this.deps.adapter.getPr(pr)).labels ?? [];
     } catch (err) {
-      this.log(`escalation: PR read failed on #${pr}`, err);
-      return [];
+      return this.escalationFactFailed(pr, "labels", err, causes);
     }
   }
 
@@ -3071,16 +3161,53 @@ export class VerdictWatcher {
    * "failed" (pending and inert runs are not listed) — the same
    * latest-run-per-name rule the CI gate uses, so an auto-cancelled
    * superseded run cannot escalate to a person forever. */
-  private async escalationFailingChecks(pr: number, head: string): Promise<string[]> {
+  private async escalationFailingChecks(
+    pr: number,
+    head: string,
+    causes: Record<string, string>,
+  ): Promise<string[] | null> {
     if (!this.deps.adapter.listChecks || !head) return [];
     try {
       return latestRunPerName(await this.deps.adapter.listChecks(head))
         .filter((c) => checkOutcome(c) === "failed")
         .map((c) => c.name);
     } catch (err) {
-      this.log(`escalation: checks read failed on #${pr}`, err);
+      return this.escalationFactFailed(pr, "failing_checks", err, causes);
+    }
+  }
+
+  /**
+   * What a failed fact read means for this evaluation. A failure GitHub may
+   * answer differently later (transient, rate-limited, or unclassifiable) is
+   * UNKNOWN: null, its cause in `causes`, and the evaluation is deferred and
+   * asked again. A `rejected` read (a 4xx such as 404 or 403) is GitHub's
+   * definite answer, and asking again every few minutes would get the same
+   * one for ever: it is logged once (`escalation_fact_rejected`) and read as a
+   * KNOWN ABSENCE, `[]`, so the decision proceeds. An absent fact only ever
+   * keeps a rule from firing, and an empty changed-path list refuses every
+   * path-bearing scope, so the absence never widens what is delivered.
+   */
+  private escalationFactFailed(
+    pr: number,
+    fact: "changed_paths" | "labels" | "failing_checks",
+    err: unknown,
+    causes: Record<string, string>,
+  ): string[] | null {
+    const failure = classifyGitHubFailure(err);
+    if (failure.kind === "rejected") {
+      this.log(
+        `escalation: ${fact} read refused on #${pr} (${failure.detail}) — read as absent; the evaluation proceeds`,
+      );
+      this.deps.store.logEvent("escalation_fact_rejected", pr, {
+        fact,
+        ...(failure.status !== undefined ? { status: failure.status } : {}),
+        detail: failure.detail,
+      });
       return [];
     }
+    this.log(`escalation: ${fact} read failed on #${pr} (${failure.kind})`, err);
+    causes[fact] = String(err).slice(0, 300);
+    return null;
   }
 
   // ---- ledger freshness ------------------------------------------------
@@ -3821,7 +3948,7 @@ export class VerdictWatcher {
     // An incident on the automatic retry ladder is announced as FAILED_LOUD,
     // under its policy and with its retry time, like every other one; a hold
     // for the operator keeps the deadline's own message.
-    await this.announceSafe((a) =>
+    this.announceSafe((a) =>
       a.anomaly({
         pr,
         round_no: roundNo,
@@ -4114,7 +4241,7 @@ export class VerdictWatcher {
         `remove ${this.deps.cfg.github.in_progress_label} on #${pr}`,
       );
       await this.closeMeasurement(owed, "background");
-      await this.announceSafe((a) =>
+      this.announceSafe((a) =>
         a.anomaly({
           pr,
           round_no: roundNo,
@@ -4884,12 +5011,15 @@ export class VerdictWatcher {
         const newest = store
           .roundsFor(round.pr)
           .reduce((a, b) => (b.round_no > a.round_no ? b : a), round);
-        await this.announceSafe((a) =>
+        // Read now: the announcement itself may run later, behind this PR's
+        // earlier ones.
+        const supersedingHead = store.getPr(round.pr)?.head_sha ?? "";
+        this.announceSafe((a) =>
           a.superseded({
             pr: round.pr,
             old_round_no: round.round_no,
             new_round_no: newest.round_no,
-            head_sha: store.getPr(round.pr)?.head_sha ?? "",
+            head_sha: supersedingHead,
           }),
         );
         this.log(`verdicts: #${round.pr} round ${round.round_no} cancelled (superseded)`);
@@ -4999,16 +5129,34 @@ export class VerdictWatcher {
     return overdue;
   }
 
-  /** Slack is a side channel: absent announcer ⇒ nothing happens, and a Slack
-   * failure is logged, never propagated into the verdict path. */
-  private async announceSafe(fn: (a: VerdictAnnouncer) => Promise<void>): Promise<void> {
+  /**
+   * Slack is a side channel: absent announcer ⇒ nothing happens, and a Slack
+   * failure is logged, never propagated into the verdict path.
+   *
+   * Fire-and-forget. A blackholed Slack costs each call its bounded retries
+   * (tens of seconds), and the deadline sweep and the verdict path must
+   * never wait on that. The announcer is CALLED here, synchronously, never
+   * from a queue of this watcher's own: the announcer orders each PR's
+   * announcements by when they were called (`SlackAnnouncer.inPrOrder`),
+   * across the watcher and dispatch alike, so an incident's alert stays
+   * before the verdict that follows it, and a later round's pickup can never
+   * overtake either. The work is tracked as background work, so `idle()`
+   * waits for it.
+   */
+  private announceSafe(fn: (a: VerdictAnnouncer) => Promise<void>): void {
     const announcer = this.deps.announce;
     if (!announcer) return;
+    let call: Promise<void>;
     try {
-      await fn(announcer);
+      call = fn(announcer);
     } catch (err) {
       this.log("verdicts: slack announcement failed", err);
+      return;
     }
+    const job: Promise<void> = call
+      .catch((err: unknown) => this.log("verdicts: slack announcement failed", err))
+      .finally(() => this.background.delete(job));
+    this.background.add(job);
   }
 
   private async safe<T>(fn: () => Promise<T>, what: string): Promise<T | undefined> {

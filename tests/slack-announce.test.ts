@@ -693,6 +693,143 @@ describe("pinned heartbeat", () => {
     expect(posted?.text).toContain("Use u on the board to recover");
   });
 
+  // The first FAILED_LOUD alert could be lost for good: a definite refusal
+  // settled ok=0 with nothing to post it again, and an alert queued behind a
+  // slow Slack died with the process. The heartbeat owes every open incident
+  // its alert — and never re-posts one Slack may already have.
+  describe("an open incident's owed alert", () => {
+    function openIncident(stage = "command_start"): void {
+      store.upsertPr({
+        number: 5420,
+        state: "tracked",
+        head_sha: "abc",
+        title: "PR",
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      store.openReviewFailure({
+        pr: 5420,
+        command_id: "cmd-5420",
+        round_id: null,
+        round_no: 3,
+        head_sha: "abc",
+        stage,
+        detail: "no start",
+        attempts: 2,
+        retry_cap: 2,
+      });
+      cfg.slack.policy.causes["review.failed_loud"] = { enabled: true, cooldown_min: 0 };
+    }
+    const alerts = (): Posted[] => slack.posts.filter((p) => p.text.startsWith("⛔ #5420"));
+    const ID = "review-failure:cmd-5420";
+
+    // MUTATION: drop the `announceOwedIncidents` call from heartbeat — no
+    // alert is ever posted for an incident whose announcement never ran.
+    it("an incident never announced is announced at the next heartbeat, once", async () => {
+      openIncident();
+      const a = announcer();
+      await a.heartbeat();
+      expect(alerts()).toHaveLength(1);
+      expect(store.slackPost(ID)).toMatchObject({ ok: 1 });
+      await a.heartbeat();
+      expect(alerts()).toHaveLength(1);
+    });
+
+    it("a definitely refused alert is posted again under the incident's own key", async () => {
+      openIncident();
+      const a = announcer();
+      slack.failNext = true;
+      await a.anomaly({
+        pr: 5420,
+        round_no: 3,
+        kind: "failed_loud",
+        deadline_min: 75,
+        incident_id: ID,
+      });
+      expect(store.slackPost(ID)).toMatchObject({ ok: 0 });
+      expect(alerts()).toHaveLength(0);
+      await a.heartbeat();
+      expect(alerts()).toHaveLength(1);
+      expect(store.slackPost(ID)).toMatchObject({ ok: 1, ts: expect.any(String) });
+    });
+
+    // MUTATION: re-post when `post.ok === 1 && !post.ts` — the ambiguous
+    // create is posted a second time and the count is 1.
+    it("an ambiguous alert is never re-posted blindly", async () => {
+      openIncident();
+      const a = announcer();
+      slack.throwNext = true;
+      await a.anomaly({
+        pr: 5420,
+        round_no: 3,
+        kind: "failed_loud",
+        deadline_min: 75,
+        incident_id: ID,
+      });
+      expect(store.slackPost(ID)).toMatchObject({ ok: 1, ts: null });
+      await a.heartbeat();
+      await announcer().heartbeat();
+      expect(alerts()).toHaveLength(0);
+    });
+
+    // MUTATION: re-post every owed alert as `kind: "failed_loud"` — the
+    // overdue incident's alert says "exhausted automatic recovery" instead.
+    it("the re-post says what the original would have: an overdue incident's alert is the overdue one", async () => {
+      openIncident("round_deadline");
+      cfg.slack.policy.causes["round.overdue"] = { enabled: true, cooldown_min: 0 };
+      await announcer().heartbeat();
+      const posted = slack.posts.filter((p) => p.text.includes("#5420"));
+      expect(posted).toHaveLength(1);
+      expect(posted[0]!.text.startsWith("⏱ #5420 round 3")).toBe(true);
+      expect(store.slackPost(ID)).toMatchObject({ ok: 1 });
+    });
+
+    // MUTATION: restore `if (failure.round_no === null) continue` in
+    // owedIncidentAlerts — a failed wake's lost alert is never posted again;
+    // this fails.
+    it("a failed wake's incident, with no round, is owed its alert too", async () => {
+      store.upsertPr({
+        number: 5421,
+        state: "tracked",
+        head_sha: "abc",
+        title: "PR",
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      store.openReviewFailure({
+        pr: 5421,
+        command_id: "wake-5421",
+        round_id: null,
+        round_no: null,
+        head_sha: "abc",
+        stage: "session_command",
+        detail: "fetch failed",
+        attempts: 2,
+        retry_cap: 2,
+      });
+      cfg.slack.policy.causes["review.failed_loud"] = { enabled: true, cooldown_min: 0 };
+      const wakeAlerts = () => slack.posts.filter((p) => p.text.startsWith("⛔ #5421"));
+      const a = announcer();
+      await a.heartbeat();
+      expect(wakeAlerts()).toHaveLength(1);
+      expect(wakeAlerts()[0]?.text).toContain("conversation work (a failed wake)");
+      expect(store.slackPost("review-failure:wake-5421")).toMatchObject({ ok: 1 });
+      await a.heartbeat();
+      expect(wakeAlerts()).toHaveLength(1);
+    });
+
+    it("a recovered incident is owed nothing", async () => {
+      openIncident();
+      store.recoverReviewFailure(5420, "operator-rerun");
+      await announcer().heartbeat();
+      expect(alerts()).toHaveLength(0);
+    });
+  });
+
   describe("a recovered incident's correction", () => {
     async function recoveredIncident(a: SlackAnnouncer): Promise<string> {
       store.upsertPr({

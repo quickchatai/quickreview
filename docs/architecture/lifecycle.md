@@ -215,8 +215,11 @@ a round already running never gets a second.
 
 **Building the round.** For a PR that survives both:
 
-1. consume both triggers and add the in-progress label;
-2. read `base_ref` and the PR body in one `getPr`, and the changed files once;
+1. read `base_ref`, the PR body and the labels in one `getPr` — a failed read
+   defers the dispatch (below), never a round without its base fetch and
+   intent lens;
+2. consume both triggers, add the in-progress label, and read the changed
+   files once;
 3. plan the passes (`buildPassPlan`) and open the round row
    (`store.startRound`) with the diffstat, the plan and the validator tier;
 4. **prepare the worktree before building the order** — fetch the PR head and
@@ -240,6 +243,14 @@ The round is provisional until that handoff completes: if anything before it
 throws, the round row is discarded rather than left orphaned. If the durable
 session command was already persisted, the round is *retained* instead and the
 bounded supervisor owns its recovery.
+
+**Per-PR backoff.** A dispatch that fails before any round owns the review
+leaves the PR queued, and the pump would otherwise retry the whole attempt every
+tick. `src/dispatchbackoff.ts` holds the PR back instead: 30 s after the first
+failure, doubling to 30 min, never shorter than a GitHub `Retry-After`. The
+fourth consecutive failure raises one `dispatch_failing` anomaly; any dispatch
+of the PR that ends without failing clears the streak. The streak is per daemon
+process, so a restart retries at once.
 
 ### Lens selection and tiers
 
@@ -577,7 +588,15 @@ withheld mark and applies a `REQUEST_CHANGES` verdict event, moving the PR to
 
 `runBaseAdvance()` fans a base-branch move out only to open PRs that target that
 branch and hold a standing approval; every other PR is skipped without an API
-call.
+call. Whether an advance is a question for a PR is one decision
+(`baseAdvanceEligibility`), shared by the fan-out and the retry below. A
+base-advance question a run cannot answer — the fan-out's `getPr` or the delta
+read fails, the head moves under the reads, or the run fails before its
+question is handed off durably — is never dropped: `runRecheck` says so in its
+outcome (`owed`), the question is owed in `owed_base_rechecks` (one row per PR,
+branch and commit), and every reconcile pass asks the due ones again
+(`retryOwedBaseRechecks`, 2 min doubling to 1 h), settling each once it is
+answered or nothing is left to ask.
 
 ## 8. Ping-pong, wake holding and self-requeue
 
@@ -744,6 +763,23 @@ the model), it can never touch a verdict, and it rides the same `max_per_pr` cap
 and the same never-twice ledger. Which half a candidate belongs to is decided by
 the **call site**: `deliverEscalations()` takes the two groups as separate
 arguments, so a session cannot label itself as a rule to buy an exemption.
+
+The facts a rule reads (the changed paths, the labels, the failing checks)
+come off GitHub reads, and a read that fails is **unknown**, never an empty
+list that would silently keep every rule keyed on it from firing. An unknown
+fact a configured rule or a session candidate needs defers the whole
+evaluation (`escalation_facts_unavailable`, with the cause). The changed paths
+are needed only by what can carry a path: a path or severity rule, or a
+session candidate whose scope names a file; a label or failing-check rule and
+a pathless candidate decide without them. The round's owed escalation work is
+retried five minutes later, and a later round of the PR answers it instead
+when one exists (`escalation_evaluation_superseded`); a round's work is also
+settled, before it can deliver anything, once a later round has an evaluation
+of its own. A
+read GitHub refuses outright (a 4xx the shared classifier calls `rejected`,
+such as 404 or 403) would be refused again on every retry, so it is logged once
+(`escalation_fact_rejected`) and read as a known absence, and the evaluation
+proceeds; an absent fact only keeps a rule from firing.
 
 Two delivery shapes. `comment` (the default) posts a gated `create_review`
 COMMENT with `reviewPurpose: "escalation"` — the same mechanically-authored

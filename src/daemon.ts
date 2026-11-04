@@ -53,6 +53,7 @@ import { OutcomeCapture, type AnchorGit } from "./outcomes.js";
 import { reconcileOnce, type ReconcileAdapter } from "./reconcile.js";
 import {
   RecheckWatcher,
+  retryOwedBaseRechecks,
   runBaseAdvance,
   runRecheck,
   recheckFingerprint,
@@ -1021,6 +1022,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         ok: false,
         error: `the reconcile pass failed: ${thrown instanceof Error ? thrown.message : JSON.stringify(thrown)}`,
       };
+    // The base-advance backstop: a base-advance recheck whose reads failed
+    // is owed, and asked again here once its backoff is due. Its own guard:
+    // it never fails the pass.
+    await guard("owed base rechecks", () => retryOwedBaseRechecks(recheckDeps));
     // The poll's outcome reaches status.json now, not at the next heartbeat:
     // "working" is judged on it.
     writeStatus();

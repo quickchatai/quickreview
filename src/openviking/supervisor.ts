@@ -14,12 +14,24 @@
 //   * Never gives up. A crash schedules a respawn on a capped backoff ladder,
 //     forever. An engine that stays down is worse than a slow retry, and every
 //     memory call site already degrades.
+//   * Restarts a server that is alive but not answering. A process can keep
+//     running while it serves nothing (a deadlock, a wedged event loop), and
+//     an exit-only supervisor never notices. After `liveness_failures`
+//     consecutive failed `/health` probes spanning at least
+//     `liveness_span_s`, the child is stopped (SIGTERM, then SIGKILL) and
+//     its exit walks the same capped ladder. A child that has never answered
+//     is still starting, not hung: it is judged only once it has answered
+//     once, or once `liveness_startup_grace_s` has passed. The kill is never
+//     awaited by a round or the boot, and each one is logged and reported
+//     (`onLivenessRestart`).
 //   * Never throws at the heartbeat. `status()` is synchronous, reads only
 //     cached samples, and returns a minimal block on any internal error — the
 //     status writer must not be able to fail on the memory engine.
 //
-// Monitoring only: RSS/CPU ride the heartbeat, with no RSS watchdog and no
-// auto-restart on a memory budget. Do not add one.
+// Memory size is monitoring only: RSS/CPU ride the heartbeat, with no RSS
+// watchdog and no restart on a memory budget. Do not add one. The liveness
+// restart above is the one restart a running server can get, and it judges
+// only whether `/health` answers, never how much memory the server holds.
 //
 // `[openviking] endpoint = "remote"` is the memory sidecar (docker/memory/):
 // the server is some other container's process. This class then supervises
@@ -139,6 +151,10 @@ export interface SupervisorDeps {
    * never held back for good). A respawn never waits: a server crash is not
    * the embedder's to gate, and `start()` still returns at once. */
   startGate?: { open: () => boolean; maxWaitMs: number; pollMs?: number; what: string };
+  /** Told each time a liveness restart stops a server that stopped
+   * answering (the daemon raises an anomaly). A throw is logged and
+   * swallowed. */
+  onLivenessRestart?: (detail: string) => void;
 }
 
 const defaultSchedule: Schedule = (fn, ms) => {
@@ -158,6 +174,7 @@ export class OpenVikingSupervisor {
   private readonly schedule: Schedule;
   private readonly onReady: (() => void) | undefined;
   private readonly startGate: SupervisorDeps["startGate"];
+  private readonly onLivenessRestart: ((detail: string) => void) | undefined;
   private readonly bindHost: string;
   private readonly remote: boolean;
   private waitingSince: number | null = null;
@@ -175,6 +192,15 @@ export class OpenVikingSupervisor {
   private health: OpenVikingHealth | null = null;
   /** Consecutive polls that reached the server but not its `/ready`. */
   private notReadyPolls = 0;
+  /** Consecutive failed `/health` probes of the current child, counted for
+   * the liveness restart, and when the first of them was taken. */
+  private livenessFailures = 0;
+  private livenessSince: number | null = null;
+  /** The current child has answered `/health` at least once. */
+  private answeredSinceSpawn = false;
+  /** The child a liveness restart is stopping (never stopped twice). */
+  private livenessStopping: SupervisedChild | null = null;
+  private livenessRestarts = 0;
   private proc: ProcSample | undefined;
   private lastExit: OpenVikingStatus["last_exit"];
   private lastError: string | undefined;
@@ -193,6 +219,7 @@ export class OpenVikingSupervisor {
     this.schedule = deps.schedule ?? defaultSchedule;
     this.onReady = deps.onReady;
     this.startGate = deps.startGate;
+    this.onLivenessRestart = deps.onLivenessRestart;
     this.bindHost = deps.bindHost ?? deps.cfg.host;
     this.remote = deps.cfg.endpoint === "remote";
   }
@@ -273,6 +300,9 @@ export class OpenVikingSupervisor {
     if (this.stopping) return;
     this.cancelRestart = null;
     this.notReadyPolls = 0;
+    this.livenessFailures = 0;
+    this.livenessSince = null;
+    this.answeredSinceSpawn = false;
     const args = [
       "--config",
       this.cfg.config_file,
@@ -397,6 +427,11 @@ export class OpenVikingSupervisor {
     // history: the probe's own error (if any) is the current one.
     if (health.reachable) this.lastError = undefined;
     this.notReadyPolls = this.health.reachable && !this.health.ready ? this.notReadyPolls + 1 : 0;
+    this.checkLiveness(child, health);
+    // A liveness stop whose child exits at once has already run the exit
+    // path (cache cleared, respawn scheduled): this probe describes nothing
+    // tracked any more.
+    if (this.child !== child) return;
     this.proc = this.childPid !== undefined ? this.sampler.sample(this.childPid) : undefined;
     if (this.health.ready && !wasReady) {
       try {
@@ -405,6 +440,44 @@ export class OpenVikingSupervisor {
         this.log("openviking: onReady callback threw", err);
       }
     }
+  }
+
+  /**
+   * The liveness restart (see the header): count a failed `/health` probe
+   * of the tracked child, and stop the child once the failures reach the
+   * configured count and span. Synchronous; the stop is never awaited.
+   */
+  private checkLiveness(child: SupervisedChild | null, health: OpenVikingHealth): void {
+    if (this.remote || !child || this.stopping) return;
+    const limit = this.cfg.liveness_failures;
+    if (!(limit > 0)) return;
+    if (health.reachable) {
+      this.answeredSinceSpawn = true;
+      this.livenessFailures = 0;
+      this.livenessSince = null;
+      return;
+    }
+    const now = this.now().getTime();
+    const upMs = this.startedAt !== null ? now - this.startedAt : 0;
+    if (!this.answeredSinceSpawn && upMs < this.cfg.liveness_startup_grace_s * 1000) return;
+    if (this.livenessFailures === 0) this.livenessSince = now;
+    this.livenessFailures += 1;
+    const spanMs = now - (this.livenessSince ?? now);
+    if (this.livenessFailures < limit || spanMs < this.cfg.liveness_span_s * 1000) return;
+    if (this.livenessStopping === child) return;
+    this.livenessStopping = child;
+    this.livenessRestarts += 1;
+    const detail = `the server (pid ${child.pid ?? "?"}) is running but failed ${this.livenessFailures} /health probes over ${Math.round(spanMs / 1000)}s (${health.error ?? "no answer"}); stopping it for a restart on the backoff ladder`;
+    this.lastError = `liveness restart: ${health.error ?? "no answer"}`;
+    this.log(`openviking: liveness restart — ${detail}`);
+    try {
+      this.onLivenessRestart?.(detail);
+    } catch (err) {
+      this.log("openviking: onLivenessRestart callback threw", err);
+    }
+    void terminateChild(child, this.schedule).finally(() => {
+      if (this.livenessStopping === child) this.livenessStopping = null;
+    });
   }
 
   /** The `openviking` block of status.json. Synchronous, cached, total. */
@@ -421,6 +494,7 @@ export class OpenVikingSupervisor {
         restarts: this.restarts,
       };
       const version = this.health?.version;
+      if (this.livenessRestarts > 0) base.liveness_restarts = this.livenessRestarts;
       return {
         ...base,
         ...(this.remote ? { endpoint: "remote" as const } : {}),

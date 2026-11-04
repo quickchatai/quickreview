@@ -95,6 +95,11 @@ import { renderGateNotes } from "@quickchatai/pi-quickreview/src/templates.js";
 import { firstPartyDirectiveFiles } from "@quickchatai/pi-quickreview/src/severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine.js";
+import {
+  clearDispatchFailures,
+  dispatchBackoffHold,
+  noteDispatchFailure,
+} from "./dispatchbackoff.js";
 import type { ApprovalWithheldRow, PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import { roundPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
@@ -1237,6 +1242,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       return `skipped — under a ${lease.kind} lease (${lease.holder})`;
     if (store.hasHeldWakes(row.number))
       return "skipped — held conversational wakes must drain first";
+    // A PR whose last dispatches failed waits out its backoff
+    // (src/dispatchbackoff.ts) instead of repeating the attempt every tick.
+    const backoff = dispatchBackoffHold(store, row.number, now().getTime());
+    if (backoff) return backoff;
     return null;
   };
   const eligible = queuedInOrder(store).filter((row) => {
@@ -1395,6 +1404,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         log(
           `dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}; standing ${standing ?? "review (verdict unknown)"} stands, PR ${restored}`,
         );
+        clearDispatchFailures(store, row.number);
         continue;
       }
 
@@ -1475,35 +1485,38 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               reason: `dispatch-short-circuit:${sc.reason}`,
             },
           );
+          clearDispatchFailures(store, row.number);
           continue;
         }
       }
 
-      markedInProgress = true;
-      const consumed = await consumeTriggers(deps, row.number);
-
       // The branch this PR targets (base freshness) and its body
-      // (pass-intent's artifact + substance bar) come off one getPr read. A
-      // failed read degrades to "no base facts, no intent lens", never a
-      // failed round.
-      let baseRef = "";
-      let prBody: string | undefined;
-      // The PR's labels as GitHub has them this round (a label request for a
-      // security review stands while its label does); null when unread.
-      let labels: string[] | null = null;
+      // (pass-intent's artifact + substance bar) come off one getPr read,
+      // taken BEFORE the triggers are consumed. A failed read defers the
+      // dispatch through the per-PR backoff (the outer catch): a round run
+      // without it would silently lose its base fetch and its intent lens,
+      // and nothing has been written to GitHub yet, so the PR is simply
+      // still queued.
       // The request row this round's inputs may count as seen, read BEFORE
       // the labels: a request recorded after this line (a label added while
       // the tree is prepared) is never "seen", so a plan the stale labels
       // left it out of puts it back (deferUncoveredSecurityRequest).
       const requestSeen = store.reviewRequest(row.number, SECURITY_REQUEST_KIND)?.requested_at;
+      let ref: Awaited<ReturnType<DispatchAdapter["getPr"]>>;
       try {
-        const ref = await deps.adapter.getPr(row.number);
-        baseRef = ref.base_ref;
-        prBody = ref.body;
-        labels = Array.isArray(ref.labels) ? ref.labels : null;
+        ref = await deps.adapter.getPr(row.number);
       } catch (err) {
-        log(`dispatch: base ref lookup failed on #${row.number}`, err);
+        log(`dispatch: base ref lookup failed on #${row.number} — dispatch deferred`, err);
+        throw err;
       }
+      const baseRef = ref.base_ref;
+      const prBody: string | undefined = ref.body;
+      // The PR's labels as GitHub has them this round (a label request for a
+      // security review stands while its label does); null when unread.
+      const labels: string[] | null = Array.isArray(ref.labels) ? ref.labels : null;
+
+      markedInProgress = true;
+      const consumed = await consumeTriggers(deps, row.number);
 
       // Prepare the tree BEFORE building the order, so the prompt cites the sha
       // the passes will actually read. `row.head_sha` is a webhook/reconcile
@@ -2384,6 +2397,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       provisionalRoundId = undefined;
       dispatched.push(order);
       started++;
+      clearDispatchFailures(store, row.number);
     } catch (err) {
       // One bad PR must never stall the pump. Before the session handoff, the
       // provisional round is disposable. AFTER dispatchRound persisted a
@@ -2470,6 +2484,16 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         });
       } catch (eventError) {
         log(`dispatch: #${row.number} failure event write failed`, eventError);
+      }
+      // A retained round owns the review and is supervised; any other failure
+      // holds the PR back on its backoff before the next attempt.
+      if (retainedCommand) clearDispatchFailures(store, row.number);
+      else {
+        try {
+          noteDispatchFailure(store, row.number, err, now().getTime());
+        } catch (backoffError) {
+          log(`dispatch: #${row.number} backoff not recorded`, backoffError);
+        }
       }
     } finally {
       // A round that failed after its seed never leaves the case

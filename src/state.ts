@@ -766,6 +766,18 @@ export type EscalationRecoveryInput = Omit<
   "phase" | "last_error" | "next_attempt_at" | "updated_at"
 >;
 
+/** A base-advance recheck owed after a failed read (`owed_base_rechecks`). */
+export interface OwedBaseRecheckRow {
+  pr: number;
+  branch: string;
+  before_sha: string;
+  after_sha: string;
+  attempts: number;
+  next_attempt_at: string;
+  last_error: string | null;
+  created_at: string;
+}
+
 export interface WebhookInboxRow {
   guid: string;
   event: string;
@@ -776,6 +788,18 @@ export interface WebhookInboxRow {
   received_at: string;
   attempted_at: string | null;
   next_attempt_at: string | null;
+  /** Failed fulfilment attempts so far; drives the capped backoff. */
+  attempts: number;
+}
+
+/** The first wait after an accepted webhook's fulfilment fails. */
+export const WEBHOOK_RETRY_BASE_MS = 30_000;
+/** The longest wait the doubling reaches. */
+export const WEBHOOK_RETRY_MAX_MS = 30 * 60_000;
+
+/** The wait after the `attempts`-th failed fulfilment: 30 s doubling to 30 min. */
+export function webhookRetryDelayMs(attempts: number): number {
+  return Math.min(WEBHOOK_RETRY_MAX_MS, WEBHOOK_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1));
 }
 
 const SCHEMA = `
@@ -1034,6 +1058,21 @@ CREATE TABLE IF NOT EXISTS rechecks (
   reason       TEXT,
   created_at   TEXT NOT NULL,
   PRIMARY KEY (pr, fingerprint)
+);
+-- A base-advance recheck question whose reads failed: owed, and asked again
+-- at next_attempt_at by the reconcile pass (retryOwedBaseRechecks), so a
+-- transient GitHub error never drops it. One row per PR and advance; the
+-- branch is part of the advance, since two branches can reach one commit.
+CREATE TABLE IF NOT EXISTS owed_base_rechecks (
+  pr              INTEGER NOT NULL,
+  branch          TEXT NOT NULL,
+  before_sha      TEXT NOT NULL,
+  after_sha       TEXT NOT NULL,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT NOT NULL,
+  last_error      TEXT,
+  created_at      TEXT NOT NULL,
+  PRIMARY KEY (pr, branch, after_sha)
 );
 -- Rendered non-push questions remain owed independently of capped active wakes.
 CREATE TABLE IF NOT EXISTS recheck_deliveries (
@@ -1948,6 +1987,10 @@ export class StateStore {
       // and a review captured before the column is unknown — the miner then
       // never reads it as a request for changes.
       "ALTER TABLE pr_comments ADD COLUMN review_state TEXT",
+      // Failed fulfilment attempts of an accepted webhook: the retry backs
+      // off on it and raises one anomaly at a threshold. A row from before
+      // the column starts at 0, which only means its next wait is short.
+      "ALTER TABLE webhook_inbox ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
     ])
       this.addColumn(ddl);
     this.migrateBotCommentNamespaces();
@@ -6431,6 +6474,67 @@ export class StateStore {
     })();
   }
 
+  /** Owe a base-advance recheck whose reads failed: insert, or count one
+   * more failed attempt; the next one is due `retryMs` from now. Returns
+   * the attempts so far. */
+  oweBaseRecheck(
+    pr: number,
+    advance: { branch: string; before: string; after: string },
+    error: string,
+    retryAfterMs: (attempts: number) => number,
+  ): number {
+    return this.db
+      .transaction(() => {
+        const prior = this.owedBaseRecheck(pr, advance.branch, advance.after);
+        const attempts = (prior?.attempts ?? 0) + 1;
+        const now = this.now().getTime();
+        const due = new Date(now + retryAfterMs(attempts)).toISOString();
+        this.db
+          .prepare(
+            `INSERT INTO owed_base_rechecks
+               (pr, branch, before_sha, after_sha, attempts, next_attempt_at, last_error, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(pr, branch, after_sha) DO UPDATE SET
+               attempts = excluded.attempts, next_attempt_at = excluded.next_attempt_at,
+               last_error = excluded.last_error`,
+          )
+          .run(
+            pr,
+            advance.branch,
+            advance.before,
+            advance.after,
+            attempts,
+            due,
+            error.slice(0, 500),
+            this.ts(),
+          );
+        return attempts;
+      })
+      .immediate();
+  }
+
+  owedBaseRecheck(pr: number, branch: string, after: string): OwedBaseRecheckRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM owed_base_rechecks WHERE pr = ? AND branch = ? AND after_sha = ?")
+      .get(pr, branch, after) as OwedBaseRecheckRow | undefined;
+  }
+
+  /** Owed base-advance rechecks due at `now`, oldest first. */
+  dueBaseRechecks(now: string): OwedBaseRecheckRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM owed_base_rechecks WHERE next_attempt_at <= ? ORDER BY next_attempt_at, pr",
+      )
+      .all(now) as OwedBaseRecheckRow[];
+  }
+
+  /** The owed question is answered (asked, or nothing left to ask). */
+  settleBaseRecheck(pr: number, branch: string, after: string): void {
+    this.db
+      .prepare("DELETE FROM owed_base_rechecks WHERE pr = ? AND branch = ? AND after_sha = ?")
+      .run(pr, branch, after);
+  }
+
   /** The receipt guard's read (docs/archiving.md §8.1): the PR's
    * archive row — its state and the newest original mtime among the
    * transcripts the archiver moved — or null when the PR was never archived.
@@ -6573,12 +6677,30 @@ export class StateStore {
       .immediate();
   }
 
-  deferWebhookDelivery(guid: string, error: string, now: number): void {
-    this.db
-      .prepare(
-        "UPDATE webhook_inbox SET attempted_at=?,next_attempt_at=?,last_error=? WHERE guid=?",
-      )
-      .run(new Date(now).toISOString(), new Date(now + 30_000).toISOString(), error, guid);
+  /** A failed fulfilment: count it and push the next attempt out on the
+   * capped backoff (`webhookRetryDelayMs`). Returns the attempts so far, 0
+   * when the row is gone. */
+  deferWebhookDelivery(guid: string, error: string, now: number): number {
+    return this.db
+      .transaction(() => {
+        const row = this.db.prepare("SELECT attempts FROM webhook_inbox WHERE guid=?").get(guid) as
+          { attempts: number } | undefined;
+        if (!row) return 0;
+        const attempts = row.attempts + 1;
+        this.db
+          .prepare(
+            "UPDATE webhook_inbox SET attempted_at=?,next_attempt_at=?,last_error=?,attempts=? WHERE guid=?",
+          )
+          .run(
+            new Date(now).toISOString(),
+            new Date(now + webhookRetryDelayMs(attempts)).toISOString(),
+            error,
+            attempts,
+            guid,
+          );
+        return attempts;
+      })
+      .immediate();
   }
 
   completeWebhookDelivery(guid: string): void {
