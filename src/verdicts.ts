@@ -1463,8 +1463,9 @@ export class VerdictWatcher {
      *     mode).
      *   - `exhausted`: a `deferred` receipt whose daemon-owned
      *     retry is over without a confirmed review — its window spent, a
-     *     guard refused it, or its handoff is unreadable. The POST was
-     *     attempted, so never a requeue: every path fails it loud. */
+     *     guard refused it, or its handoff is unreadable. A POST may have
+     *     been sent (by the session, or by the retry after a deferral made
+     *     before any attempt), so never a requeue: every path fails it loud. */
     failure?: "unconfirmed" | "ambiguous" | "contradicted" | "exhausted";
   }> {
     if (!round.posting_key) return { kind: "legacy" };
@@ -1682,9 +1683,9 @@ export class VerdictWatcher {
       pendingPosting(this.postingReceiptDir(), round.pr, round.round_no, round.posting_key)
     )
       return { kind: "waiting" };
-    // A deferred POST whose retry is over (the outbox job is failed or gone)
-    // and whose marker the read above did not find: attempted, never
-    // confirmed. Loud on every path — never a requeue.
+    // A deferred posting whose retry is over (the outbox job is failed or
+    // gone) and whose marker the read above did not find: never confirmed,
+    // and a POST may have been sent. Loud on every path — never a requeue.
     if (receiptIdentityOk && receipt && receipt.status === "deferred") {
       const ledger = this.deps.store.postingRetry(round.posting_key);
       return {
