@@ -5,6 +5,7 @@
 // (packages/pi-plugin/src/engine/round.ts), the bench reports them (src/bench/aacr.ts).
 import { isLensTool, LENS_WAVE_TOOL, lensIdOf, LensOnce, lensResultsOf } from "../lensresult.js";
 import { usageCost } from "../pricing.js";
+import { modelErrorKind } from "../modelerrors.js";
 
 export interface Usage {
   input: number;
@@ -262,24 +263,9 @@ export interface ModelErrors {
   sample?: string;
 }
 
-/** The plan's usage window is spent (checked before RATE_LIMIT_RE, which it
- * would also match). */
-export const USAGE_LIMIT_RE =
-  /usage limit has been reached|usage[ _-]?limit[ _-]?reached|insufficient[ _-]?quota|exceeded your current quota/i;
-export const RATE_LIMIT_RE = /\b429\b|rate[ _-]?limit|too many requests|usage[ _-]?limit|quota/i;
-export const OVERLOAD_RE = /overloaded|\b50[23]\b|\b529\b|capacity/i;
-
-/** A model error message's kind: a spent usage window first (its words would
- * also read as a rate limit), then a rate limit, then an overload. One
- * reading for pi's event stream and its stderr. */
-export function modelErrorKind(
-  message: string,
-): "usage_limit" | "rate_limited" | "overloaded" | "other" {
-  if (USAGE_LIMIT_RE.test(message)) return "usage_limit";
-  if (RATE_LIMIT_RE.test(message)) return "rate_limited";
-  if (OVERLOAD_RE.test(message)) return "overloaded";
-  return "other";
-}
+// The error-message reading lives in src/modelerrors.ts (outside the engine,
+// so the daemon can read a worker's provider failure the same way).
+export { USAGE_LIMIT_RE, RATE_LIMIT_RE, OVERLOAD_RE, modelErrorKind } from "../modelerrors.js";
 
 /**
  * Count the failed model calls in pi's `--mode json` stream: every assistant
