@@ -3817,11 +3817,14 @@ export class VerdictWatcher {
           : []),
       ].join("\n"),
     );
+    // An incident on the automatic retry ladder is announced as FAILED_LOUD,
+    // under its policy and with its retry time, like every other one; a hold
+    // for the operator keeps the deadline's own message.
     await this.announceSafe((a) =>
       a.anomaly({
         pr,
         round_no: roundNo,
-        kind,
+        kind: failure.next_action === "retry_wait" ? "failed_loud" : kind,
         deadline_min: cfg.daemon.round_deadline_min,
         incident_id: failure.incident_id,
       }),

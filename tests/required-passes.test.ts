@@ -51,6 +51,7 @@ import type { PassPlanEntry, SessionHooks } from "@quickchatai/pi-quickreview/sr
 import { PASS_TIER_ORDER, roundPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import type { AnomalyAnnouncement, VerdictAnnouncer } from "../src/slack/announce.js";
 
 const root = resolve(import.meta.dirname, "..");
 const baseCfg: Config = parseConfig(
@@ -794,6 +795,7 @@ describe("the verdict path requeues instead of applying", () => {
     dir = mkdtempSync(join(tmpdir(), "qcr-required-verdict-"));
     store = new StateStore(":memory:", () => clock);
     adapter = new FakeAdapter();
+    announced = [];
   });
   afterEach(() => {
     store.close();
@@ -804,6 +806,14 @@ describe("the verdict path requeues instead of applying", () => {
     async dispatchRound() {},
     async inject() {},
     async archiveAndClose() {},
+  };
+  let announced: AnomalyAnnouncement[] = [];
+  const announce: VerdictAnnouncer = {
+    async verdict() {},
+    async anomaly(a) {
+      announced.push(a);
+    },
+    async superseded() {},
   };
   const watcher = () =>
     new VerdictWatcher({
@@ -816,6 +826,7 @@ describe("the verdict path requeues instead of applying", () => {
       usage: {},
       partialWrite: { windowMs: 0 },
       now: () => clock,
+      announce,
     });
   function round(pr: number, progress: (roundNo: number) => RoundProgressSnapshot): number {
     store.upsertPr({
@@ -1034,6 +1045,20 @@ describe("the verdict path requeues instead of applying", () => {
     });
     expect(store.openReviewFailure(706)?.next_retry_at).not.toBeNull();
     expect(events("review_failed_loud").at(-1)).toMatchObject({ cause: "provider_transient" });
+  });
+
+  // MUTATION: announce `kind` in handleAnomaly whatever the incident's
+  // next_action — Slack words an automatic retry as a deadline overrun, under
+  // round.overdue's policy, with no retry time; this fails.
+  it("past the cap, the automatic-retry incident is announced as FAILED_LOUD; an operator hold as overdue", async () => {
+    await exhaustOn(709, "429 Too Many Requests: rate limit exceeded");
+    expect(announced.at(-1)).toMatchObject({
+      pr: 709,
+      kind: "failed_loud",
+      incident_id: store.openReviewFailure(709)?.incident_id,
+    });
+    await exhaustOn(710, TIMEOUT);
+    expect(announced.at(-1)).toMatchObject({ pr: 710, kind: "overdue" });
   });
 
   // MUTATION: treat every recorded pass failure as provider-transient — a
