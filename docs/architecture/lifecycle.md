@@ -673,7 +673,8 @@ minutes after the first requeue at a head and 8 after the second
 (`SELF_REQUEUE_BACKOFF_MIN`; the `round_self_requeued` event carries the
 not-before time, and any newer trigger lifts it — a push, an operator's `u`,
 or a person's request, read from the lifecycle log because a request on a row
-already queued keeps the row's FIFO `trigger_ts`). A `head_moved` requeue, or
+already queued keeps the row's FIFO `trigger_ts`; an operator's `u` on such a
+row logs `self_requeue_backoff_lifted`). A `head_moved` requeue, or
 one onto a fresher head, is new work and waits for nothing; prompt *redelivery* is bounded
 separately by `[daemon] max_prompt_redeliveries`, because re-sending the exact
 bytes to a live session is far cheaper than cancelling a round. A live session

@@ -7653,7 +7653,8 @@ export class StateStore {
    * request on a row already queued keeps the row's first `trigger_ts` (its
    * FIFO place), so a person's request is read from the lifecycle log
    * instead: a `pr_transition` trigger after the requeue whose source is not
-   * the reconcile poll's. Undefined when there is none, or it no longer
+   * the reconcile poll's, or an operator's recovery
+   * (`liftSelfRequeueBackoff`). Undefined when there is none, or it no longer
    * describes the queued row.
    */
   selfRequeueNotBefore(
@@ -7676,14 +7677,22 @@ export class StateStore {
     const asked = this.db
       .prepare(
         `SELECT 1 FROM events
-          WHERE kind='pr_transition' AND pr=? AND id>?
-            AND json_valid(payload) AND json_extract(payload, '$.event')='trigger'
-            AND COALESCE(json_extract(payload, '$.source'), 'reconcile')!='reconcile'
+          WHERE pr=? AND id>?
+            AND (kind='self_requeue_backoff_lifted'
+              OR (kind='pr_transition'
+                AND json_valid(payload) AND json_extract(payload, '$.event')='trigger'
+                AND COALESCE(json_extract(payload, '$.source'), 'reconcile')!='reconcile'))
           LIMIT 1`,
       )
       .get(pr, row.id);
     if (asked) return undefined;
     return notBefore;
+  }
+
+  /** An operator's explicit recovery (`u`) lifts the self-requeue backoff on
+   * the queued row (`selfRequeueNotBefore`), whose FIFO identity it keeps. */
+  liftSelfRequeueBackoff(pr: number, by: string): void {
+    this.logEvent("self_requeue_backoff_lifted", pr, { by });
   }
 
   /**
