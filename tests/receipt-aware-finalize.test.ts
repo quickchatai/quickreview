@@ -814,6 +814,44 @@ describe("an ordinary delivery whose window ran out", () => {
     expect(failure!.detail).toContain("a POST was attempted");
     expect(postings()).toBe(0);
   });
+
+  // Every attempt was held before any POST (the approval's CI could not be
+  // read): the job counts them as attempts, and none as a POST.
+  // MUTATION: count every job attempt as a POST attempt in postingProof — this fails.
+  it("an exhausted job whose attempts all sent no POST says no POST was sent", async () => {
+    mkdirSync(dir(), { recursive: true });
+    const payload = { commit_id: HEAD, event: "APPROVE", body: `Ok\n\n${postingMarker(key)}` };
+    writeFileSync(
+      join(dir(), `pr-${PR}-round-5.outbox.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        repo: cfg.github.repo,
+        mode: "live",
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: "APPROVE",
+        payload,
+        payload_sha256: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
+        status: "failed",
+        attempts: 3,
+        unposted_attempts: 3,
+        created_at: "2026-01-15T08:52:57.000Z",
+        next_attempt_at: "2026-01-15T09:50:00.000Z",
+        exhausted_at: "2026-01-15T09:52:57.000Z",
+        last_error: "posting retry exhausted: not delivered within 60 min; last: pr-unreadable",
+      }),
+    );
+    const github = new ReadingAdapter();
+    const { supervisor } = wire(true, github);
+    set("2026-01-15T09:55:00.000Z");
+    await supervisor.scan();
+    expect(github.reads).toBeGreaterThan(0);
+    const failure = store.openReviewFailure(PR);
+    expect(failure!.detail).toContain("no POST was sent");
+    expect(failure!.detail).not.toContain("a POST was attempted");
+  });
 });
 
 describe("an ordinary delivery of an approval withheld for CI", () => {

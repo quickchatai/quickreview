@@ -408,6 +408,8 @@ export class PostingJournal {
       throw new JournalError("no delivery snapshot for this posting key — cannot hand off");
     const first = (value.deferred_at as string | undefined) ?? this.iso();
     delete queued.negative_at;
+    // The deferred retry counts its unposted attempts against its own ledger.
+    if (value.status !== "deferred") delete queued.unposted_attempts;
     this.write(jobPath, {
       ...queued,
       payload: o.payload,
@@ -476,6 +478,7 @@ export class PostingJournal {
     const now = this.iso();
     delete queued.negative_at;
     delete queued.attempted_at;
+    delete queued.unposted_attempts;
     this.write(jobPath, {
       ...queued,
       payload: o.payload,

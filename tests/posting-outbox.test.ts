@@ -399,5 +399,8 @@ describe("an ordinary APPROVE delivery and its CI pre-check", () => {
     expect(pendingPosting(dir, 12, 1, key)).toBe(true);
     const j = JSON.parse(readFileSync(join(dir, "pr-12-round-1.outbox.json"), "utf8"));
     expect(j.next_attempt_at).toBe(new Date(clock + 900_000).toISOString());
+    // A delivery attempt, and not a POST one.
+    // MUTATION: drop the unposted_attempts count on a held delivery — this fails.
+    expect(j).toMatchObject({ attempts: 1, unposted_attempts: 1 });
   });
 });

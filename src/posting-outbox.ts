@@ -63,11 +63,14 @@ export interface PostingJob {
    * 5xx or no answer and no review carried the marker. The first failure;
    * the daemon's retry schedule (state.db `posting_retries`) runs from it. */
   deferred_at?: string;
-  /** Deferred retry only: how many of the ledger's counted attempts ended
-   * with NO POST sent (a failed marker read, a gate read that could not
-   * read the PR or its CI, a rate-limit refusal). They do not use up the
-   * POST attempts, and while they happen the retry window stretches (see
-   * `DEFERRED_READ_WINDOW_FACTOR`). */
+  /** How many of the counted attempts ended with NO POST sent. Deferred
+   * retry: of the ledger's attempts (a failed marker read, a gate read that
+   * could not read the PR or its CI, a rate-limit refusal); they do not use
+   * up the POST attempts, and while they happen the retry window stretches
+   * (see `DEFERRED_READ_WINDOW_FACTOR`). Ordinary delivery: of `attempts`,
+   * those the gate or the CI pre-check held before any POST
+   * (`pr-unreadable`), so an exhausted job never claims a POST it did not
+   * send. A deferral starts the count afresh. */
   unposted_attempts?: number;
   /** Deferred retry only: GitHub asked for a wait (`Retry-After`, a
    * rate-limit reset) that ends here. No attempt — read or POST — runs
@@ -1048,6 +1051,7 @@ export class PostingOutbox {
         if (result.blocked) {
           delete j.attempted_at;
           rmSync(postingReceiptPath(this.deps.dir, j.pr, j.round_no)); // gate proved no POST executed
+          j.unposted_attempts = (j.unposted_attempts ?? 0) + 1;
           // A read the delivery depends on (the PR, an approval's CI) could
           // not be read: retried, inside the delivery window.
           if (result.blocked === "pr-unreadable")

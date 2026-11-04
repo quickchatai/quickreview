@@ -11,6 +11,7 @@ import {
   readFileSync,
   rmSync,
   utimesSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -201,6 +202,39 @@ describe("the journal writes the receipt and job files the readers expect", () =
     expect(journal.check(PR, ROUND, KEY)).toBe("deferred");
     expect(() => journal.withdraw(PR, ROUND, KEY)).toThrow(JournalError);
   });
+
+  // The ordinary delivery's held attempts are not the deferred retry's: the
+  // retry counts its own against its ledger.
+  // MUTATION: drop `delete queued.unposted_attempts` from defer — this fails.
+  it.each(["defer", "deferUnattempted"] as const)(
+    "%s starts the unposted-attempt count afresh",
+    (how) => {
+      enqueue();
+      const path = join(tsDir, jobName);
+      writeFileSync(
+        path,
+        JSON.stringify({
+          ...JSON.parse(readFileSync(path, "utf8")),
+          attempts: 2,
+          unposted_attempts: 2,
+        }),
+      );
+      const o = {
+        key: KEY,
+        pr: PR,
+        round: ROUND,
+        head: HEAD,
+        intended: "REQUEST_CHANGES" as const,
+        payload: payload(),
+        reason: "GitHub answered 502",
+      };
+      if (how === "defer") {
+        prepare();
+        journal.defer(o);
+      } else journal.deferUnattempted(o);
+      expect(readPostingJob(path)!.unposted_attempts).toBeUndefined();
+    },
+  );
 
   it("deferUnattempted never writes over an attempted receipt, and needs the queued job", () => {
     const defer = () =>
