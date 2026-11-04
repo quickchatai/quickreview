@@ -1970,20 +1970,22 @@ describe("a transient failure with nothing posted waits on the automatic retry l
     over: {
       preflight?: "none" | "dryrun" | "refused" | "executed" | "ambiguous";
       posted?: boolean;
+      head?: string;
     } = {},
   ): { roundId: number; roundNo: number; commandId: string } {
-    store.upsertPr(prRow(pr, { state: "reviewing", head_sha: `head-${pr}` }));
+    const head = over.head ?? `head-${pr}`;
+    store.upsertPr(prRow(pr, { state: "reviewing", head_sha: head }));
     const roundId = store.startRound(pr, "re-review", ["pass-baseline"], 75);
     const roundNo = store.roundsFor(pr).find((r) => r.id === roundId)!.round_no;
-    store.stampPostingKey(roundId, `v1:${pr}:${roundNo}:head-${pr}`);
+    store.stampPostingKey(roundId, `v1:${pr}:${roundNo}:${head}`);
     if (over.preflight && over.preflight !== "none")
       store.recordRoundPreflightPosting(roundId, over.preflight);
     if (over.posted)
       store.confirmRoundPosting(roundId, {
-        posting_key: `v1:${pr}:${roundNo}:head-${pr}`,
+        posting_key: `v1:${pr}:${roundNo}:${head}`,
         actual_event: "APPROVE",
         gh_review_id: 77,
-        gh_commit_id: `head-${pr}`,
+        gh_commit_id: head,
         confirmed_at: clock.toISOString(),
       });
     const commandId = `cmd-${pr}-${roundNo}`;
@@ -2116,6 +2118,29 @@ describe("a transient failure with nothing posted waits on the automatic retry l
     store.finishRound(done, "APPROVE", null, "ok");
     r = failedRound(5608);
     expect(open(5608, r)).toMatchObject({ retry_epoch: 0 });
+  });
+
+  // MUTATION: compare the activation's target head with `failure.head_sha` in
+  // activateDueReviewFailureRetries — the successor's head inherits the
+  // predecessor's retry generation and its first failure waits 30 minutes;
+  // this fails.
+  it("keeps the failed round's head apart from the queued successor's", () => {
+    const r = failedRound(5615);
+    // A push moved the PR on while the round failed: the caller names the
+    // successor's head, the newest owed.
+    store.db.prepare("UPDATE pr_state SET head_sha='succ-head' WHERE number=5615").run();
+    const first = open(5615, r, { head_sha: "succ-head" });
+    expect(first).toMatchObject({ next_action: "retry_wait" });
+    clock = new Date(first.next_retry_at!);
+    expect(store.activateDueReviewFailureRetries(clock.toISOString())).toEqual([
+      expect.objectContaining({ pr: 5615, target_head_sha: "succ-head", retry_epoch: 0 }),
+    ]);
+
+    // The successor's own first failure starts the ladder at 15 minutes.
+    const b = failedRound(5615, { head: "succ-head" });
+    const second = open(5615, b, { head_sha: "succ-head" });
+    expect(second).toMatchObject({ head_sha: "succ-head", retry_epoch: 0 });
+    expect(Date.parse(second.next_retry_at!) - clock.getTime()).toBe(15 * 60_000);
   });
 
   const park = (pr: number) =>

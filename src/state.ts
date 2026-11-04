@@ -4953,14 +4953,15 @@ export class StateStore {
     const failureHead = exactPreFanout ? postingHead : arg.head_sha;
     // The ladder's generation belongs to the head, not to the class: a
     // pre-fanout stall after an automatic retry of another class (which binds
-    // no fanout-first instruction) still waits longer than the first.
+    // no fanout-first instruction) still waits longer than the first. It is
+    // the generation of the head that failed, never a queued successor's.
     const retryEpoch = exactPreFanout
       ? Math.max(
           exactRecovery?.retry_epoch ?? 0,
           this.transientRetryEpoch(arg.pr, postingHead ?? arg.head_sha),
         )
       : transient
-        ? this.transientRetryEpoch(arg.pr, arg.head_sha)
+        ? this.transientRetryEpoch(arg.pr, postingHead ?? arg.head_sha)
         : 0;
     const retryDelayMin = Math.min(
       AUTO_REVIEW_RETRY_INITIAL_MIN * 2 ** retryEpoch,
@@ -5618,7 +5619,13 @@ export class StateStore {
         // A new authoritative head is new work and gets its own fast-retry /
         // backoff generation. The delayed wake still carries the predecessor
         // identity, but old-head failures do not punish the new head's rate.
-        const retryEpoch = targetHead === failure.head_sha ? failure.retry_epoch + 1 : 0;
+        // The head that failed is the round's own (its posting key's): the
+        // debt's head may name the successor that was owed when it opened.
+        const failedHead =
+          (round.posting_key
+            ? postingKeyHead(round.posting_key, failure.pr, round.round_no)
+            : undefined) ?? failure.head_sha;
+        const retryEpoch = targetHead === failedHead ? failure.retry_epoch + 1 : 0;
         // Only a pre-fanout stall changes how the successor runs (a
         // fanout-first instruction bound to it); every other stage retries
         // the same work as ordinary queued review.
