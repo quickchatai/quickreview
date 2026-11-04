@@ -54,19 +54,34 @@ export function passTimeoutMessage(
 
 /**
  * The provider error a session is retrying, read off pi's session events:
- * `auto_retry_start` names the error pi is about to retry, and an
- * `auto_retry_end` that succeeded clears it. Fed every event of every attempt
- * of one pass, so the error survives the deadline's own retry.
+ * `auto_retry_start` names the error pi is about to retry, and the provider
+ * answering clears it — an `auto_retry_end` that succeeded, or an assistant
+ * message that ended without an error (a replacement attempt that never had
+ * to retry emits no `auto_retry_end`). Fed every event of every attempt of
+ * one pass, so the error survives the deadline's own retry until the
+ * provider is seen answering.
  */
 export class ProviderRetryWatch {
   private error: string | undefined;
 
   feed(event: unknown): void {
     if (typeof event !== "object" || event === null) return;
-    const e = event as { type?: unknown; errorMessage?: unknown; success?: unknown };
+    const e = event as {
+      type?: unknown;
+      errorMessage?: unknown;
+      success?: unknown;
+      message?: { role?: unknown; stopReason?: unknown } | null;
+    };
     if (e.type === "auto_retry_start" && typeof e.errorMessage === "string")
       this.error = e.errorMessage;
     else if (e.type === "auto_retry_end" && e.success === true) this.error = undefined;
+    else if (
+      e.type === "message_end" &&
+      e.message?.role === "assistant" &&
+      e.message.stopReason !== "error" &&
+      e.message.stopReason !== "aborted"
+    )
+      this.error = undefined;
   }
 
   /** The provider error still being retried, if any. */

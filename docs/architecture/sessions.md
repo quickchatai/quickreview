@@ -361,7 +361,10 @@ sessions retry a provider for about 13 minutes per request (`BOT_RETRY`)
 before any of this; an operator's `retry` in the agent dir's settings.json
 wins. A lens pass's shorter per-pass deadline can end it while pi still
 retries; its failure then names the provider error pi was retrying, so a
-required pass an outage kept from completing still reads as transient. A
+required pass an outage kept from completing still reads as transient. Any
+answer from the provider since (a replacement attempt's first reply, say)
+forgets that error, so a pass that recovered and then timed out on its own
+reads as a bare timeout. A
 login the worker's own check refused fails in words that keep the incident
 the operator's.
 

@@ -125,6 +125,22 @@ describe("a timeout while pi retries the provider", () => {
     watch.feed(null);
     expect(watch.last()).toBeUndefined();
   });
+
+  // MUTATION: drop the message_end branch from ProviderRetryWatch.feed — a
+  // replacement attempt that got its answer without retrying, then hung in a
+  // tool, is blamed on the first attempt's 429; this fails.
+  it("forgets the error once the provider answers, even with no auto_retry_end", () => {
+    const watch = new ProviderRetryWatch();
+    watch.feed({ type: "auto_retry_start", attempt: 1, errorMessage: "429 Too Many Requests" });
+    // The provider's own failed answer, or one cut off by the abort, is no recovery.
+    watch.feed({ type: "message_end", message: { role: "assistant", stopReason: "error" } });
+    watch.feed({ type: "message_end", message: { role: "assistant", stopReason: "aborted" } });
+    watch.feed({ type: "message_end", message: { role: "user" } });
+    expect(watch.last()).toBe("429 Too Many Requests");
+    // The replacement session's first answer: a tool call.
+    watch.feed({ type: "message_end", message: { role: "assistant", stopReason: "toolUse" } });
+    expect(watch.last()).toBeUndefined();
+  });
 });
 
 describe("runUnderDeadline", () => {
