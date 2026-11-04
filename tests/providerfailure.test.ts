@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   PROVIDER_BACKOFF_MIN,
   isProviderTransient,
+  isProviderTransientPassError,
   providerBackoffMs,
   providerFailureKind,
 } from "../src/providerfailure.js";
@@ -50,6 +51,30 @@ describe("isProviderTransient", () => {
     expect(isProviderTransient("x: the provider failed the turn: invalid request")).toBe(false);
     expect(isProviderTransient(null)).toBe(false);
     expect(isProviderTransient("")).toBe(false);
+  });
+});
+
+describe("isProviderTransientPassError", () => {
+  // A lens pass's recorded failure is the provider's bare message.
+  it("reads a lens pass's bare provider message, and the worker's wording", () => {
+    expect(isProviderTransientPassError("429 Too Many Requests")).toBe(true);
+    expect(isProviderTransientPassError("Connection error.")).toBe(true);
+    expect(isProviderTransientPassError("overloaded_error: Overloaded")).toBe(true);
+    expect(
+      isProviderTransientPassError("the round: the provider failed the turn: fetch failed"),
+    ).toBe(true);
+  });
+
+  it("is never a timeout, a spent usage window, another error or nothing", () => {
+    expect(isProviderTransientPassError("pass pass-security--sol-high timed out after 8 min")).toBe(
+      false,
+    );
+    expect(isProviderTransientPassError("You have hit your usage limit has been reached")).toBe(
+      false,
+    );
+    expect(isProviderTransientPassError("invalid_request_error: prompt is too long")).toBe(false);
+    expect(isProviderTransientPassError("failed")).toBe(false);
+    expect(isProviderTransientPassError(undefined)).toBe(false);
   });
 });
 
