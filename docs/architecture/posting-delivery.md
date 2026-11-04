@@ -160,10 +160,14 @@ the window (one marker read, no POST) exhausts the row: the
 job fails, a `posting_retry_exhausted` anomaly records why, and the verdict
 watcher's posting proof reads `failed`/`exhausted`, so whichever path reaches
 the round first (verdict sweep, stage limit, deadline) fails it loud — the
-FAILED_LOUD hold an operator clears with `u`, its `review_failed_loud` wake and
-status.json. Never a requeue: a POST may have been sent (by the session, or
-by the retry after a deferral made before any attempt), and the anomaly's
-detail says whether the last attempt sent one ("no POST sent").
+FAILED_LOUD hold, its `review_failed_loud` wake and status.json. Never an
+immediate requeue: a POST may have been sent (by the session, or by the retry
+after a deferral made before any attempt), and the anomaly's detail says
+whether the last attempt sent one ("no POST sent"). When the proof's marker
+read ran and found no review carrying the key, nothing landed, so the incident
+is transient (`posting_exhausted_unposted`) and waits on the automatic retry
+ladder (`retry_wait`, 15 minutes doubling to 6 hours) rather than on `u`; when
+GitHub could not be read, it stays the operator's to clear with `u`.
 
 While a deferred post is owed the PR stays `reviewing` with its round
 `running` and its verdict file unapplied; `reviewed_heads` is not stamped

@@ -429,6 +429,13 @@ Three endings are not ordinary verdicts:
 - **A guard-2 refusal at posting time** — the review was never published, so the
   verdict in the file is never applied; the round settles as a terminal
   no-new-evidence round rather than failing loud.
+- **A verdict whose review never reached GitHub** — no posting receipt of any
+  status for the round's key, nothing pending delivery (a guard's pre-check
+  refused and withdrew the queued approval, say). A redo cannot post twice, so
+  the round is redone through the same capped self-requeue (cancel cause
+  `posting_unconfirmed`) rather than held for an operator. The receipt grace
+  runs from the newest delivery snapshot queued for the key, a withdrawn one
+  included, not from the round's dispatch.
 
 Malformed files and rounds that blow `[daemon] round_deadline_min` route to
 `handleAnomaly()`: the round is marked, a companion-inbox item is written, and the PR
@@ -463,8 +470,31 @@ pending in the bridge, no verdict is on disk and the receipt proves the prompt
 was never accepted, the round is requeued — a missing prompt is a *delivery*
 fault, so redelivery of the exact dispatched bytes comes before anything
 expensive. Every requeue draws on the `[daemon] max_self_requeues` budget per
-head; exhausting it ends in a loud failure and an operator unwedge, never a
-loop.
+head, and its replacement waits 2 minutes before it dispatches (8 after the
+second requeue at the head; a requeue onto fresh work waits for nothing).
+Exhausting the budget ends in a loud failure, never a loop.
+
+**Who clears a FAILED_LOUD incident.** Every incident is loud the same way —
+the `review_failed_loud` anomaly, the board row, the Slack FAILED_LOUD message,
+status.json — and holds the PR's review until it clears. What clears it
+depends on its cause (`TransientFailureCause` in `src/state.ts`). A transient
+cause with nothing posted waits on the automatic retry ladder (`retry_wait`:
+15 minutes, doubling to 6 hours, reset by a round that finishes), at any
+stage, and the board, the inbox line and Slack say when it is due; `u` still
+retries at once. The transient causes are a provider failure (a dropped
+connection, a rate limit, an overload — `provider_unavailable` when the
+worker's own requeues were spent on it), an infrastructure stage or a dead or
+wedged session exhausted after its self-requeues, a posting with no receipt at
+all once its requeue cap is spent, and an exhausted deferred POST whose marker
+GitHub was read for and does not hold. "Nothing posted" is proven, not
+assumed: the round's preflight posted nothing, it has no confirmed posting
+linkage, no posting receipt of any status exists, and nothing is pending
+delivery. Everything else — a POST that may have landed, evidence that
+contradicts the round, a malformed verdict, a posted round with no verdict, a
+round with no posting key — waits for an operator (`operator_unwedge`). Due,
+a round's retry republishes ordinary queued work (only a pre-fanout stall
+binds its fanout-first instruction to the successor); a failed wake's retry
+hands the same command back to the supervisor's bounded replay.
 
 ## 6. CI and withheld approvals
 
@@ -616,8 +646,13 @@ should a later change ever make one possible, is the WAKE anomaly
 **Self-requeue.** Round-level recovery lives in `src/verdicts.ts selfRequeue()`
 and covers a dead session, a live-but-wedged session (killed first, then
 rebirthed), a lost prompt, a `head_moved` ending, an infrastructure stage
-failure, and a `NEEDS_HUMAN` with no passes. Every mode is bounded by
-`[daemon] max_self_requeues` per head; prompt *redelivery* is bounded
+failure, a `NEEDS_HUMAN` with no passes, and a finished round whose review
+never reached GitHub. Every mode is bounded by `[daemon] max_self_requeues`
+per head, and backs off: the replacement round is held from dispatch for 2
+minutes after the first requeue at a head and 8 after the second
+(`SELF_REQUEUE_BACKOFF_MIN`; the `round_self_requeued` event carries the
+not-before time, and any newer trigger lifts it). A `head_moved` requeue, or
+one onto a fresher head, is new work and waits for nothing; prompt *redelivery* is bounded
 separately by `[daemon] max_prompt_redeliveries`, because re-sending the exact
 bytes to a live session is far cheaper than cancelling a round. A live session
 with no order is idle, not wedged — killing it is not the recovery.
