@@ -843,6 +843,8 @@ export class VerdictWatcher {
   private readonly working = new Set<string>();
   /** Background round work, tracked until it ends. */
   private readonly background = new Set<Promise<void>>();
+  /** The tail of each PR's Slack announcements (`announceSafe`). */
+  private readonly announceLanes = new Map<number, Promise<void>>();
   /** The once-per-watcher resume of measurements an earlier process owed. */
   private owedResumed = false;
   /** `checkDeadlines` never overlaps itself. */
@@ -2103,7 +2105,7 @@ export class VerdictWatcher {
       () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
       `remove ${cfg.github.in_progress_label} on #${round.pr}`,
     );
-    await this.announceSafe((a) =>
+    this.announceSafe(round.pr, (a) =>
       a.anomaly({
         pr: round.pr,
         round_no: round.round_no,
@@ -2602,7 +2604,7 @@ export class VerdictWatcher {
     // Slack, in-thread and never broadcast. duration_s is computed
     // inside finishRound, so it is read back off the row rather than recomputed.
     const finished = round ? store.roundsFor(v.pr).find((r) => r.id === round.id) : undefined;
-    await this.announceSafe((a) =>
+    this.announceSafe(v.pr, (a) =>
       a.verdict({
         pr: v.pr,
         round_no: v.round_no,
@@ -3756,7 +3758,7 @@ export class VerdictWatcher {
           : []),
       ].join("\n"),
     );
-    await this.announceSafe((a) =>
+    this.announceSafe(pr, (a) =>
       a.anomaly({
         pr,
         round_no: roundNo,
@@ -4049,7 +4051,7 @@ export class VerdictWatcher {
         `remove ${this.deps.cfg.github.in_progress_label} on #${pr}`,
       );
       await this.closeMeasurement(owed, "background");
-      await this.announceSafe((a) =>
+      this.announceSafe(pr, (a) =>
         a.anomaly({
           pr,
           round_no: roundNo,
@@ -4811,12 +4813,15 @@ export class VerdictWatcher {
         const newest = store
           .roundsFor(round.pr)
           .reduce((a, b) => (b.round_no > a.round_no ? b : a), round);
-        await this.announceSafe((a) =>
+        // Read now: the announcement itself may run later, behind this PR's
+        // earlier ones.
+        const supersedingHead = store.getPr(round.pr)?.head_sha ?? "";
+        this.announceSafe(round.pr, (a) =>
           a.superseded({
             pr: round.pr,
             old_round_no: round.round_no,
             new_round_no: newest.round_no,
-            head_sha: store.getPr(round.pr)?.head_sha ?? "",
+            head_sha: supersedingHead,
           }),
         );
         this.log(`verdicts: #${round.pr} round ${round.round_no} cancelled (superseded)`);
@@ -4926,16 +4931,31 @@ export class VerdictWatcher {
     return overdue;
   }
 
-  /** Slack is a side channel: absent announcer ⇒ nothing happens, and a Slack
-   * failure is logged, never propagated into the verdict path. */
-  private async announceSafe(fn: (a: VerdictAnnouncer) => Promise<void>): Promise<void> {
+  /**
+   * Slack is a side channel: absent announcer ⇒ nothing happens, and a Slack
+   * failure is logged, never propagated into the verdict path.
+   *
+   * Fire-and-forget. A blackholed Slack costs each call its bounded retries
+   * (tens of seconds), and the deadline sweep and the verdict path must
+   * never wait on that. Order still holds per PR, which is per incident:
+   * each announcement is chained behind the PR's previous one, so an
+   * incident's alert is posted before the reopening edit or the verdict that
+   * follows it, exactly as when each was awaited. The work is tracked as
+   * background work, so `idle()` waits for it.
+   */
+  private announceSafe(pr: number, fn: (a: VerdictAnnouncer) => Promise<void>): void {
     const announcer = this.deps.announce;
     if (!announcer) return;
-    try {
-      await fn(announcer);
-    } catch (err) {
-      this.log("verdicts: slack announcement failed", err);
-    }
+    const prev = this.announceLanes.get(pr) ?? Promise.resolve();
+    const run: Promise<void> = prev
+      .then(() => fn(announcer))
+      .catch((err: unknown) => this.log("verdicts: slack announcement failed", err));
+    this.announceLanes.set(pr, run);
+    const job: Promise<void> = run.finally(() => {
+      if (this.announceLanes.get(pr) === run) this.announceLanes.delete(pr);
+      this.background.delete(job);
+    });
+    this.background.add(job);
   }
 
   private async safe<T>(fn: () => Promise<T>, what: string): Promise<T | undefined> {
