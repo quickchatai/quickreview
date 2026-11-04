@@ -386,6 +386,10 @@ round in flight.
 - **Effect.** While draining, `src/webhook.ts` answers deliveries `200` and
   **drops** them (counted, so the lift line can say how many the poll must make
   up); `GET /health` is untouched, and the dispatch pump starts no new rounds.
+  The worker-failure breaker's drain is the exception for webhooks: the same
+  process lifts it, so its deliveries are accepted into the durable inbox
+  (`webhook_inbox`) unprepared and fulfilled once it lifts — the inbox pump does
+  no work while any drain is on.
   Terminal failure obligations stay visible but do not count as live rounds.
 - **Lifting it.** The operator's drain has no expiry, and the boot's **first**
   reconcile pass lifts it — only that pass, and only when it completed with no
@@ -486,7 +490,16 @@ at boot (`validateSlackConfig`).
 - `announce.ts` decides *whether, where and exactly once*; `messages.ts` owns
   the wording as pure functions, so no model can reword an announcement. Every
   interpolated user string is escaped, and a `<@U…>` mention is only emitted
-  for an id the daemon itself resolved.
+  for an id the daemon itself resolved. The verdict watcher's announcements,
+  like dispatch's pickups, are fire-and-forget, so a slow Slack never holds
+  the verdict path, the deadline sweep or the pump; their order is the
+  announcer's, one lane per PR reserved on the call whoever makes it, so a
+  later round's pickup never overtakes a verdict or alert called before it.
+  Each heartbeat
+  re-announces an open FAILED_LOUD incident whose alert is missing or was
+  definitely refused (a failed wake's, which has no round, included), under
+  the incident's own idem key; an alert whose delivery is unknown is never
+  re-posted.
 - `policy.ts` holds the caps and cooldowns, enforced in daemon code over the
   SQLite ledgers — never by prompt.
 - `reply.ts` is the overseer's only way to speak: the session holds no token and

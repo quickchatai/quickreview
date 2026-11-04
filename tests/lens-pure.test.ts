@@ -15,12 +15,14 @@ import {
 } from "../src/config.js";
 import {
   PASS_DEADLINE_ENV,
+  ProviderRetryWatch,
   passTimeoutMessage,
   resolvePassDeadlineMs,
   runUnderDeadline,
 } from "@quickchatai/pi-quickreview/src/engine/lens/deadline.js";
 import { lensAgentsDir } from "@quickchatai/pi-quickreview/src/engine/lens/round-lens.js";
 import { WeightedSemaphore } from "@quickchatai/pi-quickreview/src/engine/lens/semaphore.js";
+import { isProviderTransientPassError } from "../src/providerfailure.js";
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 5));
 const DEADLINE_MS = 120;
@@ -81,6 +83,63 @@ describe("resolvePassDeadlineMs", () => {
     expect(passTimeoutMessage("pass-security--sol-high", 480_000)).toBe(
       "pass pass-security--sol-high timed out after 8 min (retried once)",
     );
+  });
+});
+
+describe("a timeout while pi retries the provider", () => {
+  // MUTATION: drop `providerError` from passTimeoutMessage's text — a pass the
+  // deadline ended mid-outage reads as a bare timeout, and the required-pass
+  // gap holds the PR for an operator instead of the automatic retry; this fails.
+  it("names the provider error it was retrying, and reads as transient", () => {
+    const text = passTimeoutMessage("pass-baseline--sol-high", 480_000, "429  Too Many\nRequests");
+    expect(text).toBe(
+      "pass pass-baseline--sol-high timed out after 8 min (retried once) while the provider was failing: 429 Too Many Requests",
+    );
+    expect(isProviderTransientPassError(text)).toBe(true);
+    expect(isProviderTransientPassError(passTimeoutMessage("pass-baseline", 480_000))).toBe(false);
+  });
+
+  // MUTATION: cut providerError to 300 characters in passTimeoutMessage
+  // without boundedProviderError — a usage-limit qualifier past the cut reads
+  // as a rate limit and a spent window retries itself; this fails.
+  it("reads the provider error whole before bounding it", () => {
+    const error = `429 Too Many Requests: ${"retry later please ".repeat(20)}the usage limit has been reached`;
+    const text = passTimeoutMessage("pass-baseline", 480_000, error);
+    expect(text.length).toBeLessThan(450);
+    expect(isProviderTransientPassError(text)).toBe(false);
+  });
+
+  // MUTATION: never clear the error on a successful auto_retry_end — a pass
+  // that recovered and then timed out for its own reasons is blamed on the
+  // provider; this fails.
+  it("keeps the error pi is still retrying, and forgets one it recovered from", () => {
+    const watch = new ProviderRetryWatch();
+    watch.feed({ type: "message_end" });
+    expect(watch.last()).toBeUndefined();
+    watch.feed({ type: "auto_retry_start", attempt: 1, errorMessage: "overloaded_error" });
+    expect(watch.last()).toBe("overloaded_error");
+    watch.feed({ type: "auto_retry_end", attempt: 1, success: false, finalError: "x" });
+    expect(watch.last()).toBe("overloaded_error");
+    watch.feed({ type: "auto_retry_end", attempt: 2, success: true });
+    expect(watch.last()).toBeUndefined();
+    watch.feed(null);
+    expect(watch.last()).toBeUndefined();
+  });
+
+  // MUTATION: drop the message_end branch from ProviderRetryWatch.feed — a
+  // replacement attempt that got its answer without retrying, then hung in a
+  // tool, is blamed on the first attempt's 429; this fails.
+  it("forgets the error once the provider answers, even with no auto_retry_end", () => {
+    const watch = new ProviderRetryWatch();
+    watch.feed({ type: "auto_retry_start", attempt: 1, errorMessage: "429 Too Many Requests" });
+    // The provider's own failed answer, or one cut off by the abort, is no recovery.
+    watch.feed({ type: "message_end", message: { role: "assistant", stopReason: "error" } });
+    watch.feed({ type: "message_end", message: { role: "assistant", stopReason: "aborted" } });
+    watch.feed({ type: "message_end", message: { role: "user" } });
+    expect(watch.last()).toBe("429 Too Many Requests");
+    // The replacement session's first answer: a tool call.
+    watch.feed({ type: "message_end", message: { role: "assistant", stopReason: "toolUse" } });
+    expect(watch.last()).toBeUndefined();
   });
 });
 

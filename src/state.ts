@@ -122,6 +122,30 @@ export interface ReviewFailureRow {
   work_owed: number;
 }
 
+/** What opens one durable FAILED_LOUD review debt (`openReviewFailure`). */
+export interface OpenReviewFailureInput {
+  pr: number;
+  command_id?: string | null;
+  round_id?: number | null;
+  round_no?: number | null;
+  head_sha: string;
+  stage: string;
+  detail: string;
+  attempts: number;
+  retry_cap: number;
+  /** A transient cause (`TransientFailureCause`); absent for every other. */
+  cause?: TransientFailureCause;
+  /** The caller's proof, from posting evidence the store cannot see, that
+   * no review for the round's key reached GitHub. Two proofs are accepted:
+   * for ordinary work, receipt absence (no posting receipt of any status for
+   * the key, since a POST writes `prepared` first and it stays; no posting
+   * linkage; nothing pending delivery); for an exhausted deferred delivery,
+   * which may have sent a POST and keeps its `deferred` receipt, a completed
+   * marker read that inspected every review and found none carrying the key.
+   * Read only with a transient cause. */
+  nothing_posted?: boolean;
+}
+
 /** One exact future round's daemon-authored recovery instruction. It is
  * append-only history keyed by round number, not mutable ambient PR state, so
  * a later ordinary round can never inherit a stale recovery override. */
@@ -141,16 +165,59 @@ export interface RoundRecoveryInstructionRow {
 export interface AutomaticReviewRetry {
   pr: number;
   incident_id: string;
+  /** The failure's stage: `first_pass_start` binds a fanout-first instruction
+   * to its successor; every other stage retries as ordinary work. */
+  stage: string;
   target_head_sha: string;
-  target_round_no: number;
+  /** The round the retry queues; null when the retried work is a failed
+   * session command (a wake), which is replayed under its own id. */
+  target_round_no: number | null;
+  /** The command handed back to the supervisor's bounded replay, for a
+   * session-command failure. */
+  replayed_command_id?: string;
   retry_epoch: number;
 }
 
 /** Circuit-breaker timing is policy, not activity-derived. The first delayed
- * attempt waits 15 minutes; repeated pre-fanout failures double to a six-hour
- * ceiling and continue at that bounded rate until progress or terminal truth. */
+ * attempt waits 15 minutes; repeated failures double to a six-hour ceiling and
+ * continue at that bounded rate until progress or terminal truth. */
 export const AUTO_REVIEW_RETRY_INITIAL_MIN = 15;
 export const AUTO_REVIEW_RETRY_MAX_MIN = 360;
+
+/**
+ * A review failure whose cause a later attempt of the same work can cure.
+ * With nothing posted, it waits on the automatic retry ladder (`retry_wait`)
+ * at any stage, instead of an operator's `u`; it stays a FAILED_LOUD incident
+ * all the while (the anomaly, the board row, Slack).
+ *   - `provider_transient`: the model provider dropped the connection, rate
+ *     limited or was overloaded (src/providerfailure.ts), including a dead or
+ *     stuck worker whose last error was one of those;
+ *   - `infrastructure_exhausted`: a bounded daemon→Pi stage, or a dead or
+ *     wedged session, spent its immediate self-requeues;
+ *   - `posting_unconfirmed`: a finished round whose review has no receipt at
+ *     all, once its capped requeue is spent;
+ *   - `posting_exhausted_unposted`: a deferred POST whose daemon retry window
+ *     is spent, and GitHub read and no review carries its marker.
+ * Everything else — a posting that may have landed or disagrees with the
+ * round, a malformed verdict, a posted round with no verdict — stays the
+ * operator's.
+ */
+export type TransientFailureCause =
+  | "provider_transient"
+  | "infrastructure_exhausted"
+  | "posting_unconfirmed"
+  | "posting_exhausted_unposted";
+
+export const TRANSIENT_FAILURE_CAUSES: readonly TransientFailureCause[] = [
+  "provider_transient",
+  "infrastructure_exhausted",
+  "posting_unconfirmed",
+  "posting_exhausted_unposted",
+];
+
+/** The preflight posting states that prove nothing reached GitHub before the
+ * round's command was delivered. */
+const PREFLIGHT_UNPOSTED = ["none", "dryrun", "refused"];
 
 export interface SuccessorObligationRow {
   pr: number;
@@ -226,6 +293,10 @@ export type CancelCause =
   /** The daemon→Pi parent failed a finite start/finish stage before a merits
    * verdict existed. Loud: infrastructure failed, review still owed. */
   | "infrastructure_failure"
+  /** The round finished, but its review has no posting receipt at all and
+   * nothing is pending delivery: nothing reached GitHub, so it was
+   * redispatched rather than held for an operator. */
+  | "posting_unconfirmed"
   /** A newer round on the same PR outlived this one. Benign. */
   | "superseded"
   /** An operator unwedge lever (`rerun-round` / `restart-session`). */
@@ -247,6 +318,7 @@ export const CANCEL_CAUSES: readonly CancelCause[] = [
   "head_moved",
   "incomplete_round",
   "infrastructure_failure",
+  "posting_unconfirmed",
   "superseded",
   "operator",
   "no_new_evidence",
@@ -278,6 +350,7 @@ export const CANCEL_CAUSE_LABEL: Record<CancelCause, string> = {
   head_moved: "head moved",
   incomplete_round: "incomplete round",
   infrastructure_failure: "infrastructure failure",
+  posting_unconfirmed: "posting unconfirmed",
   superseded: "superseded",
   no_new_evidence: "nothing new to post (guard 2)",
   operator: "operator",
@@ -604,7 +677,8 @@ const SESSION_COMMAND_COLUMNS_SQL = `(
   failure        TEXT,
   est_usd        REAL,
   lens_usd       REAL,
-  usage_final    INTEGER NOT NULL DEFAULT 0
+  usage_final    INTEGER NOT NULL DEFAULT 0,
+  not_before     TEXT
 )`;
 
 const SESSION_COMMAND_INDEXES_SQL = `
@@ -692,6 +766,18 @@ export type EscalationRecoveryInput = Omit<
   "phase" | "last_error" | "next_attempt_at" | "updated_at"
 >;
 
+/** A base-advance recheck owed after a failed read (`owed_base_rechecks`). */
+export interface OwedBaseRecheckRow {
+  pr: number;
+  branch: string;
+  before_sha: string;
+  after_sha: string;
+  attempts: number;
+  next_attempt_at: string;
+  last_error: string | null;
+  created_at: string;
+}
+
 export interface WebhookInboxRow {
   guid: string;
   event: string;
@@ -702,6 +788,18 @@ export interface WebhookInboxRow {
   received_at: string;
   attempted_at: string | null;
   next_attempt_at: string | null;
+  /** Failed fulfilment attempts so far; drives the capped backoff. */
+  attempts: number;
+}
+
+/** The first wait after an accepted webhook's fulfilment fails. */
+export const WEBHOOK_RETRY_BASE_MS = 30_000;
+/** The longest wait the doubling reaches. */
+export const WEBHOOK_RETRY_MAX_MS = 30 * 60_000;
+
+/** The wait after the `attempts`-th failed fulfilment: 30 s doubling to 30 min. */
+export function webhookRetryDelayMs(attempts: number): number {
+  return Math.min(WEBHOOK_RETRY_MAX_MS, WEBHOOK_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1));
 }
 
 const SCHEMA = `
@@ -960,6 +1058,21 @@ CREATE TABLE IF NOT EXISTS rechecks (
   reason       TEXT,
   created_at   TEXT NOT NULL,
   PRIMARY KEY (pr, fingerprint)
+);
+-- A base-advance recheck question whose reads failed: owed, and asked again
+-- at next_attempt_at by the reconcile pass (retryOwedBaseRechecks), so a
+-- transient GitHub error never drops it. One row per PR and advance; the
+-- branch is part of the advance, since two branches can reach one commit.
+CREATE TABLE IF NOT EXISTS owed_base_rechecks (
+  pr              INTEGER NOT NULL,
+  branch          TEXT NOT NULL,
+  before_sha      TEXT NOT NULL,
+  after_sha       TEXT NOT NULL,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT NOT NULL,
+  last_error      TEXT,
+  created_at      TEXT NOT NULL,
+  PRIMARY KEY (pr, branch, after_sha)
 );
 -- Rendered non-push questions remain owed independently of capped active wakes.
 CREATE TABLE IF NOT EXISTS recheck_deliveries (
@@ -1546,6 +1659,10 @@ export interface SessionCommandRow {
   /** 1 once the worker's closing report arrived: `est_usd` is the whole command's
    * spend. Before it, a figure is a partial (and a crashed worker never closes). */
   usage_final: number;
+  /** A worker command requeued after a transient provider failure: no worker
+   * is launched for it before this time (src/workersupervisor.ts). Null = at
+   * once. */
+  not_before: string | null;
 }
 
 export interface SupervisorLeaseRow {
@@ -1832,6 +1949,10 @@ export class StateStore {
       "ALTER TABLE session_commands ADD COLUMN est_usd REAL",
       "ALTER TABLE session_commands ADD COLUMN lens_usd REAL",
       "ALTER TABLE session_commands ADD COLUMN usage_final INTEGER NOT NULL DEFAULT 0",
+      // A worker command requeued after a transient provider failure waits
+      // for this time before a worker is launched for it. Nullable, additive:
+      // NULL launches at once, as every row before the column did.
+      "ALTER TABLE session_commands ADD COLUMN not_before TEXT",
       // Durable circuit-breaker generation and due time. Nullable due
       // means this failure remains in the operator-owned classes.
       "ALTER TABLE review_failures ADD COLUMN retry_epoch INTEGER NOT NULL DEFAULT 0",
@@ -1866,6 +1987,10 @@ export class StateStore {
       // and a review captured before the column is unknown — the miner then
       // never reads it as a request for changes.
       "ALTER TABLE pr_comments ADD COLUMN review_state TEXT",
+      // Failed fulfilment attempts of an accepted webhook: the retry backs
+      // off on it and raises one anomaly at a threshold. A row from before
+      // the column starts at 0, which only means its next wait is short.
+      "ALTER TABLE webhook_inbox ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
     ])
       this.addColumn(ddl);
     this.migrateBotCommentNamespaces();
@@ -2027,11 +2152,11 @@ export class StateStore {
           (id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
            status, owner_token, attempt, recovery_attempts, unknown_checks, redeliveries,
            created_at, updated_at, next_check_at, started_at, settled_at, failed_at, failure,
-           est_usd, lens_usd, usage_final)
+           est_usd, lens_usd, usage_final, not_before)
         SELECT id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
            status, owner_token, attempt, recovery_attempts, unknown_checks, redeliveries,
            created_at, updated_at, next_check_at, started_at, settled_at, failed_at, failure,
-           est_usd, lens_usd, usage_final
+           est_usd, lens_usd, usage_final, not_before
           FROM session_commands_before_cancelled;
         DROP TABLE session_commands_before_cancelled;
         ${SESSION_COMMAND_INDEXES_SQL}
@@ -3920,7 +4045,14 @@ export class StateStore {
    * Spends one `recovery_attempts`, the bound the supervisor reads. A round's
    * command is only handed back while its round still runs.
    */
-  requeueWorkerCommand(id: string, ownerToken: string | null, nextCheckAt: string): boolean {
+  /** `notBefore`: no worker is launched for the requeued command before this
+   * time (a transient provider failure's backoff); omitted = at once. */
+  requeueWorkerCommand(
+    id: string,
+    ownerToken: string | null,
+    nextCheckAt: string,
+    notBefore: string | null = null,
+  ): boolean {
     const ts = this.ts();
     return (
       this.db
@@ -3928,7 +4060,7 @@ export class StateStore {
           `UPDATE session_commands
             SET status='pending', owner_token=NULL, updated_at=@ts, next_check_at=@next,
                 unknown_checks=0, started_at=NULL, failure=NULL,
-                recovery_attempts=recovery_attempts+1
+                recovery_attempts=recovery_attempts+1, not_before=@not_before
           WHERE id=@id AND status='running'
             AND (@owner IS NULL OR owner_token=@owner)
             AND (kind != 'round' OR EXISTS (
@@ -3936,7 +4068,7 @@ export class StateStore {
                WHERE r.pr = session_commands.pr AND r.round_no = session_commands.round_no
                  AND r.status = 'running'))`,
         )
-        .run({ id, owner: ownerToken, ts, next: nextCheckAt }).changes === 1
+        .run({ id, owner: ownerToken, ts, next: nextCheckAt, not_before: notBefore }).changes === 1
     );
   }
 
@@ -4804,32 +4936,8 @@ export class StateStore {
   // ---- durable FAILED_LOUD review debt ---------------------------------
 
   openReviewFailure(pr: number): ReviewFailureRow | undefined;
-  openReviewFailure(input: {
-    pr: number;
-    command_id?: string | null;
-    round_id?: number | null;
-    round_no?: number | null;
-    head_sha: string;
-    stage: string;
-    detail: string;
-    attempts: number;
-    retry_cap: number;
-  }): ReviewFailureRow;
-  openReviewFailure(
-    arg:
-      | number
-      | {
-          pr: number;
-          command_id?: string | null;
-          round_id?: number | null;
-          round_no?: number | null;
-          head_sha: string;
-          stage: string;
-          detail: string;
-          attempts: number;
-          retry_cap: number;
-        },
-  ): ReviewFailureRow | undefined {
+  openReviewFailure(input: OpenReviewFailureInput): ReviewFailureRow;
+  openReviewFailure(arg: number | OpenReviewFailureInput): ReviewFailureRow | undefined {
     if (typeof arg === "number") {
       return this.db
         .prepare(
@@ -4843,9 +4951,11 @@ export class StateStore {
       : `review-failure:pr-${arg.pr}-round-${arg.round_no ?? "unknown"}`;
 
     // The automatic-retry class is deliberately proven here, not selected by
-    // an untrusted field. The exact command must own the exact now-terminal
-    // round, and the supervisor stage must be before the first lens. Every
-    // other class — especially posting ambiguity — stays operator-owned.
+    // an untrusted field. Two shapes earn it: a pre-fanout stall (the exact
+    // command must own the exact now-terminal round, and the supervisor stage
+    // must be before the first lens), and a transient cause with nothing
+    // posted (`TransientFailureCause`, proven below). Every other class —
+    // especially posting ambiguity — stays operator-owned.
     const command = arg.command_id ? this.getSessionCommand(arg.command_id) : undefined;
     const round =
       arg.round_id === null || arg.round_id === undefined
@@ -4869,25 +4979,50 @@ export class StateStore {
       round?.pr === arg.pr &&
       round.round_no === arg.round_no &&
       round.status !== "running" &&
-      ["none", "dryrun", "refused"].includes(round.preflight_posting_state);
+      PREFLIGHT_UNPOSTED.includes(round.preflight_posting_state);
     const priorRecovery = exactPreFanout
       ? this.roundRecoveryInstruction(arg.pr, arg.round_no!)
       : undefined;
     const exactRecovery =
       priorRecovery?.target_head_sha === postingHead ? priorRecovery : undefined;
-    const retryEpoch = exactRecovery?.retry_epoch ?? 0;
+    // The transient class (`TransientFailureCause`) is proven here too: the
+    // caller names the cause and gives its word for the posting evidence only
+    // it can read (the receipt files, the marker read); the exact command,
+    // round and posting columns are checked against the store.
+    const transient =
+      !exactPreFanout &&
+      arg.cause !== undefined &&
+      TRANSIENT_FAILURE_CAUSES.includes(arg.cause) &&
+      arg.nothing_posted === true &&
+      this.transientRetryProven(arg, command, round);
     // `arg.head_sha` historically meant the newest OWED head (a successor may
     // already have moved pr_state). The safe class preserves the deterministic
     // posting-key head; a newer authoritative successor resets backoff later.
     const failureHead = exactPreFanout ? postingHead : arg.head_sha;
+    // The ladder's generation belongs to the head, not to the class: a
+    // pre-fanout stall after an automatic retry of another class (which binds
+    // no fanout-first instruction) still waits longer than the first. It is
+    // the generation of the head that failed, never a queued successor's.
+    const retryEpoch = exactPreFanout
+      ? Math.max(
+          exactRecovery?.retry_epoch ?? 0,
+          this.transientRetryEpoch(arg.pr, postingHead ?? arg.head_sha),
+        )
+      : transient
+        ? this.transientRetryEpoch(arg.pr, postingHead ?? arg.head_sha)
+        : 0;
     const retryDelayMin = Math.min(
       AUTO_REVIEW_RETRY_INITIAL_MIN * 2 ** retryEpoch,
       AUTO_REVIEW_RETRY_MAX_MIN,
     );
-    const nextRetryAt = exactPreFanout
+    // A PR the worker breaker parked launches no worker until an operator
+    // unparks it (`rerun-round`, `restart-session`), so an automatic retry
+    // would only reschedule work that still needs them: it is theirs at once.
+    const automatic = (exactPreFanout || transient) && !this.isWorkerParked(arg.pr);
+    const nextRetryAt = automatic
       ? new Date(Date.parse(ts) + retryDelayMin * 60_000).toISOString()
       : null;
-    const nextAction = exactPreFanout ? "retry_wait" : "operator_unwedge";
+    const nextAction = automatic ? "retry_wait" : "operator_unwedge";
 
     const failure = this.db.transaction((): ReviewFailureRow => {
       this.db
@@ -4964,6 +5099,7 @@ export class StateStore {
       command_id: failure.command_id,
       round_no: failure.round_no,
       stage: failure.stage,
+      cause: arg.cause ?? null,
       attempts: failure.attempts,
       retry_cap: failure.retry_cap,
       retry_epoch: failure.retry_epoch,
@@ -4971,6 +5107,64 @@ export class StateStore {
       next_action: failure.next_action,
     });
     return failure;
+  }
+
+  /** The store's half of the transient class's proof: the failure names one
+   * exact command of this PR's session, and
+   *   - for a round command: the exact round, no longer running, whose
+   *     preflight posted nothing and which has no confirmed posting linkage;
+   *   - for an ordinary wake: no round, and the command already failed.
+   * An operator's message (`answer`) owes no review and never gets here. */
+  private transientRetryProven(
+    arg: OpenReviewFailureInput,
+    command: SessionCommandRow | undefined,
+    round: RoundRow | undefined,
+  ): boolean {
+    if (
+      command?.pr !== arg.pr ||
+      command.session !== `pr-${arg.pr}` ||
+      command.kind === "answer" ||
+      command.kind === "legacy"
+    )
+      return false;
+    if (command.kind === "round")
+      return (
+        arg.round_no !== null &&
+        arg.round_no !== undefined &&
+        command.round_no === arg.round_no &&
+        round?.pr === arg.pr &&
+        round.round_no === arg.round_no &&
+        round.status !== "running" &&
+        PREFLIGHT_UNPOSTED.includes(round.preflight_posting_state) &&
+        round.posted_at === null &&
+        round.gh_review_id === null
+      );
+    return (
+      (arg.round_id ?? null) === null &&
+      (arg.round_no ?? null) === null &&
+      command.status === "failed"
+    );
+  }
+
+  /** The backoff generation of a transient failure: one past the newest
+   * automatic retry of this PR at this head, unless a round finished since
+   * (progress resets the ladder); zero otherwise. The automatic retry records
+   * its generation in its recovery (`automatic-retry:<n>`). */
+  private transientRetryEpoch(pr: number, head: string): number {
+    const prior = this.db
+      .prepare(
+        `SELECT recovery, recovered_at FROM review_failures
+          WHERE pr=? AND head_sha=? AND work_owed=0 AND recovery LIKE 'automatic-retry:%'
+          ORDER BY recovered_at DESC LIMIT 1`,
+      )
+      .get(pr, head) as { recovery: string; recovered_at: string | null } | undefined;
+    if (!prior?.recovered_at) return 0;
+    const progressed = this.db
+      .prepare("SELECT 1 FROM rounds WHERE pr=? AND status='done' AND started_at>=? LIMIT 1")
+      .get(pr, prior.recovered_at);
+    if (progressed) return 0;
+    const epoch = Number(/^automatic-retry:(\d+)$/.exec(prior.recovery)?.[1]);
+    return Number.isInteger(epoch) && epoch > 0 ? epoch : 0;
   }
 
   /** Atomically hand one killed/fenced infrastructure round from active
@@ -4987,6 +5181,8 @@ export class StateStore {
     attempts: number;
     retry_cap: number;
     summary: string;
+    cause?: TransientFailureCause;
+    nothing_posted?: boolean;
   }): ReviewFailureRow | undefined {
     const terminalize = this.db.transaction((): ReviewFailureRow | undefined => {
       const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(input.round_id) as
@@ -5033,6 +5229,8 @@ export class StateStore {
         detail: input.detail,
         attempts: input.attempts,
         retry_cap: input.retry_cap,
+        ...(input.cause ? { cause: input.cause } : {}),
+        ...(input.nothing_posted !== undefined ? { nothing_posted: input.nothing_posted } : {}),
       });
     });
     return terminalize();
@@ -5209,6 +5407,125 @@ export class StateStore {
       .run(row);
   }
 
+  /**
+   * The due automatic retry of a failed session command (an ordinary wake
+   * whose bounded replays were spent on a transient failure). The command is
+   * the obligation and keeps its id and bytes: its replay allowance is reset
+   * and it is made due, so the session-command supervisor replays it through
+   * its ordinary bounded path, and the debt closes in the same transaction.
+   * The PR's queued review stays behind the command as it always does
+   * (conversation drains first). Runs inside the activation transaction.
+   */
+  private activateCommandRetry(
+    failure: ReviewFailureRow,
+    command: SessionCommandRow | undefined,
+    active: { id: string } | undefined,
+    at: string,
+  ): AutomaticReviewRetry | undefined {
+    if (
+      command?.pr !== failure.pr ||
+      command.session !== `pr-${failure.pr}` ||
+      command.kind === "round" ||
+      command.kind === "answer" ||
+      command.status !== "failed" ||
+      this.hasRunningRound(failure.pr) ||
+      active
+    ) {
+      this.deferAutoRetry(
+        failure,
+        at,
+        active
+          ? `active-command:${active.id}`
+          : this.hasRunningRound(failure.pr)
+            ? "running-round"
+            : "identity-mismatch",
+      );
+      return undefined;
+    }
+    const retryEpoch = failure.retry_epoch + 1;
+    const ts = this.ts();
+    const commandChanged = this.db
+      .prepare(
+        `UPDATE session_commands
+          SET recovery_attempts=0, unknown_checks=0, next_check_at=@ts, updated_at=@ts
+        WHERE id=@id AND pr=@pr AND session=@session AND status='failed'
+          AND kind NOT IN ('round', 'answer')`,
+      )
+      .run({ id: command.id, pr: failure.pr, session: `pr-${failure.pr}`, ts }).changes;
+    if (commandChanged !== 1) throw new Error(`automatic retry command CAS lost for ${command.id}`);
+    this.closeAutoRetriedFailure(failure, at, retryEpoch);
+    return {
+      pr: failure.pr,
+      incident_id: failure.incident_id,
+      stage: failure.stage,
+      target_head_sha: failure.head_sha,
+      target_round_no: null,
+      replayed_command_id: command.id,
+      retry_epoch: retryEpoch,
+    };
+  }
+
+  /** The command's newest incident was closed by an automatic retry
+   * (`activateCommandRetry`), which handed the failed command back for a
+   * replay: that scheduled retry is owed a delivery attempt of its own,
+   * whatever allowance of immediate replays the configuration gives. */
+  commandRetryActivated(commandId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT work_owed, recovery FROM review_failures
+          WHERE command_id=? ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(commandId) as { work_owed: number; recovery: string | null } | undefined;
+    return row?.work_owed === 0 && (row.recovery ?? "").startsWith("automatic-retry:");
+  }
+
+  /** Close the debt an automatic retry just took over: the compare-and-swap
+   * both activations share, inside their transaction. It requires the same
+   * incident, generation and due state the activation selected, so a
+   * concurrent sweep, an operator's `u` or a settlement leaves at most one
+   * winner; a lost race throws and rolls the activation back. The recovery
+   * records the retry's generation (`automatic-retry:<n>`), which the next
+   * transient failure at the head reads (`transientRetryEpoch`). */
+  private closeAutoRetriedFailure(failure: ReviewFailureRow, at: string, retryEpoch: number): void {
+    const changed = this.db
+      .prepare(
+        `UPDATE review_failures
+          SET work_owed=0, recovered_at=@ts, recovery=@recovery,
+              next_action='closed', next_retry_at=NULL, updated_at=@ts
+        WHERE incident_id=@incident_id AND work_owed=1
+          AND next_action='retry_wait' AND retry_epoch=@expected_epoch
+          AND next_retry_at IS NOT NULL AND next_retry_at<=@at`,
+      )
+      .run({
+        incident_id: failure.incident_id,
+        expected_epoch: failure.retry_epoch,
+        at,
+        ts: this.ts(),
+        recovery: `automatic-retry:${retryEpoch}`,
+      }).changes;
+    if (changed !== 1)
+      throw new Error(`automatic retry failure CAS lost for ${failure.incident_id}`);
+  }
+
+  /** Hand a due automatic retry to the operator: the incident stays owed and
+   * loud, and now waits for `u`. Only a failure still waiting on its retry
+   * moves. */
+  private handAutoRetryToOperator(failure: ReviewFailureRow, reason: string): void {
+    const changed = this.db
+      .prepare(
+        `UPDATE review_failures
+          SET next_action='operator_unwedge', next_retry_at=NULL, updated_at=?
+        WHERE incident_id=? AND work_owed=1 AND next_action='retry_wait'`,
+      )
+      .run(this.ts(), failure.incident_id).changes;
+    if (changed === 1)
+      this.logEvent("review_failure_auto_retry_withdrawn", failure.pr, {
+        incident_id: failure.incident_id,
+        reason,
+        next_action: "operator_unwedge",
+      });
+  }
+
   /** Put a due automatic retry off by one initial interval without
    * activating it, and say why. Only a failure still waiting on its retry
    * moves. */
@@ -5230,8 +5547,10 @@ export class StateStore {
   /**
    * Circuit-breaker sweep. The whole due transition is one SQLite
    * transaction: exact debt + failed predecessor command are terminalized,
-   * the recovery instruction is bound to the next round number, and ordinary
-   * queued work is published. The caller may then invoke the normal dispatch
+   * a pre-fanout stall's recovery instruction is bound to the next round
+   * number, and ordinary queued work is published. A failed wake's debt hands
+   * its command back to the supervisor's bounded replay instead
+   * (`activateCommandRetry`). The caller may then invoke the normal dispatch
    * pump; this method itself cannot create a round, a Pi command, or a GitHub
    * mutation.
    *
@@ -5277,15 +5596,20 @@ export class StateStore {
               AND next_retry_at IS NOT NULL AND next_retry_at<=?`,
           )
           .get(candidate.incident_id, at) as ReviewFailureRow | undefined;
-        if (
-          !failure ||
-          failure.stage !== "first_pass_start" ||
-          !failure.command_id ||
-          failure.round_id === null ||
-          failure.round_no === null
-        )
+        if (!failure || !failure.command_id) return undefined;
+        // A round's debt names its round; a failed wake's names none. A row
+        // with half of a round identity is neither, and is left as it is.
+        const roundDebt = failure.round_id !== null && failure.round_no !== null;
+        if (!roundDebt && (failure.round_id !== null || failure.round_no !== null))
           return undefined;
 
+        // A park the worker breaker set since the incident opened holds every
+        // worker launch until an operator unparks the PR: the incident is
+        // handed to them rather than retried into the park again and again.
+        if (this.isWorkerParked(failure.pr)) {
+          this.handAutoRetryToOperator(failure, "worker-parked");
+          return undefined;
+        }
         const pr = this.getPr(failure.pr);
         if (!pr || pr.state === "closed" || pr.paused) {
           // A close is handled by the exact terminal-failure path; a pause is
@@ -5303,13 +5627,14 @@ export class StateStore {
           return undefined;
         }
         const command = this.getSessionCommand(failure.command_id);
-        const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(failure.round_id) as
-          RoundRow | undefined;
         const active = this.db
           .prepare(
             "SELECT id FROM session_commands WHERE pr=? AND status IN ('pending','running') LIMIT 1",
           )
           .get(failure.pr) as { id: string } | undefined;
+        if (!roundDebt) return this.activateCommandRetry(failure, command, active, at);
+        const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(failure.round_id) as
+          RoundRow | undefined;
         if (
           command?.pr !== failure.pr ||
           command.session !== `pr-${failure.pr}` ||
@@ -5342,25 +5667,36 @@ export class StateStore {
         // A new authoritative head is new work and gets its own fast-retry /
         // backoff generation. The delayed wake still carries the predecessor
         // identity, but old-head failures do not punish the new head's rate.
-        const retryEpoch = targetHead === failure.head_sha ? failure.retry_epoch + 1 : 0;
+        // The head that failed is the round's own (its posting key's): the
+        // debt's head may name the successor that was owed when it opened.
+        const failedHead =
+          (round.posting_key
+            ? postingKeyHead(round.posting_key, failure.pr, round.round_no)
+            : undefined) ?? failure.head_sha;
+        const retryEpoch = targetHead === failedHead ? failure.retry_epoch + 1 : 0;
+        // Only a pre-fanout stall changes how the successor runs (a
+        // fanout-first instruction bound to it); every other stage retries
+        // the same work as ordinary queued review.
+        const preFanout = failure.stage === "first_pass_start";
         const triggerTs =
           successor?.requested_at ??
           (pr.trigger_provenance === "human" && pr.trigger_ts ? pr.trigger_ts : this.ts());
         const provenance =
           successor?.provenance ?? (pr.trigger_provenance === "human" ? "human" : "system");
 
-        this.insertRecoveryInstruction({
-          pr: failure.pr,
-          target_round_no: targetRoundNo,
-          target_head_sha: targetHead,
-          stage: "first_pass_start",
-          source_incident_id: failure.incident_id,
-          source_command_id: failure.command_id,
-          source_round_no: failure.round_no,
-          immediate_attempt: failure.attempts,
-          retry_epoch: retryEpoch,
-          created_at: this.ts(),
-        });
+        if (preFanout)
+          this.insertRecoveryInstruction({
+            pr: failure.pr,
+            target_round_no: targetRoundNo,
+            target_head_sha: targetHead,
+            stage: "first_pass_start",
+            source_incident_id: failure.incident_id,
+            source_command_id: failure.command_id,
+            source_round_no: failure.round_no,
+            immediate_attempt: failure.attempts,
+            retry_epoch: retryEpoch,
+            created_at: this.ts(),
+          });
         const commandChanged = this.db
           .prepare(
             `UPDATE session_commands
@@ -5377,28 +5713,13 @@ export class StateStore {
             session: `pr-${failure.pr}`,
             round_no: failure.round_no,
             ts: this.ts(),
-            reason: `automatic pre-fanout retry epoch ${retryEpoch}`,
+            reason: preFanout
+              ? `automatic pre-fanout retry epoch ${retryEpoch}`
+              : `automatic retry epoch ${retryEpoch} (${failure.stage})`,
           }).changes;
         if (commandChanged !== 1)
           throw new Error(`automatic retry command CAS lost for ${failure.command_id}`);
-        const failureChanged = this.db
-          .prepare(
-            `UPDATE review_failures
-              SET work_owed=0, recovered_at=@ts, recovery=@recovery,
-                  next_action='closed', next_retry_at=NULL, updated_at=@ts
-            WHERE incident_id=@incident_id AND work_owed=1
-              AND next_action='retry_wait' AND retry_epoch=@expected_epoch
-              AND next_retry_at IS NOT NULL AND next_retry_at<=@at`,
-          )
-          .run({
-            incident_id: failure.incident_id,
-            expected_epoch: failure.retry_epoch,
-            at,
-            ts: this.ts(),
-            recovery: `automatic-retry:${retryEpoch}`,
-          }).changes;
-        if (failureChanged !== 1)
-          throw new Error(`automatic retry failure CAS lost for ${failure.incident_id}`);
+        this.closeAutoRetriedFailure(failure, at, retryEpoch);
         // The pause test must be the one `getPr` answered above
         // (`withLivePause`): a session pause past its expiry no longer binds
         // even while the column still reads 1 because the lever sweep has
@@ -5424,6 +5745,7 @@ export class StateStore {
         return {
           pr: failure.pr,
           incident_id: failure.incident_id,
+          stage: failure.stage,
           target_head_sha: targetHead,
           target_round_no: targetRoundNo,
           retry_epoch: retryEpoch,
@@ -6152,6 +6474,67 @@ export class StateStore {
     })();
   }
 
+  /** Owe a base-advance recheck whose reads failed: insert, or count one
+   * more failed attempt; the next one is due `retryMs` from now. Returns
+   * the attempts so far. */
+  oweBaseRecheck(
+    pr: number,
+    advance: { branch: string; before: string; after: string },
+    error: string,
+    retryAfterMs: (attempts: number) => number,
+  ): number {
+    return this.db
+      .transaction(() => {
+        const prior = this.owedBaseRecheck(pr, advance.branch, advance.after);
+        const attempts = (prior?.attempts ?? 0) + 1;
+        const now = this.now().getTime();
+        const due = new Date(now + retryAfterMs(attempts)).toISOString();
+        this.db
+          .prepare(
+            `INSERT INTO owed_base_rechecks
+               (pr, branch, before_sha, after_sha, attempts, next_attempt_at, last_error, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(pr, branch, after_sha) DO UPDATE SET
+               attempts = excluded.attempts, next_attempt_at = excluded.next_attempt_at,
+               last_error = excluded.last_error`,
+          )
+          .run(
+            pr,
+            advance.branch,
+            advance.before,
+            advance.after,
+            attempts,
+            due,
+            error.slice(0, 500),
+            this.ts(),
+          );
+        return attempts;
+      })
+      .immediate();
+  }
+
+  owedBaseRecheck(pr: number, branch: string, after: string): OwedBaseRecheckRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM owed_base_rechecks WHERE pr = ? AND branch = ? AND after_sha = ?")
+      .get(pr, branch, after) as OwedBaseRecheckRow | undefined;
+  }
+
+  /** Owed base-advance rechecks due at `now`, oldest first. */
+  dueBaseRechecks(now: string): OwedBaseRecheckRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM owed_base_rechecks WHERE next_attempt_at <= ? ORDER BY next_attempt_at, pr",
+      )
+      .all(now) as OwedBaseRecheckRow[];
+  }
+
+  /** The owed question is answered (asked, or nothing left to ask). */
+  settleBaseRecheck(pr: number, branch: string, after: string): void {
+    this.db
+      .prepare("DELETE FROM owed_base_rechecks WHERE pr = ? AND branch = ? AND after_sha = ?")
+      .run(pr, branch, after);
+  }
+
   /** The receipt guard's read (docs/archiving.md §8.1): the PR's
    * archive row — its state and the newest original mtime among the
    * transcripts the archiver moved — or null when the PR was never archived.
@@ -6294,12 +6677,30 @@ export class StateStore {
       .immediate();
   }
 
-  deferWebhookDelivery(guid: string, error: string, now: number): void {
-    this.db
-      .prepare(
-        "UPDATE webhook_inbox SET attempted_at=?,next_attempt_at=?,last_error=? WHERE guid=?",
-      )
-      .run(new Date(now).toISOString(), new Date(now + 30_000).toISOString(), error, guid);
+  /** A failed fulfilment: count it and push the next attempt out on the
+   * capped backoff (`webhookRetryDelayMs`). Returns the attempts so far, 0
+   * when the row is gone. */
+  deferWebhookDelivery(guid: string, error: string, now: number): number {
+    return this.db
+      .transaction(() => {
+        const row = this.db.prepare("SELECT attempts FROM webhook_inbox WHERE guid=?").get(guid) as
+          { attempts: number } | undefined;
+        if (!row) return 0;
+        const attempts = row.attempts + 1;
+        this.db
+          .prepare(
+            "UPDATE webhook_inbox SET attempted_at=?,next_attempt_at=?,last_error=?,attempts=? WHERE guid=?",
+          )
+          .run(
+            new Date(now).toISOString(),
+            new Date(now + webhookRetryDelayMs(attempts)).toISOString(),
+            error,
+            attempts,
+            guid,
+          );
+        return attempts;
+      })
+      .immediate();
   }
 
   completeWebhookDelivery(guid: string): void {
@@ -7368,6 +7769,89 @@ export class StateStore {
       }
     }
     return spend;
+  }
+
+  /**
+   * The not-before time of this PR's newest self-requeue, while the queued
+   * work it backed off is still the work queued: the same head and the same
+   * trigger the requeue wrote (`round_self_requeued`'s `queued_head_sha` and
+   * `queued_trigger_ts`), and no person's request since. Any newer trigger —
+   * a push, a person's request, an operator's `u` — lifts the backoff. A
+   * request on a row already queued keeps the row's first `trigger_ts` (its
+   * FIFO place), so a person's request is read from the lifecycle log
+   * instead: a `pr_transition` trigger after the requeue whose source is not
+   * the reconcile poll's, or an operator's recovery
+   * (`liftSelfRequeueBackoff`). Undefined when there is none, or it no longer
+   * describes the queued row.
+   */
+  selfRequeueNotBefore(
+    pr: number,
+    queued: { head_sha: string; trigger_ts: string | null },
+  ): string | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT id, payload FROM events WHERE kind='round_self_requeued' AND pr=? ORDER BY id DESC LIMIT 1",
+      )
+      .get(pr) as { id: number; payload: string | null } | undefined;
+    if (!row) return undefined;
+    const notBefore = readStringField(row.payload, "not_before");
+    if (notBefore === undefined) return undefined;
+    if (
+      readStringField(row.payload, "queued_head_sha") !== queued.head_sha ||
+      readStringField(row.payload, "queued_trigger_ts") !== (queued.trigger_ts ?? undefined)
+    )
+      return undefined;
+    const asked = this.db
+      .prepare(
+        `SELECT 1 FROM events
+          WHERE pr=? AND id>?
+            AND (kind='self_requeue_backoff_lifted'
+              OR (kind='pr_transition'
+                AND json_valid(payload) AND json_extract(payload, '$.event')='trigger'
+                AND COALESCE(json_extract(payload, '$.source'), 'reconcile')!='reconcile'))
+          LIMIT 1`,
+      )
+      .get(pr, row.id);
+    if (asked) return undefined;
+    return notBefore;
+  }
+
+  /** An operator's explicit recovery (`u`) lifts the self-requeue backoff on
+   * the queued row (`selfRequeueNotBefore`), whose FIFO identity it keeps. */
+  liftSelfRequeueBackoff(pr: number, by: string): void {
+    this.logEvent("self_requeue_backoff_lifted", pr, { by });
+  }
+
+  /**
+   * Requeues of one mode that only a finished round's evidence can raise
+   * (`round_self_requeued` with mode `posting_unconfirmed`: its review never
+   * reached GitHub; or `required_pass_missing`: a required pass failed) at a
+   * head, since the last verdict applied there. A planned fanout does NOT
+   * start a fresh count, as it does for `selfRequeueSpend`: a replacement
+   * that starts its passes has not shown that posting, or the provider that
+   * failed the pass, recovered, and a budget renewed by every fanout would
+   * redo full reviews for ever instead of reaching the FAILED_LOUD hold and
+   * its slower automatic retry ladder.
+   */
+  persistentRequeueCount(
+    pr: number,
+    headSha: string,
+    mode: "posting_unconfirmed" | "required_pass_missing",
+  ): number {
+    const rows = this.db
+      .prepare(
+        `SELECT kind, payload FROM events
+          WHERE pr=? AND kind IN ('round_self_requeued','verdict_applied')
+          ORDER BY id`,
+      )
+      .all(pr) as Array<{ kind: string; payload: string | null }>;
+    let count = 0;
+    for (const row of rows) {
+      if (readStringField(row.payload, "head_sha") !== headSha) continue;
+      if (row.kind === "verdict_applied") count = 0;
+      else if (readStringField(row.payload, "mode") === mode) count += 1;
+    }
+    return count;
   }
 
   /** `selfRequeueSpend` collapsed to the number the cap is compared against:

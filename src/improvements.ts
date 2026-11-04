@@ -27,7 +27,7 @@ import { GitHubRequestError, type GitHubAdapter } from "./github.js";
 import type { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { StateStore } from "./state.js";
 import { runOrThrow, type ExecFn } from "./tmux.js";
-import { pinnedGitExec } from "./worktrees.js";
+import { networkGitExec, pinnedGitExec } from "./worktrees.js";
 
 /** Injectable git runner: `git <args>` in `cwd`, stdout on success, a THROW on
  * a non-zero exit. The cwd is mandatory — there is no sensible default. */
@@ -35,10 +35,12 @@ export type Run = (args: string[], cwd: string) => Promise<string>;
 
 /** The production `Run` over an `ExecFn` (`nodeExec` in wire.ts). A failing
  * git step throws instead of returning its stdout, so a refused fetch or push
- * never reads as success. The end-to-end test drives this same runner against
- * real git. */
+ * never reads as success. Its base fetch is bounded like every daemon fetch
+ * (`networkGitExec`): a hung one fails instead of holding the filing. The
+ * end-to-end test drives this same runner against real git. */
 export function gitRunner(exec: ExecFn): Run {
-  return async (args, cwd) => (await runOrThrow(exec, "git", args, { cwd })).stdout;
+  const bounded = networkGitExec(exec);
+  return async (args, cwd) => (await runOrThrow(bounded, "git", args, { cwd })).stdout;
 }
 
 /** The daemon's runner for the improvement channel. Its git works in the

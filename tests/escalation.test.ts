@@ -50,7 +50,7 @@ import { renderRoundPrompt, roundVars } from "@quickchatai/pi-quickreview/src/te
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { SessionHooks, VerdictFile } from "@quickchatai/pi-quickreview/src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
-import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import { ESCALATION_FACTS_RETRY_MS, VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const repoRoot = resolve(process.cwd());
@@ -379,6 +379,429 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     expect(handled).toContain("pr-43-round-1.json");
     expect(existsSync(join(dir, "pr-43-round-1.json"))).toBe(false);
     expect(s.getPr(43)!.state).toBe("tracked");
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // An unreadable fact was `[]`, so every rule keyed on it silently did not
+  // fire (honest-unknown, invariant 9). It is unknown now: the evaluation is
+  // deferred, said with its cause, and evaluated again later.
+  // MUTATION: return `[]` from escalationPaths on a throw again — the rule is
+  // evaluated against no paths, nothing fires, and the retry below never
+  // delivers (createReview stays at 0 calls after the second sweep).
+  it("an unreadable fact defers the evaluation — never decided on an empty list", async () => {
+    const s = new StateStore(":memory:");
+    const dir = mkdtempSync(join(tmpdir(), "qcr-esc-unknown-"));
+    let clock = new Date("2026-08-31T12:00:00Z");
+    let filesDown = true;
+    let reviews = 0;
+    const adapter: VerdictAdapter = {
+      async addLabel() {
+        return { executed: true };
+      },
+      async removeLabel() {
+        return { executed: true };
+      },
+      async listPrFiles() {
+        if (filesDown) throw new Error("GET /pulls/44/files → 502");
+        return [{ filename: "a.py" }];
+      },
+      async getPr() {
+        return { labels: [] };
+      },
+      async createReview() {
+        reviews++;
+        return { executed: true };
+      },
+    };
+    const hooks: SessionHooks = {
+      async dispatchRound() {},
+      async inject() {},
+      async archiveAndClose() {},
+    };
+    s.setAnomalySink(() => {});
+    s.upsertPr({
+      number: 44,
+      state: "reviewing",
+      head_sha: HEAD,
+      title: "T",
+      author: "a",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    s.startRound(44, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    writeFileSync(
+      join(dir, "pr-44-round-1.json"),
+      JSON.stringify({
+        pr: 44,
+        round_no: 1,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        finished_at: "2026-08-31T12:00:00Z",
+      }),
+    );
+    const w = new VerdictWatcher({
+      cfg: {
+        ...cfg,
+        escalation: on({
+          targets: ["teammate-one"],
+          rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }],
+        }),
+      },
+      store: s,
+      adapter,
+      hooks,
+      verdictDir: dir,
+      root: dir,
+      usage: {},
+      partialWrite: { windowMs: 0 },
+      ledgerCheckDelayMs: 0,
+      now: () => clock,
+    });
+    await w.sweep();
+    await w.idle();
+    // The verdict is applied; the escalation is not decided.
+    expect(s.roundsFor(44)[0]!.verdict).toBe("APPROVE");
+    expect(reviews).toBe(0);
+    const unavailable = s.db
+      .prepare("SELECT payload FROM events WHERE kind = 'escalation_facts_unavailable'")
+      .all() as Array<{ payload: string }>;
+    expect(unavailable).toHaveLength(1);
+    expect(JSON.parse(unavailable[0]!.payload)).toMatchObject({
+      round_no: 1,
+      facts: ["changed_paths"],
+      causes: { changed_paths: expect.stringContaining("502") },
+    });
+    const owed = s.db
+      .prepare("SELECT due_at, completed_at FROM round_work WHERE kind = 'escalations'")
+      .get() as { due_at: string; completed_at: string | null };
+    expect(owed.completed_at).toBeNull();
+    expect(Date.parse(owed.due_at)).toBe(clock.getTime() + ESCALATION_FACTS_RETRY_MS);
+
+    // Not due yet: nothing is read again.
+    await w.sweep();
+    await w.idle();
+    expect(reviews).toBe(0);
+    // Due, and the read recovered: the rule fires on the real facts.
+    filesDown = false;
+    clock = new Date(clock.getTime() + ESCALATION_FACTS_RETRY_MS);
+    await w.sweep();
+    await w.idle();
+    expect(reviews).toBeGreaterThan(0);
+    expect(
+      (
+        s.db.prepare("SELECT completed_at FROM round_work WHERE kind = 'escalations'").get() as {
+          completed_at: string | null;
+        }
+      ).completed_at,
+    ).not.toBeNull();
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // A read GitHub refuses outright (a 404 or 403, `rejected` by the shared
+  // classifier) is refused again on every retry, so deferring on it would
+  // re-defer every five minutes for ever. It is a known absence instead: said
+  // once, read as `[]`, and the evaluation proceeds on the facts it has.
+  // MUTATION: drop the `rejected` branch from escalationFactFailed — the 404
+  // defers the evaluation, the path rule never delivers (createReview stays at
+  // 0) and the owed work stays open; this fails.
+  it("a fact GitHub refuses is a known absence — the evaluation proceeds", async () => {
+    const s = new StateStore(":memory:");
+    const dir = mkdtempSync(join(tmpdir(), "qcr-esc-rejected-"));
+    let reviews = 0;
+    let prReads = 0;
+    const adapter: VerdictAdapter = {
+      async addLabel() {
+        return { executed: true };
+      },
+      async removeLabel() {
+        return { executed: true };
+      },
+      async listPrFiles() {
+        return [{ filename: "a.py" }];
+      },
+      async getPr() {
+        prReads++;
+        throw new GitHubRequestError("GET", "/repos/o/r/pulls/45", 404, "Not Found");
+      },
+      async createReview() {
+        reviews++;
+        return { executed: true };
+      },
+    };
+    const hooks: SessionHooks = {
+      async dispatchRound() {},
+      async inject() {},
+      async archiveAndClose() {},
+    };
+    s.setAnomalySink(() => {});
+    s.upsertPr({
+      number: 45,
+      state: "reviewing",
+      head_sha: HEAD,
+      title: "T",
+      author: "a",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    s.startRound(45, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    writeFileSync(
+      join(dir, "pr-45-round-1.json"),
+      JSON.stringify({
+        pr: 45,
+        round_no: 1,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        finished_at: "2026-08-31T12:00:00Z",
+      }),
+    );
+    let clock = new Date("2026-08-31T12:00:00Z");
+    const w = new VerdictWatcher({
+      cfg: {
+        ...cfg,
+        escalation: on({
+          targets: ["teammate-one"],
+          rules: [
+            // Needs the labels, so the refused read matters to the decision.
+            { name: "flagged", to: "teammate-one", why: "w", labels: ["needs-eyes"] },
+            { name: "all", to: "teammate-one", why: "w", paths: ["**"] },
+          ],
+        }),
+      },
+      store: s,
+      adapter,
+      hooks,
+      verdictDir: dir,
+      root: dir,
+      usage: {},
+      partialWrite: { windowMs: 0 },
+      ledgerCheckDelayMs: 0,
+      now: () => clock,
+    });
+    await w.sweep();
+    await w.idle();
+    expect(s.roundsFor(45)[0]!.verdict).toBe("APPROVE");
+    // Decided now: the path rule fires; the label rule reads no labels.
+    expect(reviews).toBeGreaterThan(0);
+    const events = (kind: string) =>
+      s.db.prepare("SELECT payload FROM events WHERE kind = ?").all(kind) as Array<{
+        payload: string;
+      }>;
+    expect(events("escalation_facts_unavailable")).toHaveLength(0);
+    const rejected = events("escalation_fact_rejected");
+    expect(rejected).toHaveLength(1);
+    expect(JSON.parse(rejected[0]!.payload)).toMatchObject({ fact: "labels", status: 404 });
+    const owed = s.db
+      .prepare("SELECT completed_at FROM round_work WHERE kind = 'escalations'")
+      .get() as { completed_at: string | null };
+    expect(owed.completed_at).not.toBeNull();
+    // Nothing is owed, so nothing asks GitHub again.
+    const readsAfterDecision = prReads;
+    clock = new Date(clock.getTime() + ESCALATION_FACTS_RETRY_MS);
+    await w.sweep();
+    await w.idle();
+    expect(prReads).toBe(readsAfterDecision);
+    expect(events("escalation_fact_rejected")).toHaveLength(1);
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // A label rule decides without the changed paths: its scope names the
+  // label, never a file. Requiring the listing anyway deferred it, again and
+  // again, on an endpoint the decision did not need.
+  // MUTATION: make `needed.changed_paths` true whenever any rule exists
+  // again — the label rule is deferred on the failing listing and nothing is
+  // delivered; this fails.
+  it("an unreadable file listing does not hold a decision that names no path", async () => {
+    const s = new StateStore(":memory:");
+    const dir = mkdtempSync(join(tmpdir(), "qcr-esc-pathless-"));
+    let reviews = 0;
+    const adapter: VerdictAdapter = {
+      async addLabel() {
+        return { executed: true };
+      },
+      async removeLabel() {
+        return { executed: true };
+      },
+      async listPrFiles() {
+        throw new Error("GET /pulls/46/files → 502");
+      },
+      async getPr() {
+        return { labels: ["needs-eyes"] };
+      },
+      async createReview() {
+        reviews++;
+        return { executed: true };
+      },
+    };
+    const hooks: SessionHooks = {
+      async dispatchRound() {},
+      async inject() {},
+      async archiveAndClose() {},
+    };
+    s.setAnomalySink(() => {});
+    s.upsertPr({
+      number: 46,
+      state: "reviewing",
+      head_sha: HEAD,
+      title: "T",
+      author: "a",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    s.startRound(46, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    writeFileSync(
+      join(dir, "pr-46-round-1.json"),
+      JSON.stringify({
+        pr: 46,
+        round_no: 1,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        finished_at: "2026-08-31T12:00:00Z",
+      }),
+    );
+    const w = new VerdictWatcher({
+      cfg: {
+        ...cfg,
+        escalation: on({
+          targets: ["teammate-one"],
+          rules: [{ name: "flagged", to: "teammate-one", why: "w", labels: ["needs-eyes"] }],
+        }),
+      },
+      store: s,
+      adapter,
+      hooks,
+      verdictDir: dir,
+      root: dir,
+      usage: {},
+      partialWrite: { windowMs: 0 },
+      ledgerCheckDelayMs: 0,
+      now: () => new Date("2026-08-31T12:00:00Z"),
+    });
+    await w.sweep();
+    await w.idle();
+    expect(reviews).toBeGreaterThan(0);
+    expect(
+      s.db.prepare("SELECT 1 FROM events WHERE kind = 'escalation_facts_unavailable'").all(),
+    ).toHaveLength(0);
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Round 1 defers; round 2 finishes at the same head without round 1's
+  // candidate; the read recovers. Round 1's evaluation used to deliver its
+  // obsolete candidate then, spending the PR's allowance on a question the
+  // newer round no longer asked. A later round's own evaluation settles it
+  // before it can deliver.
+  // MUTATION: drop the laterRoundWork check before deliverEscalations — round
+  // 1's session candidate is delivered after the recovery; this fails.
+  it("a deferred evaluation a later round has answered is settled, never delivered", async () => {
+    const s = new StateStore(":memory:");
+    const dir = mkdtempSync(join(tmpdir(), "qcr-esc-superseded-"));
+    let clock = new Date("2026-08-31T12:00:00Z");
+    let labelsDown = true;
+    let reviews = 0;
+    const adapter: VerdictAdapter = {
+      async addLabel() {
+        return { executed: true };
+      },
+      async removeLabel() {
+        return { executed: true };
+      },
+      async listPrFiles() {
+        return [{ filename: "a.py" }];
+      },
+      async getPr() {
+        if (labelsDown) throw new Error("GET /pulls/47 → 502");
+        return { labels: [] };
+      },
+      async createReview() {
+        reviews++;
+        return { executed: true };
+      },
+    };
+    const hooks: SessionHooks = {
+      async dispatchRound() {},
+      async inject() {},
+      async archiveAndClose() {},
+    };
+    s.setAnomalySink(() => {});
+    s.upsertPr({
+      number: 47,
+      state: "reviewing",
+      head_sha: HEAD,
+      title: "T",
+      author: "a",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const w = new VerdictWatcher({
+      cfg: {
+        ...cfg,
+        escalation: on({
+          targets: ["teammate-one"],
+          session_judgement: true,
+          rules: [{ name: "flagged", to: "teammate-one", why: "w", labels: ["needs-eyes"] }],
+        }),
+      },
+      store: s,
+      adapter,
+      hooks,
+      verdictDir: dir,
+      root: dir,
+      usage: {},
+      partialWrite: { windowMs: 0 },
+      ledgerCheckDelayMs: 0,
+      now: () => clock,
+    });
+    const round = async (roundNo: number, escalations: unknown[]) => {
+      s.startRound(47, roundNo === 1 ? "first" : "re-review", ["pass-baseline"], 30);
+      writeFileSync(
+        join(dir, `pr-47-round-${roundNo}.json`),
+        JSON.stringify({
+          pr: 47,
+          round_no: roundNo,
+          verdict: "APPROVE",
+          head_sha: HEAD,
+          finished_at: clock.toISOString(),
+          escalations,
+        }),
+      );
+      await w.sweep();
+      await w.idle();
+    };
+    await round(1, [
+      {
+        target: "teammate-one",
+        scope: { kind: "decision", decision: "the retry budget" },
+        question: "Is a budget of three retries right for this queue?",
+        why: "you own the queue",
+      },
+    ]);
+    expect(s.roundsFor(47).find((r) => r.round_no === 1)?.verdict).toBe("APPROVE");
+    expect(reviews).toBe(0);
+    await round(2, []);
+    expect(s.roundsFor(47).find((r) => r.round_no === 2)?.verdict).toBe("APPROVE");
+    labelsDown = false;
+    clock = new Date(clock.getTime() + ESCALATION_FACTS_RETRY_MS);
+    await w.sweep();
+    await w.idle();
+    expect(reviews).toBe(0);
+    const superseded = s.db
+      .prepare("SELECT payload FROM events WHERE kind = 'escalation_evaluation_superseded'")
+      .all() as Array<{ payload: string }>;
+    expect(superseded.map((e) => JSON.parse(e.payload).round_no)).toEqual([1]);
+    const open = s.db
+      .prepare(
+        "SELECT round_no FROM round_work WHERE kind = 'escalations' AND completed_at IS NULL",
+      )
+      .all();
+    expect(open).toEqual([]);
     s.close();
     rmSync(dir, { recursive: true, force: true });
   });

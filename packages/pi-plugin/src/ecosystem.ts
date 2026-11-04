@@ -38,7 +38,7 @@
 //     implementations hold no state and dispatch keeps owning the store, the
 //     gate-backed adapter and the git seam — nothing here can grow a second
 //     mutation path.
-import { GitHubRequestError } from "./githubcore.js";
+import { classifyGitHubFailure, GitHubRequestError } from "./githubcore.js";
 import { codePath } from "./codespan.js";
 import type { GateResult } from "./gate.js";
 import {
@@ -437,12 +437,8 @@ async function djangoPreCheck(
   } catch (err) {
     // 408 is not a refusal: the request may have been accepted, so its
     // delivery stays unknown and the pending event is reconciled by marker.
-    if (
-      err instanceof GitHubRequestError &&
-      err.status >= 400 &&
-      err.status < 500 &&
-      err.status !== 408
-    )
+    const kind = classifyGitHubFailure(err).kind;
+    if (err instanceof GitHubRequestError && (kind === "rejected" || kind === "rate_limited"))
       io.logEvent("migration_collision_comment_refused", round.pr, {
         head_sha: round.head_sha,
         fingerprint,

@@ -12,6 +12,10 @@ import {
   mintAppJwt,
   type FetchFn,
 } from "@quickchatai/pi-quickreview/src/githubAuth.js";
+import { GitHubRequestError } from "@quickchatai/pi-quickreview/src/githubcore.js";
+
+/** The minter's retry clock made instant: no real 1 s / 3 s pause here. */
+const INSTANT = { sleep: async () => {}, random: () => 0.5 };
 
 // A real throwaway RSA key, generated in-process — no filesystem secret and no
 // network anywhere in this file.
@@ -219,8 +223,14 @@ describe("TokenMinter", () => {
       return jsonResponse({ message: "Bad credentials" }, 401);
     }) as unknown as FetchFn;
     await expect(
-      new TokenMinter(secretsDir, failing, "https://api.github.com", () => T0).installationToken(),
-    ).rejects.toThrow(/token mint failed for installation 42: 401/);
+      new TokenMinter(
+        secretsDir,
+        failing,
+        "https://api.github.com",
+        () => T0,
+        INSTANT,
+      ).installationToken(),
+    ).rejects.toThrow(/POST \/app\/installations\/42\/access_tokens → 401/);
 
     const empty = (async () => jsonResponse([])) as unknown as FetchFn;
     await expect(
@@ -239,8 +249,9 @@ describe("TokenMinter", () => {
         broken,
         "https://api.github.com",
         () => T0,
+        INSTANT,
       ).resolveInstallationId(),
-    ).rejects.toThrow(/GET \/app\/installations failed: 500/);
+    ).rejects.toThrow(/GET \/app\/installations → 500/);
   });
 
   it("keeps GitHub's explanation in a failed mint and discovery error", async () => {
@@ -249,7 +260,13 @@ describe("TokenMinter", () => {
       return jsonResponse({ message: "Resource not accessible by integration" }, 403);
     }) as unknown as FetchFn;
     await expect(
-      new TokenMinter(secretsDir, failing, "https://api.github.com", () => T0).installationToken(),
+      new TokenMinter(
+        secretsDir,
+        failing,
+        "https://api.github.com",
+        () => T0,
+        INSTANT,
+      ).installationToken(),
     ).rejects.toThrow(/403.*Resource not accessible by integration/);
 
     const limited = (async () =>
@@ -260,8 +277,69 @@ describe("TokenMinter", () => {
         limited,
         "https://api.github.com",
         () => T0,
+        INSTANT,
       ).resolveInstallationId(),
     ).rejects.toThrow(/403.*API rate limit exceeded/);
+  });
+
+  it("retries a transient discovery or mint failure on the bounded schedule", async () => {
+    let installs = 0;
+    let mints = 0;
+    const sleeps: number[] = [];
+    const flaky = (async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("/app/installations"))
+        return ++installs === 1
+          ? jsonResponse({ message: "bad gateway" }, 502)
+          : jsonResponse([{ id: 42 }]);
+      if (++mints === 1) throw new TypeError("fetch failed", { cause: { code: "ECONNRESET" } });
+      return jsonResponse({ token: "ghs_after_retry", expires_at: "2026-08-13T13:00:00Z" }, 201);
+    }) as unknown as FetchFn;
+    const minter = new TokenMinter(secretsDir, flaky, "https://api.github.com", () => T0, {
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      random: () => 0.5,
+    });
+    expect(await minter.installationToken()).toBe("ghs_after_retry");
+    expect(installs).toBe(2);
+    expect(mints).toBe(2);
+    expect(sleeps).toEqual([1000, 1000]);
+  });
+
+  it("a refused mint is a GitHubRequestError, thrown at once", async () => {
+    let mints = 0;
+    const refusing = (async (url: string | URL) => {
+      if (String(url).endsWith("/app/installations")) return jsonResponse([{ id: 42 }]);
+      mints++;
+      return jsonResponse({ message: "Bad credentials" }, 401);
+    }) as unknown as FetchFn;
+    const err = await new TokenMinter(
+      secretsDir,
+      refusing,
+      "https://api.github.com",
+      () => T0,
+      INSTANT,
+    )
+      .installationToken()
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GitHubRequestError);
+    expect((err as GitHubRequestError).status).toBe(401);
+    expect(mints).toBe(1);
+  });
+
+  it("a discovery that keeps failing gives up after three attempts", async () => {
+    let calls = 0;
+    const down = (async () => {
+      calls++;
+      return jsonResponse({ message: "unavailable" }, 503);
+    }) as unknown as FetchFn;
+    const err = await new TokenMinter(secretsDir, down, "https://api.github.com", () => T0, INSTANT)
+      .resolveInstallationId()
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GitHubRequestError);
+    expect((err as GitHubRequestError).status).toBe(503);
+    expect(calls).toBe(3);
   });
 
   it("uses only the app PEM — no environment token is ever consulted", async () => {

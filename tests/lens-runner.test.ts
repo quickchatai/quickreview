@@ -354,6 +354,70 @@ describe("[runLens] abort and deadline", () => {
     expect(lensSemaphoreFor(rig.host, 1).held).toBe(0);
     expect(ledger()[0]).toMatchObject({ timedOut: true, exitCode: 1 });
   });
+
+  // MUTATION: stop feeding the session's events to the ProviderRetryWatch in
+  // runlens.ts — a pass the deadline ended while pi retried a 429 records a
+  // bare timeout, losing the provider's evidence; this fails.
+  it("a pass the deadline ends while pi retries the provider names the provider's error", async () => {
+    const retrying = await createHostRig({
+      settings: {
+        compaction: { enabled: false },
+        retry: { enabled: true, maxRetries: 10, baseDelayMs: 2_000 },
+      },
+    });
+    try {
+      retrying.faux.setResponses(
+        Array.from({ length: 4 }, () =>
+          fauxAssistantMessage("", {
+            stopReason: "error",
+            errorMessage: "429 Too Many Requests: rate limit reached",
+          }),
+        ),
+      );
+      const runner = createLensRunner(config({ host: retrying.host, deadlineMs: 60 }));
+      const { result } = await runner.run({ agent: "pass-a", task: "go" });
+      expect(result).toMatchObject({ exitCode: 1, timedOut: true });
+      expect(result.errorMessage).toMatch(
+        /^pass pass-a timed out after .* min \(retried once\) while the provider was failing: 429 Too Many Requests/,
+      );
+    } finally {
+      retrying.close();
+    }
+  });
+
+  // MUTATION: drop the message_end branch from ProviderRetryWatch.feed — the
+  // replacement attempt answered the provider, then timed out on its own, and
+  // its timeout still names the first attempt's 429; this fails.
+  it("a replacement attempt the provider answered times out bare, not on the first attempt's error", async () => {
+    const retrying = await createHostRig({
+      settings: {
+        compaction: { enabled: false },
+        retry: { enabled: true, maxRetries: 10, baseDelayMs: 2_000 },
+      },
+    });
+    try {
+      retrying.faux.setResponses([
+        // The first attempt: a 429 pi is still retrying when the deadline ends it.
+        () =>
+          fauxAssistantMessage("", {
+            stopReason: "error",
+            errorMessage: "429 Too Many Requests: rate limit reached",
+          }),
+        // The replacement: the provider answers with a tool call, then the pass hangs.
+        () =>
+          fauxAssistantMessage([fauxToolCall("read", { path: join(dir, "absent.txt") })], {
+            stopReason: "toolUse",
+          }),
+        ...Array.from({ length: 3 }, () => hang()),
+      ]);
+      const runner = createLensRunner(config({ host: retrying.host, deadlineMs: 300 }));
+      const { result } = await runner.run({ agent: "pass-a", task: "go" });
+      expect(result).toMatchObject({ exitCode: 1, timedOut: true });
+      expect(result.errorMessage).toMatch(/^pass pass-a timed out after .* min \(retried once\)$/);
+    } finally {
+      retrying.close();
+    }
+  });
 });
 
 describe("[runLens] isolation", () => {

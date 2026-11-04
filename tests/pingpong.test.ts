@@ -446,7 +446,12 @@ describe("structured thread decision", () => {
 
     expect(await watcher.handleFile(name)).toBe(false);
     expect(resolveOwnReviewThread).not.toHaveBeenCalled();
+    // An unreadable PR state is transient: the long schedule (about a minute
+    // first), and no strike spent.
+    expect(ledger.retry(5001)).toMatchObject({ attempts: 0, transient_attempts: 1 });
     now = new Date("2026-08-26T09:00:31Z");
+    expect(await watcher.handleFile(name)).toBe(false);
+    now = new Date("2026-08-26T09:01:01Z");
     expect(await watcher.handleFile(name)).toBe(true);
     expect(createReviewCommentReply).toHaveBeenCalledTimes(2);
     expect(ledger.discipline(4000).exchanges).toBe(1);
@@ -588,7 +593,8 @@ describe("structured thread decision", () => {
     expect(await watcher.handleFile(name)).toBe(false);
     // The first attempt did not read: a fresh decision posts without a GET.
     expect(listRecentReviewComments).not.toHaveBeenCalled();
-    now = new Date("2026-08-26T09:00:31Z");
+    // A dropped connection is transient: the long schedule, a minute first.
+    now = new Date("2026-08-26T09:01:01Z");
     expect(await watcher.handleFile(name)).toBe(true);
     expect(createReviewCommentReply).toHaveBeenCalledTimes(1);
     expect(ledger.discipline(4000).exchanges).toBe(3);
@@ -698,7 +704,8 @@ describe("structured thread decision", () => {
     const h = recovering(vi.fn().mockRejectedValue(new Error("HTTP 502")));
     expect(await h.watcher.handleFile(h.name)).toBe(false);
     expect(h.createReviewCommentReply).not.toHaveBeenCalled();
-    expect(ledger.retry(5001).attempts).toBe(1);
+    // A 502 is transient: it waits on the long schedule and spends no strike.
+    expect(ledger.retry(5001)).toMatchObject({ attempts: 0, transient_attempts: 1 });
     expect(ledger.decisionProgress(5001).reply_posted).toBe(false);
   });
 
@@ -949,6 +956,149 @@ describe("structured thread decision", () => {
     );
     expect(watcher.retryFailed(5001)).toMatchObject({ ok: true, file: name });
     expect(watcher.status()).toMatchObject({ pending: 1, failed: 0 });
+    watcher.stop();
+  });
+
+  it("a run of 502s does not quarantine: the long schedule, no strike spent, then the terminal path", async () => {
+    ledger.claimAuthorMessage(event);
+    let now = new Date("2026-08-26T09:00:00Z");
+    const resolveOwnReviewThread = vi
+      .fn()
+      .mockRejectedValue(new GitHubRequestError("POST", "/graphql", 502, "Bad Gateway"));
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "",
+      }),
+    );
+
+    // About 1, 2, 5, 15, 30, 60, 60 minutes: seven waits, eight attempts.
+    const waitsMin = [1, 2, 5, 15, 30, 60, 60];
+    for (const [i, wait] of waitsMin.entries()) {
+      expect(await watcher.handleFile(name)).toBe(false);
+      expect(ledger.retry(5001)).toMatchObject({
+        attempts: 0,
+        transient_attempts: i + 1,
+        terminal: false,
+      });
+      expect(watcher.status()).toMatchObject({ failed: 0 });
+      // Not before its time.
+      now = new Date(now.getTime() + wait * 60_000 - 1000);
+      expect(await watcher.handleFile(name)).toBe(false);
+      expect(resolveOwnReviewThread).toHaveBeenCalledTimes(i + 1);
+      now = new Date(now.getTime() + 1000);
+    }
+    expect(store.logAnomaly).not.toHaveBeenCalled();
+    // The eighth failure spends the schedule: the existing terminal path.
+    expect(await watcher.handleFile(name)).toBe(false);
+    expect(resolveOwnReviewThread).toHaveBeenCalledTimes(8);
+    expect(watcher.status()).toMatchObject({ pending: 0, failed: 1 });
+    expect(store.logAnomaly).toHaveBeenCalledWith(
+      "pingpong_decision_retry_exhausted",
+      77,
+      null,
+      expect.stringContaining("comment 5001"),
+      expect.any(String),
+    );
+    watcher.stop();
+  });
+
+  // MUTATION: record the retry and open the breaker at the attempt's start
+  // (`now`) instead of `failedAt` — this fails.
+  it("cooldowns run from when the failure arrived, not from when the attempt began", async () => {
+    ledger.claimAuthorMessage(event);
+    let now = new Date("2026-08-26T09:00:00Z");
+    // Each call spends three minutes (a read on its own retries) before failing.
+    const slowly = (err: Error) => async () => {
+      now = new Date(now.getTime() + 3 * 60_000);
+      throw err;
+    };
+    const resolveOwnReviewThread = vi
+      .fn()
+      .mockImplementationOnce(
+        slowly(new GitHubRequestError("POST", "/graphql", 502, "Bad Gateway")),
+      )
+      .mockImplementationOnce(
+        slowly(new GitHubRequestError("POST", "/graphql", 429, "rate limit", 10 * 60_000)),
+      );
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "",
+      }),
+    );
+    expect(await watcher.handleFile(name)).toBe(false);
+    // The 502 arrived at 09:03; the first transient wait is a minute from then.
+    expect(ledger.retry(5001).next_attempt_at).toBe("2026-08-26T09:04:00.000Z");
+    now = new Date("2026-08-26T09:04:00Z");
+    expect(await watcher.handleFile(name)).toBe(false);
+    // The 429 arrived at 09:07 asking for ten minutes: the breaker holds until 09:17.
+    expect(ledger.breaker().open_until).toBe("2026-08-26T09:17:00.000Z");
+    watcher.stop();
+  });
+
+  it("only a refusal spends a strike; a transient failure between them does not", async () => {
+    ledger.claimAuthorMessage(event);
+    let now = new Date("2026-08-26T09:00:00Z");
+    const resolveOwnReviewThread = vi
+      .fn()
+      .mockRejectedValueOnce(new GitHubRequestError("POST", "/graphql", 422, "Unprocessable"))
+      .mockRejectedValueOnce(new GitHubRequestError("POST", "/graphql", 503, "Unavailable"))
+      .mockRejectedValueOnce(new GitHubRequestError("POST", "/graphql", 422, "Unprocessable"));
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "",
+      }),
+    );
+    expect(await watcher.handleFile(name)).toBe(false);
+    expect(ledger.retry(5001)).toMatchObject({ attempts: 1, transient_attempts: 0 });
+    now = new Date("2026-08-26T09:00:31Z");
+    expect(await watcher.handleFile(name)).toBe(false);
+    expect(ledger.retry(5001)).toMatchObject({ attempts: 1, transient_attempts: 1 });
+    now = new Date("2026-08-26T09:01:32Z");
+    expect(await watcher.handleFile(name)).toBe(false);
+    expect(ledger.retry(5001)).toMatchObject({ attempts: 2, terminal: false });
+    expect(store.logAnomaly).not.toHaveBeenCalled();
     watcher.stop();
   });
 

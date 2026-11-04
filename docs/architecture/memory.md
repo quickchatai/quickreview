@@ -307,6 +307,13 @@ Three properties are structural:
 - **It never gives up.** A crash schedules a respawn on a capped backoff
   ladder (`restart_backoff_ms`, reset after `restart_reset_after_s` of
   uptime), forever.
+- **A running server that stops answering is restarted.** After
+  `liveness_failures` consecutive failed `/health` probes spanning at least
+  `liveness_span_s`, the child is stopped (SIGTERM, then SIGKILL) and its exit
+  walks the same ladder. A child that has never answered since it started is
+  judged only after `liveness_startup_grace_s`. Each one is logged, counted in
+  `status.json` (`liveness_restarts`) and recorded as a quiet
+  `openviking_liveness_restart` anomaly; nothing waits on it.
 - **`status()` never throws.** It is synchronous, reads only cached samples,
   and degrades to a minimal block on any internal error — the heartbeat writer
   must not be able to fail on the memory engine.
@@ -319,7 +326,8 @@ RSS and CPU are sampled from `/proc/<pid>/stat` (`src/openviking/proc.ts`; CPU
 is a rate, hence the small stateful sampler) and reported in
 `state/status.json` under `openviking` — see `OpenVikingStatus` in
 `src/openviking/types.ts` for every field. **Monitoring only**: there is no RSS
-watchdog and no auto-restart on a memory budget.
+watchdog and no auto-restart on a memory budget. The liveness restart judges
+only whether `/health` answers, never memory size.
 
 ### The health gate — `src/openviking/health.ts`
 

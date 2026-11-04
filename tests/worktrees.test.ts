@@ -9,6 +9,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -31,8 +32,14 @@ import {
   parseNewSideRanges,
   reviewedHeadRef,
   unquoteGitPath,
+  GIT_CLONE_TIMEOUT_MS,
+  GIT_FETCH_TIMEOUT_MS,
+  GIT_NETWORK_CONFIG,
+  networkGitExec,
+  pinnedGitExec,
 } from "../src/worktrees.js";
-import { nodeExec, type ExecFn } from "../src/tmux.js";
+import { nodeExec, type ExecFn, type ExecOpts } from "../src/tmux.js";
+import { EXEC_SETTLE_GRACE_MS } from "@quickchatai/pi-quickreview/src/execfn.js";
 
 let tmp: string;
 let origin: string;
@@ -95,6 +102,228 @@ describe("cloneUrlFor", () => {
     expect(cloneUrlFor("git@github.com:o/n.git")).toBe("git@github.com:o/n.git");
     expect(cloneUrlFor("https://example.com/n.git")).toBe("https://example.com/n.git");
     expect(cloneUrlFor("/srv/mirror.git")).toBe("/srv/mirror.git");
+  });
+});
+
+// One hung fetch stalls the dispatch pump and every webhook waiting on it:
+// each daemon git command that reaches the network carries a timeout, git's
+// low-speed abort and no terminal prompt. Nothing else gets them.
+describe("network git commands are bounded", () => {
+  type Seen = { args: string[]; opts: ExecOpts };
+  function recording(): { run: ExecFn; seen: Seen[] } {
+    const seen: Seen[] = [];
+    const run: ExecFn = async (cmd, args, opts = {}) => {
+      seen.push({ args, opts });
+      return nodeExec(cmd, args, opts);
+    };
+    return { run, seen };
+  }
+  const verb = (s: Seen): string => s.args[GIT_NETWORK_CONFIG.length] ?? "";
+
+  it("the clone and the round's fetch carry the timeout, the low-speed abort and no prompt", async () => {
+    const sha = commit("feature.txt", "v1\n");
+    publishPullHead(7, sha);
+    const { run, seen } = recording();
+    const m = new WorktreeManager({
+      root,
+      repo: "exampleorg/example-app",
+      cloneUrl: origin,
+      run,
+    });
+    await m.ensureWorktree(7, { baseRef: "master" });
+    const clone = seen.find((s) => verb(s) === "clone");
+    const fetch = seen.find((s) => verb(s) === "fetch");
+    expect(clone?.args.slice(0, GIT_NETWORK_CONFIG.length)).toEqual([...GIT_NETWORK_CONFIG]);
+    expect(clone?.opts.timeoutMs).toBe(GIT_CLONE_TIMEOUT_MS);
+    expect(clone?.opts.env?.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(fetch?.args).toEqual([
+      "-c",
+      "http.lowSpeedLimit=1000",
+      "-c",
+      "http.lowSpeedTime=60",
+      "fetch",
+      "--force",
+      "origin",
+      "+refs/pull/7/head:refs/qcr/pr-7",
+      "+refs/heads/master:refs/remotes/origin/master",
+    ]);
+    expect(fetch?.opts.timeoutMs).toBe(GIT_FETCH_TIMEOUT_MS);
+    expect(fetch?.opts.env?.GIT_TERMINAL_PROMPT).toBe("0");
+    // A local command is untouched: no flags, no timeout, no env override.
+    const local = seen.filter((s) => s.args[0] !== "-c");
+    expect(local.length).toBeGreaterThan(0);
+    for (const s of local) {
+      expect(s.opts.timeoutMs).toBeUndefined();
+      expect(s.opts.env).toBeUndefined();
+    }
+  });
+
+  it("the fetch on miss (the recheck's merge read) is bounded too", async () => {
+    const { run, seen } = recording();
+    const m = new WorktreeManager({
+      root,
+      repo: "exampleorg/example-app",
+      cloneUrl: origin,
+      run,
+    });
+    await m.ensureBaseClone();
+    const later = commit("later.txt", "x\n");
+    publishPullHead(3, later);
+    await m.resolvedFilesInMerges(later, later, 3);
+    const fetches = seen.filter((s) => verb(s) === "fetch");
+    expect(fetches.length).toBeGreaterThan(0);
+    for (const f of fetches) {
+      expect(f.args.slice(0, GIT_NETWORK_CONFIG.length)).toEqual([...GIT_NETWORK_CONFIG]);
+      expect(f.opts.timeoutMs).toBe(GIT_FETCH_TIMEOUT_MS);
+    }
+  });
+
+  it("a caller's own timeout wins, and a command that is not fetch or clone passes through", async () => {
+    const seen: Array<{ args: string[]; opts: ExecOpts | undefined }> = [];
+    const inner: ExecFn = async (_cmd, args, opts) => {
+      seen.push({ args, opts });
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const run = networkGitExec(inner);
+    await run("git", ["fetch", "origin"], { timeoutMs: 5 });
+    await run("git", ["rev-parse", "HEAD"], { cwd: root });
+    await run("tmux", ["fetch"]);
+    expect(seen[0]!.opts?.timeoutMs).toBe(5);
+    expect(seen[1]).toEqual({ args: ["rev-parse", "HEAD"], opts: { cwd: root } });
+    expect(seen[2]!.args).toEqual(["fetch"]);
+  });
+
+  it("a clone that fails leaves no half-written clone behind to pass for a finished one", async () => {
+    const run: ExecFn = async (cmd, args, opts) => {
+      if (args.includes("clone")) {
+        // What a clone killed mid-transfer leaves: a `.git`, no checkout.
+        mkdirSync(join(root, "example-app", ".git"), { recursive: true });
+        return { code: -1, stdout: "", stderr: "killed" };
+      }
+      return nodeExec(cmd, args, opts);
+    };
+    const m = new WorktreeManager({
+      root,
+      repo: "exampleorg/example-app",
+      cloneUrl: origin,
+      run,
+    });
+    await expect(m.ensureBaseClone()).rejects.toThrow();
+    expect(existsSync(join(m.basePath, ".git"))).toBe(false);
+    // The next attempt clones for real.
+    await mgr().ensureBaseClone();
+    expect(existsSync(join(m.basePath, ".git"))).toBe(true);
+  });
+  // git's own timeout killed git alone: an ssh transport or credential
+  // helper it started survived with git's stderr pipe open, and the call
+  // (which settles on `close`) never returned. The kill now takes git's whole
+  // process group, and the call settles within a short grace regardless.
+  // MUTATION: drop `ownProcessGroup: true` from networkGitExec — the helper
+  // survives the kill (its pid still answers); this fails.
+  it("a fetch whose transport helper hangs is killed with it, and the call returns", async () => {
+    const pidFile = join(tmp, "helper.pid");
+    const helper = join(tmp, "hung-ssh.sh");
+    writeFileSync(helper, `#!/bin/sh\necho $$ > "${pidFile}"\nexec sleep 30\n`);
+    chmodSync(helper, 0o755);
+    const run = networkGitExec(pinnedGitExec);
+    const started = Date.now();
+    const fetched = run("git", ["fetch", "ssh://git.example.invalid/o/r.git"], {
+      cwd: origin,
+      timeoutMs: 500,
+      env: { ...process.env, GIT_SSH_COMMAND: helper },
+    });
+    const res = await Promise.race([
+      fetched,
+      new Promise<"held">((r) => setTimeout(() => r("held"), 500 + EXEC_SETTLE_GRACE_MS + 5_000)),
+    ]);
+    expect(res).not.toBe("held");
+    expect((res as { code: number }).code).not.toBe(0);
+    // Settled by `close`, not by the grace: nothing held git's output open.
+    expect(Date.now() - started).toBeLessThan(500 + EXEC_SETTLE_GRACE_MS);
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    expect(() => process.kill(pid, 0)).toThrow();
+  });
+
+  // `close` waits for every holder of the child's pipes. A descendant that
+  // outlives the kill (one outside the process group, or any child of a
+  // caller that did not ask for one) held them, and the call never settled.
+  // MUTATION: drop the grace timer from nodeExec — the call settles only when
+  // the descendant exits, after the race below; this fails.
+  it("a timed-out command settles within the grace even while a descendant holds its output", async () => {
+    let orphan = 0;
+    try {
+      const res = await Promise.race([
+        nodeExec("sh", ["-c", "sleep 20 & echo $!; wait"], { timeoutMs: 200 }).then((r) => {
+          orphan = Number(r.stdout.trim());
+          return r;
+        }),
+        new Promise<"held">((r) => setTimeout(() => r("held"), 200 + EXEC_SETTLE_GRACE_MS + 5_000)),
+      ]);
+      expect(res).not.toBe("held");
+      expect((res as { code: number; stderr: string }).code).toBe(-1);
+      expect((res as { stderr: string }).stderr).toContain("killed after 200 ms");
+    } finally {
+      if (orphan > 0) {
+        try {
+          process.kill(orphan, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+    }
+  });
+
+  // A destination that existed before the clone is a mount the deployment
+  // provides. A clone that failed mid-checkout left files beside its `.git`;
+  // removing only the `.git` left the mount nonempty, and every retry refused
+  // it.
+  // MUTATION: remove only `join(basePath, ".git")` on failure again — the
+  // checked-out file stays and the retry below refuses a nonempty directory.
+  it("a clone that fails into a mounted destination leaves it as it found it, and retryable", async () => {
+    const dest = join(root, "example-app");
+    mkdirSync(dest, { recursive: true });
+    let failClone = true;
+    const run: ExecFn = async (cmd, args, opts) => {
+      if (failClone && args.includes("clone")) {
+        // A clone killed during checkout: its `.git`, and part of the tree.
+        mkdirSync(join(dest, ".git"), { recursive: true });
+        writeFileSync(join(dest, "README.md"), "base\n");
+        return { code: -1, stdout: "", stderr: "killed" };
+      }
+      return nodeExec(cmd, args, opts);
+    };
+    const m = new WorktreeManager({ root, repo: "exampleorg/example-app", cloneUrl: origin, run });
+    await expect(m.ensureBaseClone()).rejects.toThrow();
+    expect(existsSync(dest)).toBe(true);
+    expect(readdirSync(dest)).toEqual([]);
+    failClone = false;
+    await m.ensureBaseClone();
+    expect(existsSync(join(dest, ".git"))).toBe(true);
+  });
+
+  // Two callers that both find no clone (a round's preparation and a
+  // session's revival) started two clones into one directory; the second
+  // refused the directory the first had created, and its cleanup deleted the
+  // first one's clone.
+  // MUTATION: drop the BASE_CLONES single-flight from ensureBaseClone — two
+  // clones run, the second fails and removes the first's directory; this
+  // fails.
+  it("two callers that find no clone share one clone, and neither removes the other's", async () => {
+    let clones = 0;
+    const run: ExecFn = async (cmd, args, opts) => {
+      if (args.includes("clone")) {
+        clones++;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return nodeExec(cmd, args, opts);
+    };
+    const make = () =>
+      new WorktreeManager({ root, repo: "exampleorg/example-app", cloneUrl: origin, run });
+    const [a, b] = await Promise.all([make().ensureBaseClone(), make().ensureBaseClone()]);
+    expect(a).toBe(b);
+    expect(clones).toBe(1);
+    expect(existsSync(join(a, ".git"))).toBe(true);
+    expect(existsSync(join(a, "README.md"))).toBe(true);
   });
 });
 

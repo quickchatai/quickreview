@@ -150,6 +150,9 @@ export interface OpenVikingStatus {
   version_drift?: boolean;
   /** Restarts since the daemon booted. */
   restarts: number;
+  /** Of those, the ones a liveness restart caused: a running server that
+   * stopped answering `/health`. Absent when none. */
+  liveness_restarts?: number;
   /** ISO instant the current child started. */
   started_at?: string;
   last_exit?: ChildExit;

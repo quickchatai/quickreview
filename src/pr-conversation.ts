@@ -9,6 +9,11 @@ import { isFeedbackBody } from "./feedback.js";
 import { isSecurityCommand } from "./securityrequest.js";
 import { DEFAULT_PARTIAL_WRITE_POLICY } from "@quickchatai/pi-quickreview/src/settledread.js";
 import { wakeOrHold } from "./wakes.js";
+import {
+  classifyGitHubFailure,
+  transientRetryDelayMs,
+  type GitHubFailure,
+} from "@quickchatai/pi-quickreview/src/githubcore.js";
 
 export function blockedPrAuthor(store: StateStore, pr: number): string | undefined {
   const row = store.getPr(pr);
@@ -37,9 +42,28 @@ interface Obligation extends PrAuthorComment {
   delivered_at: string | null;
   deliveries: number;
   reply: string | null;
+  /** Refusals and unknown failures: three are terminal. */
   attempts: number;
+  /** Transient GitHub failures in a row, on the long schedule; no strike. */
+  transient_attempts: number;
   retry_at: string | null;
   state: "pending" | "answered" | "closed" | "failed";
+}
+
+/** The posting guard could not read the PR's state: nothing was posted, and
+ * the next read may well succeed. */
+class PrStateUnreadable extends Error {
+  constructor() {
+    super("PR state unreadable");
+    this.name = "PrStateUnreadable";
+  }
+}
+
+/** One classification (`classifyGitHubFailure`), plus the guard's own
+ * unreadable-state refusal, which is transient too. */
+function postingFailure(err: unknown): GitHubFailure {
+  if (err instanceof PrStateUnreadable) return { kind: "transient", detail: err.message };
+  return classifyGitHubFailure(err);
 }
 interface ConversationDeps {
   store: StateStore;
@@ -93,6 +117,14 @@ export class PrConversation {
       attempts INTEGER NOT NULL DEFAULT 0, retry_at TEXT,
       state TEXT NOT NULL DEFAULT 'pending'
     ); CREATE INDEX IF NOT EXISTS pr_conversation_pending ON pr_conversation(state, retry_at);`);
+    // Additive column: transient failures, counted apart from the strikes.
+    try {
+      deps.store.db.exec(
+        "ALTER TABLE pr_conversation ADD COLUMN transient_attempts INTEGER NOT NULL DEFAULT 0",
+      );
+    } catch {
+      /* column already present */
+    }
   }
 
   private now(): Date {
@@ -395,7 +427,7 @@ export class PrConversation {
             ? { executed: true, response: { id: landed.id } }
             : await adapter.createIssueComment(o.pr, body);
           if (result.blocked) {
-            if (result.blocked === "pr-unreadable") throw new Error("PR state unreadable");
+            if (result.blocked === "pr-unreadable") throw new PrStateUnreadable();
             this.update(o.comment_id, "state = 'closed'");
             this.deps.store.logEvent("pr_conversation_reply_blocked", o.pr, {
               comment_id: o.comment_id,
@@ -415,6 +447,34 @@ export class PrConversation {
             executed: result.executed,
           });
         } catch (err) {
+          const failure = postingFailure(err);
+          if (failure.kind === "transient" || failure.kind === "rate_limited") {
+            // GitHub is down or slowing us, or the PR state could not be
+            // read. A timeout or a 5xx on the POST itself leaves the delivery
+            // unknown — the comment may already have landed — so the next
+            // attempt's read-before-post (the marker search above) decides,
+            // and must stay. The long bounded schedule, GitHub's retry-after
+            // honoured, and no strike spent; the terminal path only once the
+            // schedule is spent.
+            const transient = o.transient_attempts + 1;
+            const delay = transientRetryDelayMs(transient, failure.retryAfterMs);
+            this.update(
+              o.comment_id,
+              "transient_attempts = ?, retry_at = ?",
+              transient,
+              delay === null ? null : new Date(this.now().getTime() + delay).toISOString(),
+            );
+            this.deps.store.logEvent("pr_conversation_retry", o.pr, {
+              comment_id: o.comment_id,
+              attempts: o.attempts,
+              transient_attempts: transient,
+              kind: failure.kind,
+              error: String(err),
+            });
+            if (delay === null)
+              this.fail(o, `${String(err)} (transient failures for about three hours)`);
+            continue;
+          }
           const attempts = o.attempts + 1;
           this.update(
             o.comment_id,
@@ -425,6 +485,7 @@ export class PrConversation {
           this.deps.store.logEvent("pr_conversation_retry", o.pr, {
             comment_id: o.comment_id,
             attempts,
+            kind: failure.kind,
             error: String(err),
           });
           if (attempts >= 3) this.fail(o, String(err));

@@ -201,6 +201,9 @@ async function recoverPrForOperatorNow(
   )) {
     deps.store.queuePrForOperatorRecovery(pr, (deps.now ?? (() => new Date()))().toISOString());
   }
+  // The operator's word is a fresh request: a self-requeue's backoff no longer
+  // holds the queued row, whose FIFO identity was kept above.
+  deps.store.liftSelfRequeueBackoff(pr, mode);
 
   await deps.pump();
   const after = deps.store.getPr(pr);

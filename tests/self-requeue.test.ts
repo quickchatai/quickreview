@@ -16,6 +16,7 @@ import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { StateStore } from "../src/state.js";
+import { applyEvent } from "../src/statemachine.js";
 import { roundPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
@@ -295,7 +296,10 @@ describe("bounded infrastructure-stage recovery", () => {
     expect(store.getPr(295)?.state).toBe("queued");
   });
 
-  it("returns non-prepass exhaustion to the ordinary operator recovery path, stops Pi, and frees round capacity", async () => {
+  // MUTATION: pass `cause` from recoverInfrastructureFailure's exhaustion
+  // without `nothing_posted: this.nothingPosted(round)` (or with true) — a round
+  // whose posting nothing can prove retries itself; this fails.
+  it("returns non-prepass exhaustion of a round with no posting key (nothing provable) to the operator recovery path, stops Pi, and frees round capacity", async () => {
     reviewingRound(291);
     commandForRound(291, 1);
     const { hooks } = hooksWith(true);
@@ -324,6 +328,119 @@ describe("bounded infrastructure-stage recovery", () => {
       attempts: DEFAULT_MAX_SELF_REQUEUES,
       next_action: "operator_unwedge",
     });
+  });
+});
+
+describe("exhausted infrastructure recovery with nothing posted retries itself", () => {
+  // MUTATION: drop `cause`/`nothing_posted` from recoverInfrastructureFailure's
+  // terminalizeInfrastructureReviewFailure call — the debt is operator_unwedge; this fails.
+  it("a keyed round with no posting receipt waits on the automatic retry at any stage", async () => {
+    const roundId = reviewingRound(296);
+    store.stampPostingKey(roundId, "v1:296:1:abc123");
+    commandForRound(296, 1);
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++)
+      store.logEvent("round_self_requeued", 296, { head_sha: "abc123" });
+    const v = watcher(hooks);
+
+    expect(
+      await v.recoverInfrastructureFailure(296, 1, "running_hard_bound", "fixed bound exhausted"),
+    ).toBe("exhausted");
+    expect(store.openReviewFailure(296)).toMatchObject({
+      stage: "running_hard_bound",
+      next_action: "retry_wait",
+      next_retry_at: new Date(clock.getTime() + 15 * 60_000).toISOString(),
+    });
+    expect(events("review_failed_loud").at(-1)!.payload).toMatchObject({
+      cause: "infrastructure_exhausted",
+    });
+    // Loud: the anomaly names the automatic retry.
+    expect(
+      store
+        .anomalies()
+        .some(
+          (a) => a.kind === "review_failed_loud" && a.detail.includes("automatic retry scheduled"),
+        ),
+    ).toBe(true);
+  });
+
+  it("a provider outage is named truthfully: stage provider_unavailable, cause provider_transient", async () => {
+    const roundId = reviewingRound(297);
+    store.stampPostingKey(roundId, "v1:297:1:abc123");
+    commandForRound(297, 1);
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++)
+      store.logEvent("round_self_requeued", 297, { head_sha: "abc123" });
+    const v = watcher(hooks);
+
+    expect(
+      await v.recoverInfrastructureFailure(
+        297,
+        1,
+        "provider_unavailable",
+        "round: the provider failed the turn: 529 overloaded; requeued 3 times already",
+      ),
+    ).toBe("exhausted");
+    expect(store.openReviewFailure(297)).toMatchObject({
+      stage: "provider_unavailable",
+      next_action: "retry_wait",
+    });
+    expect(events("review_failed_loud").at(-1)!.payload).toMatchObject({
+      cause: "provider_transient",
+    });
+  });
+
+  it("a posting receipt of any status keeps the operator's hold", async () => {
+    const roundId = reviewingRound(298);
+    store.stampPostingKey(roundId, "v1:298:1:abc123");
+    commandForRound(298, 1);
+    mkdirSync(join(dir, "state", "posting-receipts"), { recursive: true });
+    writeFileSync(join(dir, "state", "posting-receipts", "pr-298-round-1.json"), "{}");
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++)
+      store.logEvent("round_self_requeued", 298, { head_sha: "abc123" });
+    const v = watcher(hooks);
+    await v.recoverInfrastructureFailure(298, 1, "running_hard_bound", "fixed bound exhausted");
+    expect(store.openReviewFailure(298)).toMatchObject({ next_action: "operator_unwedge" });
+  });
+
+  // MUTATION: drop the isOperatorWorkerFailure checks from transientCause in
+  // src/verdicts.ts — a refused login's exhausted round waits on the automatic
+  // retry, which cannot fix its credentials; this fails.
+  it.each([
+    ["its own failure", "round: the provider refused the login: token expired", undefined],
+    [
+      "the worker's last failure",
+      "fixed bound exhausted",
+      "the worker's login was refused: no login in the agent dir",
+    ],
+  ])("a refused login keeps the operator's hold (%s)", async (_where, detail, workerError) => {
+    const roundId = reviewingRound(299);
+    store.stampPostingKey(roundId, "v1:299:1:abc123");
+    commandForRound(299, 1);
+    if (workerError)
+      store.recordWorkerFailure(299, {
+        commandId: "c",
+        error: workerError,
+        at: clock.toISOString(),
+        parkAfter: 99,
+      });
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++)
+      store.logEvent("round_self_requeued", 299, { head_sha: "abc123" });
+    const v = watcher(hooks);
+    expect(await v.recoverInfrastructureFailure(299, 1, "running_hard_bound", detail)).toBe(
+      "exhausted",
+    );
+    expect(store.openReviewFailure(299)).toMatchObject({
+      next_action: "operator_unwedge",
+      next_retry_at: null,
+    });
+    expect(events("review_failed_loud").at(-1)!.payload).toMatchObject({ cause: null });
   });
 });
 
@@ -607,6 +724,87 @@ describe("self-requeued rounds do not age the PR", () => {
       expect(orders[0]!.round_no).toBe(2); // round_no advances; review age does not
     },
   );
+});
+
+describe("a self-requeue backs off before its replacement dispatches", () => {
+  const pump = (at: Date) =>
+    dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter: new FakeDispatchAdapter(),
+      hooks: dispatchHooks().hooks,
+      now: () => at,
+    });
+
+  // MUTATION: drop the selfRequeueNotBefore check from dispatch's heldBack —
+  // the replacement dispatches at once into whatever just failed; this fails.
+  it(
+    "the replacement is held until its not-before time, then dispatches",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      reviewingRound(340);
+      pastDeadline();
+      const { hooks } = hooksWith(false);
+      await watcher(hooks).checkDeadlines();
+      const first = events("round_self_requeued").at(-1)!.payload;
+      expect(first.not_before).toBe(new Date(clock.getTime() + 2 * 60_000).toISOString());
+
+      expect(await pump(new Date(clock.getTime() + 60_000))).toHaveLength(0);
+      expect(store.getPr(340)?.state).toBe("queued");
+      expect(await pump(new Date(clock.getTime() + 2 * 60_000))).toHaveLength(1);
+    },
+  );
+
+  // MUTATION: return SELF_REQUEUE_BACKOFF_MIN[0] for every attempt in
+  // selfRequeueBackoffMin — the second requeue waits 2 minutes; this fails.
+  it("the first requeue at a head waits 2 minutes, the second 8", async () => {
+    const { hooks } = hooksWith(false);
+    const w = watcher(hooks);
+    for (const wait of [2, 8]) {
+      reviewingRound(342);
+      pastDeadline();
+      await w.checkDeadlines();
+      expect(events("round_self_requeued").at(-1)!.payload.not_before).toBe(
+        new Date(clock.getTime() + wait * 60_000).toISOString(),
+      );
+    }
+  });
+
+  // MUTATION: drop the queued_trigger_ts comparison from selfRequeueNotBefore —
+  // a person's fresh request waits behind the backoff; this fails.
+  it("a newer trigger on the row lifts the backoff", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+    reviewingRound(341);
+    pastDeadline();
+    const { hooks } = hooksWith(false);
+    await watcher(hooks).checkDeadlines();
+    const row = store.getPr(341)!;
+    expect(store.selfRequeueNotBefore(341, row)).toBeDefined();
+    const later = new Date(clock.getTime() + 30_000).toISOString();
+    store.upsertPr({ ...row, trigger_ts: later, trigger_provenance: "human" });
+    expect(store.selfRequeueNotBefore(341, store.getPr(341)!)).toBeUndefined();
+    expect(await pump(new Date(clock.getTime() + 30_000))).toHaveLength(1);
+  });
+
+  // MUTATION: drop the pr_transition read from selfRequeueNotBefore — a
+  // label or team request on the already-queued row keeps its FIFO trigger_ts
+  // and waits behind the backoff; this fails.
+  it.each([
+    [343, "label", true],
+    [344, "team_request", true],
+    [345, "reconcile", false],
+  ] as const)("#%i: a %s trigger on the queued row lifts it: %s", async (pr, source, lifted) => {
+    reviewingRound(pr);
+    pastDeadline();
+    const { hooks } = hooksWith(false);
+    await watcher(hooks).checkDeadlines();
+    const queued = store.getPr(pr)!;
+    expect(queued.state).toBe("queued");
+    expect(store.selfRequeueNotBefore(pr, queued)).toBeDefined();
+    applyEvent(store, pr, { type: "trigger", source }, {}, { now: () => clock });
+    // The queued row keeps its FIFO place: trigger_ts is unchanged.
+    expect(store.getPr(pr)!.trigger_ts).toBe(queued.trigger_ts);
+    expect(store.selfRequeueNotBefore(pr, store.getPr(pr)!) === undefined).toBe(lifted);
+  });
 });
 
 describe("idempotency against the restart orphan-requeue", () => {

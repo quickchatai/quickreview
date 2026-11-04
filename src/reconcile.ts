@@ -735,6 +735,14 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
 
   // ---- 3. open-PR sync: locally-live PRs GitHub no longer lists as open ----
   await step("closed-sync", async () => {
+    // Closed-sync judges each local PR against the open list. When that list
+    // was not read, `open` is empty, and every live PR would look closed and
+    // cost its own getPr (each up to its timeout): the step waits for the
+    // next pass, which has the authoritative list.
+    if (!openListed) {
+      (deps.log ?? (() => {}))("reconcile: closed-sync skipped — the open-PR list was not read");
+      return;
+    }
     for (const local of store.allPrs()) {
       if (local.state === "closed") continue;
       if (open.has(local.number)) continue;

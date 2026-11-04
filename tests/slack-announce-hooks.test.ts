@@ -244,6 +244,16 @@ describe("verdict hooks", () => {
     });
   }
 
+  /** One watcher call, then the Slack announcements it set off: they run in
+   * the background (announceSafe is fire-and-forget). */
+  async function settled(
+    w: VerdictWatcher,
+    call: (w: VerdictWatcher) => Promise<unknown>,
+  ): Promise<void> {
+    await call(w);
+    await w.idle();
+  }
+
   function reviewingRound(pr: number): number {
     store.upsertPr({
       number: pr,
@@ -276,7 +286,7 @@ describe("verdict hooks", () => {
       finished_at: clock.toISOString(),
       summary: "Nothing blocking; the retry loop is bounded now.",
     });
-    await watcher(announcer()).sweep();
+    await settled(watcher(announcer()), (w) => w.sweep());
     expect(slack.posts).toEqual([
       {
         thread_ts: "1699999999.0001",
@@ -300,7 +310,7 @@ describe("verdict hooks", () => {
       finished_at: clock.toISOString(),
       summary: "Nothing blocking; CI is red.",
     });
-    await watcher(announcer()).sweep();
+    await settled(watcher(announcer()), (w) => w.sweep());
     expect(slack.posts[0]!.text.split("\n")[0]).toBe(
       "<@U_ALICE> ⏳ *APPROVAL WITHHELD (CI not green)* — round 1, 0 min",
     );
@@ -316,7 +326,7 @@ describe("verdict hooks", () => {
       head_sha: "abcdef1234567890",
       finished_at: clock.toISOString(),
     });
-    await watcher(announcer()).sweep();
+    await settled(watcher(announcer()), (w) => w.sweep());
     expect(slack.posts[0]!.text.split("\n")).toHaveLength(2);
   });
 
@@ -324,7 +334,7 @@ describe("verdict hooks", () => {
     store.upsertSlackThread({ pr: 5263, channel: "C_REVIEW", root_ts: "1699999999.0001" });
     reviewingRound(5263);
     writeFileSync(join(dir, "pr-5263-round-1.json"), "{not json");
-    await watcher(announcer()).sweep();
+    await settled(watcher(announcer()), (w) => w.sweep());
     expect(slack.posts[0]).toEqual({
       thread_ts: "1699999999.0001",
       text: "⚠️ #5263 round 1 ended without a usable verdict — nothing was posted and no approval was implied.",
@@ -335,7 +345,7 @@ describe("verdict hooks", () => {
     store.upsertSlackThread({ pr: 5263, channel: "C_REVIEW", root_ts: "1699999999.0001" });
     reviewingRound(5263);
     clock = new Date("2026-08-17T23:00:00.000Z");
-    await watcher(announcer()).checkDeadlines();
+    await settled(watcher(announcer()), (w) => w.checkDeadlines());
     expect(slack.posts[0]!.text).toBe(
       `⏱ #5263 round 1 blew its ${cfg.daemon.round_deadline_min}-min deadline — ` +
         "no verdict was posted, and no approval was implied. <@U_MAT>",
@@ -347,11 +357,82 @@ describe("verdict hooks", () => {
     reviewingRound(5263);
     store.startRound(5263, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
     clock = new Date("2026-08-17T23:00:00.000Z");
-    await watcher(announcer()).checkDeadlines();
+    await settled(watcher(announcer()), (w) => w.checkDeadlines());
     expect(slack.posts[0]!.text).toBe(
       "♻️ the round-1 review is superseded by round 2 (`abcdef1`) — read the newest one",
     );
     expect(slack.posts[0]!.text).not.toContain("dismiss");
+  });
+
+  // A blackholed Slack costs each post its bounded retries — about 45 s a
+  // call. The deadline sweep used to await every one of them.
+  // MUTATION: await `fn(announcer)` inside announceSafe again — checkDeadlines
+  // does not return until the hold is released, and the race below times out.
+  it("a slow Slack never holds the deadline sweep, and each PR's announcements keep their order", async () => {
+    store.upsertSlackThread({ pr: 5263, channel: "C_REVIEW", root_ts: "1699999999.0001" });
+    store.upsertSlackThread({ pr: 5264, channel: "C_REVIEW", root_ts: "1699999999.0002" });
+    reviewingRound(5263);
+    store.startRound(5263, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    reviewingRound(5264);
+    let release!: () => void;
+    slack.hold = new Promise<void>((r) => (release = r));
+    clock = new Date("2026-08-17T23:00:00.000Z");
+    const w = watcher(announcer());
+    const swept = await Promise.race([
+      w.checkDeadlines().then(() => "returned"),
+      new Promise((r) => setTimeout(() => r("held"), 2_000)),
+    ]);
+    expect(swept).toBe("returned");
+    expect(slack.posts).toHaveLength(0);
+    release();
+    await w.idle();
+    const kind = (text: string): string =>
+      text.startsWith("♻️") ? "superseded" : text.startsWith("⏱") ? "overdue" : text;
+    const texts = (root: string) =>
+      slack.posts.filter((p) => p.thread_ts === root).map((p) => kind(p.text));
+    // #5263: round 1 superseded, then round 2 overdue — in the order they
+    // were decided.
+    expect(texts("1699999999.0001")).toEqual(["superseded", "overdue"]);
+    expect(texts("1699999999.0002")).toEqual(["overdue"]);
+  });
+
+  // The order was kept by a queue inside the verdict watcher, so an
+  // announcement waiting there had not reached the announcer yet, and
+  // dispatch's pickup of the next round, which calls the announcer directly,
+  // reserved the PR's lane first and posted ahead of it. The order is the
+  // announcer's now, reserved on the call whoever makes it.
+  // MUTATION: chain announceSafe's calls behind a per-PR promise of the
+  // watcher's own again — the pickup posts between the supersede and the
+  // overdue alert; this fails.
+  it("a later round's pickup never overtakes the announcements called before it", async () => {
+    store.upsertSlackThread({ pr: 5263, channel: "C_REVIEW", root_ts: "1699999999.0001" });
+    reviewingRound(5263);
+    store.startRound(5263, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    let release!: () => void;
+    slack.hold = new Promise<void>((r) => (release = r));
+    clock = new Date("2026-08-17T23:00:00.000Z");
+    const shared = announcer();
+    const w = watcher(shared);
+    await w.checkDeadlines();
+    // Dispatch picks up the next round while Slack still holds the first post.
+    const pickup = shared.roundStarted({
+      pr: 5263,
+      title: "Fix the retry loop",
+      author: "alice",
+      head_sha: "abcdef1234567890",
+      round_no: 3,
+      round_type: "re-review",
+      lenses: ["pass-baseline"],
+      additions: 1,
+      deletions: 1,
+      changed_files: 1,
+    });
+    release();
+    await w.idle();
+    await pickup;
+    const kind = (text: string): string =>
+      text.startsWith("♻️") ? "superseded" : text.startsWith("⏱") ? "overdue" : "pickup";
+    expect(slack.posts.map((p) => kind(p.text))).toEqual(["superseded", "overdue", "pickup"]);
   });
 
   it("applies verdicts unchanged with no announcer, and survives a Slack outage", async () => {
@@ -377,7 +458,7 @@ describe("verdict hooks", () => {
       finished_at: clock.toISOString(),
       summary: "ok",
     });
-    await watcher(announcer()).sweep();
+    await settled(watcher(announcer()), (w) => w.sweep());
     expect(store.roundsFor(6000)[0]!.verdict).toBe("APPROVE");
     expect(store.slackPost("verdict:6000:1")).toMatchObject({
       ok: 1,

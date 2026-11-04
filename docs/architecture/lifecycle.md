@@ -215,8 +215,11 @@ a round already running never gets a second.
 
 **Building the round.** For a PR that survives both:
 
-1. consume both triggers and add the in-progress label;
-2. read `base_ref` and the PR body in one `getPr`, and the changed files once;
+1. read `base_ref`, the PR body and the labels in one `getPr` — a failed read
+   defers the dispatch (below), never a round without its base fetch and
+   intent lens;
+2. consume both triggers, add the in-progress label, and read the changed
+   files once;
 3. plan the passes (`buildPassPlan`) and open the round row
    (`store.startRound`) with the diffstat, the plan and the validator tier;
 4. **prepare the worktree before building the order** — fetch the PR head and
@@ -240,6 +243,14 @@ The round is provisional until that handoff completes: if anything before it
 throws, the round row is discarded rather than left orphaned. If the durable
 session command was already persisted, the round is *retained* instead and the
 bounded supervisor owns its recovery.
+
+**Per-PR backoff.** A dispatch that fails before any round owns the review
+leaves the PR queued, and the pump would otherwise retry the whole attempt every
+tick. `src/dispatchbackoff.ts` holds the PR back instead: 30 s after the first
+failure, doubling to 30 min, never shorter than a GitHub `Retry-After`. The
+fourth consecutive failure raises one `dispatch_failing` anomaly; any dispatch
+of the PR that ends without failing clears the streak. The streak is per daemon
+process, so a restart retries at once.
 
 ### Lens selection and tiers
 
@@ -429,6 +440,17 @@ Three endings are not ordinary verdicts:
 - **A guard-2 refusal at posting time** — the review was never published, so the
   verdict in the file is never applied; the round settles as a terminal
   no-new-evidence round rather than failing loud.
+- **A verdict whose review never reached GitHub** — no posting receipt of any
+  status for the round's key, nothing pending delivery (a guard's pre-check
+  refused and withdrew the queued approval, say). A redo cannot post twice, so
+  the round is redone through the same capped self-requeue (cancel cause
+  `posting_unconfirmed`) rather than held for an operator. The receipt grace
+  runs from the newest delivery snapshot queued for the key, a withdrawn one
+  included, not from the round's dispatch. These requeues spend a budget of
+  their own as well (`persistentRequeueCount`; a required pass's failure spends
+  another the same way): a replacement's fanout does not renew it — starting passes says nothing of whether posting recovered — and
+  only a verdict applied at the head resets it. A round with posting linkage
+  on record (a marker reconcile found its review) is never redone this way.
 
 Malformed files and rounds that blow `[daemon] round_deadline_min` route to
 `handleAnomaly()`: the round is marked, a companion-inbox item is written, and the PR
@@ -463,8 +485,47 @@ pending in the bridge, no verdict is on disk and the receipt proves the prompt
 was never accepted, the round is requeued — a missing prompt is a *delivery*
 fault, so redelivery of the exact dispatched bytes comes before anything
 expensive. Every requeue draws on the `[daemon] max_self_requeues` budget per
-head; exhausting it ends in a loud failure and an operator unwedge, never a
-loop.
+head, and its replacement waits 2 minutes before it dispatches (8 after the
+second requeue at the head; a requeue onto fresh work waits for nothing).
+Exhausting the budget ends in a loud failure, never a loop.
+
+**Who clears a FAILED_LOUD incident.** Every incident is loud the same way —
+the `review_failed_loud` anomaly, the board row, the Slack FAILED_LOUD message,
+status.json and its line in `qcr status` — and holds the PR's review until it clears. What clears it
+depends on its cause (`TransientFailureCause` in `src/state.ts`). A transient
+cause with nothing posted waits on the automatic retry ladder (`retry_wait`:
+15 minutes, doubling to 6 hours, reset by a round that finishes), at any
+stage, and the board, `qcr status`, the inbox line and Slack say when it is due; `u` still
+retries at once. The transient causes are a provider failure (a dropped
+connection, a rate limit, an overload — `provider_unavailable` when the
+worker's own requeues were spent on it; and a required lens pass still missing
+after the self-requeues when every failure recorded for it was one of those),
+an infrastructure stage or a dead or
+wedged session exhausted after its self-requeues, a posting with no receipt at
+all once its requeue cap is spent, an exhausted deferred POST whose marker
+GitHub was read for and does not hold, and an ordinary delivery whose window
+ran out before it sent any POST or wrote any receipt. "Nothing posted" is proven, not
+assumed, and the proof takes one of two forms. For every cause it means the
+round's preflight posted nothing, it has no confirmed posting linkage and
+nothing is pending delivery; beyond that, ordinary unconfirmed work proves it
+by the absence of any posting receipt for the key, while an exhausted
+deferred delivery — whose `deferred` receipt is still there by construction —
+proves it by a marker read that inspected every review GitHub returned and
+found none carrying the key (a read that failed, or threw part-way, proves
+nothing). Everything else — a POST that may have landed, evidence that
+contradicts the round, a malformed verdict, a posted round with no verdict, a
+round with no posting key, a worker failure only an operator cures (a refused
+login, a spent usage window), a PR the worker breaker parked — waits for an
+operator (`operator_unwedge`); a park set while a retry waits hands the
+incident to the operator when the retry falls due. The ladder's generation is
+the head's, whatever the class of each failure. Due, a round's retry
+republishes ordinary queued work (only a pre-fanout stall binds its
+fanout-first instruction to the successor); a failed wake's retry hands the
+same command back to the supervisor's bounded replay, and that retry delivers
+the command once even when `session_command_max_start_retries` allows no
+immediate replay. A failed wake's
+incident is as loud as a round's: its `review_failed_loud` wake reaches the
+inbox and Slack names it as conversation work.
 
 ## 6. CI and withheld approvals
 
@@ -527,7 +588,15 @@ withheld mark and applies a `REQUEST_CHANGES` verdict event, moving the PR to
 
 `runBaseAdvance()` fans a base-branch move out only to open PRs that target that
 branch and hold a standing approval; every other PR is skipped without an API
-call.
+call. Whether an advance is a question for a PR is one decision
+(`baseAdvanceEligibility`), shared by the fan-out and the retry below. A
+base-advance question a run cannot answer — the fan-out's `getPr` or the delta
+read fails, the head moves under the reads, or the run fails before its
+question is handed off durably — is never dropped: `runRecheck` says so in its
+outcome (`owed`), the question is owed in `owed_base_rechecks` (one row per PR,
+branch and commit), and every reconcile pass asks the due ones again
+(`retryOwedBaseRechecks`, 2 min doubling to 1 h), settling each once it is
+answered or nothing is left to ask.
 
 ## 8. Ping-pong, wake holding and self-requeue
 
@@ -543,6 +612,16 @@ them verbatim. The session answers with a thread decision file
 (`pr-<n>-thread-<t>-comment-<c>.json`); `ThreadDecisionWatcher` treats that
 output as untrusted — ids must match a claimed author message, and the adapter
 independently verifies bot ownership before resolving anything.
+
+A decision that fails is retried by what the failure was
+(`classifyThreadDecisionError`, over the one GitHub failure classifier). A
+rate limit opens one installation-wide breaker. A transient failure (a 5xx, a
+timeout, a dropped connection, a PR state the posting guard could not read)
+waits on a long bounded schedule, about 1, 2, 5, 15, 30, 60 and 60 minutes,
+honouring GitHub's `retry-after`, and spends no strike. A refusal or an
+unknown failure spends one of three strikes. Either budget, once spent,
+preserves the decision under `failed/` with the
+`pingpong_decision_retry_exhausted` anomaly.
 
 **PR-level author objections.** While a substantive bot REQUEST_CHANGES stands
 on a tracked open PR, an ordinary, nonempty top-level comment from that PR's
@@ -560,8 +639,11 @@ standing verdict or automatically requests another review.
 SQLite preserves each obligation independently of the held-wake queue. Failed
 injections are held; missing answers may be redelivered after five minutes only
 when the PR session is idle and no copy is held. Three unsuccessful deliveries
-or posting attempts leave a retained failed obligation and an anomaly, not
-unbounded retry. Before posting, the daemon reads the conversation for the
+or refused posting attempts leave a retained failed obligation and an anomaly,
+not unbounded retry. A posting attempt that fails transiently or is
+rate-limited (or meets an unreadable PR state) spends no strike: it waits on
+the same long bounded schedule as a thread decision, about three hours in
+all, and only then fails the obligation the same way. Before posting, the daemon reads the conversation for the
 exact bot answer and its per-comment marker, so an interrupted successful POST
 is recovered rather than duplicated; an unreadable or truncated list cannot
 license a blind repost. A separate bounded capture-recovery step admits only
@@ -603,8 +685,16 @@ should a later change ever make one possible, is the WAKE anomaly
 **Self-requeue.** Round-level recovery lives in `src/verdicts.ts selfRequeue()`
 and covers a dead session, a live-but-wedged session (killed first, then
 rebirthed), a lost prompt, a `head_moved` ending, an infrastructure stage
-failure, and a `NEEDS_HUMAN` with no passes. Every mode is bounded by
-`[daemon] max_self_requeues` per head; prompt *redelivery* is bounded
+failure, a `NEEDS_HUMAN` with no passes, and a finished round whose review
+never reached GitHub. Every mode is bounded by `[daemon] max_self_requeues`
+per head, and backs off: the replacement round is held from dispatch for 2
+minutes after the first requeue at a head and 8 after the second
+(`SELF_REQUEUE_BACKOFF_MIN`; the `round_self_requeued` event carries the
+not-before time, and any newer trigger lifts it — a push, an operator's `u`,
+or a person's request, read from the lifecycle log because a request on a row
+already queued keeps the row's FIFO `trigger_ts`; an operator's `u` on such a
+row logs `self_requeue_backoff_lifted`). A `head_moved` requeue, or
+one onto a fresher head, is new work and waits for nothing; prompt *redelivery* is bounded
 separately by `[daemon] max_prompt_redeliveries`, because re-sending the exact
 bytes to a live session is far cheaper than cancelling a round. A live session
 with no order is idle, not wedged — killing it is not the recovery.
@@ -673,6 +763,23 @@ the model), it can never touch a verdict, and it rides the same `max_per_pr` cap
 and the same never-twice ledger. Which half a candidate belongs to is decided by
 the **call site**: `deliverEscalations()` takes the two groups as separate
 arguments, so a session cannot label itself as a rule to buy an exemption.
+
+The facts a rule reads (the changed paths, the labels, the failing checks)
+come off GitHub reads, and a read that fails is **unknown**, never an empty
+list that would silently keep every rule keyed on it from firing. An unknown
+fact a configured rule or a session candidate needs defers the whole
+evaluation (`escalation_facts_unavailable`, with the cause). The changed paths
+are needed only by what can carry a path: a path or severity rule, or a
+session candidate whose scope names a file; a label or failing-check rule and
+a pathless candidate decide without them. The round's owed escalation work is
+retried five minutes later, and a later round of the PR answers it instead
+when one exists (`escalation_evaluation_superseded`); a round's work is also
+settled, before it can deliver anything, once a later round has an evaluation
+of its own. A
+read GitHub refuses outright (a 4xx the shared classifier calls `rejected`,
+such as 404 or 403) would be refused again on every retry, so it is logged once
+(`escalation_fact_rejected`) and read as a known absence, and the evaluation
+proceeds; an absent fact only keeps a rule from firing.
 
 Two delivery shapes. `comment` (the default) posts a gated `create_review`
 COMMENT with `reviewPurpose: "escalation"` — the same mechanically-authored

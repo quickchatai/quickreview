@@ -93,9 +93,12 @@ async function adapterClassifyInput(): Promise<CheckSummary[]> {
     invalidate: () => {},
   } as unknown as TokenMinter;
   const gate = new MutationGate(true, join(tmpdir(), "qcr-fences-cigate-unused"), async () => ({}));
-  return new GitHubAdapter(cfg, minter, gate, fetch as unknown as FetchFn, apiBase).listChecks(
-    "deadbeefcafe",
-  );
+  // An instant clock: the page-2 refusal below is retried by the adapter's
+  // read edge, and the fence is about the answer, not the waiting.
+  return new GitHubAdapter(cfg, minter, gate, fetch as unknown as FetchFn, apiBase, {
+    sleep: async () => {},
+    checkRestartMs: 0,
+  }).listChecks("deadbeefcafe");
 }
 
 describe("the adapter reads every page of the head's checks", () => {

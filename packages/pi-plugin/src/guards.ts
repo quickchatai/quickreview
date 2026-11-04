@@ -455,7 +455,9 @@ function makeAppPostingGuard(deps: GuardDeps): MutationGuard {
       // --- guard 4: no green CI at this head ⇒ no approval ---
       let ciGreen = false;
       if (deps.guards.block_approve_on_red_ci && (body.event ?? "").toUpperCase() === "APPROVE") {
-        const ci = await readCi(deps, pr, head, log);
+        // CI the caller already read as not green (the daemon delivery's
+        // pre-check) withholds without a second read here.
+        const ci = intent.approvalCiWithheld ?? (await readCi(deps, pr, head, log));
         ciGreen = ci === "green";
         if (ci && ciBlocksApproval(ci, { noChecksIsRed: deps.guards.no_checks_is_red })) {
           log(`guard: #${pr} APPROVE → COMMENT (CI ${ci} at ${head.slice(0, 7)})`);

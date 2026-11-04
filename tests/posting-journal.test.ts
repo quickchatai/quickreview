@@ -11,12 +11,14 @@ import {
   readFileSync,
   rmSync,
   utimesSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   JournalError,
+  newestSnapshotQueuedAt,
   PostingJournal,
   payloadHash,
   type JobPayload,
@@ -164,6 +166,95 @@ describe("the journal writes the receipt and job files the readers expect", () =
     expect(readPostingReceipt(tsDir, PR, ROUND)).toMatchObject({ status: "deferred" });
   });
 
+  // A read the post depended on failed before any attempt: the queued job is
+  // handed to the deferred retry with no `prepared` receipt ever written.
+  // MUTATION: write status "prepared" in deferUnattempted — this fails.
+  it("enqueue, deferUnattempted: a deferred receipt over the queued job, nothing attempted", () => {
+    enqueue("APPROVE");
+    const defer = () =>
+      journal.deferUnattempted({
+        key: KEY,
+        pr: PR,
+        round: ROUND,
+        head: HEAD,
+        intended: "APPROVE",
+        payload: payload("APPROVE"),
+        reason: "ci-unreadable: GitHub answered 502",
+      });
+    defer();
+    const job = readPostingJob(join(tsDir, jobName))!;
+    expect(job).toMatchObject({
+      status: "pending",
+      last_error: "ci-unreadable: GitHub answered 502",
+    });
+    expect(job.deferred_at).toBeTruthy();
+    expect(job.attempted_at).toBeUndefined();
+    const receipt = readPostingReceipt(tsDir, PR, ROUND) as PostingReceipt;
+    expect(receipt).toMatchObject({
+      status: "deferred",
+      intended_event: "APPROVE",
+      actual_event: "APPROVE",
+      payload_sha256: job.payload_sha256,
+      defer_reason: "ci-unreadable: GitHub answered 502",
+    });
+    expect(receipt.deferred_at).toBe(job.deferred_at);
+    defer(); // the same deferral, replayed
+    // The session asking again is told it is deferred; a withdraw is refused.
+    expect(journal.check(PR, ROUND, KEY)).toBe("deferred");
+    expect(() => journal.withdraw(PR, ROUND, KEY)).toThrow(JournalError);
+  });
+
+  // The ordinary delivery's held attempts are not the deferred retry's: the
+  // retry counts its own against its ledger.
+  // MUTATION: drop `delete queued.unposted_attempts` from defer — this fails.
+  it.each(["defer", "deferUnattempted"] as const)(
+    "%s starts the unposted-attempt count afresh",
+    (how) => {
+      enqueue();
+      const path = join(tsDir, jobName);
+      writeFileSync(
+        path,
+        JSON.stringify({
+          ...JSON.parse(readFileSync(path, "utf8")),
+          attempts: 2,
+          unposted_attempts: 2,
+        }),
+      );
+      const o = {
+        key: KEY,
+        pr: PR,
+        round: ROUND,
+        head: HEAD,
+        intended: "REQUEST_CHANGES" as const,
+        payload: payload(),
+        reason: "GitHub answered 502",
+      };
+      if (how === "defer") {
+        prepare();
+        journal.defer(o);
+      } else journal.deferUnattempted(o);
+      expect(readPostingJob(path)!.unposted_attempts).toBeUndefined();
+    },
+  );
+
+  it("deferUnattempted never writes over an attempted receipt, and needs the queued job", () => {
+    const defer = () =>
+      journal.deferUnattempted({
+        key: KEY,
+        pr: PR,
+        round: ROUND,
+        head: HEAD,
+        intended: "REQUEST_CHANGES",
+        payload: payload(),
+        reason: "pr-unreadable",
+      });
+    expect(defer).toThrow(/no delivery snapshot/);
+    enqueue();
+    prepare();
+    expect(defer).toThrow(/refusing to defer over a prepared receipt/);
+    expect(readPostingReceipt(tsDir, PR, ROUND)?.status).toBe("prepared");
+  });
+
   it("enqueue, withdraw: the job is set aside and nothing else is written", () => {
     enqueue("APPROVE");
     journal.withdraw(PR, ROUND, KEY);
@@ -173,6 +264,37 @@ describe("the journal writes the receipt and job files the readers expect", () =
     enqueue("COMMENT");
     prepare("COMMENT");
     expect(() => journal.withdraw(PR, ROUND, KEY)).toThrow(JournalError);
+  });
+
+  // MUTATION: drop the withdrawn snapshots from newestSnapshotQueuedAt's scan —
+  // the withdrawn snapshot's newer time is missed; this fails.
+  it("newestSnapshotQueuedAt: the newest snapshot queued for the key, a withdrawn one included", () => {
+    expect(newestSnapshotQueuedAt(tsDir, PR, ROUND, KEY)).toBeUndefined(); // no dir yet
+    const at = (iso: string) =>
+      new PostingJournal({ dir: tsDir, repo: REPO, now: () => new Date(iso) });
+    const queue = (j: PostingJournal) =>
+      j.enqueue({
+        key: KEY,
+        pr: PR,
+        round: ROUND,
+        head: HEAD,
+        event: "APPROVE",
+        mode: "live",
+        payload: payload("APPROVE"),
+      });
+    queue(at("2026-11-04T10:00:00.000Z"));
+    expect(newestSnapshotQueuedAt(tsDir, PR, ROUND, KEY)).toBe("2026-11-04T10:00:00.000Z");
+    at("2026-11-04T10:05:00.000Z").withdraw(PR, ROUND, KEY);
+    // Only the withdrawn snapshot remains: its queue time is still the answer.
+    expect(newestSnapshotQueuedAt(tsDir, PR, ROUND, KEY)).toBe("2026-11-04T10:00:00.000Z");
+    queue(at("2026-11-04T10:10:00.000Z"));
+    at("2026-11-04T10:12:00.000Z").withdraw(PR, ROUND, KEY);
+    expect(newestSnapshotQueuedAt(tsDir, PR, ROUND, KEY)).toBe("2026-11-04T10:10:00.000Z");
+    // Another key, another round: nothing of theirs.
+    expect(
+      newestSnapshotQueuedAt(tsDir, PR, ROUND, roundPostingKey(PR, ROUND, "c".repeat(40))),
+    ).toBeUndefined();
+    expect(newestSnapshotQueuedAt(tsDir, PR, ROUND + 1, KEY)).toBeUndefined();
   });
 
   it("skip", () => {

@@ -14,6 +14,7 @@ import {
   fileImprovementPr,
   fileIssue,
   findDuplicateIssue,
+  gitRunner,
   improvementRateReason,
   isBranchName,
   issueRateReason,
@@ -23,6 +24,8 @@ import {
   type Run,
 } from "../src/improvements.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import type { ExecFn, ExecOpts } from "../src/tmux.js";
+import { GIT_FETCH_TIMEOUT_MS, GIT_NETWORK_CONFIG } from "../src/worktrees.js";
 
 const cfg: Config = parseConfig(
   readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -164,6 +167,33 @@ describe("parseNumstat / deniedPath / checkDiffstat", () => {
     expect(tiny.ok).toBe(false);
     expect(tiny.reason).toContain(`caps.${key}`);
     expect(tiny.reason).toContain("refusing");
+  });
+});
+
+// The filing's base fetch is a daemon network git command like the round's:
+// a hung one must fail on its timeout, never hold the filing forever.
+// MUTATION: build gitRunner over `exec` directly, without networkGitExec — the
+// fetch reaches exec with no timeout and no low-speed abort.
+describe("gitRunner", () => {
+  it("bounds a fetch and leaves a local command untouched", async () => {
+    const seen: { args: string[]; opts: ExecOpts }[] = [];
+    const exec: ExecFn = async (_cmd, args, opts = {}) => {
+      seen.push({ args, opts });
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const run = gitRunner(exec);
+    await run(["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"], "/repo");
+    await run(["for-each-ref", "refs/heads/x"], "/repo");
+    expect(seen[0]!.args).toEqual([
+      ...GIT_NETWORK_CONFIG,
+      "fetch",
+      "origin",
+      "+refs/heads/main:refs/remotes/origin/main",
+    ]);
+    expect(seen[0]!.opts).toMatchObject({ cwd: "/repo", timeoutMs: GIT_FETCH_TIMEOUT_MS });
+    expect(seen[0]!.opts.env?.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(seen[1]!.args).toEqual(["for-each-ref", "refs/heads/x"]);
+    expect(seen[1]!.opts.timeoutMs).toBeUndefined();
   });
 });
 
