@@ -1252,8 +1252,12 @@ export class ThreadDecisionWatcher {
       const retryAfterMs = classifyGitHubFailure(err).retryAfterMs;
       const pr = Number(match[1]);
       const commentId = Number(match[3]);
+      // Every wait runs from when the failure arrived, not from when this
+      // attempt began: a read that spent minutes on its own retries must not
+      // start a cooldown already partly or wholly spent.
+      const failedAt = (this.deps.now ?? (() => new Date()))();
       if (classification === "rate_limit") {
-        const opened = this.deps.ledger.openBreaker(now, String(err), retryAfterMs);
+        const opened = this.deps.ledger.openBreaker(failedAt, String(err), retryAfterMs);
         this.deps.store.logEvent("pingpong_breaker_opened", pr, {
           file: name,
           streak: opened.streak,
@@ -1274,7 +1278,7 @@ export class ThreadDecisionWatcher {
         // half-open. Close globally and retry only this decision on its bounded
         // schedule.
         if (this.deps.ledger.breaker().state === "half_open") {
-          this.deps.ledger.closeBreaker(now);
+          this.deps.ledger.closeBreaker(failedAt);
           this.deps.store.logEvent("pingpong_breaker_closed", pr, {
             comment_id: commentId,
             reason: "non-rate probe failure",
@@ -1285,8 +1289,8 @@ export class ThreadDecisionWatcher {
         // strike; only a refusal or an unknown failure counts toward three.
         const retryState =
           classification === "transient"
-            ? this.deps.ledger.recordTransientRetry(commentId, now, String(err), retryAfterMs)
-            : this.deps.ledger.recordRetry(commentId, now, String(err));
+            ? this.deps.ledger.recordTransientRetry(commentId, failedAt, String(err), retryAfterMs)
+            : this.deps.ledger.recordRetry(commentId, failedAt, String(err));
         if (retryState.terminal) {
           this.quarantineTerminal(
             name,
