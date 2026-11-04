@@ -36,6 +36,7 @@ import {
   type WorkerDeps,
 } from "../src/botworker.js";
 import { createCapabilityFd, ipcEnv, runDirOf } from "../src/ipc/capability.js";
+import { isProviderTransient } from "../src/providerfailure.js";
 import { LIVE_MAIN_FILE, liveRoundDir } from "@quickchatai/pi-quickreview/src/live/events.js";
 import { DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
@@ -825,6 +826,19 @@ describe("a round that fails", () => {
       errorMessage: "invalid request: unknown parameter",
     });
     expect((await round("ORDER\n", script([broken]))).code).toBe(EXIT.failed);
+  });
+
+  // MUTATION: cut watch.lastError to 300 characters before botworker's settle
+  // classifies it — a 429 after a long preamble exits EXIT.failed; this fails.
+  it("a provider failure is classified on its whole message, and its kept words read the same", async () => {
+    const late: Step = fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: `${"the upstream gateway reported a failure while streaming ".repeat(8)}429 Too Many Requests`,
+    });
+    expect((await round("ORDER\n", script([late]))).code).toBe(EXIT.provider);
+    const reason = String(daemon.of("failed").at(-1)!.body["reason"]);
+    expect(reason.length).toBeLessThan(500);
+    expect(isProviderTransient(reason)).toBe(true);
   });
 
   it("a wall-clock cap that runs out is a failed round", async () => {

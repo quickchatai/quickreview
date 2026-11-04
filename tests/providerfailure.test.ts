@@ -10,9 +10,13 @@ import {
   isTransientKind,
   providerBackoffMs,
   providerFailureKind,
+  providerMessageKind,
 } from "../src/providerfailure.js";
 import { modelErrorKind } from "@quickchatai/pi-quickreview/src/engine/roundevents.js";
-import { modelErrorKind as coreModelErrorKind } from "@quickchatai/pi-quickreview/src/modelerrors.js";
+import {
+  boundedProviderError,
+  modelErrorKind as coreModelErrorKind,
+} from "@quickchatai/pi-quickreview/src/modelerrors.js";
 
 describe("providerFailureKind", () => {
   it.each([
@@ -128,5 +132,37 @@ describe("the backoff ladder", () => {
 describe("one reading of a model error", () => {
   it("the engine's modelErrorKind is the core's, re-exported", () => {
     expect(modelErrorKind).toBe(coreModelErrorKind);
+  });
+});
+
+describe("boundedProviderError", () => {
+  const preamble = "upstream request failed while streaming the response body ".repeat(8);
+
+  // MUTATION: return the plain cut in boundedProviderError (never name the
+  // whole message's kind) — a late 429, ECONNRESET or usage-limit qualifier
+  // is lost to the cut and the bounded words read as another kind; this fails.
+  it.each([
+    [`${preamble}: 429 Too Many Requests`, "rate_limited"],
+    [`${preamble}: read ECONNRESET`, "transport"],
+    [`429 Too Many Requests: ${preamble} the usage limit has been reached`, "usage_limit"],
+    [`503 ${preamble} 500 internal error`, "overloaded"],
+    [`${preamble} 500 internal error`, "other"],
+  ] as const)("a long message keeps its kind when cut: %#", (message, kind) => {
+    const bounded = boundedProviderError(message);
+    expect(bounded.length).toBeLessThanOrEqual(330);
+    expect(providerMessageKind(message)).toBe(kind);
+    expect(providerMessageKind(bounded)).toBe(kind);
+  });
+
+  // MUTATION: cut at exactly `max` characters — a 4291 cut to 429 reads as a
+  // rate limit the whole message never named; this fails.
+  it("cuts on a whole word, so the cut matches nothing the message does not", () => {
+    const message = `${"x".repeat(296)} 4291 bytes`;
+    expect(providerMessageKind(message)).toBe("other");
+    expect(providerMessageKind(boundedProviderError(message))).toBe("other");
+  });
+
+  it("leaves a short message whole, its spacing folded", () => {
+    expect(boundedProviderError("429  Too Many\nRequests")).toBe("429 Too Many Requests");
   });
 });

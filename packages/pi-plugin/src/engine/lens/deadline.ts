@@ -1,6 +1,7 @@
 // The per-pass deadline: its env knob, the retry-once runner and the result a
 // pass that timed out twice answers with. Pure — no pi, no filesystem. Lifted
 // from the retired extensions/subagents.ts.
+import { boundedProviderError } from "../../modelerrors.js";
 
 /** The shape of a native subagent tool result, as far as the glue reads it. */
 export interface ParallelNativeResult {
@@ -46,7 +47,8 @@ export function passTimeoutMessage(
   providerError?: string,
 ): string {
   const base = `pass ${agent} timed out after ${minutesText(deadlineMs)} min (retried once)`;
-  const error = providerError?.replace(/\s+/g, " ").trim().slice(0, 300);
+  // Bounded after it is read: the cut keeps the whole error's kind.
+  const error = providerError === undefined ? undefined : boundedProviderError(providerError);
   return error ? `${base} while the provider was failing: ${error}` : base;
 }
 

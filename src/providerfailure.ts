@@ -14,7 +14,7 @@
 // This module is a daemon module: it never imports the engine
 // (tests/fences-worker-supervisor.test.ts), so the error-message reading is the
 // core's src/modelerrors.ts.
-import { modelErrorKind } from "@quickchatai/pi-quickreview/src/modelerrors.js";
+import { providerErrorKind } from "@quickchatai/pi-quickreview/src/modelerrors.js";
 
 export type ProviderFailureKind =
   "transport" | "rate_limited" | "overloaded" | "usage_limit" | "other";
@@ -22,12 +22,6 @@ export type ProviderFailureKind =
 /** The words botworker.ts puts before the provider's own message: a turn the
  * provider ended with an error, and a turn whose output stream broke. */
 const PROVIDER_FAILURE = /(?:the provider failed the turn|output stream failed): ([\s\S]*)$/i;
-
-/** The phrasings of a dropped connection: Node's and undici's (`fetch failed`,
- * the socket errnos, `other side closed`, `terminated`) and the SDKs'
- * (`Connection error`). */
-const TRANSPORT =
-  /\b(fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|socket hang up|connection error|other side closed|terminated)\b/i;
 
 /** What a worker's failure text says about the provider, or undefined when the
  * text is not a provider failure botworker.ts worded (a refused login, a
@@ -42,9 +36,7 @@ export function providerFailureKind(error: string): ProviderFailureKind | undefi
  * recorded failure (its `errorMessage`, as round-progress keeps it) is the
  * provider's words with no worker prefix. */
 export function providerMessageKind(message: string): ProviderFailureKind {
-  const kind = modelErrorKind(message);
-  if (kind !== "other") return kind;
-  return TRANSPORT.test(message) ? "transport" : "other";
+  return providerErrorKind(message);
 }
 
 /** The kinds a later attempt of the same request cures: the connection, a

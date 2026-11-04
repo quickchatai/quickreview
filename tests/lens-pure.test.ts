@@ -99,6 +99,16 @@ describe("a timeout while pi retries the provider", () => {
     expect(isProviderTransientPassError(passTimeoutMessage("pass-baseline", 480_000))).toBe(false);
   });
 
+  // MUTATION: cut providerError to 300 characters in passTimeoutMessage
+  // without boundedProviderError — a usage-limit qualifier past the cut reads
+  // as a rate limit and a spent window retries itself; this fails.
+  it("reads the provider error whole before bounding it", () => {
+    const error = `429 Too Many Requests: ${"retry later please ".repeat(20)}the usage limit has been reached`;
+    const text = passTimeoutMessage("pass-baseline", 480_000, error);
+    expect(text.length).toBeLessThan(450);
+    expect(isProviderTransientPassError(text)).toBe(false);
+  });
+
   // MUTATION: never clear the error on a successful auto_retry_end — a pass
   // that recovered and then timed out for its own reasons is blamed on the
   // provider; this fails.

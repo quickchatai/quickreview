@@ -353,7 +353,10 @@ rather than at once, and when its replays are spent its debt waits on the
 automatic retry ladder instead of `u`. The breaker never parks a PR for a
 transient provider failure (it feeds the drain only on a repeat), and a spent
 usage window feeds the drain without parking. The breaker classifies the
-whole failure text, not its 300-character display cut. The worker's own pi
+whole failure text, not its 300-character display cut, and the worker and the
+lens deadline classify the provider's whole message before they bound it
+(`boundedProviderError`: a cut that lost the message's kind, a late 429 or
+usage-limit qualifier, is led by words naming it). The worker's own pi
 sessions retry a provider for about 13 minutes per request (`BOT_RETRY`)
 before any of this; an operator's `retry` in the agent dir's settings.json
 wins. A lens pass's shorter per-pass deadline can end it while pi still
