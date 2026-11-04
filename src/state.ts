@@ -1061,7 +1061,8 @@ CREATE TABLE IF NOT EXISTS rechecks (
 );
 -- A base-advance recheck question whose reads failed: owed, and asked again
 -- at next_attempt_at by the reconcile pass (retryOwedBaseRechecks), so a
--- transient GitHub error never drops it. One row per PR and advance.
+-- transient GitHub error never drops it. One row per PR and advance; the
+-- branch is part of the advance, since two branches can reach one commit.
 CREATE TABLE IF NOT EXISTS owed_base_rechecks (
   pr              INTEGER NOT NULL,
   branch          TEXT NOT NULL,
@@ -1071,7 +1072,7 @@ CREATE TABLE IF NOT EXISTS owed_base_rechecks (
   next_attempt_at TEXT NOT NULL,
   last_error      TEXT,
   created_at      TEXT NOT NULL,
-  PRIMARY KEY (pr, after_sha)
+  PRIMARY KEY (pr, branch, after_sha)
 );
 -- Rendered non-push questions remain owed independently of capped active wakes.
 CREATE TABLE IF NOT EXISTS recheck_deliveries (
@@ -6484,7 +6485,7 @@ export class StateStore {
   ): number {
     return this.db
       .transaction(() => {
-        const prior = this.owedBaseRecheck(pr, advance.after);
+        const prior = this.owedBaseRecheck(pr, advance.branch, advance.after);
         const attempts = (prior?.attempts ?? 0) + 1;
         const now = this.now().getTime();
         const due = new Date(now + retryAfterMs(attempts)).toISOString();
@@ -6493,7 +6494,7 @@ export class StateStore {
             `INSERT INTO owed_base_rechecks
                (pr, branch, before_sha, after_sha, attempts, next_attempt_at, last_error, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(pr, after_sha) DO UPDATE SET
+             ON CONFLICT(pr, branch, after_sha) DO UPDATE SET
                attempts = excluded.attempts, next_attempt_at = excluded.next_attempt_at,
                last_error = excluded.last_error`,
           )
@@ -6512,10 +6513,10 @@ export class StateStore {
       .immediate();
   }
 
-  owedBaseRecheck(pr: number, after: string): OwedBaseRecheckRow | undefined {
+  owedBaseRecheck(pr: number, branch: string, after: string): OwedBaseRecheckRow | undefined {
     return this.db
-      .prepare("SELECT * FROM owed_base_rechecks WHERE pr = ? AND after_sha = ?")
-      .get(pr, after) as OwedBaseRecheckRow | undefined;
+      .prepare("SELECT * FROM owed_base_rechecks WHERE pr = ? AND branch = ? AND after_sha = ?")
+      .get(pr, branch, after) as OwedBaseRecheckRow | undefined;
   }
 
   /** Owed base-advance rechecks due at `now`, oldest first. */
@@ -6528,8 +6529,10 @@ export class StateStore {
   }
 
   /** The owed question is answered (asked, or nothing left to ask). */
-  settleBaseRecheck(pr: number, after: string): void {
-    this.db.prepare("DELETE FROM owed_base_rechecks WHERE pr = ? AND after_sha = ?").run(pr, after);
+  settleBaseRecheck(pr: number, branch: string, after: string): void {
+    this.db
+      .prepare("DELETE FROM owed_base_rechecks WHERE pr = ? AND branch = ? AND after_sha = ?")
+      .run(pr, branch, after);
   }
 
   /** The receipt guard's read (docs/archiving.md §8.1): the PR's
