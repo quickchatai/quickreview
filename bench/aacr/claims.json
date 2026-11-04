@@ -1,6 +1,6 @@
 {
  "schema": "quickreview-claims/1",
- "about": "Every published benchmark number: where it is printed, the value as printed, and the check that recomputes it from the released data (bench/aacr/verify_claims.py). Edit the entries by hand; `python3 bench/aacr/verify_claims.py --lint` checks them against the text.",
+ "about": "Every published benchmark number: where it is printed, the value as printed, and the check that recomputes it from the released data (bench/aacr/verify_claims.py). Edit the entries by hand; `python3 bench/aacr/verify_claims.py --lint` checks them against the text. A script check's `reads` names, per run index unit (its archive path), the keys whose number is computed from that unit's files: changing the unit's files and rerunning the script moves those keys; the HF export links their claims' groups to the unit (hf_export.claim_links).",
  "scope": [
   "A benchmark claim is a number in one of the `files` below that reports a measurement of a benchmark run or of the benchmark's data: defects, goldens or issues found or missed; recall, precision, F1, agreement and other rates; cost, time, tokens and replies measured on the runs; Elo ratings, confidence intervals and paired differences; and the size and make-up of the answer keys, sets and runs (PRs, defects, goldens, issues, judgments).",
   "Not claims: version numbers and model names (`version_patterns`, and any number glued to a word, such as gpt-6.1 or S40); dates, years and clock times; third-party plan and list prices (per-million-token rates, subscription prices); method parameters chosen before a run (resamples, seeds, timeouts, retries, concurrency, caps, the confidence level); identifiers (PR, commit, ticket, section, table, figure, step and list numbers); install and configuration values; numbers quoted from other papers; and how many reviewers a table or chart was designed to show. A number of these kinds that the lint sees is listed under `not_claims` with its reason.",
@@ -267,7 +267,216 @@
     "slim:open-models/runs",
     "slim:runs"
    ],
-   "doc": "docs/DIGITALOCEAN.md's speed table and smokes"
+   "doc": "docs/DIGITALOCEAN.md's speed table and smokes",
+   "reads": {
+    "open-models/runs/dsv41f-smoke-ffa13988-1013-2125-glm-aacr-extra3": [
+     "table/DeepSeek V4.1 Flash/minutes",
+     "table/DeepSeek V4.1 Flash/output",
+     "table/DeepSeek V4.1 Flash/reply_seconds",
+     "table/DeepSeek V4.1 Flash/usd"
+    ],
+    "open-models/runs/dsv41f-smoke-ffa13988-1013-2125-glm-aacr1": [
+     "table/DeepSeek V4.1 Flash/reply_seconds",
+     "table/DeepSeek V4.1 Flash/usd"
+    ],
+    "open-models/runs/dsv41f-smoke-ffa13988-1013-2125-glm-martian-extra2": [
+     "table/DeepSeek V4.1 Flash/minutes",
+     "table/DeepSeek V4.1 Flash/output",
+     "table/DeepSeek V4.1 Flash/reply_seconds",
+     "table/DeepSeek V4.1 Flash/tok_per_s",
+     "table/DeepSeek V4.1 Flash/usd"
+    ],
+    "open-models/runs/dsv41f-smoke-ffa13988-1013-2125-glm-martian1": [
+     "table/DeepSeek V4.1 Flash/reply_seconds",
+     "table/DeepSeek V4.1 Flash/tok_per_s",
+     "table/DeepSeek V4.1 Flash/usd"
+    ],
+    "open-models/runs/dsv41f-smoke-ffa13988-1013-2125-glm-qodo-extra2": [
+     "table/DeepSeek V4.1 Flash/minutes",
+     "table/DeepSeek V4.1 Flash/output",
+     "table/DeepSeek V4.1 Flash/reply_seconds",
+     "table/DeepSeek V4.1 Flash/tok_per_s",
+     "table/DeepSeek V4.1 Flash/usd"
+    ],
+    "open-models/runs/dsv41f-smoke-ffa13988-1013-2125-glm-qodo1": [
+     "table/DeepSeek V4.1 Flash/minutes",
+     "table/DeepSeek V4.1 Flash/reply_seconds",
+     "table/DeepSeek V4.1 Flash/usd"
+    ],
+    "open-models/runs/gemma4-smoke-d39d39dc-1013-1957-glm-aacr-extra3": [
+     "smokes/gemma4-smoke-d39d39dc-1013-1957/ok",
+     "table/Gemma 4 31B/minutes",
+     "table/Gemma 4 31B/output",
+     "table/Gemma 4 31B/reply_seconds",
+     "table/Gemma 4 31B/tok_per_s",
+     "table/Gemma 4 31B/usd"
+    ],
+    "open-models/runs/gemma4-smoke-d39d39dc-1013-1957-glm-aacr1": [
+     "smokes/gemma4-smoke-d39d39dc-1013-1957/ok",
+     "table/Gemma 4 31B/reply_seconds",
+     "table/Gemma 4 31B/usd"
+    ],
+    "open-models/runs/gemma4-smoke-d39d39dc-1013-1957-glm-martian-extra2": [
+     "smokes/gemma4-smoke-d39d39dc-1013-1957/ok",
+     "table/Gemma 4 31B/minutes",
+     "table/Gemma 4 31B/output",
+     "table/Gemma 4 31B/reply_seconds",
+     "table/Gemma 4 31B/tok_per_s",
+     "table/Gemma 4 31B/usd"
+    ],
+    "open-models/runs/gemma4-smoke-d39d39dc-1013-1957-glm-martian1": [
+     "smokes/gemma4-smoke-d39d39dc-1013-1957/ok",
+     "table/Gemma 4 31B/reply_seconds",
+     "table/Gemma 4 31B/usd"
+    ],
+    "open-models/runs/gemma4-smoke-d39d39dc-1013-1957-glm-qodo-extra2": [
+     "smokes/gemma4-smoke-d39d39dc-1013-1957/ok",
+     "table/Gemma 4 31B/minutes",
+     "table/Gemma 4 31B/output",
+     "table/Gemma 4 31B/reply_seconds",
+     "table/Gemma 4 31B/usd"
+    ],
+    "open-models/runs/gemma4-smoke-d39d39dc-1013-1957-glm-qodo1": [
+     "smokes/gemma4-smoke-d39d39dc-1013-1957/ok",
+     "table/Gemma 4 31B/minutes",
+     "table/Gemma 4 31B/output",
+     "table/Gemma 4 31B/reply_seconds",
+     "table/Gemma 4 31B/tok_per_s",
+     "table/Gemma 4 31B/usd"
+    ],
+    "open-models/runs/glm53-full-dev10": [
+     "qwen_projection/full/usd_per_pr",
+     "qwen_projection/full/usd_total"
+    ],
+    "open-models/runs/glm53-full-fresh10": [
+     "qwen_projection/full/usd_per_pr",
+     "qwen_projection/full/usd_total"
+    ],
+    "open-models/runs/glm53-full-holdout10": [
+     "qwen_projection/full/usd_per_pr",
+     "qwen_projection/full/usd_total"
+    ],
+    "open-models/runs/glm53-full-martian50": [
+     "qwen_projection/full/usd_per_pr",
+     "qwen_projection/full/usd_total"
+    ],
+    "open-models/runs/glm53-full-qodo-pr100": [
+     "qwen_projection/full/usd_per_pr",
+     "qwen_projection/full/usd_total"
+    ],
+    "open-models/runs/glm53-full-rest145": [
+     "glm_full_slowest/0/0",
+     "glm_full_slowest/1/0",
+     "glm_full_slowest/2/0",
+     "glm_full_slowest/3/0",
+     "glm_full_slowest/4/0",
+     "qwen_projection/full/usd_per_pr",
+     "qwen_projection/full/usd_total"
+    ],
+    "open-models/runs/glm53-full-smoke10": [
+     "qwen_projection/full/usd_per_pr",
+     "qwen_projection/full/usd_total"
+    ],
+    "open-models/runs/glm53-smoke-7879ddc5-1013-1822-glm-aacr-extra3": [
+     "table/GLM-5.3 Flash/minutes",
+     "table/GLM-5.3 Flash/output",
+     "table/GLM-5.3 Flash/reply_seconds",
+     "table/GLM-5.3 Flash/usd"
+    ],
+    "open-models/runs/glm53-smoke-7879ddc5-1013-1822-glm-aacr1": [
+     "table/GLM-5.3 Flash/reply_seconds",
+     "table/GLM-5.3 Flash/tok_per_s",
+     "table/GLM-5.3 Flash/usd"
+    ],
+    "open-models/runs/glm53-smoke-7879ddc5-1013-1822-glm-martian-extra2": [
+     "table/GLM-5.3 Flash/minutes",
+     "table/GLM-5.3 Flash/output",
+     "table/GLM-5.3 Flash/reply_seconds",
+     "table/GLM-5.3 Flash/tok_per_s",
+     "table/GLM-5.3 Flash/usd"
+    ],
+    "open-models/runs/glm53-smoke-7879ddc5-1013-1822-glm-martian1": [
+     "table/GLM-5.3 Flash/minutes",
+     "table/GLM-5.3 Flash/output",
+     "table/GLM-5.3 Flash/reply_seconds",
+     "table/GLM-5.3 Flash/usd"
+    ],
+    "open-models/runs/glm53-smoke-7879ddc5-1013-1822-glm-qodo-extra2": [
+     "table/GLM-5.3 Flash/minutes",
+     "table/GLM-5.3 Flash/output",
+     "table/GLM-5.3 Flash/reply_seconds",
+     "table/GLM-5.3 Flash/usd"
+    ],
+    "open-models/runs/glm53-smoke-7879ddc5-1013-1822-glm-qodo1": [
+     "table/GLM-5.3 Flash/minutes",
+     "table/GLM-5.3 Flash/output",
+     "table/GLM-5.3 Flash/reply_seconds",
+     "table/GLM-5.3 Flash/usd"
+    ],
+    "open-models/runs/glm53-smoke-p10-l12-glm-aacr-extra3": [
+     "qwen_projection/smoke/usd_per_pr",
+     "smokes/glm53-smoke-p10-l12/max_min",
+     "smokes/glm53-smoke-p10-l12/mean_min",
+     "smokes/glm53-smoke-p10-l12/median_min",
+     "smokes/glm53-smoke-p10-l12/ok",
+     "smokes/glm53-smoke-p10-l12/usd"
+    ],
+    "open-models/runs/glm53-smoke-p10-l12-glm-aacr1": [
+     "qwen_projection/smoke/usd_per_pr",
+     "smokes/glm53-smoke-p10-l12/max_min",
+     "smokes/glm53-smoke-p10-l12/mean_min",
+     "smokes/glm53-smoke-p10-l12/ok",
+     "smokes/glm53-smoke-p10-l12/usd"
+    ],
+    "open-models/runs/glm53-smoke-p10-l12-glm-martian-extra2": [
+     "qwen_projection/smoke/usd_per_pr",
+     "smokes/glm53-smoke-p10-l12/max_min",
+     "smokes/glm53-smoke-p10-l12/mean_min",
+     "smokes/glm53-smoke-p10-l12/median_min",
+     "smokes/glm53-smoke-p10-l12/ok",
+     "smokes/glm53-smoke-p10-l12/usd"
+    ],
+    "open-models/runs/glm53-smoke-p10-l12-glm-martian1": [
+     "qwen_projection/smoke/usd_per_pr",
+     "smokes/glm53-smoke-p10-l12/mean_min",
+     "smokes/glm53-smoke-p10-l12/median_min",
+     "smokes/glm53-smoke-p10-l12/ok",
+     "smokes/glm53-smoke-p10-l12/usd"
+    ],
+    "open-models/runs/glm53-smoke-p10-l12-glm-qodo-extra2": [
+     "qwen_projection/smoke/usd_per_pr",
+     "smokes/glm53-smoke-p10-l12/max_min",
+     "smokes/glm53-smoke-p10-l12/mean_min",
+     "smokes/glm53-smoke-p10-l12/median_min",
+     "smokes/glm53-smoke-p10-l12/ok",
+     "smokes/glm53-smoke-p10-l12/usd"
+    ],
+    "open-models/runs/glm53-smoke-p10-l12-glm-qodo1": [
+     "qwen_projection/smoke/usd_per_pr",
+     "smokes/glm53-smoke-p10-l12/mean_min",
+     "smokes/glm53-smoke-p10-l12/median_min",
+     "smokes/glm53-smoke-p10-l12/ok",
+     "smokes/glm53-smoke-p10-l12/usd"
+    ],
+    "runs/final1-martian50": [
+     "table/GPT-6.1 Sol/minutes",
+     "table/GPT-6.1 Sol/output",
+     "table/GPT-6.1 Sol/reply_seconds",
+     "table/GPT-6.1 Sol/usd"
+    ],
+    "runs/final1-qodo-pr100": [
+     "table/GPT-6.1 Sol/minutes",
+     "table/GPT-6.1 Sol/output",
+     "table/GPT-6.1 Sol/reply_seconds",
+     "table/GPT-6.1 Sol/usd"
+    ],
+    "runs/final1-rest145": [
+     "table/GPT-6.1 Sol/output",
+     "table/GPT-6.1 Sol/reply_seconds",
+     "table/GPT-6.1 Sol/tok_per_s",
+     "table/GPT-6.1 Sol/usd"
+    ]
+   }
   },
   "elo_refit": {
    "kind": "slim",
@@ -319,7 +528,94 @@
     "hf:defects",
     "hf:defect_verdicts"
    ],
-   "doc": "how the answer key was built, recounted from the key-building files: the first key's reviewer comments by run, the hunt's drafts and reference verdicts, v1 and v2 exclusions, the extension's candidates, tab:prov, the hunt's grade against the verifier's, the saturation curve, the leave-one-reviewer-out key and the key without QuickReview-only defects"
+   "doc": "how the answer key was built, recounted from the key-building files: the first key's reviewer comments by run, the hunt's drafts and reference verdicts, v1 and v2 exclusions, the extension's candidates, tab:prov, the hunt's grade against the verifier's, the saturation curve, the leave-one-reviewer-out key and the key without QuickReview-only defects",
+   "reads": {
+    "orig40-code": [
+     "extension/excluded",
+     "extension/matched_existing",
+     "loo/all185_abs_printed_delta_min",
+     "single_source/orig40/pct_single",
+     "single_source/orig40/single"
+    ],
+    "rest145-code": [
+     "extension/excluded",
+     "extension/matched_existing",
+     "first_key/hunt_drafts",
+     "first_key/hunt_drafts_high",
+     "first_key/hunt_raised",
+     "first_key/hunt_refs_real",
+     "first_key/hunt_refs_rejected",
+     "first_key/mapped_pct_by_run/default",
+     "first_key/mapped_pct_by_run/low",
+     "first_key/mapped_pct_by_run/ocr",
+     "first_key/v1_exclusions",
+     "first_key/v1_reviewer_exclusions_by_run/default",
+     "first_key/v1_reviewer_exclusions_by_run/low",
+     "first_key/v1_reviewer_exclusions_by_run/ocr",
+     "hunt_grade/all/kappa",
+     "hunt_grade/all/matches",
+     "hunt_grade/all/same_pct",
+     "hunt_grade/confident/kappa",
+     "hunt_grade/confident/lowered",
+     "hunt_grade/confident/matches",
+     "hunt_grade/confident/raised",
+     "hunt_grade/confident/same",
+     "hunt_grade/confident/same_pct",
+     "hunt_grade/confident/transitions/high->low",
+     "hunt_grade/confident/transitions/low->medium",
+     "hunt_grade/confident/transitions/medium->high",
+     "hunt_grade/confident/transitions/medium->low",
+     "loo/all185_abs_printed_delta_max",
+     "loo/all185_abs_printed_delta_min",
+     "loo/max_abs_delta_pts",
+     "loo/rest145/claude/full_recall",
+     "loo/rest145/claude/loo_defects",
+     "loo/rest145/claude/loo_recall",
+     "loo/rest145/codex/delta_printed_pts",
+     "loo/rest145/codex/loo_defects",
+     "loo/rest145/default/full_recall",
+     "loo/rest145/default/loo_defects",
+     "loo/rest145/default/loo_recall",
+     "loo/rest145/low/loo_defects",
+     "loo/rest145/ocr/full_recall",
+     "loo/rest145/ocr/loo_defects",
+     "loo/rest145/ocr/loo_recall",
+     "prov/only/default",
+     "prov/only/hunt",
+     "prov/only/low",
+     "prov/only/ocr",
+     "prov/raised/default",
+     "prov/raised/hunt",
+     "prov/raised/low",
+     "prov/raised/ocr",
+     "prov/raised/refs",
+     "prov/raised_pct/default",
+     "saturation/defects",
+     "saturation/hunt_or_refs",
+     "saturation/last_step_pct",
+     "saturation/marginal_per_reviewer/claude",
+     "saturation/marginal_per_reviewer/codex",
+     "saturation/marginal_per_reviewer/default",
+     "saturation/marginal_per_reviewer/low",
+     "saturation/marginal_per_reviewer/ocr",
+     "saturation/marginal_per_reviewer/opencode",
+     "saturation/marginal_per_reviewer/pireview",
+     "saturation/marginal_step/0",
+     "saturation/marginal_step/1",
+     "saturation/marginal_step/2",
+     "saturation/marginal_step/3",
+     "saturation/marginal_step/4",
+     "saturation/marginal_step/5",
+     "saturation/marginal_step/6",
+     "saturation/reviewers_only_union_after_k/1",
+     "saturation/reviewers_only_union_after_k/2",
+     "saturation/reviewers_only_union_after_k/3",
+     "saturation/reviewers_only_union_after_k/4",
+     "saturation/reviewers_only_union_after_k/5",
+     "saturation/reviewers_only_union_after_k/6",
+     "saturation/reviewers_only_union_after_k/7"
+    ]
+   }
   },
   "tokens": {
    "kind": "json",
@@ -441,7 +737,181 @@
     "archive:analysis/external-benchmarks-2026-10-02/gm/rows.json",
     "archive:runs/mv-r1-asposted.martian/results/"
    ],
-   "doc": "Martian tune20 against the extended key (the 38 valid goldens plus the real defects no golden lists): every tool's recall, strict and lenient precision and F1, its candidates' classes, the key's sensitivity variants, and Martian's own credits by golden quality"
+   "doc": "Martian tune20 against the extended key (the 38 valid goldens plus the real defects no golden lists): every tool's recall, strict and lenient precision and F1, its candidates' classes, the key's sensitivity variants, and Martian's own credits by golden quality",
+   "reads": {
+    "analysis": [
+     "best_other_f1_lenient",
+     "next_raised",
+     "next_recall",
+     "sensitivity/full/augment/f1_strict",
+     "sensitivity/full/augment/recall",
+     "sensitivity/full/claude-code/f1_strict",
+     "sensitivity/full/claude-code/recall",
+     "sensitivity/full/cubic-v2/f1_strict",
+     "sensitivity/full/cubic-v2/recall",
+     "sensitivity/full/devin/f1_strict",
+     "sensitivity/full/devin/recall",
+     "sensitivity/full/macroscope/f1_strict",
+     "sensitivity/full/macroscope/recall",
+     "sensitivity/full/qodo-extended-v2/f1_strict",
+     "sensitivity/full/qodo-extended-v2/recall",
+     "sensitivity/full/qodo-v2/f1_strict",
+     "sensitivity/full/qodo-v2/recall",
+     "sensitivity/full/quickreview/f1_strict",
+     "sensitivity/full/quickreview/recall",
+     "sensitivity/medium_high/augment/f1_strict",
+     "sensitivity/medium_high/augment/recall",
+     "sensitivity/medium_high/claude-code/f1_strict",
+     "sensitivity/medium_high/claude-code/recall",
+     "sensitivity/medium_high/cubic-v2/f1_strict",
+     "sensitivity/medium_high/cubic-v2/recall",
+     "sensitivity/medium_high/devin/f1_strict",
+     "sensitivity/medium_high/devin/recall",
+     "sensitivity/medium_high/macroscope/f1_strict",
+     "sensitivity/medium_high/macroscope/recall",
+     "sensitivity/medium_high/qodo-extended-v2/f1_strict",
+     "sensitivity/medium_high/qodo-extended-v2/recall",
+     "sensitivity/medium_high/qodo-v2/f1_strict",
+     "sensitivity/medium_high/qodo-v2/recall",
+     "sensitivity/medium_high/quickreview/f1_strict",
+     "sensitivity/medium_high/quickreview/recall",
+     "sensitivity/not_quickreview_alone/augment/f1_strict",
+     "sensitivity/not_quickreview_alone/augment/recall",
+     "sensitivity/not_quickreview_alone/claude-code/f1_strict",
+     "sensitivity/not_quickreview_alone/claude-code/recall",
+     "sensitivity/not_quickreview_alone/cubic-v2/f1_strict",
+     "sensitivity/not_quickreview_alone/cubic-v2/recall",
+     "sensitivity/not_quickreview_alone/devin/f1_strict",
+     "sensitivity/not_quickreview_alone/devin/recall",
+     "sensitivity/not_quickreview_alone/key",
+     "sensitivity/not_quickreview_alone/macroscope/f1_strict",
+     "sensitivity/not_quickreview_alone/macroscope/recall",
+     "sensitivity/not_quickreview_alone/qodo-extended-v2/f1_strict",
+     "sensitivity/not_quickreview_alone/qodo-extended-v2/recall",
+     "sensitivity/not_quickreview_alone/qodo-v2/f1_strict",
+     "sensitivity/not_quickreview_alone/qodo-v2/recall",
+     "sensitivity/not_quickreview_alone/quickreview/f1_strict",
+     "sensitivity/not_quickreview_alone/quickreview/recall",
+     "sensitivity/two_tools/augment/f1_strict",
+     "sensitivity/two_tools/augment/recall",
+     "sensitivity/two_tools/claude-code/f1_strict",
+     "sensitivity/two_tools/claude-code/recall",
+     "sensitivity/two_tools/cubic-v2/f1_strict",
+     "sensitivity/two_tools/cubic-v2/recall",
+     "sensitivity/two_tools/devin/f1_strict",
+     "sensitivity/two_tools/devin/recall",
+     "sensitivity/two_tools/key",
+     "sensitivity/two_tools/macroscope/f1_strict",
+     "sensitivity/two_tools/macroscope/recall",
+     "sensitivity/two_tools/qodo-extended-v2/f1_strict",
+     "sensitivity/two_tools/qodo-extended-v2/recall",
+     "sensitivity/two_tools/qodo-v2/f1_strict",
+     "sensitivity/two_tools/qodo-v2/recall",
+     "sensitivity/two_tools/quickreview/f1_strict",
+     "sensitivity/two_tools/quickreview/recall",
+     "sensitivity/valid_only/augment/f1_strict",
+     "sensitivity/valid_only/augment/recall",
+     "sensitivity/valid_only/claude-code/f1_strict",
+     "sensitivity/valid_only/claude-code/recall",
+     "sensitivity/valid_only/cubic-v2/f1_strict",
+     "sensitivity/valid_only/cubic-v2/recall",
+     "sensitivity/valid_only/devin/f1_strict",
+     "sensitivity/valid_only/devin/recall",
+     "sensitivity/valid_only/macroscope/f1_strict",
+     "sensitivity/valid_only/macroscope/recall",
+     "sensitivity/valid_only/qodo-extended-v2/f1_strict",
+     "sensitivity/valid_only/qodo-extended-v2/recall",
+     "sensitivity/valid_only/qodo-v2/f1_strict",
+     "sensitivity/valid_only/qodo-v2/recall",
+     "sensitivity/valid_only/quickreview/f1_strict",
+     "sensitivity/valid_only/quickreview/recall",
+     "tool/augment/dup_pct",
+     "tool/augment/f1_lenient",
+     "tool/augment/f1_strict",
+     "tool/augment/minor_pct",
+     "tool/augment/p_lenient",
+     "tool/augment/p_strict",
+     "tool/augment/raised",
+     "tool/augment/real_raised",
+     "tool/augment/recall",
+     "tool/augment/valid_raised",
+     "tool/augment/wrong_pct",
+     "tool/claude-code/dup_pct",
+     "tool/claude-code/f1_lenient",
+     "tool/claude-code/f1_strict",
+     "tool/claude-code/p_lenient",
+     "tool/claude-code/p_strict",
+     "tool/claude-code/raised",
+     "tool/claude-code/recall",
+     "tool/claude-code/valid_raised",
+     "tool/claude-code/wrong_pct",
+     "tool/cubic-v2/dup_pct",
+     "tool/cubic-v2/f1_lenient",
+     "tool/cubic-v2/f1_strict",
+     "tool/cubic-v2/minor_pct",
+     "tool/cubic-v2/p_lenient",
+     "tool/cubic-v2/p_strict",
+     "tool/cubic-v2/raised",
+     "tool/cubic-v2/real_raised",
+     "tool/cubic-v2/recall",
+     "tool/cubic-v2/valid_raised",
+     "tool/cubic-v2/wrong_pct",
+     "tool/devin/dup_pct",
+     "tool/devin/f1_lenient",
+     "tool/devin/f1_strict",
+     "tool/devin/p_lenient",
+     "tool/devin/p_strict",
+     "tool/devin/raised",
+     "tool/devin/real_raised",
+     "tool/devin/recall",
+     "tool/devin/valid_raised",
+     "tool/devin/wrong_pct",
+     "tool/macroscope/dup_pct",
+     "tool/macroscope/f1_lenient",
+     "tool/macroscope/f1_strict",
+     "tool/macroscope/p_lenient",
+     "tool/macroscope/p_strict",
+     "tool/macroscope/raised",
+     "tool/macroscope/recall",
+     "tool/macroscope/valid_raised",
+     "tool/qodo-extended-v2/dup_pct",
+     "tool/qodo-extended-v2/f1_lenient",
+     "tool/qodo-extended-v2/f1_strict",
+     "tool/qodo-extended-v2/minor_pct",
+     "tool/qodo-extended-v2/p_lenient",
+     "tool/qodo-extended-v2/p_strict",
+     "tool/qodo-extended-v2/raised",
+     "tool/qodo-extended-v2/real_raised",
+     "tool/qodo-extended-v2/recall",
+     "tool/qodo-extended-v2/valid_raised",
+     "tool/qodo-extended-v2/wrong_pct",
+     "tool/qodo-v2/dup_pct",
+     "tool/qodo-v2/f1_lenient",
+     "tool/qodo-v2/f1_strict",
+     "tool/qodo-v2/minor_pct",
+     "tool/qodo-v2/p_lenient",
+     "tool/qodo-v2/p_strict",
+     "tool/qodo-v2/raised",
+     "tool/qodo-v2/recall",
+     "tool/qodo-v2/valid_raised",
+     "tool/qodo-v2/wrong_pct",
+     "tool/quickreview/dup_pct",
+     "tool/quickreview/f1_lenient",
+     "tool/quickreview/f1_strict",
+     "tool/quickreview/minor_pct",
+     "tool/quickreview/p_lenient",
+     "tool/quickreview/p_strict",
+     "tool/quickreview/raised",
+     "tool/quickreview/real_raised",
+     "tool/quickreview/recall",
+     "tool/quickreview/valid_raised",
+     "tool/quickreview/wrong_pct",
+     "unlisted_only_quickreview",
+     "unlisted_only_quickreview_by_severity/low",
+     "unlisted_only_quickreview_by_severity/medium",
+     "valid_disposition/P+"
+    ]
+   }
   },
   "line_gate": {
    "kind": "json",
@@ -468,7 +938,37 @@
     "archive:runs/<run>/results/all/",
     "repo:bench/aacr/references.json"
    ],
-   "doc": "AACR-Bench's metric for the earlier study's seven reviewers at line gates of 1, 5 and 999 (references found, recall, precision, F1), and the re-scoring's logged judge calls"
+   "doc": "AACR-Bench's metric for the earlier study's seven reviewers at line gates of 1, 5 and 999 (references found, recall, precision, F1), and the re-scoring's logged judge calls",
+   "reads": {
+    "analysis": [
+     "arms/claude-code-opus55/gain_pct",
+     "arms/claude-code-opus55/k5/found",
+     "arms/claude-code-opus55/k999/found",
+     "arms/codex-medium-sol/gain_pct",
+     "arms/codex-medium-sol/k5/found",
+     "arms/codex-medium-sol/k999/found",
+     "arms/ocr-medium-sol/k5/found",
+     "arms/ocr-medium-sol/k999/found",
+     "arms/opencode-bridge-sol/k5/found",
+     "arms/opencode-bridge-sol/k999/found",
+     "arms/pireview-medium-sol/k5/found",
+     "arms/pireview-medium-sol/k999/found",
+     "arms/quickreview-default-sol/gain_pct",
+     "arms/quickreview-default-sol/k5/found",
+     "arms/quickreview-default-sol/k999/f1",
+     "arms/quickreview-default-sol/k999/found",
+     "arms/quickreview-low-sol/gain_pct",
+     "arms/quickreview-low-sol/k5/found",
+     "arms/quickreview-low-sol/k999/f1",
+     "arms/quickreview-low-sol/k999/found",
+     "gain_max",
+     "gain_min",
+     "k999_f1_max",
+     "k999_f1_min",
+     "k999_recall_max",
+     "k999_recall_min"
+    ]
+   }
   },
   "lens_credit": {
    "kind": "json",
@@ -517,7 +1017,15 @@
     "hf:runs",
     "archive:analysis/2026-09-26-missed-defects/miss-G*.json"
    ],
-   "doc": "the missed-defect analysis behind the levers: the defects the normal-effort development runs kept missing, by miss class and root cause"
+   "doc": "the missed-defect analysis behind the levers: the defects the normal-effort development runs kept missing, by miss class and root cause",
+   "reads": {
+    "analysis": [
+     "defects",
+     "miss_class/never-raised",
+     "root_cause/attention",
+     "root_cause/external-library-knowledge"
+    ]
+   }
   },
   "martian_published": {
    "kind": "json",
@@ -605,7 +1113,27 @@
    "data": [
     "archive:open-models/runs/glm53-smoke-7879ddc5-glm-*/cases/<id>/pi-events.pruned.jsonl (openmodels-smokes)"
    ],
-   "doc": "the 2026-10-13 15:23 UTC GLM smoke's lens passes by outcome (stop, timeout, ...) from the numbers-only extracts"
+   "doc": "the 2026-10-13 15:23 UTC GLM smoke's lens passes by outcome (stop, timeout, ...) from the numbers-only extracts",
+   "reads": {
+    "open-models/runs/glm53-smoke-7879ddc5-glm-aacr-extra3": [
+     "timed_out"
+    ],
+    "open-models/runs/glm53-smoke-7879ddc5-glm-aacr1": [
+     "timed_out"
+    ],
+    "open-models/runs/glm53-smoke-7879ddc5-glm-martian-extra2": [
+     "timed_out"
+    ],
+    "open-models/runs/glm53-smoke-7879ddc5-glm-martian1": [
+     "timed_out"
+    ],
+    "open-models/runs/glm53-smoke-7879ddc5-glm-qodo-extra2": [
+     "timed_out"
+    ],
+    "open-models/runs/glm53-smoke-7879ddc5-glm-qodo1": [
+     "timed_out"
+    ]
+   }
   },
   "martian_tiers": {
    "kind": "json",
@@ -632,7 +1160,36 @@
     "archive:quickreview-runs-martian-tuning-rounds.tar.zst",
     "hf:martian_goldens"
    ],
-   "doc": "QuickReview on Martian by its own severity (tab:martiantiers): each candidate's tier from the posted comment it was extracted from (word overlap, or the shipped gpt-6.1-sol label where overlap cannot settle it), the blind tune20 classes per tier, and the stored Martian judgements recounted per posted subset under the Core profile; reads the label file the archive ships and checks every row's model and prompt sha256; no model call"
+   "doc": "QuickReview on Martian by its own severity (tab:martiantiers): each candidate's tier from the posted comment it was extracted from (word overlap, or the shipped gpt-6.1-sol label where overlap cannot settle it), the blind tune20 classes per tier, and the stored Martian judgements recounted per posted subset under the Core profile; reads the label file the archive ships and checks every row's model and prompt sha256; no model call",
+   "reads": {
+    "analysis": [
+     "left/P0-P1/dup",
+     "left/P0-P1/real",
+     "left/P0-P1/real_pct",
+     "left/P0-P1/wrong",
+     "left/P2/dup",
+     "left/P2/minor",
+     "left/P2/real",
+     "left/P2/real_pct",
+     "left/P3/dup",
+     "left/P3/real",
+     "left/P3/real_pct",
+     "left/nit/dup",
+     "left/nit/minor",
+     "left/nit/wrong",
+     "left/unmapped/dup",
+     "left/unmapped/minor",
+     "right/P0-P1 only/f2",
+     "right/P0-P1 only/per_pr",
+     "right/P0-P1 only/precision",
+     "right/P0-P2/f2",
+     "right/P0-P2/precision",
+     "right/P0-P2/recall",
+     "right/blockers only/f2",
+     "right/blockers only/per_pr",
+     "right/blockers only/precision"
+    ]
+   }
   },
   "lost_credit": {
    "kind": "json",
@@ -660,7 +1217,20 @@
     "hf:reviews",
     "hf:defect_verdicts"
    ],
-   "doc": "where the low preset's lost credit went and what the default's validator dropped, on the gpt-6-sol AACR runs: posted comments and killed or withheld findings within five lines of each defect, as the shipped gpt-6.1-sol labels say they relate to it (same, related, different); reads the label file the archive ships and checks every row's model and prompt sha256; no model call"
+   "doc": "where the low preset's lost credit went and what the default's validator dropped, on the gpt-6-sol AACR runs: posted comments and killed or withheld findings within five lines of each defect, as the shipped gpt-6.1-sol labels say they relate to it (same, related, different); reads the label file the archive ships and checks every row's model and prompt sha256; no model call",
+   "reads": {
+    "analysis": [
+     "labelled/at_most_points_same",
+     "labelled/at_most_points_same_or_related",
+     "labelled/attribution_defects/validator filtering",
+     "labelled/attribution_pct/lens generation",
+     "labelled/attribution_pct/validator filtering",
+     "labelled/attribution_pct/weaker comments",
+     "labelled/only_killed/default",
+     "labelled/same_claim_killed",
+     "labelled/same_claim_killed_points"
+    ]
+   }
   },
   "judged_inputs": {
    "kind": "json",
@@ -687,7 +1257,15 @@
     "repo:bench/aacr/sets/qodo-pr100.json",
     "repo:bench/aacr/sets/qodo-heldout31.json"
    ],
-   "doc": "what a judge was given where it differs from what was posted (AACR comments listed twice, Qodo's deleted-line comments, Martian's text-shortening posting policies, SWE-PRBench's judged answers), and the Qodo judge's double pass"
+   "doc": "what a judge was given where it differs from what was posted (AACR comments listed twice, Qodo's deleted-line comments, Martian's text-shortening posting policies, SWE-PRBench's judged answers), and the Qodo judge's double pass",
+   "reads": {
+    "runs/qr-all50-asposted": [
+     "martian_variants/runs"
+    ],
+    "runs/qr-all50-nonits-1pf-vb": [
+     "martian_variants/runs"
+    ]
+   }
   }
  },
  "groups": {
@@ -793,22 +1371,18 @@
   "do:gemma-smoke": {
    "what": "DIGITALOCEAN.md:37-42 Gemma 4 smoke 2026-10-13 19:57: 9 of 10 clean, one unparseable findings record",
    "families": [
-    "openmodels-driver",
     "openmodels-smokes"
    ],
    "archive": [
-    "quickreview-runs-openmodels-driver.tar.zst",
     "quickreview-runs-openmodels-smokes.tar.zst"
    ]
   },
   "do:glm-smoke": {
    "what": "DIGITALOCEAN.md:132-146 GLM smoke 2026-10-13: 10/10 ok, $3.31, median ~28 min, slowest 54 min; and the 17:23 smoke whose six lenses failed",
    "families": [
-    "openmodels-driver",
     "openmodels-smokes"
    ],
    "archive": [
-    "quickreview-runs-openmodels-driver.tar.zst",
     "quickreview-runs-openmodels-smokes.tar.zst"
    ]
   },
@@ -816,25 +1390,19 @@
    "what": "bench/aacr/docs/DIGITALOCEAN.md:45-56 'Why the open models take longer': minutes, output tokens, replies, generation speed and $/PR on the same 10 PRs for GPT-6.1 Sol (final1), GLM-5.3 Flash, DeepSeek V4.1 Flash, Gemma 4 31B",
    "families": [
     "aacr-frozen-build",
-    "openmodels-driver",
-    "openmodels-gpt61-baselines",
     "openmodels-smokes"
    ],
    "archive": [
     "quickreview-runs-aacr-frozen-build.tar.zst",
-    "quickreview-runs-openmodels-driver.tar.zst",
-    "quickreview-runs-openmodels-gpt61-baselines.tar.zst",
     "quickreview-runs-openmodels-smokes.tar.zst"
    ]
   },
   "do:timeouts": {
    "what": "DIGITALOCEAN.md:77-80 GLM-5.3 Flash takes 54-66 min on the largest AACR PRs; 5 of the first 10 PRs of the 2026-10-14 full run timed out at 75 min",
    "families": [
-    "openmodels-driver",
     "openmodels-glm53-full"
    ],
    "archive": [
-    "quickreview-runs-openmodels-driver.tar.zst",
     "quickreview-runs-openmodels-glm53-full.tar.zst"
    ]
   },
@@ -1001,9 +1569,7 @@
     "aacr-frozen-build",
     "aacr-luna-basemodel",
     "aacr-opus55-basemodel",
-    "openmodels-driver",
     "openmodels-dsv41f-full",
-    "openmodels-dsv41f-low",
     "openmodels-dsv41f-mix",
     "openmodels-glm53-full"
    ],
@@ -1011,9 +1577,7 @@
     "quickreview-runs-aacr-frozen-build.tar.zst",
     "quickreview-runs-aacr-luna-basemodel.tar.zst",
     "quickreview-runs-aacr-opus55-basemodel.tar.zst",
-    "quickreview-runs-openmodels-driver.tar.zst",
     "quickreview-runs-openmodels-dsv41f-full.tar.zst",
-    "quickreview-runs-openmodels-dsv41f-low.tar.zst",
     "quickreview-runs-openmodels-dsv41f-mix.tar.zst",
     "quickreview-runs-openmodels-glm53-full.tar.zst"
    ]

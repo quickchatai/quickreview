@@ -648,11 +648,48 @@ def cited(check: str, key: str, arm_ids: set, units: set, martian_dirs: set) -> 
     return arms & arm_ids, runs & units
 
 
-def claim_links(claims: list[dict], arms: list[dict], runs: list[dict], martian_dirs: set) -> tuple[dict, dict]:
+def reads_of(checks: dict | None, runs: list[dict]) -> dict:
+    """{(check, q key): run index units}: a script check's `reads` in claims.json, {unit path: [the q keys
+    whose number is computed from that unit's files]}, by unit name (the runs table's `unit` of each path)."""
+    name = {r["path"]: r["unit"] for r in runs if r.get("path")}
+    out = collections.defaultdict(set)
+    for check, spec in (checks or {}).items():
+        for path, keys in (spec.get("reads") or {}).items():
+            for k in keys:
+                if path in name:
+                    out[(check, k)].add(name[path])
+    return out
+
+
+def reads_problems(checks: dict, claims: list[dict], runs: list[dict]) -> list[str]:
+    """Each check's `reads` against the run index and the claims: a unit path no runs row has, or a key no
+    claim of that check reads."""
+    paths = {r["path"] for r in runs}
+    used = {(ch, k) for c in claims for ch, k in q_refs(c.get("q") or "")}
+    out = []
+    for check, spec in checks.items():
+        for path, keys in (spec.get("reads") or {}).items():
+            out += [f"{check}: {path} is not a run index unit"] if path not in paths else []
+            out += [f"{check}: {path}: {k} is read by no claim" for k in keys if (check, k) not in used]
+    return out
+
+
+def family_link_problems(t: dict[str, list[dict]], manifest: dict) -> list[str]:
+    """Every family claims.json's `groups` name as backing a published number, against the derived links:
+    a family none of whose units carries any claim group."""
+    linked = {r["family"] for r in t["runs"] if r.get("claims")}
+    named = {f for spec in (manifest.get("groups") or {}).values() for f in spec.get("families") or []}
+    return sorted(f for f in named if f not in linked)
+
+
+def claim_links(claims: list[dict], arms: list[dict], runs: list[dict], martian_dirs: set,
+                checks: dict | None = None) -> tuple[dict, dict]:
     """({arm id: claim groups}, {run index unit: claim groups}): the groups of the claims whose q keys
-    read the arm or the unit, an arm's runs included. A claim with no group links nothing."""
+    read the arm or the unit, an arm's runs included, and the units a script check's `reads` names for
+    the key (reads_of). A claim with no group links nothing."""
     arm_ids, units = {a["arm_id"] for a in arms}, {r["unit"] for r in runs}
     arm_runs = {a["arm_id"]: set(a.get("runs") or []) for a in arms}
+    reads = reads_of(checks, runs)
     by_arm, by_unit = collections.defaultdict(set), collections.defaultdict(set)
     for c in claims:
         g = c.get("group")
@@ -660,6 +697,7 @@ def claim_links(claims: list[dict], arms: list[dict], runs: list[dict], martian_
             continue
         for check, key in q_refs(c.get("q") or ""):
             a, u = cited(check, key, arm_ids, units, martian_dirs)
+            u |= reads.get((check, key), set())
             for x in a:
                 by_arm[x].add(g)
                 u |= arm_runs[x] & units
@@ -668,13 +706,13 @@ def claim_links(claims: list[dict], arms: list[dict], runs: list[dict], martian_
     return dict(by_arm), dict(by_unit)
 
 
-def claim_link_problems(t: dict[str, list[dict]], claims: list[dict]) -> dict[str, list[str]]:
+def claim_link_problems(t: dict[str, list[dict]], claims: list[dict], checks: dict | None = None) -> dict[str, list[str]]:
     """The tables against the manifest's q keys, both ways: `arms`, every arm whose `paper_tables` is not
     exactly the groups of the claims that read it (a group missing, or a label no claim reads it under)
     or whose `in_paper` is not whether any claim reads it; `runs`, every run index unit whose `claims` is
     not exactly the groups of the claims that read it."""
     martian = {s["work_dir"] for s in t.get("martian_scores") or [] if s.get("work_dir")}
-    by_arm, by_unit = claim_links(claims, t["arms"], t["runs"], martian)
+    by_arm, by_unit = claim_links(claims, t["arms"], t["runs"], martian, checks)
 
     def diff(name, have, want):
         have, want = set(have or []), set(want)
@@ -685,10 +723,10 @@ def claim_link_problems(t: dict[str, list[dict]], claims: list[dict]) -> dict[st
     return {"arms": sorted(arms), "runs": sorted(runs)}
 
 
-def claim_groups(t: dict[str, list[dict]], claims: list[dict]) -> dict[str, dict]:
+def claim_groups(t: dict[str, list[dict]], claims: list[dict], checks: dict | None = None) -> dict[str, dict]:
     """{claim group: its families and archive volumes}, from the units its claims' q keys read."""
     martian = {s["work_dir"] for s in t.get("martian_scores") or [] if s.get("work_dir")}
-    _, by_unit = claim_links(claims, t["arms"], t["runs"], martian)
+    _, by_unit = claim_links(claims, t["arms"], t["runs"], martian, checks)
     fam = {r["unit"]: (r["family"], r.get("archive_volumes") or []) for r in t["runs"]}
     out = collections.defaultdict(lambda: {"families": set(), "volumes": set()})
     for u, gs in by_unit.items():
@@ -1487,9 +1525,10 @@ class Exporter:
         """`arms.paper_tables` and `runs.claims` are the claim groups whose q keys read the arm or the
         run (claim_links), and nothing else: no hand-written label is a source. `arms.in_paper` is true
         for any arm a claim reads."""
-        claims = json.load(open(CLAIMS_MANIFEST))["claims"]
+        manifest = json.load(open(CLAIMS_MANIFEST))
         martian = {s["work_dir"] for s in self.tables.get("martian_scores") or [] if s.get("work_dir")}
-        by_arm, by_unit = claim_links(claims, self.tables["arms"], self.tables.get("runs") or [], martian)
+        by_arm, by_unit = claim_links(manifest["claims"], self.tables["arms"], self.tables.get("runs") or [], martian,
+                                      manifest.get("checks"))
         for a in self.tables["arms"]:
             a["paper_tables"] = sorted(by_arm.get(a["arm_id"], set()))
             a["in_paper"] = bool(a["paper_tables"])
@@ -2065,7 +2104,8 @@ def rejudge_column_checks(t: dict[str, list[dict]]) -> list[dict]:
     check("runs: every Martian scoring dir's judges states the effort, verbosity, backend and dropped request keys",
           unstated[:20], [])
     if t.get("arms") and t.get("runs"):
-        links = claim_link_problems(t, json.load(open(CLAIMS_MANIFEST))["claims"])
+        manifest = json.load(open(CLAIMS_MANIFEST))
+        links = claim_link_problems(t, manifest["claims"], manifest.get("checks"))
         # MUTATION: drop ex.link_claims() from main — both fail
         # MUTATION: in link_claims, keep a row's earlier labels beside the derived groups — both fail
         check("arms: every arm's paper_tables is exactly the groups of the claims whose q keys read it, and it is "
@@ -2368,6 +2408,13 @@ def dataset_url(repo_id: str) -> str:
     return f"https://huggingface.co/datasets/{repo_id}"
 
 
+def groups_on_no_run(runs: list[dict], groups: dict | None = None) -> str:
+    """The card's list of the claims manifest's groups that no runs row carries, in code font ("none")."""
+    groups = json.load(open(CLAIMS_MANIFEST))["groups"] if groups is None else groups
+    carried = {g for r in runs for g in r.get("claims") or []}
+    return ", ".join(f"`{g}`" for g in sorted(set(groups) - carried)) or "none"
+
+
 def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter, runs: list[dict] | None = None) -> dict:
     """Every {{NAME}} the card template holds, from the export's own facts. What
     is not known at export time (the DOI, the papers' arXiv ids) renders as an
@@ -2402,6 +2449,7 @@ def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter,
             "CONFIGS_YAML": configs_yaml, "CONFIG_ROWS": rows, "SCRUB_TABLE": scrub_tbl,
             "CHECKS": f"{ok} of {len(checks)}",
             "RUN_UNITS": f"{len(runs):,}", "RUN_FAMILIES": f"{len({r['family'] for r in runs}):,}",
+            "GROUPS_ON_NO_RUN": groups_on_no_run(runs),
             "SIZE_CATEGORY": size_category(sum(sizes.values()))}
 
 
@@ -2482,7 +2530,7 @@ def rerender_card(a, out: str) -> None:
     sizes = {n: pq.ParquetFile(os.path.join(out, "data", f"{n}.parquet")).metadata.num_rows for n in CONFIGS}
     if sizes != v["rows"]:
         raise SystemExit("--card-only: the tables' row counts differ from validation.json; rebuild the dataset")
-    runs = pq.read_table(os.path.join(out, "data", "runs.parquet"), columns=["family"]).to_pylist()
+    runs = pq.read_table(os.path.join(out, "data", "runs.parquet"), columns=["family", "claims"]).to_pylist()
     NT.write_licences(out)
     open(os.path.join(out, "NOTICE"), "w").write(dataset_notice())
     render_card(a, out, sizes, v["checks"], collections.Counter(v.get("scrub_counts") or {}), runs)
@@ -2574,6 +2622,15 @@ def main():
               + ex.raw_text_checks(tables))
     if not a.no_figures:
         checks += figure_checks(out)
+    manifest = json.load(open(CLAIMS_MANIFEST))
+    # MUTATION: drop the `reads` of key_build from claims.json — this fails (answer-key carries no claim group)
+    fam = family_link_problems(tables, manifest)
+    checks.append({"check": "runs: every family claims.json's groups name as backing a number carries a claim group "
+                            "on one of its units", "got": fam[:20], "want": [], "ok": not fam})
+    # MUTATION: name a unit path the run index lacks in a check's `reads` — this fails
+    bad = reads_problems(manifest["checks"], manifest["claims"], tables["runs"])
+    checks.append({"check": "claims.json: every script check's `reads` names a run index unit and keys its claims "
+                            "read", "got": bad[:20], "want": [], "ok": not bad})
     if a.archive:
         idx = os.path.join(os.path.abspath(os.path.expanduser(a.archive)), "RUNS-INDEX.json")
         groups = json.load(open(CLAIMS_MANIFEST))["groups"]
@@ -2590,7 +2647,7 @@ def main():
     load = {} if a.no_load_check else load_counts(out)
     report = {"rows": sizes, "checks": checks, "failed": [c for c in checks if not c["ok"]],
               "coverage": coverage(tables, ex.cat),
-              "claim_groups": claim_groups(tables, json.load(open(CLAIMS_MANIFEST))["claims"]),
+              "claim_groups": claim_groups(tables, *(lambda m: (m["claims"], m["checks"]))(json.load(open(CLAIMS_MANIFEST)))),
               "scrub_counts": dict(ex.counts), "leaks": leaks, "load_dataset": load, "notes": ex.notes}
     json.dump(report, open(os.path.join(out, "validation.json"), "w"), indent=1, default=str)
     print(json.dumps({k: v for k, v in report.items() if k != "checks"}, indent=1, default=str))

@@ -119,6 +119,29 @@ describe("the card describes every config", () => {
 });
 
 describe("the card's claim ids are the manifest's groups", () => {
+  // MUTATION: write the list of groups on no run into card.md by hand (drop {{GROUPS_ON_NO_RUN}}) — this fails
+  // MUTATION: in groups_on_no_run, list every group (ignore the runs' claims) — this fails
+  it("renders the groups no run carries from the runs table, never a hand-written list", () => {
+    expect(CARD).toMatch(
+      /A group none of whose keys reads a run is on no run:\s+\{\{GROUPS_ON_NO_RUN\}\}\./,
+    );
+    const groups = Object.keys(
+      (
+        JSON.parse(readFileSync("bench/aacr/claims.json", "utf8")) as {
+          groups: Record<string, unknown>;
+        }
+      ).groups,
+    );
+    const r = py(
+      "runs = json.loads(sys.argv[1])\n" +
+        "print(json.dumps([h.groups_on_no_run(runs, {'a:x': {}, 'b:y': {}, 'c:z': {}}), h.groups_on_no_run(runs[:1], {'a:x': {}}),\n" +
+        "  h.groups_on_no_run([{'claims': g} for g in [json.loads(sys.argv[2])]])]))",
+      JSON.stringify([{ claims: ["a:x"] }, { claims: ["c:z", "a:x"] }, { claims: [] }]),
+      JSON.stringify(groups.filter((g) => g !== "do:sets")),
+    ) as string[];
+    expect(r).toEqual(["`b:y`", "none", "`do:sets`"]);
+  });
+
   // MUTATION: put `qr:max-anecdote` (a retired hand-written label) back into the card's claim table — this fails
   it("names in the claim table's id column only groups bench/aacr/claims.json declares", () => {
     const groups = Object.keys(

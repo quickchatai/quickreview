@@ -70,7 +70,10 @@
 //      claim groups the claims manifest's q keys derive (no hand-written
 //      label; a level word is never an arm), the archive's RUNS-INDEX.json
 //      holds the runs table's rows and describes each group it carries from
-//      the manifest's `groups`, and a Qodo verdict ships only beside its review;
+//      the manifest's `groups`, a script check's `reads` links its keys' claims
+//      to the units they are computed from, every family a group names as
+//      backing a number carries a claim, and a Qodo verdict ships only beside
+//      its review;
 //  26. the export's load check reads the folder it wrote, through a cache of
 //      its own (load_counts), never an earlier export's.
 
@@ -2143,6 +2146,38 @@ describe("hf_export: what a re-judge needs", () => {
       keys: ["note", "units", "withheld", "claims"],
       described: { "do:a": "a doc", "g:a": "the a figure", "g:m": "the m table" },
     });
+  });
+
+  // MUTATION: in claim_links, drop the `reads` union (u |= reads.get(...)) — this fails
+  // MUTATION: in reads_of, key the units by path instead of the runs table's unit name — this fails
+  // MUTATION: in reads_problems, skip the "read by no claim" test — this fails
+  // MUTATION: make family_link_problems return [] — this fails
+  it("links a script check's claims to the units its `reads` names, and checks reads and families", () => {
+    const r = py(
+      "runs = [{'unit': 'rest145-code', 'path': 'rest145-code', 'family': 'answer-key', 'claims': []},\n" +
+        "        {'unit': 'x1', 'path': 'open-models/runs/x1', 'family': 'om', 'claims': []},\n" +
+        "        {'unit': 'drv', 'path': 'open-models/drv.log', 'family': 'driver', 'claims': []}]\n" +
+        "checks = {'key_build': {'reads': {'rest145-code': ['first_key/a']}},\n" +
+        "          'do_speed': {'reads': {'open-models/runs/x1': ['table/M/minutes'], 'open-models/runs/gone': ['table/M/minutes']}}}\n" +
+        "claims = [{'group': 'g:key', 'q': '{key_build:first_key/a} + 1'}, {'group': 'g:do', 'q': 'do_speed:table/M/minutes'},\n" +
+        "          {'group': 'g:other', 'q': 'key_build:first_key/b'}]\n" +
+        "_, u = h.claim_links(claims, [], runs, set(), checks)\n" +
+        "_, plain = h.claim_links(claims, [], runs, set())\n" +
+        "bad = dict(checks, key_build={'reads': {'rest145-code': ['first_key/a', 'first_key/unused']}})\n" +
+        "t = {'runs': [dict(r, claims=sorted(u.get(r['unit'], []))) for r in runs]}\n" +
+        "m = {'groups': {'g:key': {'families': ['answer-key']}, 'g:do': {'families': ['om', 'driver']}}}\n" +
+        "print(json.dumps({'u': {k: sorted(v) for k, v in sorted(u.items())}, 'plain': {k: sorted(v) for k, v in plain.items()},\n" +
+        "  'reads': h.reads_problems(bad, claims, runs), 'fam': h.family_link_problems(t, m),\n" +
+        "  'fam_unlinked': h.family_link_problems({'runs': runs}, m)}))",
+    ) as Record<string, unknown>;
+    expect(r.u).toEqual({ "rest145-code": ["g:key"], x1: ["g:do"] });
+    expect(r.plain).toEqual({});
+    expect(r.reads).toEqual([
+      "key_build: rest145-code: first_key/unused is read by no claim",
+      "do_speed: open-models/runs/gone is not a run index unit",
+    ]);
+    expect(r.fam).toEqual(["driver"]);
+    expect(r.fam_unlinked).toEqual(["answer-key", "driver", "om"]);
   });
 
   // MUTATION: in link_claims, keep a row's earlier labels beside the derived groups — this fails
