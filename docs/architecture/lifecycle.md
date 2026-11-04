@@ -510,7 +510,9 @@ incident to the operator when the retry falls due. The ladder's generation is
 the head's, whatever the class of each failure. Due, a round's retry
 republishes ordinary queued work (only a pre-fanout stall binds its
 fanout-first instruction to the successor); a failed wake's retry hands the
-same command back to the supervisor's bounded replay. A failed wake's
+same command back to the supervisor's bounded replay, and that retry delivers
+the command once even when `session_command_max_start_retries` allows no
+immediate replay. A failed wake's
 incident is as loud as a round's: its `review_failed_loud` wake reaches the
 inbox and Slack names it as conversation work.
 

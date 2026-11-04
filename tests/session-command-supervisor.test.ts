@@ -338,6 +338,32 @@ describe("a transient provider failure", () => {
     });
   });
 
+  // MUTATION: compare recoverNonRound's replay against `retryCap` alone (drop
+  // the scheduled retry's allowance) — with no immediate replays configured,
+  // every automatic retry reopens the incident without delivering; this fails.
+  it("with no immediate replays configured, a scheduled retry still delivers once", async () => {
+    const noReplays = {
+      ...baseCfg,
+      daemon: { ...baseCfg.daemon, session_command_max_start_retries: 0 },
+    };
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 1 });
+    failWith(id, PROVIDER_429);
+    const retry = vi.fn(async () => "retried" as const);
+    const h = hooks({ killSession: vi.fn(async () => {}), retrySessionCommand: retry });
+
+    await supervisor(h, undefined, noReplays).supervisor.scan();
+    expect(retry).not.toHaveBeenCalled();
+    const failure = store.openReviewFailure(pr)!;
+    expect(failure).toMatchObject({ command_id: id, next_action: "retry_wait" });
+
+    clock = new Date(Date.parse(failure.next_retry_at!));
+    expect(store.activateDueReviewFailureRetries(clock.toISOString())).toHaveLength(1);
+    await supervisor(h, undefined, noReplays).supervisor.scan();
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(store.openReviewFailure(pr)).toBeUndefined();
+    expect(store.getSessionCommand(id)?.recovery_attempts).toBe(1);
+  });
+
   it("any other exhausted wake failure still needs the operator", async () => {
     const { id, pr } = seedWakeCommand({ status: "failed", attempt: 3 });
     store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id=?").run(id);

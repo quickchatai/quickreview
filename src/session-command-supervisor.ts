@@ -929,7 +929,13 @@ export class SessionCommandSupervisor {
       DEFAULT_SESSION_COMMAND_MAX_START_RETRIES;
     const effectiveReason = command.failure?.trim() || reason;
     const providerTransient = command.status === "failed" && isProviderTransient(effectiveReason);
-    if (providerTransient && command.recovery_attempts < retryCap) {
+    // A retry the ladder scheduled (its activation reset the count to zero)
+    // makes one delivery attempt even when no immediate replay is allowed.
+    const allowance = Math.max(
+      retryCap,
+      command.recovery_attempts === 0 && this.deps.store.commandRetryActivated(command.id) ? 1 : 0,
+    );
+    if (providerTransient && command.recovery_attempts < allowance) {
       const failedMs = Date.parse(command.failed_at ?? command.updated_at);
       const dueMs = failedMs + providerBackoffMs(command.recovery_attempts);
       if (Number.isFinite(dueMs) && this.now().getTime() < dueMs) {
@@ -948,7 +954,7 @@ export class SessionCommandSupervisor {
         return;
       }
     }
-    if (command.recovery_attempts < retryCap) {
+    if (command.recovery_attempts < allowance) {
       const retry = this.admitRecovery(command, retryCap, "command");
       const recoveryAttempt = command.recovery_attempts + 1;
       const result = await retry(command.id, effectiveReason);

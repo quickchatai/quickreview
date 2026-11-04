@@ -5416,6 +5416,20 @@ export class StateStore {
     };
   }
 
+  /** The command's newest incident was closed by an automatic retry
+   * (`activateCommandRetry`), which handed the failed command back for a
+   * replay: that scheduled retry is owed a delivery attempt of its own,
+   * whatever allowance of immediate replays the configuration gives. */
+  commandRetryActivated(commandId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT work_owed, recovery FROM review_failures
+          WHERE command_id=? ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(commandId) as { work_owed: number; recovery: string | null } | undefined;
+    return row?.work_owed === 0 && (row.recovery ?? "").startsWith("automatic-retry:");
+  }
+
   /** Close the debt an automatic retry just took over: the compare-and-swap
    * both activations share, inside their transaction. It requires the same
    * incident, generation and due state the activation selected, so a
