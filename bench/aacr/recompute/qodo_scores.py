@@ -3,6 +3,8 @@
 
     python3 bench/aacr/recompute/qodo_scores.py --data <hf-dataset> --verdicts DIR --judge LABEL
         [--runs WORK|TOOL,...] [--gain WORK|TOOL,WORK|TOOL] [--json OUT]
+    python3 bench/aacr/recompute/qodo_scores.py --data <hf-dataset> --judge LABEL
+        --from-judgements <work dir>/judgements.jsonl --work WORK [--tool [WORK|]FROM=TO ...] [--save DIR] [...]
 
 (`uv run --no-project --with pyarrow python ...` when the tables are parquet.) No model call.
 
@@ -16,6 +18,22 @@ carries. Matching is one to one (bench/aacr/ext/qodo_judge.py SYSTEM): a
 comment credits at most one issue and an issue at most one comment, and the
 script refuses a row that breaks it, names an issue or comment the PR does not
 have, or a review the release does not ship.
+
+--from-judgements reads our own judge's output instead, `judgements.jsonl` of a
+work dir `bench/aacr/ext/qodo_judge.py` wrote (`ext.sh qodo`, with
+EXT_JUDGE_MODEL for another model), and maps it to that table
+(judgements_rows): per PR and tool the first-pass row the judge's own scoring
+reads (qodo_judge.effective), one verdict per issue of the PR in `qodo_issues`,
+`matched` when a row of its `matches` names the issue and `comment_index` that
+row's `comment`. Every row gets `--work` as its `work_dir` (give both flags
+once per work dir, in the same order, to score several, such as the two
+builds of the held-out gain), and `--tool [WORK|]FROM=TO` renames a tool to
+the table's name, under one work dir or every one (the frozen build's
+`quickreview` is `quickreview-frozen` under `final1-qodo-pr100`,
+`quickreview-2026-10-02` under `ext-r6-qodo-pr100`). A judgement whose comments are not the published
+review's (by path and lines, in order) is refused: its comment indices would
+point at other comments. `--save DIR` also writes the mapped table there, the
+`--verdicts` input heldout.py takes.
 
 The location rule is not the judge's: as qodo_judge.py does, a match is a hit
 under the primary rule when the comment's file is the issue's and its lines
@@ -45,7 +63,9 @@ import argparse
 import copy
 import json
 import os
+import shutil
 import sys
+import tempfile
 from typing import Dict, List, Optional, Sequence, Tuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -53,7 +73,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "ext"))
 import claim_metrics as cm  # noqa: E402
 import heldout as H  # noqa: E402
-from qodo_judge import located  # noqa: E402
+from qodo_judge import effective, located  # noqa: E402
 from tables import has_table, load_table, with_judge  # noqa: E402
 
 OURS = H.QODO_JUDGE
@@ -106,6 +126,41 @@ def verdict_rows(data: str, extra: str, judge: str) -> List[dict]:
             if r.get(f) is not None and bool(r[f]) != v:
                 raise SystemExit(f"{f} {r[f]} disagrees with the comment's location ({v}): {k}")
         out.append(dict(row, **got))
+    return out
+
+
+def judgements_rows(data: str, path: str, work: str, tools: Dict[str, str]) -> List[dict]:
+    """qodo_judge.py's judgements.jsonl as `qodo_verdicts` rows (the module docstring)."""
+    issues: Dict[str, int] = {}
+    for i in load_table(data, "qodo_issues"):
+        issues[i["pr_url"]] = max(issues.get(i["pr_url"], 0), i["issue_index"] + 1)
+    reviews = {(r["work_dir"], r["tool"], r["pr_url"]): r["comments"] or [] for r in load_table(data, "qodo_reviews")}
+    with open(path) as f:
+        got = effective(f)
+    shipped: Dict[str, set] = {}
+    for w, t, _ in reviews:
+        shipped.setdefault(w, set()).add(t)
+    out, skipped = [], 0
+    for j in sorted(got, key=lambda x: (x["pr"], x["tool"])):
+        url, tool = j["pr"], tools.get(j["tool"], j["tool"])
+        if url not in issues:
+            skipped += 1  # a PR the benchmark's answer key does not hold (the export skips it too)
+            continue
+        if work in shipped and tool not in shipped[work]:
+            raise SystemExit(f"{path}: the release ships {work}'s reviews under {sorted(shipped[work])}, not "
+                             f"{tool!r}: name it with --tool '{work}|{j['tool']}=<one of those>'")
+        pub = reviews.get((work, tool, url))
+        mine = [(c.get("path"), c.get("start"), c.get("end")) for c in j.get("comments") or []]
+        if pub is not None and mine != [(c.get("path"), c.get("start"), c.get("end")) for c in pub]:
+            raise SystemExit(f"{path}: the judgement of {work}|{tool} {url} is of other comments than the published "
+                             f"review's ({len(mine)} against {len(pub)}): its comment indices would point elsewhere")
+        by_issue = {m["issue"]: m for m in j.get("matches") or []}
+        for i in range(issues[url]):
+            m = by_issue.get(i)
+            out.append({"work_dir": work, "tool": tool, "pr_url": url, "issue_index": i,
+                        "matched": m is not None, "comment_index": m["comment"] if m else None})
+    if skipped:
+        print(f"{path}: {skipped} judgement(s) of PRs not in qodo_issues skipped", file=sys.stderr)
     return out
 
 
@@ -174,7 +229,16 @@ def render(res: dict, judge: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", required=True, help="the Hugging Face dataset dir (or its data/ dir)")
-    ap.add_argument("--verdicts", required=True, help="the dir holding your judge's qodo_verdicts")
+    ap.add_argument("--verdicts", help="the dir holding your judge's qodo_verdicts")
+    ap.add_argument("--from-judgements", action="append", default=[], metavar="JSONL",
+                    help="instead of --verdicts: qodo_judge.py's judgements.jsonl, mapped to qodo_verdicts "
+                         "(repeatable, each with its --work)")
+    ap.add_argument("--work", action="append", default=[],
+                    help="with --from-judgements: the work_dir its rows score (e.g. final1-qodo-pr100)")
+    ap.add_argument("--tool", action="append", default=[], metavar="[WORK|]FROM=TO",
+                    help="with --from-judgements: rename a tool to the table's name, under one work dir or all "
+                         "(repeatable), e.g. final1-qodo-pr100|quickreview=quickreview-frozen")
+    ap.add_argument("--save", help="with --from-judgements: also write the mapped qodo_verdicts.jsonl to this dir")
     ap.add_argument("--judge", required=True, help="your judge's label (one no published row carries)")
     ap.add_argument("--runs", help="WORK|TOOL, comma-separated (default: every run your judge judged)")
     ap.add_argument("--gain", help="X,Y (two WORK|TOOL runs): X's held-out recall gain over Y")
@@ -184,10 +248,31 @@ def main() -> None:
                     help="count every PR of the run even when your judge judged only some (those have no hit)")
     ap.add_argument("--json", help="also write every number to this JSON file")
     a = ap.parse_args()
+    if bool(a.verdicts) == bool(a.from_judgements):
+        sys.exit("give your judge's answers once: --verdicts DIR or --from-judgements JSONL --work WORK")
+    if a.from_judgements:
+        if len(a.work) != len(a.from_judgements):
+            sys.exit("give one --work (the work_dir its judgements score) per --from-judgements, in the same order")
+        bad = [x for x in a.tool if "=" not in x]
+        if bad:
+            sys.exit(f"--tool wants [WORK|]FROM=TO, got {bad}")
+        rename = [(x.split("=", 1)[0].rpartition("|"), x.split("=", 1)[1]) for x in a.tool]
+        rows = []
+        for path, work in zip(a.from_judgements, a.work):
+            tools = {src: to for (w, _, src), to in rename if w in ("", work)}
+            rows += judgements_rows(a.data, path, work, tools)
+        a.verdicts = a.save or tempfile.mkdtemp(prefix="qodo-judgements-")
+        os.makedirs(a.verdicts, exist_ok=True)
+        with open(os.path.join(a.verdicts, "qodo_verdicts.jsonl"), "w") as f:
+            f.writelines(json.dumps(r) + "\n" for r in rows)
     if not has_table(a.verdicts, "qodo_verdicts"):
         sys.exit(f"{a.verdicts}: no qodo_verdicts.parquet or .jsonl")
     t = cm.Tables(a.data)
-    t._t["qodo_verdicts"] = verdict_rows(a.data, a.verdicts, a.judge)
+    try:
+        t._t["qodo_verdicts"] = verdict_rows(a.data, a.verdicts, a.judge)
+    finally:
+        if a.from_judgements and not a.save:
+            shutil.rmtree(a.verdicts)
     have = sorted({f"{v['work_dir']}|{v['tool']}" for v in t("qodo_verdicts") if v["judge"] == a.judge})
     runs = [x for x in (a.runs.split(",") if a.runs else have) if x]
     missing = [x for x in runs if x not in have]

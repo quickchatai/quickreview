@@ -3,6 +3,9 @@
 
     python3 bench/aacr/recompute/martian_scores.py --data <hf-dataset> [--verdicts DIR --judge LABEL]
         [--runs WORK|TOOL,...] [--half martian-test30|martian-tune20] [--json OUT]
+    python3 bench/aacr/recompute/martian_scores.py --data <hf-dataset> --judge LABEL
+        --from-evaluations <work>.martian/results/<model>/evaluations.json --work WORK
+        [--tool [WORK|]FROM=TO ...] [--save DIR] [...]
 
 (`uv run --no-project --with pyarrow python ...` when the tables are parquet.) No model call.
 
@@ -30,6 +33,21 @@ does not have or on a PR the run has no fp for, a repeated row, and a run
 whose review the release does not ship. Without DIR it recomputes our judge's
 runs and checks them against the stored scores.
 
+--from-evaluations reads our own judge's output instead: Martian's step 3
+writes `results/<model>/evaluations.json` in a scoring dir (`ext.sh martian`,
+with EXT_JUDGE_MODEL for another model), {pr_url: {tool: {true_positives:
+[{golden_comment, ...}], false_positives, fp, ...}}}. It is mapped to the two
+tables (evaluations_rows): per PR and tool, one `martian_verdicts` row per
+golden of the PR in `martian_goldens`, matched when a true positive's
+`golden_comment` is that golden's `comment` (a golden text the PR does not
+have is refused), and one `martian_reviews` row whose `fp` is the entry's `fp`
+(the number of its `false_positives` when it has none). Every row gets
+`--work` as its `work_dir` (give both flags once per scoring dir, in the same
+order, to score several), and `--tool [WORK|]FROM=TO` renames a tool to the
+table's name, under one work dir or every one (the frozen build's
+`quickreview` is `quickreview-frozen` under `final1-martian50`). `--save DIR`
+also writes the mapped tables there, the `--verdicts` input heldout.py takes.
+
 --half recounts on one half's PRs (a committed set file, as claim_metrics'
 `WORK|TOOL~HALF` keys do). When your judge judged only some of the PRs ours
 judged (a sample), our column is counted over your judge's PRs too, and the
@@ -41,8 +59,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+import tempfile
+from typing import Dict, List, Optional, Set, Tuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -95,6 +115,40 @@ def _load(data: str, extra: str, judge: str) -> Tuple[List[dict], List[dict]]:
             raise SystemExit(f"two verdicts for {k}")
         seen.add(k)
     return vs, rs
+
+
+def evaluations_rows(data: str, path: str, work: str, tools: Dict[str, str]) -> Tuple[List[dict], List[dict]]:
+    """Martian's evaluations.json as (martian_verdicts, martian_reviews) rows (the module docstring)."""
+    golden: Dict[str, Dict[str, int]] = {}
+    for g in load_table(data, "martian_goldens"):
+        golden.setdefault(g["pr_url"], {})[g["comment"]] = g["golden_index"]
+    shipped: Dict[str, Set[str]] = {}
+    for r in load_table(data, "martian_reviews"):
+        shipped.setdefault(r["work_dir"], set()).add(r["tool"])
+    with open(path) as f:
+        evals = json.load(f)
+    verdicts, reviews = [], []
+    for url in sorted(evals):
+        if url not in golden:
+            raise SystemExit(f"{path}: PR {url} is not in martian_goldens")
+        for src, e in sorted((evals[url] or {}).items()):
+            tool = tools.get(src, src)
+            if work in shipped and tool not in shipped[work]:
+                raise SystemExit(f"{path}: the release ships {work}'s reviews under {sorted(shipped[work])}, not "
+                                 f"{tool!r}: name it with --tool '{work}|{src}=<one of those>'")
+            hit = set()
+            for tp in e.get("true_positives") or []:
+                i = golden[url].get(tp.get("golden_comment"))
+                if i is None:
+                    raise SystemExit(f"{path}: {src} on {url} matched a golden comment the PR does not have in "
+                                     f"martian_goldens: {str(tp.get('golden_comment'))[:80]!r}")
+                hit.add(i)
+            verdicts += [{"work_dir": work, "tool": tool, "pr_url": url, "golden_index": i, "matched": i in hit}
+                         for i in sorted(golden[url].values())]
+            fp = e.get("fp")
+            reviews.append({"work_dir": work, "tool": tool, "pr_url": url,
+                            "fp": fp if isinstance(fp, int) else len(e.get("false_positives") or [])})
+    return verdicts, reviews
 
 
 def counts(goldens: List[dict], verdicts: List[dict], reviews: List[dict], work: str, tool: str, judge: str,
@@ -170,6 +224,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", required=True, help="the Hugging Face dataset dir (or its data/ dir)")
     ap.add_argument("--verdicts", help="the dir holding your judge's martian_verdicts and martian_reviews (fp)")
+    ap.add_argument("--from-evaluations", action="append", default=[], metavar="JSON",
+                    help="instead of --verdicts: Martian's results/<model>/evaluations.json, mapped to the two "
+                         "tables (repeatable, each with its --work)")
+    ap.add_argument("--work", action="append", default=[],
+                    help="with --from-evaluations: the work_dir its rows score (e.g. final1-martian50)")
+    ap.add_argument("--tool", action="append", default=[], metavar="[WORK|]FROM=TO",
+                    help="with --from-evaluations: rename a tool to the table's name, under one work dir or all "
+                         "(repeatable), e.g. final1-martian50|quickreview=quickreview-frozen")
+    ap.add_argument("--save", help="with --from-evaluations: also write the mapped tables (.jsonl) to this dir")
     ap.add_argument("--judge", help="your judge's label (one no published row carries)")
     ap.add_argument("--runs", help="WORK|TOOL, comma-separated (default: every run the judge judged)")
     ap.add_argument("--half", help="recount on one half's PRs: a set file name (martian-test30, martian-tune20)")
@@ -178,15 +241,40 @@ def main() -> None:
                     help="count our judge over all its PRs even when yours judged only some")
     ap.add_argument("--json", help="also write every number to this JSON file")
     a = ap.parse_args()
+    if a.verdicts and a.from_evaluations:
+        sys.exit("give your judge's answers once: --verdicts DIR or --from-evaluations JSON --work WORK")
+    tmp = None
+    if a.from_evaluations:
+        if len(a.work) != len(a.from_evaluations):
+            sys.exit("give one --work (the work_dir its evaluations score) per --from-evaluations, in the same order")
+        bad = [x for x in a.tool if "=" not in x]
+        if bad:
+            sys.exit(f"--tool wants [WORK|]FROM=TO, got {bad}")
+        rename = [(x.split("=", 1)[0].rpartition("|"), x.split("=", 1)[1]) for x in a.tool]
+        vs_new, rs_new = [], []
+        for path, work in zip(a.from_evaluations, a.work):
+            v, r = evaluations_rows(a.data, path, work, {src: to for (w, _, src), to in rename if w in ("", work)})
+            vs_new += v
+            rs_new += r
+        a.verdicts = a.save or tempfile.mkdtemp(prefix="martian-evaluations-")
+        tmp = None if a.save else a.verdicts
+        os.makedirs(a.verdicts, exist_ok=True)
+        for name, rows in (("martian_verdicts", vs_new), ("martian_reviews", rs_new)):
+            with open(os.path.join(a.verdicts, f"{name}.jsonl"), "w") as f:
+                f.writelines(json.dumps(x) + "\n" for x in rows)
     if bool(a.verdicts) != bool(a.judge):
-        sys.exit("--verdicts and --judge go together: your judge's answers and its label")
+        sys.exit("--verdicts (or --from-evaluations) and --judge go together: your judge's answers and its label")
     judge = a.judge or OURS
     goldens = load_table(a.data, "martian_goldens")
     if a.verdicts:
         for t in ("martian_verdicts", "martian_reviews"):
             if not has_table(a.verdicts, t):
                 sys.exit(f"{a.verdicts}: no {t}.parquet or .jsonl")
-        vs, rs = _load(a.data, a.verdicts, judge)
+        try:
+            vs, rs = _load(a.data, a.verdicts, judge)
+        finally:
+            if tmp:
+                shutil.rmtree(tmp)
     else:
         vs, rs = load_table(a.data, "martian_verdicts"), load_table(a.data, "martian_reviews")
     scores = load_table(a.data, "martian_scores")

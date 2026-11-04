@@ -473,21 +473,10 @@ def aacr_arms() -> list[dict]:
 
 def qodo_effective(lines) -> list[dict]:
     """The pass-1 judgement per (PR, tool) that qodo_judge.py scores from its
-    append-only judgements.jsonl: the last record without an error, else the
-    last record. A retry appends its replacement and never removes the errored
-    record, so reading every line would export a review twice."""
-    best: dict[tuple[str, str], dict] = {}
-    for line in lines:
-        if not line.strip():
-            continue
-        j = json.loads(line)
-        if j["pass"] != 1:
-            continue
-        k = (j["pr"], j["tool"])
-        prev = best.get(k)
-        if prev is None or "error" in prev["meta"] or "error" not in j["meta"]:
-            best[k] = j
-    return list(best.values())
+    append-only judgements.jsonl (qodo_judge.effective, which
+    recompute/qodo_scores.py --from-judgements reads too)."""
+    import qodo_judge
+    return qodo_judge.effective(lines)
 
 
 # ---------------------------------------------------------------------------

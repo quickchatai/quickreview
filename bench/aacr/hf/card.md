@@ -664,6 +664,16 @@ aacr_bootstrap.py --data $D --verdicts DIR --judge LABEL --arms a,b     # the in
 heldout.py --data $D --fixed-set --verdicts DIR --judge LABEL           # the held-out PRs
 ```
 
+If you re-ran our own judge instead (`bench.sh judge` over the archive's run
+directories, as "Reproduce" in `bench/aacr/README.md` says), score its files
+directly: `score_verdicts.py --data $D --judge LABEL --from-judgements ARM
+--runs-dir <archive>/runs --judge-dir NAME` reads each run's
+`judge/v<key version>-NAME/` in the arm's `runs` (`NAME` is the label the
+judge wrote under, such as `openai-gpt-6-sol-high` on your own key), and
+`--save DIR` writes the two tables for `aacr_bootstrap.py` and `heldout.py`.
+Run on our judge's own files in the archive (`--judge-dir gpt-6-sol-high`),
+it prints the published numbers.
+
 **Martian.** Input: the `martian_reviews` rows of QuickReview, by `work_dir`
 and `tool` as a claim's key names them (the frozen build: `final1-martian50`,
 `quickreview-frozen`), or the archive's `runs/<work_dir>.martian/results/benchmark_data.json`,
@@ -674,16 +684,19 @@ gives the commands to run them with no docker (through its bridge for a
 Responses API model, or with `MARTIAN_BASE_URL` set straight to a Chat
 Completions endpoint). Output: `martian_verdicts` (work_dir, tool, pr_url,
 golden_index, matched) and `martian_reviews` (work_dir, tool, pr_url, fp: the
-PR's unmatched candidates). Martian's pipeline writes
-`results/<model>/evaluations.json` instead; the export mapped it so: a
-matched golden's `golden_index` is that of the `martian_goldens` row of the
-PR whose `comment` equals its `golden_comment`, `fp` is the PR's `fp` (the
-number of its `false_positives`), and the tool takes the table's name (the
-frozen build's `quickreview` is `quickreview-frozen`). Score:
+PR's unmatched candidates). Score:
 
 ```sh
 martian_scores.py --data $D --verdicts DIR --judge LABEL [--runs WORK|TOOL] [--half martian-test30]
+martian_scores.py --data $D --judge LABEL --work final1-martian50 \
+    --from-evaluations <dir>/results/<model>/evaluations.json --tool 'final1-martian50|quickreview=quickreview-frozen'
 ```
+
+The second form reads Martian's pipeline output (`results/<model>/evaluations.json`)
+as the export does: a golden is matched when a true positive's `golden_comment`
+is its `comment`, `fp` is the PR's, and `--tool` gives the tool the table's
+name. Run on our judge's own file in the archive, it prints the published
+scores.
 
 Without `--verdicts` it recomputes our judge's stored scores and fails on
 any difference.
@@ -695,16 +708,19 @@ judge was sent. Answer key: `qodo_issues`. Our judge's prompt is `SYSTEM` in
 `bench/aacr/ext/qodo_judge.py`, and `ask()` there builds the user message
 (it cuts long comment text and issue code); the code, not the judge, applies
 the location rule (`located()`). Output: `qodo_verdicts` (work_dir, tool,
-pr_url, issue_index, matched, comment_index). `qodo_judge.py` writes
-`judgements.jsonl` instead; the export mapped it so: per PR and tool the last
-first-pass row without an error, one verdict per issue of the PR in
-`qodo_issues`, `matched` when a row of its `matches` names the issue and
-`comment_index` that row's `comment`, `work_dir` the run's, and the tool the
-table's name. Score:
+pr_url, issue_index, matched, comment_index). Score:
 
 ```sh
 qodo_scores.py --data $D --verdicts DIR --judge LABEL [--runs WORK|TOOL,...]
+qodo_scores.py --data $D --judge LABEL --work final1-qodo-pr100 \
+    --from-judgements <dir>/judgements.jsonl --tool 'final1-qodo-pr100|quickreview=quickreview-frozen'
 ```
+
+The second form reads `qodo_judge.py`'s `judgements.jsonl` as the export
+does (per PR and tool the first-pass row its own scoring reads, one verdict per
+issue) and refuses a judgement of comments other than the published review's;
+give `--from-judgements` and `--work` once per work dir to score both builds.
+Run on our judge's own files in the archive, it prints the published scores.
 
 It also scores the held-out PRs (`sets/qodo-heldout31.json`) and the
 frozen build's held-out gain over the 2026-10-02 build.

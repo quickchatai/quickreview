@@ -67,6 +67,20 @@ score of our judge whose reviews ship from the verdict tables, fails on any
 difference, and names the stored scores it cannot recompute (no
 `martian_reviews` rows).
 
+Our own judge pipelines' output needs no hand mapping: run again on another
+model, it is read straight from its files, mapped as the export maps ours,
+and `--save DIR` writes the tables `--verdicts` takes:
+
+    score_verdicts.py --data <hf-dataset> --judge LABEL --from-judgements ARM[,ARM] --runs-dir <runs> --judge-dir NAME   # bench.sh judge's judge/v<key>-NAME/
+    martian_scores.py --data <hf-dataset> --judge LABEL --from-evaluations <work>.martian/results/<model>/evaluations.json --work WORK [--tool 'WORK|FROM=TO']
+    qodo_scores.py --data <hf-dataset> --judge LABEL --from-judgements <work>.qodo/judgements.jsonl --work WORK [--tool 'WORK|FROM=TO']
+
+`--tool` gives a tool the table's name (the frozen build's `quickreview` is
+`quickreview-frozen` under `final1-martian50` and `final1-qodo-pr100`, and
+`quickreview-2026-10-02` under `ext-r6-qodo-pr100`); the Martian and Qodo
+flags repeat with their `--work`, once per work dir. Run on our judge's own
+files in the run archive, each prints the published numbers.
+
 When your judge judged only some of the PRs ours did (a sample),
 `score_verdicts.py`, `qodo_scores.py` and `martian_scores.py` count both
 columns over your judge's PRs and say so in the header; `--whole-run` counts

@@ -142,22 +142,29 @@ The dataset card's section of the same name says the same per benchmark.
   prints the one it received. Output: `defect_verdicts` (and optionally
   `comment_verdicts`). Score: `score_verdicts.py --data D --verdicts DIR
   --judge LABEL`; `aacr_bootstrap.py` and `heldout.py --fixed-set` take the
-  same `--verdicts DIR --judge LABEL`.
+  same `--verdicts DIR --judge LABEL`. Our judge's own files, re-run on
+  another model (as above): `score_verdicts.py --data D --judge LABEL
+  --from-judgements ARM --runs-dir RUNS --judge-dir NAME`, with `--save DIR`
+  for the other two.
 - **Martian.** Input: QuickReview's `martian_reviews` rows (the frozen build:
   `final1-martian50`, `quickreview-frozen`), or the archive's
   `runs/<run>.martian/results/benchmark_data.json`. Answer key:
   `martian_goldens`. Our judge: Martian's own pipeline at `e616e84` on
   GPT-6.1 Sol; [`ext/ext_judge.py`](ext/ext_judge.py)'s docstring runs it
   with no docker. Output: `martian_verdicts` and the per-PR `fp` of
-  `martian_reviews` (the card maps the pipeline's `evaluations.json` to them). Score: `martian_scores.py --data D --verdicts DIR
-  --judge LABEL`.
+  `martian_reviews`. Score: `martian_scores.py --data D --verdicts DIR
+  --judge LABEL`, or, on the pipeline's own output, `martian_scores.py
+  --data D --judge LABEL --from-evaluations <dir>/results/<model>/evaluations.json
+  --work final1-martian50 --tool 'final1-martian50|quickreview=quickreview-frozen'`.
 - **Qodo.** Input: `qodo_reviews` of `final1-qodo-pr100` / `quickreview-frozen`
   or `ext-r6-qodo-pr100` / `quickreview-2026-10-02`, what our judge was sent
   (`ask()` builds the message and cuts long text). Answer key: `qodo_issues`.
   Our judge's prompt: `SYSTEM` in [`ext/qodo_judge.py`](ext/qodo_judge.py).
-  Output: `qodo_verdicts` (the card maps `judgements.jsonl` to them). Score:
-  `qodo_scores.py --data D --verdicts DIR --judge LABEL`, which also scores
-  the held-out set, `sets/qodo-heldout31.json`.
+  Output: `qodo_verdicts`. Score: `qodo_scores.py --data D --verdicts DIR
+  --judge LABEL`, or, on `qodo_judge.py`'s own output, `qodo_scores.py --data
+  D --judge LABEL --from-judgements <dir>/judgements.jsonl --work
+  final1-qodo-pr100 --tool 'final1-qodo-pr100|quickreview=quickreview-frozen'`;
+  either also scores the held-out set, `sets/qodo-heldout31.json`.
 - **Copilot 2025.** Input: the arms of `tab:copilot2025` (the card maps each
   row to its arm) on the PRs of `copilot-2025-upstream`
   ([`final/copilot19.txt`](final/copilot19.txt)). Judge and output as for

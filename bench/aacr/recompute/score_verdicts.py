@@ -3,6 +3,8 @@
 
     python3 bench/aacr/recompute/score_verdicts.py --data <hf-dataset> --verdicts DIR --judge LABEL
         [--arms a,b,...] [--select SEL] [--json OUT]
+    python3 bench/aacr/recompute/score_verdicts.py --data <hf-dataset> --judge LABEL
+        --from-judgements ARM[,ARM...] --runs-dir RUNS [--runs-dir ...] --judge-dir NAME [--save DIR] [...]
 
 (`uv run --no-project --with pyarrow python ...` when the tables are parquet.) No model call.
 
@@ -35,6 +37,17 @@ counted over your judge's PRs alone, and the header says how many of ours that i
 counts as missed (so its numbers are not comparable with ours).
 `aacr_bootstrap.py --verdicts DIR --judge LABEL` gives the intervals and
 `heldout.py --verdicts DIR --judge LABEL --fixed-set` the held-out PRs.
+
+--from-judgements reads our own judge's output instead (`bench.sh judge`, Tier
+2 of bench/aacr/README.md, with another model and `--label NAME`): each run
+dir's `judge/v<key version>-<NAME>/<instance>.r1.json` (its `defects`, each
+id and verdict, and its `comments`, each id, verdict, defect and new_defect),
+mapped to the two tables (judgements_rows). An arm's run dirs are `arms.runs`,
+found under the first `--runs-dir` that holds each (the unpacked archive's
+`runs/`, or your own runs dir); a PR is read from the first of them with a
+judgement of it that is not an error, as compare.py scores an arm, and only
+the arm's published PRs are read. `--save DIR` also writes the mapped tables
+there, the `--verdicts` input aacr_bootstrap.py and heldout.py take.
 """
 from __future__ import annotations
 
@@ -42,7 +55,9 @@ import argparse
 import copy
 import json
 import os
+import shutil
 import sys
+import tempfile
 from typing import Dict, List, Optional, Sequence
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -106,6 +121,44 @@ def comment_rows(data: str, extra: str, judge: str) -> List[dict]:
             raise SystemExit(f"two comment verdicts for {k}")
         seen.add(k)
     return rows
+
+
+def judgements_rows(data: str, arms: Sequence[str], runs_dirs: Sequence[str], judge_dir: str) -> Dict[str, List[dict]]:
+    """Our AACR judge's per-PR files as defect_verdicts and comment_verdicts rows (the module docstring)."""
+    version = {p["instance_id"]: p["key_version"] for p in load_table(data, "prs")}
+    runs_of = {a["arm_id"]: list(a.get("runs") or []) for a in load_table(data, "arms")}
+    published = {(r["arm_id"], r["instance_id"]) for t in ("reviews", "defect_verdicts") for r in load_table(data, t)}
+    out: Dict[str, List[dict]] = {"defect_verdicts": [], "comment_verdicts": []}
+    for arm in arms:
+        if arm not in runs_of:
+            raise SystemExit(f"--from-judgements: no arm {arm!r} in arms")
+        dirs = []
+        for run in runs_of[arm]:
+            found = next((os.path.join(d, run) for d in runs_dirs if os.path.isdir(os.path.join(d, run))), None)
+            if found is None:
+                raise SystemExit(f"--from-judgements: arm {arm}'s run dir {run} is under no --runs-dir {list(runs_dirs)}")
+            dirs.append(found)
+        n = 0
+        for iid in sorted(i for a, i in published if a == arm):
+            sub = judge_dir if judge_dir.startswith("wpself-") else f"v{version.get(iid)}-{judge_dir}"
+            for d in dirs:
+                try:
+                    with open(os.path.join(d, "judge", sub, f"{iid}.r1.json")) as f:
+                        j = json.load(f)
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(j, dict) or j.get("error"):
+                    continue
+                n += 1
+                out["defect_verdicts"] += [{"arm_id": arm, "instance_id": iid, "defect_id": x["id"],
+                                            "verdict": x.get("verdict")} for x in j.get("defects") or []]
+                out["comment_verdicts"] += [{"arm_id": arm, "instance_id": iid, "comment_id": c["id"],
+                                             "grade": c.get("verdict"), "defect_id": c.get("defect"),
+                                             "new_defect": c.get("new_defect")} for c in j.get("comments") or []]
+                break
+        if not n:
+            raise SystemExit(f"--from-judgements: no judge/v<key>-{judge_dir}/ judgement of arm {arm} in its run dirs")
+    return out
 
 
 class WithJudge(cm.Tables):
@@ -198,7 +251,13 @@ def render(res: Dict[str, dict], judge: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", required=True, help="the Hugging Face dataset dir (or its data/ dir)")
-    ap.add_argument("--verdicts", required=True, help="the dir holding your judge's defect_verdicts (and comment_verdicts)")
+    ap.add_argument("--verdicts", help="the dir holding your judge's defect_verdicts (and comment_verdicts)")
+    ap.add_argument("--from-judgements", metavar="ARM[,ARM...]",
+                    help="instead of --verdicts: our AACR judge's files in these arms' run dirs, mapped to the tables")
+    ap.add_argument("--runs-dir", action="append", default=[],
+                    help="with --from-judgements: a dir holding the arms' run dirs (repeatable, searched in order)")
+    ap.add_argument("--judge-dir", help="with --from-judgements: the judge's label, its dirs judge/v<key>-<label>/")
+    ap.add_argument("--save", help="with --from-judgements: also write the mapped tables (.jsonl) to this dir")
     ap.add_argument("--judge", required=True, help="your judge's label (one no published row carries)")
     ap.add_argument("--arms", help="arm ids, comma-separated (default: every arm your judge judged)")
     ap.add_argument("--select", default="", help="the PRs to score, a claim_metrics.Aacr selector "
@@ -207,9 +266,26 @@ def main() -> None:
                     help="count every PR of the arm even when your judge judged only some (those count as missed)")
     ap.add_argument("--json", help="also write every number to this JSON file")
     a = ap.parse_args()
+    if bool(a.verdicts) == bool(a.from_judgements):
+        sys.exit("give your judge's answers once: --verdicts DIR or --from-judgements ARM --runs-dir RUNS --judge-dir NAME")
+    tmp = None
+    if a.from_judgements:
+        if not (a.runs_dir and a.judge_dir):
+            sys.exit("--from-judgements needs --runs-dir (where the arms' run dirs are) and --judge-dir (the judge's label)")
+        rows = judgements_rows(a.data, [x for x in a.from_judgements.split(",") if x], a.runs_dir, a.judge_dir)
+        a.verdicts = a.save or tempfile.mkdtemp(prefix="aacr-judgements-")
+        tmp = None if a.save else a.verdicts
+        os.makedirs(a.verdicts, exist_ok=True)
+        for name, xs in rows.items():
+            with open(os.path.join(a.verdicts, f"{name}.jsonl"), "w") as f:
+                f.writelines(json.dumps(x) + "\n" for x in xs)
     if not has_table(a.verdicts, "defect_verdicts"):
         sys.exit(f"{a.verdicts}: no defect_verdicts.parquet or .jsonl")
-    t = WithJudge(a.data, a.verdicts, a.judge)
+    try:
+        t = WithJudge(a.data, a.verdicts, a.judge)
+    finally:
+        if tmp:
+            shutil.rmtree(tmp)
     have = sorted({arm for arm, _ in t.judged})
     arms = [x for x in (a.arms.split(",") if a.arms else have) if x]
     missing = [x for x in arms if x not in have]

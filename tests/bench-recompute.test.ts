@@ -24,7 +24,9 @@
 //      --judge on aacr_bootstrap and heldout score them beside ours and refuse
 //      what the release cannot place; score_verdicts --select scores only the PRs
 //      a claim's selector names; a judge of some PRs is scored beside ours on
-//      those PRs alone; elo_ratings rates the plan's judges;
+//      those PRs alone; elo_ratings rates the plan's judges; our own judge
+//      pipelines' files (--from-judgements for AACR and Qodo, --from-evaluations
+//      for Martian) score exactly as the same answers in tables do;
 //   8. judge_prompt equals defects.ts judgePrompt() on the same inputs, refuses
 //      a link-only review and writes no prompt the judge was never given.
 
@@ -677,8 +679,12 @@ describe("another judge's verdicts", () => {
   });
   // Ours: p1/d1 found, p1/d2 partial, p2/d1 found, p3/d1 no row (2.5 of 4);
   // mine: p1/d2 missed, p3/d1 found (3 of 4). Two of the four pairs agree.
-  jsonl(D, "prs", PRS);
-  jsonl(D, "arms", [{ arm_id: F, judge: J }]);
+  jsonl(
+    D,
+    "prs",
+    PRS.map((p) => ({ ...p, key_version: 2 })),
+  );
+  jsonl(D, "arms", [{ arm_id: F, judge: J, runs: ["r-a", "r-b"] }]);
   jsonl(D, "defects", DEFECTS);
   jsonl(
     D,
@@ -778,9 +784,15 @@ describe("another judge's verdicts", () => {
   ]);
   // Martian: m1 has a bug and a style golden, m2 a bug; ours matched both of m1's.
   jsonl(D, "martian_goldens", [
-    { pr_url: "m1", golden_index: 0, category: "bug", audit_bucket: "real" },
-    { pr_url: "m1", golden_index: 1, category: "style", audit_bucket: "real" },
-    { pr_url: "m2", golden_index: 0, category: "bug", audit_bucket: "real" },
+    { pr_url: "m1", golden_index: 0, category: "bug", audit_bucket: "real", comment: "g-m1-bug" },
+    {
+      pr_url: "m1",
+      golden_index: 1,
+      category: "style",
+      audit_bucket: "real",
+      comment: "g-m1-style",
+    },
+    { pr_url: "m2", golden_index: 0, category: "bug", audit_bucket: "real", comment: "g-m2-bug" },
   ]);
   jsonl(D, "martian_reviews", [
     { ...MW, judge: QJ, pr_url: "m1", fp: 3 },
@@ -1067,6 +1079,234 @@ describe("another judge's verdicts", () => {
     jsonl(bad, "martian_reviews", [{ ...MW, pr_url: "m2", fp: 0 }]);
     expect(refused("martian_scores.py", "--data", D, "--verdicts", bad, "--judge", "x")).toMatch(
       /a golden the PR does not have/,
+    );
+  });
+
+  // Our own pipelines' output, read by --from-judgements / --from-evaluations: the same answers as MINE.
+  const put = (path: string, text: string) => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, text);
+  };
+  const RUNS = join(tmp, "rejudge-runs");
+  const judgement = (run: string, ver: number, iid: string, j: object) =>
+    put(join(RUNS, run, "judge", `v${ver}-myj`, `${iid}.r1.json`), JSON.stringify(j));
+  const dj = (defects: [string, string][], grade: string) => ({
+    defects: defects.map(([id, verdict]) => ({ id, verdict, comments: [], why: "w" })),
+    comments: [{ id: "C1", verdict: grade, defect: null, new_defect: false, why: "w" }],
+  });
+  judgement("r-a", 2, "p1", { error: "the judge timed out" });
+  judgement("r-a", 2, "p2", dj([["d1", "found"]], "correct-minor"));
+  judgement(
+    "r-b",
+    2,
+    "p1",
+    dj(
+      [
+        ["d1", "found"],
+        ["d2", "missed"],
+      ],
+      "correct-valuable",
+    ),
+  );
+  judgement("r-b", 2, "p2", dj([["d1", "missed"]], "incorrect")); // a later run's: never read
+  judgement("r-b", 2, "p3", dj([["d1", "found"]], "correct-minor"));
+  judgement("r-b", 1, "p3", dj([["d1", "missed"]], "incorrect")); // another key version's dir
+
+  // MUTATION: in score_verdicts.judgements_rows, read every run's judgement of a PR (drop the `break`) — this fails
+  // MUTATION: in score_verdicts.judgements_rows, read an errored judgement (drop the `j.get("error")` test) — this fails
+  // MUTATION: in score_verdicts.judgements_rows, take a comment's grade from c["grade"], not its "verdict" — this fails
+  it("score_verdicts --from-judgements scores our judge's own files as the same tables would", () => {
+    const save = join(tmp, "rejudge-saved");
+    const r = json(
+      "score_verdicts.py",
+      "--data",
+      D,
+      "--judge",
+      "my-judge",
+      "--from-judgements",
+      F,
+      "--runs-dir",
+      join(tmp, "nowhere"),
+      "--runs-dir",
+      RUNS,
+      "--judge-dir",
+      "myj",
+      "--save",
+      save,
+    ).arms[F];
+    const mine = json("score_verdicts.py", "--data", D, "--verdicts", MINE, "--judge", "my-judge")
+      .arms[F];
+    expect(r).toEqual(mine);
+    expect(r["my-judge"]).toMatchObject({ found: 3, defects: 4, recall: 75, correct: 100 });
+    expect(
+      readFileSync(join(save, "defect_verdicts.jsonl"), "utf8").trim().split("\n"),
+    ).toHaveLength(4);
+    expect(
+      refused(
+        "score_verdicts.py",
+        "--data",
+        D,
+        "--judge",
+        "x",
+        "--from-judgements",
+        F,
+        "--runs-dir",
+        RUNS,
+      ),
+    ).toMatch(/needs --runs-dir .* and --judge-dir/);
+    expect(
+      refused(
+        "score_verdicts.py",
+        "--data",
+        D,
+        "--judge",
+        "x",
+        "--from-judgements",
+        F,
+        "--runs-dir",
+        tmp,
+        "--judge-dir",
+        "myj",
+      ),
+    ).toMatch(/run dir r-a is under no --runs-dir/);
+  });
+
+  const QJL = join(tmp, "rejudge-qodo", "judgements.jsonl");
+  const qcm = (path: string, line: number) => ({ path, start: line, end: line, body: "b" });
+  const qrow = (
+    pr: string,
+    pass: number,
+    matches: object[],
+    comments: object[],
+    meta: object = {},
+  ) =>
+    JSON.stringify({
+      pr,
+      tool: "quickreview",
+      pass,
+      judge: "my-model",
+      n_comments: comments.length,
+      matches,
+      meta,
+      comments,
+    });
+  const q1 = [qcm("a.py", 11), qcm("b.py", 40)];
+  put(
+    QJL,
+    [
+      qrow("q1", 1, [], q1, { error: "HTTP 500" }),
+      qrow(
+        "q1",
+        1,
+        [
+          { issue: 0, comment: 0 },
+          { issue: 1, comment: 1 },
+        ],
+        q1,
+      ),
+      qrow("q1", 2, [], q1),
+      qrow("q2", 1, [{ issue: 0, comment: 0 }], [qcm("c.py", 5)]),
+      qrow("q9", 1, [], []),
+    ].join("\n") + "\n",
+  );
+
+  // MUTATION: in qodo_scores.judgements_rows, read every line of judgements.jsonl (not qodo_judge.effective) — this fails
+  // MUTATION: in qodo_scores.judgements_rows, drop the comparison with the published review's comments — this fails
+  // MUTATION: in qodo_scores.judgements_rows, ignore --tool (keep the file's tool name) — this fails
+  it("qodo_scores --from-judgements scores qodo_judge.py's judgements.jsonl as the same table would", () => {
+    const args = ["--data", D, "--judge", "my-judge", "--sets-dir", SETS, "--resamples", "50"];
+    const r = json(
+      "qodo_scores.py",
+      ...args,
+      "--from-judgements",
+      QJL,
+      "--work",
+      "final1-qodo-pr100",
+      "--tool",
+      "final1-qodo-pr100|quickreview=quickreview-frozen",
+    );
+    const mine = json(
+      "qodo_scores.py",
+      ...args,
+      "--verdicts",
+      MINE,
+      "--runs",
+      "final1-qodo-pr100|quickreview-frozen",
+    );
+    expect(r.runs).toEqual(mine.runs);
+    expect(r.runs["final1-qodo-pr100|quickreview-frozen"]["my-judge"]).toMatchObject({
+      hits: 2,
+      comments: 3,
+    });
+    const from = (path: string, ...more: string[]) =>
+      refused(
+        "qodo_scores.py",
+        ...args,
+        "--from-judgements",
+        path,
+        "--work",
+        "final1-qodo-pr100",
+        ...more,
+      );
+    expect(from(QJL)).toMatch(
+      /ships final1-qodo-pr100's reviews under \['quickreview-frozen'\], not 'quickreview'/,
+    );
+    const moved = join(tmp, "rejudge-qodo", "moved.jsonl");
+    put(moved, qrow("q2", 1, [{ issue: 0, comment: 0 }], [qcm("c.py", 50)]) + "\n");
+    expect(from(moved, "--tool", "quickreview=quickreview-frozen")).toMatch(
+      /other comments than the published review's/,
+    );
+  });
+
+  const EVAL = join(tmp, "rejudge-martian", "evaluations.json");
+  put(
+    EVAL,
+    JSON.stringify({
+      m1: {
+        "qr-run": {
+          true_positives: [{ golden_comment: "g-m1-bug" }],
+          false_positives: [{ candidate: "x" }],
+          fp: 1,
+        },
+      },
+      m2: { "qr-run": { true_positives: [{ golden_comment: "g-m2-bug" }], false_positives: [] } },
+    }),
+  );
+
+  // MUTATION: in martian_scores.evaluations_rows, take `fp` as written (no count of false_positives when it has none) — this fails
+  // MUTATION: in martian_scores.evaluations_rows, skip a matched golden text the PR does not have instead of refusing — this fails
+  // MUTATION: in martian_scores.evaluations_rows, ignore --tool (keep the file's tool name) — this fails
+  it("martian_scores --from-evaluations scores Martian's evaluations.json as the same tables would", () => {
+    const from = (path: string, ...more: string[]) => [
+      "--data",
+      D,
+      "--judge",
+      "my-judge",
+      "--from-evaluations",
+      path,
+      "--work",
+      "final1-martian50",
+      ...more,
+    ];
+    const r = json("martian_scores.py", ...from(EVAL, "--tool", "qr-run=quickreview")).runs[
+      "final1-martian50|quickreview"
+    ];
+    const mine = json("martian_scores.py", "--data", D, "--verdicts", MINE, "--judge", "my-judge")
+      .runs["final1-martian50|quickreview"];
+    expect(r).toEqual(mine);
+    expect(r["my-judge"]).toMatchObject({ all_tp: 2, all_fp: 1, all_fn: 1, core_tp: 2 });
+    expect(refused("martian_scores.py", ...from(EVAL))).toMatch(
+      /not 'qr-run': name it with --tool/,
+    );
+    const odd = join(tmp, "rejudge-martian", "odd.json");
+    put(
+      odd,
+      JSON.stringify({
+        m2: { quickreview: { true_positives: [{ golden_comment: "not a golden" }], fp: 0 } },
+      }),
+    );
+    expect(refused("martian_scores.py", ...from(odd))).toMatch(
+      /a golden comment the PR does not have/,
     );
   });
 

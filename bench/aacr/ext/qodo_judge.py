@@ -216,6 +216,25 @@ def located(c: dict, x: dict, n: float) -> bool:
     return hi >= x["start_line"] - n and lo <= x["end_line"] + n
 
 
+def effective(lines) -> list[dict]:
+    """The pass-1 judgement per (PR, tool) that this judge's scoring stands on, from its
+    append-only judgements.jsonl: the last record without an error, else the last record.
+    A retry appends its replacement and never removes the errored record, so reading every
+    line would count a review twice (hf_export.py and recompute/qodo_scores.py read it so)."""
+    best: dict[tuple[str, str], dict] = {}
+    for line in lines:
+        if not line.strip():
+            continue
+        j = json.loads(line)
+        if j["pass"] != 1:
+            continue
+        k = (j["pr"], j["tool"])
+        prev = best.get(k)
+        if prev is None or "error" in prev["meta"] or "error" not in j["meta"]:
+            best[k] = j
+    return list(best.values())
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--set", required=True, type=Path)
