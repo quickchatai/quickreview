@@ -235,9 +235,11 @@ describe("the client posts through a daemon", () => {
     expect(err).toMatch(/^reply-thread: timeout: .*unknown — do NOT retry/);
   });
 
-  it("the client waits long enough for the posting path's worst case", () => {
-    // 2 capped daemon reads (20 s), 3 guard reads (3 × 60 s + backoff), the POST (60 s).
-    expect(POST_TIMEOUT_MS).toBeGreaterThanOrEqual(2 * 20_000 + 3 * 184_000 + 60_000);
+  it("the client answers before a session's two-minute command timeout kills it", () => {
+    // A slower post answers "in flight" (tested above); a killed script answers nothing.
+    expect(POST_TIMEOUT_MS).toBeLessThan(120_000);
+    // Long enough for a post whose capped daemon reads (20 s each) and POST (60 s) all run slow.
+    expect(POST_TIMEOUT_MS).toBeGreaterThanOrEqual(2 * 20_000 + 60_000);
   });
 
   it("exits 1 with no capability on the fd, and 2 for an unknown kind", async () => {

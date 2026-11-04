@@ -62,16 +62,16 @@ const processIo: ShimIo = {
 };
 
 /**
- * How long the client waits for the daemon's answer. The worst case of one
- * post: the daemon's own reads are capped at 20 s each (the approval's CI
- * pre-check, the marker read; postops.ts `POSTING_READ_DEADLINE_MS`), and
- * the posting guards' reads on the gate (the PR, the reviews, the checks)
- * each have the adapter's bounded retry, 3 attempts of up to 60 s plus about
- * 4 s of backoff; then the POST itself, up to 60 s. 2 × 20 + 3 × 184 + 60 ≈
- * 650 s. Past this the post is still running in the daemon, which records
- * its outcome: the client answers "in flight", never "failed".
+ * How long the client waits for the daemon's answer. It stays below the
+ * command timeout a session gives the posting script (two minutes is what
+ * sessions pass), so the session always reads an answer instead of its tool
+ * killing the script mid-wait. Nearly every post answers well inside this.
+ * The slow worst case (the guards' reads on the gate, each with the adapter's
+ * bounded retry, then the POST) can outlast it; the post then keeps running
+ * in the daemon, which records its outcome, and the client answers
+ * "in flight — do NOT post again", never "failed".
  */
-export const POST_TIMEOUT_MS = 720_000;
+export const POST_TIMEOUT_MS = 100_000;
 
 /** What a review or an approval answers when this client stopped waiting. */
 const IN_FLIGHT =
