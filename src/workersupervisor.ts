@@ -100,6 +100,7 @@ import {
   type WorkerLogLimits,
 } from "./workerlog.js";
 import { WorkerBreaker, type BreakerLimits } from "./workerbreaker.js";
+import { WORKER_EXIT_PROVIDER, providerBackoffMs } from "./providerfailure.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
 import {
   WorkerLeases,
@@ -213,7 +214,9 @@ export type KillReason =
 export type Outcome =
   | { kind: "acked" }
   | { kind: "failed"; reason: string }
-  | { kind: "requeue"; reason: string }
+  /** `backoff: "provider"`: the requeued command waits out the provider
+   * backoff (`providerBackoffMs`) before a worker is launched for it. */
+  | { kind: "requeue"; reason: string; backoff?: "provider" }
   | { kind: "leave" };
 
 /**
@@ -223,7 +226,10 @@ export type Outcome =
  * money, a bad payload) fails the command; one that was lost (killed, crashed,
  * its daemon went away) hands the round to a fresh worker, which resumes the
  * JSONL. Ended for its wall clock, or by the operator: failed, not retried. Ended
- * by a recovery fence: left as it is, for the caller that fenced it.
+ * by a recovery fence: left as it is, for the caller that fenced it. A turn a
+ * transient provider failure ended (`WORKER_EXIT_PROVIDER`) is requeued too,
+ * within the same `maxRequeues`, but after the provider backoff: the provider
+ * that just refused it is not asked again at once.
  */
 export function decideOutcome(x: {
   code: number | null;
@@ -242,6 +248,12 @@ export function decideOutcome(x: {
   if (x.killedFor !== undefined)
     return { kind: "requeue", reason: `the worker was ended: ${x.killedFor}` };
   if (x.code === 0) return { kind: "acked" };
+  if (x.code === WORKER_EXIT_PROVIDER)
+    return {
+      kind: "requeue",
+      reason: x.failedReason ?? "the provider failed the turn",
+      backoff: "provider",
+    };
   if (x.code !== null && x.code >= 1 && x.code <= 6)
     return { kind: "failed", reason: x.failedReason ?? `the worker exited ${x.code}` };
   return {
@@ -699,6 +711,9 @@ export class WorkerSupervisor {
         );
         continue;
       }
+      // A command requeued after a transient provider failure waits out its
+      // backoff (`requeueOrFail`).
+      if (row.not_before !== null && row.not_before > this.iso(this.now())) continue;
       // A drained bot or a parked PR starts nothing; the command waits, and the
       // refusal is not logged every pass.
       if (!this.breaker.gate(row.pr).ok) continue;
@@ -1173,13 +1188,20 @@ export class WorkerSupervisor {
     } else if (outcome.kind === "failed") {
       this.finishFailed(id, rec.token, outcome.reason);
     } else {
-      this.requeueOrFail(id, rec.token, outcome.reason);
+      this.requeueOrFail(id, rec.token, outcome.reason, outcome.backoff === "provider");
     }
   }
 
   /** Hand the command to a fresh worker, or fail it once the requeues are spent
-   * (or its round has ended meanwhile). */
-  private requeueOrFail(id: string, token: string | null, reason: string): boolean {
+   * (or its round has ended meanwhile). `providerBackoff`: the fresh worker is
+   * not launched before the provider backoff for this requeue has passed, and
+   * the start lease runs from then. */
+  private requeueOrFail(
+    id: string,
+    token: string | null,
+    reason: string,
+    providerBackoff = false,
+  ): boolean {
     const { store } = this.deps;
     const row = store.getSessionCommand(id);
     if (!row || row.status !== "running") return false;
@@ -1193,7 +1215,27 @@ export class WorkerSupervisor {
       this.failRow(row, token, `${reason}; requeued ${row.recovery_attempts} times already`);
       return false;
     }
-    if (store.requeueWorkerCommand(id, token, this.iso(this.now()))) return true;
+    const now = this.now();
+    const notBefore = providerBackoff ? now + providerBackoffMs(row.recovery_attempts) : null;
+    if (
+      notBefore === null
+        ? store.requeueWorkerCommand(id, token, this.iso(now))
+        : store.requeueWorkerCommand(
+            id,
+            token,
+            this.iso(notBefore + this.limits.readyMs),
+            this.iso(notBefore),
+          )
+    ) {
+      if (notBefore !== null)
+        store.logEvent("worker_requeue_backoff", row.pr, {
+          command_id: id,
+          requeue: row.recovery_attempts + 1,
+          not_before: this.iso(notBefore),
+          reason: reason.slice(0, 300),
+        });
+      return true;
+    }
     this.failRow(row, token, `${reason}; its round is no longer running`);
     return false;
   }

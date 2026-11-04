@@ -134,6 +134,12 @@ async function onHello(m) {
     await sleep(50);
     process.exit(1);
   }
+  if (mode === "provider-fail") {
+    // botworker.ts's EXIT.provider: a turn a transient provider failure ended.
+    event("failed", { code: 7, reason: "round: the provider failed the turn: 429 Too Many Requests" });
+    await sleep(50);
+    process.exit(7);
+  }
   event("accepted", { command_id: commandId });
   if (mode === "stale") {
     const r = await request("worker.spec", generation - 1);
