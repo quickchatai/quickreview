@@ -164,6 +164,62 @@ describe("the journal writes the receipt and job files the readers expect", () =
     expect(readPostingReceipt(tsDir, PR, ROUND)).toMatchObject({ status: "deferred" });
   });
 
+  // A read the post depended on failed before any attempt: the queued job is
+  // handed to the deferred retry with no `prepared` receipt ever written.
+  // MUTATION: write status "prepared" in deferUnattempted — this fails.
+  it("enqueue, deferUnattempted: a deferred receipt over the queued job, nothing attempted", () => {
+    enqueue("APPROVE");
+    const defer = () =>
+      journal.deferUnattempted({
+        key: KEY,
+        pr: PR,
+        round: ROUND,
+        head: HEAD,
+        intended: "APPROVE",
+        payload: payload("APPROVE"),
+        reason: "ci-unreadable: GitHub answered 502",
+      });
+    defer();
+    const job = readPostingJob(join(tsDir, jobName))!;
+    expect(job).toMatchObject({
+      status: "pending",
+      last_error: "ci-unreadable: GitHub answered 502",
+    });
+    expect(job.deferred_at).toBeTruthy();
+    expect(job.attempted_at).toBeUndefined();
+    const receipt = readPostingReceipt(tsDir, PR, ROUND) as PostingReceipt;
+    expect(receipt).toMatchObject({
+      status: "deferred",
+      intended_event: "APPROVE",
+      actual_event: "APPROVE",
+      payload_sha256: job.payload_sha256,
+      defer_reason: "ci-unreadable: GitHub answered 502",
+    });
+    expect(receipt.deferred_at).toBe(job.deferred_at);
+    defer(); // the same deferral, replayed
+    // The session asking again is told it is deferred; a withdraw is refused.
+    expect(journal.check(PR, ROUND, KEY)).toBe("deferred");
+    expect(() => journal.withdraw(PR, ROUND, KEY)).toThrow(JournalError);
+  });
+
+  it("deferUnattempted never writes over an attempted receipt, and needs the queued job", () => {
+    const defer = () =>
+      journal.deferUnattempted({
+        key: KEY,
+        pr: PR,
+        round: ROUND,
+        head: HEAD,
+        intended: "REQUEST_CHANGES",
+        payload: payload(),
+        reason: "pr-unreadable",
+      });
+    expect(defer).toThrow(/no delivery snapshot/);
+    enqueue();
+    prepare();
+    expect(defer).toThrow(/refusing to defer over a prepared receipt/);
+    expect(readPostingReceipt(tsDir, PR, ROUND)?.status).toBe("prepared");
+  });
+
   it("enqueue, withdraw: the job is set aside and nothing else is written", () => {
     enqueue("APPROVE");
     journal.withdraw(PR, ROUND, KEY);

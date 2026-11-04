@@ -33,6 +33,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
+import { PostingJournal } from "../src/posting-journal.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { RoundProgressSnapshot } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
@@ -592,6 +593,39 @@ describe("a deferred posting", () => {
     expect(failure).toBeDefined();
     expect(failure!.detail).toContain("exhausted after 0 attempt(s): GitHub 502 ×3");
     expect(postings()).toBe(0);
+  });
+
+  // The production incident: the approval's CI pre-check could not read the
+  // checks, so the session's post deferred it before any attempt
+  // (`deferUnattempted`). The verdict APPROVE the session then commits must
+  // read `waiting` — never `unconfirmed`, which would fail the round loud.
+  // MUTATION: write the deferral as a `prepared` receipt in deferUnattempted — this fails.
+  it("a verdict APPROVE over an approval deferred before any attempt (CI unreadable) waits", async () => {
+    const journal = new PostingJournal({ dir: dir(), repo: cfg.github.repo });
+    const payload = { commit_id: HEAD, event: "APPROVE" as const, body: `LGTM\n\n${postingMarker(key)}` };
+    const ident = { key, pr: PR, round: 5, head: HEAD };
+    journal.enqueue({ ...ident, event: "APPROVE", mode: "live", payload });
+    journal.deferUnattempted({
+      ...ident,
+      intended: "APPROVE",
+      payload,
+      reason: "ci-unreadable: GitHub answered 502",
+    });
+    const { watcher, supervisor } = wire(true);
+    verdictFile("APPROVE");
+    set("2026-01-15T08:54:00.000Z");
+    expect(await watcher.sweep()).toEqual([]); // waiting on the posting
+    store.finishSessionCommand(CMD, "bridge-1", "acked");
+    for (const at of ["2026-01-15T08:58:43.000Z", "2026-01-15T09:40:00.000Z"]) {
+      set(at);
+      await supervisor.scan();
+      await watcher.checkDeadlines();
+      expect(await watcher.sweep()).toEqual([]);
+    }
+    expect(round5().status).toBe("running");
+    expect(killed).toEqual([]);
+    expect(store.openReviewFailure(PR)).toBeUndefined();
+    expect(count("round_infrastructure_failure")).toBe(0);
   });
 
   it("an APPROVE the gate softened at retry time (red CI) lands as a withheld approval", async () => {
