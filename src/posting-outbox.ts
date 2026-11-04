@@ -374,8 +374,38 @@ function deferredReceipt(dir: string, j: PostingJob): PostingReceipt | undefined
   return r && r.status === "deferred" && receiptMatchesJob(r, j) ? r : undefined;
 }
 
-const QUIET_WINDOW_MS = 120_000;
-const NEGATIVE_GAP_MS = 30_000;
+/** After a POST whose outcome is unknown, how long before its absence is
+ * read at all: an accepted POST can take this long to show. The one policy
+ * for an uncertain POST, the review outbox's and the thread reply's
+ * (postops.ts) alike. */
+export const QUIET_WINDOW_MS = 120_000;
+/** And the least time between the two reads that must both find it absent
+ * before it may be posted again. */
+export const NEGATIVE_GAP_MS = 30_000;
+
+/**
+ * Where an uncertain POST stands after a read just found its marker absent.
+ * GitHub offers no idempotency token, so one negative read proves nothing:
+ *  - `quiet`: still inside the quiet window, `until` it ends;
+ *  - `first-negative`: past it, and this is the first negative read — the
+ *    caller records `now` as it and reads again after `until`;
+ *  - `gap`: the second read came too soon after the first, `until`;
+ *  - `post`: two negative reads apart, past the quiet window: it may be
+ *    posted again.
+ * Persisting `negative_at` and scheduling the next read are the caller's.
+ */
+export function uncertainPostStep(
+  attemptedAt: string,
+  negativeAt: string | undefined,
+  now: number,
+): { step: "quiet" | "first-negative" | "gap"; until: number } | { step: "post" } {
+  const quietEnds = Date.parse(attemptedAt) + QUIET_WINDOW_MS;
+  if (now < quietEnds) return { step: "quiet", until: quietEnds };
+  if (negativeAt === undefined) return { step: "first-negative", until: now + NEGATIVE_GAP_MS };
+  const gapEnds = Date.parse(negativeAt) + NEGATIVE_GAP_MS;
+  if (now < gapEnds) return { step: "gap", until: gapEnds };
+  return { step: "post" };
+}
 export class PostingOutbox {
   private busy = false;
   constructor(
@@ -981,16 +1011,17 @@ export class PostingOutbox {
       const attemptedAt =
         j.attempted_at ?? (receipt?.status === "prepared" ? receipt.prepared_at : undefined);
       if (attemptedAt) {
-        if (this.now().getTime() - Date.parse(attemptedAt) < QUIET_WINDOW_MS) {
+        const step = uncertainPostStep(attemptedAt, j.negative_at, this.now().getTime()).step;
+        if (step === "quiet") {
           this.schedule(path, j, "waiting for prior transport to settle", QUIET_WINDOW_MS);
           return;
         }
-        if (!j.negative_at) {
+        if (step === "first-negative") {
           j.negative_at = this.now().toISOString();
           this.schedule(path, j, "first complete negative marker reconcile", NEGATIVE_GAP_MS);
           return;
         }
-        if (this.now().getTime() - Date.parse(j.negative_at) < NEGATIVE_GAP_MS) return;
+        if (step === "gap") return;
       }
       j.attempts++;
       j.attempted_at = this.now().toISOString();

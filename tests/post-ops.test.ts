@@ -1191,6 +1191,50 @@ describe("post.reply live", () => {
     expect(replyPosts()).toHaveLength(1);
   });
 
+  // An accepted POST whose answer could not be read is not a refusal.
+  // MUTATION: clear the attempt for every failure not classified transient or rate-limited — this fails (two POSTs).
+  it("an accepted POST whose answer is cut short stays uncertain: no second copy at once", async () => {
+    rig.gh.replyAnswerTruncated = true;
+    await expect(reply()).rejects.toMatchObject({
+      code: "post_failed",
+      message: /not on GitHub yet: it may still land/,
+    });
+    rig.gh.replyAnswerTruncated = false;
+    await expect(reply()).rejects.toMatchObject({
+      message: /may still land, so nothing was posted now/,
+    });
+    expect(replyPosts()).toHaveLength(1);
+  });
+
+  // MUTATION: drop the not_before check at the top of replyOnce — this fails.
+  it("a rate-limited POST keeps GitHub's requested wait: no read and no POST before it", async () => {
+    rig.gh.failReplyPost = 429;
+    rig.gh.replyRetryAfterS = 1800;
+    const until = new Date(clock + 1_800_000).toISOString();
+    const reads = () =>
+      rig.gh.calls.filter((c) => c.method === "GET" && /\/comments$/.test(c.path));
+    await expect(reply()).rejects.toMatchObject({
+      code: "post_failed",
+      message: new RegExp(
+        `no more requests until ${until}.*Run the same script again after that time`,
+      ),
+    });
+    expect(reads()).toHaveLength(1); // the check before the POST, none after it
+    rig.gh.failReplyPost = null;
+    clock += 150_000; // past the quiet window and a negative gap, inside the wait
+    await expect(reply()).rejects.toMatchObject({ message: new RegExp(`until ${until}`) });
+    clock += 30_000;
+    await expect(reply()).rejects.toMatchObject({ message: new RegExp(`until ${until}`) });
+    expect(reads()).toHaveLength(1);
+    expect(replyPosts()).toHaveLength(1);
+    // The wait over: the two negative reads apart, then the POST.
+    clock = Date.parse(until) + 1_000;
+    await expect(reply()).rejects.toMatchObject({ message: /may still land/ });
+    clock += 31_000;
+    expect((await reply()).status).toBe("posted");
+    expect(replyPosts()).toHaveLength(2);
+  });
+
   it("a refused POST (4xx) is a known outcome: the re-run may post at once", async () => {
     rig.gh.failReplyPost = 422;
     await expect(reply()).rejects.toMatchObject({ code: "post_failed" });

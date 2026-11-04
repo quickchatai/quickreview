@@ -43,11 +43,13 @@ import type { StandingMarkSnapshot } from "@quickchatai/pi-quickreview/src/stand
 
 export type ReviewEvent = PostingReceipt["intended_event"];
 
-/** A reply POST whose outcome is not yet known: when it was sent, and when
- * a read first found it absent. */
+/** A reply POST whose outcome is not yet known: when it was sent, when a
+ * read first found it absent, and the time before which GitHub asked not to
+ * be called again (a rate limit's `Retry-After` or reset). */
 export interface ReplyAttempt {
   attempted_at: string;
   negative_at?: string;
+  not_before?: string;
 }
 
 /** What `check` says about a round's receipt slot. */
@@ -587,13 +589,15 @@ export class PostingJournal {
       value.marker !== marker ||
       typeof value.attempted_at !== "string" ||
       !Number.isFinite(Date.parse(value.attempted_at)) ||
-      (value.negative_at !== undefined &&
-        (typeof value.negative_at !== "string" || !Number.isFinite(Date.parse(value.negative_at))))
+      [value.negative_at, value.not_before].some(
+        (t) => t !== undefined && (typeof t !== "string" || !Number.isFinite(Date.parse(t))),
+      )
     )
       throw new JournalError("existing reply attempt invalid");
     return {
       attempted_at: value.attempted_at,
       ...(typeof value.negative_at === "string" ? { negative_at: value.negative_at } : {}),
+      ...(typeof value.not_before === "string" ? { not_before: value.not_before } : {}),
     };
   }
 

@@ -179,14 +179,19 @@ every POST; a reply found there answers "already posted". Two requests for
 the same reply at once share one owner in the daemon: the second joins the
 first and gets its answer, so the read and the POST are never run twice.
 
-A POST GitHub did not answer (no response, a 5xx, a rate limit) is uncertain,
-not failed: it may still land. The daemon records the attempt beside the PR's
-receipts (`pr-<n>-reply-<hash>.json`) before the POST, and a later run of the
-same reply posts again only after the quiet window (two minutes) and two
-reads, at least 30 seconds apart, that both find it absent, as the review
-outbox does. A read that fails before any POST sends nothing and says so: the
-session runs the script again later, and the marker read comes first. A
-refused POST (a 4xx) is a known outcome and clears the record.
+A POST whose outcome is not known (no response, a 5xx, a timeout, a rate
+limit, an answer that could not be read) is uncertain, not failed: it may
+still land. The daemon records the attempt beside the PR's receipts
+(`pr-<n>-reply-<hash>.json`) before the POST, and a later run of the same
+reply posts again only after the quiet window (two minutes) and two reads, at
+least 30 seconds apart, that both find it absent: the review outbox's policy,
+one helper (`uncertainPostStep` in `src/posting-outbox.ts`) for both. A wait
+GitHub asked for (`Retry-After`, a rate-limit reset) is kept on the record as
+`not_before`, and until then a run neither reads nor posts. A read that fails
+before any POST sends nothing and says so: the session runs the script again
+later, and the marker read comes first. Only a permanent refusal (a 4xx other
+than a 408 timeout or a rate limit) or the gate's own refusal is a known
+outcome, and clears the record.
 
 ## Lifecycle and visibility
 

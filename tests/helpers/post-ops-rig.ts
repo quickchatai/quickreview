@@ -61,6 +61,11 @@ export class FakeGitHub {
   failReplyPost: number | "network" | null = null;
   /** The reply POST lands on GitHub even though it fails (its answer lost). */
   replyLandsOnFailure = false;
+  /** The failed reply POST's `Retry-After`, in seconds. */
+  replyRetryAfterS: number | null = null;
+  /** The reply POST is accepted, but its answer is cut short (invalid JSON),
+   * and the reply is not yet visible to a read. */
+  replyAnswerTruncated = false;
   calls: Array<{ method: string; path: string; body?: any }> = [];
   posts(): Array<{ method: string; path: string; body?: any }> {
     return this.calls.filter((c) => c.method !== "GET");
@@ -128,10 +133,16 @@ export class FakeGitHub {
         body: body.body,
         in_reply_to_id: Number(/comments\/(\d+)\/replies$/.exec(path)?.[1]),
       };
+      if (this.replyAnswerTruncated) return new Response(`{"id": ${reply.id}, "bo`);
       if (this.failReplyPost !== null) {
         if (this.replyLandsOnFailure) this.comments.push(reply);
         if (this.failReplyPost === "network") throw new TypeError("fetch failed");
-        return new Response("upstream trouble", { status: this.failReplyPost });
+        return new Response("upstream trouble", {
+          status: this.failReplyPost,
+          ...(this.replyRetryAfterS !== null
+            ? { headers: { "retry-after": String(this.replyRetryAfterS) } }
+            : {}),
+        });
       }
       this.comments.push(reply);
       return json({ ...reply, html_url: `https://github.com/${REPO}/pull/${PR}#r${reply.id}` });

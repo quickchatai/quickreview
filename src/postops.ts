@@ -71,7 +71,7 @@ import {
   type InlineComment,
   type ReviewPayload,
 } from "./posting.js";
-import { markedReviewsOf } from "./posting-outbox.js";
+import { markedReviewsOf, uncertainPostStep } from "./posting-outbox.js";
 import {
   describeGap,
   failedSecurityRows,
@@ -373,13 +373,6 @@ function clientCause(f: GitHubFailure): string {
   if (f.kind === "rate_limited") return "GitHub rate-limited the read";
   return "the read failed before GitHub answered; the daemon's log has the cause";
 }
-
-/** After a reply POST GitHub did not answer, how long before the reply's
- * absence is read at all: an accepted POST can take this long to show. */
-export const REPLY_QUIET_MS = 120_000;
-/** And the least time between the two reads that must both find it absent
- * before the reply may be posted again. */
-export const REPLY_NEGATIVE_GAP_MS = 30_000;
 
 /** A failure the daemon may retry by itself later. */
 const retryable = (f: GitHubFailure): boolean =>
@@ -1101,6 +1094,20 @@ class PostOps {
     );
   }
 
+  /** The time GitHub asked this reply's earlier POST to wait until, while
+   * it is still ahead. A record that cannot be read answers nothing here;
+   * the attempt read after the marker check refuses it. */
+  private replyNotBefore(pr: number, marker: string): Date | undefined {
+    let notBefore: string | undefined;
+    try {
+      notBefore = this.d.journal.readReplyAttempt(pr, marker)?.not_before;
+    } catch {
+      return undefined;
+    }
+    const at = notBefore === undefined ? NaN : Date.parse(notBefore);
+    return at > this.now().getTime() ? new Date(at) : undefined;
+  }
+
   private async replyOnce(
     ctx: RequestContext,
     id: number,
@@ -1109,6 +1116,16 @@ class PostOps {
   ): Promise<PostOutcome> {
     const j = this.d.journal;
     const replyBody = `${text.trimEnd()}\n\n${marker}`;
+    // GitHub asked for a wait after an earlier POST of this reply: neither a
+    // read nor a POST until it is over.
+    const asked = this.replyNotBefore(ctx.pr, marker);
+    if (asked) {
+      this.audit(ctx, "post.reply", "rate-limited");
+      throw new IpcError(
+        "post_failed",
+        `GitHub asked for no more requests for this reply until ${asked.toISOString()}, so nothing was read or posted now. Run the same script again after that time.`,
+      );
+    }
     const before = await this.findReply(ctx, id, marker);
     if (before === "unreadable") {
       // Nothing was sent now. The reply is still owed; the next run reads
@@ -1128,18 +1145,17 @@ class PostOps {
     // two negative reads apart, as the review outbox does.
     const earlier = j.readReplyAttempt(ctx.pr, marker);
     if (earlier) {
-      const now = this.now().getTime();
-      const settled = Date.parse(earlier.attempted_at) + REPLY_QUIET_MS;
-      if (now < settled) throw this.replySettling(ctx, new Date(settled));
-      if (!earlier.negative_at) {
+      const step = uncertainPostStep(
+        earlier.attempted_at,
+        earlier.negative_at,
+        this.now().getTime(),
+      );
+      if (step.step === "first-negative")
         j.noteReplyAttempt(ctx.pr, marker, {
           ...earlier,
           negative_at: this.now().toISOString(),
         });
-        throw this.replySettling(ctx, new Date(now + REPLY_NEGATIVE_GAP_MS));
-      }
-      const second = Date.parse(earlier.negative_at) + REPLY_NEGATIVE_GAP_MS;
-      if (now < second) throw this.replySettling(ctx, new Date(second));
+      if (step.step !== "post") throw this.replySettling(ctx, new Date(step.until));
     }
     // The attempt is on disk BEFORE the POST: a lost answer, or a daemon
     // that stops mid-POST, leaves the reconciliation above owed. A dry run
@@ -1150,13 +1166,39 @@ class PostOps {
     try {
       res = await this.d.adapter.createReviewCommentReply(ctx.pr, id, replyBody);
     } catch (err) {
-      if (!unanswered(err)) {
-        // An explicit refusal: nothing landed.
+      const f = classifyGitHubFailure(err);
+      if (gateRefusal(err) || f.kind === "rejected") {
+        // A refusal (the gate's, or a permanent 4xx): nothing landed.
         j.clearReplyAttempt(ctx.pr, marker);
         this.audit(ctx, "post.reply", "failed");
         throw new IpcError("post_failed", this.describe(err));
       }
+      // Anything else — no answer, a 5xx, a timeout, a rate limit, an answer
+      // that could not be read — leaves the POST uncertain: the attempt stays
+      // on record. A wait GitHub asked for is kept with it, and nothing is
+      // read during that wait.
       const why = this.describe(err);
+      const notBefore =
+        f.retryAfterMs !== undefined && f.retryAfterMs > 0
+          ? new Date(this.now().getTime() + f.retryAfterMs)
+          : undefined;
+      if (notBefore) {
+        const kept = this.tryJournal("record GitHub's requested wait", () => {
+          const earlier = j.readReplyAttempt(ctx.pr, marker);
+          if (earlier)
+            j.noteReplyAttempt(ctx.pr, marker, {
+              ...earlier,
+              not_before: notBefore.toISOString(),
+            });
+        });
+        if (kept !== false) {
+          this.audit(ctx, "post.reply", "rate-limited");
+          throw new IpcError(
+            "post_failed",
+            `${why}: GitHub asked for no more requests until ${notBefore.toISOString()}, and nothing more was sent. Run the same script again after that time: it checks for this reply first and posts it only once GitHub has shown twice, apart, that it is not there.`,
+          );
+        }
+      }
       const after = await this.findReply(ctx, id, marker);
       if (after !== null && after !== "unreadable") {
         j.clearReplyAttempt(ctx.pr, marker);
