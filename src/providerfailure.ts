@@ -16,7 +16,8 @@
 // core's src/modelerrors.ts.
 import { modelErrorKind } from "@quickchatai/pi-quickreview/src/modelerrors.js";
 
-export type ProviderFailureKind = "transport" | "rate_limited" | "overloaded" | "usage_limit" | "other";
+export type ProviderFailureKind =
+  "transport" | "rate_limited" | "overloaded" | "usage_limit" | "other";
 
 /** The words botworker.ts puts before the provider's own message: a turn the
  * provider ended with an error, and a turn whose output stream broke. */

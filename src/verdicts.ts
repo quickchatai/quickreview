@@ -4619,16 +4619,15 @@ export class VerdictWatcher {
     // The replacement waits out its backoff unless it is new work: a moved
     // head, or a successor at a fresher head than the round reviewed.
     const reviewedHead =
-      round.head_sha ?? (round.posting_key ? round.posting_key.split(":").slice(3).join(":") : head);
+      round.head_sha ??
+      (round.posting_key ? round.posting_key.split(":").slice(3).join(":") : head);
     const queued = store.getPr(round.pr);
     const notBefore =
       mode !== "head_moved" &&
       publication.queued &&
       queued &&
       publication.target_head_sha === reviewedHead
-        ? new Date(
-            this.now().getTime() + selfRequeueBackoffMin(attempt) * 60_000,
-          ).toISOString()
+        ? new Date(this.now().getTime() + selfRequeueBackoffMin(attempt) * 60_000).toISOString()
         : undefined;
     store.logEvent("round_self_requeued", round.pr, {
       cancel_cause: cause,

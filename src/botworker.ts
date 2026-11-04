@@ -596,7 +596,10 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       if (watch.lastError !== undefined) {
         const refused = classifyAuthFailure(watch.lastError);
         if (refused)
-          throw new Stop(EXIT.failed, `${what}: the provider refused the login: ${refused.message}`);
+          throw new Stop(
+            EXIT.failed,
+            `${what}: the provider refused the login: ${refused.message}`,
+          );
         const reason = `${what}: the provider failed the turn: ${watch.lastError}`;
         throw new Stop(isProviderTransient(reason) ? EXIT.provider : EXIT.failed, reason);
       }

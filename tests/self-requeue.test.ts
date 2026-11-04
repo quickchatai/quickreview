@@ -356,9 +356,11 @@ describe("exhausted infrastructure recovery with nothing posted retries itself",
     });
     // Loud: the anomaly names the automatic retry.
     expect(
-      store.anomalies().some(
-        (a) => a.kind === "review_failed_loud" && a.detail.includes("automatic retry scheduled"),
-      ),
+      store
+        .anomalies()
+        .some(
+          (a) => a.kind === "review_failed_loud" && a.detail.includes("automatic retry scheduled"),
+        ),
     ).toBe(true);
   });
 
