@@ -25,6 +25,7 @@ import {
   classifyGitHubFailure,
   type GitHubFailure,
 } from "@quickchatai/pi-quickreview/src/githubcore.js";
+import { bodyOnlyPayload, isAnchorRejection, validationText } from "./diffplacement.js";
 import { inlineCommentFault } from "./posting.js";
 import type { PostingRetryRow } from "./state.js";
 import {
@@ -555,6 +556,33 @@ export class PostingOutbox {
     writePostingFile(path, j);
     this.deps.log(`posting pending: ${error}`, j);
   }
+  /**
+   * GitHub refused the job's review because it could not place an inline
+   * comment (a 422 that does not say which). A 422 landed nothing, so the
+   * snapshot is rewritten with every comment in the body (the job, then the
+   * receipt beside it, both before the next POST) and the caller posts that
+   * once more. Any other failure, or a review with no comments: false.
+   */
+  private foldAfterAnchorRejection(path: string, j: PostingJob, error: unknown): boolean {
+    const f = classifyGitHubFailure(error);
+    if (f.kind !== "rejected" || f.status !== 422 || (j.payload.comments?.length ?? 0) === 0)
+      return false;
+    const validation = validationText(error);
+    if (!isAnchorRejection(validation)) return false;
+    const count = j.payload.comments!.length;
+    j.payload = bodyOnlyPayload(j.payload, postingMarker(j.posting_key));
+    j.payload_sha256 = createHash("sha256").update(JSON.stringify(j.payload)).digest("hex");
+    writePostingFile(path, j);
+    const receiptPath = postingReceiptPath(this.deps.dir, j.pr, j.round_no);
+    const receipt = readPostingReceipt(this.deps.dir, j.pr, j.round_no);
+    if (receipt?.posting_key === j.posting_key)
+      writePostingFile(receiptPath, { ...receipt, payload_sha256: j.payload_sha256 });
+    this.deps.log(
+      `posting: GitHub could not place ${count} inline comment(s) (${validation}); posting again with them in the body`,
+      j,
+    );
+    return true;
+  }
   private fail(path: string, j: PostingJob, reason: string): void {
     j.status = "failed";
     j.last_error = reason;
@@ -835,7 +863,13 @@ export class PostingOutbox {
       }
       // (4) Through the ONE gate.
       try {
-        const result = await d.deliver(j.pr, j.payload, j.posting_key);
+        let result: Awaited<ReturnType<typeof d.deliver>>;
+        try {
+          result = await d.deliver(j.pr, j.payload, j.posting_key);
+        } catch (error) {
+          if (!this.foldAfterAnchorRejection(path, j, error)) throw error;
+          result = await d.deliver(j.pr, j.payload, j.posting_key);
+        }
         if (result.blocked) {
           // `pr-unreadable`: the gate's PR read, or the approval's CI
           // pre-check, could not read GitHub. No POST was sent.
@@ -1047,7 +1081,13 @@ export class PostingOutbox {
         ...(this.deps.personMode ? { person_mode: true as const } : {}),
       } satisfies PostingReceipt);
       try {
-        const result = await this.deps.adapter.createReview(j.pr, j.payload);
+        let result: DeliveryResult;
+        try {
+          result = await this.deps.adapter.createReview(j.pr, j.payload);
+        } catch (error) {
+          if (!this.foldAfterAnchorRejection(path, j, error)) throw error;
+          result = await this.deps.adapter.createReview(j.pr, j.payload);
+        }
         if (result.blocked) {
           delete j.attempted_at;
           rmSync(postingReceiptPath(this.deps.dir, j.pr, j.round_no)); // gate proved no POST executed

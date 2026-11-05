@@ -209,6 +209,39 @@ describe("durable review delivery", () => {
     expect(createReview).toHaveBeenCalledTimes(1);
     expect(pendingPosting(dir, 12, 1, key)).toBe(false);
   });
+  // MUTATION: make foldAfterAnchorRejection return false — this fails
+  // (one POST, the job failed loud).
+  it("posts the comments in the body when GitHub cannot place an inline comment's line", async () => {
+    job.payload.comments = [{ path: "a.py", line: 3, side: "RIGHT", body: "[blocker] x" }];
+    save();
+    createReview.mockRejectedValueOnce(
+      new GitHubRequestError(
+        "POST",
+        "/x",
+        422,
+        JSON.stringify({ message: "x", errors: ["Line could not be resolved"] }),
+      ),
+    );
+    await worker().tick();
+    expect(createReview).toHaveBeenCalledTimes(2);
+    const second = createReview.mock.calls[1]![1];
+    expect(second.comments).toEqual([]);
+    expect(second.body).toMatch(/^Review\n\n### Comments given here instead of inline/);
+    expect(second.body).toContain("**`a.py:3`**\n\n[blocker] x");
+    expect(second.body.endsWith(postingMarker(key))).toBe(true);
+    expect(readPostingReceipt(dir, 12, 1)).toMatchObject({ status: "confirmed" });
+    expect(pendingPosting(dir, 12, 1, key)).toBe(false);
+  });
+  it("a 422 about something else on a review with comments still fails loud", async () => {
+    job.payload.comments = [{ path: "a.py", line: 3, side: "RIGHT", body: "[blocker] x" }];
+    save();
+    createReview.mockRejectedValueOnce(
+      new GitHubRequestError("POST", "/x", 422, JSON.stringify({ errors: ["Body is too long"] })),
+    );
+    await worker().tick();
+    expect(createReview).toHaveBeenCalledTimes(1);
+    expect(pendingPosting(dir, 12, 1, key)).toBe(false);
+  });
   it("does not deliver dry-run obligations after a live-mode flip", async () => {
     job.mode = "dryrun";
     save();

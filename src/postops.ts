@@ -59,8 +59,11 @@ import {
   foldIntoBody,
   isAnchorRejection,
   splitByDiff,
+  validationText,
 } from "./diffplacement.js";
 import { GitHubRequestError, type GitHubAdapter } from "./github.js";
+
+export { validationText };
 import { IpcError } from "./ipc/protocol.js";
 import type { OpHandler, RequestContext } from "./ipc/server.js";
 import type { IpcServer } from "./ipc/server.js";
@@ -386,46 +389,6 @@ function clientCause(f: GitHubFailure): string {
 /** A failure the daemon may retry by itself later. */
 const retryable = (f: GitHubFailure): boolean =>
   f.kind === "transient" || f.kind === "rate_limited";
-
-/**
- * GitHub's validation text of a refused POST, and only that: the
- * `errors[].message` entries (or the plain strings GitHub sometimes lists
- * there) of the answer the adapter quoted. Control characters go, and each
- * entry is capped; an answer with no such entries says so.
- */
-export function validationText(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  const at = raw.indexOf("{");
-  const out: string[] = [];
-  const push = (x: unknown): void => {
-    if (typeof x !== "string") return;
-    const clean = x.replace(/\p{Cc}+/gu, " ").trim();
-    if (clean) out.push(clean.slice(0, 200));
-  };
-  if (at >= 0) {
-    try {
-      const body = JSON.parse(raw.slice(at)) as { errors?: unknown };
-      if (Array.isArray(body.errors))
-        for (const e of body.errors)
-          push(typeof e === "string" ? e : (e as { message?: unknown } | null)?.message);
-    } catch {
-      // The quoted answer is cut short: read the `errors` array as far as it goes.
-      const seg = /"errors"\s*:\s*\[([\s\S]*)/.exec(raw.slice(at))?.[1] ?? "";
-      const strings = (re: RegExp): void => {
-        for (const m of seg.matchAll(re)) {
-          try {
-            push(JSON.parse(`"${m[1]}"`));
-          } catch {
-            push(m[1]);
-          }
-        }
-      };
-      if (seg.trimStart().startsWith("{")) strings(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/g);
-      else strings(/"((?:[^"\\]|\\.)*)"/g);
-    }
-  }
-  return out.length > 0 ? out.slice(0, 5).join("; ") : "(GitHub gave no validation detail)";
-}
 
 /** GitHub refused the review because it could not place an inline comment.
  * The post op answers it itself, by posting the comments in the body. */

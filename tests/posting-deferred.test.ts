@@ -46,8 +46,16 @@ const deliver = vi.fn();
 const listReviewsFull = vi.fn();
 const onExhausted = vi.fn();
 
-function writeDeferred(event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT" = "REQUEST_CHANGES"): void {
-  const payload = { commit_id: head, event, body: `Review\n\n${postingMarker(key)}` };
+function writeDeferred(
+  event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT" = "REQUEST_CHANGES",
+  comments?: unknown[],
+): void {
+  const payload = {
+    commit_id: head,
+    event,
+    body: `Review\n\n${postingMarker(key)}`,
+    ...(comments ? { comments } : {}),
+  };
   const sha = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
   const job: PostingJob = {
     version: 1,
@@ -150,6 +158,34 @@ describe("deferred review posting", () => {
     expect(store.postingRetry(key)).toMatchObject({ status: "confirmed", attempts: 1 });
     expect(jobFile()).toMatchObject({ status: "done", attempts: 1 }); // the ledger's count
     expect(pendingPosting(dir, 12, 1, key)).toBe(false);
+  });
+
+  // GitHub's 422 for a line it cannot place says not which comment. A 422
+  // landed nothing: the retry rewrites the snapshot with every comment in the
+  // body and posts that once more in the same attempt.
+  // MUTATION: make foldAfterAnchorRejection return false — this fails.
+  it("posts the comments in the body when GitHub cannot place an inline comment's line", async () => {
+    writeDeferred("REQUEST_CHANGES", [
+      { path: "big.json", line: 3863, side: "RIGHT", body: "[nit] formal register" },
+    ]);
+    deliver.mockRejectedValueOnce(
+      new GitHubRequestError(
+        "POST",
+        "/x",
+        422,
+        JSON.stringify({ message: "Unprocessable Entity", errors: ["Line could not be resolved"] }),
+      ),
+    );
+    at(4);
+    await worker().tick();
+    expect(deliver).toHaveBeenCalledTimes(2);
+    const second = deliver.mock.calls[1]![1];
+    expect(second.comments).toEqual([]);
+    expect(second.body).toContain("**`big.json:3863`**\n\n[nit] formal register");
+    expect(second.body.endsWith(postingMarker(key))).toBe(true);
+    expect(readPostingReceipt(dir, 12, 1)).toMatchObject({ status: "confirmed", gh_review_id: 88 });
+    expect(store.postingRetry(key)).toMatchObject({ status: "confirmed" });
+    expect(onExhausted).not.toHaveBeenCalled();
   });
 
   it("confirms from a marker found before an attempt, without POSTing", async () => {

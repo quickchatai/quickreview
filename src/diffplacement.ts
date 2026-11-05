@@ -10,8 +10,10 @@
 //   - a very large PR, where GitHub cannot place lines even in some files the
 //     files API does serve a patch for. That case cannot be read in advance.
 // `splitByDiff` catches the first case before the POST, keeping every other
-// comment inline. The post op answers the second case after GitHub's 422 by
-// posting once more with every comment in the body (`foldIntoBody`). Either
+// comment inline. The second case is answered after GitHub's 422 by posting
+// once more with every comment in the body: by the post op for the session's
+// POST (`foldIntoBody`), and by the outbox for a delivery the daemon owns
+// (`bodyOnlyPayload`). Either
 // way the review and its findings reach the author, rather than a refused
 // POST losing the whole review.
 //
@@ -124,4 +126,68 @@ export function isAnchorRejection(validation: string): boolean {
   return /could not be resolved|must be part of the (diff|same hunk)|pull_request_review_thread/i.test(
     validation,
   );
+}
+
+/**
+ * GitHub's validation text of a refused POST, and only that: the
+ * `errors[].message` entries (or the plain strings GitHub sometimes lists
+ * there) of the answer the adapter quoted. Control characters go, and each
+ * entry is capped; an answer with no such entries says so.
+ */
+export function validationText(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const at = raw.indexOf("{");
+  const out: string[] = [];
+  const push = (x: unknown): void => {
+    if (typeof x !== "string") return;
+    const clean = x.replace(/\p{Cc}+/gu, " ").trim();
+    if (clean) out.push(clean.slice(0, 200));
+  };
+  if (at >= 0) {
+    try {
+      const body = JSON.parse(raw.slice(at)) as { errors?: unknown };
+      if (Array.isArray(body.errors))
+        for (const e of body.errors)
+          push(typeof e === "string" ? e : (e as { message?: unknown } | null)?.message);
+    } catch {
+      // The quoted answer is cut short: read the `errors` array as far as it goes.
+      const seg = /"errors"\s*:\s*\[([\s\S]*)/.exec(raw.slice(at))?.[1] ?? "";
+      const strings = (re: RegExp): void => {
+        for (const m of seg.matchAll(re)) {
+          try {
+            push(JSON.parse(`"${m[1]}"`));
+          } catch {
+            push(m[1]);
+          }
+        }
+      };
+      if (seg.trimStart().startsWith("{")) strings(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/g);
+      else strings(/"((?:[^"\\]|\\.)*)"/g);
+    }
+  }
+  return out.length > 0 ? out.slice(0, 5).join("; ") : "(GitHub gave no validation detail)";
+}
+
+/**
+ * A review payload with every inline comment moved into its body, for a
+ * review GitHub refused because it could not place a comment. The posting
+ * marker stays the body's last line, so the review is still found by it.
+ */
+export function bodyOnlyPayload<P extends { body: string; comments?: unknown[] }>(
+  payload: P,
+  marker: string,
+): P {
+  const comments = (payload.comments ?? []) as InlineComment[];
+  if (!payload.body.endsWith(marker))
+    return {
+      ...payload,
+      body: foldIntoBody(payload.body, comments, UNRESOLVED_NOTE),
+      comments: [],
+    };
+  const text = payload.body.slice(0, -marker.length).trimEnd();
+  return {
+    ...payload,
+    body: `${foldIntoBody(text, comments, UNRESOLVED_NOTE)}\n\n${marker}`,
+    comments: [],
+  };
 }
