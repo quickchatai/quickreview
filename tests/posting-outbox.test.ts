@@ -209,7 +209,7 @@ describe("durable review delivery", () => {
     expect(createReview).toHaveBeenCalledTimes(1);
     expect(pendingPosting(dir, 12, 1, key)).toBe(false);
   });
-  // MUTATION: make foldAfterAnchorRejection return false — this fails
+  // MUTATION: rethrow every error in postFolding — this fails
   // (one POST, the job failed loud).
   it("posts the comments in the body when GitHub cannot place an inline comment's line", async () => {
     job.payload.comments = [{ path: "a.py", line: 3, side: "RIGHT", body: "[blocker] x" }];

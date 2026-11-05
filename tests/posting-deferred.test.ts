@@ -163,7 +163,7 @@ describe("deferred review posting", () => {
   // GitHub's 422 for a line it cannot place says not which comment. A 422
   // landed nothing: the retry rewrites the snapshot with every comment in the
   // body and posts that once more in the same attempt.
-  // MUTATION: make foldAfterAnchorRejection return false — this fails.
+  // MUTATION: rethrow every error in postFolding — this fails.
   it("posts the comments in the body when GitHub cannot place an inline comment's line", async () => {
     writeDeferred("REQUEST_CHANGES", [
       { path: "big.json", line: 3863, side: "RIGHT", body: "[nit] formal register" },

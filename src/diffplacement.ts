@@ -11,14 +11,24 @@
 //     files API does serve a patch for. That case cannot be read in advance.
 // `splitByDiff` catches the first case before the POST, keeping every other
 // comment inline. The second case is answered after GitHub's 422 by posting
-// once more with every comment in the body: by the post op for the session's
-// POST (`foldIntoBody`), and by the outbox for a delivery the daemon owns
-// (`bodyOnlyPayload`). Either
+// once more with every comment in the body (`bodyOnlyPayload`): by the post
+// op for the session's POST, and by the outbox for a delivery the daemon owns.
+// Both are worked out at POST time from the saved review, which stays the
+// session's exact input: nothing rewritten is persisted, so a replay or a
+// crash between the two POSTs derives the same thing again. Either
 // way the review and its findings reach the author, rather than a refused
 // POST losing the whole review.
 //
+// This is not `packages/pi-plugin/src/anchors.ts`. That module keeps a
+// finding to a changed-line run, which is the posting policy's rule for where
+// a finding belongs. GitHub places a comment on any line a hunk shows,
+// context lines included, and only GitHub's rule decides whether the POST is
+// refused. Applying the stricter rule here would move valid comments out of
+// the code.
+//
 // Pure: no I/O.
 
+import { classifyGitHubFailure } from "@quickchatai/pi-quickreview/src/githubcore.js";
 import { parseHunkHeader } from "@quickchatai/pi-quickreview/src/hunkheader.js";
 import type { FileList } from "./github.js";
 import type { InlineComment } from "./posting.js";
@@ -92,7 +102,7 @@ export function splitByDiff(
 }
 
 /** Where a comment was anchored, as the body names it. */
-function where(c: InlineComment): string {
+function anchorLabel(c: InlineComment): string {
   const range = c.start_line !== undefined && c.start_line !== c.line ? `${c.start_line}–` : "";
   const removed = (c.side ?? "RIGHT") === "LEFT" ? " (a removed line)" : "";
   return `\`${c.path}:${range}${c.line}\`${removed}`;
@@ -112,7 +122,7 @@ export function foldIntoBody(
   if (folded.length === 0) return text;
   let out = `${text.trimEnd()}\n\n### Comments given here instead of inline\n\n${note}`;
   for (const [i, c] of folded.entries()) {
-    const item = `\n\n---\n\n**${where(c)}**\n\n${c.body.trim()}`;
+    const item = `\n\n---\n\n**${anchorLabel(c)}**\n\n${c.body.trim()}`;
     const left = folded.length - i;
     const tail = `\n\n_${left} more comment(s) did not fit in the review body._`;
     if (out.length + item.length + tail.length > max) return out + tail;
@@ -121,9 +131,19 @@ export function foldIntoBody(
   return out;
 }
 
+/** GitHub's validation text when `error` is its 422 for an inline comment
+ * it could not place, on a review that carries `comments` of them; otherwise
+ * undefined. */
+export function anchorRejectionOf(error: unknown, comments: number): string | undefined {
+  const f = classifyGitHubFailure(error);
+  if (f.kind !== "rejected" || f.status !== 422 || comments === 0) return undefined;
+  const validation = validationText(error);
+  return isAnchorRejection(validation) ? validation : undefined;
+}
+
 /** GitHub's validation text says an inline comment could not be placed. */
 export function isAnchorRejection(validation: string): boolean {
-  return /could not be resolved|must be part of the (diff|same hunk)|pull_request_review_thread/i.test(
+  return /\b(line|start line|start_line|path|position) could not be resolved|must be part of the (diff|same hunk)|pull_request_review_thread\.(line|start_line|path|position|side|start_side)\b/i.test(
     validation,
   );
 }
@@ -169,25 +189,34 @@ export function validationText(err: unknown): string {
 }
 
 /**
- * A review payload with every inline comment moved into its body, for a
- * review GitHub refused because it could not place a comment. The posting
- * marker stays the body's last line, so the review is still found by it.
+ * A review payload with `folded` moved into its body and `kept` as its inline
+ * comments. With `marker`, a posting marker that ends the body stays its last
+ * line, so the review is still found by it.
  */
+export function foldPayload<P extends { body: string; comments?: unknown[] }>(
+  payload: P,
+  folded: InlineComment[],
+  kept: InlineComment[],
+  note: string,
+  marker?: string,
+): P {
+  const marked = marker !== undefined && marker !== "" && payload.body.endsWith(marker);
+  const text = marked ? payload.body.slice(0, -marker.length).trimEnd() : payload.body;
+  const body = foldIntoBody(text, folded, note);
+  return { ...payload, body: marked ? `${body}\n\n${marker}` : body, comments: kept };
+}
+
+/** The payload with every inline comment in its body: the answer to GitHub's
+ * 422 for a line it could not place. */
 export function bodyOnlyPayload<P extends { body: string; comments?: unknown[] }>(
   payload: P,
-  marker: string,
+  marker?: string,
 ): P {
-  const comments = (payload.comments ?? []) as InlineComment[];
-  if (!payload.body.endsWith(marker))
-    return {
-      ...payload,
-      body: foldIntoBody(payload.body, comments, UNRESOLVED_NOTE),
-      comments: [],
-    };
-  const text = payload.body.slice(0, -marker.length).trimEnd();
-  return {
-    ...payload,
-    body: `${foldIntoBody(text, comments, UNRESOLVED_NOTE)}\n\n${marker}`,
-    comments: [],
-  };
+  return foldPayload(
+    payload,
+    (payload.comments ?? []) as InlineComment[],
+    [],
+    UNRESOLVED_NOTE,
+    marker,
+  );
 }

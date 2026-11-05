@@ -53,17 +53,14 @@ import {
 import type { Config, GuardsConfig } from "./config.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import {
-  FOLDED_BODY_MAX,
   NOT_ON_DIFF_NOTE,
-  UNRESOLVED_NOTE,
-  foldIntoBody,
-  isAnchorRejection,
+  anchorRejectionOf,
+  bodyOnlyPayload,
+  foldPayload,
   splitByDiff,
   validationText,
 } from "./diffplacement.js";
 import { GitHubRequestError, type GitHubAdapter } from "./github.js";
-
-export { validationText };
 import { IpcError } from "./ipc/protocol.js";
 import type { OpHandler, RequestContext } from "./ipc/server.js";
 import type { IpcServer } from "./ipc/server.js";
@@ -334,6 +331,15 @@ interface Keyed {
   key: string;
 }
 
+/** One review post as the session asked for it. */
+interface ReviewPost {
+  keyed: Keyed | null;
+  head: string;
+  event: ReviewEvent;
+  text: string;
+  comments: InlineComment[] | undefined;
+}
+
 /** The round's posting identity, or null for a command with no round. A request
  * may restate the round, head and key (the shim passes its env); each must be
  * the command's own. */
@@ -389,14 +395,6 @@ function clientCause(f: GitHubFailure): string {
 /** A failure the daemon may retry by itself later. */
 const retryable = (f: GitHubFailure): boolean =>
   f.kind === "transient" || f.kind === "rate_limited";
-
-/** GitHub refused the review because it could not place an inline comment.
- * The post op answers it itself, by posting the comments in the body. */
-class AnchorRejected extends IpcError {
-  constructor(readonly validation: string) {
-    super("post_rejected", `GitHub rejected the review (422): ${validation}. Nothing was posted.`);
-  }
-}
 
 /** The reply's hidden identity: which PR, which comment it answers, and a
  * short hash of what it says. A reply carrying it is this reply. */
@@ -655,92 +653,10 @@ class PostOps {
 
   // ---- the shared review post ----------------------------------------------
 
-  /**
-   * The review post, with its inline comments placed where GitHub can place
-   * them (src/diffplacement.ts). GitHub refuses the whole review when one
-   * comment names a line it cannot place, and does not say which one:
-   *  - before the POST, a comment on a file GitHub serves no diff for, or on
-   *    lines outside the file's hunks, is moved into the body;
-   *  - when GitHub still answers 422 about a comment's line, the review is
-   *    posted once more, under the same key, with every comment in the body.
-   *    A 422 means nothing landed, so the second POST cannot duplicate it.
-   */
   private async postReview(
     ctx: RequestContext,
     op: "post.review" | "post.approval",
-    r: {
-      keyed: Keyed | null;
-      head: string;
-      event: ReviewEvent;
-      text: string;
-      comments: InlineComment[] | undefined;
-    },
-  ): Promise<PostOutcome> {
-    let { text, comments } = r;
-    const notes: string[] = [];
-    if (comments && comments.length > 0) {
-      const split = await this.splitOnDiff(ctx.pr, comments);
-      if (split.folded.length > 0) {
-        text = foldIntoBody(text, split.folded, NOT_ON_DIFF_NOTE);
-        comments = split.placed;
-        const names = split.folded.map((c) => `${c.path}:${c.line}`).join(", ");
-        this.log(
-          `post: #${ctx.pr} ${split.folded.length} comment(s) not on GitHub's diff, moved into the body: ${names}`,
-        );
-        notes.push(
-          `${split.folded.length} inline comment(s) are on lines GitHub shows no diff for (${names}); they were posted in the review body instead`,
-        );
-      }
-    }
-    let out: PostOutcome;
-    try {
-      out = await this.postReviewOnce(ctx, op, { ...r, text, comments });
-    } catch (e) {
-      if (!(e instanceof AnchorRejected) || !comments || comments.length === 0) throw e;
-      this.log(
-        `post: #${ctx.pr} GitHub could not place ${comments.length} inline comment(s) (${e.validation}); posting again with them in the body`,
-      );
-      out = await this.postReviewOnce(ctx, op, {
-        ...r,
-        text: foldIntoBody(text, comments, UNRESOLVED_NOTE, FOLDED_BODY_MAX),
-        comments: [],
-      });
-      notes.push(
-        `GitHub could not place the inline comments on its diff (${e.validation}); the review was posted again with all of them in the body`,
-      );
-    }
-    out.lines.push(...notes);
-    return out;
-  }
-
-  /** The PR's files as GitHub serves them, split by where the comments can
-   * go. A list that cannot be read leaves every comment inline: GitHub's own
-   * answer to the POST then decides. */
-  private async splitOnDiff(
-    pr: number,
-    comments: InlineComment[],
-  ): Promise<{ placed: InlineComment[]; folded: InlineComment[] }> {
-    try {
-      const files = await this.within(this.d.adapter.listPrFiles(pr), "the PR files read");
-      return splitByDiff(comments, files);
-    } catch (e) {
-      this.log(
-        `post: #${pr} the PR files could not be read (${this.describe(e)}); comments posted as given`,
-      );
-      return { placed: comments, folded: [] };
-    }
-  }
-
-  private async postReviewOnce(
-    ctx: RequestContext,
-    op: "post.review" | "post.approval",
-    r: {
-      keyed: Keyed | null;
-      head: string;
-      event: ReviewEvent;
-      text: string;
-      comments: InlineComment[] | undefined;
-    },
+    r: ReviewPost,
   ): Promise<PostOutcome> {
     const { keyed, head, event } = r;
     // A security pass that did not complete is named in the body, never
@@ -859,37 +775,89 @@ class PostOps {
     });
   }
 
+  /** The snapshot with the inline comments GitHub shows no diff for moved
+   * into its body, read from the PR's files as GitHub serves them. A list
+   * that cannot be read leaves every comment inline: GitHub's own answer to
+   * the POST then decides. */
+  private async placeOnDiff(
+    pr: number,
+    payload: JobPayload,
+    marker: string | undefined,
+  ): Promise<{ payload: JobPayload; note?: string }> {
+    const comments = (payload.comments ?? []) as InlineComment[];
+    if (comments.length === 0) return { payload };
+    let split;
+    try {
+      const files = await this.within(this.d.adapter.listPrFiles(pr), "the PR files read");
+      split = splitByDiff(comments, files);
+    } catch (e) {
+      this.log(
+        `post: #${pr} the PR files could not be read (${this.describe(e)}); comments posted as given`,
+      );
+      return { payload };
+    }
+    if (split.folded.length === 0) return { payload };
+    const names = split.folded.map((c) => `${c.path}:${c.line}`).join(", ");
+    this.log(
+      `post: #${pr} ${split.folded.length} comment(s) not on GitHub's diff, moved into the body: ${names}`,
+    );
+    return {
+      payload: foldPayload(payload, split.folded, split.placed, NOT_ON_DIFF_NOTE, marker),
+      note: `${split.folded.length} inline comment(s) are on lines GitHub shows no diff for (${names}); they were posted in the review body instead`,
+    };
+  }
+
   /** The gated POST and what follows it. Runs under the round's lock when keyed. */
   private async submit(
     ctx: RequestContext,
     op: string,
-    r: {
-      keyed: Keyed | null;
-      head: string;
-      event: ReviewEvent;
-      text: string;
-      comments?: InlineComment[];
-    },
+    r: ReviewPost,
     jobPayload: JobPayload,
   ): Promise<PostOutcome> {
     const { keyed, event } = r;
     const j = this.d.journal;
-    const review: AssembledReview = {
+    const marker = keyed ? postingMarker(keyed.key) : undefined;
+    const reviewOf = (payload: JobPayload): AssembledReview => ({
       pr: ctx.pr,
-      payload: jobPayload as unknown as ReviewPayload,
+      payload: payload as unknown as ReviewPayload,
       overflow: [],
       tags: new Map(),
       ungrammatical: [],
       withheld: [],
-    };
-    const ident = keyed ? { key: keyed.key, pr: ctx.pr, round: keyed.round, head: r.head } : null;
-    let sub;
-    try {
-      sub = await submitReview(
+    });
+    const post = (payload: JobPayload) =>
+      submitReview(
         { adapter: this.d.adapter, store: this.d.store },
-        review,
+        reviewOf(payload),
         keyed?.round ?? null,
       );
+    const ident = keyed ? { key: keyed.key, pr: ctx.pr, round: keyed.round, head: r.head } : null;
+    // What is POSTed is worked out here from the snapshot, which stays the
+    // session's exact input (src/diffplacement.ts): comments GitHub shows no
+    // diff for go into the body first, and a 422 about a comment's line is
+    // answered by one more POST with every comment in the body. A 422 landed
+    // nothing, so the second POST cannot duplicate a review.
+    const notes: string[] = [];
+    const placed = await this.placeOnDiff(ctx.pr, jobPayload, marker);
+    if (placed.note) notes.push(placed.note);
+    let sub;
+    try {
+      try {
+        sub = await post(placed.payload);
+      } catch (err) {
+        const anchor = anchorRejectionOf(err, placed.payload.comments?.length ?? 0);
+        if (anchor === undefined) throw err;
+        const count = jobPayload.comments?.length ?? 0;
+        this.log(
+          `post: #${ctx.pr} GitHub could not place the inline comments (${anchor}); posting again with all ${count} in the body`,
+        );
+        sub = await post(bodyOnlyPayload(jobPayload, marker));
+        notes.splice(
+          0,
+          notes.length,
+          `GitHub could not place the inline comments on its diff (${anchor}); the review was posted again with all ${count} of them in the body`,
+        );
+      }
     } catch (err) {
       if (ident && unanswered(err)) return this.handoff(ctx, ident, event, jobPayload, err);
       const why = this.describe(err); // logs GitHub's own answer daemon-side
@@ -907,9 +875,6 @@ class PostOps {
           );
         }
         this.audit(ctx, op, `rejected:${f.status ?? "4xx"}`);
-        const validation = validationText(err);
-        if (f.status === 422 && (r.comments?.length ?? 0) > 0 && isAnchorRejection(validation))
-          throw new AnchorRejected(validation);
         throw new IpcError(
           "post_rejected",
           f.status === 422
@@ -1009,7 +974,7 @@ class PostOps {
       status: "posted",
       ...(response?.html_url ? { review_url: response.html_url } : {}),
       ...(typeof response?.id === "number" ? { review_id: response.id } : {}),
-      lines: [`POST /pulls/${ctx.pr}/reviews -> ${event} review posted on #${ctx.pr}`],
+      lines: [`POST /pulls/${ctx.pr}/reviews -> ${event} review posted on #${ctx.pr}`, ...notes],
     };
   }
 

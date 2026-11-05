@@ -35,11 +35,11 @@ import {
   IN_FLIGHT_LINE,
   postOps,
   replyPostMarker,
-  validationText,
   type PostAdapter,
   type PostOpsDeps,
   type PostOutcome,
 } from "../src/postops.js";
+import { validationText } from "../src/diffplacement.js";
 import type { RequestContext } from "../src/ipc/server.js";
 import {
   SECURITY_PASSES_UNKNOWN_LINE,
@@ -804,7 +804,7 @@ describe("post.review live", () => {
   // inline comment: GitHub would refuse the WHOLE review with "Line could not
   // be resolved". The comment goes into the body before the POST; the others
   // stay inline.
-  // MUTATION: make splitOnDiff return every comment as placed — this fails
+  // MUTATION: make placeOnDiff return the payload unchanged — this fails
   // (the POST carries the big.json comment inline).
   it("moves a comment on a file GitHub shows no diff for into the body, and keeps the rest inline", async () => {
     rig.gh.files = [
@@ -838,13 +838,15 @@ describe("post.review live", () => {
     expect(posts[0]!.body.body).toContain("**`big.json:3863`**\n\n[nit] formal register");
     expect(posts[0]!.body.body.endsWith(postingMarker(KEY))).toBe(true);
     expect(receipt()).toMatchObject({ status: "confirmed", posting_key: KEY });
+    // The snapshot stays the session's exact input; the split is POST-time.
+    expect(rig.journal.readJob(PR, 1)?.payload.comments).toHaveLength(2);
   });
 
   // GitHub cannot place lines in some files of a very large PR even when the
   // files API serves their patch, and its 422 does not say which comment.
   // The post op posts once more, under the same key, with every comment in
   // the body: the review reaches the author instead of failing the round.
-  // MUTATION: drop the AnchorRejected catch in postReview — this fails
+  // MUTATION: rethrow every error in submit's anchor-422 catch — this fails
   // (post_rejected, nothing posted).
   it("posts again with every comment in the body when GitHub cannot place a comment's line", async () => {
     rig.gh.rejectInlineComments = "Line could not be resolved";
@@ -857,7 +859,7 @@ describe("post.review live", () => {
       { pr: PR },
     );
     expect(out.status).toBe("posted");
-    expect(out.lines.join("\n")).toMatch(/Line could not be resolved.*all of them in the body/);
+    expect(out.lines.join("\n")).toMatch(/Line could not be resolved.*all 1 of them in the body/);
     const posts = rig.gh.posts().filter((p) => p.method === "POST");
     expect(posts).toHaveLength(2);
     expect(posts[0]!.body.comments).toHaveLength(1);

@@ -1,7 +1,14 @@
 // Where inline comments can go on GitHub's diff (src/diffplacement.ts): the
 // pre-POST split, the body fold, and which 422s are about a comment's line.
 import { describe, expect, it } from "vitest";
-import { foldIntoBody, isAnchorRejection, placeable, splitByDiff } from "../src/diffplacement.js";
+import {
+  bodyOnlyPayload,
+  foldIntoBody,
+  foldPayload,
+  isAnchorRejection,
+  placeable,
+  splitByDiff,
+} from "../src/diffplacement.js";
 import type { FileList } from "../src/github.js";
 import type { InlineComment } from "../src/posting.js";
 
@@ -60,8 +67,7 @@ describe("placeable", () => {
     expect(placeable(files(), c("src/x.ts", 41, { start_line: 12 }))).toBe(false);
   });
 
-  // The case that refused nine rounds of one PR: a large generated file
-  // the files API lists with no patch at all.
+  // A large generated file the files API lists with no patch at all.
   it("refuses any line of a file GitHub serves no patch for", () => {
     expect(placeable(files(), c("translation/id.json", 3863))).toBe(false);
   });
@@ -113,6 +119,40 @@ describe("foldIntoBody", () => {
   });
 });
 
+describe("foldPayload / bodyOnlyPayload", () => {
+  const marker = "<!-- qcr-post:v1:7:1:abc -->";
+  const payload = {
+    commit_id: "h",
+    event: "COMMENT" as const,
+    body: `Review\n\n${marker}`,
+    comments: [c("a.ts", 1), c("b.ts", 2)],
+  };
+
+  it("keeps the posting marker the body's last line, exactly once", () => {
+    const out = bodyOnlyPayload(payload, marker);
+    expect(out.comments).toEqual([]);
+    expect(out.body.startsWith("Review\n\n### Comments given here instead of inline")).toBe(true);
+    expect(out.body.endsWith(`\n\n${marker}`)).toBe(true);
+    expect(out.body.split(marker)).toHaveLength(2);
+    expect(out.body).toContain("**`a.ts:1`**");
+    expect(out.body).toContain("**`b.ts:2`**");
+    expect(payload.comments).toHaveLength(2); // the snapshot is not changed
+  });
+
+  it("folds some and keeps the rest inline", () => {
+    const out = foldPayload(payload, [payload.comments[1]!], [payload.comments[0]!], "why", marker);
+    expect(out.comments).toEqual([payload.comments[0]]);
+    expect(out.body).toContain("**`b.ts:2`**");
+    expect(out.body).not.toContain("**`a.ts:1`**");
+  });
+
+  // An unkeyed post has no marker: the whole body is the text.
+  it("folds the whole body when there is no marker", () => {
+    const out = bodyOnlyPayload({ ...payload, body: "Plain" });
+    expect(out.body.startsWith("Plain\n\n### Comments given here instead of inline")).toBe(true);
+  });
+});
+
 describe("isAnchorRejection", () => {
   it("reads GitHub's answers about a comment's place", () => {
     expect(isAnchorRejection("Line could not be resolved, and Line could not be resolved")).toBe(
@@ -132,5 +172,8 @@ describe("isAnchorRejection", () => {
   it("does not read other refusals as one", () => {
     expect(isAnchorRejection("Body is too long (maximum is 65536 characters)")).toBe(false);
     expect(isAnchorRejection("(GitHub gave no validation detail)")).toBe(false);
+    // MUTATION: widen the pattern back to a bare `could not be resolved` — this fails.
+    expect(isAnchorRejection("Commit could not be resolved")).toBe(false);
+    expect(isAnchorRejection("pull_request_review_thread.body is too long")).toBe(false);
   });
 });
