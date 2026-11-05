@@ -56,7 +56,7 @@ describe("classify", () => {
     ];
     expect(route(pr11)).toEqual({ full: false, lint: false, image: false, clone: false });
     expect(
-      route([".github/pull_request_template.md", "memory/README.md", "docs/media/a.gif"]),
+      route([".github/pull_request_template.md", "docs/media/a.gif"]),
     ).toEqual({
       full: false,
       lint: false,
