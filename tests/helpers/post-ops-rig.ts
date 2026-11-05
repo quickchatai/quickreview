@@ -46,6 +46,11 @@ export class FakeGitHub {
   failReviewPost: number | "network" | null = null;
   /** The body a failed review POST answers with. */
   failReviewBody = "upstream trouble";
+  /** The PR's files (the files API rows); null answers the read with a 404. */
+  files: Array<Record<string, unknown>> | null = null;
+  /** When set, a review POST carrying any inline comment answers 422 with
+   * this validation message, as GitHub does for a line it cannot place. */
+  rejectInlineComments: string | null = null;
   /** When set, the PR read answers with this status. */
   failPr: number | null = null;
   /** When set, every DELETE (the approval's trigger steps) answers with this status. */
@@ -106,12 +111,18 @@ export class FakeGitHub {
         return new Response("comments unavailable", { status: this.failComments });
       return json([...this.comments].reverse());
     }
+    if (method === "GET" && /^\/pulls\/\d+\/files$/.test(path))
+      return this.files === null
+        ? new Response("files unavailable", { status: 404 })
+        : json(this.files.slice((Number(u.searchParams.get("page") ?? 1) - 1) * 100));
     if (method === "GET" && /\/status$/.test(path)) return json({ total_count: 0, statuses: [] });
     if (method === "GET" && /\/requested_reviewers$/.test(path)) return json({ teams: [] });
     if (method === "POST" && /^\/pulls\/\d+\/reviews$/.test(path)) {
       if (this.failReviewPost === "network") throw new TypeError("fetch failed");
       if (this.failReviewPost !== null)
         return new Response(this.failReviewBody, { status: this.failReviewPost });
+      if (this.rejectInlineComments !== null && (body.comments ?? []).length > 0)
+        return json({ message: "Unprocessable Entity", errors: [this.rejectInlineComments] }, 422);
       const state =
         body.event === "APPROVE"
           ? "APPROVED"
