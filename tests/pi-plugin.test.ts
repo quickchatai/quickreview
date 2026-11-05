@@ -1,4 +1,5 @@
-// The pi plugin (packages/pi-plugin), in process: its manifest and skills, the
+// The pi plugin (packages/pi-plugin), in process: its manifest and skills (as
+// rendered from the one skill source, plugins/qcr/), the
 // version gate, what the extension registers, /qcr-review in the background
 // through the extension on a fake pi (status line, result message, one review
 // at a time, stop, the posting rule), its arguments and presets, the
@@ -10,15 +11,7 @@
 // tests/review-post-cli.test.ts. git runs: each fake host's repo is a scratch
 // git repo (the review store keys a repo's state by its root commit).
 import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -65,8 +58,12 @@ import type {
   ReviewTarget,
 } from "@quickchatai/pi-quickreview/src/reviewapi.js";
 import {
+  guidedScan,
+  guidedScanLine,
   parseScanCommand,
+  PLUGIN_SCAN_VERBS,
   runScanCommand,
+  SCAN_COMMAND_USAGE,
   scanStateHome,
   ScanSessions,
   type ScanCommandDeps,
@@ -88,6 +85,7 @@ import { fillCaseAgentDir } from "@quickchatai/pi-quickreview/src/plugin/scancas
 import { coreExtensionFile } from "@quickchatai/pi-quickreview/src/engine/extfiles.js";
 import { ROUND_EXTENSIONS } from "@quickchatai/pi-quickreview/src/engine/round.js";
 import { parseSkillFrontmatter } from "./helpers/skill-frontmatter.js";
+import { loadSource, render, TEMPLATE_CONTRACT } from "../plugins/qcr/render.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const PLUGIN = join(ROOT, "packages", "pi-plugin");
@@ -111,13 +109,21 @@ describe("the plugin's manifest", () => {
   });
 
   // Each command is also a skill of the same name, and each skill names its
-  // command. MUTATION: delete skills/qcr-scan, or rename its `name:` — this
-  // fails.
+  // command. The skills/ the Plugin ships is rendered from the one skill
+  // source (plugins/qcr/render.mjs) at build and pack, and gitignored, so this
+  // reads the render itself: a fresh clone has no skills/ before a build.
+  // MUTATION: delete plugins/qcr/templates/scan.md, or render the pi copy
+  // under the namespaced names — this fails.
   it("ships one skill per command, named as the command, that tells the model the command", () => {
-    const dir = join(PLUGIN, "skills");
-    expect(readdirSync(dir).sort()).toEqual([...QUICKREVIEW_COMMANDS].sort());
+    const files = render(loadSource(), "pi", {
+      version: pluginPkg()["version"] as string,
+      contract: TEMPLATE_CONTRACT,
+    });
+    expect(Object.keys(files).sort()).toEqual(
+      [...QUICKREVIEW_COMMANDS].map((c) => `skills/${c}/SKILL.md`).sort(),
+    );
     for (const name of QUICKREVIEW_COMMANDS) {
-      const fm = parseSkillFrontmatter(readFileSync(join(dir, name, "SKILL.md"), "utf8"));
+      const fm = parseSkillFrontmatter(files[`skills/${name}/SKILL.md`]!);
       expect(fm.fields.get("name")?.value, name).toBe(name);
       const description = fm.fields.get("description");
       expect(description?.resolvesTo, name).toBe("string");
@@ -1382,6 +1388,41 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     expect(existsSync(join(host.cwd, ".qcr"))).toBe(false);
   });
 
+  // A preview with stage 0 due offers the guided run after it: that line
+  // keeps the scope the person priced, so the scan priced after the draft is
+  // the folder, delta and commit asked for, not the whole repository.
+  // MUTATION: offer a bare `/qcr-scan` in priceAndStart's stage-0 preview — this fails.
+  it("a stage-0 preview of one folder offers the guided run of that folder", async () => {
+    const host = scanHost();
+    const config = join(host.home, "qcr-config.toml");
+    writeFileSync(
+      config,
+      readFileSync(join(ROOT, "config.example.toml"), "utf8").replace(
+        /^threat_model = "off"/m,
+        'threat_model = "auto"',
+      ),
+    );
+    const env = { ...host.env, QCR_CONFIG: config };
+    const ui = fakeUi();
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    await runScanCommand("units propose", { ...host, env }, ui, { sessions, deps });
+    await runScanCommand("units save", { ...host, env }, ui, { sessions, deps });
+    await runScanCommand("--path lib --sha HEAD --preview", { ...host, env }, ui, {
+      sessions,
+      deps,
+    });
+    const shown = ui.shown.at(-1)!;
+    expect(shown).toMatch(/drafts its threat model \(stage 0/);
+    expect(shown).toMatch(/\/qcr-scan threat-model start --key \w+ --sha \w+`/);
+    expect(shown).toContain("`/qcr-scan --sha HEAD --path lib`");
+    expect(guidedScanLine({ delta: true, sha: "abc", path: "my dir" })).toBe(
+      '/qcr-scan --delta --sha abc --path "my dir"',
+    );
+    expect(guidedScanLine({ delta: false })).toBe("/qcr-scan");
+    expect(deps.agents).toEqual([]);
+  });
+
   // MUTATION: drop the Esc handler from priceAndStart's stage-0 wait — the
   // drafting case never ends, the command never returns, and this fails.
   it("Esc stops a threat-model draft in flight, and nothing is scanned", async () => {
@@ -1446,6 +1487,99 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     await runScanCommand("--preview", host, ui, { sessions, deps });
     expect(ui.shown.at(-1)).toMatch(/Scan 3 files of .*stops hard at \$/);
     expect(deps.agents).toEqual([]);
+  });
+
+  it("takes --path: the guided run and a preview price one folder, and the usage says so", async () => {
+    expect(SCAN_COMMAND_USAGE).toMatch(/\[--path DIR\]/);
+    expect(parseScanCommand("--path ./lib/ --preview")).toEqual({
+      kind: "guided",
+      o: { delta: false, path: "lib", preview: true },
+    });
+    expect((parseScanCommand("--path /etc") as { error: string }).error).toMatch(
+      /absolute[\s\S]*usage: \/qcr-scan/,
+    );
+    // the last --path wins, as qcr scan's does; `.` is the whole repo.
+    // MUTATION: keep an earlier folder when a later --path is `.` — this fails.
+    expect(parseScanCommand("--path app --path .")).toEqual({
+      kind: "guided",
+      o: { delta: false },
+    });
+    expect(parseScanCommand("--path . --path app")).toEqual({
+      kind: "guided",
+      o: { delta: false, path: "app" },
+    });
+    const host = scanHost();
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await runScanCommand("units propose", host, ui, { sessions, deps });
+    await runScanCommand("units save", host, ui, { sessions, deps });
+    await runScanCommand("--path lib --preview", host, ui, { sessions, deps });
+    expect(ui.shown.at(-1)).toMatch(/Scan 1 files of lib\/ in /);
+    expect(ui.shown.at(-1)).toMatch(/\/qcr-scan start --key \w+ --sha \w+ --path lib`/);
+    // the guided line it offers beside the start keeps the folder too
+    expect(ui.shown.at(-1)).toMatch(/, or `\/qcr-scan --path lib`\.$/);
+    await runScanCommand("preview --path lib", host, ui, { sessions, deps });
+    expect(ui.shown.at(-1)).toMatch(/\/qcr-scan start --key \w+ --sha \w+ --path lib/);
+    await runScanCommand("--path nope --preview", host, ui, { sessions, deps });
+    expect(ui.notes.at(-1)?.[1]).toMatch(/--path nope is not a folder/);
+    expect(deps.agents).toEqual([]);
+  });
+
+  // MUTATION: render a /qcr-scan line's folder with the shell's quoting
+  // (scanrender.ts pathFlag: single quotes, which splitArgs keeps as part of
+  // the word) or JSON's (escapes it never undoes) — this fails.
+  it("writes a /qcr-scan line's folder as pi's words read it back", () => {
+    for (const path of ["lib", "my dir", "app/routes/$slug", "it's", 'a"b']) {
+      const guided = guidedScanLine({ delta: false, path });
+      expect(splitArgs(guided), guided).toEqual(["/qcr-scan", "--path", path]);
+      // ...and the command reads the line it offered back to the same folder
+      expect(parseScanCommand(guided.replace(/^\/qcr-scan /, ""))).toMatchObject({ o: { path } });
+      const start = PLUGIN_SCAN_VERBS.start({ key: "k", sha: "s", mode: "stage1", path });
+      expect(splitArgs(start).slice(-2), start).toEqual(["--path", path]);
+    }
+    // a folder no pi word spells is said to be one, never sent as a broken word
+    expect(guidedScanLine({ delta: false, path: 'say "hi"' })).toMatch(
+      /cannot quote: run qcr scan for it/,
+    );
+  });
+
+  // MUTATION: drop the folder filter from followRun's listing — the folder
+  // run answers with the whole repo's earlier new findings, and this fails.
+  it("a folder run answers with the new findings inside its folder only", async () => {
+    const host = scanHost();
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await runScanCommand("units propose", host, ui, { sessions, deps });
+    await runScanCommand("units save", host, ui, { sessions, deps });
+    const whole = await guidedScan(host, ui, { delta: false }, { sessions, deps });
+    expect(whole.ok && whole.findings.map((f) => f.file).sort()).toEqual([
+      "app/a.py",
+      "lib/b.py",
+      "main.py",
+    ]);
+    writeFileSync(join(host.cwd, "lib", "b.py"), "X = 2\n");
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=T",
+        "-c",
+        "user.email=t@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-qam",
+        "b",
+      ],
+      { cwd: host.cwd },
+    );
+    const lib = await guidedScan(host, ui, { delta: true, path: "lib" }, { sessions, deps });
+    if (!lib.ok) throw new Error(lib.error);
+    expect(lib.findings.length).toBeGreaterThan(0);
+    for (const f of lib.findings) expect(f.file).toMatch(/^lib\//);
+    expect(lib.total).toBe(lib.findings.length);
   });
 
   it("stops the run in flight with /qcr-scan stop, and its findings so far follow", async () => {

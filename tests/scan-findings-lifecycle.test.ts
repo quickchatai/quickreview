@@ -183,6 +183,32 @@ describe("reconcile settles only against the content the run's tree holds", () =
     ).toEqual({ fixed: 0, pending: 1, not_reproduced: 0, dismissed_unreported: 0 });
     expect(st.question().question!.fresh.map((f) => f.fingerprint)).toEqual([moved.fingerprint]);
   });
+
+  // MUTATION: drop the `scope` check from reconcile's gone-file branch — the
+  // lib run fixes the src finding it never read, and this fails.
+  it("a folder run settles no finding whose file is gone outside its folder", () => {
+    const st = store();
+    st.report([CANON], S("r1", "2026-09-30T10:00:00Z"));
+    // src/commands.ts moved to src/ops.ts; r2 read only lib/.
+    const rows = [
+      row({
+        lens: "pass-security",
+        path: "lib/x.ts",
+        blob: "x1",
+        run: "r2",
+        at: "2026-09-30T11:00:01Z",
+      }),
+    ];
+    const tree = new Set(["src/ops.ts", "lib/x.ts"]);
+    expect(
+      st.reconcile({ rows, tree, scope: "lib", run: S("r2", "2026-09-30T11:00:02Z") }),
+    ).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
+    expect(st.load().findings[0]!.state).toBe("new");
+    // a run whose folder holds it settles it, as a whole-repo run does
+    expect(
+      st.reconcile({ rows, tree, scope: "src", run: S("r3", "2026-09-30T12:00:00Z") }).fixed,
+    ).toBe(1);
+  });
 });
 
 it("replaces an absorbed fingerprint's obsolete judgement while preserving independent support", () => {

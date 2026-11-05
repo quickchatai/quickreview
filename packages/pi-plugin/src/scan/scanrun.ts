@@ -57,6 +57,15 @@
 // builds at that depth; a deep one adds the floor (stage2.ts). The depth is
 // part of a deep plan's key, so a key never starts a run at another depth.
 //
+// A FOLDER SCAN (`path`, scan.ts `scanPath`) plans the files under one
+// folder alone: stage 1's cases, a delta's basis and a stage-2 proposal's
+// rows and floor all stay inside it. The path is part of the key, so a key
+// a preview of one folder handed out never starts a run over another, and a
+// path that names no folder of the tree at the sha is refused as a usage
+// error before anything is planned or priced. A folder run reconciles the
+// findings like any run: only the files it re-read settle theirs, and a file
+// gone from the tree settles its findings only inside the folder.
+//
 // Where a case runs: background pi subagents inside the companion (the case
 // runner port), from the scan agent build — `pass-scan`, and the validator
 // when `[scan] validator` is on, both built with the scan-mode anchor
@@ -182,8 +191,10 @@ import {
   normalizeCode,
   parseScanAnswer,
   parseValidatorAnswer,
+  pathProblem,
   planKey,
   planStage1,
+  scanPath,
   scanCasePrompt,
   scanValidatorPrompt,
   scenarioIsAnchored,
@@ -194,6 +205,7 @@ import {
   SCAN_DEEP_MAX_SUGGESTIONS,
   SCAN_PASS,
   stage1LensKey,
+  underPath,
   type ExclusionReason,
   type PromptContext,
   type ScanCandidate,
@@ -448,6 +460,8 @@ export interface ScanRun {
   id: string;
   mode: ScanMode;
   sha: string;
+  /** A folder scan's folder (scan.ts `scanPath`); absent for the whole repo. */
+  path?: string;
   plan_key: string;
   started_at: string;
   finished_at: string | null;
@@ -510,6 +524,8 @@ export interface ScanPreview {
   key: string;
   mode: ScanMode;
   sha: string;
+  /** A folder scan's folder; null for the whole repo. */
+  path: string | null;
   cases: Array<ScanCasePlan & { estimate_usd: number | null }>;
   files: number;
   lines: number;
@@ -612,6 +628,24 @@ export type Stage2Proposal = StoredStage2Proposal;
 
 const EPS = 1e-9;
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** A folder scan's `path` read against the tree at `sha`: the normalised
+ * folder (null for the whole repo), or a usage refusal — absolute, above the
+ * root, or no folder of the tree. */
+function scopeOf(
+  raw: string | null | undefined,
+  tree: Pick<ScanTree, "files">,
+  sha: string,
+): { ok: true; path: string | null } | Refusal {
+  if (raw === undefined || raw === null) return { ok: true, path: null };
+  const p = scanPath(raw);
+  if (!p.ok) return { ok: false, errors: [p.why], usage: true };
+  const problem = pathProblem(p.path, tree.files, sha);
+  return problem === null ? p : { ok: false, errors: [problem], usage: true };
+}
+
+/** ` under <path>` for a folder scan's messages. */
+const inPath = (path: string | null): string => (path === null ? "" : ` under ${path}`);
 
 /** The refusal while another process holds the driver lease. */
 const heldElsewhere = (l: LeaseRecord): string =>
@@ -960,10 +994,14 @@ export class ScanRunner {
     ref: string | undefined,
     delta = false,
     claim = false,
+    rawPath?: string | null,
   ): Promise<{ ok: true; planned: Planned } | Refusal> {
     const pre = this.prerequisites(ref, claim);
     if (!pre.ok) return pre;
     const { sha, tree, entries, settings } = pre;
+    const scoped = scopeOf(rawPath, tree, sha);
+    if (!scoped.ok) return scoped;
+    const path = scoped.path;
     const cfg = settings.scan;
     const depth = cfg.depth;
     // Stage 1's ledger lens: a `[scan] kinds`-filtered reading is its own
@@ -1016,6 +1054,7 @@ export class ScanRunner {
       exclude: cfg.exclude,
       budget: { maxFiles: cfg.case_max_files, maxLines: cfg.case_max_lines },
       ...(basis ? { delta: basis } : {}),
+      path,
     });
     const key: RateKey = {
       lens: s1,
@@ -1074,14 +1113,14 @@ export class ScanRunner {
     // Nothing to read, but the findings still owe a reconcile — a reported
     // file deleted since, or a run that ended before its own reconcile: the
     // run reads nothing and only settles them, so emptiness is no blocker.
-    const reconcileOnly = cases.length === 0 ? this.reconcileOwed(tree) : null;
+    const reconcileOnly = cases.length === 0 ? this.reconcileOwed(tree, path) : null;
     if (cases.length === 0 && reconcileOnly === null) {
       blockers.push(
         delta
-          ? `nothing changed to read at ${sha.slice(0, 12)} since the last scan (${basis!.since.slice(0, 12)}), and the ledger covers every other file at its content`
+          ? `nothing changed to read${inPath(path)} at ${sha.slice(0, 12)} since the last scan (${basis!.since.slice(0, 12)}), and the ledger covers every other file at its content`
           : plan.covered > 0
-            ? `nothing left to read at ${sha.slice(0, 12)}: the ledger already covers every stage-1 file at this content`
-            : "nothing to read: no unit of the saved cut owns a readable, non-excluded file",
+            ? `nothing left to read${inPath(path)} at ${sha.slice(0, 12)}: the ledger already covers every stage-1 file at this content`
+            : `nothing to read${inPath(path)}: no unit of the saved cut owns a readable, non-excluded file`,
       );
     }
     // A deep delta owes an unchanged file a standard reading already covers
@@ -1108,6 +1147,8 @@ export class ScanRunner {
       key: planKey({
         mode,
         sha,
+        // Absent for the whole repo, so a whole-repo key is what it was.
+        ...(path !== null ? { path } : {}),
         cases: cases.map((c) => [
           c.id,
           c.files.map(
@@ -1124,6 +1165,7 @@ export class ScanRunner {
       }),
       mode,
       sha,
+      path,
       cases,
       files: cases.reduce((n, c) => n + c.files.length, 0),
       lines: cases.reduce((n, c) => n + c.lines, 0),
@@ -1252,8 +1294,10 @@ export class ScanRunner {
   /** Why a run that reads nothing must still run, or null: an open finding
    * on a file the tree no longer holds (outside the pending match question,
    * which waits for the companion's answer), or a last run that ended before
-   * its own reconcile (interrupted, or its reconcile failed). */
-  private reconcileOwed(tree: ScanTree): string | null {
+   * its own reconcile (interrupted, or its reconcile failed). A folder run
+   * owes the gone files inside its folder only: it settles no other
+   * (findings.ts reconcile `scope`). */
+  private reconcileOwed(tree: ScanTree, path: string | null): string | null {
     const last = this.load().file.current;
     // A threat-model run reads no findings, so it owes no reconcile.
     if (
@@ -1270,7 +1314,8 @@ export class ScanRunner {
     );
     const paths = new Set(tree.files.map((f) => f.path));
     const gone = findings.filter(
-      (f) => !settled(f) && !asked.has(f.fingerprint) && !paths.has(f.path),
+      (f) =>
+        !settled(f) && !asked.has(f.fingerprint) && !paths.has(f.path) && underPath(f.path, path),
     ).length;
     return gone > 0 ? `${gone} open finding(s) on file(s) no longer in the tree` : null;
   }
@@ -1280,9 +1325,9 @@ export class ScanRunner {
   /** What a scan would read and cost now at `sha` (default the checkout's
    * HEAD), and the key a start must quote. */
   async preview(
-    args: { sha?: string; delta?: boolean } = {},
+    args: { sha?: string; delta?: boolean; path?: string | null } = {},
   ): Promise<{ ok: true; preview: ScanPreview } | Refusal> {
-    const p = await this.plan(args.sha, args.delta === true);
+    const p = await this.plan(args.sha, args.delta === true, false, args.path);
     return p.ok ? { ok: true, preview: p.planned.preview } : p;
   }
 
@@ -1291,6 +1336,7 @@ export class ScanRunner {
     key?: unknown;
     sha?: string;
     delta?: boolean;
+    path?: string | null;
   }): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const busy = this.refuseBusy();
     if (busy !== null) return busy;
@@ -1305,10 +1351,13 @@ export class ScanRunner {
     const key = args.key;
     // Stage 0's key starts stage 0: the key a preview's `threat_model_stage`
     // (or `proposeThreatModel`) handed out. Keys of the two plans never meet
-    // (stage 0's carries its stage).
+    // (stage 0's carries its stage). Stage 0 reads the whole repository, so
+    // a `path` does not scope it.
     if (this.isThreatModelKey(key, args.sha))
       return this.startThreatModel({ key, ...(args.sha !== undefined ? { sha: args.sha } : {}) });
-    return this.holdingStart(() => this.startPlanned(key, args.sha, args.delta === true));
+    return this.holdingStart(() =>
+      this.startPlanned(key, args.sha, args.delta === true, args.path),
+    );
   }
 
   /** Is `key` the key stage 0 plans at `ref` now? Never under
@@ -1425,9 +1474,10 @@ export class ScanRunner {
     key: string,
     sha: string | undefined,
     delta: boolean,
+    path: string | null | undefined,
   ): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const args = { key, sha };
-    const p = await this.plan(args.sha, delta, true);
+    const p = await this.plan(args.sha, delta, true, path);
     if (!p.ok) return p;
     const { preview, tree, settings, threatModel } = p.planned;
     const stage0 = preview.threat_model_stage;
@@ -1482,6 +1532,7 @@ export class ScanRunner {
       {
         mode: preview.mode,
         sha: preview.sha,
+        ...(preview.path !== null ? { path: preview.path } : {}),
         plan_key: preview.key,
         cap_usd: preview.cap_usd,
         estimate_usd: preview.estimate_usd,
@@ -1506,7 +1557,14 @@ export class ScanRunner {
     file: RunFile,
     head: Pick<
       ScanRun,
-      "mode" | "sha" | "plan_key" | "cap_usd" | "estimate_usd" | "settings" | "threat_model"
+      | "mode"
+      | "sha"
+      | "path"
+      | "plan_key"
+      | "cap_usd"
+      | "estimate_usd"
+      | "settings"
+      | "threat_model"
     >,
     jobs: CaseJob[],
     tree: ScanTree,
@@ -1713,10 +1771,14 @@ export class ScanRunner {
     ref: string | undefined,
     deep: boolean | undefined,
     claim = false,
+    rawPath?: string | null,
   ): Promise<Stage2Planned> {
     const pre = this.prerequisites(ref, claim);
     if (!pre.ok) return pre;
     const { sha, tree, entries } = pre;
+    const scoped = scopeOf(rawPath, tree, sha);
+    if (!scoped.ok) return scoped;
+    const path = scoped.path;
     const depth: ScanDepth =
       deep === undefined ? pre.settings.scan.depth : deep ? "deep" : "standard";
     const settings: ScanSettings = { ...pre.settings, scan: { ...pre.settings.scan, depth } };
@@ -1759,6 +1821,7 @@ export class ScanRunner {
       price: (lens, tier, effort) => priceStage2Row(entries, cfg, lens, tier, effort, depth),
       budgetUsd,
       ...(depth === "deep" ? { floor: cfg.deep_lenses } : {}),
+      path,
       allow: cfg.lenses,
       networkIam,
       ...(entryGlobs.length > 0 ? { entryPoint: globMatcherOrNothing(entryGlobs) } : {}),
@@ -1767,6 +1830,8 @@ export class ScanRunner {
     const runnable = plan.rows.filter((r) => r.status === "run");
     const key = stage2Key({
       sha,
+      // Absent for the whole repo, so a whole-repo key is what it was.
+      ...(path !== null ? { path } : {}),
       rows: runnable.map((r) => [
         r.id,
         // The ledger key, `[scan] kinds` scope and all: changing the kinds
@@ -1797,6 +1862,7 @@ export class ScanRunner {
       validator: cfg.validator,
       depth,
       floor: plan.floor,
+      ...(path !== null ? { path } : {}),
     };
     return { ok: true, proposal, tree, settings, cut: pre.cut, threatModel };
   }
@@ -1814,6 +1880,8 @@ export class ScanRunner {
     budget_usd?: unknown;
     sha?: string;
     deep?: unknown;
+    /** A folder proposal: rows and floor only under it. */
+    path?: string | null;
   }): Promise<{ ok: true; proposal: Stage2Proposal } | Refusal> {
     const rows = args.rows ?? [];
     if (!Array.isArray(rows))
@@ -1854,7 +1922,7 @@ export class ScanRunner {
       }
       budget = args.budget_usd;
     }
-    const p = await this.planStage2(request, budget, args.sha, deep);
+    const p = await this.planStage2(request, budget, args.sha, deep, false, args.path);
     if (!p.ok) return p;
     try {
       this.ports.state.write(
@@ -1933,6 +2001,7 @@ export class ScanRunner {
       stored.proposal.sha,
       proposalDepth(stored.proposal) === "deep",
       true,
+      stored.proposal.path ?? null,
     );
     if (!p.ok) return p;
     if (p.proposal.key !== key) {
@@ -2022,6 +2091,8 @@ export class ScanRunner {
           ...(cfg.depth === "deep" ? { depth: cfg.depth } : {}),
         },
         ...modelRef(p.threatModel),
+        // The approved proposal's folder, as stage 1 records its preview's.
+        ...(p.proposal.path !== undefined ? { path: p.proposal.path } : {}),
       },
       jobs,
       p.tree,
@@ -3022,6 +3093,8 @@ export class ScanRunner {
         tree: new Set(tree.files.map((f) => f.path)),
         blobs: new Map(tree.files.map((f) => [f.path, f.blob])),
         run: { run: run.id, sha: run.sha, at: this.ports.clock().toISOString() },
+        // A folder run settles no gone file outside its folder.
+        scope: run.path ?? null,
       });
     } catch (err) {
       run.problems.push(

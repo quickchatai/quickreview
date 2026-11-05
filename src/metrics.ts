@@ -14,10 +14,10 @@
 // Ops-day bucketing goes through eod.ts's Intl helpers (DST-correct; never
 // manual offsets).
 import { zoneDateString } from "./eod.js";
+import { snapshotHeartbeat } from "./heartbeat.js";
 import {
   cancelCauseLabel,
   tableExists,
-  snapshotHeartbeat,
   roundUsage,
   cancellationTotals,
   tallyCancellations,

@@ -41,13 +41,40 @@ export function runtimeSpecifiers(text: string): string[] {
  * the fence holds.
  */
 export function workerReachesStateStore(root: string, entry = "src/botworker.ts"): string[] {
+  return closureReachesStateStore(root, [entry]);
+}
+
+/** An edge a closure does not follow: `from`'s import of `spec`, a door the
+ * fence names as store-backed on purpose. Only that file's edge is cut; the
+ * same specifier anywhere else is followed. */
+export interface CutEdge {
+  from: string;
+  spec: string;
+}
+
+/**
+ * The same traversal from several entries at once: every chain from one of
+ * `entries` (repo-relative) to the state store or a SQLite package, through
+ * runtime imports (static and dynamic: a lazy import on the way loads the
+ * module just the same), never crossing an edge in `cut`.
+ */
+export function closureReachesStateStore(
+  root: string,
+  entries: readonly string[],
+  cut: readonly CutEdge[] = [],
+): string[] {
   const files = new Set(
     [...SRC_DIRS, ...EXTENSION_DIRS].flatMap((d) => tsFilesUnder(join(root, d))),
   );
-  const start = join(root, entry);
-  if (!files.has(start)) throw new Error(`${entry} does not exist under ${root}`);
-  const parent = new Map<string, string | null>([[start, null]]);
-  const queue = [start];
+  const parent = new Map<string, string | null>();
+  const queue: string[] = [];
+  for (const entry of entries) {
+    const start = join(root, entry);
+    if (!files.has(start)) throw new Error(`${entry} does not exist under ${root}`);
+    if (parent.has(start)) continue;
+    parent.set(start, null);
+    queue.push(start);
+  }
   const hits: string[] = [];
   const chain = (f: string, tail?: string): string => {
     const out: string[] = [];
@@ -56,11 +83,13 @@ export function workerReachesStateStore(root: string, entry = "src/botworker.ts"
   };
   while (queue.length > 0) {
     const f = queue.shift()!;
-    if (relative(root, f) === STATE_STORE) {
+    const rel = relative(root, f);
+    if (rel === STATE_STORE) {
       hits.push(chain(f));
       continue; // report the way in, not the store's own imports
     }
     for (const spec of runtimeSpecifiers(readFileSync(f, "utf8"))) {
+      if (cut.some((c) => c.from === rel && c.spec === spec)) continue;
       if (SQLITE_PACKAGES.test(spec)) {
         hits.push(chain(f, spec));
         continue;

@@ -41,6 +41,10 @@ COPY scripts/verify-dist.mjs scripts/verify-dist.mjs
 COPY packages packages
 COPY src src
 COPY extensions extensions
+# The renderer's types: the app's src/plugincli.ts imports them, and tsc -b
+# compiles the whole app. The sidecar never runs the renderer, so only its
+# declarations come in.
+COPY plugins/qcr/render.d.mts plugins/qcr/render.d.mts
 RUN npx tsc -b && node scripts/verify-dist.mjs
 
 # ---- memory --------------------------------------------------------------------

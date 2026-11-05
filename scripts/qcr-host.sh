@@ -18,6 +18,9 @@
 #                        the companion
 #   qcr login [provider] pi's own /login, stored in the qcr-login volume
 #   qcr update [version] pull a newer image and repin this file
+#   qcr --schema N <verb> a host plugin's call: the verb after the flag
+#                        decides the container as above, and the image reads
+#                        the flag
 #
 # What a container gets, and nothing else:
 #   the repo (the directory you stand in)    /repo               read-only
@@ -206,6 +209,26 @@ maybe_notice() {
 # ---- the verb -----------------------------------------------------------------
 
 verb="${1:-}"
+# `qcr --schema N <verb>`, a host plugin's call, is the image's to read
+# (src/schemaflag.ts): the wrapper finds the verb past it, and hands it to the
+# image in front of the call's own arguments. A verb with no versioned payload
+# is one plain call the image refuses.
+schema=''
+case "$verb" in
+  --schema)
+    schema="--schema=${2-}"
+    shift
+    [ "$#" = 0 ] || shift
+    ;;
+  --schema=*)
+    schema="$verb"
+    shift
+    ;;
+esac
+if [ -n "$schema" ]; then
+  verb="${1:-}"
+  case "$verb" in review | scan | version) ;; *) verb=--schema ;; esac
+fi
 if [ "$verb" = update ]; then
   shift
   [ "$#" -le 1 ] || die "usage: qcr update [version]"
@@ -268,15 +291,20 @@ case "$verb" in
     done
     ;;
   version | --version | -V | help | --help | -h | install) split=0 ;;
+  --schema)
+    split=0
+    gh=0
+    ;;
 esac
 
 # A scan runs in the foreground: the container ends with the call, and a
-# driver detached inside it would end with the container.
+# driver detached inside it would end with the container. That holds for
+# every start: the scan's, stage 2's and stage 0's (threat-model start).
 if [ "$verb" = scan ]; then
   fg=0
   case "${2:-}" in
     start) fg=1 ;;
-    stage2) [ "${3:-}" != start ] || fg=1 ;;
+    stage2 | threat-model) [ "${3:-}" != start ] || fg=1 ;;
   esac
   for a in "$@"; do
     [ "$a" != --foreground ] || fg=0
@@ -317,7 +345,7 @@ if [ "$rverb" = start ] && [ -z "$phase" ]; then
     [ -n "$rand" ] || rand="$$"
     id="$(date -u +%Y%m%d%H%M%S)-$rand"
     rc=0
-    QCR_WRAPPER_PHASE=claim QCR_RUN_ID="$id" sh "$self" "$@" || rc=$?
+    QCR_WRAPPER_PHASE=claim QCR_RUN_ID="$id" sh "$self" ${schema:+"$schema"} "$@" || rc=$?
     [ "$rc" = 0 ] || exit "$rc"
     QCR_WRAPPER_PHASE=driver QCR_RUN_ID="$id" sh "$self" "$@" >/dev/null || rc=$?
     if [ "$rc" != 0 ]; then
@@ -325,7 +353,7 @@ if [ "$rverb" = start ] && [ -z "$phase" ]; then
       sh "$self" review stop "$id" >/dev/null 2>&1 || true
       die "review start: the review container could not be started"
     fi
-    maybe_notice
+    [ -n "$schema" ] || maybe_notice
     exit 0
   fi
 fi
@@ -527,6 +555,7 @@ fi
 # Keep the user's arguments exactly as they are: the docker command is built
 # after them and rotated in front (no eval, no quoting).
 if [ "$drop" = 1 ]; then shift; fi
+if [ -n "$schema" ]; then set -- "$schema" "$@"; fi
 nuser=$#
 
 # -t only with a terminal on both ends, or docker refuses to start. The driver
@@ -788,5 +817,5 @@ if [ "$rc" = 0 ] && [ -n "$stop_target" ]; then
   docker stop -t "$grace" "$stop_target" >/dev/null 2>&1 || true
   docker kill "$stop_target" >/dev/null 2>&1 || true
 fi
-[ -n "$phase" ] || maybe_notice
+[ -n "$phase" ] || [ -n "$schema" ] || maybe_notice
 exit "$rc"

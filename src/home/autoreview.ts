@@ -20,7 +20,7 @@
 //                 (invariant 9: never Off and never On)
 import { readFileSync } from "node:fs";
 import { parse } from "smol-toml";
-import { snapshotHeartbeat } from "../state.js";
+import { snapshotHeartbeat } from "../heartbeat.js";
 import { OnboardingEngine, type OnboardAdapters, type ProcessRunner } from "../onboard/engine.js";
 import {
   CONTAINER_STATE_DIR,

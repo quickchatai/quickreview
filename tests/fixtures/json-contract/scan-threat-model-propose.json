@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "preview": {
+    "key": "0000000000000000",
+    "mode": "threat-model",
+    "sha": "0000000000000000000000000000000000000000",
+    "why": "[scan] threat_model is off: the scan never drafts a threat model",
+    "existing": null,
+    "estimate_usd": null,
+    "cap_usd": 3,
+    "tier": "sol-med",
+    "inventory": "## Security facts (computed from the repository, not by a model)\n\nLine parsers over the repository's files, run before this pass. A `found` line is a lead to verify in the code, never a finding on its own; a `clear` line covers only what its check reads; an `unknown` line is a check that could not run, not one that found nothing.\n\n- `route-inventory` (pass-sec-authn-coverage): clear — no route registration found in the 0 route-like file(s) read from the tree",
+    "blockers": ["[scan] threat_model is off: the scan never drafts a threat model"]
+  },
+  "start": null
+}

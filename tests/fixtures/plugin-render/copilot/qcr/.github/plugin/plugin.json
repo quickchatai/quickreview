@@ -1,0 +1,5 @@
+{
+  "name": "qcr",
+  "version": "0.0.0-golden",
+  "description": "QuickReview's multi-lens AI code review, whole-repo scan and setup, run through its qcr command-line tool."
+}

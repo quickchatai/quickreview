@@ -49,6 +49,7 @@ export const DOCS_SUITE = [
   "tests/fences-published.test.ts",
   "tests/fences-tui.test.ts",
   "tests/onboarding-docs.test.ts",
+  "tests/plugin-docs.test.ts",
   "tests/publishability.test.ts",
   "tests/release-docs.test.ts",
   "tests/reviewer-context.test.ts",

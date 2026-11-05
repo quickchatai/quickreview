@@ -397,6 +397,19 @@ describe("[open] finding the session", () => {
   });
 });
 
+describe("[open] the terminal side's scan dir", () => {
+  // A host scan keeps a checkout's transcripts under that repo's own state
+  // home (scancli.ts `scanEnv`); the terminal side must read them there.
+  // MUTATION: set cmdOpen's scanDir back to `join(home, "scan", "transcripts")`
+  // — this fails.
+  it("cmdOpen takes the scan's transcripts dir from scanTranscriptsDir, never the global home", () => {
+    const src = readFileSync(join(ROOT, "src", "opencli.ts"), "utf8");
+    const body = src.slice(src.indexOf("export async function cmdOpen("));
+    expect(body).toMatch(/scanDir: scanTranscriptsDir\(process\.env, DEFAULT_REVIEWED_REPO\)/);
+    expect(body).not.toMatch(/scanDir: join\(home/);
+  });
+});
+
 describe("[open] the verb", () => {
   it("prepares a private agent dir, starts pi on a fork, and removes the copy of the login afterwards", async () => {
     const out = round(join(home, "runs", "r1", "out"), { main: "M" });

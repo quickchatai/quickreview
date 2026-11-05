@@ -23,8 +23,9 @@
 import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, sandboxRoot, type CompanionConfig } from "./config.js";
+import { loadConfig, sandboxRoot } from "./config.js";
 import { stateHome } from "./install.js";
+import { mountedCheckout, scanEnv } from "./scanenv.js";
 import {
   IN_SANDBOX_ENV,
   STARTED_FILE_ENV,
@@ -134,32 +135,8 @@ export function takeSandboxFlag(rest: readonly string[]): {
 
 // ---- assembly ------------------------------------------------------------------
 
-/** The env a host-side `qcr scan` assembles under: the reviewed checkout and
- * the tracker from `[companion]` when the env does not name them, so the CLI
- * reads the same repo the companion mounts. Inside a scan sandbox neither is
- * read — they are host paths — and the container's env decides. */
-export function scanEnv(
-  env: NodeJS.ProcessEnv,
-  defaultRepo: string,
-  companionOf: () => Pick<CompanionConfig, "reviewed_repo_dir" | "tracker_dir"> = () =>
-    loadConfig().companion,
-): NodeJS.ProcessEnv {
-  let companion: { reviewed_repo_dir: string; tracker_dir: string } | null = null;
-  if (!env[IN_SANDBOX_ENV]?.trim()) {
-    try {
-      companion = companionOf();
-    } catch {
-      // No readable config: the env and the defaults decide.
-    }
-  }
-  const tracker = env.QCR_TRACKER_DIR?.trim() || companion?.tracker_dir || "";
-  return {
-    ...env,
-    QCR_ROOT: env.QCR_ROOT?.trim() || sandboxRoot(),
-    QCR_REVIEWED_REPO: env.QCR_REVIEWED_REPO?.trim() || companion?.reviewed_repo_dir || defaultRepo,
-    ...(tracker ? { QCR_TRACKER_DIR: tracker } : {}),
-  };
-}
+// Which checkout a host-side scan reads and where its state lives: src/scanenv.ts.
+export { checkoutOf, mountedCheckout, scanEnv, scanTranscriptsDir, toplevelOf } from "./scanenv.js";
 
 /** The child the launch needs — `child_process.spawn`'s, narrowed. */
 interface DriverChild {
@@ -369,6 +346,7 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
     triage,
     afterMatch: triage ? () => triage.closeFixed() : null,
     home,
+    repo: env.QCR_REVIEWED_REPO!,
     out: (line) => console.log(line),
     ...(inSandbox
       ? { detach: detachDriver(env, home), units: engine }
@@ -461,10 +439,7 @@ async function sandboxPorts(
     docker,
   });
   const appRoot = env.QCR_ROOT?.trim() || sandboxRoot();
-  // The checkout to mount: named by the env or `[companion]`, never the
-  // in-container default (a host path is what docker mounts).
-  const reviewedRepo =
-    process.env.QCR_REVIEWED_REPO?.trim() || cfg?.companion.reviewed_repo_dir || "";
+  const reviewedRepo = mountedCheckout(env);
   // The model stage 1 runs on (the profile may move its tier): the login
   // the doctor's probe needs.
   const model = (): string => {

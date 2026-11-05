@@ -106,7 +106,13 @@ const REVIEW_GOLDENS = [
   "review-status-done",
   "review-stop",
 ];
-const SCAN_GOLDENS = ["scan-preview", "scan-status", "scan-findings", "scan-refused"];
+const SCAN_GOLDENS = [
+  "scan-preview",
+  "scan-status",
+  "scan-findings",
+  "scan-refused",
+  "scan-threat-model-propose",
+];
 
 describe("the committed golden outputs", () => {
   it.skipIf(UPDATE).each(REVIEW_GOLDENS)("%s validates against review-result.v1", (name) => {
@@ -184,13 +190,18 @@ describe("the committed golden outputs", () => {
 // ---- qcr version -----------------------------------------------------------------
 
 describe("qcr version", () => {
-  it("reports the image version, the schema versions and the pi pin", () => {
+  it("reports the image version, the schema versions, the contracts and the pi pin", () => {
     const v = versionInfo(ROOT, { package: "@earendil-works/pi-coding-agent", version: "1.4.0" });
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string };
     expect(v.image.version).toBe(pkg.version);
     expect(v.schemas).toEqual({ review: REVIEW_SCHEMA_VERSION, scan: SCAN_SCHEMA_VERSION });
     expect(v.pi).toEqual({ package: "@earendil-works/pi-coding-agent", version: "1.4.0" });
-    expect(renderVersion(v)).toMatch(/JSON schemas: review v1, scan v1/);
+    expect(renderVersion(v)).toMatch(
+      /JSON schemas: review v1, scan v1; host-plugin contracts: 1$/m,
+    );
+    // an added field: the version family stays at 1
+    expect(v.contracts).toEqual([1]);
+    expect(VERSION_SCHEMA_VERSION).toBe(1);
     expectContract(versionSchema, "version", VERSION_SCHEMA_VERSION, v as unknown as Json);
   });
 
@@ -492,5 +503,11 @@ describe("qcr scan --json", () => {
       SCAN_SCHEMA_VERSION,
       await run(["start", "--key", "stale", "--foreground"]),
     );
+    // Stage 0's proposal names its own preview shape (threatModelPreview), not
+    // a scan's: no cases, files, lines or depth.
+    // MUTATION: point the top-level `preview` back at `#/$defs/preview` alone — this fails.
+    const stage0 = await run(["threat-model", "propose"]);
+    expectContract(scan, "scan-threat-model-propose", SCAN_SCHEMA_VERSION, stage0);
+    expect((stage0["preview"] as Json)["mode"]).toBe("threat-model");
   }, 60_000);
 });

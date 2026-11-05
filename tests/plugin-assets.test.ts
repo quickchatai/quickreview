@@ -56,7 +56,9 @@ describe("the plugin's packed data", () => {
     const pkg = JSON.parse(
       readFileSync(join(ROOT, "packages", "pi-plugin", "package.json"), "utf8"),
     ) as { scripts: Record<string, string> };
-    expect(pkg.scripts["prepack"]).toBe("tsc -b && node ../../scripts/plugin-assets.mjs");
+    expect(pkg.scripts["prepack"]).toBe(
+      "tsc -b && node ../../plugins/qcr/render.mjs pi && node ../../scripts/plugin-assets.mjs",
+    );
     expect(pkg.scripts["postpack"]).toBe("node ../../scripts/plugin-assets.mjs --clean");
     copyAssets(ROOT, plugin);
     expect(ROOT_FILES).toEqual(["LICENSE"]);

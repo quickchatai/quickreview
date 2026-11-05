@@ -53,7 +53,7 @@ export interface TicketsClosed {
  * `qcr scan` CLI's subcommands — the same words around either. */
 export interface ScanVerbs {
   /** How to start the previewed run. */
-  start(p: Pick<ScanPreview, "key" | "sha" | "mode">): string;
+  start(p: Pick<ScanPreview, "key" | "sha" | "mode" | "path">): string;
   /** Where the pending match question is shown. */
   matches: string;
   /** How to answer the match question `key`: what precedes "that are the
@@ -83,9 +83,19 @@ export const TOOL_VERBS: ScanVerbs = {
   threatModelStart: (p) => `scan_start with key ${p.key} and sha ${p.sha}`,
 };
 
+/** ` --path P` for a folder scan's `qcr` start line, or nothing for the
+ * whole repo. The line is pasted into a POSIX shell, so a folder with any
+ * other character is single-quoted (a `'` as `'\''`): inside double quotes
+ * the shell would still expand a `$slug` or run a `$(…)` in the name. A pi
+ * slash line reads its words otherwise (plugin/scan.ts `slashPathFlag`). */
+export function pathFlag(path: string | null | undefined): string {
+  if (path === null || path === undefined) return "";
+  return ` --path ${/^[\w./@+-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`}`;
+}
+
 export const CLI_VERBS: ScanVerbs = {
   start: (p) =>
-    `qcr scan start --key ${p.key} --sha ${p.sha}${p.mode === "delta" ? " --delta" : ""}`,
+    `qcr scan start --key ${p.key} --sha ${p.sha}${p.mode === "delta" ? " --delta" : ""}${pathFlag(p.path)}`,
   matches: "qcr scan matches",
   match: (key) => `qcr scan match --key ${key} OLD=NEW… — the pairs`,
   stage2Start: (key) =>
@@ -115,7 +125,7 @@ function owedClause(d: ScanPreview["delta"]): string {
 export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): string {
   const out: string[] = [];
   const deep = p.depth === "deep";
-  const head = `${deep ? "(deep) " : ""}at ${p.sha.slice(0, 12)} — ${p.settings.tier} at ${p.settings.effort} effort, skeptic ${p.settings.validator ? `on (at the lens's tier, ${p.settings.validate_tier}; its cost is in the price)` : "off (findings stay unjudged — validity unknown)"}`;
+  const head = `${deep ? "(deep) " : ""}${p.path ? `of ${p.path}/ ` : ""}at ${p.sha.slice(0, 12)} — ${p.settings.tier} at ${p.settings.effort} effort, skeptic ${p.settings.validator ? `on (at the lens's tier, ${p.settings.validate_tier}; its cost is in the price)` : "off (findings stay unjudged — validity unknown)"}`;
   // A rate measured at the other depth stands in until this depth is priced.
   const across = p.rate_across_depth
     ? ` — from readings at the other depth: nothing at ${p.depth} depth is priced at these settings yet`
@@ -544,7 +554,7 @@ export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_
   const run = p.rows.filter((r) => r.status === "run");
   const deep = p.depth === "deep";
   out.push(
-    `STAGE 2 proposal ${deep ? "(deep) " : ""}at ${p.sha.slice(0, 12)} — ${run.length} row(s) to run, estimate ${usd(p.cap_usd)} (the run stops hard there)` +
+    `STAGE 2 proposal ${deep ? "(deep) " : ""}${p.path ? `of ${p.path}/ ` : ""}at ${p.sha.slice(0, 12)} — ${run.length} row(s) to run, estimate ${usd(p.cap_usd)} (the run stops hard there)` +
       (p.budget_usd !== null ? `, fitted to a ${usd(p.budget_usd)} budget` : "") +
       `; validator ${p.validator ? "on" : "off"}.`,
   );
@@ -621,6 +631,7 @@ export function startedDetails(run: ScanRun): {
   id: string;
   mode: ScanRun["mode"];
   sha: string;
+  path: string | null;
   cases: number;
   cap_usd: number;
 } {
@@ -628,6 +639,7 @@ export function startedDetails(run: ScanRun): {
     id: run.id,
     mode: run.mode,
     sha: run.sha,
+    path: run.path ?? null,
     cases: run.cases.length,
     cap_usd: run.cap_usd,
   };
@@ -724,11 +736,13 @@ export function proposalDetails(p: StoredStage2Proposal): {
   depth: "standard" | "deep";
   floor_rows: number;
   floor_usd: number;
+  path: string | null;
 } {
   const floor = p.rows.filter((x) => x.floor);
   return {
     key: p.key,
     sha: p.sha,
+    path: p.path ?? null,
     cap_usd: p.cap_usd,
     runnable: p.runnable,
     rows: p.rows.length,
@@ -759,7 +773,7 @@ export function stage2StartedLine(
 /** The line a stage-1 start answers. */
 export function startedLine(run: ScanRun, verbs: ScanVerbs = TOOL_VERBS): string {
   return (
-    `Scan ${run.id} (${run.mode}) started at ${run.sha.slice(0, 12)}: ${run.cases.length} case(s), hard stop ${usd(run.cap_usd)}. ` +
+    `Scan ${run.id} (${run.mode}) started${run.path ? ` over ${run.path}/` : ""} at ${run.sha.slice(0, 12)}: ${run.cases.length} case(s), hard stop ${usd(run.cap_usd)}. ` +
     `It runs in the background — ${verbs.status} shows progress, ${verbs.stop} stops it.`
   );
 }

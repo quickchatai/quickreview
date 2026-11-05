@@ -31,13 +31,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import type { Config } from "../config.js";
 import { opsDay } from "../eod.js";
-import {
-  snapshotHeartbeat,
-  type SlackCooldownRow,
-  type SlackReopeningRow,
-  type SlackPostKind,
-  type StateStore,
-} from "../state.js";
+import { snapshotHeartbeat } from "../heartbeat.js";
+import type { SlackCooldownRow, SlackReopeningRow, SlackPostKind, StateStore } from "../state.js";
 import type { RoundType } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   causeMessage,

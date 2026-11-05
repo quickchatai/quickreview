@@ -362,6 +362,7 @@ describe("the driver's host: a login per case, refused and read-only", () => {
     const faux = pricedFaux(() => 0.01, { provider: "faux", models: [{ id: "m" }] });
     faux.appendResponses(Array.from({ length: 4 }, () => fauxAssistantMessage("NONE")));
     const made: Array<{ agentDir: string; credentials: unknown }> = [];
+    const keyed: Array<[string, string]> = [];
     const cases = scanSdkCases({
       agentsDir,
       cwd: work,
@@ -373,13 +374,25 @@ describe("the driver's host: a login per case, refused and read-only", () => {
         const host = await PiHost.create({
           agentDir: o.agentDir,
           credentials: o.credentials as never,
-          configureModels: (r) => r.registerNativeProvider(faux.provider),
+          configureModels: async (r) => {
+            r.registerNativeProvider(faux.provider);
+            if (o.configureModels === undefined) return;
+            // The key-only route: the faux model's key stands in for the
+            // provider key the env hands a real model.
+            await r.setRuntimeApiKey("faux", "faux-key");
+            await o.configureModels({
+              setRuntimeApiKey: async (p, k) => {
+                keyed.push([p, k]);
+                await r.setRuntimeApiKey(p, k);
+              },
+            });
+          },
         });
         hosts.push(host);
         return host;
       },
     });
-    return { cases, made };
+    return { cases, made, keyed };
   }
 
   it("reads the login from the scan container's mount first, else the pi agent dir", () => {
@@ -427,6 +440,40 @@ describe("the driver's host: a login per case, refused and read-only", () => {
     );
     const out = await cases.run(spec, new AbortController().signal);
     expect(out).toMatchObject({ ok: false, reason: expect.stringMatching(/no pi login/) });
+    expect(expired).toHaveLength(1);
+    expect(made).toHaveLength(0);
+  });
+
+  // MUTATION: drop the key-only branch in scanSdkCases (engineCredentials
+  // always) — the first case is refused with "no pi login" and this fails.
+  it("on the host, no login but a provider key in the env runs on that key, nothing written", async () => {
+    const expired: string[] = [];
+    const none = join(dir, "no-pi");
+    const { cases, made, keyed } = driver(
+      { PATH: "/bin", HOME: dir, PI_CODING_AGENT_DIR: none, OPENAI_API_KEY: "sk-test" },
+      (r) => expired.push(r),
+    );
+    const out = await cases.run(spec, new AbortController().signal);
+    expect(out, JSON.stringify(out)).toMatchObject({ ok: true, output: "NONE" });
+    expect(expired).toEqual([]);
+    expect(made).toHaveLength(1);
+    expect(await (made[0]!.credentials as { list(): Promise<unknown[]> }).list()).toEqual([]);
+    expect(keyed).toEqual([["openai", "sk-test"]]);
+    expect(existsSync(join(none, "auth.json"))).toBe(false);
+    expect(existsSync(join(dir, "sdk-agent", "auth.json"))).toBe(false);
+  });
+
+  // MUTATION: drop the `envKeyNames(o.env).length === 0` refusal — the case
+  // builds a host on an empty store and this fails.
+  it("on the host, neither a login nor a key stops the run naming `qcr login`", async () => {
+    const expired: string[] = [];
+    const { cases, made } = driver(
+      { PATH: "/bin", HOME: dir, PI_CODING_AGENT_DIR: join(dir, "no-pi"), OPENAI_API_KEY: " " },
+      (r) => expired.push(r),
+    );
+    const out = await cases.run(spec, new AbortController().signal);
+    expect(out).toMatchObject({ ok: false, cost_usd: 0 });
+    expect((out as { reason: string }).reason).toMatch(/no provider API key.*run `qcr login`/);
     expect(expired).toHaveLength(1);
     expect(made).toHaveLength(0);
   });

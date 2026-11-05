@@ -17,7 +17,12 @@ import {
   buildAgents,
 } from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
-import { buildScanAgents, scanConfig, scanSettings } from "../src/setup/scanbuild.js";
+import {
+  buildScanAgents,
+  loadScanConfig,
+  scanConfig,
+  scanSettings,
+} from "../src/setup/scanbuild.js";
 
 const sandbox = join(import.meta.dirname, "..");
 const fixtureToml = readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8");
@@ -242,6 +247,72 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
     profile("repo", `[scan]\neffort = "medium"\n`);
     const agents = scanBuild(scanConfig(sandbox, configWith("repo"), homeProfileLookup(env)));
     expect(/^model: (.*)$/m.exec(agents.get("pass-scan--sol-med")!)?.[1]).toMatch(/:medium$/);
+  });
+});
+
+describe("loadScanConfig — the live config, or the shipped defaults on a fresh install", () => {
+  /** The install env, as the process env loadScanConfig takes. */
+  const live = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ ...env, ...extra });
+
+  /** An asset root holding only the shipped defaults (and, asked, a stranded config). */
+  function assetRoot(stranded = false): string {
+    const root = join(dir, "root");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.example.toml"),
+      readFileSync(join(sandbox, "config.example.toml")),
+    );
+    if (stranded) writeFileSync(join(root, "config.toml"), fixtureToml);
+    return root;
+  }
+
+  // MUTATION: drop the shipped-defaults branch in loadScanConfig (read the
+  // located path unconditionally) — the first case fails with ENOENT.
+  it("an empty config home scans on config.example.toml, as `qcr review` does", () => {
+    const root = assetRoot();
+    const loaded = loadScanConfig(root, live());
+    expect(loaded).toMatchObject({ ok: true });
+    const shipped = parseConfig(readFileSync(join(root, "config.example.toml"), "utf8"));
+    expect(loaded.ok && loaded.cfg.scan).toEqual(shipped.scan);
+    expect(loaded.ok && loaded.cfg.models).toEqual(shipped.models);
+  });
+
+  it("the install's own config wins over the shipped defaults", () => {
+    const root = assetRoot();
+    mkdirSync(configHome(env), { recursive: true });
+    writeFileSync(
+      join(configHome(env), "config.toml"),
+      `${fixtureToml}\n[scan]\neffort = "medium"\n`,
+    );
+    const loaded = loadScanConfig(root, live());
+    expect(loaded.ok && loaded.cfg.scan.effort).toBe("medium");
+  });
+
+  // MUTATION: drop `located.source === "override"` from the refusal — this fails.
+  it("a QCR_CONFIG naming a missing file still refuses: it named that file", () => {
+    const root = assetRoot();
+    const loaded = loadScanConfig(root, live({ QCR_CONFIG: join(dir, "nope.toml") }));
+    expect(loaded).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/no config at .*nope\.toml \(named by QCR_CONFIG\)/)],
+    });
+  });
+
+  it("a config stranded in the checkout refuses and names `qcr install migrate`", () => {
+    const loaded = loadScanConfig(assetRoot(true), live());
+    expect(loaded.ok).toBe(false);
+    expect(!loaded.ok && loaded.errors[0]).toMatch(/qcr install migrate/);
+  });
+
+  it("no shipped defaults either, or an invalid config, still refuses", () => {
+    const bare = join(dir, "bare");
+    mkdirSync(bare);
+    expect(loadScanConfig(bare, live()).ok).toBe(false);
+    const root = assetRoot();
+    mkdirSync(configHome(env), { recursive: true });
+    writeFileSync(join(configHome(env), "config.toml"), `${fixtureToml}\n[scan]\nturbo = true\n`);
+    const loaded = loadScanConfig(root, live());
+    expect(!loaded.ok && loaded.errors[0]).toMatch(/invalid: .*unknown key "turbo"/);
   });
 });
 

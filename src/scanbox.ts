@@ -96,6 +96,7 @@ import {
   type DockerRunner,
   type MemoryWiring,
 } from "./tui/companion.js";
+import { IN_SANDBOX_ENV } from "./scanenv.js";
 
 export { loginInPi } from "./pilogin.js";
 
@@ -103,7 +104,8 @@ export { loginInPi } from "./pilogin.js";
  * `DetachOutcome` carries it — `R` is its run record), its log and, from a
  * sandbox, its container; or a refusal. */
 export type StartOutcome<R = unknown> =
-  { ok: true; run: R; log: string; container?: string } | { ok: false; errors: string[] };
+  | { ok: true; run: R; log: string; container?: string }
+  | { ok: false; errors: string[]; usage?: true };
 
 /** In-container paths of a scan sandbox. The image fixes the app's and the
  * pi home's; the rest are the companion's own mount points, so code inside
@@ -131,10 +133,9 @@ const AGENT_SUBPATH = "agent";
 
 /** The image label carrying the build stamp. */
 export const STAMP_LABEL = "qcr.build-sha";
-/** Set in a scan sandbox: the process is the driver inside, so the
- * `[companion]` checkout and tracker (host paths) are not read, and no
- * further sandbox is launched. */
-export const IN_SANDBOX_ENV = "QCR_IN_SCAN_SANDBOX";
+/** Set in a scan sandbox (src/scanenv.ts, which reads it before any scan
+ * state is chosen). */
+export { IN_SANDBOX_ENV };
 /** Where the driver inside writes its start outcome. */
 export const STARTED_FILE_ENV = "QCR_SCAN_STARTED_FILE";
 /** Where the entrypoint sends the container's output (the driver log). */

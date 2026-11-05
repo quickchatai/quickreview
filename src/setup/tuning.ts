@@ -18,7 +18,7 @@
 //
 // A write needs the whole interview: every concern answered and the goals
 // said. A preview never does, and never writes anything.
-import { ALL_PASSES } from "../dispatch.js";
+import { ALL_PASSES } from "@quickchatai/pi-quickreview/src/passes.js";
 import { EXAMPLE_PROFILES, PROFILES_DIR } from "../install.js";
 import {
   PINNED_BUDGET_CHARS,

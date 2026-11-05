@@ -12,6 +12,11 @@
 // `preview` handed out (a plan, sha, price or setting that moved since is
 // refused), and a run stops hard at the estimate it showed.
 //
+// `--path DIR` scopes `preview`, `start` and `stage2 propose` to one folder
+// of the repo (scan.ts `scanPath`). A path that is absolute, leaves the repo,
+// or names no folder of the tree at the scanned sha is a usage error, exit 2,
+// and nothing is planned or priced.
+//
 // Exit codes: 0 done; 1 refused (or a waited-for run that did not end
 // complete); 2 usage; 3 `status --wait` gave up at its `--timeout`.
 import { readFileSync } from "node:fs";
@@ -25,6 +30,7 @@ import {
 } from "./cutrender.js";
 import type { FindingsStore, ScanFinding } from "./findings.js";
 import { dismissedLine } from "./presentation.js";
+import { scanPath } from "./scan.js";
 import type { Refusal } from "./scanports.js";
 import {
   CLI_VERBS as QCR_SCAN_VERBS,
@@ -55,11 +61,11 @@ import type { StoredStage2Proposal } from "./stage2request.js";
 import type { UnitCutPort } from "./unitcutstore.js";
 
 export const SCAN_USAGE =
-  "usage: qcr scan preview [--sha REF] [--delta] | start --key K [--sha REF] [--delta] [--foreground] | " +
+  "usage: qcr scan preview [--sha REF] [--delta] [--path DIR] | start --key K [--sha REF] [--delta] [--path DIR] [--foreground] | " +
   "status [--wait [--timeout S]] | stop | " +
   "findings [--state S] [--lens L] [--unit U] [--severity P] [--validity V] [--doubted|--not-doubted] [--limit N] | " +
   "matches | match --key K [OLD=NEW…] | suggestions | " +
-  "stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] | " +
+  "stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] [--path DIR] | " +
   "stage2 start --key K [--rows ID,ID…] [--foreground] | " +
   "threat-model propose [--sha REF] | threat-model start --key K [--sha REF] [--foreground] | dismiss FP… --reason TEXT | " +
   "units show | units propose [--file F|-] | units adjust --file F|- | units save | login [--provider P] | doctor | rebuild   (every subcommand takes --json, and --sandbox host|docker over [scan] sandbox)";
@@ -78,15 +84,22 @@ export interface FindingsQuery {
 }
 
 export type ScanCommand =
-  | { verb: "preview"; sha?: string; delta: boolean }
-  | { verb: "start"; key: string; sha?: string; delta: boolean; foreground: boolean }
+  | { verb: "preview"; sha?: string; delta: boolean; path?: string }
+  | { verb: "start"; key: string; sha?: string; delta: boolean; path?: string; foreground: boolean }
   | { verb: "status"; wait: boolean; timeout?: number }
   | { verb: "stop" }
   | { verb: "findings"; query: FindingsQuery }
   | { verb: "matches" }
   | { verb: "match"; key: string; pairs: Array<{ old: string; new: string }> }
   | { verb: "suggestions" }
-  | { verb: "stage2-propose"; rows?: string; budget?: number; deep?: boolean; sha?: string }
+  | {
+      verb: "stage2-propose";
+      rows?: string;
+      budget?: number;
+      deep?: boolean;
+      sha?: string;
+      path?: string;
+    }
   | { verb: "stage2-start"; key: string; rows?: string[]; foreground: boolean }
   | { verb: "threat-model-propose"; sha?: string }
   | { verb: "threat-model-start"; key: string; sha?: string; foreground: boolean }
@@ -130,6 +143,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
     "--reason",
     "--file",
     "--provider",
+    "--path",
   ]);
   const BARE = new Set([
     "--delta",
@@ -168,13 +182,21 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
     return n;
   };
   const sha = (): { sha?: string } => (str("--sha") !== undefined ? { sha: str("--sha")! } : {});
+  // One folder of the repo, normalised; `.` is the whole repo.
+  const path = (): { path?: string } => {
+    const raw = str("--path");
+    if (raw === undefined) return {};
+    const p = scanPath(raw);
+    if (!p.ok) throw usage(p.why);
+    return p.path === null ? {} : { path: p.path };
+  };
   switch (sub) {
     case "preview":
-      allowed("--sha", "--delta");
+      allowed("--sha", "--delta", "--path");
       noPositional();
-      return { verb: "preview", ...sha(), delta: flags.has("--delta") };
+      return { verb: "preview", ...sha(), delta: flags.has("--delta"), ...path() };
     case "start": {
-      allowed("--key", "--sha", "--delta", "--foreground");
+      allowed("--key", "--sha", "--delta", "--path", "--foreground");
       noPositional();
       const key = str("--key");
       if (key === undefined) throw usage("start needs --key — the key a preview showed");
@@ -183,6 +205,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
         key,
         ...sha(),
         delta: flags.has("--delta"),
+        ...path(),
         foreground: flags.has("--foreground"),
       };
     }
@@ -245,7 +268,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
       noPositional();
       return { verb: "suggestions" };
     case "stage2-propose": {
-      allowed("--rows", "--budget", "--deep", "--standard", "--sha");
+      allowed("--rows", "--budget", "--deep", "--standard", "--sha", "--path");
       noPositional();
       if (flags.has("--deep") && flags.has("--standard")) throw usage();
       const budget = num("--budget", (n) => n > 0);
@@ -255,6 +278,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
         ...(budget !== undefined ? { budget } : {}),
         ...(flags.has("--deep") ? { deep: true } : flags.has("--standard") ? { deep: false } : {}),
         ...sha(),
+        ...path(),
       };
     }
     case "stage2-start": {
@@ -387,6 +411,7 @@ export function runJson(run: ScanRun & { display?: string }): Record<string, unk
     id: run.id,
     mode: run.mode,
     sha: run.sha,
+    path: run.path ?? null,
     state: run.state,
     display: run.display ?? run.state,
     depth: run.settings.depth ?? "standard",
@@ -444,7 +469,8 @@ function proposalJson(p: StoredStage2Proposal): Record<string, unknown> {
 /** What a detached driver answers once it has recorded its run (or refused);
  * a sandboxed one names its container. */
 export type DetachOutcome =
-  { ok: true; run: ScanRun; log: string; container?: string } | { ok: false; errors: string[] };
+  | { ok: true; run: ScanRun; log: string; container?: string }
+  | { ok: false; errors: string[]; usage?: true };
 
 /** The dismissal a host offers (the app's triage, over reviewer memory and
  * the tracker): a finding marked not worth reporting, with the reason PR
@@ -472,6 +498,9 @@ export interface ScanVerbDeps {
   afterMatch: (() => Promise<TicketsClosed>) | null;
   /** The state home. */
   home: string;
+  /** The checkout the scan reads. A preview and a start name it (`repo`),
+   * so whoever approves the price sees which repository it is for. */
+  repo?: string;
   /** Where a foreground start's output goes, as its start outcome names it. */
   driverLog: string;
   out: (line: string) => void;
@@ -518,6 +547,10 @@ export async function runScanVerb(
       ok: false,
       errors,
     });
+  // A refusal of the call's own arguments (a --path the tree has no folder
+  // for) is a usage error.
+  const refused = (what: string, r: { errors: readonly string[]; usage?: true }): number =>
+    refusal(what, r.errors, r.usage ? 2 : 1);
   let cmd: ScanCommand;
   try {
     cmd = parseScanArgs(rest);
@@ -526,10 +559,16 @@ export async function runScanVerb(
     return emit(2, msg, { ok: false, errors: [msg] });
   }
   const { scan } = deps;
+  const repoField = deps.repo !== undefined ? { repo: deps.repo } : {};
+  const scanning = deps.repo !== undefined ? `Repository: ${deps.repo}\n\n` : "";
   switch (cmd.verb) {
     case "preview": {
-      const r = await scan.preview({ ...(cmd.sha ? { sha: cmd.sha } : {}), delta: cmd.delta });
-      if (!r.ok) return refusal("Scan preview", r.errors);
+      const r = await scan.preview({
+        ...(cmd.sha ? { sha: cmd.sha } : {}),
+        delta: cmd.delta,
+        ...(cmd.path ? { path: cmd.path } : {}),
+      });
+      if (!r.ok) return refused("Scan preview", r);
       const p = r.preview;
       // Stage 0 due first: `start` starts it (the runner routes its key).
       const stage0 = p.threat_model_stage;
@@ -537,10 +576,19 @@ export async function runScanVerb(
         p.blockers.length > 0
           ? null
           : stage0 !== undefined
-            ? ["--key", stage0.key, "--sha", p.sha]
-            : ["--key", p.key, "--sha", p.sha, ...(p.mode === "delta" ? ["--delta"] : [])];
-      return emit(0, renderPreview(p, CLI_VERBS), {
+            ? // Stage 0 reads the whole repository: its start takes no --path.
+              ["--key", stage0.key, "--sha", p.sha]
+            : [
+                "--key",
+                p.key,
+                "--sha",
+                p.sha,
+                ...(p.mode === "delta" ? ["--delta"] : []),
+                ...(p.path !== null ? ["--path", p.path] : []),
+              ];
+      return emit(0, `${scanning}${renderPreview(p, CLI_VERBS)}`, {
         ok: true,
+        ...repoField,
         preview: previewDetails(p),
         start,
       });
@@ -549,8 +597,9 @@ export async function runScanVerb(
       const r = await scan.proposeThreatModel(cmd.sha ? { sha: cmd.sha } : {});
       if (!r.ok) return refusal("Threat-model proposal", r.errors);
       const p = r.preview;
-      return emit(0, renderThreatModelPreview(p, CLI_VERBS), {
+      return emit(0, `${scanning}${renderThreatModelPreview(p, CLI_VERBS)}`, {
         ok: true,
+        ...repoField,
         preview: p,
         start: p.blockers.length > 0 ? null : ["--key", p.key, "--sha", p.sha],
       });
@@ -567,6 +616,7 @@ export async function runScanVerb(
               cmd.key,
               ...(cmd.sha ? ["--sha", cmd.sha] : []),
               ...(cmd.delta ? ["--delta"] : []),
+              ...(cmd.path ? ["--path", cmd.path] : []),
             ]
           : cmd.verb === "threat-model-start"
             ? ["threat-model", "start", "--key", cmd.key, ...(cmd.sha ? ["--sha", cmd.sha] : [])]
@@ -593,12 +643,13 @@ export async function runScanVerb(
           : startedLine(run, CLI_VERBS);
       if (!cmd.foreground) {
         const d = await deps.detach(argv);
-        if (!d.ok) return refusal(what, d.errors);
+        if (!d.ok) return refused(what, d);
         return emit(
           0,
-          `${line(d.run)}\nDriver output: ${d.log}${d.container ? `\nContainer: ${d.container}` : ""}`,
+          `${scanning}${line(d.run)}\nDriver output: ${d.log}${d.container ? `\nContainer: ${d.container}` : ""}`,
           {
             ok: true,
+            ...repoField,
             run: startedDetails(d.run),
             log: d.log,
             ...(d.container ? { container: d.container } : {}),
@@ -611,16 +662,17 @@ export async function runScanVerb(
               key: cmd.key,
               ...(cmd.sha ? { sha: cmd.sha } : {}),
               delta: cmd.delta,
+              ...(cmd.path ? { path: cmd.path } : {}),
             })
           : cmd.verb === "threat-model-start"
             ? await scan.startThreatModel({ key: cmd.key, ...(cmd.sha ? { sha: cmd.sha } : {}) })
             : await scan.startStage2({ key: cmd.key, ...(cmd.rows ? { rows: cmd.rows } : {}) });
       if (!r.ok) {
-        deps.onStart?.({ ok: false, errors: r.errors });
-        return refusal(what, r.errors);
+        deps.onStart?.({ ok: false, errors: r.errors, ...(r.usage ? { usage: true } : {}) });
+        return refused(what, r);
       }
       deps.onStart?.({ ok: true, run: r.run, log: deps.driverLog });
-      if (!json) deps.out(line(r.run));
+      if (!json) deps.out(`${scanning}${line(r.run)}`);
       // A pending promise alone keeps no process alive: hold it open until
       // the run ends.
       const keep = setInterval(() => {}, 60_000);
@@ -633,8 +685,10 @@ export async function runScanVerb(
       }
       const s = scan.status();
       const complete = s.run?.display === "complete";
+      // The same checkout as a detached start names (scan-result.v1 `repo`).
       return emit(complete ? 0 : 1, renderStatus(s, CLI_VERBS), {
         ok: complete,
+        ...repoField,
         run: s.run ? runJson(s.run) : null,
       });
     }
@@ -743,8 +797,9 @@ export async function runScanVerb(
         ...(cmd.budget !== undefined ? { budget_usd: cmd.budget } : {}),
         ...(cmd.sha ? { sha: cmd.sha } : {}),
         ...(cmd.deep !== undefined ? { deep: cmd.deep } : {}),
+        ...(cmd.path ? { path: cmd.path } : {}),
       });
-      if (!r.ok) return refusal("Stage 2 proposal", r.errors);
+      if (!r.ok) return refused("Stage 2 proposal", r);
       return emit(0, renderProposal(r.proposal, CLI_VERBS), {
         ok: true,
         proposal: proposalJson(r.proposal),

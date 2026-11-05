@@ -3,7 +3,8 @@
 // (scanagents.ts) over it.
 import { readFileSync } from "node:fs";
 import { parseConfig, type Config } from "../config.js";
-import { homeProfileLookup, locateConfig } from "../install.js";
+import { oneShotConfigFile } from "../homes.js";
+import { homeProfileLookup } from "../install.js";
 import type { BuiltAgent } from "@quickchatai/pi-quickreview/src/include.js";
 import type { ProfileLookup } from "@quickchatai/pi-quickreview/src/profiles.js";
 import type { Refusal } from "./engine.js";
@@ -33,16 +34,24 @@ export function scanConfig(
 
 /** The live config (the install locator's answer), as `scanConfig` reads
  * it — or why it cannot be read. Never `loadConfig`: that also demands the
- * Slack token files, which the companion does not mount. */
+ * Slack token files, which the companion does not mount. Zero-config, by
+ * the one-shot review's rule (homes.ts `oneShotConfigFile`): when the
+ * install's config home holds no config, the shipped defaults
+ * (`<root>/config.example.toml`) stand in — a fresh npm install scans as it
+ * reviews. A `$QCR_CONFIG` naming a missing file, a config stranded in the
+ * checkout, and a config that does not parse still refuse. */
 export function loadScanConfig(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
 ): { ok: true; cfg: Config } | Refusal {
   let path: string;
   try {
-    path = locateConfig({ env }).path;
+    path = oneShotConfigFile({ root, env }).file;
   } catch (err) {
-    return { ok: false, errors: [`no live config: ${String(err)}`] };
+    return {
+      ok: false,
+      errors: [err instanceof Error ? err.message : `no live config: ${String(err)}`],
+    };
   }
   let toml: string;
   try {

@@ -445,18 +445,6 @@ export function tableExists(store: StateStore, name: string): boolean {
   );
 }
 
-/** The snapshot's heartbeat, with its legacy written_at field as fallback. */
-export function snapshotHeartbeat(snapshot: {
-  heartbeat?: unknown;
-  written_at?: unknown;
-}): string | null {
-  return typeof snapshot.heartbeat === "string"
-    ? snapshot.heartbeat
-    : typeof snapshot.written_at === "string"
-      ? snapshot.written_at
-      : null;
-}
-
 /** PR lifecycle facts for PRs the daemon never tracked (M2 backfill fills it).
  * Deliberately a separate table: no live query reads it, so importing hundreds
  * of historical PRs cannot leak into the board, status.json or dispatch. */

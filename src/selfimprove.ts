@@ -49,7 +49,7 @@ export function selfImproveBrief(o: {
 }
 
 /** What /selfimprove takes: the scan's run flags, never a preview or a verb. */
-export const SELFIMPROVE_USAGE = "usage: /selfimprove [--delta] [--sha REF]";
+export const SELFIMPROVE_USAGE = "usage: /selfimprove [--delta] [--sha REF] [--path DIR]";
 
 /** /selfimprove: scan the repo, then hand the agent the findings and the fix loop. */
 export async function runSelfImproveCommand(
@@ -70,7 +70,7 @@ export async function runSelfImproveCommand(
   }
   if (cmd.kind === "pass" || cmd.o.preview)
     return ui.notify(
-      `/selfimprove takes the scan's flags only: --delta and --sha REF\n${SELFIMPROVE_USAGE}`,
+      `/selfimprove takes the scan's flags only: --delta, --sha REF and --path DIR\n${SELFIMPROVE_USAGE}`,
       "error",
     );
   const r = await guidedScan(host, ui, cmd.o, scan);

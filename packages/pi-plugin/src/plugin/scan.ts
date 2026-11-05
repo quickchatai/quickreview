@@ -12,7 +12,8 @@
 // when it ends. One scan runs per session; `/qcr-scan stop` (or the session
 // ending) stops it, and the ledger keeps what finished. A repo scanned for the
 // first time gets a unit cut proposed from its layout and saved, once the
-// person agrees. `--preview` prices the run and starts nothing.
+// person agrees. `--preview` prices the run and starts nothing. `--path DIR`
+// scans one folder of the repo (scan/scan.ts `scanPath`).
 //
 // `/qcr-scan <subcommand> …` is the scan's verb of that name, the same one
 // `qcr scan <subcommand>` runs (scan/scanverbs.ts), answered here. A start
@@ -23,17 +24,17 @@
 // The guided run, waited for, is also the app's /selfimprove's first half
 // (the app's src/selfimprove.ts): the scan, then the findings to the
 // person's agent.
-import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
-import { basename, join } from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { assetRoot } from "../assetroot.js";
-import { homeProfileLookup, loadOneShotConfig, stateHome } from "../homes.js";
+import { homeProfileLookup, loadOneShotConfig, repoScanHome, stateHome } from "../homes.js";
 import type { CoreConfig } from "../reviewconfig.js";
 import { scanConfigOf } from "../scan/scanagents.js";
 import { assembleScan, type AssembledScan } from "../scan/scanassemble.js";
 import { checkoutReader, stateHomeFs } from "../scan/scanfs.js";
 import type { CaseRunner, Refusal } from "../scan/scanports.js";
 import { listFindings, renderStatus, type ScanVerbs } from "../scan/scanrender.js";
+import { scanPath, underPath } from "../scan/scan.js";
 import type { ScanRun, ScanStatus } from "../scan/scanrun.js";
 import {
   findingJson,
@@ -78,12 +79,12 @@ export const SCAN_SUBCOMMANDS = [
 export const APP_SUBCOMMANDS: readonly string[] = ["login", "doctor", "rebuild", "dismiss"];
 
 export const SCAN_COMMAND_USAGE =
-  "usage: /qcr-scan [--delta] [--sha REF] [--preview] | /qcr-scan <scan subcommand> …";
+  "usage: /qcr-scan [--delta] [--sha REF] [--path DIR] [--preview] | /qcr-scan <scan subcommand> …";
 
 /** How the scan's answers name the next step here. */
 export const PLUGIN_SCAN_VERBS: ScanVerbs = {
   start: (p) =>
-    `/qcr-scan start --key ${p.key} --sha ${p.sha}${p.mode === "delta" ? " --delta" : ""}`,
+    `/qcr-scan start --key ${p.key} --sha ${p.sha}${p.mode === "delta" ? " --delta" : ""}${slashPathFlag(p.path)}`,
   matches: "/qcr-scan matches",
   match: (key) => `/qcr-scan match --key ${key} OLD=NEW… — the pairs`,
   stage2Start: (key) =>
@@ -94,6 +95,26 @@ export const PLUGIN_SCAN_VERBS: ScanVerbs = {
   threatModelStart: (p) => `/qcr-scan threat-model start --key ${p.key} --sha ${p.sha}`,
 };
 
+/** The guided `/qcr-scan` line for `o`: what a preview offers as the run
+ * after it keeps the scope the person priced (folder, delta, commit). */
+export function guidedScanLine(o: ScanOptions): string {
+  return `/qcr-scan${o.delta ? " --delta" : ""}${o.sha ? ` --sha ${o.sha}` : ""}${slashPathFlag(o.path)}`;
+}
+
+/**
+ * ` --path P` for a `/qcr-scan` line, or nothing for the whole repo. pi's
+ * words are `splitArgs`'s: double quotes group and nothing else is special,
+ * so a folder is bare, or double-quoted when it holds a space, never
+ * escaped. A folder no such word spells (a space and a `"`, or a leading
+ * `"`) is named as one this line cannot carry, never as a broken word.
+ */
+export function slashPathFlag(path: string | null | undefined): string {
+  if (path === null || path === undefined) return "";
+  if (!path.includes('"')) return ` --path ${/\s/.test(path) ? `"${path}"` : path}`;
+  if (/^[^"\s]\S*$/.test(path)) return ` --path ${path}`;
+  return ` --path ${JSON.stringify(path)} (a folder name a /qcr-scan line cannot quote: run qcr scan for it)`;
+}
+
 /** A scan finding as the scan's `--json` lists it. */
 export type ScanFinding = FindingJson;
 
@@ -101,6 +122,8 @@ export type ScanFinding = FindingJson;
 export interface ScanOptions {
   delta: boolean;
   sha?: string;
+  /** One folder of the repo, normalised (scan/scan.ts `scanPath`). */
+  path?: string;
   /** Price it, start nothing. */
   preview?: boolean;
 }
@@ -121,6 +144,13 @@ export function parseScanCommand(
     else if (w === "--sha" && next !== undefined && !next.startsWith("--")) {
       o.sha = next;
       i++;
+    } else if (w === "--path" && next !== undefined && !next.startsWith("--")) {
+      const p = scanPath(next);
+      if (!p.ok) return { error: `${p.why}\n${SCAN_COMMAND_USAGE}` };
+      // The last --path wins, as `qcr scan`'s does: a later `.` is the whole repo.
+      if (p.path === null) delete o.path;
+      else o.path = p.path;
+      i++;
     } else if (w === "--sandbox")
       return {
         error: `the scan sandbox is the app's (qcr scan, [scan] sandbox): here the scan runs in this pi, its cases behind the bash guard\n${SCAN_COMMAND_USAGE}`,
@@ -130,20 +160,9 @@ export function parseScanCommand(
   return { kind: "guided", o };
 }
 
-/** This repo's own scan state home, under the person's qcr state home: the
- * repo's directory name and a hash of its real path, so two repos never share
- * a unit cut, a ledger or a findings store. */
-export function repoScanHome(env: NodeJS.ProcessEnv, cwd: string): string {
-  let real = cwd;
-  try {
-    real = realpathSync(cwd);
-  } catch {
-    // a cwd that cannot be resolved keys on its spelling
-  }
-  const name = basename(real).replace(/[^A-Za-z0-9._-]/g, "_") || "repo";
-  const hash = createHash("sha256").update(real).digest("hex").slice(0, 12);
-  return join(stateHome(env), "repos", `${name}-${hash}`);
-}
+/** This repo's own scan state home, under the person's qcr state home
+ * (homes.ts, which `qcr scan` on a host keys the same way). */
+export { repoScanHome };
 
 /** Where this repo's scan keeps its state: `QCR_STATE_HOME` when the person
  * set one, else the repo's own home under the qcr state home. */
@@ -333,7 +352,11 @@ async function priceAndStart(
   const { scan } = engine;
   ui.status("QuickReview: pricing the scan…");
   try {
-    const previewArgs = { ...(o.sha ? { sha: o.sha } : {}), delta: o.delta };
+    const previewArgs = {
+      ...(o.sha ? { sha: o.sha } : {}),
+      delta: o.delta,
+      ...(o.path ? { path: o.path } : {}),
+    };
     let pv = await scan.preview(previewArgs);
     if (!pv.ok && pv.errors.some((e) => NO_CUT.test(e))) {
       // First scan of this repo: a scan reads by unit, and the cut is
@@ -390,7 +413,7 @@ async function priceAndStart(
       if (o.preview)
         return {
           ok: true,
-          preview: `${first}\n\nStart it with \`${PLUGIN_SCAN_VERBS.threatModelStart!(stage0)}\`, or \`/qcr-scan\`; the scan itself is priced once the draft is written.`,
+          preview: `${first}\n\nStart it with \`${PLUGIN_SCAN_VERBS.threatModelStart!(stage0)}\`, or \`${guidedScanLine(o)}\`; the scan itself is priced once the draft is written.`,
         };
       if (!ui.interactive)
         return {
@@ -436,13 +459,13 @@ async function priceAndStart(
         return { ok: false, error: "the threat-model stage wrote no draft the scan can read" };
     }
     const what =
-      `Scan ${p.files} files of ${host.cwd}` +
+      `Scan ${p.files} files of ${p.path !== null ? `${p.path}/ in ` : ""}${host.cwd}` +
       `${p.mode === "delta" ? " (the files changed since the last scan)" : ""} for about ` +
       `${p.estimate_usd === null ? "the price of a calibration run" : usd(p.estimate_usd)}; it stops hard at ${usd(p.cap_usd)}.`;
     if (o.preview)
       return {
         ok: true,
-        preview: `${what}\n\nStart it with \`${PLUGIN_SCAN_VERBS.start(p)}\`, or \`/qcr-scan\`.`,
+        preview: `${what}\n\nStart it with \`${PLUGIN_SCAN_VERBS.start(p)}\`, or \`${guidedScanLine(o)}\`.`,
       };
     if (!ui.interactive)
       return {
@@ -453,7 +476,12 @@ async function priceAndStart(
     if (login !== null) return { ok: false, error: login };
     if (!(await ui.confirm("QuickReview scan", `${what} Start it?`, host.shutdown)))
       return { ok: false, error: "the scan was not started" };
-    const started = await scan.start({ key: p.key, sha: p.sha, delta: p.mode === "delta" });
+    const started = await scan.start({
+      key: p.key,
+      sha: p.sha,
+      delta: p.mode === "delta",
+      ...(p.path !== null ? { path: p.path } : {}),
+    });
     if (!started.ok) return { ok: false, error: started.errors.join("; ") };
     return { ok: true, run: started.run };
   } finally {
@@ -518,11 +546,14 @@ async function followRun(
     );
   const listed = listFindings(engine.findings, { state: "new" });
   if (!listed.ok) return { ok: false, error: listed.error };
+  // The ledger is the whole repo's: a folder run answers with the new
+  // findings inside its folder only, never one an earlier run left outside.
+  const inScope = listed.findings.filter((f) => underPath(f.path, run?.path));
   return {
     ok: true,
     sha: run?.sha ?? null,
-    findings: listed.findings.map(findingJson),
-    total: listed.findings.length,
+    findings: inScope.map(findingJson),
+    total: inScope.length,
   };
 }
 
@@ -665,6 +696,7 @@ async function passThrough(
       triage: null,
       afterMatch: null,
       home: engine.home,
+      repo: host.cwd,
       driverLog: join(engine.home, "scan", "plugin.log"),
       out: (l) => out.push(l),
       // A start runs here, in the background, like the guided one.
@@ -683,6 +715,7 @@ async function passThrough(
                 key: parsed.key,
                 ...(parsed.sha ? { sha: parsed.sha } : {}),
                 delta: parsed.delta,
+                ...(parsed.path ? { path: parsed.path } : {}),
               })
             : parsed.verb === "stage2-start"
               ? await engine.scan.startStage2({

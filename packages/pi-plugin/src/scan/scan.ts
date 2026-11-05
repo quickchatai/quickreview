@@ -23,6 +23,12 @@
 // unreadable then, readable now) or cut short between ranges. Those are
 // owed, not skipped: a delta that left them out would leave a file no
 // lens ever read out of every delta for as long as it stays unchanged.
+//
+// A scan may be scoped to one folder (`--path`): the plan is the same plan
+// over the files under it alone, so a unit only partly inside keeps its name
+// and contributes the files it has there, and exclusions, the ledger and a
+// delta apply within it. A path is one relative folder inside the repo,
+// never absolute and never above the root (`scanPath`).
 import { planKey } from "../plankey.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
@@ -67,6 +73,49 @@ export function stage1Exclusion(
   if (isMigrationFile(path)) return "migration";
   if (excluded(path)) return "excluded-glob";
   return null;
+}
+
+// ---- the scope -------------------------------------------------------------------
+
+/** A `--path` as a scan reads it: one repo-relative folder, normalised
+ * (`./`, doubled and trailing slashes gone), or null for the whole repo (`.`
+ * names the root) — or why it is refused: absolute, or above the repo root. */
+export function scanPath(
+  raw: string,
+): { ok: true; path: string | null } | { ok: false; why: string } {
+  const spelled = raw.trim();
+  if (spelled === "") return { ok: false, why: "--path names a folder inside the repo" };
+  if (spelled.includes("\0"))
+    return { ok: false, why: `--path ${JSON.stringify(raw)} is not a path` };
+  if (spelled.startsWith("/") || spelled.startsWith("\\") || /^[A-Za-z]:/.test(spelled))
+    return {
+      ok: false,
+      why: `--path ${JSON.stringify(raw)} is absolute — name a folder relative to the repo root`,
+    };
+  const norm = posix.normalize(spelled).replace(/\/+$/, "");
+  if (norm === ".." || norm.startsWith("../"))
+    return { ok: false, why: `--path ${JSON.stringify(raw)} leaves the repo` };
+  return { ok: true, path: norm === "." || norm === "" ? null : norm };
+}
+
+/** Is `file` (repo-relative) under the folder `path`? A null path is the
+ * whole repo. */
+export function underPath(file: string, path: string | null | undefined): boolean {
+  return path === null || path === undefined || file.startsWith(`${path}/`);
+}
+
+/** Why `path` scopes nothing in a tree of `files`, or null when it names a
+ * folder there. */
+export function pathProblem(
+  path: string | null | undefined,
+  files: readonly { path: string }[],
+  sha: string,
+): string | null {
+  if (path === null || path === undefined) return null;
+  if (files.some((f) => underPath(f.path, path))) return null;
+  return files.some((f) => f.path === path)
+    ? `--path ${path} is a file, not a folder — name the folder it is in`
+    : `--path ${path} is not a folder in the tree at ${sha.slice(0, 12)}`;
 }
 
 // ---- the plan ----------------------------------------------------------------
@@ -239,6 +288,8 @@ export interface PlanInput {
   /** path → the ledger's newest `pass-scan` reading of it (any content):
    * what orders the cases. Absent: the plan's own (unit) order stands. */
   history?: ReadonlyMap<string, PriorReading>;
+  /** A folder scan (`scanPath`): only the files under it are planned. */
+  path?: string | null;
 }
 
 /** A file's newest reading as the plan orders by it (ledger.ts `readings`). */
@@ -292,9 +343,8 @@ export function planStage1(input: PlanInput): Stage1Plan {
   const readable: string[] = [];
   // Files over one case: the ranges still to read, cut up front.
   const ranged = new Map<string, FileRange[]>();
-  for (const f of [...input.files].sort((a, b) =>
-    a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
-  )) {
+  const scoped = input.files.filter((f) => underPath(f.path, input.path));
+  for (const f of scoped.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
     const why = stage1Exclusion(f.path, excludedGlob);
     if (why !== null) {
       excluded[why]++;

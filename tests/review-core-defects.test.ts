@@ -406,12 +406,14 @@ describe("the detached driver re-runs the CLI from where the code is", () => {
     }
   });
 
-  it("names the cli beside the module, in the module's own kind of file", () => {
+  // MUTATION: name `./cli` again — the driver loads the state store, and a
+  // run cannot start where the SQLite driver cannot load; this fails.
+  it("names the bin's front door beside the module, in the module's own kind of file", () => {
     expect(detachedEntry("file:///opt/qcr/dist/src/reviewdetach.js")).toBe(
-      "/opt/qcr/dist/src/cli.js",
+      "/opt/qcr/dist/src/qcrbin.js",
     );
-    expect(detachedEntry("file:///work/src/reviewdetach.ts")).toBe("/work/src/cli.ts");
-    expect(detachedEntry()).toBe(join(ROOT, "src", "cli.ts"));
+    expect(detachedEntry("file:///work/src/reviewdetach.ts")).toBe("/work/src/qcrbin.ts");
+    expect(detachedEntry()).toBe(join(ROOT, "src", "qcrbin.ts"));
   });
 
   it("builds the driver's command line: node flags, entry, review --detached-run, the run, the arguments, --json", () => {

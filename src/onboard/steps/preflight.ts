@@ -1,6 +1,6 @@
 // Preflight — the first real onboarding step: the machine facts the
-// rest of the wizard stands on. Node 26 or newer (the supported Node; an older one
-// is noted, never refused), Docker and
+// rest of the wizard stands on. Node 22.19 or newer (the supported Node; an older
+// one is noted, never refused), Docker and
 // Docker Compose present (the laptop route's runtime), the released image
 // reachable (the stack is pulled, never built), and
 // the current uid captured — later steps write it to the project `.env` as
@@ -17,35 +17,44 @@ import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../en
 import { releaseImage, releaseVersion, rootOf } from "./compose.js";
 
 export const PREFLIGHT_STEP_ID = "preflight";
-/** The supported Node — package.json `engines.node` says the same
- * (tests/onboard-engine.test.ts holds the two equal). An older Node is not
- * refused: the check passes and says it is unsupported. */
-export const MIN_NODE_MAJOR = 26;
+/** The supported Node, the floor of an npm install. Both packages'
+ * `engines.node` and CI's test matrix say the same (tests/node-floor.test.ts
+ * holds them equal); the images carry their own, newer Node. An older Node is
+ * not refused: the check passes and says it is unsupported. */
+export const MIN_NODE = { major: 22, minor: 19 } as const;
+/** The floor as people read it and `engines` spells it: "22.19". */
+export const MIN_NODE_LABEL = `${MIN_NODE.major}.${MIN_NODE.minor}`;
 /** The choice key later steps read the captured uid from (QCR_UID input). */
 export const UID_CHOICE_KEY = CHOICE_KEYS.uid;
 
-/** "v22.1.0" | "22.1.0" → 22; null when unparseable. */
-export function parseNodeMajor(version: string): number | null {
-  const m = /^v?(\d+)\./.exec(version.trim());
-  return m ? Number(m[1]) : null;
+/** "v22.1.0" | "22.1.0" → { major: 22, minor: 1 }; null when unparseable. */
+export function parseNodeVersion(version: string): { major: number; minor: number } | null {
+  const m = /^v?(\d+)\.(\d+)\./.exec(version.trim());
+  return m ? { major: Number(m[1]), minor: Number(m[2]) } : null;
+}
+
+/** Whether a `process.version` is at or above the floor; false when unparseable. */
+export function meetsNodeFloor(version: string): boolean {
+  const v = parseNodeVersion(version);
+  if (v === null) return false;
+  return v.major > MIN_NODE.major || (v.major === MIN_NODE.major && v.minor >= MIN_NODE.minor);
 }
 
 async function toolingChecks(ctx: StepContext): Promise<CheckResult[]> {
   const { host, runner } = ctx.adapters;
   const checks: CheckResult[] = [];
 
-  const major = parseNodeMajor(host.nodeVersion);
   checks.push(
-    major !== null && major >= MIN_NODE_MAJOR
+    meetsNodeFloor(host.nodeVersion)
       ? {
           name: "node",
           ok: true,
-          detail: `Node ${host.nodeVersion} (${MIN_NODE_MAJOR} or newer is supported)`,
+          detail: `Node ${host.nodeVersion} (${MIN_NODE_LABEL} or newer is supported)`,
         }
       : {
           name: "node",
           ok: true,
-          detail: `Node ${host.nodeVersion} is older than the supported Node ${MIN_NODE_MAJOR}; it is not refused, but it is not supported either`,
+          detail: `Node ${host.nodeVersion} is older than the supported Node ${MIN_NODE_LABEL}; it is not refused, but it is not supported either`,
         },
   );
 
@@ -136,7 +145,7 @@ export function preflightStep(): OnboardingStep {
     id: PREFLIGHT_STEP_ID,
     title: "Preflight: Node, Docker, Compose, images, uid",
     explain:
-      `Checks that this machine can run QuickReview at all: Node ${MIN_NODE_MAJOR} or newer (older is noted, not refused), Docker, the Compose plugin, and whether ` +
+      `Checks that this machine can run QuickReview at all: Node ${MIN_NODE_LABEL} or newer (older is noted, not refused), Docker, the Compose plugin, and whether ` +
       "the released image can be pulled (an unreachable image is noted here, with the fix, and enforced by bring-up). " +
       "It also captures your user id so the containers run as you and can read the secrets you own.",
     order: 10,

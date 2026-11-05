@@ -4,6 +4,9 @@ dist/
 # agents/, seeds/, …) and the LICENSE: the root copy is the one source.
 /packages/*/assets/
 /packages/*/LICENSE
+# The pi Plugin's skills, rendered from the one skill source (plugins/qcr/)
+# by the build and the Plugin's prepack: never edited, never committed.
+/packages/pi-plugin/skills/
 state/*
 !state/.gitkeep
 inject/*
