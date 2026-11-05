@@ -1,6 +1,10 @@
 # Release notes
 
-## Unreleased
+## 1.4.0
+
+QuickReview installs into seven coding-agent CLIs from npm and runs on Node
+22.19 or newer. It gains a security review, and the bot rides out network
+failures that used to need an operator.
 
 ### The Claude Code plugin moves off Docker
 
@@ -82,6 +86,56 @@ security signal (`[security] triggers`).
   and `/qcr-scan --path DIR` scan one folder of the repo. The folder is part
   of the plan key, and the scan payload gains `path` (null for the whole
   repo), still scan v1.
+
+### The bot rides out network failures
+
+- **A transient GitHub read no longer drops a review.** Reads and GraphQL
+  queries are tried up to three times (a `retry-after` of 20 s or less is
+  honoured; mutations are never retried), and a check listing that moves
+  while it is read is read again rather than returned partial. A transient
+  read in the pre-check before an approval defers the post, where it used to
+  withdraw it and leave the PR waiting for an operator. A 4xx rejection
+  clears the post and hands the session GitHub's own message, and a thread
+  reply carries a hidden marker so a retry never posts it twice.
+- **A transient failure with nothing posted retries by itself.** A model
+  provider outage, a dead worker, or a post whose retry window ran out with
+  nothing on GitHub now waits and retries at any stage (15 minutes, doubling
+  to 6 hours) instead of waiting for `u`. It stays visible on the board, in
+  Slack and in `qcr status`, which prints one line per open incident with its
+  next retry or "operator u required". Whatever may already be on GitHub
+  still stays with the operator: for example a post that may have landed, a
+  malformed verdict or a posted round with no verdict. Self-requeues wait 2
+  then 8 minutes, a worker turn the provider ended is requeued after 2, 8
+  and 30 minutes, and a failed conversation reply no longer holds the PR's
+  next round.
+- **Model provider blips are absorbed.** The bot's pi sessions retry the
+  provider for about 13 minutes (10 attempts, from 5 s doubling to 2
+  minutes); an operator's own `retry` in pi's `settings.json` still wins. A
+  rate limit or overload no longer parks a PR on the worker breaker, and a
+  spent usage window drains it rather than parking. Thread replies and PR
+  conversation answers that hit a transient GitHub failure wait on a
+  schedule of about 3 hours instead of spending one of their three strikes.
+- **Nothing on the network hangs the daemon.** Every daemon `git fetch` and
+  `git clone` has a timeout, and a failed clone leaves no half-written
+  repository. A failing dispatch backs off per PR, from 30 s to 30 minutes
+  (anomaly `dispatch_failing`), and so does a failing webhook delivery
+  (`webhook_delivery_failing`). Webhooks that arrive during a breaker drain
+  are kept and handled after it lifts; a deploy drain still drops them. Slack announcements no longer block the verdict and deadline paths,
+  and an incident alert that never reached Slack is sent again. A
+  base-advance recheck that failed to read is retried rather than lost.
+- **A memory server that stops answering is restarted**, after 3 failed
+  health probes over at least 90 s (`[openviking] liveness_failures`,
+  `liveness_span_s`, `liveness_startup_grace_s`).
+- **Escalation rules read unknown facts as unknown.** A transient failure
+  reading a path, label or check list defers the evaluation for 5 minutes,
+  where it used to read as empty and skip the rule; a read GitHub refuses
+  outright counts as a known absence.
+- **One review, not two, when CI was still running.** An approval the bot
+  withheld for running CI, then gave once CI went green, now posts as one
+  line pointing at the review above, not a second copy of the whole review.
+- **The improvement channel's git runs no hooks** from the reviewed
+  repository's clone: it carries the same git pins as every other git the
+  daemon starts.
 
 ## 1.3.2
 
