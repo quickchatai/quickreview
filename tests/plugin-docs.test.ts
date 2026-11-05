@@ -82,13 +82,16 @@ describe("README.md", () => {
 
 describe("the changelog", () => {
   // MUTATION: move the migration lines under `## 1.3.2` in CHANGELOG.md — this fails.
-  it("carries the migration from the Docker-based plugin in its unreleased section", () => {
+  // 1.3.2 is the last release that shipped the Docker-based plugin, so the
+  // migration sits in a section above it: Unreleased, or the release that
+  // dropped it.
+  it("carries the migration from the Docker-based plugin above the last release that shipped it", () => {
     const log = read("CHANGELOG.md");
-    const unreleased = /^## Unreleased\n([\s\S]*?)(?=^## )/m.exec(log)?.[1] ?? "";
-    const old = unreleased.indexOf(OLD_UNINSTALL);
+    const newer = /^# [^\n]*\n([\s\S]*?)(?=^## 1\.3\.2\n)/m.exec(log)?.[1] ?? "";
+    const old = newer.indexOf(OLD_UNINSTALL);
     expect(old).toBeGreaterThanOrEqual(0);
     expect(
-      unreleased.indexOf("npx @quickchatai/quickreview plugin install --to claude", old),
+      newer.indexOf("npx @quickchatai/quickreview plugin install --to claude", old),
     ).toBeGreaterThan(old);
   });
 });
