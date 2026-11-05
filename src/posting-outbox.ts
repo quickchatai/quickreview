@@ -25,6 +25,7 @@ import {
   classifyGitHubFailure,
   type GitHubFailure,
 } from "@quickchatai/pi-quickreview/src/githubcore.js";
+import { anchorRejectionOf, bodyOnlyPayload } from "./diffplacement.js";
 import { inlineCommentFault } from "./posting.js";
 import type { PostingRetryRow } from "./state.js";
 import {
@@ -555,6 +556,31 @@ export class PostingOutbox {
     writePostingFile(path, j);
     this.deps.log(`posting pending: ${error}`, j);
   }
+  /**
+   * One delivery POST of the job's payload. When GitHub refuses it because it
+   * could not place an inline comment (a 422 that does not say which), it is
+   * posted once more with every comment in the body. A 422 landed nothing, so
+   * this cannot post twice. The job's snapshot is not changed: the receipt
+   * names the snapshot, and the second POST carries the same marker, so the
+   * marker read and the confirmation find it as they find any review.
+   */
+  private async postFolding(
+    j: PostingJob,
+    post: (payload: PostingJob["payload"]) => Promise<DeliveryResult>,
+  ): Promise<DeliveryResult> {
+    try {
+      return await post(j.payload);
+    } catch (error) {
+      const count = j.payload.comments?.length ?? 0;
+      const validation = anchorRejectionOf(error, count);
+      if (validation === undefined) throw error;
+      this.deps.log(
+        `posting: GitHub could not place ${count} inline comment(s) (${validation}); posting again with them in the body`,
+        j,
+      );
+      return await post(bodyOnlyPayload(j.payload, postingMarker(j.posting_key)));
+    }
+  }
   private fail(path: string, j: PostingJob, reason: string): void {
     j.status = "failed";
     j.last_error = reason;
@@ -835,7 +861,9 @@ export class PostingOutbox {
       }
       // (4) Through the ONE gate.
       try {
-        const result = await d.deliver(j.pr, j.payload, j.posting_key);
+        const result = await this.postFolding(j, (payload) =>
+          d.deliver(j.pr, payload, j.posting_key),
+        );
         if (result.blocked) {
           // `pr-unreadable`: the gate's PR read, or the approval's CI
           // pre-check, could not read GitHub. No POST was sent.
@@ -1047,7 +1075,9 @@ export class PostingOutbox {
         ...(this.deps.personMode ? { person_mode: true as const } : {}),
       } satisfies PostingReceipt);
       try {
-        const result = await this.deps.adapter.createReview(j.pr, j.payload);
+        const result = await this.postFolding(j, (payload) =>
+          this.deps.adapter.createReview(j.pr, payload),
+        );
         if (result.blocked) {
           delete j.attempted_at;
           rmSync(postingReceiptPath(this.deps.dir, j.pr, j.round_no)); // gate proved no POST executed

@@ -35,11 +35,11 @@ import {
   IN_FLIGHT_LINE,
   postOps,
   replyPostMarker,
-  validationText,
   type PostAdapter,
   type PostOpsDeps,
   type PostOutcome,
 } from "../src/postops.js";
+import { validationText } from "../src/diffplacement.js";
 import type { RequestContext } from "../src/ipc/server.js";
 import {
   SECURITY_PASSES_UNKNOWN_LINE,
@@ -798,6 +798,93 @@ describe("post.review live", () => {
     const out = await ask(false);
     expect(out.status).toBe("posted");
     expect(receipt()).toMatchObject({ status: "confirmed", posting_key: KEY });
+  });
+
+  // A file GitHub serves with no patch (a diff too large to show) takes no
+  // inline comment: GitHub would refuse the WHOLE review with "Line could not
+  // be resolved". The comment goes into the body before the POST; the others
+  // stay inline.
+  // MUTATION: make placeOnDiff return the payload unchanged — this fails
+  // (the POST carries the big.json comment inline).
+  it("moves a comment on a file GitHub shows no diff for into the body, and keeps the rest inline", async () => {
+    rig.gh.files = [
+      { filename: "a.py", status: "modified", patch: "@@ -1,2 +1,4 @@\n x\n+y\n+z\n w" },
+      { filename: "big.json", status: "added" },
+    ];
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "live review");
+    const comments = rig.write(
+      `pr-${PR}-round-1-comments.json`,
+      JSON.stringify([
+        { path: "a.py", line: 3, side: "RIGHT", body: "[blocker] x" },
+        { path: "big.json", line: 3863, side: "RIGHT", body: "[nit] formal register" },
+      ]),
+    );
+    const c = await rig.connect("c-round");
+    const out = await c.request<PostOutcome>(
+      "post.review",
+      { pr: PR, event: "REQUEST_CHANGES", body_file: body, comments_file: comments },
+      { pr: PR },
+    );
+    expect(out.status).toBe("posted");
+    expect(out.lines.join("\n")).toMatch(/big\.json:3863.*posted in the review body/);
+    const posts = rig.gh.posts().filter((p) => p.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.body.comments).toEqual([
+      { path: "a.py", line: 3, side: "RIGHT", body: "[blocker] x" },
+    ]);
+    expect(posts[0]!.body.body).toMatch(
+      /^live review\n\n### Comments given here instead of inline/,
+    );
+    expect(posts[0]!.body.body).toContain("**`big.json:3863`**\n\n[nit] formal register");
+    expect(posts[0]!.body.body.endsWith(postingMarker(KEY))).toBe(true);
+    expect(receipt()).toMatchObject({ status: "confirmed", posting_key: KEY });
+    // The snapshot stays the session's exact input; the split is POST-time.
+    expect(rig.journal.readJob(PR, 1)?.payload.comments).toHaveLength(2);
+  });
+
+  // GitHub cannot place lines in some files of a very large PR even when the
+  // files API serves their patch, and its 422 does not say which comment.
+  // The post op posts once more, under the same key, with every comment in
+  // the body: the review reaches the author instead of failing the round.
+  // MUTATION: rethrow every error in submit's anchor-422 catch — this fails
+  // (post_rejected, nothing posted).
+  it("posts again with every comment in the body when GitHub cannot place a comment's line", async () => {
+    rig.gh.rejectInlineComments = "Line could not be resolved";
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "live review");
+    const comments = rig.write(`pr-${PR}-round-1-comments.json`, COMMENTS);
+    const c = await rig.connect("c-round");
+    const out = await c.request<PostOutcome>(
+      "post.review",
+      { pr: PR, event: "REQUEST_CHANGES", body_file: body, comments_file: comments },
+      { pr: PR },
+    );
+    expect(out.status).toBe("posted");
+    expect(out.lines.join("\n")).toMatch(/Line could not be resolved.*all 1 of them in the body/);
+    const posts = rig.gh.posts().filter((p) => p.method === "POST");
+    expect(posts).toHaveLength(2);
+    expect(posts[0]!.body.comments).toHaveLength(1);
+    expect(posts[1]!.body.comments).toEqual([]);
+    expect(posts[1]!.body.event).toBe("REQUEST_CHANGES");
+    expect(posts[1]!.body.body).toContain("**`a.py:3`**\n\n[blocker] x");
+    expect(posts[1]!.body.body.endsWith(postingMarker(KEY))).toBe(true);
+    expect(receipt()).toMatchObject({ status: "confirmed", posting_key: KEY });
+  });
+
+  // A 422 about something else is not an anchor problem: no second POST.
+  it("does not post again for a 422 that is not about a comment's line", async () => {
+    rig.gh.failReviewPost = 422;
+    rig.gh.failReviewBody = JSON.stringify({ message: "x", errors: ["Body is too long"] });
+    const body = rig.write(`pr-${PR}-round-1-review.md`, "live review");
+    const comments = rig.write(`pr-${PR}-round-1-comments.json`, COMMENTS);
+    const c = await rig.connect("c-round");
+    await expect(
+      c.request<PostOutcome>(
+        "post.review",
+        { pr: PR, event: "REQUEST_CHANGES", body_file: body, comments_file: comments },
+        { pr: PR },
+      ),
+    ).rejects.toMatchObject({ code: "post_rejected", message: /Body is too long/ });
+    expect(rig.gh.posts().filter((p) => p.method === "POST")).toHaveLength(1);
   });
 
   it("validationText reads errors[].message, plain strings, and a cut-short answer", () => {
