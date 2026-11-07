@@ -11,6 +11,7 @@ import {
   computeSecurityFacts,
   flattenYaml,
   hasUniqueConstraint,
+  importLineMask,
   renderSecurityFacts,
   routeRegistrations,
   treeRouteInventory,
@@ -112,6 +113,57 @@ describe("removed-guard", () => {
       ].join("\n"),
     );
     expect(statuses(computeSecurityFacts([both], null), "removed-guard")).toEqual(["found"]);
+  });
+
+  // MUTATION: drop `if (line.includes(close)) close = null;` in importLineMask
+  // — the bare `login_required` after `)` is masked, and this fails.
+  it("masks each member of a multi-line import, and nothing past its closing bracket", () => {
+    expect(
+      importLineMask([
+        "from django.contrib.auth.decorators import (",
+        "    login_required,",
+        "    permission_required as perm,",
+        ")",
+        "login_required",
+        "@login_required",
+        "import {",
+        "  requireAuth, requireAdmin",
+        "} from './auth';",
+        "router.use(requireAuth);",
+      ]),
+    ).toEqual([true, true, true, true, false, false, true, true, true, false]);
+  });
+
+  /**
+   * The removed side of a diff can put one import opener straight after
+   * another whose bracket never closed on that side, so the member pattern
+   * meets a whole `from a.long.module import (` line. The pattern that
+   * split a repeated name anywhere took exponential time on it and froze
+   * the daemon's loop for good.
+   * MUTATION: restore `(?:[\w.$]+(?:\s+as\s+[\w$]+)?\s*,?\s*)*` as the
+   * member pattern's names — this test never finishes.
+   */
+  it("judges a long import opener after an unclosed one in linear time", () => {
+    const opener = "from myapp.integrations.http_request_actions.from_text_prompt import (";
+    expect(importLineMask(["from a import (", opener, "    x,", ")"])).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ]);
+    const patch = [
+      "@@ -1,6 +1,2 @@",
+      "-from myapp.integrations.base import (",
+      "+from myapp.integrations.base import Base",
+      `-${opener}`,
+      "-    build_prompt,",
+      "-)",
+      "-@login_required",
+      " def run(request):",
+    ].join("\n");
+    expect(
+      statuses(computeSecurityFacts([file("app/views.py", patch)], null), "removed-guard"),
+    ).toEqual(["found"]);
   });
 
   it("is unknown for a changed file that came without a patch", () => {
@@ -381,6 +433,33 @@ describe("unique-without-index", () => {
       ),
     ).toBe(false);
   });
+
+  it("reads a SQL unique index or key on the column, within one statement", () => {
+    for (const sql of [
+      "CREATE UNIQUE INDEX users_email ON users (email);",
+      "UNIQUE KEY tenant_email (tenant_id, email)",
+      "unique index u on users (id) where (lower(email) is not null)",
+    ])
+      expect(hasUniqueConstraint(sql, "email"), sql).toBe(true);
+    for (const sql of [
+      "CREATE UNIQUE INDEX users_name ON users (name);",
+      "CREATE UNIQUE INDEX users_name ON users (name); SELECT (email)",
+      `UNIQUE KEY ${"x".repeat(201)}(email)`,
+      "UNIQUE KEY k (email",
+    ])
+      expect(hasUniqueConstraint(sql, "email"), sql).toBe(false);
+  });
+
+  /**
+   * Schema files are read at the PR's head, so their author picks the text.
+   * MUTATION: restore the single pattern
+   * `\\bunique\\s+(?:index|key)\\b[^;]{0,200}?\\(\\s*[^)]*\\b${c}\\b[^)]*\\)` in
+   * hasUniqueConstraint — this takes minutes.
+   */
+  it("reads many unclosed unique keys over many mentions of the column in linear time", () => {
+    const text = "unique key(".repeat(5000) + " email".repeat(50000);
+    expect(hasUniqueConstraint(text, "email")).toBe(false);
+  });
 });
 
 describe("unattached-security-group", () => {
@@ -475,6 +554,27 @@ describe("compose-port-ufw", () => {
 
   it("is unknown with no io", () => {
     expect(statuses(computeSecurityFacts([pr], null), "compose-port-ufw")).toEqual(["unknown"]);
+  });
+
+  it("reads an Ansible ufw task key as the host's firewall", () => {
+    const io = repo({
+      "deploy/docker-compose.yml": compose,
+      "deploy/firewall.yml": "- name: firewall\n  ufw:\n    rule: allow\n",
+    });
+    expect(statuses(computeSecurityFacts([pr], io), "compose-port-ufw")).toEqual(["found"]);
+  });
+
+  /**
+   * The ufw pattern runs over every file's whole patch with `m`, where `^`
+   * matches after `\r` and U+2028, which `\s` also matches.
+   * MUTATION: restore `^\s*-?\s*ufw:\s*$` as its task-key alternative —
+   * this never finishes.
+   */
+  it("reads a patch line of carriage returns or line separators in linear time", () => {
+    for (const ch of ["\r", "\u2028"]) {
+      const notes = file("notes.txt", `@@ -0,0 +1 @@\n+${ch.repeat(100_000)}`);
+      expect(statuses(computeSecurityFacts([notes], null), "compose-port-ufw")).toEqual(["clear"]);
+    }
   });
 
   it("reads short, inline and long port syntax", () => {
