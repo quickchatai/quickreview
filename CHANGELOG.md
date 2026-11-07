@@ -1,5 +1,17 @@
 # Release notes
 
+## 1.4.1
+
+The bot no longer freezes on a diff. One pattern the security checks match
+against a pull request's import lines could take exponential time on a long
+dotted module name: a PR that removed two bracketed Python imports in a row
+held the daemon's loop at full CPU, with no reconcile, no heartbeat and no
+review, and a restart froze again on the same PR. That pattern, and two
+others that read a PR's text in more than linear time (the ufw task key over
+a line of carriage returns or line separators, and a SQL `UNIQUE KEY` over a
+schema file), now read in linear time and match exactly what they matched
+before.
+
 ## 1.4.0
 
 QuickReview installs into seven coding-agent CLIs from npm and runs on Node
