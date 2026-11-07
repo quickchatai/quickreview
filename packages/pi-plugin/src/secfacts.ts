@@ -577,13 +577,62 @@ const SCHEMA_PATH_RE =
   /(?:^|\/)(?:migrations?|migrate|alembic|db|database|schemas?|models?|entities|entity|prisma)(?:\/|\.[A-Za-z]+$)|\.sql$|\.prisma$/i;
 const SCHEMA_EXT_RE = /\.(?:py|rb|ts|js|mjs|cjs|go|java|kt|cs|php|ex|exs|scala|sql|prisma)$/;
 
+/**
+ * `UNIQUE INDEX|KEY …(… col …)`: a bracket opened within 200 characters of
+ * the keyword, with no `;` before it, whose contents name the column (`c`,
+ * already escaped). Scanned rather than matched by one pattern, because
+ * `\(\s*[^)]*\bcol\b[^)]*\)` over many brackets and many mentions of the
+ * column is polynomial in a file a pull request's author can write: each
+ * mention is found once, and each bracket asks only whether one falls
+ * inside it.
+ */
+function uniqueKeyOn(text: string, c: string): boolean {
+  const at: number[] = [];
+  const end: number[] = [];
+  for (const m of text.matchAll(new RegExp(`\\b${c}\\b`, "gi"))) {
+    at.push(m.index);
+    end.push(m.index + m[0].length);
+  }
+  if (at.length === 0) return false;
+  // The first mention starting at or after `pos`.
+  const firstFrom = (pos: number): number => {
+    let lo = 0;
+    let hi = at.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (at[mid]! < pos) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  let searchedFrom = -1;
+  let close = -1;
+  for (const m of text.matchAll(/\bunique\s+(?:index|key)\b/gi)) {
+    const from = m.index + m[0].length;
+    for (let o = from; o <= from + 200 && o < text.length; o++) {
+      const ch = text[o];
+      if (ch === ";") break;
+      if (ch !== "(") continue;
+      // No `)` lies between a search start and the `)` it found, so one
+      // search answers every bracket opened in that span.
+      if (!(searchedFrom >= 0 && searchedFrom <= o + 1 && (close < 0 || o + 1 <= close))) {
+        searchedFrom = o + 1;
+        close = text.indexOf(")", o + 1);
+      }
+      if (close < 0) break;
+      const i = firstFrom(o + 1);
+      if (i < at.length && end[i]! <= close) return true;
+    }
+  }
+  return false;
+}
+
 /** Whether `text` declares a unique constraint or unique index on `col`. */
 export function hasUniqueConstraint(text: string, col: string): boolean {
   const c = escapeRe(col);
   const wide: RegExp[] = [
     new RegExp(`UniqueConstraint\\(\\s*(?:fields\\s*=\\s*)?[\\[(]?[^)\\]]{0,300}?['"]${c}['"]`),
     new RegExp(`unique_together\\s*=\\s*[\\s\\S]{0,300}?['"]${c}['"]`),
-    new RegExp(`\\bunique\\s+(?:index|key)\\b[^;]{0,200}?\\(\\s*[^)]*\\b${c}\\b[^)]*\\)`, "i"),
     new RegExp(`\\bunique\\s*\\(\\s*[^)]*\\b${c}\\b`, "i"),
     new RegExp(
       `add_index\\s*\\(?\\s*:\\w+\\s*,\\s*(?:\\[[^\\]]*:${c}\\b[^\\]]*\\]|:${c}\\b)[^\\n]*unique:\\s*true`,
@@ -594,7 +643,7 @@ export function hasUniqueConstraint(text: string, col: string): boolean {
     new RegExp(`@@unique\\(\\s*(?:fields:\\s*)?\\[[^\\]]*\\b${c}\\b`),
     new RegExp(`\\.unique\\(\\s*\\[?[^)]*['"]${c}['"]`),
   ];
-  if (wide.some((re) => re.test(text))) return true;
+  if (wide.some((re) => re.test(text)) || uniqueKeyOn(text, c)) return true;
   // The column's own declaration: its line plus a decorator line above it,
   // and the rest of a bracket it opens (a field call or object over lines).
   const UNIQUE_TOKEN =
@@ -957,8 +1006,18 @@ const COMPOSE_RE = /(?:^|\/)(?:docker-)?compose(?:[.-][\w.-]+)?\.ya?ml$/i;
 /** A compose file for development or tests, not a deploy. */
 const DEV_COMPOSE_RE =
   /(?:^|[./-])(?:dev|devel|development|local|test|tests|ci|e2e|override)(?:[./-]|$)/i;
-const UFW_RE =
-  /\bufw\s+(?:allow|deny|reject|limit|default|enable|route)\b|\bcommunity\.general\.ufw\b|^\s*-?\s*ufw:\s*$/m;
+/** Whitespace within one line: `\s` without the line terminators. */
+const HSPACE = String.raw`[^\S\n\r\u2028\u2029]`;
+/** A ufw command, the Ansible module, or a `- ufw:` task key on a line of its
+ * own. It runs over whole patches a pull request's author wrote, with `m`, so
+ * `^` matches after every line terminator `\s` would also match: the task
+ * key's whitespace stays on its line, and only one run of it can take a
+ * space, or a run of `\r` or U+2028 costs cubic time. */
+const UFW_RE = new RegExp(
+  String.raw`\bufw\s+(?:allow|deny|reject|limit|default|enable|route)\b|\bcommunity\.general\.ufw\b|` +
+    `^${HSPACE}*(?:-${HSPACE}*)?ufw:${HSPACE}*$`,
+  "m",
+);
 const UFW_FILE_RE =
   /\.(?:sh|bash|ya?ml|j2|tf|rules|cfg|conf|txt|tpl)$|(?:^|\/)(?:Makefile|Dockerfile[^/]*|user-data|cloud-init[^/]*)$/i;
 const DOCKER_UFW_FIX_RE = /DOCKER-USER|ufw-docker|"iptables"\s*:\s*false/;
