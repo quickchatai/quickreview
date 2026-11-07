@@ -11,6 +11,7 @@ import {
   computeSecurityFacts,
   flattenYaml,
   hasUniqueConstraint,
+  importLineMask,
   renderSecurityFacts,
   routeRegistrations,
   treeRouteInventory,
@@ -112,6 +113,54 @@ describe("removed-guard", () => {
       ].join("\n"),
     );
     expect(statuses(computeSecurityFacts([both], null), "removed-guard")).toEqual(["found"]);
+  });
+
+  it("masks each member of a multi-line import, and nothing past its closing bracket", () => {
+    expect(
+      importLineMask([
+        "from django.contrib.auth.decorators import (",
+        "    login_required,",
+        "    permission_required as perm,",
+        ")",
+        "@login_required",
+        "import {",
+        "  requireAuth, requireAdmin",
+        "} from './auth';",
+        "router.use(requireAuth);",
+      ]),
+    ).toEqual([true, true, true, true, false, true, true, true, false]);
+  });
+
+  /**
+   * The removed side of a diff can put one import opener straight after
+   * another whose bracket never closed on that side, so the member pattern
+   * meets a whole `from a.long.module import (` line. The pattern that
+   * split a repeated name anywhere took exponential time on it and froze
+   * the daemon's loop for good.
+   * MUTATION: restore `(?:[\w.$]+(?:\s+as\s+[\w$]+)?\s*,?\s*)*` as the
+   * member pattern's names — this test never finishes.
+   */
+  it("judges a long import opener after an unclosed one in linear time", () => {
+    const opener = "from myapp.integrations.http_request_actions.from_text_prompt import (";
+    expect(importLineMask(["from a import (", opener, "    x,", ")"])).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ]);
+    const patch = [
+      "@@ -1,6 +1,2 @@",
+      "-from myapp.integrations.base import (",
+      "+from myapp.integrations.base import Base",
+      `-${opener}`,
+      "-    build_prompt,",
+      "-)",
+      "-@login_required",
+      " def run(request):",
+    ].join("\n");
+    expect(
+      statuses(computeSecurityFacts([file("app/views.py", patch)], null), "removed-guard"),
+    ).toEqual(["found"]);
   });
 
   it("is unknown for a changed file that came without a patch", () => {

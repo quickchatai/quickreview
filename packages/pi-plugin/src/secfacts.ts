@@ -284,13 +284,22 @@ function escapeRe(s: string): string {
  * `import`, a CommonJS `require`, PHP/Rust `use`, Ruby `require`, C#
  * `using`. Dropping an unused import of a guard is a cleanup, never a
  * removed guard; the guard's removal is its decorator, middleware or call
- * line. */
+ * line.
+ *
+ * Both patterns run over diff lines a pull request's author wrote, inside
+ * the daemon's own loop, so each admits one parse of a line: no two
+ * quantifiers may compete for the same characters. */
 const IMPORT_LINE_RE =
-  /^\s*(?:import\b|from\s+[\w.]+\s+import\b|(?:const|let|var)\s+(?:\{[^}]*\}|[\w$]+)\s*=\s*require\s*\(|use\s+[\w\\:]+|require(?:_relative)?\s*\(?\s*["']|using\s+[\w.]+\s*;)/;
+  /^\s*(?:import\b|from\s+[\w.]+\s+import\b|(?:const|let|var)\s+(?:\{[^}]*\}|[\w$]+)\s*=\s*require\s*\(|use\s+[\w\\:]+|require(?:_relative)?\s*(?:\(\s*)?["']|using\s+[\w.]+\s*;)/;
 /** A member line inside a multi-line import (`login_required,`, `)`,
- * `} from './auth';`). */
+ * `} from './auth';`): names (an `as` alias is two more names) separated by
+ * spaces or one comma, then the closing bracket. Each name and its
+ * separator is taken whole, an atomic group (`(?=(…))\1`), because a
+ * repeated `[\w.$]+` that may split anywhere backtracks exponentially on a
+ * long name followed by a non-member character (`from a.long.module
+ * import (`). */
 const IMPORT_MEMBER_RE =
-  /^\s*(?:[\w.$]+(?:\s+as\s+[\w$]+)?\s*,?\s*)*(?:[)}]\s*(?:from\s+["'][^"'\n]*["']\s*)?;?)?\s*$/;
+  /^\s*(?:(?=([\w.$]+\s*,?\s*))\1)*(?:[)}]\s*(?:from\s+["'][^"'\n]*["']\s*)?(?:;\s*)?)?$/;
 
 /**
  * Which of `lines` (one side of a diff, in order) belong to an import
