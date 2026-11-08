@@ -1,5 +1,15 @@
 # Release notes
 
+## 1.4.2
+
+Fewer false pass-plan alerts. The check that holds a round's executed passes
+against its plan raised a mismatch for two things the round instructions
+allow: a pre-approval sweep that found nothing and so ran no validator, and
+the exploit chain's `compose` step, which runs after the other passes only
+when they turned up security leads. Both now conform; a validator skipped
+over real candidates, an unplanned pass and a pass at the wrong tier still
+raise the alert.
+
 ## 1.4.1
 
 The bot no longer freezes on a diff. One pattern the security checks match
