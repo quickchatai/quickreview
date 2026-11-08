@@ -91,6 +91,7 @@ import { TranscriptIndex } from "./transcriptindex.js";
 import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
 import { classifyGitHubFailure } from "@quickchatai/pi-quickreview/src/githubcore.js";
 import { VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
+import { CHAIN_PASS } from "@quickchatai/pi-quickreview/src/passes.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
@@ -580,6 +581,13 @@ function plannedTierMismatches(passes: VerdictPassEntry[], rows: PlanRow[]): str
 function nothingToValidate(passes: VerdictPassEntry[]): boolean {
   const lenses = passes.filter((p) => p.name !== VALIDATE_PASS);
   return lenses.length > 0 && lenses.every((p) => p.findings === 0);
+}
+
+/** A chain row's strategy names the run, not the lens: the session writes
+ * `pass-sec-exploit-chain:compose` for the row the plan holds as
+ * `pass-sec-exploit-chain`, so the plan check reads the lens. */
+function planLensOf(pass: VerdictPassEntry): VerdictPassEntry {
+  return pass.name.startsWith(`${CHAIN_PASS}:`) ? { ...pass, name: CHAIN_PASS } : pass;
 }
 
 function comparePlan(
@@ -3372,10 +3380,20 @@ export class VerdictWatcher {
       // to `sweep_plan` — and a sweep lens is missing only when the sweep ran,
       // so a round that decided before the sweep raises nothing. Every other
       // round compares every pass against its plan.
+      //
+      // The post-discovery rows (`post_plan`, the exploit chain's `compose`)
+      // run after the wave and only when the round has security leads
+      // (`CHAIN-SKIPPED no leads` otherwise), so each is an optional row of
+      // the main stage: conformant when it runs at its tier, never missing.
+      const postPlan = round.post_plan ? (JSON.parse(round.post_plan) as PlanRow[]) : [];
+      const mainAddable = addable
+        ? [...addable, ...postPlan.map((p) => ({ ...p, optional: true as const }))]
+        : null;
+      const passes = v.passes.map(planLensOf);
       const followUp = round.scope === "delta";
-      const deltaPasses = followUp ? v.passes.filter((p) => p.phase !== "sweep") : v.passes;
-      const sweepPasses = followUp ? v.passes.filter((p) => p.phase === "sweep") : [];
-      const main = comparePlan(deltaPasses, plan, addable, legacyPlanned, true);
+      const deltaPasses = followUp ? passes.filter((p) => p.phase !== "sweep") : passes;
+      const sweepPasses = followUp ? passes.filter((p) => p.phase === "sweep") : [];
+      const main = comparePlan(deltaPasses, plan, mainAddable, legacyPlanned, true);
       // A follow-up's delta stage dispatches no validator when its lenses
       // found nothing (prompts/round-follow-up.md, "Nothing to validate ⇒ no
       // validator"): that absence keeps the rule. Only a count every lens
@@ -3393,6 +3411,10 @@ export class VerdictWatcher {
           ...(plan ?? []).map((p) => ({ lens: p.lens, tier: p.tier })),
         ].filter((p) => !inSweep.has(p.lens));
         sweep = comparePlan(sweepPasses, sweepPlan, sweepAddable, [], sweepStatus === "ran");
+        // The same rule over the sweep's own validator: a sweep whose every
+        // lens reported zero candidates leaves it nothing to vet.
+        if (nothingToValidate(sweepPasses))
+          sweep.missing = sweep.missing.filter((name) => name !== VALIDATE_PASS);
       }
       const tag = (names: string[]): string[] => names.map((n) => `sweep:${n}`);
       const planned = main.planned;

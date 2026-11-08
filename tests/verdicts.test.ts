@@ -4694,6 +4694,34 @@ describe("follow-up rounds: sweep telemetry", () => {
     expect(anomalyKinds()).not.toContain("pass_plan_mismatch");
   });
 
+  // The same rule over the pre-approval sweep's own validator.
+  // MUTATION: drop the sweep's nothingToValidate carve-out in recordPassTelemetry — this fails.
+  it("a sweep whose lenses found nothing ran no validator by rule; one with candidates still owes it", async () => {
+    for (const [pr, findings, expected] of [
+      [711, 0, 0],
+      [712, 1, 1],
+    ] as const) {
+      followUpRound(pr, { sweepOwed: true });
+      await watcher().handleFile(
+        write(
+          pr,
+          1,
+          verdictFile({
+            pr,
+            verdict: "APPROVE",
+            sweep: "ran",
+            passes: [...DELTA_PASSES, { ...SWEEP_PASSES[0]!, findings }, SWEEP_PASSES[1]!],
+          }),
+        ),
+      );
+      const rows = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'pass_plan_mismatch' AND pr = ?")
+        .all(pr) as Array<{ payload: string }>;
+      expect(rows.length, `${pr}`).toBe(expected);
+      if (expected) expect(JSON.parse(rows[0]!.payload).missing).toEqual(["sweep:pass-validate"]);
+    }
+  });
+
   it("a delta stage with candidates, or with an unreported count, still owes its validator", async () => {
     for (const [pr, findings] of [
       [705, 2],
@@ -4850,6 +4878,65 @@ describe("follow-up rounds: sweep telemetry", () => {
           missing_reason: [],
           unknown_additions: [],
         });
+    }
+  });
+
+  // The exploit chain's `compose` row is planned in `post_plan` and runs only
+  // when the round has security leads; the session names it with its strategy.
+  // MUTATION: drop the post_plan rows from mainAddable in recordPassTelemetry — the
+  // two conformant runs read as unknown additions and this fails.
+  // MUTATION: make planLensOf return the pass unchanged — the suffixed run reads
+  // as an unknown addition and this fails.
+  it("a post-discovery compose row is optional: run under either spelling it conforms, at a foreign tier or unplanned it does not", async () => {
+    const compose = {
+      lens: "pass-sec-exploit-chain",
+      agent: "pass-sec-exploit-chain--sol-high",
+      tier: "sol-high",
+      raisable_to: [],
+      strategy: "compose",
+      stage: "post-discovery",
+    };
+    for (const [pr, name, tier, planned, mismatch] of [
+      [221, "pass-sec-exploit-chain:compose", "sol-high", true, null],
+      [222, "pass-sec-exploit-chain", "sol-high", true, null],
+      [223, null, null, true, null],
+      [
+        224,
+        "pass-sec-exploit-chain:compose",
+        "terra-med",
+        true,
+        { wrong_tier: ["pass-sec-exploit-chain"] },
+      ],
+      [
+        225,
+        "pass-sec-exploit-chain:compose",
+        "sol-high",
+        false,
+        { unknown_additions: ["pass-sec-exploit-chain"] },
+      ],
+    ] as const) {
+      const id = policyRound(pr);
+      if (planned) store.setRoundMeta(id, { post_plan: [compose] as never });
+      await watcher().handleFile(
+        write(
+          pr,
+          1,
+          verdictFile({
+            pr,
+            passes: [
+              { name: "pass-baseline", tier: "sol-med", findings: 1 },
+              ...(name ? [{ name, tier: tier!, findings: 0 }] : []),
+              { name: "pass-validate", tier: "sol-high", findings: 0 },
+            ],
+          }),
+        ),
+      );
+      const rows = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'pass_plan_mismatch' AND pr = ?")
+        .all(pr) as Array<{ payload: string }>;
+      expect(rows.length, `${pr}`).toBe(mismatch ? 1 : 0);
+      if (mismatch)
+        expect(JSON.parse(rows[0]!.payload)).toMatchObject({ missing: [], ...mismatch });
     }
   });
 
