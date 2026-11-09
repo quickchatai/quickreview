@@ -227,7 +227,11 @@ function dataset(root: string): void {
     no_tools_system_line: true,
     prompt_sha256: "0".repeat(64),
   });
-  jsonl(join(v, "aacr"), "judgements", [judgement("p1"), judgement("p2")]);
+  // p1: asked at high, answered at low (the next attempt after a cap); p2: the second run, asked at low
+  jsonl(join(v, "aacr"), "judgements", [
+    { ...judgement("p1"), effort_used: "low" },
+    { ...judgement("p2"), effort_requested: "low", effort_used: "low" },
+  ]);
   jsonl(join(v, "martian"), "martian_verdicts", [
     { ...MW, pr_url: "m1", golden_index: 0, matched: true, judge: LABEL },
     { ...MW, pr_url: "m1", golden_index: 1, matched: true, judge: LABEL },
@@ -464,6 +468,8 @@ describe("second_judges: validation.json's checks", () => {
 describe("second_judges: the claims verifier", () => {
   // MUTATION: in claim_metrics.SecondJudge, read an aacr metric from the arm's published judge's column (row[row["reference_judge"]]) — this fails
   // MUTATION: in claim_metrics.SecondJudge, count Martian over the published judge's rows (label -> "gpt-6.1-sol") — this fails
+  // MUTATION: in claim_metrics.SecondJudge, count effort_used=E from the effort_requested column — this fails
+  // MUTATION: in claim_metrics.SecondJudge, count every review of the run as `empty` (drop the n_comments test) — this fails
   it("gives the second judge's numbers by label, through the scorers, beside the published judge's", () => {
     const got = py(
       `import claim_metrics as M
@@ -473,6 +479,9 @@ L = "${LABEL}"
 keys = [L + "/aacr/${ARM}:found", L + "/aacr/${ARM}:recall", L + "/aacr/${ARM}:correct", L + "/aacr/${ARM}:pct",
         L + "/aacr/${ARM}:c_pct", L + "/martian/w-martian|acme:core_recall", L + "/martian/w-martian|acme:core_precision",
         L + "/qodo/w-qodo|acme:recall", L + "/qodo/w-qodo|acme:precision"]
+keys += [L + "/aacr/judgements:rows", L + "/aacr/judgements:usd", L + "/aacr/judgements:effort_used=high",
+         L + "/aacr/judgements:effort_used=low", L + "/aacr/judgements:effort_requested=low",
+         L + "/qodo/w-qodo|acme:empty"]
 out = {k: sj.value(k) for k in keys}
 out["published found"] = a.value("${ARM}:found")
 try:
@@ -496,6 +505,12 @@ print(json.dumps(out))`,
       [`${LABEL}/martian/w-martian|acme:core_precision`]: 50,
       [`${LABEL}/qodo/w-qodo|acme:recall`]: 100,
       [`${LABEL}/qodo/w-qodo|acme:precision`]: 100,
+      [`${LABEL}/aacr/judgements:rows`]: 2,
+      [`${LABEL}/aacr/judgements:usd`]: 0.02,
+      [`${LABEL}/aacr/judgements:effort_used=high`]: 0,
+      [`${LABEL}/aacr/judgements:effort_used=low`]: 2,
+      [`${LABEL}/aacr/judgements:effort_requested=low`]: 1,
+      [`${LABEL}/qodo/w-qodo|acme:empty`]: 0,
       "published found": 1,
       "unknown arm": `no ${LABEL} verdicts for arm 'not-an-arm'`,
     });

@@ -883,11 +883,14 @@ class SecondJudge(Provider):
     LABEL/aacr/ARM:METRIC         score_verdicts.score over the folder's aacr/: under LABEL found defects
                                   recall high_rec weighted graded correct incorrect new_defects; against the
                                   arm's published judge (arms.judge) pairs pct kappa c_pairs c_pct c_kappa; reviews
+    LABEL/aacr/judgements:METRIC  the folder's aacr/judgements rows: rows, usd (summed), effort_used=E and
+                                  effort_requested=E (rows with that effort)
     LABEL/martian/WORK|TOOL:METRIC  martian_scores.metrics(counts(...)) under LABEL over the folder's martian/:
                                   {core,strict,all}_{tp,fp,fn,precision,recall,f1,f2}; prs
     LABEL/qodo/WORK|TOOL:METRIC   qodo_scores.run_scores under LABEL over the folder's qodo/ (on the PRs it
                                   judged when it judged only some, as the scorer counts): hits comments per_pr
-                                  precision recall f1 recall_functional recall_rule and the _semantic ones; prs
+                                  precision recall f1 recall_functional recall_rule and the _semantic ones; prs;
+                                  empty (the run's reviews with no comment: no request to judge)
 
     The published judge's own cells are the `aacr`, `martian` and `qodo` keys; a folder the release does
     not hold is a missing source (the check needs `second_judges`), never a number."""
@@ -915,6 +918,16 @@ class SecondJudge(Provider):
             raise KeyError_(f"second_judge key {key!r}: want LABEL/aacr|martian|qodo/HEAD:METRIC")
         d = self._folder(label, part)
         try:
+            if part == "aacr" and head == "judgements":
+                rows = load_table(d, "judgements")
+                k, _, v = metric.partition("=")
+                if metric == "rows":
+                    return len(rows)
+                if metric == "usd":
+                    return sum(r["usd"] or 0.0 for r in rows)
+                if k in ("effort_used", "effort_requested") and v:
+                    return sum(1 for r in rows if r[k] == v)
+                raise KeyError_(f"unknown second_judge judgements metric {metric!r}")
             if part == "aacr":
                 import score_verdicts as SV
                 tables = self._once(("aacr", label), lambda: SV.WithJudge(self.t.data, d, label))
@@ -946,6 +959,9 @@ class SecondJudge(Provider):
                 raise KeyError_(f"no {label} qodo_verdicts rows for {head}")
             if metric == "prs":
                 return len(mine)
+            if metric == "empty":
+                return sum(1 for r in t("qodo_reviews") if r["work_dir"] == work and r["tool"] == tool
+                           and not r["n_comments"])
             whole = {r["pr_url"] for r in t("qodo_reviews") if r["work_dir"] == work and r["tool"] == tool}
             view = t if whole <= mine else QS.on_prs(t, mine)  # qodo_scores.main's scope: a sample's own PRs
             if metric not in QS.METRICS:
