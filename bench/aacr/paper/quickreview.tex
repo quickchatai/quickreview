@@ -1465,13 +1465,19 @@ three third-party tools have more than \qcr{}'s 6.1. These flags are
 unverified, and they could move the gaps in either direction by a few
 points~\cite{qcrbench}.
 
-\paragraph{One judge, sharing a model family.} The final reviews were graded
-by gpt-6-sol only; the second judge, from another family, agreed on 98.7\%
-of verdicts in the earlier study but did not grade these reviews. The judge
-shares a family with every reviewer here except Claude Code. A third judge,
-from a third family and without access to the code, re-graded the six
-third-party tools' final reviews and the frozen build: every reviewer's
-recall stayed within 0.4 points and the order was unchanged~\cite{qcrbench}.
+\paragraph{One judge, sharing a model family.} The published grades of the
+final reviews come from one judge, gpt-6-sol; the second judge, from another
+family, agreed on 98.7\% of verdicts in the earlier study but did not grade
+these reviews. The judge shares a family with every reviewer here except
+Claude Code. A third judge, from a third family and without access to the
+code, re-graded the six third-party tools' final reviews and the frozen
+build: every reviewer's recall stayed within 0.4 points and in the same
+order, but comments correct fell for six of the seven, the frozen build's
+from 92.4\% to 85.4\%, since a judge that cannot open the file cannot
+confirm a claim about it. On Martian it raised every tool's precision and
+F1, the frozen build's least, so every other tool's F1 lead over it widens and
+Claude Code passes it on $F_2$; on Qodo the frozen build keeps the highest
+F1 of the four harnesses on gpt-6.1-sol~\cite{qcrbench}.
 
 \paragraph{Development sets.} Every September lever was designed from
 \qcr{}'s misses on the original 40 PRs; the other 145 are reported apart and

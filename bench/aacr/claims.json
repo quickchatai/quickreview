@@ -7,7 +7,7 @@
   "Spelled-out numbers (\"six other reviewers\", \"ten times\") are claims when they report a measurement, but the lint sees digits only, so they are not listed.",
   "A claim printed as approximate (\"about $4\", \"~$770\") carries `about: true` and passes when the recomputed number is within `about_tolerance` (relative) of the printed one. Every other claim passes when the recomputed number, printed with the published value's decimals, sign, thousands separator and `%`, is the same string.",
   "`lint: complete` files account for every number token (bench/aacr/recompute/claim_text.py defines a token): each is a claim or a listed not-claim, and tests/bench-claims.test.ts holds README.md to it with no data. `lint: report` files list what is covered so far; verify_claims.py reports the rest as unaccounted.",
-  "Rounding: a computed number is printed the way Python's `format` prints the float with the published value's decimals, which is how the papers' tables were generated; a value half-way between two printed values takes the nearer binary float's side (16.25 prints 16.2, and 8.95, stored as 8.9499…, prints 8.9). Every page follows that convention."
+  "Rounding: a computed number is printed the way Python's `format` prints the float with the published value's decimals, which is how the papers' tables were generated; a value half-way between two printed values takes the nearer binary float's side (16.25 prints 16.2, and 8.95, stored as 8.9499\u2026, prints 8.9). Every page follows that convention."
  ],
  "about_tolerance": 0.1,
  "version_patterns": [
@@ -1905,7 +1905,7 @@
   {
    "id": "readme.readme:aacr.24",
    "file": "README.md",
-   "anchor": "and 0.7–2.3 minutes ([Benchmarks]",
+   "anchor": "and 0.7\u20132.3 minutes ([Benchmarks]",
    "value": "0.7",
    "group": "readme:aacr",
    "q": "min({aacr:pireview-panel-high-g61:min_median}, {aacr:claude-code-opus55:min_median}, {aacr:ocr-high-g61:min_median}, {aacr:codex-high-g61:min_median}, {aacr:opencode-native-pr-g61:min_median}, {aacr:pragent-g61:min_median})"
@@ -1913,7 +1913,7 @@
   {
    "id": "readme.readme:aacr.25",
    "file": "README.md",
-   "anchor": "and 0.7–2.3 minutes ([Benchmarks]",
+   "anchor": "and 0.7\u20132.3 minutes ([Benchmarks]",
    "value": "2.3",
    "group": "readme:aacr",
    "q": "max({aacr:pireview-panel-high-g61:min_median}, {aacr:claude-code-opus55:min_median}, {aacr:ocr-high-g61:min_median}, {aacr:codex-high-g61:min_median}, {aacr:opencode-native-pr-g61:min_median}, {aacr:pragent-g61:min_median})"
@@ -5740,7 +5740,7 @@
   {
    "id": "do.do:speed.26",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "They are slow because they take 2.5–3× the",
+   "anchor": "They are slow because they take 2.5\u20133\u00d7 the",
    "value": "3",
    "group": "do:speed",
    "q": "{do_speed:table/DeepSeek V4.1 Flash/replies} / {do_speed:table/GPT-6.1 Sol/replies}",
@@ -5749,7 +5749,7 @@
   {
    "id": "do.do:speed.29",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "They are slow because they take 2.5–3× the",
+   "anchor": "They are slow because they take 2.5\u20133\u00d7 the",
    "value": "2.5",
    "group": "do:speed",
    "q": "{do_speed:table/GLM-5.3 Flash/replies} / {do_speed:table/GPT-6.1 Sol/replies}",
@@ -5758,7 +5758,7 @@
   {
    "id": "do.do:speed.27",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "steps and write 7–9× the output",
+   "anchor": "steps and write 7\u20139\u00d7 the output",
    "value": "7",
    "group": "do:speed",
    "q": "{do_speed:table/GLM-5.3 Flash/output} / {do_speed:table/GPT-6.1 Sol/output}"
@@ -5766,7 +5766,7 @@
   {
    "id": "do.do:speed.28",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "steps and write 7–9× the output",
+   "anchor": "steps and write 7\u20139\u00d7 the output",
    "value": "9",
    "group": "do:speed",
    "q": "{do_speed:table/DeepSeek V4.1 Flash/output} / {do_speed:table/GPT-6.1 Sol/output}"
@@ -5784,7 +5784,7 @@
   {
    "id": "do.do:timeouts.2",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "55–72 minutes, and the run's first attempt timed out on some PRs at that limit",
+   "anchor": "55\u201372 minutes, and the run's first attempt timed out on some PRs at that limit",
    "value": "55",
    "group": "do:timeouts",
    "q": "min({do_speed:glm_full_slowest/0/0}, {do_speed:glm_full_slowest/1/0}, {do_speed:glm_full_slowest/2/0}, {do_speed:glm_full_slowest/3/0}, {do_speed:glm_full_slowest/4/0})",
@@ -5793,7 +5793,7 @@
   {
    "id": "do.do:timeouts.3",
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "55–72 minutes, and the run's first attempt timed out on some PRs at that limit",
+   "anchor": "55\u201372 minutes, and the run's first attempt timed out on some PRs at that limit",
    "value": "72",
    "group": "do:timeouts",
    "q": "max({do_speed:glm_full_slowest/0/0}, {do_speed:glm_full_slowest/1/0}, {do_speed:glm_full_slowest/2/0}, {do_speed:glm_full_slowest/3/0}, {do_speed:glm_full_slowest/4/0})",
@@ -6028,7 +6028,7 @@
   {
    "id": "card.card:key.15",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "- `prs` — the 185 runnable PRs",
+   "anchor": "- `prs` \u2014 the 185 runnable PRs",
    "value": "185",
    "group": "card:key",
    "q": "key:prs"
@@ -6036,7 +6036,7 @@
   {
    "id": "card.card:key.16",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "- `defects` — 520 defects (90 high, 145 medium, 285 low)",
+   "anchor": "- `defects` \u2014 520 defects (90 high, 145 medium, 285 low)",
    "value": "520",
    "group": "card:key",
    "q": "key:defects"
@@ -6044,7 +6044,7 @@
   {
    "id": "card.card:key.17",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "- `defects` — 520 defects (90 high, 145 medium, 285 low)",
+   "anchor": "- `defects` \u2014 520 defects (90 high, 145 medium, 285 low)",
    "value": "90",
    "group": "card:key",
    "q": "key:n_high"
@@ -6052,7 +6052,7 @@
   {
    "id": "card.card:key.18",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "- `defects` — 520 defects (90 high, 145 medium, 285 low)",
+   "anchor": "- `defects` \u2014 520 defects (90 high, 145 medium, 285 low)",
    "value": "145",
    "group": "card:key",
    "q": "key:n_medium"
@@ -6060,7 +6060,7 @@
   {
    "id": "card.card:key.19",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "- `defects` — 520 defects (90 high, 145 medium, 285 low)",
+   "anchor": "- `defects` \u2014 520 defects (90 high, 145 medium, 285 low)",
    "value": "285",
    "group": "card:key",
    "q": "key:n_low"
@@ -6068,7 +6068,7 @@
   {
    "id": "card.card:key.20",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "- `exclusions` — 3,093 candidates checked",
+   "anchor": "- `exclusions` \u2014 3,093 candidates checked",
    "value": "3,093",
    "group": "card:key",
    "q": "key:exclusions"
@@ -6076,7 +6076,7 @@
   {
    "id": "card.card:key.21",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "- `aacr_references` — AACR-Bench's own 1,418 reference comments",
+   "anchor": "- `aacr_references` \u2014 AACR-Bench's own 1,418 reference comments",
    "value": "1,418",
    "group": "card:key",
    "q": "key:refs"
@@ -6084,7 +6084,7 @@
   {
    "id": "card.card:key.22",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "- `aacr_reference_labels` — our check of the 253 references on 30 PRs",
+   "anchor": "- `aacr_reference_labels` \u2014 our check of the 253 references on 30 PRs",
    "value": "253",
    "group": "card:key",
    "q": "key:labels"
@@ -6092,7 +6092,7 @@
   {
    "id": "card.card:key.23",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "- `aacr_reference_labels` — our check of the 253 references on 30 PRs",
+   "anchor": "- `aacr_reference_labels` \u2014 our check of the 253 references on 30 PRs",
    "value": "30",
    "group": "card:key",
    "q": "key:labelled_prs"
@@ -6196,7 +6196,7 @@
   {
    "id": "card.card:judges.1",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "| `claude-opus-5-5` | Claude Opus 5.5 | the second judge.",
+   "anchor": "| `claude-opus-5-5` | Claude Opus 5.5 | the earlier study's second judge.",
    "value": "3,640",
    "group": "card:judges",
    "q": "judges:gpt-6-sol-high|claude-opus-5-5|quickreview-default-sol+quickreview-low-sol+claude-code-opus55+pireview-medium-sol+ocr-medium-sol+opencode-bridge-sol+codex-medium-sol:pairs"
@@ -50395,7 +50395,7 @@
   {
    "id": "qr.qr:tab:frozen.244",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "by gpt-6-sol only; the second judge, from another family, agreed on 98.7\\%",
+   "anchor": "family, agreed on 98.7\\% of verdicts in the earlier study but did not grade",
    "value": "98.7%",
    "group": "qr:tab:frozen",
    "q": "judges:gpt-6-sol-high|claude-opus-5-5|quickreview-default-sol+quickreview-low-sol+ocr-medium-sol+codex-medium-sol+opencode-bridge-sol+pireview-medium-sol+claude-code-opus55:pct"
@@ -51084,7 +51084,7 @@
   {
    "id": "threats.card:key.12",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "| AACR reference comments | 115 | — |",
+   "anchor": "| AACR reference comments | 115 | \u2014 |",
    "value": "115",
    "group": "card:key",
    "q": "key_build:prov/raised/refs",
@@ -51747,7 +51747,7 @@
   {
    "id": "threats.bench:sol-study.63",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  has a 95% CI of [−6.3, +9.1], so the margin does not measurably shrink.",
+   "anchor": "  has a 95% CI of [\u22126.3, +9.1], so the margin does not measurably shrink.",
    "value": "-6.3",
    "group": "bench:sol-study",
    "q": "bootstrap_sol:halves/lo"
@@ -51755,7 +51755,7 @@
   {
    "id": "threats.bench:sol-study.64",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  has a 95% CI of [−6.3, +9.1], so the margin does not measurably shrink.",
+   "anchor": "  has a 95% CI of [\u22126.3, +9.1], so the margin does not measurably shrink.",
    "value": "+9.1",
    "group": "bench:sol-study",
    "q": "bootstrap_sol:halves/hi"
@@ -51894,7 +51894,7 @@
   {
    "id": "threats.bench:sol-study.78",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  - Problems found moved by at most ±3 defects per reviewer",
+   "anchor": "  - Problems found moved by at most \u00b13 defects per reviewer",
    "value": "3",
    "group": "bench:sol-study",
    "q": "max(abs({aacr:quickreview-default-sol:found} - {aacr:quickreview-default-sol@claude-opus-5-5:found}), abs({aacr:quickreview-low-sol:found} - {aacr:quickreview-low-sol@claude-opus-5-5:found}), abs({aacr:ocr-medium-sol:found} - {aacr:ocr-medium-sol@claude-opus-5-5:found}), abs({aacr:codex-medium-sol:found} - {aacr:codex-medium-sol@claude-opus-5-5:found}), abs({aacr:opencode-bridge-sol:found} - {aacr:opencode-bridge-sol@claude-opus-5-5:found}), abs({aacr:pireview-medium-sol:found} - {aacr:pireview-medium-sol@claude-opus-5-5:found}), abs({aacr:claude-code-opus55:found} - {aacr:claude-code-opus55@claude-opus-5-5:found}))"
@@ -51942,7 +51942,7 @@
   {
    "id": "threats.bench:sol-study.84",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  validator included (interquartile range 8.5–14). Per PR, on average:",
+   "anchor": "  validator included (interquartile range 8.5\u201314). Per PR, on average:",
    "value": "14",
    "group": "bench:sol-study",
    "q": "passes:quickreview-default-g61/executed_q3"
@@ -52237,7 +52237,7 @@
   {
    "id": "threats.bench:sol-study.116",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  agreement of 81–93% on two pairs of fresh10 runs. We have no variance estimate",
+   "anchor": "  agreement of 81\u201393% on two pairs of fresh10 runs. We have no variance estimate",
    "value": "81",
    "group": "bench:sol-study",
    "q": "min(100 * ({aacr:fresh10-on+lean~set=fresh10:any_found} - {aacr:fresh10-on+lean~set=fresh10:single_found}) / {aacr:fresh10-on+lean~set=fresh10:any_found}, 100 * ({aacr:new-r1+new-r2~set=fresh10:any_found} - {aacr:new-r1+new-r2~set=fresh10:single_found}) / {aacr:new-r1+new-r2~set=fresh10:any_found})"
@@ -52245,7 +52245,7 @@
   {
    "id": "threats.bench:sol-study.117",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  agreement of 81–93% on two pairs of fresh10 runs. We have no variance estimate",
+   "anchor": "  agreement of 81\u201393% on two pairs of fresh10 runs. We have no variance estimate",
    "value": "93%",
    "group": "bench:sol-study",
    "q": "max(100 * ({aacr:fresh10-on+lean~set=fresh10:any_found} - {aacr:fresh10-on+lean~set=fresh10:single_found}) / {aacr:fresh10-on+lean~set=fresh10:any_found}, 100 * ({aacr:new-r1+new-r2~set=fresh10:any_found} - {aacr:new-r1+new-r2~set=fresh10:single_found}) / {aacr:new-r1+new-r2~set=fresh10:any_found})"
@@ -52277,7 +52277,7 @@
   {
    "id": "threats.bench:sol-study.121",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "    the third-party tools (22–36 points) is far larger",
+   "anchor": "    the third-party tools (22\u201336 points) is far larger",
    "value": "22",
    "group": "bench:sol-study",
    "q": "min({aacr:quickreview-default-sol:recall} - {aacr:ocr-medium-sol:recall}, {aacr:quickreview-default-sol:recall} - {aacr:codex-medium-sol:recall}, {aacr:quickreview-default-sol:recall} - {aacr:opencode-bridge-sol:recall}, {aacr:quickreview-default-sol:recall} - {aacr:pireview-medium-sol:recall}, {aacr:quickreview-default-sol:recall} - {aacr:claude-code-opus55:recall})"
@@ -52285,7 +52285,7 @@
   {
    "id": "threats.bench:sol-study.122",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "    the third-party tools (22–36 points) is far larger",
+   "anchor": "    the third-party tools (22\u201336 points) is far larger",
    "value": "36",
    "group": "bench:sol-study",
    "q": "max({aacr:quickreview-default-sol:recall} - {aacr:ocr-medium-sol:recall}, {aacr:quickreview-default-sol:recall} - {aacr:codex-medium-sol:recall}, {aacr:quickreview-default-sol:recall} - {aacr:opencode-bridge-sol:recall}, {aacr:quickreview-default-sol:recall} - {aacr:pireview-medium-sol:recall}, {aacr:quickreview-default-sol:recall} - {aacr:claude-code-opus55:recall})"
@@ -52455,7 +52455,7 @@
   {
    "id": "threats.bench:sol-study.145",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "    to 1.4 points per reviewer (default 12.6% → 11.2%, OCR 14.0% → 13.0%).",
+   "anchor": "    to 1.4 points per reviewer (default 12.6% \u2192 11.2%, OCR 14.0% \u2192 13.0%).",
    "value": "1.4",
    "group": "bench:sol-study",
    "q": "max({aacr:quickreview-default-sol:aacr_f1} - {aacr:quickreview-default-sol:aacr_f1_nobot}, {aacr:quickreview-low-sol:aacr_f1} - {aacr:quickreview-low-sol:aacr_f1_nobot}, {aacr:ocr-medium-sol:aacr_f1} - {aacr:ocr-medium-sol:aacr_f1_nobot}, {aacr:codex-medium-sol:aacr_f1} - {aacr:codex-medium-sol:aacr_f1_nobot}, {aacr:opencode-bridge-sol:aacr_f1} - {aacr:opencode-bridge-sol:aacr_f1_nobot}, {aacr:pireview-medium-sol:aacr_f1} - {aacr:pireview-medium-sol:aacr_f1_nobot}, {aacr:claude-code-opus55:aacr_f1} - {aacr:claude-code-opus55:aacr_f1_nobot})"
@@ -52463,7 +52463,7 @@
   {
    "id": "threats.bench:sol-study.146",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "    to 1.4 points per reviewer (default 12.6% → 11.2%, OCR 14.0% → 13.0%).",
+   "anchor": "    to 1.4 points per reviewer (default 12.6% \u2192 11.2%, OCR 14.0% \u2192 13.0%).",
    "value": "12.6%",
    "group": "bench:sol-study",
    "q": "aacr:quickreview-default-sol:aacr_f1"
@@ -52471,7 +52471,7 @@
   {
    "id": "threats.bench:sol-study.147",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "    to 1.4 points per reviewer (default 12.6% → 11.2%, OCR 14.0% → 13.0%).",
+   "anchor": "    to 1.4 points per reviewer (default 12.6% \u2192 11.2%, OCR 14.0% \u2192 13.0%).",
    "value": "11.2%",
    "group": "bench:sol-study",
    "q": "aacr:quickreview-default-sol:aacr_f1_nobot"
@@ -52479,7 +52479,7 @@
   {
    "id": "threats.bench:sol-study.148",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "    to 1.4 points per reviewer (default 12.6% → 11.2%, OCR 14.0% → 13.0%).",
+   "anchor": "    to 1.4 points per reviewer (default 12.6% \u2192 11.2%, OCR 14.0% \u2192 13.0%).",
    "value": "14.0%",
    "group": "bench:sol-study",
    "q": "aacr:ocr-medium-sol:aacr_f1"
@@ -52487,7 +52487,7 @@
   {
    "id": "threats.bench:sol-study.149",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "    to 1.4 points per reviewer (default 12.6% → 11.2%, OCR 14.0% → 13.0%).",
+   "anchor": "    to 1.4 points per reviewer (default 12.6% \u2192 11.2%, OCR 14.0% \u2192 13.0%).",
    "value": "13.0%",
    "group": "bench:sol-study",
    "q": "aacr:ocr-medium-sol:aacr_f1_nobot"
@@ -52621,7 +52621,7 @@
   {
    "id": "threats.bench:sol-study.166",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  Claude Code is level). The margin (84% against 48–66% of defects found) is",
+   "anchor": "  Claude Code is level). The margin (84% against 48\u201366% of defects found) is",
    "value": "84%",
    "group": "bench:sol-study",
    "q": "aacr:quickreview-default-sol:recall"
@@ -52629,7 +52629,7 @@
   {
    "id": "threats.bench:sol-study.167",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  Claude Code is level). The margin (84% against 48–66% of defects found) is",
+   "anchor": "  Claude Code is level). The margin (84% against 48\u201366% of defects found) is",
    "value": "48",
    "group": "bench:sol-study",
    "q": "min({aacr:quickreview-low-sol:recall}, {aacr:ocr-medium-sol:recall}, {aacr:codex-medium-sol:recall}, {aacr:opencode-bridge-sol:recall}, {aacr:pireview-medium-sol:recall}, {aacr:claude-code-opus55:recall})"
@@ -52637,7 +52637,7 @@
   {
    "id": "threats.bench:sol-study.168",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  Claude Code is level). The margin (84% against 48–66% of defects found) is",
+   "anchor": "  Claude Code is level). The margin (84% against 48\u201366% of defects found) is",
    "value": "66%",
    "group": "bench:sol-study",
    "q": "max({aacr:quickreview-low-sol:recall}, {aacr:ocr-medium-sol:recall}, {aacr:codex-medium-sol:recall}, {aacr:opencode-bridge-sol:recall}, {aacr:pireview-medium-sol:recall}, {aacr:claude-code-opus55:recall})"
@@ -52741,7 +52741,7 @@
   {
    "id": "threats.bench:sol-study.181",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  tools as shipped; ours reads the PR description and reads 4–15× the input",
+   "anchor": "  tools as shipped; ours reads the PR description and reads 4\u201315\u00d7 the input",
    "value": "15",
    "group": "bench:sol-study",
    "q": "max(({tokens:quickreview-default-sol/all/uncached_in_per_pr} + {tokens:quickreview-default-sol/all/cached_in_per_pr}) / ({tokens:ocr-medium-sol/all/uncached_in_per_pr} + {tokens:ocr-medium-sol/all/cached_in_per_pr}), ({tokens:quickreview-default-sol/all/uncached_in_per_pr} + {tokens:quickreview-default-sol/all/cached_in_per_pr}) / ({tokens:codex-medium-sol/all/uncached_in_per_pr} + {tokens:codex-medium-sol/all/cached_in_per_pr}), ({tokens:quickreview-default-sol/all/uncached_in_per_pr} + {tokens:quickreview-default-sol/all/cached_in_per_pr}) / ({tokens:opencode-bridge-sol/all/uncached_in_per_pr} + {tokens:opencode-bridge-sol/all/cached_in_per_pr}), ({tokens:quickreview-default-sol/all/uncached_in_per_pr} + {tokens:quickreview-default-sol/all/cached_in_per_pr}) / ({tokens:pireview-medium-sol/all/uncached_in_per_pr} + {tokens:pireview-medium-sol/all/cached_in_per_pr}), ({tokens:quickreview-default-sol/all/uncached_in_per_pr} + {tokens:quickreview-default-sol/all/cached_in_per_pr}) / ({tokens:claude-code-opus55/all/uncached_in_per_pr} + {tokens:claude-code-opus55/all/cached_in_per_pr}))"
@@ -52789,7 +52789,7 @@
   {
    "id": "meth.card:key.5",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "PR ref points elsewhere): ComfyUI ×2, nodejs/node",
+   "anchor": "PR ref points elsewhere): ComfyUI \u00d72, nodejs/node",
    "value": "2",
    "group": "card:key",
    "q": "key:unrunnable_repo=comfyanonymous/ComfyUI"
@@ -52797,7 +52797,7 @@
   {
    "id": "meth.card:key.6",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "PR ref points elsewhere): ComfyUI ×2, nodejs/node",
+   "anchor": "PR ref points elsewhere): ComfyUI \u00d72, nodejs/node",
    "value": "2",
    "group": "card:key",
    "q": "key:unrunnable_repo=ClickHouse/ClickHouse"
@@ -52805,7 +52805,7 @@
   {
    "id": "meth.card:key.7",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "keycloak ×5. `bench.sh prefetch --set full` confirmed the same 11 fail.",
+   "anchor": "keycloak \u00d75. `bench.sh prefetch --set full` confirmed the same 11 fail.",
    "value": "5",
    "group": "card:key",
    "q": "key:unrunnable_repo=keycloak/keycloak"
@@ -52813,7 +52813,7 @@
   {
    "id": "meth.card:key.8",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "keycloak ×5. `bench.sh prefetch --set full` confirmed the same 11 fail.",
+   "anchor": "keycloak \u00d75. `bench.sh prefetch --set full` confirmed the same 11 fail.",
    "value": "11",
    "group": "card:key",
    "q": "{sets:full.json#cases/#len} - {key:prs}"
@@ -52989,7 +52989,7 @@
   {
    "id": "meth.card:key.38",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "- Counts now: smoke10 34, dev10 37, holdout10 26, fresh10 29 defects — 126",
+   "anchor": "- Counts now: smoke10 34, dev10 37, holdout10 26, fresh10 29 defects \u2014 126",
    "value": "34",
    "group": "card:key",
    "q": "key:defects~set=smoke10"
@@ -52997,7 +52997,7 @@
   {
    "id": "meth.card:key.39",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "- Counts now: smoke10 34, dev10 37, holdout10 26, fresh10 29 defects — 126",
+   "anchor": "- Counts now: smoke10 34, dev10 37, holdout10 26, fresh10 29 defects \u2014 126",
    "value": "37",
    "group": "card:key",
    "q": "key:defects~set=dev10"
@@ -53005,7 +53005,7 @@
   {
    "id": "meth.card:key.40",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "- Counts now: smoke10 34, dev10 37, holdout10 26, fresh10 29 defects — 126",
+   "anchor": "- Counts now: smoke10 34, dev10 37, holdout10 26, fresh10 29 defects \u2014 126",
    "value": "26",
    "group": "card:key",
    "q": "key:defects~set=holdout10"
@@ -53013,7 +53013,7 @@
   {
    "id": "meth.card:key.41",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "- Counts now: smoke10 34, dev10 37, holdout10 26, fresh10 29 defects — 126",
+   "anchor": "- Counts now: smoke10 34, dev10 37, holdout10 26, fresh10 29 defects \u2014 126",
    "value": "29",
    "group": "card:key",
    "q": "key:defects~set=fresh10"
@@ -53021,7 +53021,7 @@
   {
    "id": "meth.card:key.42",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "- Counts now: smoke10 34, dev10 37, holdout10 26, fresh10 29 defects — 126",
+   "anchor": "- Counts now: smoke10 34, dev10 37, holdout10 26, fresh10 29 defects \u2014 126",
    "value": "126",
    "group": "card:key",
    "q": "key:defects~set=smoke10+dev10+holdout10+fresh10"
@@ -53134,7 +53134,7 @@
   {
    "id": "meth.card:key.62",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "7. `assemble.py` → `defects/rest145.json` v1: **379 defects** (55 high / 113",
+   "anchor": "7. `assemble.py` \u2192 `defects/rest145.json` v1: **379 defects** (55 high / 113",
    "value": "379",
    "group": "card:key",
    "q": "{key:defects~set=rest145} - {key:extension~set=rest145}"
@@ -53142,7 +53142,7 @@
   {
    "id": "meth.card:key.63",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "7. `assemble.py` → `defects/rest145.json` v1: **379 defects** (55 high / 113",
+   "anchor": "7. `assemble.py` \u2192 `defects/rest145.json` v1: **379 defects** (55 high / 113",
    "value": "55",
    "group": "card:key",
    "q": "{key:n_high~set=rest145} - {key:ext_high~set=rest145}"
@@ -53150,7 +53150,7 @@
   {
    "id": "meth.card:key.64",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "7. `assemble.py` → `defects/rest145.json` v1: **379 defects** (55 high / 113",
+   "anchor": "7. `assemble.py` \u2192 `defects/rest145.json` v1: **379 defects** (55 high / 113",
    "value": "113",
    "group": "card:key",
    "q": "{key:n_medium~set=rest145} - {key:ext_medium~set=rest145}"
@@ -53460,7 +53460,7 @@
   {
    "id": "meth.bench:sol-study.15",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "reviews (7 reviewers × 185 PRs).",
+   "anchor": "reviews (7 reviewers \u00d7 185 PRs).",
    "value": "185",
    "group": "bench:sol-study",
    "q": "key:prs"
@@ -53468,7 +53468,7 @@
   {
    "id": "meth.bench:sol-study.16",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "- **Problems found:** every reviewer is within ±3 defects.",
+   "anchor": "- **Problems found:** every reviewer is within \u00b13 defects.",
    "value": "3",
    "group": "bench:sol-study",
    "q": "max(abs({aacr:quickreview-default-sol:found} - {aacr:quickreview-default-sol@claude-opus-5-5:found}), abs({aacr:quickreview-low-sol:found} - {aacr:quickreview-low-sol@claude-opus-5-5:found}), abs({aacr:ocr-medium-sol:found} - {aacr:ocr-medium-sol@claude-opus-5-5:found}), abs({aacr:codex-medium-sol:found} - {aacr:codex-medium-sol@claude-opus-5-5:found}), abs({aacr:opencode-bridge-sol:found} - {aacr:opencode-bridge-sol@claude-opus-5-5:found}), abs({aacr:pireview-medium-sol:found} - {aacr:pireview-medium-sol@claude-opus-5-5:found}), abs({aacr:claude-code-opus55:found} - {aacr:claude-code-opus55@claude-opus-5-5:found}))"
@@ -53572,7 +53572,7 @@
   {
    "id": "meth.bench:sol-study.29",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "- **Independent-source subset** (§5, 369 defects)",
+   "anchor": "- **Independent-source subset** (\u00a75, 369 defects)",
    "value": "369",
    "group": "bench:sol-study",
    "q": "key:indep"
@@ -54157,7 +54157,7 @@
   {
    "id": "threats.round3:noise.1",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  same arm differed by 1.5–2 found defects per 10-PR set, with run-to-run",
+   "anchor": "  same arm differed by 1.5\u20132 found defects per 10-PR set, with run-to-run",
    "value": "1.5",
    "group": "bench:sol-study",
    "q": "min(abs({aacr:smoke10-3-gpt6~own:found} - {aacr:smoke10-base-r2~own:found}), abs({aacr:dev10-base~own:found} - {aacr:dev10-base-r2~own:found}), abs({aacr:holdout10-base~own:found} - {aacr:holdout10-base-r2~own:found}))"
@@ -54165,7 +54165,7 @@
   {
    "id": "threats.round3:noise.2",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  same arm differed by 1.5–2 found defects per 10-PR set, with run-to-run",
+   "anchor": "  same arm differed by 1.5\u20132 found defects per 10-PR set, with run-to-run",
    "value": "2",
    "group": "bench:sol-study",
    "q": "max(abs({aacr:smoke10-3-gpt6~own:found} - {aacr:smoke10-base-r2~own:found}), abs({aacr:dev10-base~own:found} - {aacr:dev10-base-r2~own:found}), abs({aacr:holdout10-base~own:found} - {aacr:holdout10-base-r2~own:found}))"
@@ -54173,7 +54173,7 @@
   {
    "id": "meth.round3:noise.1",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "1.5–2 found defects per 10-PR set (the benchmark paper, its run-to-run variance section).",
+   "anchor": "1.5\u20132 found defects per 10-PR set (the benchmark paper, its run-to-run variance section).",
    "value": "1.5",
    "group": "bench:sol-study",
    "q": "min(abs({aacr:smoke10-3-gpt6~own:found} - {aacr:smoke10-base-r2~own:found}), abs({aacr:dev10-base~own:found} - {aacr:dev10-base-r2~own:found}), abs({aacr:holdout10-base~own:found} - {aacr:holdout10-base-r2~own:found}))"
@@ -54181,7 +54181,7 @@
   {
    "id": "meth.round3:noise.2",
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "1.5–2 found defects per 10-PR set (the benchmark paper, its run-to-run variance section).",
+   "anchor": "1.5\u20132 found defects per 10-PR set (the benchmark paper, its run-to-run variance section).",
    "value": "2",
    "group": "bench:sol-study",
    "q": "max(abs({aacr:smoke10-3-gpt6~own:found} - {aacr:smoke10-base-r2~own:found}), abs({aacr:dev10-base~own:found} - {aacr:dev10-base-r2~own:found}), abs({aacr:holdout10-base~own:found} - {aacr:holdout10-base-r2~own:found}))"
@@ -54189,7 +54189,7 @@
   {
    "id": "threats.round3:passes.1",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  validator included (interquartile range 8.5–14). Per PR, on average:",
+   "anchor": "  validator included (interquartile range 8.5\u201314). Per PR, on average:",
    "value": "8.5",
    "group": "bench:sol-study",
    "q": "passes:quickreview-default-g61/executed_q1"
@@ -54197,7 +54197,7 @@
   {
    "id": "threats.round3:tokens.1",
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  tools as shipped; ours reads the PR description and reads 4–15× the input",
+   "anchor": "  tools as shipped; ours reads the PR description and reads 4\u201315\u00d7 the input",
    "value": "4",
    "group": "bench:sol-study",
    "q": "min(({tokens:quickreview-default-sol/all/uncached_in_per_pr} + {tokens:quickreview-default-sol/all/cached_in_per_pr}) / ({tokens:ocr-medium-sol/all/uncached_in_per_pr} + {tokens:ocr-medium-sol/all/cached_in_per_pr}), ({tokens:quickreview-default-sol/all/uncached_in_per_pr} + {tokens:quickreview-default-sol/all/cached_in_per_pr}) / ({tokens:codex-medium-sol/all/uncached_in_per_pr} + {tokens:codex-medium-sol/all/cached_in_per_pr}), ({tokens:quickreview-default-sol/all/uncached_in_per_pr} + {tokens:quickreview-default-sol/all/cached_in_per_pr}) / ({tokens:opencode-bridge-sol/all/uncached_in_per_pr} + {tokens:opencode-bridge-sol/all/cached_in_per_pr}), ({tokens:quickreview-default-sol/all/uncached_in_per_pr} + {tokens:quickreview-default-sol/all/cached_in_per_pr}) / ({tokens:pireview-medium-sol/all/uncached_in_per_pr} + {tokens:pireview-medium-sol/all/cached_in_per_pr}), ({tokens:quickreview-default-sol/all/uncached_in_per_pr} + {tokens:quickreview-default-sol/all/cached_in_per_pr}) / ({tokens:claude-code-opus55/all/uncached_in_per_pr} + {tokens:claude-code-opus55/all/cached_in_per_pr}))"
@@ -54213,7 +54213,7 @@
   {
    "id": "bench-readme.round3:109.0",
    "file": "bench/aacr/README.md",
-   "anchor": "model spend; repeat runs of one build differed by 1.5–2 found defects per",
+   "anchor": "model spend; repeat runs of one build differed by 1.5\u20132 found defects per",
    "value": "1.5",
    "group": "bench-readme",
    "q": "min(abs({aacr:smoke10-3-gpt6~own:found} - {aacr:smoke10-base-r2~own:found}), abs({aacr:dev10-base~own:found} - {aacr:dev10-base-r2~own:found}), abs({aacr:holdout10-base~own:found} - {aacr:holdout10-base-r2~own:found}))"
@@ -54221,7 +54221,7 @@
   {
    "id": "bench-readme.round3:109.1",
    "file": "bench/aacr/README.md",
-   "anchor": "model spend; repeat runs of one build differed by 1.5–2 found defects per",
+   "anchor": "model spend; repeat runs of one build differed by 1.5\u20132 found defects per",
    "value": "2",
    "group": "bench-readme",
    "q": "max(abs({aacr:smoke10-3-gpt6~own:found} - {aacr:smoke10-base-r2~own:found}), abs({aacr:dev10-base~own:found} - {aacr:dev10-base-r2~own:found}), abs({aacr:holdout10-base~own:found} - {aacr:holdout10-base-r2~own:found}))"
@@ -54365,7 +54365,7 @@
   {
    "id": "bench-readme.round3:288.0",
    "file": "bench/aacr/README.md",
-   "anchor": "sample. Repeat runs of one build differed by 1.5–2 found defects per 10-PR",
+   "anchor": "sample. Repeat runs of one build differed by 1.5\u20132 found defects per 10-PR",
    "value": "1.5",
    "group": "bench-readme",
    "q": "min(abs({aacr:smoke10-3-gpt6~own:found} - {aacr:smoke10-base-r2~own:found}), abs({aacr:dev10-base~own:found} - {aacr:dev10-base-r2~own:found}), abs({aacr:holdout10-base~own:found} - {aacr:holdout10-base-r2~own:found}))"
@@ -54373,7 +54373,7 @@
   {
    "id": "bench-readme.round3:288.1",
    "file": "bench/aacr/README.md",
-   "anchor": "sample. Repeat runs of one build differed by 1.5–2 found defects per 10-PR",
+   "anchor": "sample. Repeat runs of one build differed by 1.5\u20132 found defects per 10-PR",
    "value": "2",
    "group": "bench-readme",
    "q": "max(abs({aacr:smoke10-3-gpt6~own:found} - {aacr:smoke10-base-r2~own:found}), abs({aacr:dev10-base~own:found} - {aacr:dev10-base-r2~own:found}), abs({aacr:holdout10-base~own:found} - {aacr:holdout10-base-r2~own:found}))"
@@ -54389,7 +54389,7 @@
   {
    "id": "bench-readme.round3:311.0",
    "file": "bench/aacr/README.md",
-   "anchor": "| `smoke10`   | 10  | 62         | 20–160 changed lines, ≥4 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 16 backups                                                                                                                        |",
+   "anchor": "| `smoke10`   | 10  | 62         | 20\u2013160 changed lines, \u22654 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 16 backups                                                                                                                        |",
    "value": "10",
    "group": "bench-readme",
    "q": "sets:smoke10.json#cases/#len"
@@ -54397,7 +54397,7 @@
   {
    "id": "bench-readme.round3:311.1",
    "file": "bench/aacr/README.md",
-   "anchor": "| `smoke10`   | 10  | 62         | 20–160 changed lines, ≥4 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 16 backups                                                                                                                        |",
+   "anchor": "| `smoke10`   | 10  | 62         | 20\u2013160 changed lines, \u22654 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 16 backups                                                                                                                        |",
    "value": "62",
    "group": "bench-readme",
    "q": "sets:smoke10.json#references"
@@ -54405,7 +54405,7 @@
   {
    "id": "bench-readme.round3:311.2",
    "file": "bench/aacr/README.md",
-   "anchor": "| `smoke10`   | 10  | 62         | 20–160 changed lines, ≥4 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 16 backups                                                                                                                        |",
+   "anchor": "| `smoke10`   | 10  | 62         | 20\u2013160 changed lines, \u22654 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 16 backups                                                                                                                        |",
    "value": "16",
    "group": "bench-readme",
    "q": "sets:smoke10.json#backups/#len"
@@ -54429,7 +54429,7 @@
   {
    "id": "bench-readme.round3:313.0",
    "file": "bench/aacr/README.md",
-   "anchor": "| `dev10`     | 10  | 106        | a second development set, so changes are not tuned on smoke10 alone: 20–400 changed lines (the small-PR pool is spent), ≥4 references, no smoke10 or holdout10 repository, quota C++ 2 / TS 1 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1                   |",
+   "anchor": "| `dev10`     | 10  | 106        | a second development set, so changes are not tuned on smoke10 alone: 20\u2013400 changed lines (the small-PR pool is spent), \u22654 references, no smoke10 or holdout10 repository, quota C++ 2 / TS 1 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1                   |",
    "value": "10",
    "group": "bench-readme",
    "q": "sets:dev10.json#cases/#len"
@@ -54437,7 +54437,7 @@
   {
    "id": "bench-readme.round3:313.1",
    "file": "bench/aacr/README.md",
-   "anchor": "| `dev10`     | 10  | 106        | a second development set, so changes are not tuned on smoke10 alone: 20–400 changed lines (the small-PR pool is spent), ≥4 references, no smoke10 or holdout10 repository, quota C++ 2 / TS 1 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1                   |",
+   "anchor": "| `dev10`     | 10  | 106        | a second development set, so changes are not tuned on smoke10 alone: 20\u2013400 changed lines (the small-PR pool is spent), \u22654 references, no smoke10 or holdout10 repository, quota C++ 2 / TS 1 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1                   |",
    "value": "106",
    "group": "bench-readme",
    "q": "sets:dev10.json#references"
@@ -56223,7 +56223,7 @@
   {
    "id": "card.readme:aacr.29",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "Recall is unchanged: every reviewer is within 0.4 points of its published",
+   "anchor": "Recall moves by at most 0.4 points: six of the seven reviewers' recall",
    "value": "0.4",
    "group": "readme:aacr",
    "q": "max(abs({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:recall} - {aacr:quickreview-frozen:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:recall} - {aacr:pireview-panel-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:recall} - {aacr:claude-code-opus55:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:recall} - {aacr:ocr-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:recall} - {aacr:codex-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:recall} - {aacr:opencode-native-pr-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:recall} - {aacr:pragent-g61:recall}))"
@@ -56975,7 +56975,7 @@
   {
    "id": "card.readme:martian.22",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "0.9 to 3.8 points higher for every Martian tool, and Qodo F1 is 0 to 1.4 points",
+   "anchor": "0.9 to 3.8 points higher; the smallest gains are QuickReview's",
    "value": "0.9",
    "group": "readme:martian",
    "q": "min({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1} - {martian:final1-martian50|quickreview-frozen:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_f1} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_f1} - {martian:final1-martian50|rejudged-cubic-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_f1} - {martian:final1-martian50|rejudged-claude-code:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_f1} - {martian:final1-ocr-martian50|open-code-review:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_f1} - {martian:final1-pragent-martian50|pr-agent:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_f1} - {martian:final1-opencode-martian50|opencode:core_f1})"
@@ -56983,7 +56983,7 @@
   {
    "id": "card.readme:martian.23",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "0.9 to 3.8 points higher for every Martian tool, and Qodo F1 is 0 to 1.4 points",
+   "anchor": "0.9 to 3.8 points higher; the smallest gains are QuickReview's",
    "value": "3.8",
    "group": "readme:martian",
    "q": "max({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1} - {martian:final1-martian50|quickreview-frozen:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_f1} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_f1} - {martian:final1-martian50|rejudged-cubic-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_f1} - {martian:final1-martian50|rejudged-claude-code:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_f1} - {martian:final1-ocr-martian50|open-code-review:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_f1} - {martian:final1-pragent-martian50|pr-agent:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_f1} - {martian:final1-opencode-martian50|opencode:core_f1})"
@@ -56991,7 +56991,7 @@
   {
    "id": "card.readme:qodo.25",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "0.9 to 3.8 points higher for every Martian tool, and Qodo F1 is 0 to 1.4 points",
+   "anchor": "lead over it widens. Qodo F1 is 0 to 1.4 points",
    "value": "0",
    "group": "readme:qodo",
    "q": "min({second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:f1} - {qodo:final1-qodo-pr100|quickreview-frozen:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:f1} - {qodo:final1-opencode-qodo-pr100|opencode:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:f1} - {qodo:final1-ocr-qodo-pr100|open-code-review:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:f1} - {qodo:final1-pragent-qodo-pr100|pr-agent:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:f1} - {qodo:ext-r6-qodo-pr100|qodo-exhaustive:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:f1} - {qodo:ext-r6-qodo-pr100|qodo-precise:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:f1} - {qodo:ext-r6-qodo-pr100|augment:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:f1} - {qodo:ext-r6-qodo-pr100|copilot:f1})"
@@ -56999,7 +56999,7 @@
   {
    "id": "card.readme:qodo.26",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "0.9 to 3.8 points higher for every Martian tool, and Qodo F1 is 0 to 1.4 points",
+   "anchor": "lead over it widens. Qodo F1 is 0 to 1.4 points",
    "value": "1.4",
    "group": "readme:qodo",
    "q": "max({second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:f1} - {qodo:final1-qodo-pr100|quickreview-frozen:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:f1} - {qodo:final1-opencode-qodo-pr100|opencode:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:f1} - {qodo:final1-ocr-qodo-pr100|open-code-review:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:f1} - {qodo:final1-pragent-qodo-pr100|pr-agent:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:f1} - {qodo:ext-r6-qodo-pr100|qodo-exhaustive:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:f1} - {qodo:ext-r6-qodo-pr100|qodo-precise:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:f1} - {qodo:ext-r6-qodo-pr100|augment:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:f1} - {qodo:ext-r6-qodo-pr100|copilot:f1})"
@@ -57103,7 +57103,7 @@
   {
    "id": "bench.bench:tab:finalbuild.212",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "is slightly more lenient: Core F1 is 0.9 to 3.8",
+   "anchor": "higher for every Martian tool and Core F1 0.9 to 3.8",
    "value": "0.9",
    "group": "bench:tab:finalbuild",
    "q": "min({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1} - {martian:final1-martian50|quickreview-frozen:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_f1} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_f1} - {martian:final1-martian50|rejudged-cubic-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_f1} - {martian:final1-martian50|rejudged-claude-code:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_f1} - {martian:final1-ocr-martian50|open-code-review:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_f1} - {martian:final1-pragent-martian50|pr-agent:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_f1} - {martian:final1-opencode-martian50|opencode:core_f1})"
@@ -57111,7 +57111,7 @@
   {
    "id": "bench.bench:tab:finalbuild.213",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "is slightly more lenient: Core F1 is 0.9 to 3.8",
+   "anchor": "higher for every Martian tool and Core F1 0.9 to 3.8",
    "value": "3.8",
    "group": "bench:tab:finalbuild",
    "q": "max({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1} - {martian:final1-martian50|quickreview-frozen:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_f1} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_f1} - {martian:final1-martian50|rejudged-cubic-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_f1} - {martian:final1-martian50|rejudged-claude-code:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_f1} - {martian:final1-ocr-martian50|open-code-review:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_f1} - {martian:final1-pragent-martian50|pr-agent:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_f1} - {martian:final1-opencode-martian50|opencode:core_f1})"
@@ -57119,7 +57119,7 @@
   {
    "id": "bench.bench:tab:finalbuild.214",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "points higher for every Martian tool, and Qodo F1 0 to 1.4 points higher.",
+   "anchor": "\\qcr{} widens; Qodo F1 is 0 to 1.4 points higher.",
    "value": "0",
    "group": "bench:tab:finalbuild",
    "q": "min({second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:f1} - {qodo:final1-qodo-pr100|quickreview-frozen:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:f1} - {qodo:final1-opencode-qodo-pr100|opencode:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:f1} - {qodo:final1-ocr-qodo-pr100|open-code-review:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:f1} - {qodo:final1-pragent-qodo-pr100|pr-agent:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:f1} - {qodo:ext-r6-qodo-pr100|qodo-exhaustive:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:f1} - {qodo:ext-r6-qodo-pr100|qodo-precise:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:f1} - {qodo:ext-r6-qodo-pr100|augment:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:f1} - {qodo:ext-r6-qodo-pr100|copilot:f1})"
@@ -57127,7 +57127,7 @@
   {
    "id": "bench.bench:tab:finalbuild.215",
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "points higher for every Martian tool, and Qodo F1 0 to 1.4 points higher.",
+   "anchor": "\\qcr{} widens; Qodo F1 is 0 to 1.4 points higher.",
    "value": "1.4",
    "group": "bench:tab:finalbuild",
    "q": "max({second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:f1} - {qodo:final1-qodo-pr100|quickreview-frozen:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:f1} - {qodo:final1-opencode-qodo-pr100|opencode:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:f1} - {qodo:final1-ocr-qodo-pr100|open-code-review:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:f1} - {qodo:final1-pragent-qodo-pr100|pr-agent:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:f1} - {qodo:ext-r6-qodo-pr100|qodo-exhaustive:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:f1} - {qodo:ext-r6-qodo-pr100|qodo-precise:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:f1} - {qodo:ext-r6-qodo-pr100|augment:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:f1} - {qodo:ext-r6-qodo-pr100|copilot:f1})"
@@ -57543,10 +57543,170 @@
   {
    "id": "qr.qr:tab:frozen.269",
    "file": "bench/aacr/paper/quickreview.tex",
-   "anchor": "recall stayed within 0.4 points and the order was unchanged~\\cite{qcrbench}.",
+   "anchor": "build: every reviewer's recall stayed within 0.4 points and in the same",
    "value": "0.4",
    "group": "qr:tab:frozen",
    "q": "max(abs({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:recall} - {aacr:quickreview-frozen:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:recall} - {aacr:pireview-panel-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:recall} - {aacr:claude-code-opus55:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:recall} - {aacr:ocr-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:recall} - {aacr:codex-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:recall} - {aacr:opencode-native-pr-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:recall} - {aacr:pragent-g61:recall}))"
+  },
+  {
+   "id": "card.second-judge.94",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "the same grade to 84.0% to 92.1% of each reviewer's comments",
+   "value": "84.0%",
+   "group": "second-judge",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:c_pct})"
+  },
+  {
+   "id": "card.second-judge.95",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "the same grade to 84.0% to 92.1% of each reviewer's comments",
+   "value": "92.1%",
+   "group": "second-judge",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:c_pct})"
+  },
+  {
+   "id": "card.second-judge.96",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(kappa 0.59 to 0.79). Two pairs swap on comments correct",
+   "value": "0.59",
+   "group": "second-judge",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:c_kappa})"
+  },
+  {
+   "id": "card.second-judge.97",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(kappa 0.59 to 0.79). Two pairs swap on comments correct",
+   "value": "0.79",
+   "group": "second-judge",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:c_kappa})"
+  },
+  {
+   "id": "card.readme:martian.24",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "0.7 to 7.1 points higher for every Martian tool, and Core F1 is",
+   "value": "0.7",
+   "group": "readme:martian",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_precision} - {martian:final1-martian50|quickreview-frozen:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_precision} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_precision} - {martian:final1-martian50|rejudged-cubic-v2:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_precision} - {martian:final1-martian50|rejudged-claude-code:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_precision} - {martian:final1-ocr-martian50|open-code-review:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_precision} - {martian:final1-pragent-martian50|pr-agent:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_precision} - {martian:final1-opencode-martian50|opencode:core_precision})"
+  },
+  {
+   "id": "card.readme:martian.25",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "0.7 to 7.1 points higher for every Martian tool, and Core F1 is",
+   "value": "7.1",
+   "group": "readme:martian",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_precision} - {martian:final1-martian50|quickreview-frozen:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_precision} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_precision} - {martian:final1-martian50|rejudged-cubic-v2:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_precision} - {martian:final1-martian50|rejudged-claude-code:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_precision} - {martian:final1-ocr-martian50|open-code-review:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_precision} - {martian:final1-pragent-martian50|pr-agent:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_precision} - {martian:final1-opencode-martian50|opencode:core_precision})"
+  },
+  {
+   "id": "card.readme:martian.26",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(+0.7 precision, +0.9 F1), so every other tool's Martian precision and F1",
+   "value": "+0.7",
+   "group": "readme:martian",
+   "q": "{second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_precision} - {martian:final1-martian50|quickreview-frozen:core_precision}"
+  },
+  {
+   "id": "card.readme:martian.27",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(+0.7 precision, +0.9 F1), so every other tool's Martian precision and F1",
+   "value": "+0.9",
+   "group": "readme:martian",
+   "q": "{second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1} - {martian:final1-martian50|quickreview-frozen:core_f1}"
+  },
+  {
+   "id": "bench.second-judge.36",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "less than defect verdicts: the same grade on 84.0--92.1\\% of each",
+   "value": "84.0",
+   "group": "second-judge",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:c_pct})"
+  },
+  {
+   "id": "bench.second-judge.37",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "less than defect verdicts: the same grade on 84.0--92.1\\% of each",
+   "value": "92.1%",
+   "group": "second-judge",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:c_pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:c_pct})"
+  },
+  {
+   "id": "bench.second-judge.38",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "reviewer's comments ($\\kappa = 0.59$ to $0.79$). Two pairs swap on",
+   "value": "0.59",
+   "group": "second-judge",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:c_kappa})"
+  },
+  {
+   "id": "bench.second-judge.39",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "reviewer's comments ($\\kappa = 0.59$ to $0.79$). Two pairs swap on",
+   "value": "0.79",
+   "group": "second-judge",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:c_kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:c_kappa})"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.238",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "is more lenient: Core precision is 0.7 to 7.1 points",
+   "value": "0.7",
+   "group": "bench:tab:finalbuild",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_precision} - {martian:final1-martian50|quickreview-frozen:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_precision} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_precision} - {martian:final1-martian50|rejudged-cubic-v2:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_precision} - {martian:final1-martian50|rejudged-claude-code:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_precision} - {martian:final1-ocr-martian50|open-code-review:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_precision} - {martian:final1-pragent-martian50|pr-agent:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_precision} - {martian:final1-opencode-martian50|opencode:core_precision})"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.239",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "is more lenient: Core precision is 0.7 to 7.1 points",
+   "value": "7.1",
+   "group": "bench:tab:finalbuild",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_precision} - {martian:final1-martian50|quickreview-frozen:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_precision} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_precision} - {martian:final1-martian50|rejudged-cubic-v2:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_precision} - {martian:final1-martian50|rejudged-claude-code:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_precision} - {martian:final1-ocr-martian50|open-code-review:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_precision} - {martian:final1-pragent-martian50|pr-agent:core_precision}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_precision} - {martian:final1-opencode-martian50|opencode:core_precision})"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.240",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "points higher, the smallest gains \\qcr{}'s ($+0.7$ precision,",
+   "value": "+0.7",
+   "group": "bench:tab:finalbuild",
+   "q": "{second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_precision} - {martian:final1-martian50|quickreview-frozen:core_precision}"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.241",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "$+0.9$ F1), so every other tool's Martian precision and F1 lead over",
+   "value": "+0.9",
+   "group": "bench:tab:finalbuild",
+   "q": "{second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1} - {martian:final1-martian50|quickreview-frozen:core_f1}"
+  },
+  {
+   "id": "bench.second-judge.40",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "where an answer at high was cut off, 112 of the 1{,}168 accepted answers;",
+   "value": "112",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/judgements:effort_used=low"
+  },
+  {
+   "id": "bench.second-judge.41",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "where an answer at high was cut off, 112 of the 1{,}168 accepted answers;",
+   "value": "1,168",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/judgements:rows"
+  },
+  {
+   "id": "qr.qr:tab:frozen.270",
+   "file": "bench/aacr/paper/quickreview.tex",
+   "anchor": "from 92.4\\% to 85.4\\%, since a judge that cannot open the file cannot",
+   "value": "92.4%",
+   "group": "qr:tab:frozen",
+   "q": "aacr:quickreview-frozen:correct"
+  },
+  {
+   "id": "qr.second-judge.1",
+   "file": "bench/aacr/paper/quickreview.tex",
+   "anchor": "from 92.4\\% to 85.4\\%, since a judge that cannot open the file cannot",
+   "value": "85.4%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:correct"
   }
  ],
  "not_claims": [
@@ -57600,7 +57760,7 @@
   },
   {
    "file": "README.md",
-   "anchor": "trigger and severity cap, is §3.3 of the",
+   "anchor": "trigger and severity cap, is \u00a73.3 of the",
    "tokens": [
     "3.3"
    ],
@@ -57681,7 +57841,7 @@
   },
   {
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| `glm-5.3-flash` | `glm53-…` |",
+   "anchor": "| `glm-5.3-flash` | `glm53-\u2026` |",
    "tokens": [
     "0.15",
     "0.50",
@@ -57693,7 +57853,7 @@
   },
   {
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| `gemma-4-31B-it` | `gemma4-…` |",
+   "anchor": "| `gemma-4-31B-it` | `gemma4-\u2026` |",
    "tokens": [
     "0.18",
     "0.50",
@@ -57705,7 +57865,7 @@
   },
   {
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "| `deepseek-v4.1-flash` | `dsv41f-…` |",
+   "anchor": "| `deepseek-v4.1-flash` | `dsv41f-\u2026` |",
    "tokens": [
     "0.30",
     "1.20",
@@ -57743,7 +57903,7 @@
   },
   {
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
-   "anchor": "pi's default retry (3 attempts, ≤ 60 s",
+   "anchor": "pi's default retry (3 attempts, \u2264 60 s",
    "tokens": [
     "3",
     "60"
@@ -58019,7 +58179,7 @@
   },
   {
    "file": "bench/aacr/elo/README.md",
-   "anchor": "gpt-6.1-sol's count ran 0.70–0.76x of it for code",
+   "anchor": "gpt-6.1-sol's count ran 0.70\u20130.76x of it for code",
    "tokens": [
     "0.70",
     "0.76x",
@@ -58045,7 +58205,7 @@
   },
   {
    "file": "bench/aacr/elo/README.md",
-   "anchor": "1500 + 400·log10(strength); a 100-point gap",
+   "anchor": "1500 + 400\u00b7log10(strength); a 100-point gap",
    "tokens": [
     "1500",
     "400",
@@ -58107,7 +58267,7 @@
   },
   {
    "file": "bench/aacr/elo/README.md",
-   "anchor": "the GPT judge's first and last judgment (± 5 min)",
+   "anchor": "the GPT judge's first and last judgment (\u00b1 5 min)",
    "tokens": [
     "5"
    ],
@@ -58181,7 +58341,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "with the location rule applied at ±5 lines",
+   "anchor": "with the location rule applied at \u00b15 lines",
    "tokens": [
     "5"
    ],
@@ -58823,7 +58983,7 @@
   },
   {
    "file": "bench/aacr/paper/benchmark.tex",
-   "anchor": "literate={—}{{\\textemdash}}1 {…}{{\\ldots}}1}",
+   "anchor": "literate={\u2014}{{\\textemdash}}1 {\u2026}{{\\ldots}}1}",
    "tokens": [
     "1",
     "1"
@@ -64889,7 +65049,7 @@
   },
   {
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  has a 95% CI of [−6.3, +9.1], so the margin does not measurably shrink.",
+   "anchor": "  has a 95% CI of [\u22126.3, +9.1], so the margin does not measurably shrink.",
    "tokens": [
     "95%"
    ],
@@ -64961,7 +65121,7 @@
   },
   {
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "- **Line gate.** A comment is scored only if it lands within ±1 line",
+   "anchor": "- **Line gate.** A comment is scored only if it lands within \u00b11 line",
    "tokens": [
     "1"
    ],
@@ -64985,7 +65145,7 @@
   },
   {
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  - **The resume.** The queue was stopped and resumed at `-P 3` ×",
+   "anchor": "  - **The resume.** The queue was stopped and resumed at `-P 3` \u00d7",
    "tokens": [
     "3"
    ],
@@ -65202,7 +65362,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "the same file whose lines overlap within ±1 (the line gate)",
+   "anchor": "the same file whose lines overlap within \u00b11 (the line gate)",
    "tokens": [
     "1"
    ],
@@ -65252,7 +65412,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "(see §9).",
+   "anchor": "(see \u00a79).",
    "tokens": [
     "9"
    ],
@@ -65340,7 +65500,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "2. Expert hunt, 29 Claude agents × ~5 PRs",
+   "anchor": "2. Expert hunt, 29 Claude agents \u00d7 ~5 PRs",
    "tokens": [
     "2"
    ],
@@ -65356,7 +65516,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "4. Independent verification, 29 Claude agents × ~5 PRs",
+   "anchor": "4. Independent verification, 29 Claude agents \u00d7 ~5 PRs",
    "tokens": [
     "4"
    ],
@@ -65380,7 +65540,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "7. `assemble.py` → `defects/rest145.json` v1: **379 defects** (55 high / 113",
+   "anchor": "7. `assemble.py` \u2192 `defects/rest145.json` v1: **379 defects** (55 high / 113",
    "tokens": [
     "7"
    ],
@@ -65388,7 +65548,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "scored every review again (§6).",
+   "anchor": "scored every review again (\u00a76).",
    "tokens": [
     "6"
    ],
@@ -65404,7 +65564,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "reviews (7 reviewers × 185 PRs).",
+   "anchor": "reviews (7 reviewers \u00d7 185 PRs).",
    "tokens": [
     "7"
    ],
@@ -65412,7 +65572,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "- **Independent-source subset** (§5, 369 defects)",
+   "anchor": "- **Independent-source subset** (\u00a75, 369 defects)",
    "tokens": [
     "5"
    ],
@@ -65420,7 +65580,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "pipeline (§5) and the independent-source check",
+   "anchor": "pipeline (\u00a75) and the independent-source check",
    "tokens": [
     "5"
    ],
@@ -65554,7 +65714,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "| 09-25/26 | \"review iterations\" 1–2 (validator premises, si",
+   "anchor": "| 09-25/26 | \"review iterations\" 1\u20132 (validator premises, si",
    "tokens": [
     "09",
     "25",
@@ -65666,7 +65826,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "and in §4 the reviewer's two identity tokens, which the prompt templates fill in",
+   "anchor": "and in \u00a74 the reviewer's two identity tokens, which the prompt templates fill in",
    "tokens": [
     "4"
    ],
@@ -65674,7 +65834,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "`/code-review` prompt: it is internal to the CLI (and, as §5.5 explains, it",
+   "anchor": "`/code-review` prompt: it is internal to the CLI (and, as \u00a75.5 explains, it",
    "tokens": [
     "5.5"
    ],
@@ -65881,7 +66041,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "2. The benchmark dataset's reference comments with a hand label (${SCR}/gt/input/${id}.json → dataset_references: note, path, lines, hand_label.reality/value/reason). The dataset is known to be unreliable: about half its references are wrong. Treat each as a claim to verify, never as truth.",
+   "anchor": "2. The benchmark dataset's reference comments with a hand label (${SCR}/gt/input/${id}.json \u2192 dataset_references: note, path, lines, hand_label.reality/value/reason). The dataset is known to be unreliable: about half its references are wrong. Treat each as a claim to verify, never as truth.",
    "tokens": [
     "2"
    ],
@@ -65889,7 +66049,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "3. Every comment any automated reviewer posted on this PR across many runs, anonymised (same file → reviewer_comments, ids R1..Rn). Also claims to verify.",
+   "anchor": "3. Every comment any automated reviewer posted on this PR across many runs, anonymised (same file \u2192 reviewer_comments, ids R1..Rn). Also claims to verify.",
    "tokens": [
     "3"
    ],
@@ -65918,7 +66078,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "Check, against the code yourself, at least 8 items across different PRs: 3 defects that were INCLUDED (are they real, introduced by this PR, severity right?), 3 candidates that were EXCLUDED (was the exclusion right, or is a real defect missing?), and 2 MERGES (are they really the same defect?). Also scan every PR for an obviously missing defect class. Return concrete corrections with evidence — each as an edit to apply: add / remove / regrade / split / merge, with the PR id and defect id.",
+   "anchor": "Check, against the code yourself, at least 8 items across different PRs: 3 defects that were INCLUDED (are they real, introduced by this PR, severity right?), 3 candidates that were EXCLUDED (was the exclusion right, or is a real defect missing?), and 2 MERGES (are they really the same defect?). Also scan every PR for an obviously missing defect class. Return concrete corrections with evidence \u2014 each as an edit to apply: add / remove / regrade / split / merge, with the PR id and defect id.",
    "tokens": [
     "8",
     "3",
@@ -66021,7 +66181,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "prompt was edited into the §1.5 version (21:45 UTC) so that the hunt would",
+   "anchor": "prompt was edited into the \u00a71.5 version (21:45 UTC) so that the hunt would",
    "tokens": [
     "1.5"
    ],
@@ -66029,7 +66189,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "(`hunt.json`) were not trusted as they stood: the §1.5 prompt tells the next",
+   "anchor": "(`hunt.json`) were not trusted as they stood: the \u00a71.5 prompt tells the next",
    "tokens": [
     "1.5"
    ],
@@ -66037,7 +66197,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "the §1.5 text.",
+   "anchor": "the \u00a71.5 text.",
    "tokens": [
     "1.5"
    ],
@@ -66079,7 +66239,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- **Difference from §1.4**, all three passages: the opening line; the bullet",
+   "anchor": "- **Difference from \u00a71.4**, all three passages: the opening line; the bullet",
    "tokens": [
     "1.4"
    ],
@@ -66121,7 +66281,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "1. hunt.json — an expert's draft defects (and its verdict on each benchmark reference). Treat it as candidates, NOT as truth: re-check every defect.",
+   "anchor": "1. hunt.json \u2014 an expert's draft defects (and its verdict on each benchmark reference). Treat it as candidates, NOT as truth: re-check every defect.",
    "tokens": [
     "1"
    ],
@@ -66129,7 +66289,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "2. references.json — the benchmark's reference comments R1…: check each yourself (hunt.json's verdict is a hint only).",
+   "anchor": "2. references.json \u2014 the benchmark's reference comments R1\u2026: check each yourself (hunt.json's verdict is a hint only).",
    "tokens": [
     "2"
    ],
@@ -66137,7 +66297,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "3. candidates.json — every comment posted by the review tools being benchmarked, anonymised and shuffled (C1…). Check EACH against the code: a comment may be a real defect nobody else found, the same defect as another candidate, partly right, or wrong.",
+   "anchor": "3. candidates.json \u2014 every comment posted by the review tools being benchmarked, anonymised and shuffled (C1\u2026). Check EACH against the code: a comment may be a real defect nobody else found, the same defect as another candidate, partly right, or wrong.",
    "tokens": [
     "3"
    ],
@@ -66145,7 +66305,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "\"sites\": [{\"path\": \"…\", \"from_line\": 10, \"to_line\": 12, \"role\": \"cause|symptom|other-site\"}],",
+   "anchor": "\"sites\": [{\"path\": \"\u2026\", \"from_line\": 10, \"to_line\": 12, \"role\": \"cause|symptom|other-site\"}],",
    "tokens": [
     "10",
     "12"
@@ -66179,7 +66339,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "(§5.5), so its whole review is **one** candidate whose claims the verifier",
+   "anchor": "(\u00a75.5), so its whole review is **one** candidate whose claims the verifier",
    "tokens": [
     "5.5"
    ],
@@ -66187,7 +66347,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "Extension (2026-09-28): every comment of four more benchmarked reviewers — Codex CLI 0.158.0, OpenCode 1.18.33, pi-review 0.18.0 and Claude Code 2.1.283 (Opus 5.5) — anonymised and shuffled, checked against the code by an independent verifier (matched to an existing defect, added as a new verified defect, or excluded with a restated reason); an adversarial critic per ~17 PRs checked every addition. Existing defects unchanged.",
+   "anchor": "Extension (2026-09-28): every comment of four more benchmarked reviewers \u2014 Codex CLI 0.158.0, OpenCode 1.18.33, pi-review 0.18.0 and Claude Code 2.1.283 (Opus 5.5) \u2014 anonymised and shuffled, checked against the code by an independent verifier (matched to an existing defect, added as a new verified defect, or excluded with a restated reason); an adversarial critic per ~17 PRs checked every addition. Existing defects unchanged.",
    "tokens": [
     "0.158",
     "1.18",
@@ -66199,7 +66359,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "1. It identifies an EXISTING defect Dk (the same mechanism/consequence) → add the candidate id to that defect's provenance.reviewer_comments (the list; create it if missing). Do not change the defect otherwise.",
+   "anchor": "1. It identifies an EXISTING defect Dk (the same mechanism/consequence) \u2192 add the candidate id to that defect's provenance.reviewer_comments (the list; create it if missing). Do not change the defect otherwise.",
    "tokens": [
     "1"
    ],
@@ -66207,7 +66367,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "2. It is a REAL defect the truth does not have (check the existing excluded list first — if the same claim was already rejected there with a reason that holds, it is not new) → verify it thoroughly by reading the code, then ADD it as a new defect with the next free id (D<n+1>…), all fields (title, statement citing file:line, sites with head-side lines and roles, kind, severity graded on consequence, evidence quoting code, notes saying what a review must say to count and near-misses that must not), and provenance {\"reviewer_comments\": [\"N#\"], \"added_in\": \"extension-2026-09-28\"}. Merge candidates describing the same new defect into one.",
+   "anchor": "2. It is a REAL defect the truth does not have (check the existing excluded list first \u2014 if the same claim was already rejected there with a reason that holds, it is not new) \u2192 verify it thoroughly by reading the code, then ADD it as a new defect with the next free id (D<n+1>\u2026), all fields (title, statement citing file:line, sites with head-side lines and roles, kind, severity graded on consequence, evidence quoting code, notes saying what a review must say to count and near-misses that must not), and provenance {\"reviewer_comments\": [\"N#\"], \"added_in\": \"extension-2026-09-28\"}. Merge candidates describing the same new defect into one.",
    "tokens": [
     "2",
     "1"
@@ -66216,7 +66376,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "3. Otherwise → append to excluded: {\"source\": \"N#\", \"reason\": \"FIRST a one-sentence restatement of the claim (so a judge can recognise it in a review), THEN why it is not a real defect of this PR, citing the code\"}. For a prose candidate, one entry per rejected claim, source \"N#\".",
+   "anchor": "3. Otherwise \u2192 append to excluded: {\"source\": \"N#\", \"reason\": \"FIRST a one-sentence restatement of the claim (so a judge can recognise it in a review), THEN why it is not a real defect of this PR, citing the code\"}. For a prose candidate, one entry per rejected claim, source \"N#\".",
    "tokens": [
     "3"
    ],
@@ -66240,7 +66400,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- **Source:** `src/bench/defects.ts` `judgePrompt` (lines 259–346), given",
+   "anchor": "- **Source:** `src/bench/defects.ts` `judgePrompt` (lines 259\u2013346), given",
    "tokens": [
     "259",
     "346"
@@ -66266,7 +66426,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "arm's prose-parsed view (§6.5) instead of its empty structured file.",
+   "anchor": "arm's prose-parsed view (\u00a76.5) instead of its empty structured file.",
    "tokens": [
     "6.5"
    ],
@@ -66282,7 +66442,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "? `${e.reason.slice(0, MAX_EXCLUDED_REASON)}…`",
+   "anchor": "? `${e.reason.slice(0, MAX_EXCLUDED_REASON)}\u2026`",
    "tokens": [
     "0"
    ],
@@ -66314,7 +66474,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "on the same file and within ±1 line (`diff_location_is_same`, k=1); then the",
+   "anchor": "on the same file and within \u00b11 line (`diff_location_is_same`, k=1); then the",
    "tokens": [
     "1",
     "1"
@@ -66461,7 +66621,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "round order (§4.3), and the fact that nothing is posted to GitHub — the",
+   "anchor": "round order (\u00a74.3), and the fact that nothing is posted to GitHub \u2014 the",
    "tokens": [
     "4.3"
    ],
@@ -66493,7 +66653,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "<details><summary>system-prompt.md as sent (127 lines, sha256 6473cf70a76a32e7…)</summary>",
+   "anchor": "<details><summary>system-prompt.md as sent (127 lines, sha256 6473cf70a76a32e7\u2026)</summary>",
    "tokens": [
     "127"
    ],
@@ -66509,7 +66669,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "F1 [P1/0.9][delivery] path/file.py:123 — <claim> → open thread:<id>",
+   "anchor": "F1 [P1/0.9][delivery] path/file.py:123 \u2014 <claim> \u2192 open thread:<id>",
    "tokens": [
     "0.9",
     "123"
@@ -66518,7 +66678,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "F2 [P2/0.6][baseline] path/other.py:45 — <claim> → fixed@<sha>",
+   "anchor": "F2 [P2/0.6][baseline] path/other.py:45 \u2014 <claim> \u2192 fixed@<sha>",
    "tokens": [
     "0.6",
     "45"
@@ -66559,7 +66719,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "5. **Decide** (ported verdict logic): any [blocker] ⇒ REQUEST_CHANGES; else",
+   "anchor": "5. **Decide** (ported verdict logic): any [blocker] \u21d2 REQUEST_CHANGES; else",
    "tokens": [
     "5"
    ],
@@ -66575,7 +66735,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "changed-line runs (first 50 inline, overflow to body; unanchorable → body),",
+   "anchor": "changed-line runs (first 50 inline, overflow to body; unanchorable \u2192 body),",
    "tokens": [
     "50"
    ],
@@ -66631,7 +66791,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- `scripts/pr-context.sh 869` — one-shot read bundle: meta, diffstat, CI",
+   "anchor": "- `scripts/pr-context.sh 869` \u2014 one-shot read bundle: meta, diffstat, CI",
    "tokens": [
     "869"
    ],
@@ -66639,7 +66799,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- `scripts/pr-checks.sh 869` — CI status.",
+   "anchor": "- `scripts/pr-checks.sh 869` \u2014 CI status.",
    "tokens": [
     "869"
    ],
@@ -66647,7 +66807,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- `scripts/pr-threads.sh 869` — unresolved threads with ids.",
+   "anchor": "- `scripts/pr-threads.sh 869` \u2014 unresolved threads with ids.",
    "tokens": [
     "869"
    ],
@@ -66655,7 +66815,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- `scripts/pr-self.sh 869 <reviews|threads|head|checks>` — self-verification",
+   "anchor": "- `scripts/pr-self.sh 869 <reviews|threads|head|checks>` \u2014 self-verification",
    "tokens": [
     "869"
    ],
@@ -66671,7 +66831,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- `scripts/reply-thread.sh 869 <comment-id> <body-file>` — author ping-pong",
+   "anchor": "- `scripts/reply-thread.sh 869 <comment-id> <body-file>` \u2014 author ping-pong",
    "tokens": [
     "869"
    ],
@@ -66704,7 +66864,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- Tool output truncates at ~50 KB — a full-PR `git diff --unified=80` dump",
+   "anchor": "- Tool output truncates at ~50 KB \u2014 a full-PR `git diff --unified=80` dump",
    "tokens": [
     "50",
     "80"
@@ -66780,7 +66940,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "`scripts/pr-checks.sh 869` (a read — you never trigger, re-run or cancel",
+   "anchor": "`scripts/pr-checks.sh 869` (a read \u2014 you never trigger, re-run or cancel",
    "tokens": [
     "869"
    ],
@@ -66804,7 +66964,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "`scripts/pr-checks.sh 869 --why` — it prints what CI itself reported for each",
+   "anchor": "`scripts/pr-checks.sh 869 --why` \u2014 it prints what CI itself reported for each",
    "tokens": [
     "869"
    ],
@@ -66812,7 +66972,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "`[blocker]` if confidence ≥ 0.8 else `[question]`; P3 → `[question]`/`[nit]`.",
+   "anchor": "`[blocker]` if confidence \u2265 0.8 else `[question]`; P3 \u2192 `[question]`/`[nit]`.",
    "tokens": [
     "0.8"
    ],
@@ -66846,7 +67006,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "step 7 — and ideally the **same text, word for word**: write it once, open the",
+   "anchor": "step 7 \u2014 and ideally the **same text, word for word**: write it once, open the",
    "tokens": [
     "7"
    ],
@@ -66854,7 +67014,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "finding in seven is bookkeeping — \"the blocker from round 2 is now fixed\", \"the",
+   "anchor": "finding in seven is bookkeeping \u2014 \"the blocker from round 2 is now fixed\", \"the",
    "tokens": [
     "2"
    ],
@@ -66862,7 +67022,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "tag — no `[start here 3/5]`, no `[verified]`, no `[fyi]`, no",
+   "anchor": "tag \u2014 no `[start here 3/5]`, no `[verified]`, no `[fyi]`, no",
    "tokens": [
     "3",
     "5"
@@ -66895,7 +67055,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "1. the plain opening paragraph (above) — always first;",
+   "anchor": "1. the plain opening paragraph (above) \u2014 always first;",
    "tokens": [
     "1"
    ],
@@ -66903,7 +67063,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "2. the verdict line — `**Verdict: Approved** — no findings.` /",
+   "anchor": "2. the verdict line \u2014 `**Verdict: Approved** \u2014 no findings.` /",
    "tokens": [
     "2"
    ],
@@ -66911,7 +67071,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "`**Verdict: Changes requested** — 2 blockers, 1 nit.` /",
+   "anchor": "`**Verdict: Changes requested** \u2014 2 blockers, 1 nit.` /",
    "tokens": [
     "2",
     "1"
@@ -66920,7 +67080,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "3. the lenses line — `_Lenses applied: <lens, lens, …>._` — the passes that",
+   "anchor": "3. the lenses line \u2014 `_Lenses applied: <lens, lens, \u2026>._` \u2014 the passes that",
    "tokens": [
     "3"
    ],
@@ -66928,7 +67088,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "4. `### Blockers`, then `### Nits`, then `### Questions` — each section only",
+   "anchor": "4. `### Blockers`, then `### Nits`, then `### Questions` \u2014 each section only",
    "tokens": [
     "4"
    ],
@@ -67036,7 +67196,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "`pr` and `round_no` are numbers. `summary` is optional — but always write it: 3-4 plain",
+   "anchor": "`pr` and `round_no` are numbers. `summary` is optional \u2014 but always write it: 3-4 plain",
    "tokens": [
     "3",
     "4"
@@ -67045,7 +67205,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "plain opening paragraph (step 6) — write it once and use it in both",
+   "anchor": "plain opening paragraph (step 6) \u2014 write it once and use it in both",
    "tokens": [
     "6"
    ],
@@ -67135,7 +67295,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- Steps 1–4 — Sync, Dispatch passes (the `subagent` tool, the pass plan, raise/add protocols, pass-validate last), Merge, Validate.",
+   "anchor": "- Steps 1\u20134 \u2014 Sync, Dispatch passes (the `subagent` tool, the pass plan, raise/add protocols, pass-validate last), Merge, Validate.",
    "tokens": [
     "1",
     "4"
@@ -67148,7 +67308,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- The verdict logic of step 5 on the merits (any surviving `[blocker]` ⇒ REQUEST_CHANGES, otherwise APPROVE), the posting map and the reachability gate.",
+   "anchor": "- The verdict logic of step 5 on the merits (any surviving `[blocker]` \u21d2 REQUEST_CHANGES, otherwise APPROVE), the posting map and the reachability gate.",
    "tokens": [
     "5"
    ],
@@ -67173,7 +67333,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "1. `/bench-out/cases/alibaba__spring-ai-alibaba@3555a95/comments.json` — the inline comments array, exactly as you would pass it to the posting script: `[{\"path\": \"<repo-relative path>\", \"line\": <line>, \"side\": \"RIGHT\", \"body\": \"<the full comment text as it would be posted>\"}]` — the four fields the posting script accepts. Head-side (`RIGHT`) line numbers of the file at `3555a95e7b888335d9f72e432eb4f9fb9640e8cd`. `[]` when nothing survives.",
+   "anchor": "1. `/bench-out/cases/alibaba__spring-ai-alibaba@3555a95/comments.json` \u2014 the inline comments array, exactly as you would pass it to the posting script: `[{\"path\": \"<repo-relative path>\", \"line\": <line>, \"side\": \"RIGHT\", \"body\": \"<the full comment text as it would be posted>\"}]` \u2014 the four fields the posting script accepts. Head-side (`RIGHT`) line numbers of the file at `3555a95e7b888335d9f72e432eb4f9fb9640e8cd`. `[]` when nothing survives.",
    "tokens": [
     "1"
    ],
@@ -67181,7 +67341,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "2. `/bench-out/cases/alibaba__spring-ai-alibaba@3555a95/review.md` — the review body, exactly as step 6 formats it.",
+   "anchor": "2. `/bench-out/cases/alibaba__spring-ai-alibaba@3555a95/review.md` \u2014 the review body, exactly as step 6 formats it.",
    "tokens": [
     "2",
     "6"
@@ -67190,7 +67350,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "3. `/bench-out/cases/alibaba__spring-ai-alibaba@3555a95/findings-record.json` — the findings record, in the shape step 7 specifies (every candidate finding and its disposition).",
+   "anchor": "3. `/bench-out/cases/alibaba__spring-ai-alibaba@3555a95/findings-record.json` \u2014 the findings record, in the shape step 7 specifies (every candidate finding and its disposition).",
    "tokens": [
     "3",
     "7"
@@ -67199,7 +67359,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "4. `/bench-out/cases/alibaba__spring-ai-alibaba@3555a95/outcome.json` — LAST, because it is the signal that you are done: the step-7 verdict shape without `approval_withheld` — `{\"pr\": 869, \"round_no\": 1, \"verdict\": \"APPROVE\" | \"REQUEST_CHANGES\", \"head_sha\": \"3555a95e7b888335d9f72e432eb4f9fb9640e8cd\", \"summary\": \"...\", \"passes\": [...], \"finished_at\": \"<ISO-8601 UTC>\"}`.",
+   "anchor": "4. `/bench-out/cases/alibaba__spring-ai-alibaba@3555a95/outcome.json` \u2014 LAST, because it is the signal that you are done: the step-7 verdict shape without `approval_withheld` \u2014 `{\"pr\": 869, \"round_no\": 1, \"verdict\": \"APPROVE\" | \"REQUEST_CHANGES\", \"head_sha\": \"3555a95e7b888335d9f72e432eb4f9fb9640e8cd\", \"summary\": \"...\", \"passes\": [...], \"finished_at\": \"<ISO-8601 UTC>\"}`.",
    "tokens": [
     "4",
     "869",
@@ -67209,7 +67369,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "If a discovery pass answers \"Unknown agent\", do exactly what step 2 says: never substitute another agent, name it in `summary`, and decide from the passes that did run. Only when `pass-validate` itself cannot be resolved do you write `outcome.json` with `\"verdict\": null` (saying what failed in `summary`) — never a stand-in review.",
+   "anchor": "If a discovery pass answers \"Unknown agent\", do exactly what step 2 says: never substitute another agent, name it in `summary`, and decide from the passes that did run. Only when `pass-validate` itself cannot be resolved do you write `outcome.json` with `\"verdict\": null` (saying what failed in `summary`) \u2014 never a stand-in review.",
    "tokens": [
     "2"
    ],
@@ -67238,7 +67398,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "`src/bench/aacr.ts` `benchAppendix` (lines 327–420) appends this to every",
+   "anchor": "`src/bench/aacr.ts` `benchAppendix` (lines 327\u2013420) appends this to every",
    "tokens": [
     "327",
     "420"
@@ -67247,7 +67407,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- Steps 1–4 — Sync, Dispatch passes (the `subagent` tool, the pass plan, raise/add protocols, pass-validate last), Merge, Validate.",
+   "anchor": "- Steps 1\u20134 \u2014 Sync, Dispatch passes (the `subagent` tool, the pass plan, raise/add protocols, pass-validate last), Merge, Validate.",
    "tokens": [
     "1",
     "4"
@@ -67260,7 +67420,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "- The verdict logic of step 5 on the merits (any surviving `[blocker]` ⇒ REQUEST_CHANGES, otherwise APPROVE), the posting map and the reachability gate.",
+   "anchor": "- The verdict logic of step 5 on the merits (any surviving `[blocker]` \u21d2 REQUEST_CHANGES, otherwise APPROVE), the posting map and the reachability gate.",
    "tokens": [
     "5"
    ],
@@ -67285,7 +67445,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "1. `<case dir>/comments.json` — the inline comments array, exactly as you would pass it to the posting script: `[{\"path\": \"<repo-relative path>\", \"line\": <line>, \"side\": \"RIGHT\", \"body\": \"<the full comment text as it would be posted>\"}]` — the four fields the posting script accepts. Head-side (`RIGHT`) line numbers of the file at `<head sha>`. `[]` when nothing survives.",
+   "anchor": "1. `<case dir>/comments.json` \u2014 the inline comments array, exactly as you would pass it to the posting script: `[{\"path\": \"<repo-relative path>\", \"line\": <line>, \"side\": \"RIGHT\", \"body\": \"<the full comment text as it would be posted>\"}]` \u2014 the four fields the posting script accepts. Head-side (`RIGHT`) line numbers of the file at `<head sha>`. `[]` when nothing survives.",
    "tokens": [
     "1"
    ],
@@ -67293,7 +67453,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "2. `<case dir>/review.md` — the review body, exactly as step 6 formats it.",
+   "anchor": "2. `<case dir>/review.md` \u2014 the review body, exactly as step 6 formats it.",
    "tokens": [
     "2",
     "6"
@@ -67302,7 +67462,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "3. `<case dir>/findings-record.json` — the findings record, in the shape step 7 specifies (every candidate finding and its disposition).",
+   "anchor": "3. `<case dir>/findings-record.json` \u2014 the findings record, in the shape step 7 specifies (every candidate finding and its disposition).",
    "tokens": [
     "3",
     "7"
@@ -67311,7 +67471,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "4. `<case dir>/outcome.json` — LAST, because it is the signal that you are done: the step-7 verdict shape without `approval_withheld` — `{\"pr\": <PR number>, \"round_no\": 1, \"verdict\": \"APPROVE\" | \"REQUEST_CHANGES\", \"head_sha\": \"<head sha>\", \"summary\": \"...\", \"passes\": [...], \"finished_at\": \"<ISO-8601 UTC>\"}`.",
+   "anchor": "4. `<case dir>/outcome.json` \u2014 LAST, because it is the signal that you are done: the step-7 verdict shape without `approval_withheld` \u2014 `{\"pr\": <PR number>, \"round_no\": 1, \"verdict\": \"APPROVE\" | \"REQUEST_CHANGES\", \"head_sha\": \"<head sha>\", \"summary\": \"...\", \"passes\": [...], \"finished_at\": \"<ISO-8601 UTC>\"}`.",
    "tokens": [
     "4",
     "1"
@@ -67320,7 +67480,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "If a discovery pass answers \"Unknown agent\", do exactly what step 2 says: never substitute another agent, name it in `summary`, and decide from the passes that did run. Only when `pass-validate` itself cannot be resolved do you write `outcome.json` with `\"verdict\": null` (saying what failed in `summary`) — never a stand-in review.",
+   "anchor": "If a discovery pass answers \"Unknown agent\", do exactly what step 2 says: never substitute another agent, name it in `summary`, and decide from the passes that did run. Only when `pass-validate` itself cannot be resolved do you write `outcome.json` with `\"verdict\": null` (saying what failed in `summary`) \u2014 never a stand-in review.",
    "tokens": [
     "2"
    ],
@@ -67356,7 +67516,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "A candidate from the `pass-placement` or `pass-simplicity` lens is a judgment about structure — where the code lives, or whether it is more complex than its job requires. Such a candidate is capped at `P2`: cap anything arriving as `P0` or `P1` down to `P2` with the one-word reason `design-over-cap`. A capped candidate then follows the ordinary posting map unchanged (a `P2` posts as a blocker only at confidence ≥ 0.8, and reachability still applies). A genuine correctness, security, or data defect surfaced by either lens belongs to whichever lens owns it — judge it at that lens's severity only when another pass also raised it; from placement or simplicity alone it stays capped.",
+   "anchor": "A candidate from the `pass-placement` or `pass-simplicity` lens is a judgment about structure \u2014 where the code lives, or whether it is more complex than its job requires. Such a candidate is capped at `P2`: cap anything arriving as `P0` or `P1` down to `P2` with the one-word reason `design-over-cap`. A capped candidate then follows the ordinary posting map unchanged (a `P2` posts as a blocker only at confidence \u2265 0.8, and reachability still applies). A genuine correctness, security, or data defect surfaced by either lens belongs to whichever lens owns it \u2014 judge it at that lens's severity only when another pass also raised it; from placement or simplicity alone it stays capped.",
    "tokens": [
     "0.8"
    ],
@@ -67372,7 +67532,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "only. Their findings are capped by `quality-cap-validate` (§4.4). All five",
+   "anchor": "only. Their findings are capped by `quality-cap-validate` (\u00a74.4). All five",
    "tokens": [
     "4.4"
    ],
@@ -67397,7 +67557,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "1. **Within the change.** The same logic added in two places of this diff —",
+   "anchor": "1. **Within the change.** The same logic added in two places of this diff \u2014",
    "tokens": [
     "1"
    ],
@@ -67421,7 +67581,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "1. **Within the change.** List what the change does repeatedly — the fields it",
+   "anchor": "1. **Within the change.** List what the change does repeatedly \u2014 the fields it",
    "tokens": [
     "1"
    ],
@@ -67549,7 +67709,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "export const REVIEW_COMMAND_TEMPLATE: string = \"You are a code reviewer. Your job is to review code changes and provide actionable feedback.\\n\\n---\\n\\nInput: $ARGUMENTS\\n\\n---\\n\\n## Determining What to Review\\n\\nBased on the input provided, determine which type of review to perform:\\n\\n1. **No arguments (default)**: Review all uncommitted changes\\n   - Run: `git diff` for unstaged changes\\n   - Run: `git diff --cached` for staged changes\\n   - Run: `git status --short` to identify untracked (net new) files\\n\\n2. **Commit hash** (40-char SHA or short hash): Review that specific commit\\n   - Run: `git show $ARGUMENTS`\\n\\n3. **Branch name**: Compare current branch to the specified branch\\n   - Run: `git diff $ARGUMENTS...HEAD`\\n\\n4. **PR URL or number** (contains \\\"github.com\\\" or \\\"pull\\\" or looks like a PR number): Review the pull request\\n   - Run: `gh pr view $ARGUMENTS` to get PR context\\n   - Run: `gh pr diff $ARGUMENTS` to get the diff\\n\\nUse best judgement when processing input.\\n\\n---\\n\\n## Gathering Context\\n\\n**Diffs alone are not enough.** After getting the diff, read the entire file(s) being modified to understand the full context. Code that looks wrong in isolation may be correct given surrounding logic—and vice versa.\\n\\n- Use the diff to identify which files changed\\n- Use `git status --short` to identify untracked files, then read their full contents\\n- Read the full file to understand existing patterns, control flow, and error handling\\n- Check for existing style guide or conventions files (CONVENTIONS.md, AGENTS.md, .editorconfig, etc.)\\n\\n---\\n\\n## What to Look For\\n\\n**Bugs** - Your primary focus.\\n- Logic errors, off-by-one mistakes, incorrect conditionals\\n- If-else guards: missing guards, incorrect branching, unreachable code paths\\n- Edge cases: null/empty/undefined inputs, error conditions, race conditions\\n- Security issues: injection, auth bypass, data exposure\\n- Broken error handling that swallows failures, throws unexpectedly or returns error types that are not caught.\\n\\n**Structure** - Does the code fit the codebase?\\n- Does it follow existing patterns and conventions?\\n- Are there established abstractions it should use but doesn't?\\n- Excessive nesting that could be flattened with early returns or extraction\\n\\n**Performance** - Only flag if obviously problematic.\\n- O(n²) on unbounded data, N+1 queries, blocking I/O on hot paths\\n\\n**Behavior Changes** - If a behavioral change is introduced, raise it (especially if it's possibly unintentional).\\n\\n---\\n\\n## Before You Flag Something\\n\\n**Be certain.** If you're going to call something a bug, you need to be confident it actually is one.\\n\\n- Only review the changes - do not review pre-existing code that wasn't modified\\n- Don't flag something as a bug if you're unsure - investigate first\\n- Don't invent hypothetical problems - if an edge case matters, explain the realistic scenario where it breaks\\n- If you need more context to be sure, use the tools below to get it\\n\\n**Don't be a zealot about style.** When checking code against conventions:\\n\\n- Verify the code is *actually* in violation. Don't complain about else statements if early returns are already being used correctly.\\n- Some \\\"violations\\\" are acceptable when they're the simplest option. A `let` statement is fine if the alternative is convoluted.\\n- Excessive nesting is a legitimate concern regardless of other style choices.\\n- Don't flag style preferences as issues unless they clearly violate established project conventions.\\n\\n---\\n\\n## Tools\\n\\nUse these to inform your review:\\n\\n- **Explore agent** - Find how existing code handles similar problems. Check patterns, conventions, and prior art before claiming something doesn't fit.\\n- **Exa Code Context** - Verify correct usage of libraries/APIs before flagging something as wrong.\\n- **Web Search** - Research best practices if you're unsure about a pattern.\\n\\nIf you're uncertain about something and can't verify it with these tools, say \\\"I'm not sure about X\\\" rather than flagging it as a definite issue.\\n\\n---\\n\\n## Output\\n\\n1. If there is a bug, be direct and clear about why it is a bug.\\n2. Clearly communicate severity of issues. Do not overstate severity.\\n3. Critiques should clearly and explicitly communicate the scenarios, environments, or inputs that are necessary for the bug to arise. The comment should immediately indicate that the issue's severity depends on these factors.\\n4. Your tone should be matter-of-fact and not accusatory or overly positive. It should read as a helpful AI assistant suggestion without sounding too much like a human reviewer.\\n5. Write so the reader can quickly understand the issue without reading too closely.\\n6. AVOID flattery, do not give any comments that are not helpful to the reader. Avoid phrasing like \\\"Great job ...\\\", \\\"Thanks for ...\\\".\";",
+   "anchor": "export const REVIEW_COMMAND_TEMPLATE: string = \"You are a code reviewer. Your job is to review code changes and provide actionable feedback.\\n\\n---\\n\\nInput: $ARGUMENTS\\n\\n---\\n\\n## Determining What to Review\\n\\nBased on the input provided, determine which type of review to perform:\\n\\n1. **No arguments (default)**: Review all uncommitted changes\\n   - Run: `git diff` for unstaged changes\\n   - Run: `git diff --cached` for staged changes\\n   - Run: `git status --short` to identify untracked (net new) files\\n\\n2. **Commit hash** (40-char SHA or short hash): Review that specific commit\\n   - Run: `git show $ARGUMENTS`\\n\\n3. **Branch name**: Compare current branch to the specified branch\\n   - Run: `git diff $ARGUMENTS...HEAD`\\n\\n4. **PR URL or number** (contains \\\"github.com\\\" or \\\"pull\\\" or looks like a PR number): Review the pull request\\n   - Run: `gh pr view $ARGUMENTS` to get PR context\\n   - Run: `gh pr diff $ARGUMENTS` to get the diff\\n\\nUse best judgement when processing input.\\n\\n---\\n\\n## Gathering Context\\n\\n**Diffs alone are not enough.** After getting the diff, read the entire file(s) being modified to understand the full context. Code that looks wrong in isolation may be correct given surrounding logic\u2014and vice versa.\\n\\n- Use the diff to identify which files changed\\n- Use `git status --short` to identify untracked files, then read their full contents\\n- Read the full file to understand existing patterns, control flow, and error handling\\n- Check for existing style guide or conventions files (CONVENTIONS.md, AGENTS.md, .editorconfig, etc.)\\n\\n---\\n\\n## What to Look For\\n\\n**Bugs** - Your primary focus.\\n- Logic errors, off-by-one mistakes, incorrect conditionals\\n- If-else guards: missing guards, incorrect branching, unreachable code paths\\n- Edge cases: null/empty/undefined inputs, error conditions, race conditions\\n- Security issues: injection, auth bypass, data exposure\\n- Broken error handling that swallows failures, throws unexpectedly or returns error types that are not caught.\\n\\n**Structure** - Does the code fit the codebase?\\n- Does it follow existing patterns and conventions?\\n- Are there established abstractions it should use but doesn't?\\n- Excessive nesting that could be flattened with early returns or extraction\\n\\n**Performance** - Only flag if obviously problematic.\\n- O(n\u00b2) on unbounded data, N+1 queries, blocking I/O on hot paths\\n\\n**Behavior Changes** - If a behavioral change is introduced, raise it (especially if it's possibly unintentional).\\n\\n---\\n\\n## Before You Flag Something\\n\\n**Be certain.** If you're going to call something a bug, you need to be confident it actually is one.\\n\\n- Only review the changes - do not review pre-existing code that wasn't modified\\n- Don't flag something as a bug if you're unsure - investigate first\\n- Don't invent hypothetical problems - if an edge case matters, explain the realistic scenario where it breaks\\n- If you need more context to be sure, use the tools below to get it\\n\\n**Don't be a zealot about style.** When checking code against conventions:\\n\\n- Verify the code is *actually* in violation. Don't complain about else statements if early returns are already being used correctly.\\n- Some \\\"violations\\\" are acceptable when they're the simplest option. A `let` statement is fine if the alternative is convoluted.\\n- Excessive nesting is a legitimate concern regardless of other style choices.\\n- Don't flag style preferences as issues unless they clearly violate established project conventions.\\n\\n---\\n\\n## Tools\\n\\nUse these to inform your review:\\n\\n- **Explore agent** - Find how existing code handles similar problems. Check patterns, conventions, and prior art before claiming something doesn't fit.\\n- **Exa Code Context** - Verify correct usage of libraries/APIs before flagging something as wrong.\\n- **Web Search** - Research best practices if you're unsure about a pattern.\\n\\nIf you're uncertain about something and can't verify it with these tools, say \\\"I'm not sure about X\\\" rather than flagging it as a definite issue.\\n\\n---\\n\\n## Output\\n\\n1. If there is a bug, be direct and clear about why it is a bug.\\n2. Clearly communicate severity of issues. Do not overstate severity.\\n3. Critiques should clearly and explicitly communicate the scenarios, environments, or inputs that are necessary for the bug to arise. The comment should immediately indicate that the issue's severity depends on these factors.\\n4. Your tone should be matter-of-fact and not accusatory or overly positive. It should read as a helpful AI assistant suggestion without sounding too much like a human reviewer.\\n5. Write so the reader can quickly understand the issue without reading too closely.\\n6. AVOID flattery, do not give any comments that are not helpful to the reader. Avoid phrasing like \\\"Great job ...\\\", \\\"Thanks for ...\\\".\";",
    "tokens": [
     "40",
     "1"
@@ -67567,7 +67727,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "Copyright (c) 2026 li lingbo — MIT License",
+   "anchor": "Copyright (c) 2026 li lingbo \u2014 MIT License",
    "tokens": [
     "2026"
    ],
@@ -67652,7 +67812,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "Set Actionable to yes when the host must fix or consciously reject the finding before clean closeout. Use no for informational or explicitly out-of-scope follow-up findings. Include Lines only when you have reliable line numbers for Path: a single line (`42`) or an inclusive range (`42-58`). Omit Lines or write \"none\" for file-level or non-line-specific findings — never guess a line number. Side marks which half of a diff Lines refers to (`base` = before the change, `working` = after); omit it to default to `working`. If there are no material findings, write \"No material findings.\"",
+   "anchor": "Set Actionable to yes when the host must fix or consciously reject the finding before clean closeout. Use no for informational or explicitly out-of-scope follow-up findings. Include Lines only when you have reliable line numbers for Path: a single line (`42`) or an inclusive range (`42-58`). Omit Lines or write \"none\" for file-level or non-line-specific findings \u2014 never guess a line number. Side marks which half of a diff Lines refers to (`base` = before the change, `working` = after); omit it to default to `working`. If there are no material findings, write \"No material findings.\"",
    "tokens": [
     "42",
     "42",
@@ -67670,7 +67830,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "`Output Markdown with exactly these top-level sections:\\n\\n## Verdict\\nOne of: ${VERDICTS.join(\" | \")}\\n\\n## Summary\\nShort conclusion in 2-5 bullets.\\n\\n## Findings\\nPrioritized findings. For every material finding, use this exact shape (increment IDs as F1, F2, ...):\\n\\n### F1: <summary>\\n- Severity: critical | high | medium | low\\n- Path: <path or none>\\n- Lines: <line or line-range in Path, or none>\\n- Side: base | working (optional; defaults to working)\\n- Actionable: yes | no\\n- Evidence: <concrete evidence>\\n- Impact: <why it matters>\\n- Recommendation: <specific next step>\\n\\nSet Actionable to yes when the host must fix or consciously reject the finding before clean closeout. Use no for informational or explicitly out-of-scope follow-up findings. Include Lines only when you have reliable line numbers for Path: a single line (\\`42\\`) or an inclusive range (\\`42-58\\`). Omit Lines or write \"none\" for file-level or non-line-specific findings — never guess a line number. Side marks which half of a diff Lines refers to (\\`base\\` = before the change, \\`working\\` = after); omit it to default to \\`working\\`. If there are no material findings, write \"No material findings.\"\\n\\n## Risks and Blind Spots\\nWhat could still be wrong, missing, or unverified.\\n\\n## Open Questions\\nQuestions the parent agent or user should answer before acting. If none, write \"None.\"`,",
+   "anchor": "`Output Markdown with exactly these top-level sections:\\n\\n## Verdict\\nOne of: ${VERDICTS.join(\" | \")}\\n\\n## Summary\\nShort conclusion in 2-5 bullets.\\n\\n## Findings\\nPrioritized findings. For every material finding, use this exact shape (increment IDs as F1, F2, ...):\\n\\n### F1: <summary>\\n- Severity: critical | high | medium | low\\n- Path: <path or none>\\n- Lines: <line or line-range in Path, or none>\\n- Side: base | working (optional; defaults to working)\\n- Actionable: yes | no\\n- Evidence: <concrete evidence>\\n- Impact: <why it matters>\\n- Recommendation: <specific next step>\\n\\nSet Actionable to yes when the host must fix or consciously reject the finding before clean closeout. Use no for informational or explicitly out-of-scope follow-up findings. Include Lines only when you have reliable line numbers for Path: a single line (\\`42\\`) or an inclusive range (\\`42-58\\`). Omit Lines or write \"none\" for file-level or non-line-specific findings \u2014 never guess a line number. Side marks which half of a diff Lines refers to (\\`base\\` = before the change, \\`working\\` = after); omit it to default to \\`working\\`. If there are no material findings, write \"No material findings.\"\\n\\n## Risks and Blind Spots\\nWhat could still be wrong, missing, or unverified.\\n\\n## Open Questions\\nQuestions the parent agent or user should answer before acting. If none, write \"None.\"`,",
    "tokens": [
     "2",
     "5",
@@ -67783,7 +67943,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "deterministic parser — no model, no re-review (§6.5). The prose itself is",
+   "anchor": "deterministic parser \u2014 no model, no re-review (\u00a76.5). The prose itself is",
    "tokens": [
     "6.5"
    ],
@@ -67976,7 +68136,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "//   - a TOP-LEVEL list item (`- `, `* `, `+ `, `1. `, `1) `; indent 0–1)",
+   "anchor": "//   - a TOP-LEVEL list item (`- `, `* `, `+ `, `1. `, `1) `; indent 0\u20131)",
    "tokens": [
     "1",
     "1",
@@ -68003,7 +68163,7 @@
   },
   {
    "file": "bench/aacr/docs/PROMPTS.md",
-   "anchor": "//     (`pkg/a.ts:372 — ACP mode …`); it takes the list that follows it with",
+   "anchor": "//     (`pkg/a.ts:372 \u2014 ACP mode \u2026`); it takes the list that follows it with",
    "tokens": [
     "372"
    ],
@@ -68083,7 +68243,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "2. Expert hunt, 29 Claude agents × ~5 PRs",
+   "anchor": "2. Expert hunt, 29 Claude agents \u00d7 ~5 PRs",
    "tokens": [
     "29"
    ],
@@ -68091,7 +68251,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "2. Expert hunt, 29 Claude agents × ~5 PRs",
+   "anchor": "2. Expert hunt, 29 Claude agents \u00d7 ~5 PRs",
    "tokens": [
     "5"
    ],
@@ -68099,7 +68259,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "4. Independent verification, 29 Claude agents × ~5 PRs",
+   "anchor": "4. Independent verification, 29 Claude agents \u00d7 ~5 PRs",
    "tokens": [
     "29"
    ],
@@ -68107,7 +68267,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "4. Independent verification, 29 Claude agents × ~5 PRs",
+   "anchor": "4. Independent verification, 29 Claude agents \u00d7 ~5 PRs",
    "tokens": [
     "5"
    ],
@@ -68547,7 +68707,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "77% → 73% (`tab:stab-sol`, `tab:stab`). The Martian development table",
+   "anchor": "77% \u2192 73% (`tab:stab-sol`, `tab:stab`). The Martian development table",
    "tokens": [
     "73%",
     "77%"
@@ -68556,7 +68716,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "38.8 → 38.7, round 4's issues per PR 10.6 → 10.5, and issues per PR as",
+   "anchor": "38.8 \u2192 38.7, round 4's issues per PR 10.6 \u2192 10.5, and issues per PR as",
    "tokens": [
     "10.5",
     "10.6",
@@ -68568,7 +68728,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "posted 9.0 → 8.9 and under the frozen posting policy 2.0 → 1.9 (179 and 39",
+   "anchor": "posted 9.0 \u2192 8.9 and under the frozen posting policy 2.0 \u2192 1.9 (179 and 39",
    "tokens": [
     "1.9",
     "179",
@@ -68589,7 +68749,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "third-party harnesses find, 54--78% → 53--78%; the frozen build's cost",
+   "anchor": "third-party harnesses find, 54--78% \u2192 53--78%; the frozen build's cost",
    "tokens": [
     "53",
     "54",
@@ -68600,7 +68760,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "against the third-party tools, 4 to 29 → 4 to 31 times; the pi-review",
+   "anchor": "against the third-party tools, 4 to 29 \u2192 4 to 31 times; the pi-review",
    "tokens": [
     "29",
     "31",
@@ -68611,7 +68771,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "panel's cost, 2.7 → 2.8 times one high reviewer; Codex at high effort,",
+   "anchor": "panel's cost, 2.7 \u2192 2.8 times one high reviewer; Codex at high effort,",
    "tokens": [
     "2.7",
     "2.8"
@@ -68620,7 +68780,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "$0.05 → $0.06 more per PR; the frozen build against the default,",
+   "anchor": "$0.05 \u2192 $0.06 more per PR; the frozen build against the default,",
    "tokens": [
     "0.05",
     "0.06"
@@ -68629,7 +68789,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "20% → 21% less; the default's lead on T40, 18.2 → 18.3 points; PR-Agent's",
+   "anchor": "20% \u2192 21% less; the default's lead on T40, 18.2 \u2192 18.3 points; PR-Agent's",
    "tokens": [
     "18.2",
     "18.3",
@@ -68640,7 +68800,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "comments mapping to a defect, 77% → 76%; AACR-Bench's \"human\" references,",
+   "anchor": "comments mapping to a defect, 77% \u2192 76%; AACR-Bench's \"human\" references,",
    "tokens": [
     "76%",
     "77%"
@@ -68649,7 +68809,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "362 → 361; their AI-written share, 74% → 75%; the key's reviewer comments,",
+   "anchor": "362 \u2192 361; their AI-written share, 74% \u2192 75%; the key's reviewer comments,",
    "tokens": [
     "361",
     "362",
@@ -68660,7 +68820,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "2,216 → 2,221, and its excluded candidates, 691 → 692; the Opus-shifted",
+   "anchor": "2,216 \u2192 2,221, and its excluded candidates, 691 \u2192 692; the Opus-shifted",
    "tokens": [
     "2,216",
     "2,221",
@@ -68671,7 +68831,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "Martian projection, 43.5 → 43.6; the seven smaller sub-lenses' cost share,",
+   "anchor": "Martian projection, 43.5 \u2192 43.6; the seven smaller sub-lenses' cost share,",
    "tokens": [
     "43.5",
     "43.6"
@@ -68680,7 +68840,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "2.8% → 2.7%; defects raised by six or more lenses, 127 → 126, and by five,",
+   "anchor": "2.8% \u2192 2.7%; defects raised by six or more lenses, 127 \u2192 126, and by five,",
    "tokens": [
     "126",
     "127",
@@ -68691,7 +68851,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "53 → 54. Ratios and differences of costs use the unrounded costs, so a few",
+   "anchor": "53 \u2192 54. Ratios and differences of costs use the unrounded costs, so a few",
    "tokens": [
     "53",
     "54"
@@ -68753,7 +68913,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "$0.57); 2.5–3× the steps and 7–9× the output (was about 3× and 12–15×);",
+   "anchor": "$0.57); 2.5\u20133\u00d7 the steps and 7\u20139\u00d7 the output (was about 3\u00d7 and 12\u201315\u00d7);",
    "tokens": [
     "0.57",
     "12",
@@ -68777,7 +68937,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "reviews 55–72 minutes (was 54–66); the GLM smoke's median 26.5 minutes",
+   "anchor": "reviews 55\u201372 minutes (was 54\u201366); the GLM smoke's median 26.5 minutes",
    "tokens": [
     "26.5",
     "54",
@@ -68916,7 +69076,7 @@
   },
   {
    "file": "bench/aacr/docs/THREATS-TO-VALIDITY.md",
-   "anchor": "  same arm differed by 1.5–2 found defects per 10-PR set, with run-to-run",
+   "anchor": "  same arm differed by 1.5\u20132 found defects per 10-PR set, with run-to-run",
    "tokens": [
     "10"
    ],
@@ -68924,7 +69084,7 @@
   },
   {
    "file": "bench/aacr/docs/METHODOLOGY.md",
-   "anchor": "1.5–2 found defects per 10-PR set (the benchmark paper, its run-to-run variance section).",
+   "anchor": "1.5\u20132 found defects per 10-PR set (the benchmark paper, its run-to-run variance section).",
    "tokens": [
     "10"
    ],
@@ -68941,7 +69101,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "**Tier 1 — re-score and re-chart the published runs: no keys, no docker.**",
+   "anchor": "**Tier 1 \u2014 re-score and re-chart the published runs: no keys, no docker.**",
    "tokens": [
     "1"
    ],
@@ -68949,7 +69109,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "**Tier 2 — re-judge the saved reviews.** Take the full run archive (the",
+   "anchor": "**Tier 2 \u2014 re-judge the saved reviews.** Take the full run archive (the",
    "tokens": [
     "2"
    ],
@@ -68957,7 +69117,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "**Tier 3 — a full re-run.** Build each arm's image (`bench.sh build --arm",
+   "anchor": "**Tier 3 \u2014 a full re-run.** Build each arm's image (`bench.sh build --arm",
    "tokens": [
     "3"
    ],
@@ -69094,7 +69254,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "sample. Repeat runs of one build differed by 1.5–2 found defects per 10-PR",
+   "anchor": "sample. Repeat runs of one build differed by 1.5\u20132 found defects per 10-PR",
    "tokens": [
     "10"
    ],
@@ -69102,7 +69262,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "bench/aacr/bench.sh smoke --run first-try          # build → prefetch → review 10 PRs → score (mock judge)",
+   "anchor": "bench/aacr/bench.sh smoke --run first-try          # build \u2192 prefetch \u2192 review 10 PRs \u2192 score (mock judge)",
    "tokens": [
     "10"
    ],
@@ -69110,7 +69270,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "`smoke` takes about an hour or two for the 10 PRs (one production round each —",
+   "anchor": "`smoke` takes about an hour or two for the 10 PRs (one production round each \u2014",
    "tokens": [
     "10"
    ],
@@ -69118,7 +69278,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "| `smoke10`   | 10  | 62         | 20–160 changed lines, ≥4 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 16 backups                                                                                                                        |",
+   "anchor": "| `smoke10`   | 10  | 62         | 20\u2013160 changed lines, \u22654 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 16 backups                                                                                                                        |",
    "tokens": [
     "1",
     "1",
@@ -69149,7 +69309,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "| `dev10`     | 10  | 106        | a second development set, so changes are not tuned on smoke10 alone: 20–400 changed lines (the small-PR pool is spent), ≥4 references, no smoke10 or holdout10 repository, quota C++ 2 / TS 1 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1                   |",
+   "anchor": "| `dev10`     | 10  | 106        | a second development set, so changes are not tuned on smoke10 alone: 20\u2013400 changed lines (the small-PR pool is spent), \u22654 references, no smoke10 or holdout10 repository, quota C++ 2 / TS 1 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1                   |",
    "tokens": [
     "1",
     "1",
@@ -69177,7 +69337,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "| `prefetch` | github.com, anonymous         | volume `qcr-bench-repos` | per instance: a bare store with ONLY the PR's base and reviewed head, shallow, deepened until the merge-base resolves; PR title/body/base branch from the public API (60 req/h anonymous — pass `--wait-rate-limit` for `full`)                                                       |",
+   "anchor": "| `prefetch` | github.com, anonymous         | volume `qcr-bench-repos` | per instance: a bare store with ONLY the PR's base and reviewed head, shallow, deepened until the merge-base resolves; PR title/body/base branch from the public API (60 req/h anonymous \u2014 pass `--wait-rate-limit` for `full`)                                                       |",
    "tokens": [
     "60"
    ],
@@ -69193,7 +69353,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "access token (≈10 days when fresh). Each case checks the remaining life",
+   "anchor": "access token (\u224810 days when fresh). Each case checks the remaining life",
    "tokens": [
     "10"
    ],
@@ -69201,7 +69361,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "  metadata, 42% of the references are maintainability/readability — a class the",
+   "anchor": "  metadata, 42% of the references are maintainability/readability \u2014 a class the",
    "tokens": [
     "42%"
    ],
@@ -69279,7 +69439,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "  30×60+300 s — and writes that runner's result file, which the harness scores",
+   "anchor": "  30\u00d760+300 s \u2014 and writes that runner's result file, which the harness scores",
    "tokens": [
     "30",
     "300",
@@ -69297,7 +69457,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "  sha256 pinned in the Dockerfile. It needs git ≥ 2.41, so the `ocr` target is",
+   "anchor": "  sha256 pinned in the Dockerfile. It needs git \u2265 2.41, so the `ocr` target is",
    "tokens": [
     "2.41"
    ],
@@ -69337,7 +69497,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "--json --skip-git-repo-check <prompt>`), the process timeout (30×60+60 s),",
+   "anchor": "--json --skip-git-repo-check <prompt>`), the process timeout (30\u00d760+60 s),",
    "tokens": [
     "30",
     "60",
@@ -69363,7 +69523,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "  (`--concurrency 1`); ours run `--parallel` — compare minutes accordingly.",
+   "anchor": "  (`--concurrency 1`); ours run `--parallel` \u2014 compare minutes accordingly.",
    "tokens": [
     "1"
    ],
@@ -69395,7 +69555,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "| process timeout 30 × 60 + 60 s                                                                                                         | the same (`--timeout-min`, default 30)                                                                                                                                                                                                                                       |",
+   "anchor": "| process timeout 30 \u00d7 60 + 60 s                                                                                                         | the same (`--timeout-min`, default 30)                                                                                                                                                                                                                                       |",
    "tokens": [
     "30",
     "30",
@@ -69414,7 +69574,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "**0.18.0**) — \"isolated AI-powered code and plan reviews from the command",
+   "anchor": "**0.18.0**) \u2014 \"isolated AI-powered code and plan reviews from the command",
    "tokens": [
     "0.18"
    ],
@@ -69422,7 +69582,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "agent — as a benchmarked reviewer, on the SAME pi (**0.99.1**, the runtime",
+   "anchor": "agent \u2014 as a benchmarked reviewer, on the SAME pi (**0.99.1**, the runtime",
    "tokens": [
     "0.99"
    ],
@@ -69462,7 +69622,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "  appended to the child's ARGV, and Linux caps one argument at 128 KiB — a",
+   "anchor": "  appended to the child's ARGV, and Linux caps one argument at 128 KiB \u2014 a",
    "tokens": [
     "128"
    ],
@@ -69522,7 +69682,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "--eval 1` — both `ok`, every comment actionable (verdict `request_changes`)",
+   "anchor": "--eval 1` \u2014 both `ok`, every comment actionable (verdict `request_changes`)",
    "tokens": [
     "1"
    ],
@@ -69619,7 +69779,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "  `max_model_tokens` clamps EVERY model, gpt-5.6's 1.05M included — the",
+   "anchor": "  `max_model_tokens` clamps EVERY model, gpt-5.6's 1.05M included \u2014 the",
    "tokens": [
     "1.05M"
    ],
@@ -69667,7 +69827,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "  (`HTTP(S)_PROXY=127.0.0.1:9`, `NO_PROXY` = the loopback) — PR-Agent, LiteLLM",
+   "anchor": "  (`HTTP(S)_PROXY=127.0.0.1:9`, `NO_PROXY` = the loopback) \u2014 PR-Agent, LiteLLM",
    "tokens": [
     "127.0",
     "9"
@@ -69676,7 +69836,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "  under pr-agent's own pins (most exact: `litellm==1.101.0` …) and are frozen",
+   "anchor": "  under pr-agent's own pins (most exact: `litellm==1.101.0` \u2026) and are frozen",
    "tokens": [
     "1.101"
    ],
@@ -69684,7 +69844,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "  into `/opt/pragent-venv/freeze.txt`. It needs Python ≥ 3.12, so the target",
+   "anchor": "  into `/opt/pragent-venv/freeze.txt`. It needs Python \u2265 3.12, so the target",
    "tokens": [
     "3.12"
    ],
@@ -69759,7 +69919,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "  answer as raw text (\"Fallback level 2 (WORST CASE)\") — which the harness's",
+   "anchor": "  answer as raw text (\"Fallback level 2 (WORST CASE)\") \u2014 which the harness's",
    "tokens": [
     "2"
    ],
@@ -69856,7 +70016,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "time, so 3 rounds × 3 variants of `full` in one process took longer than the",
+   "anchor": "time, so 3 rounds \u00d7 3 variants of `full` in one process took longer than the",
    "tokens": [
     "3",
     "3"
@@ -69881,7 +70041,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "  min((MemAvailable − `QCR_BENCH_RESERVE_MB` 3072) / `QCR_BENCH_REVIEW_MB` 768,",
+   "anchor": "  min((MemAvailable \u2212 `QCR_BENCH_RESERVE_MB` 3072) / `QCR_BENCH_REVIEW_MB` 768,",
    "tokens": [
     "3072",
     "768"
@@ -70006,7 +70166,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "eval (18 judge processes: 3 variants × 6 shards) runs beside it, so an arm",
+   "anchor": "eval (18 judge processes: 3 variants \u00d7 6 shards) runs beside it, so an arm",
    "tokens": [
     "18",
     "3",
@@ -70024,7 +70184,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "**Risks.** The ONE ChatGPT login is the real limit: earlier arms ran 8–10",
+   "anchor": "**Risks.** The ONE ChatGPT login is the real limit: earlier arms ran 8\u201310",
    "tokens": [
     "10",
     "8"
@@ -70057,7 +70217,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "  interval, −6.3 to +8.9 → −6.3 to +9.1 (benchmark paper, THREATS); the Opus",
+   "anchor": "  interval, \u22126.3 to +8.9 \u2192 \u22126.3 to +9.1 (benchmark paper, THREATS); the Opus",
    "tokens": [
     "+8.9",
     "+9.1",
@@ -70068,7 +70228,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "  judge's API calls per judgement, about 1.7 → 2.0 (benchmark paper, THREATS,",
+   "anchor": "  judge's API calls per judgement, about 1.7 \u2192 2.0 (benchmark paper, THREATS,",
    "tokens": [
     "1.7",
     "2.0"
@@ -70077,7 +70237,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "  about 3 more defects found → 2, AACR maintainability matches 1 → 4 of 30 →",
+   "anchor": "  about 3 more defects found \u2192 2, AACR maintainability matches 1 \u2192 4 of 30 \u2192",
    "tokens": [
     "1",
     "2",
@@ -70089,7 +70249,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "  1 → 2 of 30, +29% → +28% cost; the re-judge's distance below Martian's",
+   "anchor": "  1 \u2192 2 of 30, +29% \u2192 +28% cost; the re-judge's distance below Martian's",
    "tokens": [
     "+28%",
     "+29%",
@@ -70101,7 +70261,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "  published scores, 1.5–6.3 → 0.9–6.3 F1 points; the Martian posting-policy",
+   "anchor": "  published scores, 1.5\u20136.3 \u2192 0.9\u20136.3 F1 points; the Martian posting-policy",
    "tokens": [
     "0.9",
     "1.5",
@@ -70112,7 +70272,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "  sweep, \"F2 between 42 and 44 at best\" → \"42.0 as posted to 46.2 at best\";",
+   "anchor": "  sweep, \"F2 between 42 and 44 at best\" \u2192 \"42.0 as posted to 46.2 at best\";",
    "tokens": [
     "42",
     "42.0",
@@ -70123,7 +70283,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "  smoke10's backup PRs in `bench/aacr/README.md`, 17 → 16. Loose ranges",
+   "anchor": "  smoke10's backup PRs in `bench/aacr/README.md`, 17 \u2192 16. Loose ranges",
    "tokens": [
     "16",
     "17"
@@ -70132,7 +70292,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "  (\"about 1–2 defects per 10 PRs\", \"about 10–15 lens passes\", \"about 10× the",
+   "anchor": "  (\"about 1\u20132 defects per 10 PRs\", \"about 10\u201315 lens passes\", \"about 10\u00d7 the",
    "tokens": [
     "1",
     "10",
@@ -70145,7 +70305,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "  tokens\", \"$2–3 of review\") now print the measured figure.",
+   "anchor": "  tokens\", \"$2\u20133 of review\") now print the measured figure.",
    "tokens": [
     "2",
     "3"
@@ -70248,7 +70408,7 @@
   },
   {
    "file": "bench/aacr/hf/card.md",
-   "anchor": "- **Recomputed.** Run-to-run agreement on fresh10, 78–89% → 81–93%, now",
+   "anchor": "- **Recomputed.** Run-to-run agreement on fresh10, 78\u201389% \u2192 81\u201393%, now",
    "tokens": [
     "78",
     "81",

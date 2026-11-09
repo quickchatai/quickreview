@@ -99,8 +99,9 @@ and listed in the manifest as quotes, not as claims.
   references marked human are rewritten review-bot comments
   (`aacr_references.bot_derived`).
 - **Each reviewer ran once and each review was judged once,** except where a
-  config says otherwise: the stability runs, the second judge, the judge
-  re-run.
+  config says otherwise: the stability runs, the earlier study's second judge
+  (`claude-opus-5-5`), the judge re-run. `second_judges/`, which no config
+  reads, judges the reviews of the repository README's full tables once more.
 - **Builds and judges differ between rows.** The open-model runs used a
   mid-October build and the `gpt-6.1-sol-high` judge; the frozen build and the
   papers' comparisons used `gpt-6-sol-high`. Compare rows within one judge.
@@ -444,7 +445,7 @@ labels in the first column.
 | Judge | Model | What it scored |
 |---|---|---|
 | `gpt-6-sol-high` | GPT-6 Sol, high effort | the primary judge of the papers: the frozen build, the final comparison, the earlier study, and every other AACR arm except the open-model ones below (base models, stability, selection, development runs, the re-baseline, the refactor smoke). |
-| `claude-opus-5-5` | Claude Opus 5.5 | the second judge. **Only the earlier gpt-6-sol study:** its seven arms (listed under `arms` above), 3,640 reviewer-defect pairs. Claude Code's run is shared by both comparisons, so the final comparison's Claude Code row carries both judges; no other final-comparison arm does. |
+| `claude-opus-5-5` | Claude Opus 5.5 | the earlier study's second judge. **Only the earlier gpt-6-sol study:** its seven arms (listed under `arms` above), 3,640 reviewer-defect pairs. Claude Code's run is shared by both comparisons, so the final comparison's Claude Code row carries both judges; no other final-comparison arm does. |
 | `gpt-6-sol-high-repeat` | GPT-6 Sol, high effort | the primary judge run again, on the same seven arms and 30 PRs, for self-consistency. |
 | `gpt-6.1-sol-high` | GPT-6.1 Sol, high effort | the open-model runs (GLM-5.3 Flash, DeepSeek V4.1 Flash, the DigitalOcean smokes) and the GPT-6.1 Sol baselines copied beside them. |
 | AACR-Bench's harness | GPT-6 Sol, low effort, three rounds | `aacr_matches` for every arm the papers report. Early development arms (prompt iterations, smokes, end-to-end checks; none in the papers) ran it with GPT-5.6 Terra at low effort, or with a single round. `arms.aacr_judge` names the model and rounds per arm. |
@@ -480,6 +481,7 @@ build and the final comparison's six third-party reviewers
 about), on Martian the README's seven tools (350 reviews) and on Qodo
 its eight (800 reviews). It is a judge of the final reviews; the
 earlier study's second judge, `claude-opus-5-5`, is in the tables ("Judges").
+The benchmark paper calls this one the third judge, after `claude-opus-5-5`.
 
 **The judge.** DeepSeek V4.1 Flash (`deepseek-v4.1-flash-1017`), from a third
 model family. On AACR-Bench it was given the published judge's prompt
@@ -509,14 +511,17 @@ the same verdict (found, partial or missed), with Cohen's kappa.
 | OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |
 | PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |
 
-Recall is unchanged: every reviewer is within 0.4 points of its published
+Recall moves by at most 0.4 points: six of the seven reviewers' recall
+moves, none by more than that against its published
 recall, and the order of the seven is the same on recall, high-severity
 recall and weighted recall. Comments correct is not: it is lower under this
 judge for six of the seven reviewers, by 1.2 to 9.3 points, and level for
 Claude Code (+0.2). Most of the disagreements grade as incorrect a comment
 that the published judge, which could read the code, graded correct or partly
-correct. Two pairs swap on comments correct: OpenCode passes Codex CLI, and
-Claude Code passes open-code-review.
+correct. Comment grades agree less than defect verdicts: the two judges give
+the same grade to 84.0% to 92.1% of each reviewer's comments
+(kappa 0.59 to 0.79). Two pairs swap on comments correct: OpenCode passes
+Codex CLI, and Claude Code passes open-code-review.
 
 **Martian** (Core; this judge / the published `gpt-6.1-sol`)
 
@@ -544,8 +549,11 @@ location rule)
 | open-code-review | 48.0 / 47.1 | 28.6 / 28.1 | 35.9 / 35.2 |
 | PR-Agent | 48.1 / 47.2 | 27.8 / 27.2 | 35.2 / 34.5 |
 
-On Martian and Qodo this judge is slightly more lenient: Core F1 is
-0.9 to 3.8 points higher for every Martian tool, and Qodo F1 is 0 to 1.4 points
+On Martian and Qodo this judge is more lenient. Core precision is
+0.7 to 7.1 points higher for every Martian tool, and Core F1 is
+0.9 to 3.8 points higher; the smallest gains are QuickReview's
+(+0.7 precision, +0.9 F1), so every other tool's Martian precision and F1
+lead over it widens. Qodo F1 is 0 to 1.4 points
 higher (augment's precision, recall and F1 are the same under both judges).
 Every change of order on the scorers' headline metrics:
 

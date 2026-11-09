@@ -1142,12 +1142,17 @@ this judge for six of the seven reviewers, by 1.2 to 9.3 points (\qcr{}'s
 frozen build from 92.4\% to 85.4\%), and level for Claude Code ($+0.2$).
 Most of the disagreements grade as incorrect a comment that the primary
 judge, reading the code, graded correct or partly correct: a judge that
-cannot open the file cannot confirm a claim about it. Two pairs swap on
+cannot open the file cannot confirm a claim about it. Comment grades agree
+less than defect verdicts: the same grade on 84.0--92.1\% of each
+reviewer's comments ($\kappa = 0.59$ to $0.79$). Two pairs swap on
 comments correct: OpenCode passes Codex CLI, and Claude Code passes
 open-code-review. On Martian and Qodo the same model ran at low effort
 through the same bridge as the published gpt-6.1-sol judge, and there it
-is slightly more lenient: Core F1 is 0.9 to 3.8
-points higher for every Martian tool, and Qodo F1 0 to 1.4 points higher.
+is more lenient: Core precision is 0.7 to 7.1 points
+higher for every Martian tool and Core F1 0.9 to 3.8
+points higher, the smallest gains \qcr{}'s ($+0.7$ precision,
+$+0.9$ F1), so every other tool's Martian precision and F1 lead over
+\qcr{} widens; Qodo F1 is 0 to 1.4 points higher.
 \qcr{} keeps the highest Martian recall and the lowest Martian precision.
 The orders that change: on Martian, open-code-review moves from fourth to a
 tie for second on recall, cubic-v2 moves ahead of qodo-extended-v2 on recall
@@ -1163,8 +1168,9 @@ every number of this paragraph from it.
   \centering
   \small
   \caption{The third judge on AACR-Bench: the primary judge (gpt-6-sol,
-  high, reading the repository) and DeepSeek V4.1 Flash (high, no tools and
-  no repository) on the same reviews. A partly found defect counts
+  high, reading the repository) and DeepSeek V4.1 Flash (high, or low
+  where an answer at high was cut off, 112 of the 1{,}168 accepted answers;
+  no tools and no repository) on the same reviews. A partly found defect counts
   $\tfrac12$. $\kappa$: Cohen's kappa between the two judges'
   found/partial/missed verdicts. The frozen build is
   Section~\ref{sec:finalbuild}'s; the other six are the final comparison's
@@ -1188,7 +1194,9 @@ every number of this paragraph from it.
 \end{table}
 \footnotetext{\code{score\_verdicts.py} on the dataset's
 \code{second\_judges/deepseek-v4.1-flash-1017/aacr/} beside the published
-verdicts, as the folder's README gives it.}
+verdicts, as the folder's README gives it. The dataset files this judge
+under \code{second\_judges/}; this paper calls it the third judge, after the
+Opus judge.}
 
 \subsection{AACR's metric as we ran it}
 \label{sec:aacrrun}
