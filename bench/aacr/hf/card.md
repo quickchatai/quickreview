@@ -42,6 +42,10 @@ and why". It comes in three parts, all in this repository:
 - **The slim re-score bundle** ({{SLIM_MD}}). The part of the archive
   that the scoring and recompute scripts read, with no transcript text.
 
+Beside them, {{SECOND_JUDGE_MD}} holds a second judge's verdicts on the
+reviewers of the repository README's full tables, on all three benchmarks,
+next to the published judge's ("Second judge").
+
 DOI: {{DOI_MD}}. The code, the benchmark definition and both papers are in the
 QuickReview repository, https://github.com/quickchatai/quickreview, under
 `bench/aacr/`.
@@ -83,10 +87,13 @@ and listed in the manifest as quotes, not as claims.
   each benchmark, including 145 of the 185 AACR-Bench PRs. The tuning sets are
   named per PR (`prs.set`, `prs.in_s40`, `martian_goldens.audit_split`), and
   the papers and the README report the held-out results beside the tuned ones.
-- **Most results rest on one judge from one model family.** A second judge
-  from another family scored only the earlier gpt-6-sol study. The final
-  comparison, the frozen build, the open-model runs, Martian and Qodo each
-  have one GPT judge. See "Judges" below.
+- **Most results rest on one judge from one model family.** In the tables, a
+  second judge from another family scored only the earlier gpt-6-sol study.
+  The final comparison, the frozen build, the open-model runs, Martian and
+  Qodo each have one GPT judge there. `second_judges/` adds a DeepSeek judge
+  on the frozen build, the final comparison's third-party reviewers, Martian
+  and Qodo; it is unaudited, and on AACR-Bench it could not read the code.
+  See "Judges" and "Second judge" below.
 - **AACR-Bench's reference labels are agent-produced**, not human labels
   (`aacr_references.is_ai_comment`, `source_model`). At least 80 of the
   references marked human are rewritten review-bot comments
@@ -135,6 +142,7 @@ The scripts are in the QuickReview repository under `bench/aacr/`.
 | QuickReview paper: the validator's kills and the lost-credit attribution | `qr:mechanism`, `qr:tab:final` | `defects`, `reviews`, `defect_verdicts` | `analysis` (`analysis/relabel/lost_credit.labels.jsonl`, its prompt, `LABELS.json`), `aacr-gpt6sol-study` | `relabel/lost_credit.py --compute` |
 | QuickReview paper: tuning appendix (prompt iterations, levers, lenses) | `qr:app:tuning` | `arms`, `defect_verdicts` | `aacr-dev-iterations`, `aacr-dev-levers-presets` | `verify_claims.py` (its table checks, `recompute/claim_metrics.py`); `recompute/missed_defects.py` |
 | QuickReview paper: the max preset example | `qr:basemodel` | `arms` (`quickreview-max-g61`) | `aacr-g61-smokes` | `compare.py` |
+| The second judge beside the published judges (this card's "Second judge"; benchmark paper `tab:dsjudge` and its judge-reliability section; QuickReview paper's limits) | `second-judge` | none: the folder `second_judges/deepseek-v4.1-flash-1017/`, beside the published judge's rows in `defect_verdicts`, `comment_verdicts`, `martian_verdicts`, `martian_reviews`, `qodo_verdicts` | none | `recompute/score_verdicts.py`, `recompute/martian_scores.py`, `recompute/qodo_scores.py` (the folder README's commands); `recompute/second_judges.py`; `validation.json` |
 
 `tab:copilot2025`'s rows are these arms, on the 19 PRs that have a
 `copilot-2025-upstream` review (`final/copilot19.txt`):
@@ -442,6 +450,7 @@ labels in the first column.
 | AACR-Bench's harness | GPT-6 Sol, low effort, three rounds | `aacr_matches` for every arm the papers report. Early development arms (prompt iterations, smokes, end-to-end checks; none in the papers) ran it with GPT-5.6 Terra at low effort, or with a single round. `arms.aacr_judge` names the model and rounds per arm. |
 | `gpt-6.1-sol` | GPT-6.1 Sol, low effort, medium verbosity (`ext_judge.py`'s default) | every row of `martian_verdicts` and `qodo_verdicts`. One judge, served by the ChatGPT Codex backend through `bench/aacr/ext/ext_judge.py`. The backend rejects a sampling temperature, so the bridge drops the harnesses' temperature 0 (and, on one Martian smoke, some requests' `max_completion_tokens`). On Martian the same model also extracts and merges the candidates (steps 2 and 2.5). Each Martian scoring dir's `runs.judges` row states the model, effort, backend and dropped request keys from its request log (one dir has none, and says so), and the verbosity as `ext_judge.py`'s default, which no log records. |
 | Elo: `gpt-6.1-sol` and `claude-opus-5-5` | GPT-6.1 Sol and Claude Opus 5.5, both at xhigh | the pairwise judgments, 298 each in the ratings, pooled into 596. The two pick the same overall winner in 56% of the comparisons both judged. |
+| `deepseek-v4.1-flash-1017` (in `second_judges/`, not in the tables) | DeepSeek V4.1 Flash; on AACR-Bench high effort, no tools and no repository; on Martian and Qodo low effort, as `gpt-6.1-sol` | the reviewers of the repository README's full tables, again: the frozen build and the final comparison's six third-party reviewers on AACR-Bench, and the README's Martian and Qodo tools. See "Second judge". |
 
 The primary AACR judge's prompt is `judgePrompt()` in `src/bench/defects.ts`.
 The repository's public main builds exactly the prompts behind the published
@@ -451,13 +460,128 @@ for any arm and PR from these tables. `review_hash` in the archive's judge
 files is not a public check: it was taken before the name rewrite. The Qodo
 judge was asked twice on the 10 PRs of `ext-r6-qodo-smoke10`, every tool's
 review: 222 of the 223 matches of the first pass recur in the second (the
-run's `scores.md`). The final comparison, the frozen build, the open-model rows, Martian and
-Qodo each rest on one judge from the GPT family. The two judges agree closely
+run's `scores.md`). In the tables, the final comparison, the frozen build, the open-model rows, Martian and
+Qodo each rest on one judge from the GPT family; `second_judges/` re-judges
+the frozen build, the final comparison's third-party reviewers and the
+README's Martian and Qodo tools with a judge from a third family. The two
+judges of the tables agree closely
 on defect verdicts where both ran (3,593 of 3,640 pairs) and much less on
 pairwise preference. `validation.json` checks this coverage against the
 tables: the second judge and the re-run hold rows for the seven arms only,
 `arms.judges` names exactly the judges with rows for each arm, and the
 Martian, Qodo and Elo judges are the ones named here.
+
+## Second judge
+
+{{SECOND_JUDGE_MD}} holds a second judge's verdicts on the reviews of every
+reviewer in the repository README's full tables: on AACR-Bench the frozen
+build and the final comparison's six third-party reviewers
+(1,168 reviews, every review of those arms the published judge was asked
+about), on Martian the README's seven tools (350 reviews) and on Qodo
+its eight (800 reviews). It is a judge of the final reviews; the
+earlier study's second judge, `claude-opus-5-5`, is in the tables ("Judges").
+
+**The judge.** DeepSeek V4.1 Flash (`deepseek-v4.1-flash-1017`), from a third
+model family. On AACR-Bench it was given the published judge's prompt
+(`judge_prompt.py` rebuilds it), but **no tools and no repository**: the
+published `gpt-6-sol-high` read the code at the PR head while it judged; this
+judge read only the message (the defects with their quoted evidence, the
+rejected claims and the review). It ran at high effort, and at low effort when
+an answer at high was cut off (1,056 and 112 of the accepted
+answers). On Martian and Qodo it ran at low effort through the same
+`ext_judge.py` bridge as the published `gpt-6.1-sol`. **It is an unaudited
+LLM judge:** no person has checked its
+verdicts. Its numbers show how much the published results depend on the
+judge; they do not correct them. The folder's README gives the run, its cost
+and every difference in full.
+
+**AACR-Bench.** Each cell: this judge / the published `gpt-6-sol-high`, on the
+same reviews. Agreement: the share of reviewer-defect pairs both judges gave
+the same verdict (found, partial or missed), with Cohen's kappa.
+
+| Reviewer | Found | Recall | High-severity recall | Comments correct | Agreement (kappa) |
+|---|---|---|---|---|---|
+| QuickReview (frozen) | 461.5 / 461 | 88.8% / 88.7% | 98.9% / 97.2% | 85.4% / 92.4% | 98.5% (0.928) |
+| pi-review panel (high) | 348 / 347.5 | 66.9% / 66.8% | 88.9% / 88.9% | 81.4% / 89.4% | 99.0% (0.979) |
+| Claude Code (Opus 5.5) | 324 / 324.5 | 62.3% / 62.4% | 81.1% / 80.6% | 80.8% / 80.6% | 99.0% (0.980) |
+| open-code-review (high) | 296.5 / 298.5 | 57.0% / 57.4% | 70.6% / 70.6% | 76.8% / 86.1% | 99.2% (0.985) |
+| Codex CLI (high) | 287.5 / 287 | 55.3% / 55.2% | 90.6% / 90.0% | 87.5% / 92.7% | 99.2% (0.985) |
+| OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |
+| PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |
+
+Recall is unchanged: every reviewer is within 0.4 points of its published
+recall, and the order of the seven is the same on recall, high-severity
+recall and weighted recall. Comments correct is not: it is lower under this
+judge for six of the seven reviewers, by 1.2 to 9.3 points, and level for
+Claude Code (+0.2). Most of the disagreements grade as incorrect a comment
+that the published judge, which could read the code, graded correct or partly
+correct. Two pairs swap on comments correct: OpenCode passes Codex CLI, and
+Claude Code passes open-code-review.
+
+**Martian** (Core; this judge / the published `gpt-6.1-sol`)
+
+| Tool | Precision | Recall | F1 |
+|---|---|---|---|
+| QuickReview (frozen) | 16.9 / 16.2 | 66.5 / 65.8 | 27.0 / 26.1 |
+| qodo-extended-v2 | 63.3 / 56.2 | 60.1 / 60.1 | 61.7 / 58.1 |
+| cubic-v2 | 57.6 / 54.3 | 62.0 / 60.1 | 59.8 / 57.1 |
+| open-code-review | 28.8 / 26.7 | 62.0 / 58.9 | 39.4 / 36.8 |
+| PR-Agent | 48.0 / 41.9 | 38.0 / 36.1 | 42.4 / 38.8 |
+| claude-code | 42.0 / 36.5 | 43.0 / 41.1 | 42.5 / 38.7 |
+| OpenCode | 36.1 / 32.7 | 35.4 / 33.5 | 35.8 / 33.1 |
+
+**Qodo PR-Review-Bench** (this judge / the published `gpt-6.1-sol`; the same
+location rule)
+
+| Tool | Precision | Recall | F1 |
+|---|---|---|---|
+| qodo-exhaustive | 58.4 / 58.0 | 46.7 / 46.4 | 51.9 / 51.5 |
+| qodo-precise | 68.6 / 68.0 | 36.2 / 35.9 | 47.4 / 47.0 |
+| QuickReview (frozen) | 38.5 / 37.3 | 46.9 / 45.3 | 42.3 / 40.9 |
+| augment | 67.5 / 67.5 | 29.7 / 29.7 | 41.2 / 41.2 |
+| OpenCode | 65.6 / 64.9 | 29.3 / 29.0 | 40.5 / 40.0 |
+| copilot | 48.2 / 46.8 | 34.7 / 33.6 | 40.3 / 39.1 |
+| open-code-review | 48.0 / 47.1 | 28.6 / 28.1 | 35.9 / 35.2 |
+| PR-Agent | 48.1 / 47.2 | 27.8 / 27.2 | 35.2 / 34.5 |
+
+On Martian and Qodo this judge is slightly more lenient: Core F1 is
+0.9 to 3.8 points higher for every Martian tool, and Qodo F1 is 0 to 1.4 points
+higher (augment's precision, recall and F1 are the same under both judges).
+Every change of order on the scorers' headline metrics:
+
+- **Martian.** Precision keeps its order, and QuickReview keeps the highest
+  recall and the lowest precision. Recall: open-code-review moves from fourth
+  to a tie for second with cubic-v2, and cubic-v2 leaves its published tie
+  with qodo-extended-v2 to lead it. F1: claude-code passes PR-Agent. F2
+  (`scores/martian.txt`): cubic-v2 passes qodo-extended-v2, and claude-code
+  passes QuickReview.
+- **Qodo.** Functional and rule recall keep their order. Recall: QuickReview
+  passes qodo-exhaustive, by 0.2 points, a tie. F1: QuickReview passes augment.
+  Precision: copilot passes PR-Agent and open-code-review.
+- **AACR-Bench.** Only the two comments-correct swaps above.
+
+The scorers make no model call. From a clone of the repository with this
+dataset downloaded as `quickreview-bench` (see "How to verify"), each command
+prints this judge's numbers beside the published judge's on the same reviews
+and writes, under `work/` (gitignored), the `scores/` file of the same name:
+
+```sh
+D=../quickreview-bench
+V=$D/second_judges/deepseek-v4.1-flash-1017
+L=deepseek-v4.1-flash-1017
+run() { uv run --no-project --with pyarrow python "$@"; }
+mkdir -p work
+run bench/aacr/recompute/score_verdicts.py --data $D --verdicts $V/aacr --judge $L \
+    --arms quickreview-frozen,pireview-panel-high-g61,claude-code-opus55,ocr-high-g61,codex-high-g61,opencode-native-pr-g61,pragent-g61 \
+    --json work/aacr.json > work/aacr.txt
+run bench/aacr/recompute/martian_scores.py --data $D --verdicts $V/martian --judge $L --json work/martian.json > work/martian.txt
+run bench/aacr/recompute/qodo_scores.py --data $D --verdicts $V/qodo --judge $L --json work/qodo.json > work/qodo.txt
+```
+
+`validation.json` runs the same three and compares their output with
+`scores/` (see "How to verify"), and the claims verifier recomputes every
+number of this section from the folder (`second_judge` in
+`bench/aacr/claims.json`).
 
 ## What is not here, and why
 

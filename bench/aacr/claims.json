@@ -55619,6 +55619,1934 @@
    "value": "3",
    "group": "card:key",
    "q": "judged_inputs:sweprbench/dropped"
+  },
+  {
+   "id": "card.second-judge.1",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(1,168 reviews, every review of those arms the published judge was asked",
+   "value": "1,168",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/judgements:rows"
+  },
+  {
+   "id": "card.second-judge.2",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "about), on Martian the README's seven tools (350 reviews) and on Qodo",
+   "value": "350",
+   "group": "second-judge",
+   "q": "{second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:prs} + {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:prs} + {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:prs} + {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:prs} + {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:prs} + {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:prs} + {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:prs}"
+  },
+  {
+   "id": "card.second-judge.3",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "its eight (800 reviews). It is a judge of the final reviews; the",
+   "value": "800",
+   "group": "second-judge",
+   "q": "{second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:prs} + {second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:prs} + {second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:prs} + {second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:prs} + {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:prs} + {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:prs} + {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:prs} + {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:prs}"
+  },
+  {
+   "id": "card.second-judge.4",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "an answer at high was cut off (1,056 and 112 of the accepted",
+   "value": "1,056",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/judgements:effort_used=high"
+  },
+  {
+   "id": "card.second-judge.5",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "an answer at high was cut off (1,056 and 112 of the accepted",
+   "value": "112",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/judgements:effort_used=low"
+  },
+  {
+   "id": "card.second-judge.6",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 461.5 / 461 | 88.8% / 88.7% | 98.9% / 97.2% | 85.4% / 92.4% | 98.5% (0.928) |",
+   "value": "461.5",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:found"
+  },
+  {
+   "id": "card.readme:aacr.1",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 461.5 / 461 | 88.8% / 88.7% | 98.9% / 97.2% | 85.4% / 92.4% | 98.5% (0.928) |",
+   "value": "461",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-frozen:found"
+  },
+  {
+   "id": "card.second-judge.7",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 461.5 / 461 | 88.8% / 88.7% | 98.9% / 97.2% | 85.4% / 92.4% | 98.5% (0.928) |",
+   "value": "88.8%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:recall"
+  },
+  {
+   "id": "card.readme:aacr.2",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 461.5 / 461 | 88.8% / 88.7% | 98.9% / 97.2% | 85.4% / 92.4% | 98.5% (0.928) |",
+   "value": "88.7%",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-frozen:recall"
+  },
+  {
+   "id": "card.second-judge.8",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 461.5 / 461 | 88.8% / 88.7% | 98.9% / 97.2% | 85.4% / 92.4% | 98.5% (0.928) |",
+   "value": "98.9%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:high_rec"
+  },
+  {
+   "id": "card.readme:aacr.3",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 461.5 / 461 | 88.8% / 88.7% | 98.9% / 97.2% | 85.4% / 92.4% | 98.5% (0.928) |",
+   "value": "97.2%",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-frozen:high_rec"
+  },
+  {
+   "id": "card.second-judge.9",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 461.5 / 461 | 88.8% / 88.7% | 98.9% / 97.2% | 85.4% / 92.4% | 98.5% (0.928) |",
+   "value": "85.4%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:correct"
+  },
+  {
+   "id": "card.readme:aacr.4",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 461.5 / 461 | 88.8% / 88.7% | 98.9% / 97.2% | 85.4% / 92.4% | 98.5% (0.928) |",
+   "value": "92.4%",
+   "group": "readme:aacr",
+   "q": "aacr:quickreview-frozen:correct"
+  },
+  {
+   "id": "card.second-judge.10",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 461.5 / 461 | 88.8% / 88.7% | 98.9% / 97.2% | 85.4% / 92.4% | 98.5% (0.928) |",
+   "value": "98.5%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:pct"
+  },
+  {
+   "id": "card.second-judge.11",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 461.5 / 461 | 88.8% / 88.7% | 98.9% / 97.2% | 85.4% / 92.4% | 98.5% (0.928) |",
+   "value": "0.928",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:kappa"
+  },
+  {
+   "id": "card.second-judge.12",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| pi-review panel (high) | 348 / 347.5 | 66.9% / 66.8% | 88.9% / 88.9% | 81.4% / 89.4% | 99.0% (0.979) |",
+   "value": "348",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:found"
+  },
+  {
+   "id": "card.readme:aacr.5",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| pi-review panel (high) | 348 / 347.5 | 66.9% / 66.8% | 88.9% / 88.9% | 81.4% / 89.4% | 99.0% (0.979) |",
+   "value": "347.5",
+   "group": "readme:aacr",
+   "q": "aacr:pireview-panel-high-g61:found"
+  },
+  {
+   "id": "card.second-judge.13",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| pi-review panel (high) | 348 / 347.5 | 66.9% / 66.8% | 88.9% / 88.9% | 81.4% / 89.4% | 99.0% (0.979) |",
+   "value": "66.9%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:recall"
+  },
+  {
+   "id": "card.readme:aacr.6",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| pi-review panel (high) | 348 / 347.5 | 66.9% / 66.8% | 88.9% / 88.9% | 81.4% / 89.4% | 99.0% (0.979) |",
+   "value": "66.8%",
+   "group": "readme:aacr",
+   "q": "aacr:pireview-panel-high-g61:recall"
+  },
+  {
+   "id": "card.second-judge.14",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| pi-review panel (high) | 348 / 347.5 | 66.9% / 66.8% | 88.9% / 88.9% | 81.4% / 89.4% | 99.0% (0.979) |",
+   "value": "88.9%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:high_rec"
+  },
+  {
+   "id": "card.readme:aacr.7",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| pi-review panel (high) | 348 / 347.5 | 66.9% / 66.8% | 88.9% / 88.9% | 81.4% / 89.4% | 99.0% (0.979) |",
+   "value": "88.9%",
+   "group": "readme:aacr",
+   "q": "aacr:pireview-panel-high-g61:high_rec"
+  },
+  {
+   "id": "card.second-judge.15",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| pi-review panel (high) | 348 / 347.5 | 66.9% / 66.8% | 88.9% / 88.9% | 81.4% / 89.4% | 99.0% (0.979) |",
+   "value": "81.4%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:correct"
+  },
+  {
+   "id": "card.readme:aacr.8",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| pi-review panel (high) | 348 / 347.5 | 66.9% / 66.8% | 88.9% / 88.9% | 81.4% / 89.4% | 99.0% (0.979) |",
+   "value": "89.4%",
+   "group": "readme:aacr",
+   "q": "aacr:pireview-panel-high-g61:correct"
+  },
+  {
+   "id": "card.second-judge.16",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| pi-review panel (high) | 348 / 347.5 | 66.9% / 66.8% | 88.9% / 88.9% | 81.4% / 89.4% | 99.0% (0.979) |",
+   "value": "99.0%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:pct"
+  },
+  {
+   "id": "card.second-judge.17",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| pi-review panel (high) | 348 / 347.5 | 66.9% / 66.8% | 88.9% / 88.9% | 81.4% / 89.4% | 99.0% (0.979) |",
+   "value": "0.979",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:kappa"
+  },
+  {
+   "id": "card.second-judge.18",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Claude Code (Opus 5.5) | 324 / 324.5 | 62.3% / 62.4% | 81.1% / 80.6% | 80.8% / 80.6% | 99.0% (0.980) |",
+   "value": "324",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:found"
+  },
+  {
+   "id": "card.readme:aacr.9",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Claude Code (Opus 5.5) | 324 / 324.5 | 62.3% / 62.4% | 81.1% / 80.6% | 80.8% / 80.6% | 99.0% (0.980) |",
+   "value": "324.5",
+   "group": "readme:aacr",
+   "q": "aacr:claude-code-opus55:found"
+  },
+  {
+   "id": "card.second-judge.19",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Claude Code (Opus 5.5) | 324 / 324.5 | 62.3% / 62.4% | 81.1% / 80.6% | 80.8% / 80.6% | 99.0% (0.980) |",
+   "value": "62.3%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:recall"
+  },
+  {
+   "id": "card.readme:aacr.10",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Claude Code (Opus 5.5) | 324 / 324.5 | 62.3% / 62.4% | 81.1% / 80.6% | 80.8% / 80.6% | 99.0% (0.980) |",
+   "value": "62.4%",
+   "group": "readme:aacr",
+   "q": "aacr:claude-code-opus55:recall"
+  },
+  {
+   "id": "card.second-judge.20",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Claude Code (Opus 5.5) | 324 / 324.5 | 62.3% / 62.4% | 81.1% / 80.6% | 80.8% / 80.6% | 99.0% (0.980) |",
+   "value": "81.1%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:high_rec"
+  },
+  {
+   "id": "card.readme:aacr.11",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Claude Code (Opus 5.5) | 324 / 324.5 | 62.3% / 62.4% | 81.1% / 80.6% | 80.8% / 80.6% | 99.0% (0.980) |",
+   "value": "80.6%",
+   "group": "readme:aacr",
+   "q": "aacr:claude-code-opus55:high_rec"
+  },
+  {
+   "id": "card.second-judge.21",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Claude Code (Opus 5.5) | 324 / 324.5 | 62.3% / 62.4% | 81.1% / 80.6% | 80.8% / 80.6% | 99.0% (0.980) |",
+   "value": "80.8%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:correct"
+  },
+  {
+   "id": "card.readme:aacr.12",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Claude Code (Opus 5.5) | 324 / 324.5 | 62.3% / 62.4% | 81.1% / 80.6% | 80.8% / 80.6% | 99.0% (0.980) |",
+   "value": "80.6%",
+   "group": "readme:aacr",
+   "q": "aacr:claude-code-opus55:correct"
+  },
+  {
+   "id": "card.second-judge.22",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Claude Code (Opus 5.5) | 324 / 324.5 | 62.3% / 62.4% | 81.1% / 80.6% | 80.8% / 80.6% | 99.0% (0.980) |",
+   "value": "99.0%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:pct"
+  },
+  {
+   "id": "card.second-judge.23",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Claude Code (Opus 5.5) | 324 / 324.5 | 62.3% / 62.4% | 81.1% / 80.6% | 80.8% / 80.6% | 99.0% (0.980) |",
+   "value": "0.980",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:kappa"
+  },
+  {
+   "id": "card.second-judge.24",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review (high) | 296.5 / 298.5 | 57.0% / 57.4% | 70.6% / 70.6% | 76.8% / 86.1% | 99.2% (0.985) |",
+   "value": "296.5",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:found"
+  },
+  {
+   "id": "card.readme:aacr.13",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review (high) | 296.5 / 298.5 | 57.0% / 57.4% | 70.6% / 70.6% | 76.8% / 86.1% | 99.2% (0.985) |",
+   "value": "298.5",
+   "group": "readme:aacr",
+   "q": "aacr:ocr-high-g61:found"
+  },
+  {
+   "id": "card.second-judge.25",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review (high) | 296.5 / 298.5 | 57.0% / 57.4% | 70.6% / 70.6% | 76.8% / 86.1% | 99.2% (0.985) |",
+   "value": "57.0%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:recall"
+  },
+  {
+   "id": "card.readme:aacr.14",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review (high) | 296.5 / 298.5 | 57.0% / 57.4% | 70.6% / 70.6% | 76.8% / 86.1% | 99.2% (0.985) |",
+   "value": "57.4%",
+   "group": "readme:aacr",
+   "q": "aacr:ocr-high-g61:recall"
+  },
+  {
+   "id": "card.second-judge.26",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review (high) | 296.5 / 298.5 | 57.0% / 57.4% | 70.6% / 70.6% | 76.8% / 86.1% | 99.2% (0.985) |",
+   "value": "70.6%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:high_rec"
+  },
+  {
+   "id": "card.readme:aacr.15",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review (high) | 296.5 / 298.5 | 57.0% / 57.4% | 70.6% / 70.6% | 76.8% / 86.1% | 99.2% (0.985) |",
+   "value": "70.6%",
+   "group": "readme:aacr",
+   "q": "aacr:ocr-high-g61:high_rec"
+  },
+  {
+   "id": "card.second-judge.27",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review (high) | 296.5 / 298.5 | 57.0% / 57.4% | 70.6% / 70.6% | 76.8% / 86.1% | 99.2% (0.985) |",
+   "value": "76.8%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:correct"
+  },
+  {
+   "id": "card.readme:aacr.16",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review (high) | 296.5 / 298.5 | 57.0% / 57.4% | 70.6% / 70.6% | 76.8% / 86.1% | 99.2% (0.985) |",
+   "value": "86.1%",
+   "group": "readme:aacr",
+   "q": "aacr:ocr-high-g61:correct"
+  },
+  {
+   "id": "card.second-judge.28",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review (high) | 296.5 / 298.5 | 57.0% / 57.4% | 70.6% / 70.6% | 76.8% / 86.1% | 99.2% (0.985) |",
+   "value": "99.2%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:pct"
+  },
+  {
+   "id": "card.second-judge.29",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review (high) | 296.5 / 298.5 | 57.0% / 57.4% | 70.6% / 70.6% | 76.8% / 86.1% | 99.2% (0.985) |",
+   "value": "0.985",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:kappa"
+  },
+  {
+   "id": "card.second-judge.30",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Codex CLI (high) | 287.5 / 287 | 55.3% / 55.2% | 90.6% / 90.0% | 87.5% / 92.7% | 99.2% (0.985) |",
+   "value": "287.5",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:found"
+  },
+  {
+   "id": "card.readme:aacr.17",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Codex CLI (high) | 287.5 / 287 | 55.3% / 55.2% | 90.6% / 90.0% | 87.5% / 92.7% | 99.2% (0.985) |",
+   "value": "287",
+   "group": "readme:aacr",
+   "q": "aacr:codex-high-g61:found"
+  },
+  {
+   "id": "card.second-judge.31",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Codex CLI (high) | 287.5 / 287 | 55.3% / 55.2% | 90.6% / 90.0% | 87.5% / 92.7% | 99.2% (0.985) |",
+   "value": "55.3%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:recall"
+  },
+  {
+   "id": "card.readme:aacr.18",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Codex CLI (high) | 287.5 / 287 | 55.3% / 55.2% | 90.6% / 90.0% | 87.5% / 92.7% | 99.2% (0.985) |",
+   "value": "55.2%",
+   "group": "readme:aacr",
+   "q": "aacr:codex-high-g61:recall"
+  },
+  {
+   "id": "card.second-judge.32",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Codex CLI (high) | 287.5 / 287 | 55.3% / 55.2% | 90.6% / 90.0% | 87.5% / 92.7% | 99.2% (0.985) |",
+   "value": "90.6%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:high_rec"
+  },
+  {
+   "id": "card.readme:aacr.19",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Codex CLI (high) | 287.5 / 287 | 55.3% / 55.2% | 90.6% / 90.0% | 87.5% / 92.7% | 99.2% (0.985) |",
+   "value": "90.0%",
+   "group": "readme:aacr",
+   "q": "aacr:codex-high-g61:high_rec"
+  },
+  {
+   "id": "card.second-judge.33",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Codex CLI (high) | 287.5 / 287 | 55.3% / 55.2% | 90.6% / 90.0% | 87.5% / 92.7% | 99.2% (0.985) |",
+   "value": "87.5%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:correct"
+  },
+  {
+   "id": "card.readme:aacr.20",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Codex CLI (high) | 287.5 / 287 | 55.3% / 55.2% | 90.6% / 90.0% | 87.5% / 92.7% | 99.2% (0.985) |",
+   "value": "92.7%",
+   "group": "readme:aacr",
+   "q": "aacr:codex-high-g61:correct"
+  },
+  {
+   "id": "card.second-judge.34",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Codex CLI (high) | 287.5 / 287 | 55.3% / 55.2% | 90.6% / 90.0% | 87.5% / 92.7% | 99.2% (0.985) |",
+   "value": "99.2%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:pct"
+  },
+  {
+   "id": "card.second-judge.35",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| Codex CLI (high) | 287.5 / 287 | 55.3% / 55.2% | 90.6% / 90.0% | 87.5% / 92.7% | 99.2% (0.985) |",
+   "value": "0.985",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:kappa"
+  },
+  {
+   "id": "card.second-judge.36",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |",
+   "value": "263.5",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:found"
+  },
+  {
+   "id": "card.readme:aacr.21",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |",
+   "value": "263.5",
+   "group": "readme:aacr",
+   "q": "aacr:opencode-native-pr-g61:found"
+  },
+  {
+   "id": "card.second-judge.37",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |",
+   "value": "50.7%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:recall"
+  },
+  {
+   "id": "card.readme:aacr.22",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |",
+   "value": "50.7%",
+   "group": "readme:aacr",
+   "q": "aacr:opencode-native-pr-g61:recall"
+  },
+  {
+   "id": "card.second-judge.38",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |",
+   "value": "84.4%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:high_rec"
+  },
+  {
+   "id": "card.readme:aacr.23",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |",
+   "value": "84.4%",
+   "group": "readme:aacr",
+   "q": "aacr:opencode-native-pr-g61:high_rec"
+  },
+  {
+   "id": "card.second-judge.39",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |",
+   "value": "88.1%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:correct"
+  },
+  {
+   "id": "card.readme:aacr.24",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |",
+   "value": "92.7%",
+   "group": "readme:aacr",
+   "q": "aacr:opencode-native-pr-g61:correct"
+  },
+  {
+   "id": "card.second-judge.40",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |",
+   "value": "99.6%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:pct"
+  },
+  {
+   "id": "card.second-judge.41",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode (+ PR text) | 263.5 / 263.5 | 50.7% / 50.7% | 84.4% / 84.4% | 88.1% / 92.7% | 99.6% (0.992) |",
+   "value": "0.992",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:kappa"
+  },
+  {
+   "id": "card.second-judge.42",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |",
+   "value": "192.5",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:found"
+  },
+  {
+   "id": "card.readme:aacr.25",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |",
+   "value": "194",
+   "group": "readme:aacr",
+   "q": "aacr:pragent-g61:found"
+  },
+  {
+   "id": "card.second-judge.43",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |",
+   "value": "37.0%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:recall"
+  },
+  {
+   "id": "card.readme:aacr.26",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |",
+   "value": "37.3%",
+   "group": "readme:aacr",
+   "q": "aacr:pragent-g61:recall"
+  },
+  {
+   "id": "card.second-judge.44",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |",
+   "value": "61.1%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:high_rec"
+  },
+  {
+   "id": "card.readme:aacr.27",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |",
+   "value": "61.7%",
+   "group": "readme:aacr",
+   "q": "aacr:pragent-g61:high_rec"
+  },
+  {
+   "id": "card.second-judge.45",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |",
+   "value": "74.5%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:correct"
+  },
+  {
+   "id": "card.readme:aacr.28",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |",
+   "value": "75.7%",
+   "group": "readme:aacr",
+   "q": "aacr:pragent-g61:correct"
+  },
+  {
+   "id": "card.second-judge.46",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |",
+   "value": "97.9%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:pct"
+  },
+  {
+   "id": "card.second-judge.47",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 192.5 / 194 | 37.0% / 37.3% | 61.1% / 61.7% | 74.5% / 75.7% | 97.9% (0.956) |",
+   "value": "0.956",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:kappa"
+  },
+  {
+   "id": "card.readme:aacr.29",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "Recall is unchanged: every reviewer is within 0.4 points of its published",
+   "value": "0.4",
+   "group": "readme:aacr",
+   "q": "max(abs({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:recall} - {aacr:quickreview-frozen:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:recall} - {aacr:pireview-panel-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:recall} - {aacr:claude-code-opus55:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:recall} - {aacr:ocr-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:recall} - {aacr:codex-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:recall} - {aacr:opencode-native-pr-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:recall} - {aacr:pragent-g61:recall}))"
+  },
+  {
+   "id": "card.readme:aacr.30",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "judge for six of the seven reviewers, by 1.2 to 9.3 points, and level for",
+   "value": "1.2",
+   "group": "readme:aacr",
+   "q": "abs(max({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:correct} - {aacr:quickreview-frozen:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:correct} - {aacr:pireview-panel-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:correct} - {aacr:ocr-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:correct} - {aacr:codex-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:correct} - {aacr:opencode-native-pr-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:correct} - {aacr:pragent-g61:correct}))"
+  },
+  {
+   "id": "card.readme:aacr.31",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "judge for six of the seven reviewers, by 1.2 to 9.3 points, and level for",
+   "value": "9.3",
+   "group": "readme:aacr",
+   "q": "abs(min({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:correct} - {aacr:quickreview-frozen:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:correct} - {aacr:pireview-panel-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:correct} - {aacr:ocr-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:correct} - {aacr:codex-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:correct} - {aacr:opencode-native-pr-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:correct} - {aacr:pragent-g61:correct}))"
+  },
+  {
+   "id": "card.readme:aacr.32",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "Claude Code (+0.2). Most of the disagreements grade as incorrect a comment",
+   "value": "+0.2",
+   "group": "readme:aacr",
+   "q": "{second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:correct} - {aacr:claude-code-opus55:correct}"
+  },
+  {
+   "id": "card.second-judge.48",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 16.9 / 16.2 | 66.5 / 65.8 | 27.0 / 26.1 |",
+   "value": "16.9",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_precision"
+  },
+  {
+   "id": "card.readme:martian.1",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 16.9 / 16.2 | 66.5 / 65.8 | 27.0 / 26.1 |",
+   "value": "16.2",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|quickreview-frozen:core_precision"
+  },
+  {
+   "id": "card.second-judge.49",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 16.9 / 16.2 | 66.5 / 65.8 | 27.0 / 26.1 |",
+   "value": "66.5",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_recall"
+  },
+  {
+   "id": "card.readme:martian.2",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 16.9 / 16.2 | 66.5 / 65.8 | 27.0 / 26.1 |",
+   "value": "65.8",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|quickreview-frozen:core_recall"
+  },
+  {
+   "id": "card.second-judge.50",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 16.9 / 16.2 | 66.5 / 65.8 | 27.0 / 26.1 |",
+   "value": "27.0",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1"
+  },
+  {
+   "id": "card.readme:martian.3",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 16.9 / 16.2 | 66.5 / 65.8 | 27.0 / 26.1 |",
+   "value": "26.1",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|quickreview-frozen:core_f1"
+  },
+  {
+   "id": "card.second-judge.51",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-extended-v2 | 63.3 / 56.2 | 60.1 / 60.1 | 61.7 / 58.1 |",
+   "value": "63.3",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_precision"
+  },
+  {
+   "id": "card.readme:martian.4",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-extended-v2 | 63.3 / 56.2 | 60.1 / 60.1 | 61.7 / 58.1 |",
+   "value": "56.2",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|rejudged-qodo-extended-v2:core_precision"
+  },
+  {
+   "id": "card.second-judge.52",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-extended-v2 | 63.3 / 56.2 | 60.1 / 60.1 | 61.7 / 58.1 |",
+   "value": "60.1",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_recall"
+  },
+  {
+   "id": "card.readme:martian.5",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-extended-v2 | 63.3 / 56.2 | 60.1 / 60.1 | 61.7 / 58.1 |",
+   "value": "60.1",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|rejudged-qodo-extended-v2:core_recall"
+  },
+  {
+   "id": "card.second-judge.53",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-extended-v2 | 63.3 / 56.2 | 60.1 / 60.1 | 61.7 / 58.1 |",
+   "value": "61.7",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_f1"
+  },
+  {
+   "id": "card.readme:martian.6",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-extended-v2 | 63.3 / 56.2 | 60.1 / 60.1 | 61.7 / 58.1 |",
+   "value": "58.1",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|rejudged-qodo-extended-v2:core_f1"
+  },
+  {
+   "id": "card.second-judge.54",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| cubic-v2 | 57.6 / 54.3 | 62.0 / 60.1 | 59.8 / 57.1 |",
+   "value": "57.6",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_precision"
+  },
+  {
+   "id": "card.readme:martian.7",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| cubic-v2 | 57.6 / 54.3 | 62.0 / 60.1 | 59.8 / 57.1 |",
+   "value": "54.3",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|rejudged-cubic-v2:core_precision"
+  },
+  {
+   "id": "card.second-judge.55",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| cubic-v2 | 57.6 / 54.3 | 62.0 / 60.1 | 59.8 / 57.1 |",
+   "value": "62.0",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_recall"
+  },
+  {
+   "id": "card.readme:martian.8",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| cubic-v2 | 57.6 / 54.3 | 62.0 / 60.1 | 59.8 / 57.1 |",
+   "value": "60.1",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|rejudged-cubic-v2:core_recall"
+  },
+  {
+   "id": "card.second-judge.56",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| cubic-v2 | 57.6 / 54.3 | 62.0 / 60.1 | 59.8 / 57.1 |",
+   "value": "59.8",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_f1"
+  },
+  {
+   "id": "card.readme:martian.9",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| cubic-v2 | 57.6 / 54.3 | 62.0 / 60.1 | 59.8 / 57.1 |",
+   "value": "57.1",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|rejudged-cubic-v2:core_f1"
+  },
+  {
+   "id": "card.second-judge.57",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 28.8 / 26.7 | 62.0 / 58.9 | 39.4 / 36.8 |",
+   "value": "28.8",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_precision"
+  },
+  {
+   "id": "card.readme:martian.10",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 28.8 / 26.7 | 62.0 / 58.9 | 39.4 / 36.8 |",
+   "value": "26.7",
+   "group": "readme:martian",
+   "q": "martian:final1-ocr-martian50|open-code-review:core_precision"
+  },
+  {
+   "id": "card.second-judge.58",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 28.8 / 26.7 | 62.0 / 58.9 | 39.4 / 36.8 |",
+   "value": "62.0",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_recall"
+  },
+  {
+   "id": "card.readme:martian.11",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 28.8 / 26.7 | 62.0 / 58.9 | 39.4 / 36.8 |",
+   "value": "58.9",
+   "group": "readme:martian",
+   "q": "martian:final1-ocr-martian50|open-code-review:core_recall"
+  },
+  {
+   "id": "card.second-judge.59",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 28.8 / 26.7 | 62.0 / 58.9 | 39.4 / 36.8 |",
+   "value": "39.4",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_f1"
+  },
+  {
+   "id": "card.readme:martian.12",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 28.8 / 26.7 | 62.0 / 58.9 | 39.4 / 36.8 |",
+   "value": "36.8",
+   "group": "readme:martian",
+   "q": "martian:final1-ocr-martian50|open-code-review:core_f1"
+  },
+  {
+   "id": "card.second-judge.60",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.0 / 41.9 | 38.0 / 36.1 | 42.4 / 38.8 |",
+   "value": "48.0",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_precision"
+  },
+  {
+   "id": "card.readme:martian.13",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.0 / 41.9 | 38.0 / 36.1 | 42.4 / 38.8 |",
+   "value": "41.9",
+   "group": "readme:martian",
+   "q": "martian:final1-pragent-martian50|pr-agent:core_precision"
+  },
+  {
+   "id": "card.second-judge.61",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.0 / 41.9 | 38.0 / 36.1 | 42.4 / 38.8 |",
+   "value": "38.0",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_recall"
+  },
+  {
+   "id": "card.readme:martian.14",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.0 / 41.9 | 38.0 / 36.1 | 42.4 / 38.8 |",
+   "value": "36.1",
+   "group": "readme:martian",
+   "q": "martian:final1-pragent-martian50|pr-agent:core_recall"
+  },
+  {
+   "id": "card.second-judge.62",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.0 / 41.9 | 38.0 / 36.1 | 42.4 / 38.8 |",
+   "value": "42.4",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_f1"
+  },
+  {
+   "id": "card.readme:martian.15",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.0 / 41.9 | 38.0 / 36.1 | 42.4 / 38.8 |",
+   "value": "38.8",
+   "group": "readme:martian",
+   "q": "martian:final1-pragent-martian50|pr-agent:core_f1"
+  },
+  {
+   "id": "card.second-judge.63",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| claude-code | 42.0 / 36.5 | 43.0 / 41.1 | 42.5 / 38.7 |",
+   "value": "42.0",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_precision"
+  },
+  {
+   "id": "card.readme:martian.16",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| claude-code | 42.0 / 36.5 | 43.0 / 41.1 | 42.5 / 38.7 |",
+   "value": "36.5",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|rejudged-claude-code:core_precision"
+  },
+  {
+   "id": "card.second-judge.64",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| claude-code | 42.0 / 36.5 | 43.0 / 41.1 | 42.5 / 38.7 |",
+   "value": "43.0",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_recall"
+  },
+  {
+   "id": "card.readme:martian.17",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| claude-code | 42.0 / 36.5 | 43.0 / 41.1 | 42.5 / 38.7 |",
+   "value": "41.1",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|rejudged-claude-code:core_recall"
+  },
+  {
+   "id": "card.second-judge.65",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| claude-code | 42.0 / 36.5 | 43.0 / 41.1 | 42.5 / 38.7 |",
+   "value": "42.5",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_f1"
+  },
+  {
+   "id": "card.readme:martian.18",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| claude-code | 42.0 / 36.5 | 43.0 / 41.1 | 42.5 / 38.7 |",
+   "value": "38.7",
+   "group": "readme:martian",
+   "q": "martian:final1-martian50|rejudged-claude-code:core_f1"
+  },
+  {
+   "id": "card.second-judge.66",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 36.1 / 32.7 | 35.4 / 33.5 | 35.8 / 33.1 |",
+   "value": "36.1",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_precision"
+  },
+  {
+   "id": "card.readme:martian.19",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 36.1 / 32.7 | 35.4 / 33.5 | 35.8 / 33.1 |",
+   "value": "32.7",
+   "group": "readme:martian",
+   "q": "martian:final1-opencode-martian50|opencode:core_precision"
+  },
+  {
+   "id": "card.second-judge.67",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 36.1 / 32.7 | 35.4 / 33.5 | 35.8 / 33.1 |",
+   "value": "35.4",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_recall"
+  },
+  {
+   "id": "card.readme:martian.20",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 36.1 / 32.7 | 35.4 / 33.5 | 35.8 / 33.1 |",
+   "value": "33.5",
+   "group": "readme:martian",
+   "q": "martian:final1-opencode-martian50|opencode:core_recall"
+  },
+  {
+   "id": "card.second-judge.68",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 36.1 / 32.7 | 35.4 / 33.5 | 35.8 / 33.1 |",
+   "value": "35.8",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_f1"
+  },
+  {
+   "id": "card.readme:martian.21",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 36.1 / 32.7 | 35.4 / 33.5 | 35.8 / 33.1 |",
+   "value": "33.1",
+   "group": "readme:martian",
+   "q": "martian:final1-opencode-martian50|opencode:core_f1"
+  },
+  {
+   "id": "card.second-judge.69",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-exhaustive | 58.4 / 58.0 | 46.7 / 46.4 | 51.9 / 51.5 |",
+   "value": "58.4",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:precision"
+  },
+  {
+   "id": "card.readme:qodo.1",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-exhaustive | 58.4 / 58.0 | 46.7 / 46.4 | 51.9 / 51.5 |",
+   "value": "58.0",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|qodo-exhaustive:precision"
+  },
+  {
+   "id": "card.second-judge.70",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-exhaustive | 58.4 / 58.0 | 46.7 / 46.4 | 51.9 / 51.5 |",
+   "value": "46.7",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:recall"
+  },
+  {
+   "id": "card.readme:qodo.2",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-exhaustive | 58.4 / 58.0 | 46.7 / 46.4 | 51.9 / 51.5 |",
+   "value": "46.4",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|qodo-exhaustive:recall"
+  },
+  {
+   "id": "card.second-judge.71",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-exhaustive | 58.4 / 58.0 | 46.7 / 46.4 | 51.9 / 51.5 |",
+   "value": "51.9",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:f1"
+  },
+  {
+   "id": "card.readme:qodo.3",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-exhaustive | 58.4 / 58.0 | 46.7 / 46.4 | 51.9 / 51.5 |",
+   "value": "51.5",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|qodo-exhaustive:f1"
+  },
+  {
+   "id": "card.second-judge.72",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-precise | 68.6 / 68.0 | 36.2 / 35.9 | 47.4 / 47.0 |",
+   "value": "68.6",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:precision"
+  },
+  {
+   "id": "card.readme:qodo.4",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-precise | 68.6 / 68.0 | 36.2 / 35.9 | 47.4 / 47.0 |",
+   "value": "68.0",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|qodo-precise:precision"
+  },
+  {
+   "id": "card.second-judge.73",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-precise | 68.6 / 68.0 | 36.2 / 35.9 | 47.4 / 47.0 |",
+   "value": "36.2",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:recall"
+  },
+  {
+   "id": "card.readme:qodo.5",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-precise | 68.6 / 68.0 | 36.2 / 35.9 | 47.4 / 47.0 |",
+   "value": "35.9",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|qodo-precise:recall"
+  },
+  {
+   "id": "card.second-judge.74",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-precise | 68.6 / 68.0 | 36.2 / 35.9 | 47.4 / 47.0 |",
+   "value": "47.4",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:f1"
+  },
+  {
+   "id": "card.readme:qodo.6",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| qodo-precise | 68.6 / 68.0 | 36.2 / 35.9 | 47.4 / 47.0 |",
+   "value": "47.0",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|qodo-precise:f1"
+  },
+  {
+   "id": "card.second-judge.75",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 38.5 / 37.3 | 46.9 / 45.3 | 42.3 / 40.9 |",
+   "value": "38.5",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:precision"
+  },
+  {
+   "id": "card.readme:qodo.7",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 38.5 / 37.3 | 46.9 / 45.3 | 42.3 / 40.9 |",
+   "value": "37.3",
+   "group": "readme:qodo",
+   "q": "qodo:final1-qodo-pr100|quickreview-frozen:precision"
+  },
+  {
+   "id": "card.second-judge.76",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 38.5 / 37.3 | 46.9 / 45.3 | 42.3 / 40.9 |",
+   "value": "46.9",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:recall"
+  },
+  {
+   "id": "card.readme:qodo.8",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 38.5 / 37.3 | 46.9 / 45.3 | 42.3 / 40.9 |",
+   "value": "45.3",
+   "group": "readme:qodo",
+   "q": "qodo:final1-qodo-pr100|quickreview-frozen:recall"
+  },
+  {
+   "id": "card.second-judge.77",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 38.5 / 37.3 | 46.9 / 45.3 | 42.3 / 40.9 |",
+   "value": "42.3",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:f1"
+  },
+  {
+   "id": "card.readme:qodo.9",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| QuickReview (frozen) | 38.5 / 37.3 | 46.9 / 45.3 | 42.3 / 40.9 |",
+   "value": "40.9",
+   "group": "readme:qodo",
+   "q": "qodo:final1-qodo-pr100|quickreview-frozen:f1"
+  },
+  {
+   "id": "card.second-judge.78",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| augment | 67.5 / 67.5 | 29.7 / 29.7 | 41.2 / 41.2 |",
+   "value": "67.5",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:precision"
+  },
+  {
+   "id": "card.readme:qodo.10",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| augment | 67.5 / 67.5 | 29.7 / 29.7 | 41.2 / 41.2 |",
+   "value": "67.5",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|augment:precision"
+  },
+  {
+   "id": "card.second-judge.79",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| augment | 67.5 / 67.5 | 29.7 / 29.7 | 41.2 / 41.2 |",
+   "value": "29.7",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:recall"
+  },
+  {
+   "id": "card.readme:qodo.11",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| augment | 67.5 / 67.5 | 29.7 / 29.7 | 41.2 / 41.2 |",
+   "value": "29.7",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|augment:recall"
+  },
+  {
+   "id": "card.second-judge.80",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| augment | 67.5 / 67.5 | 29.7 / 29.7 | 41.2 / 41.2 |",
+   "value": "41.2",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:f1"
+  },
+  {
+   "id": "card.readme:qodo.12",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| augment | 67.5 / 67.5 | 29.7 / 29.7 | 41.2 / 41.2 |",
+   "value": "41.2",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|augment:f1"
+  },
+  {
+   "id": "card.second-judge.81",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 65.6 / 64.9 | 29.3 / 29.0 | 40.5 / 40.0 |",
+   "value": "65.6",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:precision"
+  },
+  {
+   "id": "card.readme:qodo.13",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 65.6 / 64.9 | 29.3 / 29.0 | 40.5 / 40.0 |",
+   "value": "64.9",
+   "group": "readme:qodo",
+   "q": "qodo:final1-opencode-qodo-pr100|opencode:precision"
+  },
+  {
+   "id": "card.second-judge.82",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 65.6 / 64.9 | 29.3 / 29.0 | 40.5 / 40.0 |",
+   "value": "29.3",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:recall"
+  },
+  {
+   "id": "card.readme:qodo.14",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 65.6 / 64.9 | 29.3 / 29.0 | 40.5 / 40.0 |",
+   "value": "29.0",
+   "group": "readme:qodo",
+   "q": "qodo:final1-opencode-qodo-pr100|opencode:recall"
+  },
+  {
+   "id": "card.second-judge.83",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 65.6 / 64.9 | 29.3 / 29.0 | 40.5 / 40.0 |",
+   "value": "40.5",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:f1"
+  },
+  {
+   "id": "card.readme:qodo.15",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| OpenCode | 65.6 / 64.9 | 29.3 / 29.0 | 40.5 / 40.0 |",
+   "value": "40.0",
+   "group": "readme:qodo",
+   "q": "qodo:final1-opencode-qodo-pr100|opencode:f1"
+  },
+  {
+   "id": "card.second-judge.84",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| copilot | 48.2 / 46.8 | 34.7 / 33.6 | 40.3 / 39.1 |",
+   "value": "48.2",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:precision"
+  },
+  {
+   "id": "card.readme:qodo.16",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| copilot | 48.2 / 46.8 | 34.7 / 33.6 | 40.3 / 39.1 |",
+   "value": "46.8",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|copilot:precision"
+  },
+  {
+   "id": "card.second-judge.85",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| copilot | 48.2 / 46.8 | 34.7 / 33.6 | 40.3 / 39.1 |",
+   "value": "34.7",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:recall"
+  },
+  {
+   "id": "card.readme:qodo.17",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| copilot | 48.2 / 46.8 | 34.7 / 33.6 | 40.3 / 39.1 |",
+   "value": "33.6",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|copilot:recall"
+  },
+  {
+   "id": "card.second-judge.86",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| copilot | 48.2 / 46.8 | 34.7 / 33.6 | 40.3 / 39.1 |",
+   "value": "40.3",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:f1"
+  },
+  {
+   "id": "card.readme:qodo.18",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| copilot | 48.2 / 46.8 | 34.7 / 33.6 | 40.3 / 39.1 |",
+   "value": "39.1",
+   "group": "readme:qodo",
+   "q": "qodo:ext-r6-qodo-pr100|copilot:f1"
+  },
+  {
+   "id": "card.second-judge.87",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 48.0 / 47.1 | 28.6 / 28.1 | 35.9 / 35.2 |",
+   "value": "48.0",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:precision"
+  },
+  {
+   "id": "card.readme:qodo.19",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 48.0 / 47.1 | 28.6 / 28.1 | 35.9 / 35.2 |",
+   "value": "47.1",
+   "group": "readme:qodo",
+   "q": "qodo:final1-ocr-qodo-pr100|open-code-review:precision"
+  },
+  {
+   "id": "card.second-judge.88",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 48.0 / 47.1 | 28.6 / 28.1 | 35.9 / 35.2 |",
+   "value": "28.6",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:recall"
+  },
+  {
+   "id": "card.readme:qodo.20",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 48.0 / 47.1 | 28.6 / 28.1 | 35.9 / 35.2 |",
+   "value": "28.1",
+   "group": "readme:qodo",
+   "q": "qodo:final1-ocr-qodo-pr100|open-code-review:recall"
+  },
+  {
+   "id": "card.second-judge.89",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 48.0 / 47.1 | 28.6 / 28.1 | 35.9 / 35.2 |",
+   "value": "35.9",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:f1"
+  },
+  {
+   "id": "card.readme:qodo.21",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| open-code-review | 48.0 / 47.1 | 28.6 / 28.1 | 35.9 / 35.2 |",
+   "value": "35.2",
+   "group": "readme:qodo",
+   "q": "qodo:final1-ocr-qodo-pr100|open-code-review:f1"
+  },
+  {
+   "id": "card.second-judge.90",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.1 / 47.2 | 27.8 / 27.2 | 35.2 / 34.5 |",
+   "value": "48.1",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:precision"
+  },
+  {
+   "id": "card.readme:qodo.22",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.1 / 47.2 | 27.8 / 27.2 | 35.2 / 34.5 |",
+   "value": "47.2",
+   "group": "readme:qodo",
+   "q": "qodo:final1-pragent-qodo-pr100|pr-agent:precision"
+  },
+  {
+   "id": "card.second-judge.91",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.1 / 47.2 | 27.8 / 27.2 | 35.2 / 34.5 |",
+   "value": "27.8",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:recall"
+  },
+  {
+   "id": "card.readme:qodo.23",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.1 / 47.2 | 27.8 / 27.2 | 35.2 / 34.5 |",
+   "value": "27.2",
+   "group": "readme:qodo",
+   "q": "qodo:final1-pragent-qodo-pr100|pr-agent:recall"
+  },
+  {
+   "id": "card.second-judge.92",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.1 / 47.2 | 27.8 / 27.2 | 35.2 / 34.5 |",
+   "value": "35.2",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:f1"
+  },
+  {
+   "id": "card.readme:qodo.24",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "| PR-Agent | 48.1 / 47.2 | 27.8 / 27.2 | 35.2 / 34.5 |",
+   "value": "34.5",
+   "group": "readme:qodo",
+   "q": "qodo:final1-pragent-qodo-pr100|pr-agent:f1"
+  },
+  {
+   "id": "card.readme:martian.22",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "0.9 to 3.8 points higher for every Martian tool, and Qodo F1 is 0 to 1.4 points",
+   "value": "0.9",
+   "group": "readme:martian",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1} - {martian:final1-martian50|quickreview-frozen:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_f1} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_f1} - {martian:final1-martian50|rejudged-cubic-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_f1} - {martian:final1-martian50|rejudged-claude-code:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_f1} - {martian:final1-ocr-martian50|open-code-review:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_f1} - {martian:final1-pragent-martian50|pr-agent:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_f1} - {martian:final1-opencode-martian50|opencode:core_f1})"
+  },
+  {
+   "id": "card.readme:martian.23",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "0.9 to 3.8 points higher for every Martian tool, and Qodo F1 is 0 to 1.4 points",
+   "value": "3.8",
+   "group": "readme:martian",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1} - {martian:final1-martian50|quickreview-frozen:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_f1} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_f1} - {martian:final1-martian50|rejudged-cubic-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_f1} - {martian:final1-martian50|rejudged-claude-code:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_f1} - {martian:final1-ocr-martian50|open-code-review:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_f1} - {martian:final1-pragent-martian50|pr-agent:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_f1} - {martian:final1-opencode-martian50|opencode:core_f1})"
+  },
+  {
+   "id": "card.readme:qodo.25",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "0.9 to 3.8 points higher for every Martian tool, and Qodo F1 is 0 to 1.4 points",
+   "value": "0",
+   "group": "readme:qodo",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:f1} - {qodo:final1-qodo-pr100|quickreview-frozen:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:f1} - {qodo:final1-opencode-qodo-pr100|opencode:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:f1} - {qodo:final1-ocr-qodo-pr100|open-code-review:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:f1} - {qodo:final1-pragent-qodo-pr100|pr-agent:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:f1} - {qodo:ext-r6-qodo-pr100|qodo-exhaustive:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:f1} - {qodo:ext-r6-qodo-pr100|qodo-precise:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:f1} - {qodo:ext-r6-qodo-pr100|augment:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:f1} - {qodo:ext-r6-qodo-pr100|copilot:f1})"
+  },
+  {
+   "id": "card.readme:qodo.26",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "0.9 to 3.8 points higher for every Martian tool, and Qodo F1 is 0 to 1.4 points",
+   "value": "1.4",
+   "group": "readme:qodo",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:f1} - {qodo:final1-qodo-pr100|quickreview-frozen:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:f1} - {qodo:final1-opencode-qodo-pr100|opencode:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:f1} - {qodo:final1-ocr-qodo-pr100|open-code-review:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:f1} - {qodo:final1-pragent-qodo-pr100|pr-agent:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:f1} - {qodo:ext-r6-qodo-pr100|qodo-exhaustive:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:f1} - {qodo:ext-r6-qodo-pr100|qodo-precise:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:f1} - {qodo:ext-r6-qodo-pr100|augment:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:f1} - {qodo:ext-r6-qodo-pr100|copilot:f1})"
+  },
+  {
+   "id": "card.second-judge.93",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "passes qodo-exhaustive, by 0.2 points, a tie. F1: QuickReview passes augment.",
+   "value": "0.2",
+   "group": "second-judge",
+   "q": "{second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:recall} - {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:recall}"
+  },
+  {
+   "id": "bench.second-judge.1",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "third model family, on all 1{,}168 of their reviews the primary judge was",
+   "value": "1,168",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/judgements:rows"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.207",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "the change: every reviewer's recall is within 0.4 points of the primary",
+   "value": "0.4",
+   "group": "bench:tab:finalbuild",
+   "q": "max(abs({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:recall} - {aacr:quickreview-frozen:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:recall} - {aacr:pireview-panel-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:recall} - {aacr:claude-code-opus55:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:recall} - {aacr:ocr-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:recall} - {aacr:codex-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:recall} - {aacr:opencode-native-pr-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:recall} - {aacr:pragent-g61:recall}))"
+  },
+  {
+   "id": "bench.second-judge.2",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "97.9--99.6\\% of each reviewer's reviewer--defect pairs ($\\kappa = 0.93$ to",
+   "value": "97.9",
+   "group": "second-judge",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:pct})"
+  },
+  {
+   "id": "bench.second-judge.3",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "97.9--99.6\\% of each reviewer's reviewer--defect pairs ($\\kappa = 0.93$ to",
+   "value": "99.6%",
+   "group": "second-judge",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:pct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:pct})"
+  },
+  {
+   "id": "bench.second-judge.4",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "97.9--99.6\\% of each reviewer's reviewer--defect pairs ($\\kappa = 0.93$ to",
+   "value": "0.93",
+   "group": "second-judge",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:kappa})"
+  },
+  {
+   "id": "bench.second-judge.5",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "$0.99$; Table~\\ref{tab:dsjudge}). Comments correct is not. It is lower under",
+   "value": "0.99",
+   "group": "second-judge",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:kappa}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:kappa})"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.208",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "this judge for six of the seven reviewers, by 1.2 to 9.3 points (\\qcr{}'s",
+   "value": "1.2",
+   "group": "bench:tab:finalbuild",
+   "q": "abs(max({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:correct} - {aacr:quickreview-frozen:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:correct} - {aacr:pireview-panel-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:correct} - {aacr:ocr-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:correct} - {aacr:codex-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:correct} - {aacr:opencode-native-pr-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:correct} - {aacr:pragent-g61:correct}))"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.209",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "this judge for six of the seven reviewers, by 1.2 to 9.3 points (\\qcr{}'s",
+   "value": "9.3",
+   "group": "bench:tab:finalbuild",
+   "q": "abs(min({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:correct} - {aacr:quickreview-frozen:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:correct} - {aacr:pireview-panel-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:correct} - {aacr:ocr-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:correct} - {aacr:codex-high-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:correct} - {aacr:opencode-native-pr-g61:correct}, {second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:correct} - {aacr:pragent-g61:correct}))"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.210",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "frozen build from 92.4\\% to 85.4\\%), and level for Claude Code ($+0.2$).",
+   "value": "92.4%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:quickreview-frozen:correct"
+  },
+  {
+   "id": "bench.second-judge.6",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "frozen build from 92.4\\% to 85.4\\%), and level for Claude Code ($+0.2$).",
+   "value": "85.4%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:correct"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.211",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "frozen build from 92.4\\% to 85.4\\%), and level for Claude Code ($+0.2$).",
+   "value": "+0.2",
+   "group": "bench:tab:finalbuild",
+   "q": "{second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:correct} - {aacr:claude-code-opus55:correct}"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.212",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "is slightly more lenient: Core F1 is 0.9 to 3.8",
+   "value": "0.9",
+   "group": "bench:tab:finalbuild",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1} - {martian:final1-martian50|quickreview-frozen:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_f1} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_f1} - {martian:final1-martian50|rejudged-cubic-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_f1} - {martian:final1-martian50|rejudged-claude-code:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_f1} - {martian:final1-ocr-martian50|open-code-review:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_f1} - {martian:final1-pragent-martian50|pr-agent:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_f1} - {martian:final1-opencode-martian50|opencode:core_f1})"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.213",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "is slightly more lenient: Core F1 is 0.9 to 3.8",
+   "value": "3.8",
+   "group": "bench:tab:finalbuild",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1} - {martian:final1-martian50|quickreview-frozen:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-qodo-extended-v2:core_f1} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-cubic-v2:core_f1} - {martian:final1-martian50|rejudged-cubic-v2:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|rejudged-claude-code:core_f1} - {martian:final1-martian50|rejudged-claude-code:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-ocr-martian50|open-code-review:core_f1} - {martian:final1-ocr-martian50|open-code-review:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-pragent-martian50|pr-agent:core_f1} - {martian:final1-pragent-martian50|pr-agent:core_f1}, {second_judge:deepseek-v4.1-flash-1017/martian/final1-opencode-martian50|opencode:core_f1} - {martian:final1-opencode-martian50|opencode:core_f1})"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.214",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "points higher for every Martian tool, and Qodo F1 0 to 1.4 points higher.",
+   "value": "0",
+   "group": "bench:tab:finalbuild",
+   "q": "min({second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:f1} - {qodo:final1-qodo-pr100|quickreview-frozen:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:f1} - {qodo:final1-opencode-qodo-pr100|opencode:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:f1} - {qodo:final1-ocr-qodo-pr100|open-code-review:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:f1} - {qodo:final1-pragent-qodo-pr100|pr-agent:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:f1} - {qodo:ext-r6-qodo-pr100|qodo-exhaustive:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:f1} - {qodo:ext-r6-qodo-pr100|qodo-precise:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:f1} - {qodo:ext-r6-qodo-pr100|augment:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:f1} - {qodo:ext-r6-qodo-pr100|copilot:f1})"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.215",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "points higher for every Martian tool, and Qodo F1 0 to 1.4 points higher.",
+   "value": "1.4",
+   "group": "bench:tab:finalbuild",
+   "q": "max({second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:f1} - {qodo:final1-qodo-pr100|quickreview-frozen:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-opencode-qodo-pr100|opencode:f1} - {qodo:final1-opencode-qodo-pr100|opencode:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-ocr-qodo-pr100|open-code-review:f1} - {qodo:final1-ocr-qodo-pr100|open-code-review:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/final1-pragent-qodo-pr100|pr-agent:f1} - {qodo:final1-pragent-qodo-pr100|pr-agent:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:f1} - {qodo:ext-r6-qodo-pr100|qodo-exhaustive:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-precise:f1} - {qodo:ext-r6-qodo-pr100|qodo-precise:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|augment:f1} - {qodo:ext-r6-qodo-pr100|augment:f1}, {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|copilot:f1} - {qodo:ext-r6-qodo-pr100|copilot:f1})"
+  },
+  {
+   "id": "bench.second-judge.7",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Qodo, \\qcr{} passes qodo-exhaustive on recall (by 0.2 points, a tie) and",
+   "value": "0.2",
+   "group": "second-judge",
+   "q": "{second_judge:deepseek-v4.1-flash-1017/qodo/final1-qodo-pr100|quickreview-frozen:recall} - {second_judge:deepseek-v4.1-flash-1017/qodo/ext-r6-qodo-pr100|qodo-exhaustive:recall}"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.216",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "\\qcr{} frozen build & 88.7\\% & 88.8\\% & 97.2\\% & 98.9\\% & 92.4\\% & 85.4\\% & 0.93 \\\\",
+   "value": "88.7%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:quickreview-frozen:recall"
+  },
+  {
+   "id": "bench.second-judge.8",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "\\qcr{} frozen build & 88.7\\% & 88.8\\% & 97.2\\% & 98.9\\% & 92.4\\% & 85.4\\% & 0.93 \\\\",
+   "value": "88.8%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:recall"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.217",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "\\qcr{} frozen build & 88.7\\% & 88.8\\% & 97.2\\% & 98.9\\% & 92.4\\% & 85.4\\% & 0.93 \\\\",
+   "value": "97.2%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:quickreview-frozen:high_rec"
+  },
+  {
+   "id": "bench.second-judge.9",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "\\qcr{} frozen build & 88.7\\% & 88.8\\% & 97.2\\% & 98.9\\% & 92.4\\% & 85.4\\% & 0.93 \\\\",
+   "value": "98.9%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:high_rec"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.218",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "\\qcr{} frozen build & 88.7\\% & 88.8\\% & 97.2\\% & 98.9\\% & 92.4\\% & 85.4\\% & 0.93 \\\\",
+   "value": "92.4%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:quickreview-frozen:correct"
+  },
+  {
+   "id": "bench.second-judge.10",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "\\qcr{} frozen build & 88.7\\% & 88.8\\% & 97.2\\% & 98.9\\% & 92.4\\% & 85.4\\% & 0.93 \\\\",
+   "value": "85.4%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:correct"
+  },
+  {
+   "id": "bench.second-judge.11",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "\\qcr{} frozen build & 88.7\\% & 88.8\\% & 97.2\\% & 98.9\\% & 92.4\\% & 85.4\\% & 0.93 \\\\",
+   "value": "0.93",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:kappa"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.219",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "pi-review panel (high) & 66.8\\% & 66.9\\% & 88.9\\% & 88.9\\% & 89.4\\% & 81.4\\% & 0.98 \\\\",
+   "value": "66.8%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:pireview-panel-high-g61:recall"
+  },
+  {
+   "id": "bench.second-judge.12",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "pi-review panel (high) & 66.8\\% & 66.9\\% & 88.9\\% & 88.9\\% & 89.4\\% & 81.4\\% & 0.98 \\\\",
+   "value": "66.9%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:recall"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.220",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "pi-review panel (high) & 66.8\\% & 66.9\\% & 88.9\\% & 88.9\\% & 89.4\\% & 81.4\\% & 0.98 \\\\",
+   "value": "88.9%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:pireview-panel-high-g61:high_rec"
+  },
+  {
+   "id": "bench.second-judge.13",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "pi-review panel (high) & 66.8\\% & 66.9\\% & 88.9\\% & 88.9\\% & 89.4\\% & 81.4\\% & 0.98 \\\\",
+   "value": "88.9%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:high_rec"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.221",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "pi-review panel (high) & 66.8\\% & 66.9\\% & 88.9\\% & 88.9\\% & 89.4\\% & 81.4\\% & 0.98 \\\\",
+   "value": "89.4%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:pireview-panel-high-g61:correct"
+  },
+  {
+   "id": "bench.second-judge.14",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "pi-review panel (high) & 66.8\\% & 66.9\\% & 88.9\\% & 88.9\\% & 89.4\\% & 81.4\\% & 0.98 \\\\",
+   "value": "81.4%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:correct"
+  },
+  {
+   "id": "bench.second-judge.15",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "pi-review panel (high) & 66.8\\% & 66.9\\% & 88.9\\% & 88.9\\% & 89.4\\% & 81.4\\% & 0.98 \\\\",
+   "value": "0.98",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:kappa"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.222",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Claude Code (Opus 5.5) & 62.4\\% & 62.3\\% & 80.6\\% & 81.1\\% & 80.6\\% & 80.8\\% & 0.98 \\\\",
+   "value": "62.4%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:claude-code-opus55:recall"
+  },
+  {
+   "id": "bench.second-judge.16",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Claude Code (Opus 5.5) & 62.4\\% & 62.3\\% & 80.6\\% & 81.1\\% & 80.6\\% & 80.8\\% & 0.98 \\\\",
+   "value": "62.3%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:recall"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.223",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Claude Code (Opus 5.5) & 62.4\\% & 62.3\\% & 80.6\\% & 81.1\\% & 80.6\\% & 80.8\\% & 0.98 \\\\",
+   "value": "80.6%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:claude-code-opus55:high_rec"
+  },
+  {
+   "id": "bench.second-judge.17",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Claude Code (Opus 5.5) & 62.4\\% & 62.3\\% & 80.6\\% & 81.1\\% & 80.6\\% & 80.8\\% & 0.98 \\\\",
+   "value": "81.1%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:high_rec"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.224",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Claude Code (Opus 5.5) & 62.4\\% & 62.3\\% & 80.6\\% & 81.1\\% & 80.6\\% & 80.8\\% & 0.98 \\\\",
+   "value": "80.6%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:claude-code-opus55:correct"
+  },
+  {
+   "id": "bench.second-judge.18",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Claude Code (Opus 5.5) & 62.4\\% & 62.3\\% & 80.6\\% & 81.1\\% & 80.6\\% & 80.8\\% & 0.98 \\\\",
+   "value": "80.8%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:correct"
+  },
+  {
+   "id": "bench.second-judge.19",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Claude Code (Opus 5.5) & 62.4\\% & 62.3\\% & 80.6\\% & 81.1\\% & 80.6\\% & 80.8\\% & 0.98 \\\\",
+   "value": "0.98",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:kappa"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.225",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "open-code-review high & 57.4\\% & 57.0\\% & 70.6\\% & 70.6\\% & 86.1\\% & 76.8\\% & 0.98 \\\\",
+   "value": "57.4%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:ocr-high-g61:recall"
+  },
+  {
+   "id": "bench.second-judge.20",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "open-code-review high & 57.4\\% & 57.0\\% & 70.6\\% & 70.6\\% & 86.1\\% & 76.8\\% & 0.98 \\\\",
+   "value": "57.0%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:recall"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.226",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "open-code-review high & 57.4\\% & 57.0\\% & 70.6\\% & 70.6\\% & 86.1\\% & 76.8\\% & 0.98 \\\\",
+   "value": "70.6%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:ocr-high-g61:high_rec"
+  },
+  {
+   "id": "bench.second-judge.21",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "open-code-review high & 57.4\\% & 57.0\\% & 70.6\\% & 70.6\\% & 86.1\\% & 76.8\\% & 0.98 \\\\",
+   "value": "70.6%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:high_rec"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.227",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "open-code-review high & 57.4\\% & 57.0\\% & 70.6\\% & 70.6\\% & 86.1\\% & 76.8\\% & 0.98 \\\\",
+   "value": "86.1%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:ocr-high-g61:correct"
+  },
+  {
+   "id": "bench.second-judge.22",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "open-code-review high & 57.4\\% & 57.0\\% & 70.6\\% & 70.6\\% & 86.1\\% & 76.8\\% & 0.98 \\\\",
+   "value": "76.8%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:correct"
+  },
+  {
+   "id": "bench.second-judge.23",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "open-code-review high & 57.4\\% & 57.0\\% & 70.6\\% & 70.6\\% & 86.1\\% & 76.8\\% & 0.98 \\\\",
+   "value": "0.98",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:kappa"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.228",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Codex CLI high & 55.2\\% & 55.3\\% & 90.0\\% & 90.6\\% & 92.7\\% & 87.5\\% & 0.98 \\\\",
+   "value": "55.2%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:codex-high-g61:recall"
+  },
+  {
+   "id": "bench.second-judge.24",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Codex CLI high & 55.2\\% & 55.3\\% & 90.0\\% & 90.6\\% & 92.7\\% & 87.5\\% & 0.98 \\\\",
+   "value": "55.3%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:recall"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.229",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Codex CLI high & 55.2\\% & 55.3\\% & 90.0\\% & 90.6\\% & 92.7\\% & 87.5\\% & 0.98 \\\\",
+   "value": "90.0%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:codex-high-g61:high_rec"
+  },
+  {
+   "id": "bench.second-judge.25",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Codex CLI high & 55.2\\% & 55.3\\% & 90.0\\% & 90.6\\% & 92.7\\% & 87.5\\% & 0.98 \\\\",
+   "value": "90.6%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:high_rec"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.230",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Codex CLI high & 55.2\\% & 55.3\\% & 90.0\\% & 90.6\\% & 92.7\\% & 87.5\\% & 0.98 \\\\",
+   "value": "92.7%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:codex-high-g61:correct"
+  },
+  {
+   "id": "bench.second-judge.26",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Codex CLI high & 55.2\\% & 55.3\\% & 90.0\\% & 90.6\\% & 92.7\\% & 87.5\\% & 0.98 \\\\",
+   "value": "87.5%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:correct"
+  },
+  {
+   "id": "bench.second-judge.27",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "Codex CLI high & 55.2\\% & 55.3\\% & 90.0\\% & 90.6\\% & 92.7\\% & 87.5\\% & 0.98 \\\\",
+   "value": "0.98",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:kappa"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.231",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "OpenCode native + PR text & 50.7\\% & 50.7\\% & 84.4\\% & 84.4\\% & 92.7\\% & 88.1\\% & 0.99 \\\\",
+   "value": "50.7%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:opencode-native-pr-g61:recall"
+  },
+  {
+   "id": "bench.second-judge.28",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "OpenCode native + PR text & 50.7\\% & 50.7\\% & 84.4\\% & 84.4\\% & 92.7\\% & 88.1\\% & 0.99 \\\\",
+   "value": "50.7%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:recall"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.232",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "OpenCode native + PR text & 50.7\\% & 50.7\\% & 84.4\\% & 84.4\\% & 92.7\\% & 88.1\\% & 0.99 \\\\",
+   "value": "84.4%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:opencode-native-pr-g61:high_rec"
+  },
+  {
+   "id": "bench.second-judge.29",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "OpenCode native + PR text & 50.7\\% & 50.7\\% & 84.4\\% & 84.4\\% & 92.7\\% & 88.1\\% & 0.99 \\\\",
+   "value": "84.4%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:high_rec"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.233",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "OpenCode native + PR text & 50.7\\% & 50.7\\% & 84.4\\% & 84.4\\% & 92.7\\% & 88.1\\% & 0.99 \\\\",
+   "value": "92.7%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:opencode-native-pr-g61:correct"
+  },
+  {
+   "id": "bench.second-judge.30",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "OpenCode native + PR text & 50.7\\% & 50.7\\% & 84.4\\% & 84.4\\% & 92.7\\% & 88.1\\% & 0.99 \\\\",
+   "value": "88.1%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:correct"
+  },
+  {
+   "id": "bench.second-judge.31",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "OpenCode native + PR text & 50.7\\% & 50.7\\% & 84.4\\% & 84.4\\% & 92.7\\% & 88.1\\% & 0.99 \\\\",
+   "value": "0.99",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:kappa"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.234",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "PR-Agent & 37.3\\% & 37.0\\% & 61.7\\% & 61.1\\% & 75.7\\% & 74.5\\% & 0.96 \\\\",
+   "value": "37.3%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:pragent-g61:recall"
+  },
+  {
+   "id": "bench.second-judge.32",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "PR-Agent & 37.3\\% & 37.0\\% & 61.7\\% & 61.1\\% & 75.7\\% & 74.5\\% & 0.96 \\\\",
+   "value": "37.0%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:recall"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.235",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "PR-Agent & 37.3\\% & 37.0\\% & 61.7\\% & 61.1\\% & 75.7\\% & 74.5\\% & 0.96 \\\\",
+   "value": "61.7%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:pragent-g61:high_rec"
+  },
+  {
+   "id": "bench.second-judge.33",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "PR-Agent & 37.3\\% & 37.0\\% & 61.7\\% & 61.1\\% & 75.7\\% & 74.5\\% & 0.96 \\\\",
+   "value": "61.1%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:high_rec"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.236",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "PR-Agent & 37.3\\% & 37.0\\% & 61.7\\% & 61.1\\% & 75.7\\% & 74.5\\% & 0.96 \\\\",
+   "value": "75.7%",
+   "group": "bench:tab:finalbuild",
+   "q": "aacr:pragent-g61:correct"
+  },
+  {
+   "id": "bench.second-judge.34",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "PR-Agent & 37.3\\% & 37.0\\% & 61.7\\% & 61.1\\% & 75.7\\% & 74.5\\% & 0.96 \\\\",
+   "value": "74.5%",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:correct"
+  },
+  {
+   "id": "bench.second-judge.35",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "PR-Agent & 37.3\\% & 37.0\\% & 61.7\\% & 61.1\\% & 75.7\\% & 74.5\\% & 0.96 \\\\",
+   "value": "0.96",
+   "group": "second-judge",
+   "q": "second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:kappa"
+  },
+  {
+   "id": "bench.bench:tab:finalbuild.237",
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "moved no reviewer's recall by more than 0.4 points and lowered comments",
+   "value": "0.4",
+   "group": "bench:tab:finalbuild",
+   "q": "max(abs({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:recall} - {aacr:quickreview-frozen:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:recall} - {aacr:pireview-panel-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:recall} - {aacr:claude-code-opus55:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:recall} - {aacr:ocr-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:recall} - {aacr:codex-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:recall} - {aacr:opencode-native-pr-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:recall} - {aacr:pragent-g61:recall}))"
+  },
+  {
+   "id": "qr.qr:tab:frozen.269",
+   "file": "bench/aacr/paper/quickreview.tex",
+   "anchor": "recall stayed within 0.4 points and the order was unchanged~\\cite{qcrbench}.",
+   "value": "0.4",
+   "group": "qr:tab:frozen",
+   "q": "max(abs({second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:recall} - {aacr:quickreview-frozen:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pireview-panel-high-g61:recall} - {aacr:pireview-panel-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/claude-code-opus55:recall} - {aacr:claude-code-opus55:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/ocr-high-g61:recall} - {aacr:ocr-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/codex-high-g61:recall} - {aacr:codex-high-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/opencode-native-pr-g61:recall} - {aacr:opencode-native-pr-g61:recall}), abs({second_judge:deepseek-v4.1-flash-1017/aacr/pragent-g61:recall} - {aacr:pragent-g61:recall}))"
   }
  ],
  "not_claims": [

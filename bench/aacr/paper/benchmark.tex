@@ -1050,7 +1050,9 @@ breakdown.
 
 These checks were run on the earlier study's 1{,}295 reviews (seven
 reviewers $\times$ 185 PRs, Section~\ref{sec:sol}); the final comparison's
-reviews were graded by the primary judge only.
+reviews were graded by the primary judge, and its six third-party reviewers
+and the frozen build again by a judge that could not read the code (the last
+paragraph of this section).
 
 \paragraph{Two judges from different model families.} The primary judge is
 \code{gpt-6-sol} at high reasoning. The same prompt, byte for byte, with the
@@ -1120,9 +1122,73 @@ needed and has not been done (Section~\ref{sec:future}). Nor do they
 validate the key: both judges score against the same 520 defects. Whether
 the key is complete and correct rests on the verification pipeline, the
 independent-source checks (Section~\ref{sec:indep}) and the human audit not
-yet done. The final comparison's reviews, which only the primary judge
-graded, come from the same model family as that judge
-(gpt-6.1-sol and gpt-6-sol); the second-judge check was not repeated on them.
+yet done. The final comparison's reviews come from the same model family
+as the primary judge (gpt-6.1-sol and gpt-6-sol), and the Opus judge did not
+grade them; the next paragraph re-grades most of them with a third judge.
+
+\paragraph{A third judge, without the code.} For the data release, the
+frozen build and the final comparison's six third-party reviewers were
+re-judged by DeepSeek V4.1 Flash (\code{deepseek-v4.1-flash-1017}), from a
+third model family, on all 1{,}168 of their reviews the primary judge was
+asked about. It had the primary judge's prompt but no tools and no
+repository, so it judged from the message alone (the defects with their
+quoted evidence, the rejected claims and the review). Recall is robust to
+the change: every reviewer's recall is within 0.4 points of the primary
+judge's, the order of the seven is the same on recall, high-severity recall
+and weighted recall, and the two judges give the same defect verdict on
+97.9--99.6\% of each reviewer's reviewer--defect pairs ($\kappa = 0.93$ to
+$0.99$; Table~\ref{tab:dsjudge}). Comments correct is not. It is lower under
+this judge for six of the seven reviewers, by 1.2 to 9.3 points (\qcr{}'s
+frozen build from 92.4\% to 85.4\%), and level for Claude Code ($+0.2$).
+Most of the disagreements grade as incorrect a comment that the primary
+judge, reading the code, graded correct or partly correct: a judge that
+cannot open the file cannot confirm a claim about it. Two pairs swap on
+comments correct: OpenCode passes Codex CLI, and Claude Code passes
+open-code-review. On Martian and Qodo the same model ran at low effort
+through the same bridge as the published gpt-6.1-sol judge, and there it
+is slightly more lenient: Core F1 is 0.9 to 3.8
+points higher for every Martian tool, and Qodo F1 0 to 1.4 points higher.
+\qcr{} keeps the highest Martian recall and the lowest Martian precision.
+The orders that change: on Martian, open-code-review moves from fourth to a
+tie for second on recall, cubic-v2 moves ahead of qodo-extended-v2 on recall
+and $F_2$, and Claude Code passes PR-Agent on F1 and \qcr{} on $F_2$; on
+Qodo, \qcr{} passes qodo-exhaustive on recall (by 0.2 points, a tie) and
+augment on F1, and copilot passes PR-Agent and open-code-review on
+precision. This judge is unaudited, like the other two. Its verdicts, the
+scorers' output and the scripts that made them are in the dataset's
+\code{second\_judges/} folder, and \code{bench/aacr/claims.json} recomputes
+every number of this paragraph from it.
+
+\begin{table}[tbp]
+  \centering
+  \small
+  \caption{The third judge on AACR-Bench: the primary judge (gpt-6-sol,
+  high, reading the repository) and DeepSeek V4.1 Flash (high, no tools and
+  no repository) on the same reviews. A partly found defect counts
+  $\tfrac12$. $\kappa$: Cohen's kappa between the two judges'
+  found/partial/missed verdicts. The frozen build is
+  Section~\ref{sec:finalbuild}'s; the other six are the final comparison's
+  third-party reviewers.\protect\footnotemark}
+  \label{tab:dsjudge}
+  \begin{tabular}{lrrrrrrr}
+    \toprule
+    & \multicolumn{2}{c}{Recall} & \multicolumn{2}{c}{High-severity recall} & \multicolumn{2}{c}{Comments correct} & \\
+    \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+    Reviewer & Primary & Third & Primary & Third & Primary & Third & $\kappa$ \\
+    \midrule
+    \qcr{} frozen build & 88.7\% & 88.8\% & 97.2\% & 98.9\% & 92.4\% & 85.4\% & 0.93 \\
+    pi-review panel (high) & 66.8\% & 66.9\% & 88.9\% & 88.9\% & 89.4\% & 81.4\% & 0.98 \\
+    Claude Code (Opus 5.5) & 62.4\% & 62.3\% & 80.6\% & 81.1\% & 80.6\% & 80.8\% & 0.98 \\
+    open-code-review high & 57.4\% & 57.0\% & 70.6\% & 70.6\% & 86.1\% & 76.8\% & 0.98 \\
+    Codex CLI high & 55.2\% & 55.3\% & 90.0\% & 90.6\% & 92.7\% & 87.5\% & 0.98 \\
+    OpenCode native + PR text & 50.7\% & 50.7\% & 84.4\% & 84.4\% & 92.7\% & 88.1\% & 0.99 \\
+    PR-Agent & 37.3\% & 37.0\% & 61.7\% & 61.1\% & 75.7\% & 74.5\% & 0.96 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+\footnotetext{\code{score\_verdicts.py} on the dataset's
+\code{second\_judges/deepseek-v4.1-flash-1017/aacr/} beside the published
+verdicts, as the folder's README gives it.}
 
 \subsection{AACR's metric as we ran it}
 \label{sec:aacrrun}
@@ -3559,9 +3625,12 @@ family with Claude Code. LLM judges can prefer their own family's
 outputs~\cite{panickssery2024,zheng2023}. In the earlier study a second
 judge from another family agreed on 98.7\% of verdicts and moved no
 reviewer's recall (Section~\ref{sec:judgestab}); the one visible same-family
-effect was on comments correct. That check was not repeated on the final
-comparison's reviews. The key half is not addressed by judge agreement at
-all.
+effect was on comments correct. The Opus check was not repeated on the
+final comparison's reviews; a third judge, from a third family and without
+the code, re-graded its six third-party reviewers and the frozen build,
+moved no reviewer's recall by more than 0.4 points and lowered comments
+correct for six of the seven (Section~\ref{sec:judgestab}). The key half is
+not addressed by judge agreement at all.
 
 \paragraph{Threat 7: unequal inputs, effort and budget (moderate; direction known).}
 In the final comparison \qcr{}, OpenCode and PR-Agent read the PR title and
@@ -3699,7 +3768,8 @@ keys are in the dataset. The file names some footnotes cite --- \code{FULL-BENCH
 as the dataset \url{https://huggingface.co/datasets/quickchatai/quickreview-bench}
 (its Hugging Face DOI is pending): browsable tables of every review, finding
 and judge verdict with the judges' reasoning, the run configurations, per-PR
-summaries (cost, time, tokens) and the pairwise judgments, beside the run
+summaries (cost, time, tokens), the pairwise judgments and the third judge's
+verdicts (Section~\ref{sec:judgestab}), beside the run
 directories as archive volumes and a slim bundle for re-scoring. Raw model
 session transcripts are not published; numbers-only extracts of them
 (timestamps, token usage, lens outcomes) are. Names are rewritten to

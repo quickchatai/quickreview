@@ -153,6 +153,11 @@ beside ours on the same reviews: on a sample, both over the PRs your judge
 judged (`--whole-run` counts every PR, so the two are not comparable); each
 script's docstring gives the columns.
 The dataset card's section of the same name says the same per benchmark.
+A worked example ships in the dataset:
+[`second_judges/deepseek-v4.1-flash-1017/`](https://huggingface.co/datasets/quickchatai/quickreview-bench/tree/main/second_judges/deepseek-v4.1-flash-1017)
+holds DeepSeek V4.1 Flash's verdicts on the reviewers of the README's full
+tables in these shapes, the scripts that made them, and the three scoring
+commands with their output (the card's "Second judge").
 
 - **AACR-Bench.** Input: the arm's `reviews` rows (the verdict, the body and
   the comments `C1`, `C2`, … as the judge read them; `raw_text` as the run's

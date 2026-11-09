@@ -12,7 +12,8 @@
 //   3. the claims verifier: claim_metrics.SecondJudge gives the second judge's numbers by label through
 //      the scorers, discover finds the folder beside the tables, a claim reading it passes, and without
 //      the folder it is skipped under --partial; its release checks carry needs ["second_judges"];
-//   4. the card: the folder's tables by row count, and the release checks' split.
+//   4. the card: the folder's tables by row count, a link to each judge's folder in the dataset, and
+//      the release checks' split.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -621,6 +622,26 @@ print(json.dumps([v(SJ.file_rows(sys.argv[1])), v([])]))`,
     );
     expect(card[0]).toContain(`| \`second_judges/${LABEL}/qodo/qodo_verdicts.jsonl\` | 1 |`);
     expect(card[1]).toContain("`<second_judges/ not in this build>`");
+  });
+
+  // MUTATION: in hf_export.second_judge_links, link `{SJ.FOLDER}/{x}` as a relative path (drop `{url}/tree/main/`) — this fails
+  // MUTATION: in hf_export.card_values, render SECOND_JUDGE_MD from nothing (second_judge_links([], url)) — this fails
+  it("links each judge's folder in this dataset where the card says what it holds, pending without one", () => {
+    const card = py(
+      `import hf_export as h, second_judges as SJ, collections
+a = types.SimpleNamespace(repo_id="acme/bench")
+v = lambda sj: h.fill_card(open(sys.argv[2]).read(), h.card_values(a, {n: 1 for n in h.CONFIGS}, [{"ok": True}],
+                                                                   collections.Counter(), [], None, sj))
+print(json.dumps([v(SJ.file_rows(sys.argv[1])), v([])]))`,
+      BASE,
+      join(AACR, "hf", "card.md"),
+    ) as [string, string];
+    const link = `[\`second_judges/${LABEL}/\`](https://huggingface.co/datasets/acme/bench/tree/main/second_judges/${LABEL})`;
+    // the top of the card, where it lists the dataset's parts, and the section of its own
+    expect(card[0]).toContain(`Beside them, ${link} holds a second judge's verdicts`);
+    expect(card[0]).toContain(`## Second judge\n\n${link} holds`);
+    expect(card[1]).toContain("Beside them, `<second_judges/ not in this build>` holds");
+    expect(card[1]).not.toContain("tree/main/second_judges");
   });
 
   // MUTATION: in hf_export.verify_result, count the second judges' checks with the slim bundle's (drop `folder`) — this fails

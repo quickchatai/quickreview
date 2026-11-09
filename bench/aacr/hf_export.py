@@ -2527,6 +2527,15 @@ def render_second_judge_files(rows: list[tuple] | None) -> str:
     return "\n".join(["| File | Rows |", "|---|---:|"] + [f"| `{p}` | {n:,} |" for p, n in rows])
 
 
+def second_judge_links(rows: list[tuple] | None, url: str) -> str:
+    """The card's link to each second judge's folder in this dataset, one per label the export copied
+    (second_judges.file_rows), as a whole link; the pending marker when the build has none."""
+    labels = sorted({p.split("/")[1] for p, _ in rows or []})
+    if not labels:
+        return SECOND_JUDGES_PENDING
+    return ", ".join(f"[`{SJ.FOLDER}/{x}/`]({url}/tree/main/{SJ.FOLDER}/{x})" for x in labels)
+
+
 def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter, runs: list[dict] | None = None,
                 inventory: dict | None = None, second_judges: list[tuple] | None = None) -> dict:
     """Every {{NAME}} the card template holds, from the export's own facts. What
@@ -2565,6 +2574,7 @@ def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter,
             "GROUPS_ON_NO_RUN": groups_on_no_run(runs),
             "COMMENT_INVENTORY": render_inventory(inventory),
             "SECOND_JUDGE_FILES": render_second_judge_files(second_judges),
+            "SECOND_JUDGE_MD": second_judge_links(second_judges, url),
             "SIZE_CATEGORY": size_category(sum(sizes.values()))}
 
 

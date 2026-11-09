@@ -557,8 +557,13 @@ documented in `../README.md`.
    defects raised by at least one source other than that tool itself.
 3. **A third-family judge** for both metrics. A second-family defect judge
    (Opus 5.5) is done for the earlier gpt-6-sol study, with inter-judge
-   agreement. The final comparison, the frozen build, Martian and Qodo, and
-   the AACR metric, still have only the one judge.
+   agreement. A third-family judge (DeepSeek V4.1 Flash) re-graded the frozen
+   build, the final comparison's six third-party reviewers and the Martian
+   and Qodo tools, but without tools or the repository; its verdicts are in
+   the dataset's `second_judges/` folder and summarised in the benchmark
+   paper's judge-reliability section. QuickReview's two final-comparison
+   presets and the AACR metric still have only the one judge, and no
+   third-family judge has read the code.
 4. **Freeze the reviewer** at a tagged commit, then build a new truth
    blind-first for new PRs from outside AACR, and only then run the tools.
 5. **Three runs per arm,** with bootstrap confidence intervals over PRs.
