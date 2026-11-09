@@ -226,7 +226,7 @@ line (a command line lands in the shell history and in `ps`):
 API (OpenAI's, the default on the key route, and DigitalOcean's
 `https://inference.do-ai.run/v1/responses` both do), and it forwards with
 `OPENAI_API_KEY` from its environment, whatever the provider. Its `/health`,
-`/stats` and its log's start line name the upstream URL (`chatgpt-codex` on
+`/stats` and its log's start row (`--probe-temperature`) name the upstream URL (`chatgpt-codex` on
 the login route), so a run records which provider judged. Start it with the
 key loaded from its file:
 

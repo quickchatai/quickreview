@@ -141,10 +141,14 @@ under `--data`, recomputes every claim from whichever of them it holds
 `verify_slim.py` over the bundle), re-runs the release's own checks
 (`hf_export.py`'s validation and `verify_slim.py`'s bundle checks), and exits
 non-zero on any mismatch, error, missing source or missing script. `--partial`
-checks only what the given data holds. A claim whose data the release does not
-hold (its `no_script` reason starts "data not published") is reported as *not
-published*, apart from the claims that only wait for a script, and a claim
-that needs `--martian` or `--qodo-gt` when it was not given as *needs input*.
+checks only what the given data holds: a claim none of whose sources is in
+`--data`, or whose only missing source is `--martian` or `--qodo-gt`, is
+reported as skipped (the result line counts the skipped claims and names the
+flag that would include them), and the run exits 0 when every other claim
+passes. A claim whose data the release does not hold (its `no_script` reason
+starts "data not published") is reported as *not published*, apart from the
+claims that only wait for a script, and, without `--partial`, a claim that
+needs `--martian` or `--qodo-gt` when it was not given as *needs input*.
 Those three are the documented gaps: they fail, and `--allow-gaps` lists them
 with their reasons and passes them (a gap whose reason the manifest does not
 record still fails). This release has none, and no other status exists: the

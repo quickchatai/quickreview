@@ -29,8 +29,9 @@ refresh-disabled copy of the pi login (codex_bridge.load_credentials refuses
 anything else) — or, on the API-key route (QCR_BENCH_AUTH=api-key),
 OPENAI_API_KEY from the environment against the public API, or against
 `--upstream`, any Responses API, exactly as codex_bridge does it. /health,
-/stats and the log's start line name the upstream (the URL; chatgpt-codex on
-the login route), so a run records which provider judged.
+/stats and the log's start row (written by --probe-temperature, which ext.sh
+always passes) name the upstream (the URL; chatgpt-codex on the login route),
+so a run records which provider judged.
 
 The host-only route, no docker (a re-judge of the published Martian rows,
 with your key and your model). The key is read from its env file in a
