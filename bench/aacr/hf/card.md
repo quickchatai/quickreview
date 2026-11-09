@@ -415,6 +415,19 @@ verifier's release checks). `LICENSES/` holds the MIT licence texts of Martian's
 Qodo's data (see "Licence"). The working report the papers grew from is not
 included: the papers supersede it.
 
+**Second judge.** `second_judges/` holds another judge's verdicts on reviews
+these tables already hold, one folder per judge, each with its README, the
+scorers' output (`scores/`) and the scripts that made it (`code/`). No config
+reads it, so `load_dataset` returns the same rows with or without it. Its
+verdict tables:
+
+{{SECOND_JUDGE_FILES}}
+
+`validation.json` checks the folder file by file against the repository's
+`bench/aacr/hf/second-judges.sha256`, checks that its rows are exactly the
+published judge's rows of the reviewers it names, and re-runs the repository's
+scorers on it (see "How to verify").
+
 ## Judges
 
 Which judge scored what, exactly. The `judge` column of each table uses the
@@ -665,9 +678,9 @@ without an input above, it fails on the claims that need it.
 On this release: {{VERIFY_RESULT}}
 
 Its release checks are the checks of `validation.json` (below) that need only
-the tables, re-run on your download, and the slim bundle's own (every file's
-hash, no transcript text, every Martian and Qodo scoring dir re-scored, the
-Elo refit). `validation.json` also holds the checks the export ran against its
+the tables and the `second_judges/` folder, re-run on your download, and the
+slim bundle's own (every file's hash, no transcript text, every Martian and
+Qodo scoring dir re-scored, the Elo refit). `validation.json` also holds the checks the export ran against its
 own inputs (the source run directories, the commit remap, the archive's index,
 the figures): that every run family has rows in the tables it should, the
 `runs` table's build ids, each Elo plan's refit against its run's

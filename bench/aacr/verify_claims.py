@@ -12,7 +12,9 @@ source or missing script.
   hf    the Hugging Face tables: <dir>/data/*.parquet (the dataset root), <dir>/hf-dataset/data,
         or a dir of <config>.parquet / <config>.jsonl files;
   slim  the slim re-score bundle: quickreview-bench-slim.tar.zst in <dir> or <dir>/slim, or an
-        unpacked bundle (a dir holding FILES.sha256 and runs/).
+        unpacked bundle (a dir holding FILES.sha256 and runs/);
+  second_judges  the second judges' folder beside the tables (<dataset root>/second_judges/, as
+        downloaded): its claims (`second_judge`) and its release checks need it.
 Each claim names its check and key (`q`), and may name other sources for the same number
 (`alt`). Every source the given data holds is computed and compared with the printed
 value; a claim passes when every computed source prints as the published value and at
@@ -67,7 +69,8 @@ MANIFEST = HERE / "claims.json"
 # ---------------------------------------------------------------- data
 
 def discover(dirs: List[str]) -> Dict[str, Optional[str]]:
-    found: Dict[str, Optional[str]] = {"hf": None, "slim": None, "archive": None, "repo": str(REPO)}
+    found: Dict[str, Optional[str]] = {"hf": None, "slim": None, "archive": None, "repo": str(REPO),
+                                       "second_judges": None}
     for d in dirs:
         p = Path(d).resolve()
         for cand in (p, p / "archive"):
@@ -85,6 +88,10 @@ def discover(dirs: List[str]) -> Dict[str, Optional[str]]:
                 found["slim"] = found["slim"] or str(cand)
         if p.is_file() and p.name.endswith(".tar.zst"):
             found["slim"] = found["slim"] or str(p)
+    if found["hf"]:
+        import second_judges as SJ
+        sj = SJ.folder_of(found["hf"])
+        found["second_judges"] = sj if os.path.isdir(sj) else None
     return found
 
 
@@ -205,8 +212,8 @@ class Sources:
         self.timings: Dict[str, float] = {}
 
     def needs(self, check: str) -> str:
-        """What the check reads: one part of the release (`hf`, `slim`, `archive`, `repo`), or several
-        joined with `+` (`hf+archive`), every one of which must be under --data; `martian` is the
+        """What the check reads: one part of the release (`hf`, `slim`, `archive`, `repo`, `second_judges`), or
+        several joined with `+` (`hf+archive`), every one of which must be under --data; `martian` is the
         third-party Martian checkout --martian names (never in the release)."""
         spec = self.m["checks"].get(check)
         if spec is None:
@@ -448,8 +455,8 @@ def consistency(a, found, src: "Sources") -> List[dict]:
     headline number recomputed from the tables, the checks validation.json records) and verify_slim.py's
     bundle checks (file hashes, no transcript text, every Martian and Qodo scoring dir re-scored, the Elo
     refit equal to the run's ratings.json). Each names in `needs` what it needs beyond the tables (the
-    slim bundle, and --martian or --qodo-gt for a re-score), so the card can say how many a --partial run
-    or the tables alone re-run."""
+    second judges' folder, the slim bundle, and --martian or --qodo-gt for a re-score), so the card can say
+    how many a --partial run or the tables alone re-run."""
     out = []
     if found.get("hf") and not a.no_validation:
         sys.path.insert(0, str(HERE))
@@ -458,11 +465,18 @@ def consistency(a, found, src: "Sources") -> List[dict]:
         try:
             t = {n: load_table(found["hf"], n) for n in H.CONFIGS}
         except SystemExit as e:  # a config the release should hold is missing
-            return out + [{"source": "hf_export.validate", "check": "every config's table is present", "ok": False,
-                           "got": str(e), "want": "all of " + ", ".join(H.CONFIGS)}]
-        for c in H.validate(t) + H.validate_release(t, None, {}, None):
+            t = None
+            out.append({"source": "hf_export.validate", "check": "every config's table is present", "ok": False,
+                        "got": str(e), "want": "all of " + ", ".join(H.CONFIGS), "needs": []})
+        for c in (H.validate(t) + H.validate_release(t, None, {}, None)) if t is not None else []:
             out.append({"source": "hf_export.validate", "check": c["check"], "ok": bool(c["ok"]),
                         "got": c["got"], "want": c["want"], "needs": []})
+        if found.get("second_judges"):
+            # validation.json's checks of the second judges' folder, on the download: they need the folder
+            import second_judges as SJ
+            for c in SJ.checks(found["hf"]):
+                out.append({"source": "hf_export.validate", "check": c["check"], "ok": bool(c["ok"]),
+                            "got": c["got"], "want": c["want"], "needs": ["second_judges"]})
     if found.get("slim") and "slim" in src._json:
         summ = json.loads((src.work / "slim-verify" / "out" / "summary.json").read_text())
         out.append({"source": "verify_slim", "check": "every bundle file matches FILES.sha256", "ok": summ["hash_mismatches"] == 0,
@@ -589,10 +603,10 @@ def main() -> int:
         for s in spec.get("scripts", []):
             if not (repo / s).exists():
                 lint["errors"].append(f"check {ch}: script {s} is missing")
-        bad = [p for p in spec["needs"].split("+") if p not in ("hf", "slim", "archive", "repo", "martian")]
+        bad = [p for p in spec["needs"].split("+") if p not in ("hf", "slim", "archive", "repo", "second_judges", "martian")]
         if bad:
-            lint["errors"].append(f"check {ch}: needs {bad} is not a part of the release (hf, slim, archive, repo) "
-                                  f"or the third-party Martian checkout (martian)")
+            lint["errors"].append(f"check {ch}: needs {bad} is not a part of the release (hf, slim, archive, repo, "
+                                  f"second_judges) or the third-party Martian checkout (martian)")
     for e in lint["errors"]:
         print("MANIFEST:", e, file=sys.stderr)
     for f, s in sorted(lint["files"].items()):
@@ -604,7 +618,8 @@ def main() -> int:
         return 1 if lint["errors"] else 0
     found = discover(a.data)
     found["martian"] = str(Path(a.martian).resolve()) if a.martian else None  # third-party, never in the release
-    print(f"data: hf={found['hf']} slim={found['slim']} archive={found['archive']} martian={found['martian']}")
+    print(f"data: hf={found['hf']} slim={found['slim']} archive={found['archive']} "
+          f"second_judges={found['second_judges']} martian={found['martian']}")
     if not any(found[k] for k in ("hf", "slim", "archive")):
         print("no release data found under --data", file=sys.stderr)
         return 2

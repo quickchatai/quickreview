@@ -146,6 +146,40 @@
    ],
    "doc": "two defect judges' agreement on the same reviews, and the primary judge's re-run"
   },
+  "second_judge": {
+   "kind": "tables",
+   "provider": "second_judge",
+   "needs": "hf+second_judges",
+   "scripts": [
+    "bench/aacr/recompute/claim_metrics.py",
+    "bench/aacr/recompute/second_judges.py",
+    "bench/aacr/recompute/score_verdicts.py",
+    "bench/aacr/recompute/martian_scores.py",
+    "bench/aacr/recompute/qodo_scores.py"
+   ],
+   "data": [
+    "second_judges:deepseek-v4.1-flash-1017/aacr/defect_verdicts",
+    "second_judges:deepseek-v4.1-flash-1017/aacr/comment_verdicts",
+    "second_judges:deepseek-v4.1-flash-1017/martian/martian_verdicts",
+    "second_judges:deepseek-v4.1-flash-1017/martian/martian_reviews",
+    "second_judges:deepseek-v4.1-flash-1017/qodo/qodo_verdicts",
+    "hf:arms",
+    "hf:prs",
+    "hf:defects",
+    "hf:reviews",
+    "hf:defect_verdicts",
+    "hf:comment_verdicts",
+    "hf:martian_goldens",
+    "hf:martian_reviews",
+    "hf:martian_verdicts",
+    "hf:martian_scores",
+    "hf:qodo_issues",
+    "hf:qodo_reviews",
+    "hf:qodo_verdicts",
+    "repo:bench/aacr/sets/qodo-heldout31.json"
+   ],
+   "doc": "a second judge's numbers from the dataset's second_judges/<label>/ folder, through the scorers its README runs (claim_metrics.SecondJudge: LABEL/aacr/ARM:METRIC, LABEL/martian/WORK|TOOL:METRIC, LABEL/qodo/WORK|TOOL:METRIC); the published judge's cells are the aacr, martian and qodo keys"
+  },
   "bootstrap": {
    "kind": "json",
    "needs": "hf",
@@ -1672,6 +1706,11 @@
     "quickreview-runs-aacr-final-comparison-g61.tar.zst",
     "quickreview-runs-aacr-gpt6sol-study.tar.zst"
    ]
+  },
+  "second-judge": {
+   "what": "the second judge, DeepSeek V4.1 Flash (deepseek-v4.1-flash-1017), in the dataset's second_judges/ folder: the card's and the papers' account of it beside the published judges",
+   "families": [],
+   "archive": []
   }
  },
  "claims": [

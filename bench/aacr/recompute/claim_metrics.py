@@ -1,9 +1,9 @@
 """Published numbers recomputed from the Hugging Face tables, by key.
 
 bench/aacr/verify_claims.py asks this module for the value behind a claim of
-bench/aacr/claims.json whose check is `aacr`, `martian`, `qodo` or `elo`. No
-model call; the tables are read with recompute/tables.py (parquet, or .jsonl
-fixtures). Every value is a plain number in the unit the papers print:
+bench/aacr/claims.json whose check is `aacr`, `key`, `martian`, `qodo`, `elo`,
+`judges` or `second_judge`. No model call; the tables are read with
+recompute/tables.py (parquet, or .jsonl fixtures). Every value is a plain number in the unit the papers print:
 percentages are already x100, money in dollars, time in minutes.
 
 Keys
@@ -56,6 +56,8 @@ key      METRIC[~SEL]  the answer key alone: defects n_high n_medium n_low prs e
          size_median size_max (pr_diffstats changed lines) ai_or_bot_pct (references AI-written or bot-derived)
          unrunnable unrunnable_repo=<owner/repo> (sets/full.json PRs missing from the release's PRs)
 judges   J1|J2|ARM+ARM+...[|sample=JUDGE]:METRIC   two defect judges on the same reviews (see Judges)
+second_judge  LABEL/aacr/ARM:METRIC | LABEL/martian/WORK|TOOL:METRIC | LABEL/qodo/WORK|TOOL:METRIC
+         a second judge's numbers from the dataset's second_judges/LABEL/ through the scorers (see SecondJudge)
 martian  WORK[+WORK...]|TOOL[@JUDGE][~HALF]:METRIC  (JUDGE default gpt-6.1-sol; a published judge is
          "published: <model>", and WORK "-" names Martian's own published scores over all 50 PRs). METRIC: {core,strict,all}_{tp,fp,fn,precision,recall,f1,f2},
          the stored scores of one dir; with HALF (a set file, martian-tune20 or martian-test30) recounted on that
@@ -872,4 +874,92 @@ class Judges(Provider):
         raise KeyError_(f"unknown judges metric {metric!r}")
 
 
-PROVIDERS = {"aacr": Aacr, "key": Key, "martian": Martian, "qodo": Qodo, "elo": Elo, "judges": Judges}
+# ---------------------------------------------------------------- a second judge's folder
+
+class SecondJudge(Provider):
+    """A second judge's numbers, from the dataset's `second_judges/LABEL/` (second_judges.py) through the
+    repository's scorers, exactly as the folder README's commands print them (the scorers' --json):
+
+    LABEL/aacr/ARM:METRIC         score_verdicts.score over the folder's aacr/: under LABEL found defects
+                                  recall high_rec weighted graded correct incorrect new_defects; against the
+                                  arm's published judge (arms.judge) pairs pct kappa c_pairs c_pct c_kappa; reviews
+    LABEL/martian/WORK|TOOL:METRIC  martian_scores.metrics(counts(...)) under LABEL over the folder's martian/:
+                                  {core,strict,all}_{tp,fp,fn,precision,recall,f1,f2}; prs
+    LABEL/qodo/WORK|TOOL:METRIC   qodo_scores.run_scores under LABEL over the folder's qodo/ (on the PRs it
+                                  judged when it judged only some, as the scorer counts): hits comments per_pr
+                                  precision recall f1 recall_functional recall_rule and the _semantic ones; prs
+
+    The published judge's own cells are the `aacr`, `martian` and `qodo` keys; a folder the release does
+    not hold is a missing source (the check needs `second_judges`), never a number."""
+
+    def __init__(self, tables: Tables):
+        super().__init__(tables)
+        self._loaded: Dict[tuple, object] = {}
+
+    def _folder(self, label: str, part: str) -> str:
+        import second_judges as SJ
+        d = os.path.join(SJ.folder_of(self.t.data), label, part)
+        if not os.path.isdir(d):
+            raise KeyError_(f"no {SJ.FOLDER}/{label}/{part} beside the tables")
+        return d
+
+    def _once(self, k: tuple, build):
+        if k not in self._loaded:
+            self._loaded[k] = build()
+        return self._loaded[k]
+
+    def compute(self, key: str) -> Optional[float]:
+        label, part, rest = (key.split("/", 2) + ["", ""])[:3]
+        head, _, metric = rest.rpartition(":")
+        if not (label and head and metric) or part not in ("aacr", "martian", "qodo"):
+            raise KeyError_(f"second_judge key {key!r}: want LABEL/aacr|martian|qodo/HEAD:METRIC")
+        d = self._folder(label, part)
+        try:
+            if part == "aacr":
+                import score_verdicts as SV
+                tables = self._once(("aacr", label), lambda: SV.WithJudge(self.t.data, d, label))
+                if head not in {a for a, _ in tables.judged}:
+                    raise KeyError_(f"no {label} verdicts for arm {head!r}")
+                row = self._once(("aacr", label, head), lambda: SV.score(tables, label, [head])[head])
+                for got in (row[label], row["agreement"], row):
+                    if metric in got and not isinstance(got[metric], (dict, str, bool)):
+                        return got[metric]
+                raise KeyError_(f"unknown second_judge aacr metric {metric!r}")
+            work, _, tool = head.partition("|")
+            if part == "martian":
+                import martian_scores as MS
+                vs, rs = self._once(("martian", label), lambda: MS._load(self.t.data, d, label))
+                prs = {r["pr_url"] for r in rs if r["judge"] == label and r["work_dir"] == work and r["tool"] == tool}
+                if not prs:
+                    raise KeyError_(f"no {label} martian_reviews rows for {head}")
+                if metric == "prs":
+                    return len(prs)
+                m = self._once(("martian", label, head),
+                               lambda: MS.metrics(MS.counts(self.t("martian_goldens"), vs, rs, work, tool, label)))
+                if metric not in m:
+                    raise KeyError_(f"unknown second_judge martian metric {metric!r}")
+                return m[metric]
+            import qodo_scores as QS
+            t = self._once(("qodo", label), lambda: self._qodo_tables(QS, d, label))
+            mine = {v["pr_url"] for v in t("qodo_verdicts") if v["judge"] == label and v["work_dir"] == work and v["tool"] == tool}
+            if not mine:
+                raise KeyError_(f"no {label} qodo_verdicts rows for {head}")
+            if metric == "prs":
+                return len(mine)
+            whole = {r["pr_url"] for r in t("qodo_reviews") if r["work_dir"] == work and r["tool"] == tool}
+            view = t if whole <= mine else QS.on_prs(t, mine)  # qodo_scores.main's scope: a sample's own PRs
+            if metric not in QS.METRICS:
+                raise KeyError_(f"unknown second_judge qodo metric {metric!r}")
+            return self._once(("qodo", label, head), lambda: QS.run_scores(view, head, label))[metric]
+        except SystemExit as e:  # a scorer refusing the folder's rows: a fault, never a number
+            raise KeyError_(f"{part} scorer refused {SJ_DIR}/{label}: {e}") from None
+
+    def _qodo_tables(self, QS, d: str, label: str) -> Tables:
+        t = Tables(self.t.data)
+        t._t["qodo_verdicts"] = QS.verdict_rows(self.t.data, d, label)
+        return t
+
+
+SJ_DIR = "second_judges"
+PROVIDERS = {"aacr": Aacr, "key": Key, "martian": Martian, "qodo": Qodo, "elo": Elo, "judges": Judges,
+             "second_judge": SecondJudge}

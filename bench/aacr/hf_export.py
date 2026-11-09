@@ -29,6 +29,14 @@ What it writes (no model call, nothing uploaded; the run dirs are only read):
   LICENSES/MIT-*.txt     Martian's and Qodo's MIT licence texts (notices.py),
   validation.json        every count and headline number recomputed FROM THE
                          WRITTEN TABLES, against the papers' values.
+  second_judges/         with --second-judges: another judge's verdicts on reviews
+                         the tables hold (recompute/second_judges.py), copied as is
+                         after every file is checked against the committed manifest
+                         bench/aacr/hf/second-judges.sha256 (a missing, extra or
+                         differing file refuses the export); no config reads it.
+                         validation.json checks it (the manifest, its judge column,
+                         its coverage of the published judge's rows, the scorers
+                         reproducing its scores/, its columns) and fails without it.
 
 With --archive (the run archive folder, after `export_runs.py readme` wrote it) it
 also writes the runs table's derived fields (each Martian scoring dir's judge
@@ -73,6 +81,9 @@ import martian_ingest as MI  # noqa: E402
 import notices as NT  # noqa: E402
 import release_catalogue as RC  # noqa: E402
 import scrub_extra as SX  # noqa: E402
+
+sys.path.insert(0, os.path.join(HERE, "recompute"))
+import second_judges as SJ  # noqa: E402
 
 SETS = ("smoke10", "dev10", "holdout10", "fresh10", "rest145")
 AACR_V1_SHA256 = "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
@@ -628,6 +639,10 @@ def cited(check: str, key: str, arm_ids: set, units: set, martian_dirs: set) -> 
     elif check == "qodo":
         if head != "issues":
             runs |= _dirs_of(head.partition("|")[0], ".qodo", units)
+    elif check == "second_judge":
+        # a second judge's numbers are read from second_judges/, which neither `arms` nor the run index
+        # describes: they link no arm and no unit, so the tables its verdicts were made against keep their rows
+        pass
     elif check == "key":  # claim_metrics.Key: only its `arm=` selector reads an arm's reviews
         for part in key.partition("~")[2].split("&"):
             k, _, v = part.partition("=")
@@ -2255,6 +2270,12 @@ def leak_scan(out: str) -> dict:
         blob = json.dumps(t.to_pylist(), ensure_ascii=False, default=str)
         for p in pats:
             bad[(n, p.pattern)] += len(p.findall(blob))
+    for rel, _ in SJ.file_rows(out):  # the second judges' verdict tables, read as the configs are
+        from tables import load_table
+        blob = json.dumps(load_table(os.path.dirname(os.path.join(out, rel)), os.path.basename(rel).split(".")[0]),
+                          ensure_ascii=False, default=str)
+        for p in pats:
+            bad[(rel, p.pattern)] += len(p.findall(blob))
     for root, _, files in os.walk(out):
         for f in files:
             if f.endswith((".md", ".json", ".svg", ".txt")) or f == "NOTICE":
@@ -2496,8 +2517,18 @@ def render_inventory(inv: dict[str, dict[str, list[int]]] | None) -> str:
     return "\n".join(["| Reviewer | AACR-Bench | Martian | Qodo |", "|---|---|---|---|"] + rows)
 
 
+SECOND_JUDGES_PENDING = "`<second_judges/ not in this build>`"
+
+
+def render_second_judge_files(rows: list[tuple] | None) -> str:
+    """The card's table of the second judges' verdict tables (second_judges.file_rows): path and rows."""
+    if not rows:
+        return SECOND_JUDGES_PENDING
+    return "\n".join(["| File | Rows |", "|---|---:|"] + [f"| `{p}` | {n:,} |" for p, n in rows])
+
+
 def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter, runs: list[dict] | None = None,
-                inventory: dict | None = None) -> dict:
+                inventory: dict | None = None, second_judges: list[tuple] | None = None) -> dict:
     """Every {{NAME}} the card template holds, from the export's own facts. What
     is not known at export time (the DOI, the papers' arXiv ids) renders as an
     explicit pending marker, never as an empty string or a guess."""
@@ -2533,6 +2564,7 @@ def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter,
             "RUN_UNITS": f"{len(runs):,}", "RUN_FAMILIES": f"{len({r['family'] for r in runs}):,}",
             "GROUPS_ON_NO_RUN": groups_on_no_run(runs),
             "COMMENT_INVENTORY": render_inventory(inventory),
+            "SECOND_JUDGE_FILES": render_second_judge_files(second_judges),
             "SIZE_CATEGORY": size_category(sum(sizes.values()))}
 
 
@@ -2569,11 +2601,15 @@ def verify_result(path: str | None) -> str:
         # the split, from what each check needs: a --partial run without the third-party inputs, and the
         # tables alone, re-run fewer of them
         tables = sum(1 for x in cons if not x["needs"])
+        # validation.json's checks of the second judges' folder: they need that folder beside the tables
+        folder = sum(1 for x in cons if x["needs"] == ["second_judges"])
         third = sum(1 for x in cons if {"--martian", "--qodo-gt"} & set(x["needs"]))
-        checks = (f"The release's own checks pass {ok} of {len(cons)}: {tables} from `validation.json`, re-run on "
-                  f"the tables, and {len(cons) - tables} the slim bundle's. `--partial` without `--martian` and "
-                  f"`--qodo-gt` re-runs {len(cons) - third} of them (the slim bundle's Martian and Qodo re-scores "
-                  f"need those inputs), and with the tables alone the {tables} from `validation.json`.")
+        rerun = (f"re-run on the dataset ({tables} on the tables and {folder} on its `second_judges/` folder)"
+                 if folder else "re-run on the tables")
+        checks = (f"The release's own checks pass {ok} of {len(cons)}: {tables + folder} from `validation.json`, "
+                  f"{rerun}, and {len(cons) - tables - folder} the slim bundle's. `--partial` without `--martian` "
+                  f"and `--qodo-gt` re-runs {len(cons) - third} of them (the slim bundle's Martian and Qodo "
+                  f"re-scores need those inputs), and with the tables alone the {tables} from `validation.json`.")
     if c.get("pass", 0) == sum(c.values()):
         return (f"all {c.get('pass', 0):,} claims pass, with 0 mismatch, 0 error, 0 missing source and no "
                 f"claim left unchecked. " + checks)
@@ -2615,7 +2651,7 @@ def render_card(a, out: str, sizes: dict, checks: list[dict], counts: collection
     # the inventory from the tables as written, so the card counts exactly what ships
     inv = comment_inventory({n: pq.read_table(os.path.join(out, "data", f"{n}.parquet")).to_pylist()
                              for n in ("reviews", "martian_reviews", "qodo_reviews")})
-    card = fill_card(tmpl, card_values(a, sizes, checks, counts, runs, inv))
+    card = fill_card(tmpl, card_values(a, sizes, checks, counts, runs, inv, SJ.file_rows(out)))
     open(os.path.join(out, "README.md"), "w").write(card)
 
 
@@ -2649,6 +2685,25 @@ def dataset_notice() -> str:
         qodo_where="The `qodo_*` configs",
         swepr=False) + ("\nThe licence of each reviewed repository is in `prs.repo_license`, "
                         "`martian_prs.repo_license` and `qodo_prs.repo_license` (SPDX ids).\n")
+
+
+def refuse_second_judges(src: str, manifest: str = SJ.MANIFEST) -> None:
+    """--second-judges: every file of the folder must be the committed manifest's, none missing, extra or
+    differing, before anything is written (SystemExit naming them otherwise)."""
+    src = os.path.abspath(os.path.expanduser(src))
+    if os.path.basename(src.rstrip("/")) != SJ.FOLDER:
+        raise SystemExit(f"--second-judges: give the `{SJ.FOLDER}` folder itself, not {src}")
+    bad = SJ.manifest_problems(src, SJ.read_manifest(manifest))
+    if any(bad.values()):
+        raise SystemExit("--second-judges: the folder is not the committed manifest's "
+                         f"({os.path.relpath(manifest, os.path.dirname(os.path.dirname(HERE)))}): "
+                         + "; ".join(f"{k} {v}" for k, v in bad.items() if v))
+
+
+def copy_second_judges(src: str, out: str, manifest: str = SJ.MANIFEST) -> None:
+    """The folder into the dataset at second_judges/, as is, only when it is the manifest's."""
+    refuse_second_judges(src, manifest)
+    shutil.copytree(os.path.abspath(os.path.expanduser(src)), os.path.join(out, SJ.FOLDER))
 
 
 def main():
@@ -2685,6 +2740,9 @@ def main():
     ap.add_argument("--with-report", action="store_true",
                     help="also write reports/FULL-BENCHMARK.md and .pdf, the superseded working report (off by default)")
     ap.add_argument("--no-load-check", action="store_true")
+    ap.add_argument("--second-judges", help="the second judges' folder (a `second_judges` dir): copied to the "
+                    "dataset's second_judges/ when every file matches bench/aacr/hf/second-judges.sha256 (refused "
+                    "otherwise); validation.json's second-judge checks fail without it")
     a = ap.parse_args()
     if not (SCRUB_BOTS and SCRUB_OWNERS):
         sys.exit("set QCR_SCRUB_BOT and QCR_SCRUB_OWNER: the identities this export scrubs come from the exporter")
@@ -2697,6 +2755,8 @@ def main():
     if a.card_only:
         rerender_card(a, out)
         return
+    if a.second_judges:
+        refuse_second_judges(a.second_judges)
     if os.path.exists(out):
         shutil.rmtree(out)
     os.makedirs(out)
@@ -2710,12 +2770,15 @@ def main():
     ex.filter_by_family()
     ex.link_claims()
     sizes = write_parquet(ex.tables, out)
+    if a.second_judges:
+        copy_second_judges(a.second_judges, out)
     if not a.no_figures:
         print("figures, keys, reports …", flush=True)
         figures(a, out, ex.counts, ex.notes)
     tables = read_parquet(out)
     checks = (validate(tables) + validate_release(tables, ex.cat, ex.elo_refits, a.elo_dir, ex.commits)
               + ex.raw_text_checks(tables))
+    checks += SJ.checks(out)  # fails closed: without --second-judges the folder's checks fail
     if not a.no_figures:
         checks += figure_checks(out)
     manifest = json.load(open(CLAIMS_MANIFEST))

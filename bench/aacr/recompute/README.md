@@ -56,6 +56,19 @@ and what it refuses.
     martian_scores.py --data <hf-dataset> --verdicts DIR --judge LABEL [--runs WORK|TOOL,...] [--half martian-test30]
     heldout.py --data <hf-dataset> --fixed-set --verdicts DIR --judge LABEL   # the committed held-out sets
     judge_prompt.py --data <hf-dataset> --arm ARM --pr IID [--answer-key <unpacked archive>]   # our AACR judge's prompt
+    second_judges.py --data <hf-dataset>   # the release's checks of its second_judges/ folders
+
+The dataset's `second_judges/<LABEL>/` folders are such answers, published with
+the scorers' output on them. `second_judges.py` runs validation.json's checks of
+them: every file against the committed `bench/aacr/hf/second-judges.sha256`, the
+`judge` column, the rows against the published judge's rows of the reviewers
+the folder names (`SPECS`), the scorers above reproducing `scores/`, and the
+tables' columns. `claim_metrics.py`'s `second_judge` keys give a folder's
+numbers through the same scorers: `LABEL/aacr/ARM:METRIC` (score_verdicts:
+`found`, `recall`, `high_rec`, `correct`, ...; against the arm's published
+judge `pct`, `kappa`, `c_pct`, ...), `LABEL/martian/WORK|TOOL:METRIC`
+(`core_precision`, `core_recall`, `core_f1`, ...) and `LABEL/qodo/WORK|TOOL:METRIC`
+(`precision`, `recall`, `f1`, ...).
 
 `--select` takes a claim key's PR selector: `arm=copilot-2025-upstream` scores
 the Copilot 2025 table's PRs, `set=holdout10+fresh10` two sets; the review count
