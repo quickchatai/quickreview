@@ -1,0 +1,848 @@
+{
+ "_doc": "The numbers martian_figs.py draws that no other shipped file holds, as drawn (rounded to the decimals the figure prints), each with its key in bench/aacr/claims.json's language and the runs it reads. Written and checked by bench/aacr/martian_figvalues.py (its docstring: every key kind).",
+ "values": {
+  "goldens/prs": {
+   "value": 50,
+   "q": "martian:goldens:prs",
+   "runs": [
+    "hf:martian_prs"
+   ]
+  },
+  "goldens/real": {
+   "value": 86,
+   "q": "martian:goldens:real",
+   "runs": [
+    "hf:martian_goldens"
+   ]
+  },
+  "extended_key/key": {
+   "value": 82,
+   "q": "martian_ext:key",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/prs": {
+   "value": 20,
+   "q": "martian_ext:prs",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/quickreview/recall": {
+   "value": 86.6,
+   "q": "martian_ext:tool/quickreview/recall",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/quickreview/p_strict": {
+   "value": 40.0,
+   "q": "martian_ext:tool/quickreview/p_strict",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/quickreview/p_lenient": {
+   "value": 75.6,
+   "q": "martian_ext:tool/quickreview/p_lenient",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/quickreview/good": {
+   "value": 68,
+   "q": "{martian_ext:tool/quickreview/good_pct} * {martian_ext:tool/quickreview/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/quickreview/minor": {
+   "value": 80,
+   "q": "{martian_ext:tool/quickreview/minor_pct} * {martian_ext:tool/quickreview/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/quickreview/dup": {
+   "value": 19,
+   "q": "{martian_ext:tool/quickreview/dup_pct} * {martian_ext:tool/quickreview/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/quickreview/wrong": {
+   "value": 3,
+   "q": "{martian_ext:tool/quickreview/wrong_pct} * {martian_ext:tool/quickreview/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-v2/recall": {
+   "value": 52.4,
+   "q": "martian_ext:tool/qodo-v2/recall",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-v2/p_strict": {
+   "value": 58.7,
+   "q": "martian_ext:tool/qodo-v2/p_strict",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-v2/p_lenient": {
+   "value": 92.5,
+   "q": "martian_ext:tool/qodo-v2/p_lenient",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-v2/good": {
+   "value": 37,
+   "q": "{martian_ext:tool/qodo-v2/good_pct} * {martian_ext:tool/qodo-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-v2/minor": {
+   "value": 23,
+   "q": "{martian_ext:tool/qodo-v2/minor_pct} * {martian_ext:tool/qodo-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-v2/dup": {
+   "value": 0,
+   "q": "{martian_ext:tool/qodo-v2/dup_pct} * {martian_ext:tool/qodo-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-v2/wrong": {
+   "value": 3,
+   "q": "{martian_ext:tool/qodo-v2/wrong_pct} * {martian_ext:tool/qodo-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/augment/recall": {
+   "value": 48.8,
+   "q": "martian_ext:tool/augment/recall",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/augment/p_strict": {
+   "value": 54.4,
+   "q": "martian_ext:tool/augment/p_strict",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/augment/p_lenient": {
+   "value": 86.0,
+   "q": "martian_ext:tool/augment/p_lenient",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/augment/good": {
+   "value": 37,
+   "q": "{martian_ext:tool/augment/good_pct} * {martian_ext:tool/augment/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/augment/minor": {
+   "value": 25,
+   "q": "{martian_ext:tool/augment/minor_pct} * {martian_ext:tool/augment/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/augment/dup": {
+   "value": 3,
+   "q": "{martian_ext:tool/augment/dup_pct} * {martian_ext:tool/augment/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/augment/wrong": {
+   "value": 3,
+   "q": "{martian_ext:tool/augment/wrong_pct} * {martian_ext:tool/augment/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-extended-v2/recall": {
+   "value": 46.3,
+   "q": "martian_ext:tool/qodo-extended-v2/recall",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-extended-v2/p_strict": {
+   "value": 56.1,
+   "q": "martian_ext:tool/qodo-extended-v2/p_strict",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-extended-v2/p_lenient": {
+   "value": 82.2,
+   "q": "martian_ext:tool/qodo-extended-v2/p_lenient",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-extended-v2/good": {
+   "value": 37,
+   "q": "{martian_ext:tool/qodo-extended-v2/good_pct} * {martian_ext:tool/qodo-extended-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-extended-v2/minor": {
+   "value": 21,
+   "q": "{martian_ext:tool/qodo-extended-v2/minor_pct} * {martian_ext:tool/qodo-extended-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-extended-v2/dup": {
+   "value": 3,
+   "q": "{martian_ext:tool/qodo-extended-v2/dup_pct} * {martian_ext:tool/qodo-extended-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/qodo-extended-v2/wrong": {
+   "value": 5,
+   "q": "{martian_ext:tool/qodo-extended-v2/wrong_pct} * {martian_ext:tool/qodo-extended-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/cubic-v2/recall": {
+   "value": 42.7,
+   "q": "martian_ext:tool/cubic-v2/recall",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/cubic-v2/p_strict": {
+   "value": 50.0,
+   "q": "martian_ext:tool/cubic-v2/p_strict",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/cubic-v2/p_lenient": {
+   "value": 70.2,
+   "q": "martian_ext:tool/cubic-v2/p_lenient",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/cubic-v2/good": {
+   "value": 33,
+   "q": "{martian_ext:tool/cubic-v2/good_pct} * {martian_ext:tool/cubic-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/cubic-v2/minor": {
+   "value": 19,
+   "q": "{martian_ext:tool/cubic-v2/minor_pct} * {martian_ext:tool/cubic-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/cubic-v2/dup": {
+   "value": 5,
+   "q": "{martian_ext:tool/cubic-v2/dup_pct} * {martian_ext:tool/cubic-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/cubic-v2/wrong": {
+   "value": 9,
+   "q": "{martian_ext:tool/cubic-v2/wrong_pct} * {martian_ext:tool/cubic-v2/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/claude-code/recall": {
+   "value": 39.0,
+   "q": "martian_ext:tool/claude-code/recall",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/claude-code/p_strict": {
+   "value": 42.7,
+   "q": "martian_ext:tool/claude-code/p_strict",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/claude-code/p_lenient": {
+   "value": 71.1,
+   "q": "martian_ext:tool/claude-code/p_lenient",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/claude-code/good": {
+   "value": 32,
+   "q": "{martian_ext:tool/claude-code/good_pct} * {martian_ext:tool/claude-code/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/claude-code/minor": {
+   "value": 30,
+   "q": "{martian_ext:tool/claude-code/minor_pct} * {martian_ext:tool/claude-code/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/claude-code/dup": {
+   "value": 8,
+   "q": "{martian_ext:tool/claude-code/dup_pct} * {martian_ext:tool/claude-code/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/claude-code/wrong": {
+   "value": 5,
+   "q": "{martian_ext:tool/claude-code/wrong_pct} * {martian_ext:tool/claude-code/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/macroscope/recall": {
+   "value": 31.7,
+   "q": "martian_ext:tool/macroscope/recall",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/macroscope/p_strict": {
+   "value": 63.2,
+   "q": "martian_ext:tool/macroscope/p_strict",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/macroscope/p_lenient": {
+   "value": 82.8,
+   "q": "martian_ext:tool/macroscope/p_lenient",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/macroscope/good": {
+   "value": 24,
+   "q": "{martian_ext:tool/macroscope/good_pct} * {martian_ext:tool/macroscope/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/macroscope/minor": {
+   "value": 9,
+   "q": "{martian_ext:tool/macroscope/minor_pct} * {martian_ext:tool/macroscope/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/macroscope/dup": {
+   "value": 1,
+   "q": "{martian_ext:tool/macroscope/dup_pct} * {martian_ext:tool/macroscope/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/macroscope/wrong": {
+   "value": 4,
+   "q": "{martian_ext:tool/macroscope/wrong_pct} * {martian_ext:tool/macroscope/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/devin/recall": {
+   "value": 26.8,
+   "q": "martian_ext:tool/devin/recall",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/devin/p_strict": {
+   "value": 64.7,
+   "q": "martian_ext:tool/devin/p_strict",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/devin/p_lenient": {
+   "value": 78.6,
+   "q": "martian_ext:tool/devin/p_lenient",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/devin/good": {
+   "value": 22,
+   "q": "{martian_ext:tool/devin/good_pct} * {martian_ext:tool/devin/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/devin/minor": {
+   "value": 6,
+   "q": "{martian_ext:tool/devin/minor_pct} * {martian_ext:tool/devin/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/devin/dup": {
+   "value": 5,
+   "q": "{martian_ext:tool/devin/dup_pct} * {martian_ext:tool/devin/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "extended_key/devin/wrong": {
+   "value": 1,
+   "q": "{martian_ext:tool/devin/wrong_pct} * {martian_ext:tool/devin/candidates} / 100",
+   "runs": [
+    "runs/mv-r1-asposted.martian",
+    "analysis/external-benchmarks-2026-10-02/fair/",
+    "analysis/external-benchmarks-2026-10-02/gm/rows.json"
+   ]
+  },
+  "policy/as_posted/precision": {
+   "value": 19.7,
+   "q": "martian:mv-r1-asposted|quickreview:core_precision",
+   "runs": [
+    "runs/mv-r1-asposted.martian"
+   ]
+  },
+  "policy/as_posted/recall": {
+   "value": 58.6,
+   "q": "martian:mv-r1-asposted|quickreview:core_recall",
+   "runs": [
+    "runs/mv-r1-asposted.martian"
+   ]
+  },
+  "policy/round3/precision": {
+   "value": 20.2,
+   "q": "martian:ext-default3-martian-tune20|quickreview:core_precision",
+   "runs": [
+    "runs/ext-default3-martian-tune20.martian"
+   ]
+  },
+  "policy/round3/recall": {
+   "value": 60.3,
+   "q": "martian:ext-default3-martian-tune20|quickreview:core_recall",
+   "runs": [
+    "runs/ext-default3-martian-tune20.martian"
+   ]
+  },
+  "policy/snappy/precision": {
+   "value": 27.0,
+   "q": "martian:ext-snappy-martian-tune20|quickreview:core_precision",
+   "runs": [
+    "runs/ext-snappy-martian-tune20.martian"
+   ]
+  },
+  "policy/snappy/recall": {
+   "value": 34.5,
+   "q": "martian:ext-snappy-martian-tune20|quickreview:core_recall",
+   "runs": [
+    "runs/ext-snappy-martian-tune20.martian"
+   ]
+  },
+  "policy/frozen_tune20/precision": {
+   "value": 49.0,
+   "q": "martian:mv-r7-c100-l2-vb|quickreview:core_precision",
+   "runs": [
+    "runs/mv-r7-c100-l2-vb.martian"
+   ]
+  },
+  "policy/frozen_tune20/recall": {
+   "value": 43.1,
+   "q": "martian:mv-r7-c100-l2-vb|quickreview:core_recall",
+   "runs": [
+    "runs/mv-r7-c100-l2-vb.martian"
+   ]
+  },
+  "policy/frozen_tune20/f1": {
+   "value": 45.9,
+   "q": "martian:mv-r7-c100-l2-vb|quickreview:core_f1",
+   "runs": [
+    "runs/mv-r7-c100-l2-vb.martian"
+   ]
+  },
+  "policy/frozen_test30/precision": {
+   "value": 36.5,
+   "q": "martian:mt-test30-frozen|quickreview:core_precision",
+   "runs": [
+    "runs/mt-test30-frozen.martian"
+   ]
+  },
+  "policy/frozen_test30/recall": {
+   "value": 19.0,
+   "q": "martian:mt-test30-frozen|quickreview:core_recall",
+   "runs": [
+    "runs/mt-test30-frozen.martian"
+   ]
+  },
+  "policy/frozen_test30/f1": {
+   "value": 25.0,
+   "q": "martian:mt-test30-frozen|quickreview:core_f1",
+   "runs": [
+    "runs/mt-test30-frozen.martian"
+   ]
+  },
+  "policy/cubic_rejudged/precision": {
+   "value": 62.7,
+   "q": "martian:ext-default3-martian-tune20|rejudged-cubic-v2:core_precision",
+   "runs": [
+    "runs/ext-default3-martian-tune20.martian"
+   ]
+  },
+  "policy/cubic_rejudged/recall": {
+   "value": 72.4,
+   "q": "martian:ext-default3-martian-tune20|rejudged-cubic-v2:core_recall",
+   "runs": [
+    "runs/ext-default3-martian-tune20.martian"
+   ]
+  },
+  "leaderboard/qodo-extended-v2": {
+   "value": 65.1,
+   "q": "martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 (its published scores, the HF martian_scores rows with no work_dir)"
+   ]
+  },
+  "leaderboard/cubic-v2": {
+   "value": 64.9,
+   "q": "martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 (its published scores, the HF martian_scores rows with no work_dir)"
+   ]
+  },
+  "leaderboard/augment": {
+   "value": 64.0,
+   "q": "opus:augment:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/qodo-v2": {
+   "value": 60.6,
+   "q": "opus:qodo-v2:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/copilot-v2": {
+   "value": 58.0,
+   "q": "opus:copilot-v2:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/gemini-v2": {
+   "value": 52.8,
+   "q": "opus:gemini-v2:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/gitlab": {
+   "value": 52.7,
+   "q": "opus:gitlab:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/sourcery": {
+   "value": 51.5,
+   "q": "opus:sourcery:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/greptile-v4-1": {
+   "value": 51.2,
+   "q": "opus:greptile-v4-1:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/coderabbit": {
+   "value": 51.1,
+   "q": "opus:coderabbit:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/macroscope": {
+   "value": 50.8,
+   "q": "opus:macroscope:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/bugbot": {
+   "value": 48.6,
+   "q": "opus:bugbot:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/claude-code": {
+   "value": 47.7,
+   "q": "martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 (its published scores, the HF martian_scores rows with no work_dir)"
+   ]
+  },
+  "leaderboard/devin": {
+   "value": 44.8,
+   "q": "opus:devin:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/greptile-v5": {
+   "value": 44.5,
+   "q": "opus:greptile-v5:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/kodus-v2": {
+   "value": 41.5,
+   "q": "opus:kodus-v2:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/codeant-v2": {
+   "value": 40.9,
+   "q": "opus:codeant-v2:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/copilot": {
+   "value": 40.6,
+   "q": "opus:copilot:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/baz": {
+   "value": 40.5,
+   "q": "opus:baz:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/claude": {
+   "value": 38.9,
+   "q": "opus:claude:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/kg": {
+   "value": 18.4,
+   "q": "opus:kg:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/graphite": {
+   "value": 9.3,
+   "q": "opus:graphite:core_f2",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 offline/results/anthropic_claude-opus-4-5-20251101/evaluations.json"
+   ]
+  },
+  "leaderboard/quickreview_own_f2": {
+   "value": 40.9,
+   "q": "martian:final1-martian50|quickreview-frozen:core_f2",
+   "runs": [
+    "runs/final1-martian50.martian"
+   ]
+  },
+  "leaderboard/extra_min": {
+   "value": 7,
+   "q": "min({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 (its published scores, the HF martian_scores rows with no work_dir)",
+    "runs/final1-martian50.martian",
+    "runs/fast1-martian50.martian",
+    "runs/ext-default3-martian-tune20.martian",
+    "runs/ext-r4-martian-test30.martian",
+    "runs/mv-r1-asposted.martian"
+   ]
+  },
+  "leaderboard/extra_max": {
+   "value": 12,
+   "q": "max({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})",
+   "runs": [
+    "withmartian/code-review-benchmark@e616e84 (its published scores, the HF martian_scores rows with no work_dir)",
+    "runs/final1-martian50.martian",
+    "runs/fast1-martian50.martian",
+    "runs/ext-default3-martian-tune20.martian",
+    "runs/ext-r4-martian-test30.martian",
+    "runs/mv-r1-asposted.martian"
+   ]
+  },
+  "leaderboard/estimate_low": {
+   "value": 43.5,
+   "q": "5 * (({martian:final1-martian50|quickreview-frozen:core_tp} + min({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fp}) * 100) * (({martian:final1-martian50|quickreview-frozen:core_tp} + min({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fn}) * 100) / (4 * (({martian:final1-martian50|quickreview-frozen:core_tp} + min({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fp}) * 100) + (({martian:final1-martian50|quickreview-frozen:core_tp} + min({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fn}) * 100))",
+   "runs": [
+    "runs/final1-martian50.martian",
+    "withmartian/code-review-benchmark@e616e84 (its published scores, the HF martian_scores rows with no work_dir)",
+    "runs/fast1-martian50.martian",
+    "runs/ext-default3-martian-tune20.martian",
+    "runs/ext-r4-martian-test30.martian",
+    "runs/mv-r1-asposted.martian"
+   ]
+  },
+  "leaderboard/estimate_high": {
+   "value": 45.6,
+   "q": "5 * (({martian:final1-martian50|quickreview-frozen:core_tp} + max({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fp}) * 100) * (({martian:final1-martian50|quickreview-frozen:core_tp} + max({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fn}) * 100) / (4 * (({martian:final1-martian50|quickreview-frozen:core_tp} + max({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fp}) * 100) + (({martian:final1-martian50|quickreview-frozen:core_tp} + max({martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:final1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:fast1-martian50|rejudged-claude-code:core_tp}, {martian:-|cubic-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:ext-default3-martian-tune20+ext-r4-martian-test30|rejudged-cubic-v2:core_tp}, {martian:-|qodo-extended-v2@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-qodo-extended-v2:core_tp}, {martian:-|claude-code@published: anthropic_claude-opus-4-5-20251101:core_tp} - {martian:mv-r1-asposted+ext-r4-martian-test30|rejudged-claude-code:core_tp})) / ({martian:final1-martian50|quickreview-frozen:core_tp} + {martian:final1-martian50|quickreview-frozen:core_fn}) * 100))",
+   "runs": [
+    "runs/final1-martian50.martian",
+    "withmartian/code-review-benchmark@e616e84 (its published scores, the HF martian_scores rows with no work_dir)",
+    "runs/fast1-martian50.martian",
+    "runs/ext-default3-martian-tune20.martian",
+    "runs/ext-r4-martian-test30.martian",
+    "runs/mv-r1-asposted.martian"
+   ]
+  }
+ }
+}

@@ -5,7 +5,7 @@
 # ///
 """Figures for the Martian critique — PDF, PNG and SVG in bench/aacr/charts/martian-*.
 
-    uv run bench/aacr/martian_figs.py
+    uv run bench/aacr/martian_figs.py [--out DIR]     # DIR: write the figures there instead of charts/
 
 No review, judge or annotation run is made here. Inputs:
   charts/martian-tiers.json  martian_tiers.py --compute over the release (the severity figure)
@@ -13,9 +13,13 @@ No review, judge or annotation run is made here. Inputs:
                              Martian evaluations (golden per-item buckets, real-golden
                              credits per tool, the "all blocking found" counts)
   ext/martian-tuning/tune20-leaderboard.txt   the posting-policy variants (tune20)
-  the small tables below, copied from FAIR-COMPARISON.md (section C), the 50-PR
-  Core scoring (score_profiles.py over the stored evaluations) and Martian's
-  published Opus 4.5 results.
+  charts/martian-figs.json   every other number a figure draws, each with its key and the runs it
+                             is computed from: the tune20 extended key (martian_ext.py over the
+                             archive's analysis volume and runs/mv-r1-asposted.martian), the named
+                             posting policies and re-judges (the scoring dirs' stored Core scores),
+                             Martian's published Opus 4.5 leaderboard and the frozen build's estimate
+                             on it. martian_figvalues.py writes it from the release and --check
+                             recomputes it (its docstring names every source).
 QuickReview is drawn in the highlight colour in every figure.
 """
 import collections, json, os, re
@@ -37,11 +41,15 @@ plt.rcParams.update({
     "savefig.facecolor": GROUND, "axes.spines.top": False, "axes.spines.right": False, "svg.fonttype": "none",
 })
 D = json.load(open(os.path.join(OUT, "martian-data.json")))
+F = {k: v["value"] for k, v in json.load(open(os.path.join(OUT, "martian-figs.json")))["values"].items()}
+
+
+SAVE = OUT
 
 
 def save(fig, name):
     for ext in ("pdf", "png", "svg"):
-        fig.savefig(os.path.join(OUT, f"martian-{name}.{ext}"), dpi=200 if ext == "png" else None, bbox_inches="tight")
+        fig.savefig(os.path.join(SAVE, f"martian-{name}.{ext}"), dpi=200 if ext == "png" else None, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -103,7 +111,7 @@ def fig_real_vs_trivia():
     for src, marker, edge in (("real_published_opus", "o", OTHER), ("real_same_judge", "D", None)):
         for t, v in D[src].items():
             tot = v["real"] + v["notreal"] + v["disputed"]
-            x, y = 100 * v["notreal"] / tot, 100 * v["real"] / 86
+            x, y = 100 * v["notreal"] / tot, 100 * v["real"] / F["goldens/real"]
             c = QR if is_qr(t) else (OTHER if src.endswith("opus") else "#4A5567")
             ax.scatter(x, y, s=150 if is_qr(t) else 60, marker=marker, color=c, zorder=3,
                        edgecolor="white", linewidth=0.8)
@@ -119,21 +127,21 @@ def fig_real_vs_trivia():
                         if far else None)
     ax.set_xlim(17, 44)
     ax.set_xlabel("share of the tool's golden credits that land on NOT-real goldens (%)")
-    ax.set_ylabel("real goldens found, of 86 (%)")
+    ax.set_ylabel(f"real goldens found, of {F['goldens/real']} (%)")
     ax.grid(color=GRID)
     ax.set_axisbelow(True)
-    ax.set_title("Finding the real defects vs being rewarded for the rest (50 PRs)")
+    ax.set_title(f"Finding the real defects vs being rewarded for the rest ({F['goldens/prs']} PRs)")
     ax.text(0.01, 0.01, "◆ * = judged by gpt-6.1-sol in our pass   ● = Martian's published Opus 4.5 judgements",
             transform=ax.transAxes, fontsize=8.5, color=MUTED)
     save(fig, "real-vs-trivia")
 
 
-# 3 + 4 — the tune20 extended key (FAIR-COMPARISON.md, section C; QuickReview = round-1 default)
+# 3 + 4 — the tune20 extended key (martian_ext.py; QuickReview = round-1 default, mv-r1-asposted)
+EXT_TOOLS = [k.split("/")[1] for k in F if k.startswith("extended_key/") and k.endswith("/recall")]
 FAIR = [  # tool, recall, P strict, P lenient, GOOD, MINOR, DUP, WRONG
-    ("QuickReview", 86.6, 40.0, 75.6, 68, 80, 19, 3), ("qodo-v2", 52.4, 58.7, 92.5, 37, 23, 0, 3),
-    ("augment", 48.8, 54.4, 86.0, 37, 25, 3, 3), ("qodo-extended-v2", 46.3, 56.1, 82.2, 37, 21, 3, 5),
-    ("cubic-v2", 42.7, 50.0, 70.2, 33, 19, 5, 9), ("claude-code", 39.0, 42.7, 71.1, 32, 30, 8, 5),
-    ("macroscope", 31.7, 63.2, 82.8, 24, 9, 1, 4), ("devin", 26.8, 64.7, 78.6, 22, 6, 5, 1)]
+    ("QuickReview" if t == "quickreview" else t,
+     *(F[f"extended_key/{t}/{m}"] for m in ("recall", "p_strict", "p_lenient", "good", "minor", "dup", "wrong")))
+    for t in EXT_TOOLS]
 
 
 def fig_extended_key():
@@ -150,7 +158,7 @@ def fig_extended_key():
     ax.set_xlim(20, 100)
     ax.set_ylim(20, 95)
     ax.set_xlabel("precision against real defects (%) — ● strict: true-but-minor counts as noise   ○ lenient: it does not")
-    ax.set_ylabel("recall of the 82 real defects (%)")
+    ax.set_ylabel(f"recall of the {F['extended_key/key']} real defects (%)")
     ax.set_title("Tune20 with the key extended by every real bug any tool found")
     ax.grid(color=GRID)
     ax.set_axisbelow(True)
@@ -173,7 +181,7 @@ def fig_composition():
             lbl.set_color(QR)
             lbl.set_fontweight("bold")
     ax.invert_yaxis()
-    ax.set_xlabel("extracted comments on the 20 tuning PRs")
+    ax.set_xlabel(f"extracted comments on the {F['extended_key/prs']} tuning PRs")
     handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in (GOOD, MINOR, DUP, WRONG)]
     ax.legend(handles, ["real defect (golden or unlisted)", "true but minor", "duplicate", "wrong"],
               frameon=False, loc="lower right")
@@ -200,7 +208,8 @@ def fig_policy():
         ax.text(99, f2 * 4 * 99 / (5 * 99 - f2) + 1, f"F2={f2}", fontsize=8, color=MUTED, ha="right")
     ax.scatter([x[1] for x in pts], [x[2] for x in pts], s=22, color=shade(QR), zorder=2,
                label=f"{len(pts)} posting policies on stored reviews (tune20)")
-    named = [("as posted, tune20", 19.7, 58.6), ("round 3 default", 20.2, 60.3), ("snappy profile", 27.0, 34.5)]
+    named = [(t, F[f"policy/{k}/precision"], F[f"policy/{k}/recall"])
+             for t, k in (("as posted, tune20", "as_posted"), ("round 3 default", "round3"), ("snappy profile", "snappy"))]
     offs = {"as posted, tune20": (-14, -18, "right"), "round 3 default": (14, 16, "left"),
             "snappy profile": (8, -12, "left")}
     for t, x, y in named:
@@ -208,14 +217,17 @@ def fig_policy():
         dx, dy, ha = offs[t]
         ax.annotate(t, (x, y), xytext=(dx, dy), textcoords="offset points", fontsize=8.5, color=QR, ha=ha,
                     va="center", arrowprops={"arrowstyle": "-", "color": QR, "lw": 0.7, "shrinkA": 0, "shrinkB": 4})
-    ax.annotate("", xy=(36.5, 19.0), xytext=(49.0, 43.1),
+    tp, ts = ((F[f"policy/{k}/precision"], F[f"policy/{k}/recall"], F[f"policy/{k}/f1"])
+              for k in ("frozen_tune20", "frozen_test30"))
+    ax.annotate("", xy=ts[:2], xytext=tp[:2],
                 arrowprops={"arrowstyle": "->", "color": WRONG, "lw": 1.6})
-    ax.scatter([49.0], [43.1], s=80, color=WRONG, zorder=4)
-    ax.scatter([36.5], [19.0], s=80, facecolor="white", edgecolor=WRONG, zorder=4, linewidth=1.6)
-    ax.text(49.5, 44.5, "best policy, frozen on tune20 (F1 45.9)", fontsize=8.5, color=WRONG)
-    ax.text(37.0, 15.5, "same policy on test30 (F1 25.0)", fontsize=8.5, color=WRONG)
-    ax.scatter([62.7], [72.4], s=80, color="#4A5567", zorder=4)
-    ax.annotate("cubic-v2 (re-judged)", (62.7, 72.4), xytext=(6, 4), textcoords="offset points", fontsize=8.5)
+    ax.scatter([tp[0]], [tp[1]], s=80, color=WRONG, zorder=4)
+    ax.scatter([ts[0]], [ts[1]], s=80, facecolor="white", edgecolor=WRONG, zorder=4, linewidth=1.6)
+    ax.text(tp[0] + 0.5, tp[1] + 1.4, f"best policy, frozen on tune20 (F1 {tp[2]:.1f})", fontsize=8.5, color=WRONG)
+    ax.text(ts[0] + 0.5, ts[1] - 3.5, f"same policy on test30 (F1 {ts[2]:.1f})", fontsize=8.5, color=WRONG)
+    cubic = (F["policy/cubic_rejudged/precision"], F["policy/cubic_rejudged/recall"])
+    ax.scatter([cubic[0]], [cubic[1]], s=80, color="#4A5567", zorder=4)
+    ax.annotate("cubic-v2 (re-judged)", cubic, xytext=(6, 4), textcoords="offset points", fontsize=8.5)
     ax.set_xlim(0, 100)
     ax.set_ylim(0, 100)
     ax.set_xlabel("Martian precision (%)")
@@ -263,18 +275,17 @@ def fig_allfound():
     fig.suptitle("PRs where the tool found every listed blocking problem", x=0.01, ha="left",
                  fontweight="bold", fontsize=13)
     fig.text(0.01, -0.02, "* = gpt-6.1-sol judge, same pass (dark); others: Martian's published Opus 4.5 "
-             "judgements, which credit 7–12 more matches per tool than ours", fontsize=8.5, color=MUTED)
+             f"judgements, which credit {EXTRA} more matches per tool than ours", fontsize=8.5, color=MUTED)
     save(fig, "all-blocking")
 
 
 # 7 — the 50-PR leaderboard (Core, F2), Martian's published Opus 4.5 judge
-OPUS50 = [("qodo-extended-v2", 65.1), ("cubic-v2", 64.9), ("augment", 64.0), ("qodo-v2", 60.6),
-          ("copilot-v2", 58.0), ("gemini-v2", 52.8), ("gitlab", 52.7), ("sourcery", 51.5),
-          ("greptile-v4-1", 51.2), ("coderabbit", 51.1), ("macroscope", 50.8), ("bugbot", 48.6),
-          ("claude-code", 47.7), ("devin", 44.8), ("greptile-v5", 44.5), ("kodus-v2", 41.5),
-          ("codeant-v2", 40.9), ("copilot", 40.6), ("baz", 40.5), ("claude", 38.9), ("kg", 18.4),
-          ("graphite", 9.3)]
-QR_EST = (43.5, 45.6)  # final build (2026-10-04): our-judge 104 matches / 640 candidates (F2 40.9), plus the 7..12 extra matches per tool the Opus 4.5 judge credited across our passes
+OPUS50 = [(k.split("/", 1)[1], v) for k, v in F.items()
+          if k.startswith("leaderboard/") and not k.split("/", 1)[1].startswith(("quickreview", "extra", "estimate"))]
+# the frozen build (final1-martian50): our judge's Core matches plus the fewest / most extra matches the
+# Opus 4.5 judge credited a re-judged tool in any pass, as F2
+QR_EST = (F["leaderboard/estimate_low"], F["leaderboard/estimate_high"])
+EXTRA = f"{F['leaderboard/extra_min']}–{F['leaderboard/extra_max']}"
 
 
 def fig_leaderboard():
@@ -297,10 +308,11 @@ def fig_leaderboard():
             lbl.set_fontweight("bold")
     ax.invert_yaxis()
     ax.set_xlim(0, 80)
-    ax.set_xlabel("Martian Core F2, 50 PRs, Opus 4.5 judge")
+    ax.set_xlabel(f"Martian Core F2, {F['goldens/prs']} PRs, Opus 4.5 judge")
     ax.set_title("Martian's leaderboard metric: QuickReview mid-table")
     ax.text(0.99, 0.02, "QuickReview was never judged by Opus: range estimated from the three tools\n"
-            "both judges scored (Opus credits 7–12 more matches each). Our own judge: F2 40.9.",
+            f"both judges scored (Opus credits {EXTRA} more matches each). Our own judge: F2 "
+            f"{F['leaderboard/quickreview_own_f2']:.1f}.",
             transform=ax.transAxes, fontsize=8, color=MUTED, ha="right")
     ax.grid(axis="x", color=GRID)
     ax.set_axisbelow(True)
@@ -331,7 +343,7 @@ def fig_strength():
     ax = axes[0]
     x = range(len(CUM))
     ax.bar([i - 0.19 for i in x], [c[1] for c in CUM], width=0.36, color=GOOD, label="real defects (blind classification, tune20)")
-    ax.bar([i + 0.19 for i in x], [c[2] for c in CUM], width=0.36, color=OTHER, label="Martian precision (50 PRs, its judge)")
+    ax.bar([i + 0.19 for i in x], [c[2] for c in CUM], width=0.36, color=OTHER, label=f"Martian precision ({F['goldens/prs']} PRs, its judge)")
     for i, c in enumerate(CUM):
         ax.text(i - 0.19, c[1] + 1.5, f"{c[1]}%", ha="center", fontsize=9, color=GOOD, fontweight="bold")
         ax.text(i + 0.19, c[2] + 1.5, f"{c[2]:.0f}%", ha="center", fontsize=9, color=MUTED)
@@ -364,6 +376,11 @@ def fig_strength():
 
 
 if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--out", default=OUT, help="the directory the figures are written to (default: charts/)")
+    SAVE = ap.parse_args().out
+    os.makedirs(SAVE, exist_ok=True)
     for f in (fig_audit, fig_real_vs_trivia, fig_extended_key, fig_composition, fig_policy, fig_allfound,
               fig_leaderboard, fig_strength):
         f()
