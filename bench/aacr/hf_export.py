@@ -2415,7 +2415,89 @@ def groups_on_no_run(runs: list[dict], groups: dict | None = None) -> str:
     return ", ".join(f"`{g}`" for g in sorted(set(groups) - carried)) or "none"
 
 
-def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter, runs: list[dict] | None = None) -> dict:
+# The card's comment inventory: per reviewer and benchmark, the comment rows the tables carry with their
+# text and those that carry only a location or a link (third-party text, linked and not copied).
+# AACR arms carry no tool column: an arm counts under the first tool its id names, word by word
+# (`cc303` is Claude Code 2.1.303 in the one-PR probes), and an arm that names none is QuickReview's.
+INVENTORY_AACR_TOKENS = (("quickreview", "QuickReview"), ("claude", "Claude Code"), ("cc303", "Claude Code"),
+                         ("codex", "Codex CLI"), ("ocr", "open-code-review"), ("opencode", "OpenCode"),
+                         ("pireview", "pi-review"), ("pragent", "PR-Agent"), ("copilot", "Copilot 2025 (upstream)"))
+# Martian's and Qodo's `tool` column, every value it takes; an unknown one stops the card (fail closed).
+INVENTORY_MARTIAN_TOOLS = {"quickreview": "QuickReview", "quickreview-frozen": "QuickReview",
+                           "claude-code-bench": "Claude Code", "open-code-review": "open-code-review",
+                           "opencode": "OpenCode", "pr-agent": "PR-Agent",
+                           "rejudged-claude-code": "Claude Code (Martian's published review)",
+                           "rejudged-cubic-v2": "cubic-v2 (Martian's published review)",
+                           "rejudged-qodo-extended-v2": "qodo-extended-v2 (Martian's published review)"}
+INVENTORY_QODO_TOOLS = {"quickreview": "QuickReview", "quickreview-frozen": "QuickReview",
+                        "quickreview-2026-10-02": "QuickReview", "open-code-review": "open-code-review",
+                        "opencode": "OpenCode", "pr-agent": "PR-Agent",
+                        **{t: f"{t} (Qodo's published run)" for t in
+                           ("augment", "coderabbit", "codex", "copilot", "cursor", "greptile", "qodo-exhaustive",
+                            "qodo-precise", "sentry")}}
+INVENTORY_PENDING = "`<comment inventory pending>`"
+
+
+def inventory_tool(arm_id: str) -> str:
+    """The reviewer an AACR arm's comments count under in the card's inventory."""
+    words = arm_id.split("-")
+    return next((name for tok, name in INVENTORY_AACR_TOKENS if tok in words), "QuickReview")
+
+
+def comment_inventory(t: dict[str, list[dict]]) -> dict[str, dict[str, list[int]]]:
+    """{reviewer: {benchmark: [comments with text, comments with a location or link only, reviews]}}
+    from the tables' rows: `reviews` (text or raw_text), `martian_reviews` (body, the comments past
+    Martian's first page included) and `qodo_reviews` (body). Every row of every run counts."""
+    inv: dict[str, dict[str, list[int]]] = {}
+
+    def add(tool: str, bench: str, comments: list[dict], field) -> None:
+        c = inv.setdefault(tool, {}).setdefault(bench, [0, 0, 0])
+        c[2] += 1
+        for x in comments:
+            c[0 if field(x) else 1] += 1
+
+    for r in t["reviews"]:
+        add(inventory_tool(r["arm_id"]), "AACR-Bench", r["comments"] or [],
+            lambda x: (x.get("text") or "").strip() or (x.get("raw_text") or "").strip())
+    for name, table, tools, extra in (("Martian", "martian_reviews", INVENTORY_MARTIAN_TOOLS, "comments_beyond_first_page"),
+                                      ("Qodo", "qodo_reviews", INVENTORY_QODO_TOOLS, None)):
+        for r in t[table]:
+            if r["tool"] not in tools:
+                raise SystemExit(f"card comment inventory: {table} tool {r['tool']!r} has no reviewer name "
+                                 f"(INVENTORY_{name.upper()}_TOOLS)")
+            add(tools[r["tool"]], name, (r["comments"] or []) + ((r.get(extra) or []) if extra else []),
+                lambda x: (x.get("body") or "").strip())
+    return inv
+
+
+def render_inventory(inv: dict[str, dict[str, list[int]]] | None) -> str:
+    """The card's table: one row per reviewer, most comments with text first; a cell gives the comments
+    with text, then those with a location or a link only, or says the reviews carry no comment rows."""
+    if inv is None:
+        return INVENTORY_PENDING
+    benches = ("AACR-Bench", "Martian", "Qodo")
+
+    def both(text: int, bare: int) -> str:
+        if not bare:
+            return f"{text:,}"
+        return (f"{text:,} + " if text else "") + f"{bare:,} location or link only"
+
+    def cell(c: list[int] | None) -> str:
+        if not c:
+            return "–"
+        if c[0] + c[1] == 0:
+            return f"no comment rows ({c[2]:,} reviews)"
+        return both(c[0], c[1])
+
+    order = sorted(inv, key=lambda k: (-sum(c[0] for c in inv[k].values()), -sum(c[1] for c in inv[k].values()), k))
+    rows = [f"| {k} | " + " | ".join(cell(inv[k].get(b)) for b in benches) + " |" for k in order]
+    tot = [sum((inv[k].get(b) or [0, 0, 0])[i] for k in inv) for b in benches for i in (0, 1)]
+    rows.append("| **All** | " + " | ".join(both(tot[2 * j], tot[2 * j + 1]) for j in range(3)) + " |")
+    return "\n".join(["| Reviewer | AACR-Bench | Martian | Qodo |", "|---|---|---|---|"] + rows)
+
+
+def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter, runs: list[dict] | None = None,
+                inventory: dict | None = None) -> dict:
     """Every {{NAME}} the card template holds, from the export's own facts. What
     is not known at export time (the DOI, the papers' arXiv ids) renders as an
     explicit pending marker, never as an empty string or a guess."""
@@ -2450,6 +2532,7 @@ def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter,
             "CHECKS": f"{ok} of {len(checks)}",
             "RUN_UNITS": f"{len(runs):,}", "RUN_FAMILIES": f"{len({r['family'] for r in runs}):,}",
             "GROUPS_ON_NO_RUN": groups_on_no_run(runs),
+            "COMMENT_INVENTORY": render_inventory(inventory),
             "SIZE_CATEGORY": size_category(sum(sizes.values()))}
 
 
@@ -2518,8 +2601,12 @@ def fill_card(tmpl: str, vals: dict) -> str:
 
 
 def render_card(a, out: str, sizes: dict, checks: list[dict], counts: collections.Counter, runs: list[dict] | None = None):
+    import pyarrow.parquet as pq
     tmpl = open(os.path.join(HERE, "hf", "card.md")).read()
-    card = fill_card(tmpl, card_values(a, sizes, checks, counts, runs))
+    # the inventory from the tables as written, so the card counts exactly what ships
+    inv = comment_inventory({n: pq.read_table(os.path.join(out, "data", f"{n}.parquet")).to_pylist()
+                             for n in ("reviews", "martian_reviews", "qodo_reviews")})
+    card = fill_card(tmpl, card_values(a, sizes, checks, counts, runs, inv))
     open(os.path.join(out, "README.md"), "w").write(card)
 
 

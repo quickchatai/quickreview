@@ -152,7 +152,7 @@ dataset's `elo_judgments` table.
 it holds most of its recall on cheap open models, and it falls apart on a
 weak one:
 
-| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | $/PR | Judge |
+| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | Mean $/PR | Judge |
 |---|---|---|---|---|---|---|---|
 | GPT-6.1 Sol (frozen build) | 185 | 87.5 (97%) | 134.5 (93%) | 239 (84%) | 461 (89%) | 2.06 | gpt-6-sol |
 | DeepSeek V4.1 Flash (mostly low effort) | 185 | 83 (92%) | 131 (90%) | 237.5 (83%) | 451.5 (87%) | 0.74 | gpt-6.1-sol |
@@ -177,7 +177,7 @@ verdicts are in the [dataset](https://huggingface.co/datasets/quickchatai/quickr
 
 **AACR-Bench** (185 PRs, 10 languages, 520 verified defects; a partly found defect counts ½)
 
-| Reviewer | High (90) | Medium (145) | Low (285) | All (520) | Comments correct | $/PR | Median min/PR |
+| Reviewer | High (90) | Medium (145) | Low (285) | All (520) | Comments correct | Mean $/PR | Median min/PR |
 |---|---|---|---|---|---|---|---|
 | **QuickReview** | **87.5 (97%)** | **134.5 (93%)** | **239 (84%)** | **461 (89%)** | 92% | 2.06 | 17.5 |
 | pi-review panel (high) | 80 (89%) | 119 (82%) | 148.5 (52%) | 347.5 (67%) | 89% | 0.27 | 1.8 |
@@ -189,7 +189,7 @@ verdicts are in the [dataset](https://huggingface.co/datasets/quickchatai/quickr
 
 **Martian** (50 PRs, Core; one `gpt-6.1-sol` judge for every row, the vendor rows re-judged from their published comments)
 
-| Tool | Precision | Recall | F1 | F2 | Real goldens (86) | $/PR | min/PR |
+| Tool | Precision | Recall | F1 | F2 | Real goldens (86) | Mean $/PR | Mean min/PR |
 |---|---|---|---|---|---|---|---|
 | **QuickReview** | 16.2 | **65.8** | 26.1 | 40.9 | **75 (87%)** | 2.84 | 26.1 |
 | qodo-extended-v2 | 56.2 | 60.1 | **58.1** | **59.3** | 68 (79%) | – | – |
@@ -201,7 +201,7 @@ verdicts are in the [dataset](https://huggingface.co/datasets/quickchatai/quickr
 
 **Qodo PR-Review-Bench** (100 PRs; one `gpt-6.1-sol` judge under Qodo's stated matching rule; five more vendors are in the paper)
 
-| Tool | Comments/PR | Precision | Recall | F1 | Functional recall | Rule recall | $/PR | min/PR |
+| Tool | Comments/PR | Precision | Recall | F1 | Functional recall | Rule recall | Mean $/PR | Mean min/PR |
 |---|---|---|---|---|---|---|---|---|
 | qodo-exhaustive | 4.6 | 58.0 | **46.4** | **51.5** | 48.2 | **44.3** | – | – |
 | qodo-precise | 3.1 | 68.0 | 35.9 | 47.0 | 36.2 | 35.4 | – | – |

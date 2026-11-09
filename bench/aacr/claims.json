@@ -2604,7 +2604,7 @@
   {
    "id": "readme.readme:other-models.1",
    "file": "README.md",
-   "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | $/PR | Judge |",
+   "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | Mean $/PR | Judge |",
    "value": "90",
    "group": "readme:other-models",
    "q": "key:n_high"
@@ -2612,7 +2612,7 @@
   {
    "id": "readme.readme:other-models.2",
    "file": "README.md",
-   "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | $/PR | Judge |",
+   "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | Mean $/PR | Judge |",
    "value": "145",
    "group": "readme:other-models",
    "q": "key:n_medium"
@@ -2620,7 +2620,7 @@
   {
    "id": "readme.readme:other-models.3",
    "file": "README.md",
-   "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | $/PR | Judge |",
+   "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | Mean $/PR | Judge |",
    "value": "285",
    "group": "readme:other-models",
    "q": "key:n_low"
@@ -2628,7 +2628,7 @@
   {
    "id": "readme.readme:other-models.4",
    "file": "README.md",
-   "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | $/PR | Judge |",
+   "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | Mean $/PR | Judge |",
    "value": "520",
    "group": "readme:other-models",
    "q": "key:defects"
@@ -68398,6 +68398,146 @@
     "0"
    ],
    "why": "configuration or a method parameter"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "**Needs.** Tier 1 and the dataset",
+   "tokens": [
+    "1"
+   ],
+   "why": "a tier number of this page (list numbering)"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "git, Python 3.11 or newer, [uv](https://docs.astral.sh/uv/), zstd (for",
+   "tokens": [
+    "3.11"
+   ],
+   "why": "a tool version a reader needs (a requirement, not a benchmark number)"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "`load_dataset` with `uv run --no-project --with datasets python`. About 3 GB",
+   "tokens": [
+    "3"
+   ],
+   "why": "a disk-space estimate for the data-only route (a requirement, not a benchmark number)"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "of disk, no docker, no key. Tiers 2 and 3, and every",
+   "tokens": [
+    "2",
+    "3"
+   ],
+   "why": "a tier number of this page (list numbering)"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "start the daemon; `bench.sh doctor` says so), Docker 25 or newer",
+   "tokens": [
+    "25"
+   ],
+   "why": "a tool version a reader needs (a requirement, not a benchmark number)"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "ground-truth file (`--qodo-gt`); it exits 0 when every other claim passes,",
+   "tokens": [
+    "0"
+   ],
+   "why": "a process exit code"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "| AACR defect judge, `bench.sh judge` (Tier 2) |",
+   "tokens": [
+    "2"
+   ],
+   "why": "a tier number of this page (list numbering)"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "| Martian's steps 2, 2.5 and 3 (the host-only route",
+   "tokens": [
+    "2",
+    "2.5",
+    "3"
+   ],
+   "why": "a step number of Martian's pipeline, or its configuration"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "--port 8765 --model MODEL --effort low --probe-temperature --log judge.jsonl) &",
+   "tokens": [
+    "8765"
+   ],
+   "why": "a port number in a command"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "--port 8765 --model MODEL --effort low --probe-temperature --log judge.jsonl \\",
+   "tokens": [
+    "8765"
+   ],
+   "why": "a port number in a command"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "Needs a host where `docker info` succeeds, with Docker 25 or newer",
+   "tokens": [
+    "25"
+   ],
+   "why": "a tool version a reader needs (a requirement, not a benchmark number)"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "Needs: git, Python 3.11 or newer",
+   "tokens": [
+    "3.11"
+   ],
+   "why": "a tool version a reader needs (a requirement, not a benchmark number)"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "Disk: about 3 GB covers the",
+   "tokens": [
+    "3"
+   ],
+   "why": "a disk-space estimate for the data-only route (a requirement, not a benchmark number)"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(cd slim && awk '{print $1\"  \"$3}' FILES.sha256",
+   "tokens": [
+    "1",
+    "3"
+   ],
+   "why": "awk field numbers in a shell command"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "bundle's Martian and Qodo re-scores), and exits 0 when every other claim",
+   "tokens": [
+    "0"
+   ],
+   "why": "a process exit code"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "writes such a file from a run directory): step 3 judges every tool the file",
+   "tokens": [
+    "3"
+   ],
+   "why": "a step number of Martian's pipeline, or its configuration"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "they need a host where `docker info` succeeds, with Docker 25 or newer.",
+   "tokens": [
+    "25"
+   ],
+   "why": "a tool version a reader needs (a requirement, not a benchmark number)"
   }
  ]
 }

@@ -342,3 +342,175 @@ describe("the card is leak-scanned like every other file", () => {
     }
   });
 });
+
+describe("the card's comment inventory comes from the tables", () => {
+  const tables = {
+    reviews: [
+      {
+        arm_id: "quickreview-frozen",
+        comments: [
+          { text: "a", raw_text: "a" },
+          { text: "", raw_text: "b" },
+        ],
+      },
+      { arm_id: "ccvq-cc303-high-flagsoff", comments: [{ text: "c", raw_text: "c" }] },
+      { arm_id: "ccvq-qcr-master-opus55", comments: [{ text: "d", raw_text: "d" }] },
+      { arm_id: "copilot-2025-upstream", comments: [{ text: "", raw_text: null }] },
+    ],
+    martian_reviews: [
+      {
+        tool: "quickreview-frozen",
+        comments: [{ body: "e" }],
+        comments_beyond_first_page: [{ body: "f" }],
+      },
+      { tool: "rejudged-cubic-v2", comments: [], comments_beyond_first_page: [] },
+    ],
+    qodo_reviews: [{ tool: "greptile", comments: [{ body: "" }, { body: "" }] }],
+  };
+
+  // MUTATION: put a hand-typed table in card.md in place of {{COMMENT_INVENTORY}} — this fails
+  // MUTATION: drop ("cc303", "Claude Code") from INVENTORY_AACR_TOKENS — this fails
+  // MUTATION: in comment_inventory's add(), count every comment as having text (c[0] += 1) — this fails
+  it("counts comments with and without text per reviewer and benchmark", () => {
+    expect(CARD).toContain("\n{{COMMENT_INVENTORY}}\n");
+    const r = py(
+      "inv = h.comment_inventory(json.loads(sys.argv[1]))\nprint(json.dumps([inv, h.render_inventory(inv)]))",
+      JSON.stringify(tables),
+    ) as [Record<string, Record<string, number[]>>, string];
+    expect(r[0]).toEqual({
+      QuickReview: { "AACR-Bench": [3, 0, 2], Martian: [2, 0, 1] },
+      "Claude Code": { "AACR-Bench": [1, 0, 1] },
+      "Copilot 2025 (upstream)": { "AACR-Bench": [0, 1, 1] },
+      "cubic-v2 (Martian's published review)": { Martian: [0, 0, 1] },
+      "greptile (Qodo's published run)": { Qodo: [0, 2, 1] },
+    });
+    expect(r[1]).toContain("| QuickReview | 3 | 2 | – |");
+    expect(r[1]).toContain("| greptile (Qodo's published run) | – | – | 2 location or link only |");
+    expect(r[1]).toContain(
+      "| cubic-v2 (Martian's published review) | – | no comment rows (1 reviews) | – |",
+    );
+    expect(r[1]).toContain(
+      "| **All** | 4 + 1 location or link only | 2 | 2 location or link only |",
+    );
+  });
+
+  // MUTATION: delete the unknown-tool SystemExit in comment_inventory — this fails
+  it("stops on a Martian or Qodo tool it has no name for, and renders pending without tables", () => {
+    const r = py(
+      "t = json.loads(sys.argv[1])\nt['qodo_reviews'].append({'tool': 'newvendor', 'comments': []})\n" +
+        "try:\n    h.comment_inventory(t)\n    print(json.dumps('counted'))\n" +
+        "except SystemExit as e:\n    print(json.dumps(str(e)))",
+      JSON.stringify(tables),
+    );
+    expect(r).toMatch(/qodo_reviews tool 'newvendor' has no reviewer name/);
+    expect(render()).toContain("`<comment inventory pending>`");
+  });
+});
+
+describe("the reproduction docs work on a fresh machine", () => {
+  const PAGES = [
+    "bench/aacr/hf/card.md",
+    "bench/aacr/README.md",
+    "bench/aacr/docs/DIGITALOCEAN.md",
+    "README.md",
+  ];
+  const read = (p: string) => readFileSync(p, "utf8");
+
+  // MUTATION: delete the "Needs:" paragraph from card.md's "How to verify" — this fails
+  // MUTATION: delete the "**Needs.**" paragraph from bench/aacr/README.md's "Reproduce" — this fails
+  it("names the tools the data-only route needs, where it starts", () => {
+    const verify = CARD.split("\n## How to verify\n")[1]!.split("\n```sh\n")[0]!;
+    const reproduce = read("bench/aacr/README.md")
+      .split("\n## Reproduce\n")[1]!
+      .split("\n**Tier 1")[0]!;
+    for (const text of [verify, reproduce]) {
+      for (const need of [
+        "git",
+        "Python 3.11",
+        "https://docs.astral.sh/uv/",
+        "zstd",
+        "uvx hf auth login",
+        "`uvx hf`",
+        "uv run --no-project --with datasets python",
+        "3 GB",
+      ])
+        expect(text).toContain(need);
+    }
+    expect(reproduce).toContain("`docker info` succeeds");
+    expect(reproduce).toContain("Docker 25 or newer");
+  });
+
+  // MUTATION: put "QCR_BENCH_AUTH=api-key OPENAI_API_KEY=... python3 bench/aacr/ext/ext_judge.py" back in ext_judge.py's docstring — this fails
+  it("never puts a key value on a command line", () => {
+    const files = [
+      ...PAGES,
+      "bench/aacr/ext/ext_judge.py",
+      "bench/aacr/recompute/martian_scores.py",
+    ];
+    const bad: string[] = [];
+    for (const f of files)
+      for (const [i, line] of read(f).split("\n").entries()) {
+        // a command line (python, uv, bench.sh, ext.sh, after any env assignments) carrying KEY=<literal>
+        if (
+          !/^\s*\(?\s*(?:[A-Z_]+=\S+\s+)*(?:exec\s+)?(?:python3?|uv|\S*\/(?:bench|ext)\.sh)\b/.test(
+            line,
+          )
+        )
+          continue;
+        for (const m of line.matchAll(/\b[A-Z_]*(?:API_KEY|TOKEN)=(\S+)/g))
+          if (!/^"\$[A-Z_]+"$/.test(m[1]!) && m[1] !== "local")
+            bad.push(`${f}:${i + 1}: ${line.trim()}`);
+      }
+    expect(bad).toEqual([]);
+  });
+
+  // MUTATION: drop the `export QCR_CHARTS_OUT=…` line from bench/aacr/README.md's Tier 1 block — this fails
+  it("keeps re-drawn charts out of the clone wherever score.sh is run on the slim bundle", () => {
+    const slim = py(
+      "import export_runs as e\nprint(json.dumps(e.slim_readme(1, collections.Counter())))",
+    ) as string;
+    // the fenced sh blocks of the two pages, and the slim README's indented block
+    const blocks = [CARD, read("bench/aacr/README.md")]
+      .flatMap((t) => [...t.matchAll(/```sh\n([\s\S]*?)\n```/g)].map((m) => m[1]!))
+      .concat(
+        slim
+          .split("\n    mkdir slim")
+          .slice(1)
+          .map((b) => b.split(/\n\n(?! )/)[0]!),
+      );
+    const runs = blocks.filter((b) =>
+      /QCR_BENCH_RUNS_DIR=\S*slim\S*runs[\s\S]*final\/score\.sh/.test(b),
+    );
+    expect(runs.length).toBe(3);
+    expect(runs.filter((b) => !b.includes("QCR_CHARTS_OUT="))).toEqual([]);
+  });
+
+  // MUTATION: rename the README Martian table's "Mean min/PR" back to "min/PR" — this fails
+  // MUTATION: rename the README AACR table's "Median min/PR" to "Mean min/PR" — this fails
+  it("labels each per-PR cost and time column with the statistic its claims compute", () => {
+    const text = read("README.md").split("\n");
+    const claims = (
+      JSON.parse(read("bench/aacr/claims.json")) as {
+        claims: { file: string; anchor: string; q?: string }[];
+      }
+    ).claims.filter((c) => c.file === "README.md" && /:(usd|min_mean|min_median)$/.test(c.q ?? ""));
+    const want: Record<string, string> = {
+      usd: "Mean $/PR",
+      min_mean: "Mean min/PR",
+      min_median: "Median min/PR",
+    };
+    const seen = new Set<string>();
+    for (const c of claims) {
+      const i = text.findIndex((l) => l.includes(c.anchor));
+      if (i < 0 || !text[i]!.startsWith("|")) continue;
+      let h = i;
+      while (h > 0 && !/^\|[-|]+\|$/.test(text[h]!)) h--;
+      const header = text[h - 1]!;
+      const metric = c.q!.split(":").pop()!;
+      expect(header, `${c.anchor} (${c.q})`).toContain(`| ${want[metric]} |`);
+      seen.add(metric);
+    }
+    expect([...seen].sort()).toEqual(["min_mean", "min_median", "usd"]);
+    expect(text.filter((l) => /^\| .*\| (\$|min)\/PR \|/.test(l))).toEqual([]);
+  });
+});

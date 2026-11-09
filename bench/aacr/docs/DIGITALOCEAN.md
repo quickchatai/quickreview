@@ -9,8 +9,17 @@ reviews and child lens sessions are checked by the three-PR smoke run below.
 **Current status:** both the hello check and QuickReview benchmark support
 Gradient. Set `QCR_BENCH_PROVIDER=digitalocean` for review commands. The host
 passes `digitalocean.env` without mounting a login, and each private pi directory
-gets the provider configuration. Judge commands use their separate existing
-login or OpenAI API-key route.
+gets the provider configuration. `QCR_BENCH_PROVIDER` moves the reviews only:
+the judges keep their own routes. Most of them take any provider, Gradient
+among them: `bench.sh eval --judge openai` reads any OpenAI-compatible endpoint
+from `bench/aacr/judge.env`, Martian's judge takes `MARTIAN_BASE_URL`, the Elo
+judge a plan's `base_url`, and `qodo_judge.py` and Martian's steps go through
+`ext/ext_judge.py`, whose `--upstream` takes any Responses API
+(`https://inference.do-ai.run/v1/responses` serves it, with the key from
+`digitalocean.env` handed over as `OPENAI_API_KEY`). The defect judge
+(`bench.sh judge`) stays on the ChatGPT login or an OpenAI or Anthropic key,
+and `ext/ext.sh` on the login or an OpenAI key. Every route and its commands: [`../README.md`](../README.md#judges-on-any-provider),
+"Judges on any provider".
 
 ## The models
 

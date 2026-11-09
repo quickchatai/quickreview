@@ -53,6 +53,10 @@ also writes the mapped tables there, the `--verdicts` input heldout.py takes.
 judged (a sample), our column is counted over your judge's PRs too, and the
 header says how many of ours that is; --whole-run counts ours over all of its
 PRs instead (so the two columns cover different PRs).
+
+The stored column is our judge's `martian_scores` row, a whole-run score: on
+a sample, or with --half, it reads `unknown`, and the column to set yours
+beside is our judge's recomputed one, counted over the same PRs.
 """
 from __future__ import annotations
 

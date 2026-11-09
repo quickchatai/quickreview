@@ -182,6 +182,9 @@ verdicts = load_dataset("{{REPO_ID}}", "defect_verdicts", split="test")
 runs = load_dataset("{{REPO_ID}}", "runs", split="test")
 ```
 
+Run it with `uv run --no-project --with datasets python` when the `datasets`
+package is not installed.
+
 | Config | Rows |
 |---|---|
 {{CONFIG_ROWS}}
@@ -382,9 +385,33 @@ the two open-model arms (51 in all), and a few in arms no paper reports.
   ties and losses, and its games. The pairing plans themselves are in the
   `elo-pairwise` volume.
 
+**Every comment, by reviewer**
+
+What you can read before you download: the comment rows of `reviews`
+(AACR-Bench), `martian_reviews` (the comments past Martian's first page
+included) and `qodo_reviews`, counted per reviewer from the tables when this
+card was built. Every shipped run counts, so a PR that several runs reviewed
+counts once per run. A count is of comments whose text the table holds; a
+"location or link only" comment carries its file and line, or its link, and
+its text is third-party ("What is not here"). A Martian vendor row carries no
+comment rows: Martian's own file holds them. An AACR arm counts under the tool
+its id names (`claude-code-opus55`, `best-pragent-g61`, `ccvq-cc303-*` for
+Claude Code); the development, ablation, smoke and open-model arms are
+QuickReview's.
+
+{{COMMENT_INVENTORY}}
+
+The verdicts that read them: `comment_verdicts` (AACR-Bench, a grade per
+comment) and `defect_verdicts` (the comments that found each defect);
+`martian_verdicts` (per golden, matched or not) with
+`martian_reviews.unmatched_candidates`, the candidates extracted from a review
+that matched no golden; `qodo_verdicts` (per issue, the comment that matched
+it, `comment_index`).
+
 **Other files.** `figures/` holds the papers' charts and their data, and
 `keys/` the answer key rendered as Markdown. `validation.json` holds the
-checks below. `LICENSES/` holds the MIT licence texts of Martian's and
+checks below (see "How to verify" for how they relate to the claims
+verifier's release checks). `LICENSES/` holds the MIT licence texts of Martian's and
 Qodo's data (see "Licence"). The working report the papers grew from is not
 included: the papers supersede it.
 
@@ -557,6 +584,14 @@ The archive's README gives the count of every rewrite over the whole archive.
 
 ## How to verify
 
+Needs: git, Python 3.11 or newer, [uv](https://docs.astral.sh/uv/), zstd (for
+`tar --zstd`) and a Hugging Face login (`uvx hf auth login`). Run `hf` as
+`uvx hf` when Hugging Face's CLI is not installed, and `load_dataset` (see
+"Configs") with `uv run --no-project --with datasets python`. Nothing in this
+section needs docker, a key or a model call. Disk: about 3 GB covers the
+download, the clone, the unpacked slim bundle, the archive volumes the two
+relabel scripts unpack and uv's caches.
+
 Download the dataset and the QuickReview repository at the ref this release
 was verified against, then recompute:
 
@@ -573,12 +608,17 @@ uv run --no-project --with pyarrow python bench/aacr/recompute/heldout.py --data
 # the slim bundle: every final table and chart, the open-model rows,
 # the DigitalOcean table, the Elo refit
 mkdir slim && tar --zstd -xf $D/slim/quickreview-bench-slim.tar.zst -C slim
+(cd slim && awk '{print $1"  "$3}' FILES.sha256 | sha256sum -c --quiet)   # every file's sha256 (hash, size, path)
 QCR_BENCH_RUNS_DIR=$PWD/slim/runs QCR_CHARTS_OUT=$PWD/charts-out bench/aacr/final/score.sh
 python3 bench/aacr/recompute/open_models.py --runs-dir slim/open-models/runs
 python3 bench/aacr/recompute/do_speed.py --runs-dir slim/open-models/runs --gpt-runs-dir slim/runs
 python3 bench/aacr/recompute/elo_ratings.py slim/elo/martian-hard20-all-gpt --check-ratings \
     --runs-dir slim/runs --runs-dir slim/open-models/runs
 ```
+
+`{{REPO_REF}}` is the release's tag. It is made on the repository's main
+branch when the release's code is merged, and its `bench/aacr/` is the code
+this release was built and verified with, file for file.
 
 Two tables in the papers rest on a labelling pass as well as the runs: the
 benchmark paper's `tab:martiantiers` and the QuickReview paper's lost-credit
@@ -620,8 +660,23 @@ recompute script and a claim whose data the release does not hold; left
 without an input above, it fails on the claims that need it.
 On this release: {{VERIFY_RESULT}}
 
-With the tables alone (no slim bundle, no archive, no third-party input),
-`verify_claims.py --data $D --partial` recomputes every claim they hold.
+Its release checks are the checks of `validation.json` (below) that need only
+the tables, re-run on your download, and the slim bundle's own (every file's
+hash, no transcript text, every Martian and Qodo scoring dir re-scored, the
+Elo refit). `validation.json` also holds the checks the export ran against its
+own inputs (the source run directories, the commit remap, the archive's index,
+the figures): that every run family has rows in the tables it should, the
+`runs` table's build ids, each Elo plan's refit against its run's
+`ratings.json`. A download cannot re-run those, so its count is the larger.
+
+`--partial` checks what you have. `verify_claims.py --data $D --partial`
+skips, and does not fail, a claim whose source is not under `--data` or whose
+only missing input is Martian's checkout or Qodo's file (with the slim
+bundle's Martian and Qodo re-scores), and exits 0 when every other claim
+passes. Its result line counts the skipped claims and names the flag that
+would include them (`--martian`, `--qodo-gt`). With the tables alone (no slim
+bundle, no archive) it recomputes every claim they hold. Without `--partial`
+a missing input fails.
 
 `validation.json` recomputes, from these tables alone, the row counts (520
 defects, 3,093 exclusions, 185 PRs per full arm, 1,418 references, 173
@@ -702,7 +757,13 @@ name. Run on our judge's own file in the archive, it prints the published
 scores.
 
 Without `--verdicts` it recomputes our judge's stored scores and fails on
-any difference.
+any difference. The stored column holds whole-run scores only: on a sample of
+a run's PRs, or with `--half`, it reads `unknown`, and the column to compare
+yours with is our judge's recomputed one. To judge one PR, cut the archive's
+`benchmark_data.json` to that PR and to QuickReview's review
+(`ext_judge.py`'s docstring has the command; `ext/martian_ingest.py --only`
+writes such a file from a run directory): step 3 judges every tool the file
+holds.
 
 **Qodo.** Input: `qodo_reviews` with `work_dir` and `tool`
 `final1-qodo-pr100` and `quickreview-frozen` (the frozen build), or
@@ -724,6 +785,21 @@ does (per PR and tool the first-pass row its own scoring reads, one verdict per
 issue) and refuses a judgement of comments other than the published review's;
 give `--from-judgements` and `--work` once per work dir to score both builds.
 Run on our judge's own files in the archive, it prints the published scores.
+
+To run our judge's prompt on your model, with no docker: start
+`ext_judge.py` on your provider (its docstring), then judge the published rows
+(`--only ID[,ID]` judges those cases of the set only, as an instance id,
+`Ghost#6` or a PR URL; leave it out for all of them):
+
+```sh
+uv run --no-project --with pyarrow python bench/aacr/ext/qodo_judge.py \
+    --set bench/aacr/sets/qodo-pr100.json --gt qodo/git_code_review_bench_100_w_open_prs.jsonl \
+    --reviews $D/data/qodo_reviews.parquet --review-key 'final1-qodo-pr100|quickreview-frozen' \
+    --endpoint http://127.0.0.1:8765/v1/chat/completions --model MODEL --judge-label LABEL \
+    --out qodo-judge --only Ghost#6
+```
+
+and score `qodo-judge/judgements.jsonl` with the second form above.
 
 It also scores the held-out PRs (`sets/qodo-heldout31.json`) and the
 frozen build's held-out gain over the 2026-10-02 build.
@@ -767,7 +843,10 @@ the open-model volumes included.
 
 To re-run our own judge instead, see `bench/aacr/README.md` ("Reproduce",
 Tier 2) and `bench/aacr/ext/ext.sh`; set `EXT_JUDGE_MODEL` to judge Martian
-and Qodo with another model.
+and Qodo with another model. Those runs build and start docker containers:
+they need a host where `docker info` succeeds, with Docker 25 or newer.
+Which provider each judge can be pointed at, and how, is in one place:
+`bench/aacr/README.md`, "Judges on any provider".
 
 ## Versions
 

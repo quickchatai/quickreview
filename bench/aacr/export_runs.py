@@ -1818,10 +1818,15 @@ bundle is a subset of it, rewritten the same way (see the archive README:
 names, placeholders, blanked reasoning blobs, and why no raw session log is
 published in either).
 
-Unpack it and point the tools at its `runs/`:
+Unpack it, check every file against `FILES.sha256` (its lines are sha256,
+size and path, so `sha256sum -c` reads them with the size column dropped; the
+command prints nothing when every file matches), and point the tools at its
+`runs/`, from a checkout of the QuickReview repository:
 
     mkdir slim && tar --zstd -xf quickreview-bench-slim.tar.zst -C slim
+    (cd slim && awk '{{print $1"  "$3}}' FILES.sha256 | sha256sum -c --quiet)
     export QCR_BENCH_RUNS_DIR=$PWD/slim/runs
+    export QCR_CHARTS_OUT=$PWD/charts-out   # keeps the re-drawn charts out of the clone
     bench/aacr/final/score.sh
     python3 bench/aacr/recompute/open_models.py --runs-dir slim/open-models/runs
     python3 bench/aacr/recompute/do_speed.py --runs-dir slim/open-models/runs --gpt-runs-dir slim/runs

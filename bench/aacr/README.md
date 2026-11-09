@@ -24,11 +24,22 @@ rebuilds each published number from it with no model call.
 ## Reproduce
 
 For DigitalOcean Gradient and GLM, see [the setup and run instructions](docs/DIGITALOCEAN.md).
-The Gradient route uses `QCR_BENCH_PROVIDER=digitalocean` for reviews;
-GPT judging uses its separate login or OpenAI credential route.
+The Gradient route uses `QCR_BENCH_PROVIDER=digitalocean` for reviews; which
+provider each judge can use is in "Judges on any provider" below.
 
 Three tiers, cheapest first. Nothing here needs this repo's private history or
 the authors' machines.
+
+**Needs.** Tier 1 and the dataset's own checks (the card's "How to verify"):
+git, Python 3.11 or newer, [uv](https://docs.astral.sh/uv/), zstd (for
+`tar --zstd`) and a Hugging Face login (`uvx hf auth login`). Run `hf` as
+`uvx hf` when Hugging Face's CLI is not installed, and the card's
+`load_dataset` with `uv run --no-project --with datasets python`. About 3 GB
+of disk, no docker, no key. Tiers 2 and 3, and every `bench.sh` or
+`ext/ext.sh` step but the host-only judge routes below: a host where
+`docker info` succeeds (a VM or container whose cgroups are not mounted cannot
+start the daemon; `bench.sh doctor` says so), Docker 25 or newer, and room
+for the images and the prefetched repositories.
 
 **Tier 1 — re-score and re-chart the published runs: no keys, no docker.**
 Download the **slim re-score bundle** (the dataset's `slim/` folder) — every run dir
@@ -39,8 +50,13 @@ and point the scripts at it:
 
 ```sh
 export QCR_BENCH_RUNS_DIR=/path/to/slim-bundle/runs
+export QCR_CHARTS_OUT=$PWD/charts-out   # keeps the re-drawn charts out of the clone
 bench/aacr/final/score.sh        # every final table (compare.py) and both chart sets (charts.py; needs uv)
 ```
+
+Without `QCR_CHARTS_OUT` the charts are re-drawn over the committed ones in
+`bench/aacr/charts/`, and a re-rendered JPEG differs byte for byte from the
+committed one, so the clone is left with changed files.
 
 `compare.py` and `charts.py` read, per run dir: `run.json`, `judge.txt`,
 `judge/<label>/<instance>.r1.json` (labels `v1-…`/`v2-gpt-6-sol-high` for the
@@ -56,6 +72,11 @@ cut (null = unpriced) — so both re-score to the same cent. Still keyless and o
 `--network none`). With the dataset's tables alone, no bundle and no docker,
 [`verify_claims.py`](recompute/README.md#every-published-number-the-claims-manifest)
 `--data <dataset> --partial` recomputes every published number they hold.
+`--partial` skips, and does not fail, a claim whose source is not under
+`--data` or that needs only Martian's checkout (`--martian`) or Qodo's
+ground-truth file (`--qodo-gt`); it exits 0 when every other claim passes,
+and its result line counts the skipped claims with the flag that would
+include them. Without `--partial` a missing input fails.
 
 **Tier 2 — re-judge the saved reviews.** Take the full run archive (the
 judge reads each case's `results/all/<id>.json`, the deleted-line comments in
@@ -164,7 +185,12 @@ The dataset card's section of the same name says the same per benchmark.
   --judge LABEL`, or, on `qodo_judge.py`'s own output, `qodo_scores.py --data
   D --judge LABEL --from-judgements <dir>/judgements.jsonl --work
   final1-qodo-pr100 --tool 'final1-qodo-pr100|quickreview=quickreview-frozen'`;
-  either also scores the held-out set, `sets/qodo-heldout31.json`.
+  either also scores the held-out set, `sets/qodo-heldout31.json`. To run our
+  judge's prompt on your model with no docker, `qodo_judge.py --reviews
+  <dataset>/data/qodo_reviews.parquet --review-key WORK|TOOL` against
+  `ext_judge.py` (below); `--only ID[,ID]` judges those cases of `--set`
+  only, so a smoke test needs no hand-cut set file. The card gives the
+  command.
 - **Copilot 2025.** Input: the arms of `tab:copilot2025` (the card maps each
   row to its arm) on the PRs of `copilot-2025-upstream`
   ([`final/copilot19.txt`](final/copilot19.txt)). Judge and output as for
@@ -180,6 +206,48 @@ The dataset card's section of the same name says the same per benchmark.
 
 To re-run our own judge instead: Tier 2 above for AACR-Bench, and
 [`ext/ext.sh`](ext/ext.sh) with `EXT_JUDGE_MODEL` for Martian and Qodo.
+
+## Judges on any provider
+
+Every judge can run on a model you choose. This is each judge's route, with
+the key always read from a gitignored env file and never typed on a command
+line (a command line lands in the shell history and in `ps`):
+
+| Judge | What it talks to | Another provider |
+|---|---|---|
+| AACR defect judge, `bench.sh judge` (Tier 2) | the ChatGPT login volume; with `QCR_BENCH_AUTH=api-key`, OpenAI's API (`openai.env`), or Anthropic's with `--judge-model anthropic/<model>` (`claude.env`) | OpenAI or Anthropic only; any other model judges the published reviews as in "Re-judge with your own judge" (`judge_prompt.py` prints our judge's prompt) |
+| AACR-Bench's own metric, `bench.sh eval --judge openai` | the OpenAI-compatible endpoint in `judge.env` (`JUDGE_BASE_URL`, `JUDGE_API_KEY`, `JUDGE_MODEL`) | any, through `judge.env` |
+| Martian's steps 2, 2.5 and 3 (the host-only route in [`ext/ext_judge.py`](ext/ext_judge.py)'s docstring) | `MARTIAN_BASE_URL`, `MARTIAN_API_KEY`, `MARTIAN_MODEL`: a Chat Completions endpoint | any Chat Completions endpoint straight, or a Responses API model through `ext_judge.py` |
+| Qodo, [`ext/qodo_judge.py`](ext/qodo_judge.py) `--endpoint` | `ext_judge.py` on loopback (it sends no key of its own) | any Responses API, through `ext_judge.py --upstream` |
+| `ext/ext.sh martian`, `qodo`, `sweprbench` | `ext_judge.py` in a container: the login volume, or OpenAI's API with `QCR_BENCH_AUTH=api-key` (`openai.env`) | OpenAI only (`EXT_JUDGE_MODEL`); another provider takes the host-only routes |
+| Pairwise Elo, `elo/elo.py run --judge NAME` | the plan's `judges`: `gpt`, `opus`, or any name with a `base_url` (Chat Completions) and its key as `key_var` in an `env_file` | any, through the plan ([`elo/README.md`](elo/README.md)) |
+
+`ext_judge.py` is the one bridge. Its `--upstream` must serve the Responses
+API (OpenAI's, the default on the key route, and DigitalOcean's
+`https://inference.do-ai.run/v1/responses` both do), and it forwards with
+`OPENAI_API_KEY` from its environment, whatever the provider. Its `/health`,
+`/stats` and its log's start line name the upstream URL (`chatgpt-codex` on
+the login route), so a run records which provider judged. Start it with the
+key loaded from its file:
+
+```sh
+# OpenAI's API: bench/aacr/openai.env holds OPENAI_API_KEY=<key>
+(set -a; . bench/aacr/openai.env; set +a
+ QCR_BENCH_AUTH=api-key exec python3 bench/aacr/ext/ext_judge.py \
+   --port 8765 --model MODEL --effort low --probe-temperature --log judge.jsonl) &
+# another provider: its own key file, handed over as OPENAI_API_KEY, and its Responses URL
+(set -a; . bench/aacr/digitalocean.env; set +a
+ OPENAI_API_KEY="$DIGITALOCEAN_API_KEY" QCR_BENCH_AUTH=api-key exec python3 bench/aacr/ext/ext_judge.py \
+   --port 8765 --model MODEL --effort low --probe-temperature --log judge.jsonl \
+   --upstream https://inference.do-ai.run/v1/responses) &
+```
+
+Then point Martian's steps (`MARTIAN_BASE_URL=http://127.0.0.1:8765/v1`) or
+`qodo_judge.py --endpoint http://127.0.0.1:8765/v1/chat/completions` at it.
+One PR is enough for a smoke test: `qodo_judge.py --only ID`, and for Martian
+a `benchmark_data.json` cut to one PR and one tool (the command is in
+`ext_judge.py`'s docstring) or written by `martian_ingest.py --only ID`;
+`ext.sh martian` and `ext.sh qodo` take `--only` too.
 
 ## Results
 
@@ -358,6 +426,9 @@ sample. Repeat runs of one build differed by 1.5–2 found defects per 10-PR
 set, so a smaller difference is noise.
 
 ## Quick start
+
+Needs a host where `docker info` succeeds, with Docker 25 or newer
+("Reproduce", Needs).
 
 ```sh
 bench/aacr/bench.sh doctor                         # docker, image, volumes
