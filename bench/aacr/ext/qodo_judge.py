@@ -4,7 +4,7 @@ vendor runs Qodo published — so the comparison is apples to apples.
 
     qodo_judge.py --set SET.json --gt DATASET.jsonl [--tools TOOL-COMMENTS.json] \
         [--run RUN_DIR | --reviews QODO_REVIEWS --review-key WORK|TOOL] --endpoint URL --out WORK
-        [--model M] [--judge-label L] [--resume] [--only-tools a,b] [--noise N] [--concurrency 8]
+        [--model M] [--judge-label L] [--resume] [--only ID[,ID]] [--only-tools a,b] [--noise N] [--concurrency 8]
 
 Qodo publishes no judge, prompt or scorer (the benchmark paper's section on Qodo), only the
 rule its blog states: a hit is a comment that accurately describes a
@@ -36,6 +36,11 @@ so two judges' verdicts never mix in one score.
 
 --tools (qodo_scrape.py's vendor comments) is needed only to judge the vendors;
 without it only the run's tool is judged.
+
+--only ID[,ID] judges those cases of --set only (a case's instance_id, as the set
+file has it, e.g. agentic-review-benchmarks__Ghost@1987365; its task_id, Ghost#1, or
+its pr_url also name it), as bench.sh --only does; the scores are over those PRs.
+An ID no case carries is refused.
 
 --reviews reads the run's comments from the published `qodo_reviews` table
 (.jsonl, or .parquet with pyarrow) instead of a run dir: the rows of
@@ -235,6 +240,19 @@ def effective(lines) -> list[dict]:
     return list(best.values())
 
 
+def select_cases(cases: list[dict], only: str) -> list[dict]:
+    """The cases --only names, in the set's order (every case when it is empty). A case is named by its
+    instance_id, its task_id or its pr_url; an ID no case carries is refused, never silently dropped."""
+    ids = [x.strip() for x in only.split(",") if x.strip()]
+    if not ids:
+        return cases
+    names = lambda c: {str(c.get(k)) for k in ("instance_id", "task_id", "pr_url") if c.get(k)}  # noqa: E731
+    unknown = [i for i in ids if not any(i in names(c) for c in cases)]
+    if unknown:
+        sys.exit(f"--only: no case in --set is {', '.join(unknown)} (name a case by its instance_id, task_id or pr_url)")
+    return [c for c in cases if names(c) & set(ids)]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--set", required=True, type=Path)
@@ -250,6 +268,7 @@ def main() -> None:
     ap.add_argument("--resume", action="store_true", help="continue the judgements already in --out (same judge)")
     ap.add_argument("--run-tool", help="the tool name the --run is scored under (default quickreview; "
                                        "with --reviews, the key's TOOL)")
+    ap.add_argument("--only", default="", help="ID[,ID]: judge these cases of --set only (instance_id, task_id or pr_url)")
     ap.add_argument("--only-tools", default="")
     ap.add_argument("--noise", type=int, default=0)
     ap.add_argument("--concurrency", type=int, default=8)
@@ -268,7 +287,7 @@ def main() -> None:
         sys.exit(f"{cache} exists (an earlier run's, or the run archive's): --resume continues it with the same "
                  "judge; a new judge or a fresh run needs a new --out")
     a.out.mkdir(parents=True, exist_ok=True)
-    cases = json.loads(a.set.read_text())["cases"]
+    cases = select_cases(json.loads(a.set.read_text())["cases"], a.only)
     gt = {r["pr_url_to_review"]: r for r in map(json.loads, a.gt.read_text().splitlines()) if r}
     ours_too = bool(a.run or pub)
     only = [t for t in a.only_tools.split(",") if t]

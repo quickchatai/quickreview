@@ -143,6 +143,22 @@ describe("martian_ingest.py --arm (a third-party bench arm)", () => {
     expect(d[URL_B]!.reviews[0]!.review_comments).toEqual([]);
   });
 
+  // MUTATION: in martian_ingest.select_cases, return every case whatever --only says — this fails
+  // MUTATION: drop the unknown-ID refusal in martian_ingest.select_cases — this fails
+  it("--only writes the named cases of the set only (one PR, one tool), and refuses an unknown ID", async () => {
+    const runDir = join(t, "run");
+    writeArmCase(runDir, "o__r-1@aaa", "ok", [], null);
+    writeArmCase(runDir, "o__r-2@bbb", "ok", [], null);
+    const d = await ingest(runDir, "opencode", null, ["--only", "o__r-2@bbb"]);
+    expect(Object.keys(d)).toEqual([URL_B]);
+    expect(d[URL_B]!.reviews.map((r) => r.tool)).toEqual(["opencode"]);
+    expect(Object.keys(await ingest(runDir, "opencode", null, ["--only", URL_A]))).toEqual([URL_A]);
+    const err = await ingest(runDir, "opencode", null, ["--only", "nope"]).catch(
+      (e: { stderr: string }) => String(e.stderr),
+    );
+    expect(err).toMatch(/--only: no case in --set is nope/);
+  });
+
   it("no --arm reads QuickReview's own case files, as before", async () => {
     const runDir = join(t, "run");
     for (const id of ["o__r-1@aaa", "o__r-2@bbb"]) {
@@ -558,6 +574,53 @@ describe("qodo_judge.py with another judge (re-judging the published reviews)", 
       /holds judgements by gpt-6\.1-sol/,
     );
   });
+
+  // MUTATION: in qodo_judge.select_cases, return every case whatever --only says — this fails
+  // MUTATION: drop the unknown-ID refusal in select_cases (an ID no case carries judges nothing) — this fails
+  it("--only judges the named cases of the set only, by instance_id or task_id, and refuses an unknown ID", async () => {
+    const issue = {
+      title: "race",
+      description: "d",
+      file_path: "a.py",
+      start_line: 5,
+      end_line: 9,
+    };
+    writeFileSync(
+      join(t, "set.json"),
+      JSON.stringify({
+        cases: [
+          { pr_url: URL_A, instance_id: "o__r-1@aaa", task_id: "r#1" },
+          { pr_url: URL_B, instance_id: "o__r-2@bbb", task_id: "r#2" },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(t, "gt.jsonl"),
+      [URL_A, URL_B]
+        .map((u) => JSON.stringify({ pr_url_to_review: u, issues: [issue] }))
+        .join("\n") + "\n",
+    );
+    const prs = () =>
+      (JSON.parse(readFileSync(join(out, "scores.json"), "utf8")) as { prs: number }).prs;
+    const judged = () =>
+      readFileSync(join(out, "judgements.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => (JSON.parse(l) as { pr: string }).pr);
+    await judge();
+    expect(prs()).toBe(2);
+    out = join(t, "only-id");
+    await judge("--only", "o__r-1@aaa");
+    expect(prs()).toBe(1);
+    expect(judged()).toEqual([URL_A]);
+    out = join(t, "only-task");
+    await judge("--only", "r#2");
+    expect(judged()).toEqual([URL_B]);
+    out = join(t, "only-bad");
+    expect(await fails(judge("--only", "o__r-1@aaa,nope"))).toMatch(
+      /--only: no case in --set is nope/,
+    );
+  });
 });
 
 describe("ext.sh qodo: one judge per work dir, any judge model (stub docker; nothing runs)", () => {
@@ -583,7 +646,10 @@ describe("ext.sh qodo: one judge per work dir, any judge model (stub docker; not
     mkdirSync(bin);
     writeFileSync(
       join(bin, "docker"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${join(t, "docker.log")}"\n`,
+      // The judge's /health, as `docker exec … /health … upstream` reads it: FAKE_UPSTREAM.
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${join(t, "docker.log")}"\n` +
+        `case "$*" in exec*/health*upstream*) printf '%s\\n' "\${FAKE_UPSTREAM:-}";; ` +
+        `*cat*benchmark_data.json*) echo '{}';; esac\n`,
     );
     chmodSync(join(bin, "docker"), 0o755);
     writeFileSync(join(t, "openai.env"), "OPENAI_API_KEY=sk-test\n");
@@ -625,6 +691,50 @@ describe("ext.sh qodo: one judge per work dir, any judge model (stub docker; not
       /^my-model, /,
     );
     expect(r.stdout).toContain("judging QuickReview only");
+  });
+
+  // MUTATION: write JUDGE.txt without the /health upstream in ext.sh start_judge — this fails
+  it("JUDGE.txt records the backend the judge's /health names, the value judge.jsonl's start row carries", () => {
+    const sh = tree();
+    const url = "https://inference.example.test/v1/responses";
+    const judgeTxt = () => readFileSync(join(t, "runs", "r1.qodo", "judge", "JUDGE.txt"), "utf8");
+    const r = ext(sh, { FAKE_UPSTREAM: url, QCR_BENCH_AUTH: "api-key" }, "r1", "q");
+    expect(r.status, r.stderr).toBe(0);
+    expect(judgeTxt()).toMatch(
+      /^gpt-6\.1-sol, reasoning effort \w+, via bench\/aacr\/ext\/ext_judge\.py \(/,
+    );
+    expect(judgeTxt().trim().endsWith(`; upstream ${url})`)).toBe(true);
+    // a judge whose /health names no upstream is recorded as not reported, never as a default
+    expect(ext(sh, {}, "r1", "q", "--resume").status).toBe(0);
+    expect(judgeTxt()).toContain("(ChatGPT login, refresh-disabled copy; upstream not reported)");
+  });
+
+  // MUTATION: drop `${only[@]+"${only[@]}"}` from ext.sh martian's martian_ingest.py call — this fails
+  it("ext.sh martian passes --only to the step-1 adapter, and refuses any other flag", () => {
+    const sh = tree();
+    mkdirSync(join(t, "runs", "r1", "cases"));
+    const r = spawnSync("bash", [sh, "martian", "r1", "q", "--only", "o__r-9@zzz"], {
+      env: {
+        PATH: `${join(t, "bin")}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+        HOME: t,
+        QCR_BENCH_RUNS_DIR: join(t, "runs"),
+        EXT_CACHE: join(t, "ext-cache"),
+      },
+      encoding: "utf8",
+    });
+    // the set is empty, so the adapter refuses the ID: proof that --only reached it
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("--only: no case in --set is o__r-9@zzz");
+    const bad = spawnSync("bash", [sh, "martian", "r1", "q", "--bogus"], {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HOME: t,
+        QCR_BENCH_RUNS_DIR: join(t, "runs"),
+      },
+      encoding: "utf8",
+    });
+    expect(bad.status).not.toBe(0);
+    expect(bad.stderr).toContain("ext.sh martian: unknown flag --bogus");
   });
 
   // MUTATION: drop the `[[ ! -e "$work" || "$resume" == 1 ]]` refusal from ext.sh qodo — this fails

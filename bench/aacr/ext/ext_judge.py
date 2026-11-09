@@ -102,7 +102,8 @@ def main() -> None:
     bridge = cb.Bridge(a)
     if a.probe_temperature:
         row = probe_temperature(bridge)
-        bridge.log({**row, "model": a.model, "effort": a.effort})
+        # judge.jsonl's start row: the backend it measured, as /health and /stats name it
+        bridge.log({**row, "model": a.model, "effort": a.effort, "upstream": bridge.stats["upstream"]})
         print(f"ext-judge: {json.dumps(row)}", flush=True)
     srv = ThreadingHTTPServer((a.host, a.port), cb.make_handler(bridge))
     srv.daemon_threads = True

@@ -389,8 +389,17 @@ copy_source() {
 
 case "$cmd" in
   doctor)
-    docker version --format 'docker {{.Server.Version}}' || die "docker not reachable"
-    docker image inspect "$IMAGE" --format "image $IMAGE {{.Id}} built {{.Created}}" 2>/dev/null || echo "image $IMAGE: not built (arm $ARM)"
+    # Every live step builds and runs containers: a docker CLI whose daemon is not running, or cannot
+    # start (a VM with no cgroups: "Devices cgroup isn't mounted"), fails here, in one line that says
+    # what to do, before any build or run.
+    command -v docker >/dev/null 2>&1 \
+      || die "docker is not installed: install Docker Engine 25+ (https://docs.docker.com/engine/install/), then rerun bench.sh doctor"
+    if ! dver="$(docker info --format '{{.ServerVersion}}' 2>/dev/null)"; then
+      why="$(docker info 2>&1 >/dev/null | grep -m1 -v '^[[:space:]]*$' || true)"
+      die "docker info fails (${why:-no output}): start the Docker daemon (e.g. sudo systemctl start docker) on a host where it can run containers (a VM without cgroups cannot; use another host or VM), then rerun bench.sh doctor"
+    fi
+    echo "docker $dver"
+    docker image inspect "$IMAGE" --format "image $IMAGE {{.Id}} built {{.Created}}" 2>/dev/null | grep . || echo "image $IMAGE: not built (arm $ARM)"
     docker volume inspect "$REPOS_VOLUME" >/dev/null 2>&1 && echo "repos volume $REPOS_VOLUME: present" || echo "repos volume $REPOS_VOLUME: not created yet"
     if [[ -n "$PROVIDER" ]]; then
       pe="$(provider_env "$PROVIDER")"

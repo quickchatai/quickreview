@@ -12,8 +12,10 @@
 #                                     local caches first ($EXT_CACHE), read-only
 #   ext.sh review SET [arm.sh flags]  QuickReview `default` on gpt-6.1-sol, exactly the final
 #                                     comparison's arm (image qcr-bench:pi099-ext, --config $DEFAULT)
-#   ext.sh martian RUN SET            step 1 adapter + Martian's steps 2/2.5/3 + score_profiles,
+#   ext.sh martian RUN SET [--only ID[,ID]]
+#                                     step 1 adapter + Martian's steps 2/2.5/3 + score_profiles,
 #                                     judge $EXT_JUDGE_MODEL; also re-judges three published tools
+#                                     (--only: those cases of SET only; qodo takes --only too)
 #   ext.sh sweprbench RUN SET         export + replay + SWE-PRBench's run_eval.py, judge $EXT_JUDGE_MODEL
 #   ext.sh qodo RUN|none SET [--resume] [qodo_judge.py flags]
 #                                     Qodo PR-Review-Bench: QuickReview (RUN) and the nine published
@@ -150,9 +152,15 @@ start_judge() { # work tag
         exec python3 /opt/quickreview/bench/ext_judge.py --host 0.0.0.0 --port 8765 --model $JUDGE_MODEL \
            --effort $JUDGE_EFFORT --max-inflight 64 --probe-temperature --log /judge-out/judge.jsonl" >/dev/null
     docker network connect --alias "$JUDGE_HOST" "$NET_INTERNAL" "$name"
-    echo "$JUDGE_MODEL, reasoning effort $JUDGE_EFFORT, via bench/aacr/ext/ext_judge.py ($how)" > "$work/judge/JUDGE.txt"
   fi
   wait_health "$name" 8765
+  if [[ "${EXT_JUDGE:-}" != mock ]]; then
+    # The backend as the judge's own /health names it (the --upstream URL on the API-key route,
+    # chatgpt-codex on the login route): the same value judge.jsonl's start row records.
+    local up
+    up="$(docker exec "$name" python3 -c "import json, urllib.request; print(json.load(urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=5)).get('upstream') or '')" 2>/dev/null || true)"
+    echo "$JUDGE_MODEL, reasoning effort $JUDGE_EFFORT, via bench/aacr/ext/ext_judge.py ($how; upstream ${up:-not reported})" > "$work/judge/JUDGE.txt"
+  fi
   log "judge $name up ($(cat "$work/judge/JUDGE.txt"))"
 }
 
@@ -267,7 +275,15 @@ PY
     ;;
 
   martian)
-    run="${1:?usage: ext.sh martian RUN|none SET}"; set_name="${2:?usage: ext.sh martian RUN|none SET}"
+    run="${1:?usage: ext.sh martian RUN|none SET [--only ID[,ID]]}"; set_name="${2:?usage: ext.sh martian RUN|none SET [--only ID[,ID]]}"
+    shift 2
+    only=()
+    while (($#)); do
+      case "$1" in
+        --only) only=(--only "${2:?--only needs ID[,ID]}"); shift 2 ;;
+        *) die "ext.sh martian: unknown flag $1 (RUN SET [--only ID[,ID]])" ;;
+      esac
+    done
     f="$AACR/sets/$set_name.json"; [[ -f "$f" ]] || die "no set $f"
     # Unset: re-judge the three published comparators beside RUN; set empty: none.
     tools="${EXT_MARTIAN_REJUDGE-qodo-extended-v2,cubic-v2,claude-code}"
@@ -284,7 +300,7 @@ PY
     docker run --rm --network none --entrypoint cat "$MIMG" /opt/martian/offline/results/benchmark_data.json > "$work/published-benchmark_data.json"
     python3 "$HERE/martian_ingest.py" --run "$QCR_BENCH_RUNS_DIR/$run" --set "$f" \
       --published "$work/published-benchmark_data.json" --out "$work/results/benchmark_data.json" \
-      --rejudge "$tools" ${qr[@]+"${qr[@]}"} ${EXT_WORK_TAG:+--interim} | tee "$work/logs/ingest.log"
+      --rejudge "$tools" ${qr[@]+"${qr[@]}"} ${only[@]+"${only[@]}"} ${EXT_WORK_TAG:+--interim} | tee "$work/logs/ingest.log"
     start_judge "$work" "m-$$"
     trap 'stop_judge "m-$$" "$work"' EXIT
     # Steps 2, 2.5, 3 and the profile scorer — THEIR code, run as their README

@@ -12,7 +12,8 @@
 //   4. the verifier, end to end on small .jsonl tables: a claim whose number
 //      the data gives passes, a stale one fails as a mismatch, a claim with no
 //      script fails, a claim whose source is not in --data fails unless
-//      --partial;
+//      --partial, and one that needs only --martian is skipped under
+//      --partial with the flag named, the run exiting 0;
 //   5. how a computed number is compared: printed like the published value,
 //      and an "about" claim within its tolerance;
 //   6. verify_slim.py's constants for the open-model figures (the DigitalOcean
@@ -432,6 +433,38 @@ describe("verify_claims end to end on small tables", () => {
     expect(verify(wrong, "--allow-gaps").code).toBe(1);
   });
 
+  // MUTATION: in verify_claims.verify, keep "needs-input" under --partial (drop the skipped branch) — this fails
+  // MUTATION: in result_line, print the gaps' parenthetical when gaps_n is 0 — this fails
+  // MUTATION: in result_line, drop the skipped count — this fails
+  it("with --partial skips a claim that needs only --martian, names the flag, and exits 0", () => {
+    const m = writeManifest("needs-martian.json", [
+      ...good,
+      claim("seven", "The report has 7 more.", "7", "{key:defects} + 4"),
+      claim("smoke", "its smoke ran 12 minutes", "12", "mart:defects"),
+    ]);
+    const strict = verify(m);
+    expect(strict.code).toBe(1);
+    expect(strict.out).toContain("'needs-input': 1");
+    expect(strict.out).toContain(
+      "result: 8 pass, 1 failing, 1 documented gaps (failing; --allow-gaps passes them)",
+    );
+    const partial = verify(m, "--partial");
+    expect(partial.out).toContain("claims: {'pass': 8, 'skipped': 1}");
+    expect(partial.out).toContain("SKIPPED x1: needs --martian (--partial)");
+    expect(partial.out).toContain(
+      "result: 8 pass, 0 failing, 0 documented gaps, 1 skipped (needs --martian; pass it to include them),",
+    );
+    expect(partial.out).not.toContain("failing;");
+    expect(partial.code).toBe(0);
+    // a mismatch still fails under --partial
+    const stale = writeManifest("needs-martian-stale.json", [
+      ...good,
+      claim("seven", "The report has 7 more.", "7", "key:defects"),
+      claim("smoke", "its smoke ran 12 minutes", "12", "mart:defects"),
+    ]);
+    expect(verify(stale, "--partial").code).toBe(1);
+  });
+
   // MUTATION: restore a non-failing status for a no_script reason starting "pending relabel" — this fails
   it("has no pending status: a claim waiting for a labelling pass fails like any claim with no script", () => {
     const pending = writeManifest("pending.json", [
@@ -482,6 +515,23 @@ except KeyError:
     expect(slimCell("tab:qodo|qodo-precise|P", null)).toMatch(/^no-source: --qodo-gt/);
     expect(slimCell("tab:martianfinal|PR-Agent|P", "/m")).toBe("error");
     expect(slimCell("tab:final|arm|P", null)).toBe("error");
+  });
+
+  // MUTATION: make input_flag always answer --martian — the Qodo case reads "--martian" and this fails
+  it("names the flag a skipped claim needs: --martian, --qodo-gt, or both", () => {
+    const flag = (whys: string[]) =>
+      py(
+        "import verify_claims as V; print(json.dumps(V.input_flag([{'why': w} for w in json.loads(sys.argv[1])])))",
+        JSON.stringify(whys),
+      );
+    expect(flag(["needs hf+martian (third-party: pass --martian)"])).toBe("--martian");
+    expect(flag(["needs --qodo-gt (third-party, never in the release)"])).toBe("--qodo-gt");
+    expect(
+      flag([
+        "needs --martian (third-party, never in the release)",
+        "needs --qodo-gt (third-party)",
+      ]),
+    ).toBe("--martian and --qodo-gt");
   });
 });
 

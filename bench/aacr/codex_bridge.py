@@ -54,8 +54,12 @@ login is read at all. The bridge forwards the same streamed Responses request
 to the PUBLIC API (https://api.openai.com/v1/responses) with
 `Authorization: Bearer $OPENAI_API_KEY` — the key from the container's
 environment (bench.sh's --env-file), never an argv — and without the ChatGPT
-headers. /health and /stats report `upstream: "openai-api"` so a run records
-which backend it measured.
+headers. `--upstream` points it at any other Responses API instead (a
+provider's own URL, with that provider's key as OPENAI_API_KEY). /health and
+/stats report `upstream`: the URL the requests go to on this route,
+"chatgpt-codex" on the login route, so a run records which backend it
+measured (ext_judge.py's start row in judge.jsonl and ext.sh's JUDGE.txt carry
+the same value).
 
 Stdlib only. Every upstream refusal is logged (status + error excerpt + the
 request's key set, never its content) to the --log file.
@@ -426,6 +430,12 @@ def chat_stream_chunks(chat: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 # ---- the server -----------------------------------------------------------------
 
+def upstream_label(a: argparse.Namespace) -> str:
+    """The backend a run measured, as /health, /stats and the run records name it: the URL the API-key
+    route posts to (--upstream, default the public API), or "chatgpt-codex" on the login route."""
+    return str(a.upstream or API_UPSTREAM) if a.api_key else "chatgpt-codex"
+
+
 class Bridge:
     def __init__(self, a: argparse.Namespace):
         self.a = a
@@ -436,7 +446,7 @@ class Bridge:
             "input_tokens": 0, "cached_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0,
             "by_status": {}, "dropped_keys": {},
             "model": a.model, "effort": a.effort, "verbosity": a.verbosity,
-            "upstream": "openai-api" if a.api_key else "chatgpt-codex",
+            "upstream": upstream_label(a),
         }
         self.log_handle = open(a.log, "a", encoding="utf-8") if a.log else None
         self.label = ""
@@ -716,7 +726,15 @@ def _self_test() -> None:
     finally:
         del os.environ["OPENAI_API_KEY"]
     assert h["Authorization"] == "Bearer sk-test" and "chatgpt-account-id" not in h and "originator" not in h, h
-    assert keyed.stats["upstream"] == "openai-api"
+    assert keyed.stats["upstream"] == API_UPSTREAM, keyed.stats["upstream"]
+    # Another provider's Responses API: /health and /stats name that URL, never the public API's label.
+    other = "https://inference.example.test/v1/responses"
+    elsewhere = Bridge(argparse.Namespace(api_key=True, auth="", upstream=other, model="m", effort="e",
+                                          verbosity="v", log="", max_inflight=1))
+    assert elsewhere.stats["upstream"] == other, elsewhere.stats["upstream"]
+    login = Bridge(argparse.Namespace(api_key=False, auth="", upstream=UPSTREAM, model="m", effort="e",
+                                      verbosity="v", log="", max_inflight=1))
+    assert login.stats["upstream"] == "chatgpt-codex", login.stats["upstream"]
     print("codex_bridge self-test: ok")
 
 

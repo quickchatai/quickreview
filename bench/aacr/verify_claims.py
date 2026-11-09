@@ -17,7 +17,10 @@ Each claim names its check and key (`q`), and may name other sources for the sam
 (`alt`). Every source the given data holds is computed and compared with the printed
 value; a claim passes when every computed source prints as the published value and at
 least one source was available. With --partial a claim none of whose sources is in --data
-is reported as skipped instead of failing (to check the slim bundle or the tables alone).
+is reported as skipped instead of failing (to check the slim bundle or the tables alone), and so
+is one whose only missing source is --martian or --qodo-gt: it is listed "skipped (needs --martian)",
+the result line counts the skipped claims with the flag that would include them, and the run exits 0
+when every other claim passes. Without --partial a missing third-party input fails as "needs input".
 
 --martian (withmartian/code-review-benchmark at e616e84) and --qodo-gt (Qodo
 PR-Review-Bench's git_code_review_bench_100_w_open_prs.jsonl) are third-party and never in
@@ -30,7 +33,8 @@ the same number of decimals, the same sign, thousands separator and `%` — and 
 must be equal. The checks and their scripts are listed in claims.json under `checks`; a claim
 whose check has no script in this tree, or no `q`, fails as "no script"; one whose `no_script` reason starts
 "data not published" rests on data the release does not hold and fails as "not published" (the page's
-author may reword it); one that needs --martian or --qodo-gt when it was not given fails as "needs input".
+author may reword it); one that needs --martian or --qodo-gt when it was not given fails as "needs input"
+(skipped with --partial).
 Those three are the documented gaps: with --allow-gaps they are listed with their reasons and pass, as long
 as the manifest records a reason; a mismatch, an error or a missing source always fails. There is no other
 status: a claim waiting for data (a labelling pass, say) has no script and fails like any other.
@@ -398,9 +402,18 @@ def verify(a, manifest: dict, found) -> List[dict]:
         elif "no-script" in st:
             r["status"] = "no-script"
         elif st and all(x == "needs-input" for x in st):
-            r["status"] = "needs-input"
+            # with --partial a claim whose only missing source is a third-party input is skipped, named
+            # by the flag that would include it; without --partial it is a gap that fails
+            if a.partial:
+                r["status"], r["skip"] = "skipped", f"needs {input_flag(r['sources'])}"
+            else:
+                r["status"] = "needs-input"
         else:
             r["status"] = "skipped" if a.partial else "no-source"
+            if a.partial:
+                parts = sorted({p for s in r["sources"] for p in str(s.get("why", "")).removeprefix("needs ").split(" ")[0].split("+")
+                                if p and found.get(p) is None})
+                r["skip"] = "needs " + "+".join(parts or ["its data"]) + " in --data"
         if c.get("note"):
             r["note"] = c["note"]
         vols = (manifest.get("groups") or {}).get(c.get("group") or "", {}).get("archive") or []
@@ -421,6 +434,12 @@ FAIL = ("mismatch", "error", "no-source", "no-script", "not-published", "needs-i
 # source". A gap with no recorded reason is never allowed.
 GAPS = ("no-script", "not-published", "needs-input")
 THIRD_PARTY_INPUTS = {"martian"}
+
+
+def input_flag(sources: List[dict]) -> str:
+    """The third-party flag(s) a needs-input claim's sources ask for: --martian, --qodo-gt, or both."""
+    flags = sorted({"--qodo-gt" if "--qodo-gt" in str(s.get("why", "")) else "--martian" for s in sources})
+    return " and ".join(flags)
 NOT_PUBLISHED = "data not published"
 
 
@@ -492,6 +511,12 @@ def report_md(manifest: dict, lint: dict, results: List[dict], found, timings, c
                               for r in rs[:4])
             out.append(f"| {len(rs)} | {why.replace('|', '/')} | {where}{' …' if len(rs) > 4 else ''} |")
         out.append("")
+    skipped = [r for r in results if r["status"] == "skipped"]
+    if skipped:
+        by = Counter(r.get("skip") or "its source is not in --data" for r in skipped)
+        out += ["## Skipped (--partial)", "", f"{len(skipped)} claims were not checked; each line names what "
+                "would include them.", "", "| Claims | Skipped because |", "|---|---|"]
+        out += [f"| {n} | {why} |" for why, n in by.most_common()] + [""]
     if bad:
         out += ["## Not passing", "", "| Claim | File:line | Published | Computed | Status | Why |", "|---|---|---|---|---|---|"]
         for r in bad:
@@ -523,7 +548,8 @@ def main() -> int:
     ap.add_argument("--work", default=os.path.join(os.environ.get("TMPDIR", "/tmp"), "verify-claims"))
     ap.add_argument("--martian", help="withmartian/code-review-benchmark checkout (third-party; optional)")
     ap.add_argument("--qodo-gt", help="Qodo PR-Review-Bench ground-truth jsonl (third-party; optional)")
-    ap.add_argument("--partial", action="store_true", help="skip, do not fail, claims with no source in --data")
+    ap.add_argument("--partial", action="store_true",
+                    help="skip, do not fail, claims with no source in --data or needing only --martian/--qodo-gt")
     ap.add_argument("--file", action="append", help="verify only the claims of this published file (repeatable)")
     ap.add_argument("--lint", action="store_true", help="check the manifest against the published text only; no data")
     ap.add_argument("--no-validation", action="store_true", help="skip re-running hf_export.py's table validation")
@@ -593,6 +619,9 @@ def main() -> int:
         print(f"  NO-SCRIPT x{n}: {why}")
     for why, n in unpublished.most_common():
         print(f"  NOT-PUBLISHED x{n}: {why}")
+    skipped = Counter(r["skip"] for r in results if r["status"] == "skipped" and r.get("skip"))
+    for why, n in skipped.most_common():
+        print(f"  SKIPPED x{n}: {why} (--partial)")
     bad_c = [c for c in a._consistency if not c["ok"]]
     print(f"release checks: {len(a._consistency) - len(bad_c)} of {len(a._consistency)} pass")
     for c in bad_c:
@@ -613,11 +642,25 @@ def main() -> int:
     bad_claims = [r for r in results if failing(r)]
     gaps_n = sum(1 for r in results if r["status"] in GAPS)
     verdict = 1 if lint["errors"] or bad_claims or bad_c else 0
-    print(f"result: {tot.get('pass', 0)} pass, {len(bad_claims)} failing, "
-          f"{gaps_n} documented gaps "
-          f"({'allowed' if a.allow_gaps else 'failing; --allow-gaps passes them'}), "
-          f"release checks {len(a._consistency) - len(bad_c)}/{len(a._consistency)}: exit {verdict}")
+    print(result_line(tot.get("pass", 0), len(bad_claims), gaps_n, a.allow_gaps, skipped,
+                      len(a._consistency) - len(bad_c), len(a._consistency), verdict))
     return verdict
+
+
+def result_line(passed: int, failing_n: int, gaps_n: int, allow_gaps: bool, skipped: "Counter",
+                checks_ok: int, checks_n: int, verdict: int) -> str:
+    """The one line a run ends on. The gaps' parenthetical is printed only when there are gaps (a clean run
+    must not read "failing"); skipped claims (--partial) are counted with the input that would include them."""
+    gaps = f"{gaps_n} documented gaps"
+    if gaps_n:
+        gaps += f" ({'allowed' if allow_gaps else 'failing; --allow-gaps passes them'})"
+    skip = ""
+    if skipped:
+        n = sum(skipped.values())
+        why = ", ".join(f"{k}" if len(skipped) == 1 else f"{v} {k}" for k, v in sorted(skipped.items()))
+        skip = f", {n} skipped ({why}; pass {'it' if len(skipped) == 1 else 'them'} to include them)"
+    return (f"result: {passed} pass, {failing_n} failing, {gaps}{skip}, "
+            f"release checks {checks_ok}/{checks_n}: exit {verdict}")
 
 
 if __name__ == "__main__":
