@@ -535,6 +535,41 @@ except KeyError:
   });
 });
 
+describe("the release checks name what they need", () => {
+  // MUTATION: drop `flag` from the Martian and Qodo re-scores' needs in verify_claims.consistency (needs
+  // ["slim"]) — the card then counts them in a --partial run, and this fails.
+  // MUTATION: give the bundle's hash check needs [] — the card then counts it on the tables alone, and this fails.
+  it("marks the slim bundle's checks, and the re-scores that need --martian or --qodo-gt", () => {
+    const work = join(tmp, "consistency");
+    mkdirSync(join(work, "slim-verify", "out"), { recursive: true });
+    writeFileSync(
+      join(work, "slim-verify", "out", "summary.json"),
+      JSON.stringify({
+        hash_mismatches: 0,
+        pi_events_in_bundle: 0,
+        martian: { identical: 3 },
+        qodo: { identical: 2 },
+        elo_refit_equals_ratings_json: true,
+      }),
+    );
+    const got = py(
+      `import types, verify_claims as V
+a = types.SimpleNamespace(work=sys.argv[1], martian="/m", qodo_gt="/q", no_validation=True)
+src = V.Sources(a, {"checks": {}}, {})
+src._json["slim"] = {"cells": {}, "files": {}}
+print(json.dumps([[c["check"], c["needs"], c["ok"]] for c in V.consistency(a, {"slim": "bundle"}, src)]))`,
+      work,
+    );
+    expect(got).toEqual([
+      ["every bundle file matches FILES.sha256", ["slim"], true],
+      ["no transcript text (pi-events.jsonl) in the bundle", ["slim"], true],
+      ["every martian scoring dir re-scores to its stored scores", ["slim", "--martian"], true],
+      ["every qodo scoring dir re-scores to its stored scores", ["slim", "--qodo-gt"], true],
+      ["the Elo refit from the judgments equals the run's ratings.json", ["slim"], true],
+    ]);
+  });
+});
+
 describe("comparing a computed number with the printed one", () => {
   const same = (printed: string, x: number | string, about: number | null = null) =>
     py(

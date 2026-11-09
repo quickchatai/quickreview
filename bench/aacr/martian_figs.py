@@ -3,9 +3,15 @@
 # requires-python = ">=3.10"
 # dependencies = ["matplotlib>=3.8"]
 # ///
-"""Figures for the Martian critique — PDF, PNG and SVG in bench/aacr/charts/martian-*.
+"""Figures for the Martian critique — PDF, PNG and SVG, martian-*, into the directory named.
 
-    uv run bench/aacr/martian_figs.py [--out DIR]     # DIR: write the figures there instead of charts/
+    uv run bench/aacr/martian_figs.py --out DIR               # a scratch dir: the clone stays clean
+    uv run bench/aacr/martian_figs.py --out bench/aacr/charts # redraw the committed figures (a release step)
+
+There is no default: --out (or QCR_CHARTS_OUT, as final/score.sh reads it) names the directory, so a
+reader's redraw never writes over the committed charts/martian-*.pdf. A redraw is byte-reproducible:
+the PDF carries no CreationDate, the SVG no Date and its ids come from a fixed hash salt, and the PNG
+holds no time.
 
 No review, judge or annotation run is made here. Inputs:
   charts/martian-tiers.json  martian_tiers.py --compute over the release (the severity figure)
@@ -39,7 +45,10 @@ plt.rcParams.update({
     "axes.edgecolor": GRID, "xtick.color": MUTED, "ytick.color": INK, "axes.titleweight": "bold",
     "axes.titlesize": 12.5, "axes.titlelocation": "left", "figure.facecolor": GROUND, "axes.facecolor": GROUND,
     "savefig.facecolor": GROUND, "axes.spines.top": False, "axes.spines.right": False, "svg.fonttype": "none",
+    "svg.hashsalt": "martian-figs",  # the SVG's ids from a fixed salt, not a random one per redraw
 })
+# no timestamp in a file, so the same values redraw the same bytes
+METADATA = {"pdf": {"CreationDate": None}, "svg": {"Date": None}, "png": {}}
 D = json.load(open(os.path.join(OUT, "martian-data.json")))
 F = {k: v["value"] for k, v in json.load(open(os.path.join(OUT, "martian-figs.json")))["values"].items()}
 
@@ -49,7 +58,8 @@ SAVE = OUT
 
 def save(fig, name):
     for ext in ("pdf", "png", "svg"):
-        fig.savefig(os.path.join(SAVE, f"martian-{name}.{ext}"), dpi=200 if ext == "png" else None, bbox_inches="tight")
+        fig.savefig(os.path.join(SAVE, f"martian-{name}.{ext}"), dpi=200 if ext == "png" else None, bbox_inches="tight",
+                    metadata=METADATA[ext])
     plt.close(fig)
 
 
@@ -378,8 +388,12 @@ def fig_strength():
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--out", default=OUT, help="the directory the figures are written to (default: charts/)")
+    ap.add_argument("--out", default=os.environ.get("QCR_CHARTS_OUT") or None,
+                    help="the directory the figures are written to (default: $QCR_CHARTS_OUT; no other default)")
     SAVE = ap.parse_args().out
+    if not SAVE:
+        ap.error("name the output: --out DIR (a scratch dir), or --out bench/aacr/charts to redraw the "
+                 "committed figures")
     os.makedirs(SAVE, exist_ok=True)
     for f in (fig_audit, fig_real_vs_trivia, fig_extended_key, fig_composition, fig_policy, fig_allfound,
               fig_leaderboard, fig_strength):

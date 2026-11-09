@@ -2564,17 +2564,26 @@ def verify_result(path: str | None) -> str:
     cons = r.get("consistency") or []
     ok = sum(1 for x in cons if x["ok"])
     fails = sum(c.get(k, 0) for k in ("mismatch", "error", "no-source"))
+    checks = f"The release's own checks (the tables' validation and the slim bundle's) pass {ok} of {len(cons)}."
+    if cons and all(isinstance(x.get("needs"), list) for x in cons):
+        # the split, from what each check needs: a --partial run without the third-party inputs, and the
+        # tables alone, re-run fewer of them
+        tables = sum(1 for x in cons if not x["needs"])
+        third = sum(1 for x in cons if {"--martian", "--qodo-gt"} & set(x["needs"]))
+        checks = (f"The release's own checks pass {ok} of {len(cons)}: {tables} from `validation.json`, re-run on "
+                  f"the tables, and {len(cons) - tables} the slim bundle's. `--partial` without `--martian` and "
+                  f"`--qodo-gt` re-runs {len(cons) - third} of them (the slim bundle's Martian and Qodo re-scores "
+                  f"need those inputs), and with the tables alone the {tables} from `validation.json`.")
     if c.get("pass", 0) == sum(c.values()):
         return (f"all {c.get('pass', 0):,} claims pass, with 0 mismatch, 0 error, 0 missing source and no "
-                f"claim left unchecked. The release's own checks (the tables' validation and the slim bundle's) "
-                f"pass {ok} of {len(cons)}.")
+                f"claim left unchecked. " + checks)
     return (f"{c.get('pass', 0):,} of {sum(c.values()):,} claims pass; {c.get('mismatch', 0)} mismatch, "
             f"{c.get('error', 0)} error and {c.get('no-source', 0)} missing source"
             + ("" if not fails else " (this release is not ready)")
             + f"; the documented gaps are {c.get('no-script', 0)} claims with no recompute script yet and "
               f"{c.get('not-published', 0)} whose data the release does not hold"
             + (f", and {c['needs-input']} that need a third-party input" if c.get("needs-input") else "")
-            + f". The release's own checks (the tables' validation and the slim bundle's) pass {ok} of {len(cons)}.")
+            + ". " + checks)
 
 
 def md_link(value: str | None, pending: str, base: str) -> str:

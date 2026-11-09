@@ -398,6 +398,12 @@ case "$cmd" in
       why="$(docker info 2>&1 >/dev/null | grep -m1 -v '^[[:space:]]*$' || true)"
       die "docker info fails (${why:-no output}): start the Docker daemon (e.g. sudo systemctl start docker) on a host where it can run containers (a VM without cgroups cannot; use another host or VM), then rerun bench.sh doctor"
     fi
+    # The auth volume's subpath mount (--mount ...,volume-subpath=agent) needs Docker 25+; an older daemon
+    # would fail only at the first run. A version that is not a plain number is left to the run.
+    dmaj="${dver%%.*}"
+    if [[ "$dmaj" =~ ^[0-9]+$ ]] && (( dmaj < 25 )); then
+      die "docker $dver is too old: Docker 25+ is needed for the auth volume's subpath mount; upgrade Docker Engine (https://docs.docker.com/engine/install/), then rerun bench.sh doctor"
+    fi
     echo "docker $dver"
     docker image inspect "$IMAGE" --format "image $IMAGE {{.Id}} built {{.Created}}" 2>/dev/null | grep . || echo "image $IMAGE: not built (arm $ARM)"
     docker volume inspect "$REPOS_VOLUME" >/dev/null 2>&1 && echo "repos volume $REPOS_VOLUME: present" || echo "repos volume $REPOS_VOLUME: not created yet"

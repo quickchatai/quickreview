@@ -620,6 +620,10 @@ python3 bench/aacr/recompute/elo_ratings.py slim/elo/martian-hard20-all-gpt --ch
 branch when the release's code is merged, and its `bench/aacr/` is the code
 this release was built and verified with, file for file.
 
+Every command from here on runs in the clone and keeps its scratch there:
+`slim/`, `work/`, `charts-out/`, `martian/` and `qodo/`. The repository's
+`.gitignore` ignores all five, so `git status` in the clone stays clean.
+
 Two tables in the papers rest on a labelling pass as well as the runs: the
 benchmark paper's `tab:martiantiers` and the QuickReview paper's lost-credit
 figures. The label files ship in the archive's `analysis` volume and the slim

@@ -11,7 +11,11 @@
 //   4. martian_figvalues.Opus scores a tool the way Martian's own scorer does: its false negatives
 //      are the entry's own list (a golden its judge left out of both lists is in neither), skipped
 //      entries are left out, and only Core categories count;
-//   5. every committed value names its key and at least one run or table it reads.
+//   5. every committed value names its key and at least one run or table it reads;
+//   6. martian_figs.py stamps no time into a PDF or SVG and salts the SVG ids (a redraw is the same
+//      bytes), and has no default output directory (a bare run never writes over charts/);
+//   7. showcase/refresh_v3.py's idea builder skips an idea whose unpublished source is absent (the
+//      Martian check's write-up, the Qodo hand labels), keeping its committed entry, instead of failing.
 //
 // The check against the real release (`martian_figvalues.py --check` with --data, --archive and
 // --martian) is in the module's docstring; this file needs no data.
@@ -139,6 +143,127 @@ print(json.dumps(out))`,
       join(AACR, "martian_figs.py"),
     );
     expect(typed).toEqual([]);
+  });
+});
+
+describe("martian_figs.py writes reproducible files, and only where it is told", () => {
+  it("strips every timestamp and salts the SVG ids, so a redraw is byte for byte the same", () => {
+    // MUTATION: drop `metadata=METADATA[ext]` from martian_figs.save — the PDFs and SVGs then
+    // carry their draw time, and this fails.
+    // MUTATION: drop "svg.hashsalt" from martian_figs.py's rcParams — the SVG ids are then random
+    // per redraw, and this fails.
+    const r = py(
+      `${STUB}
+log = json.loads(draw(sys.argv[1] + "/martian_figs.py"))
+saves = [(a[0], kw.get("metadata")) for n, a, kw in log if n == "savefig"]
+salt = [a[0].get("svg.hashsalt") for n, a, kw in log if n == "update" and a and isinstance(a[0], dict)]
+print(json.dumps({"saves": saves, "salt": salt}))`,
+      figTree("repro"),
+    ) as { saves: [string, unknown][]; salt: unknown[] };
+    expect(r.saves).toHaveLength(24);
+    for (const [path, meta] of r.saves) {
+      const ext = path.split(".").pop();
+      expect(meta, path).toEqual(
+        ext === "pdf" ? { CreationDate: null } : ext === "svg" ? { Date: null } : {},
+      );
+    }
+    expect(r.salt.filter((x) => typeof x === "string" && x.length > 0)).toHaveLength(1);
+  }, 60_000);
+
+  it("has no default output: with no --out and no QCR_CHARTS_OUT it refuses, and --out is used", () => {
+    // MUTATION: give martian_figs.py's --out the default charts/ (OUT) again — the bare run then
+    // redraws the committed figures, and this fails.
+    const r = py(
+      `${STUB}
+import os, runpy, io, contextlib
+os.environ.pop("QCR_CHARTS_OUT", None)
+script = sys.argv[1] + "/martian_figs.py"; out = sys.argv[1] + "/scratch"
+def main(*argv):
+    del LOG[:]
+    sys.argv = [script, *argv]; err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            runpy.run_path(script, run_name="__main__")
+        code = 0
+    except SystemExit as e:
+        code = e.code
+    return code, err.getvalue(), sorted({os.path.dirname(a[0]) for n, a, kw in LOG if n == "savefig"})
+bare = main()
+told = main("--out", out)
+os.environ["QCR_CHARTS_OUT"] = out
+env = main()
+print(json.dumps({"bare": bare, "told": told, "env": env, "out": out}))`,
+      figTree("noout"),
+    ) as Record<string, [number, string, string[]]> & { out: string };
+    const [code, err, dirs] = r.bare!;
+    expect(code).toBe(2);
+    expect(err).toMatch(/name the output: --out DIR/);
+    expect(dirs).toEqual([]);
+    expect(r.told![0]).toBe(0);
+    expect(r.told![2]).toEqual([r.out]);
+    expect(r.env![0]).toBe(0);
+    expect(r.env![2]).toEqual([r.out]);
+  }, 60_000);
+});
+
+describe("showcase/refresh_v3: an idea whose source is unpublished", () => {
+  it("is not built when the source is absent, keeps its committed entry and says so", () => {
+    // MUTATION: in ideas_v3_data.build_ideas, build every idea (drop the `if gone:` branch) — the
+    // stranger's run then fails on the absent write-up, and this fails.
+    // MUTATION: in build_ideas, drop the committed entry of a skipped idea (no `out[name] = committed[name]`)
+    // — its figure then has no data, and this fails.
+    const dir = join(tmp, "showcase");
+    mkdirSync(join(dir, "aacr", "ext", "martian-tuning"), { recursive: true });
+    mkdirSync(join(dir, "data", "ext-cache", "qodo"), { recursive: true });
+    const r = py(
+      `import os
+sys.path.insert(0, ${JSON.stringify(join(AACR, "showcase"))})
+import argparse, ideas_v3_data as I
+root = sys.argv[1]
+ctx = argparse.Namespace(aacr=os.path.join(root, "aacr"), data_root=os.path.join(root, "data"))
+calls = []
+def built(name):
+    def b(c):
+        calls.append(name)
+        return {"built": name}
+    return b
+ideas = {"idea-uncredited": built("idea-uncredited"), "idea-funnel": built("idea-funnel")}
+lines = []
+committed = {"idea-uncredited": {"committed": True}}
+absent = I.build_ideas(ctx, committed, lines.append, ideas)
+none_committed = I.build_ideas(ctx, {}, lines.append, ideas)
+for p in I.UNPUBLISHED_SOURCES["idea-uncredited"](ctx):
+    open(p, "w").write("x")
+present = I.build_ideas(ctx, committed, lines.append, ideas)
+print(json.dumps({"absent": absent, "none": none_committed, "present": present, "calls": calls, "lines": lines}))`,
+      dir,
+    ) as {
+      absent: [Record<string, unknown>, Record<string, string[]>];
+      none: [Record<string, unknown>, Record<string, string[]>];
+      present: [Record<string, unknown>, Record<string, string[]>];
+      calls: string[];
+      lines: string[];
+    };
+    const gone = [
+      "bench/aacr/ext/martian-tuning/FAIR-COMPARISON.md",
+      "<data root>/ext-cache/qodo/unlisted-check.json",
+    ];
+    expect(r.absent).toEqual([
+      { "idea-uncredited": { committed: true }, "idea-funnel": { built: "idea-funnel" } },
+      { "idea-uncredited": gone },
+    ]);
+    expect(r.none).toEqual([
+      { "idea-funnel": { built: "idea-funnel" } },
+      { "idea-uncredited": gone },
+    ]);
+    expect(r.present).toEqual([
+      { "idea-uncredited": { built: "idea-uncredited" }, "idea-funnel": { built: "idea-funnel" } },
+      {},
+    ]);
+    expect(r.calls).toEqual(["idea-funnel", "idea-funnel", "idea-uncredited", "idea-funnel"]);
+    expect(r.lines[0]).toMatch(
+      /^skipped idea-uncredited: not rebuilt, .*FAIR-COMPARISON\.md and .*unlisted-check\.json not here \(unpublished\); data\/v3\.json keeps its committed entry$/,
+    );
   });
 });
 

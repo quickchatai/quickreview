@@ -38,8 +38,8 @@ git, Python 3.11 or newer, [uv](https://docs.astral.sh/uv/), zstd (for
 of disk, no docker, no key. Tiers 2 and 3, and every `bench.sh` or
 `ext/ext.sh` step but the host-only judge routes below: a host where
 `docker info` succeeds (a VM or container whose cgroups are not mounted cannot
-start the daemon; `bench.sh doctor` says so), Docker 25 or newer, and room
-for the images and the prefetched repositories.
+start the daemon), Docker 25 or newer (`bench.sh doctor` checks both), and
+room for the images and the prefetched repositories.
 
 **Tier 1 — re-score and re-chart the published runs: no keys, no docker.**
 Download the **slim re-score bundle** (the dataset's `slim/` folder) — every run dir
@@ -244,6 +244,19 @@ key loaded from its file:
 
 Then point Martian's steps (`MARTIAN_BASE_URL=http://127.0.0.1:8765/v1`) or
 `qodo_judge.py --endpoint http://127.0.0.1:8765/v1/chat/completions` at it.
+Martian's steps can also skip the bridge and talk to a provider's Chat
+Completions endpoint straight, when its model takes temperature 0 (Martian's
+client sends it); the key is loaded the same way, in a subshell that runs the
+steps (in the Martian checkout, the steps as in `ext_judge.py`'s docstring):
+
+```sh
+(set -a; . /path/to/quickreview/bench/aacr/digitalocean.env; set +a
+ export MARTIAN_API_KEY="$DIGITALOCEAN_API_KEY" MARTIAN_BASE_URL=https://inference.do-ai.run/v1 MARTIAN_MODEL=MODEL
+ python -m code_review_benchmark.step2_extract_comments --tool quickreview &&
+ python -m code_review_benchmark.step2_5_dedup_candidates &&
+ python -m code_review_benchmark.step3_judge_comments --dedup-groups results/MODEL/dedup_groups.json)
+```
+
 One PR is enough for a smoke test: `qodo_judge.py --only ID`, and for Martian
 a `benchmark_data.json` cut to one PR and one tool (the command is in
 `ext_judge.py`'s docstring) or written by `martian_ingest.py --only ID`;

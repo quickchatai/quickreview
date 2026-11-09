@@ -269,6 +269,38 @@ describe("the card states the release's verified state", () => {
     }
   });
 
+  // MUTATION: in verify_result, count the third-party re-scores in the --partial figure (drop `- third`) — this fails
+  // MUTATION: in verify_result, give the tables-alone figure as every check (len(cons)) — this fails
+  it("splits the release checks by what they need: the tables, the slim bundle, a third-party input", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hf-card-"));
+    try {
+      const report = join(dir, "vc.json");
+      const check = (needs: string[]) => ({ ok: true, needs });
+      writeFileSync(
+        report,
+        JSON.stringify({
+          results: Array(4).fill({ status: "pass" }),
+          consistency: [
+            ...Array(3).fill(check([])),
+            check(["slim"]),
+            check(["slim"]),
+            check(["slim", "--martian"]),
+            check(["slim", "--qodo-gt"]),
+          ],
+        }),
+      );
+      const card = render(`, repo_ref='bench-data-v1', verify_report=${JSON.stringify(report)}`);
+      expect(card).toContain(
+        "The release's own checks pass 7 of 7: 3 from `validation.json`, re-run on the tables, and 4 the " +
+          "slim bundle's. `--partial` without `--martian` and `--qodo-gt` re-runs 5 of them (the slim " +
+          "bundle's Martian and Qodo re-scores need those inputs), and with the tables alone the 3 from " +
+          "`validation.json`.",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // MUTATION: make claims_lead say every number passes whatever the report counts — this fails
   // MUTATION: make verify_result print the no-gap sentence when a claim is not-published — this fails
   // MUTATION: count "pending-relabel" as a pass in claims_lead — this fails
@@ -483,6 +515,40 @@ describe("the reproduction docs work on a fresh machine", () => {
     );
     expect(runs.length).toBe(3);
     expect(runs.filter((b) => !b.includes("QCR_CHARTS_OUT="))).toEqual([]);
+  });
+
+  // MUTATION: drop `/martian/` from the root .gitignore — this fails
+  // MUTATION: change the card's `--work work` (the relabel scripts) to `--work scratch` — this fails
+  it("leaves the clone clean: every scratch dir the card's commands make in it is gitignored", () => {
+    const verify = CARD.split("\n## How to verify\n")[1]!.split("\n## ")[0]!;
+    const cmds = [...verify.matchAll(/```sh\n([\s\S]*?)\n```/g)]
+      .map((m) => m[1]!)
+      .join("\n")
+      .split("\n");
+    const at = cmds.findIndex((l) => /^cd quickreview\b/.test(l.trim()));
+    expect(at).toBeGreaterThanOrEqual(0);
+    const dirs = new Set<string>();
+    for (const line of cmds.slice(at + 1))
+      for (const re of [
+        /\bmkdir (?:-p )?(\S+)/g,
+        /--work (\S+)/g,
+        /QCR_CHARTS_OUT=\$PWD\/(\S+)/g,
+        /--local-dir (\S+)/g,
+        /\bgit clone (?:--\S+ \S+ )*https:\/\/\S+ (\S+)/g,
+      ])
+        for (const m of line.matchAll(re)) if (!/^(\.\.|\$|\/)/.test(m[1]!)) dirs.add(m[1]!);
+    expect([...dirs].sort()).toEqual(["charts-out", "martian", "qodo", "slim", "work"]);
+    const notIgnored = [...dirs].filter((d) => {
+      try {
+        execFileSync("git", ["check-ignore", "-q", `${d}/x`]);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    expect(notIgnored).toEqual([]);
+    // and the card says so, naming each
+    for (const d of dirs) expect(verify).toContain(`\`${d}/\``);
   });
 
   // MUTATION: rename the README Martian table's "Mean min/PR" back to "min/PR" — this fails

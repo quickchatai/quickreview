@@ -56,6 +56,14 @@ judge's route:
     python -m code_review_benchmark.step2_5_dedup_candidates
     python -m code_review_benchmark.step3_judge_comments --dedup-groups results/MODEL/dedup_groups.json
     python -m analysis.score_profiles --results-dir results --model MODEL --all-profiles --beta 2
+    # or, with no bridge, straight at a provider's Chat Completions endpoint (its
+    # model must take temperature 0, which Martian's client sends): the key from
+    # its file in a subshell, as above, and the steps inside it
+    (set -a; . /path/to/quickreview/bench/aacr/digitalocean.env; set +a
+     export MARTIAN_API_KEY="$DIGITALOCEAN_API_KEY" MARTIAN_BASE_URL=https://inference.do-ai.run/v1 MARTIAN_MODEL=MODEL
+     python -m code_review_benchmark.step2_extract_comments --tool quickreview &&
+     python -m code_review_benchmark.step2_5_dedup_candidates &&
+     python -m code_review_benchmark.step3_judge_comments --dedup-groups results/MODEL/dedup_groups.json)
 
 Step 3 judges every tool the file holds, and the archive's file holds the
 re-judged vendors' reviews too (their text a sha256 placeholder, the dataset

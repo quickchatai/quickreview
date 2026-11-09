@@ -68434,7 +68434,7 @@
   },
   {
    "file": "bench/aacr/README.md",
-   "anchor": "start the daemon; `bench.sh doctor` says so), Docker 25 or newer",
+   "anchor": "start the daemon), Docker 25 or newer (`bench.sh doctor` checks both",
    "tokens": [
     "25"
    ],
@@ -68489,6 +68489,14 @@
     "25"
    ],
    "why": "a tool version a reader needs (a requirement, not a benchmark number)"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "Completions endpoint straight, when its model takes temperature 0 (Martian's",
+   "tokens": [
+    "0"
+   ],
+   "why": "a request parameter a judge's model must accept (Martian's client sends temperature 0), not a measurement"
   },
   {
    "file": "bench/aacr/hf/card.md",

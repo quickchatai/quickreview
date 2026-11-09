@@ -447,7 +447,9 @@ def consistency(a, found, src: "Sources") -> List[dict]:
     """The release's own checks, re-run on the downloaded data: hf_export.py's validation (every count and
     headline number recomputed from the tables, the checks validation.json records) and verify_slim.py's
     bundle checks (file hashes, no transcript text, every Martian and Qodo scoring dir re-scored, the Elo
-    refit equal to the run's ratings.json)."""
+    refit equal to the run's ratings.json). Each names in `needs` what it needs beyond the tables (the
+    slim bundle, and --martian or --qodo-gt for a re-score), so the card can say how many a --partial run
+    or the tables alone re-run."""
     out = []
     if found.get("hf") and not a.no_validation:
         sys.path.insert(0, str(HERE))
@@ -460,21 +462,23 @@ def consistency(a, found, src: "Sources") -> List[dict]:
                            "got": str(e), "want": "all of " + ", ".join(H.CONFIGS)}]
         for c in H.validate(t) + H.validate_release(t, None, {}, None):
             out.append({"source": "hf_export.validate", "check": c["check"], "ok": bool(c["ok"]),
-                        "got": c["got"], "want": c["want"]})
+                        "got": c["got"], "want": c["want"], "needs": []})
     if found.get("slim") and "slim" in src._json:
         summ = json.loads((src.work / "slim-verify" / "out" / "summary.json").read_text())
         out.append({"source": "verify_slim", "check": "every bundle file matches FILES.sha256", "ok": summ["hash_mismatches"] == 0,
-                    "got": summ["hash_mismatches"], "want": 0})
+                    "got": summ["hash_mismatches"], "want": 0, "needs": ["slim"]})
         out.append({"source": "verify_slim", "check": "no transcript text (pi-events.jsonl) in the bundle",
-                    "ok": summ["pi_events_in_bundle"] == 0, "got": summ["pi_events_in_bundle"], "want": 0})
-        for name in ("martian", "qodo"):
+                    "ok": summ["pi_events_in_bundle"] == 0, "got": summ["pi_events_in_bundle"], "want": 0, "needs": ["slim"]})
+        for name, flag in (("martian", "--martian"), ("qodo", "--qodo-gt")):
             st = summ.get(name) or {}
             if st:
                 out.append({"source": "verify_slim", "check": f"every {name} scoring dir re-scores to its stored scores",
-                            "ok": set(st) <= {"identical", "numbers identical, scores.md text differs"}, "got": st, "want": "identical"})
+                            "ok": set(st) <= {"identical", "numbers identical, scores.md text differs"}, "got": st, "want": "identical",
+                            "needs": ["slim", flag]})
         if "elo_refit_equals_ratings_json" in summ:
             out.append({"source": "verify_slim", "check": "the Elo refit from the judgments equals the run's ratings.json",
-                        "ok": bool(summ["elo_refit_equals_ratings_json"]), "got": summ["elo_refit_equals_ratings_json"], "want": True})
+                        "ok": bool(summ["elo_refit_equals_ratings_json"]), "got": summ["elo_refit_equals_ratings_json"], "want": True,
+                        "needs": ["slim"]})
     return out
 
 

@@ -156,6 +156,24 @@ describe("bench.sh doctor: a docker that cannot run containers fails plainly", (
     expect(r.stdout.split("\n")[0]).toBe("docker 29.0.0");
   });
 
+  // MUTATION: drop the Docker 25+ version check from bench.sh doctor — this fails
+  it("exits 1 with one line when the daemon is older than Docker 25", async () => {
+    const r = await doctor(`[[ "$1" == info ]] && { echo 24.0.7; exit 0; }\nexit 0`);
+    expect(r.code).toBe(1);
+    const lines = r.stderr.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(
+      /^bench: docker 24\.0\.7 is too old: Docker 25\+ is needed for the auth volume's subpath mount; .*rerun bench\.sh doctor$/,
+    );
+    expect(r.stdout).toBe("");
+  });
+
+  it("accepts Docker 25 exactly", async () => {
+    const r = await doctor(`[[ "$1" == info ]] && { echo 25.0.0; exit 0; }\nexit 1`);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout.split("\n")[0]).toBe("docker 25.0.0");
+  });
+
   // MUTATION: drop the `command -v docker` check from bench.sh doctor — this fails
   it("says how to install docker when there is none", async () => {
     // a PATH with the few tools bench.sh needs before doctor, and no docker

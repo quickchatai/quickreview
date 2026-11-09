@@ -126,6 +126,9 @@ caveat behind an image is in `out/v3/NUMBERS.md`.
   - Qodo: 30% are real defects the key lacks, and none of 40 are wrong.
   - Martian: 29% real, 3 of 139 wrong.
   These are earlier builds, on 10 Qodo and 20 Martian PRs.
+  Its two sources, the Martian check's write-up and the Qodo hand labels, are not published:
+  where they are absent, `refresh_v3.py` keeps the committed entry in `data/v3.json`, says so,
+  and records it under `not_rebuilt`.
 
 The rendered images are not tracked in git; run the command above to draw them into `out/`.
 

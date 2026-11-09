@@ -50,6 +50,16 @@ deploy/ansible/inventory.ini
 # QCR_* overrides beside it. Operator-local, never committed.
 /.env
 
+# The benchmark dataset card's "How to verify" runs in a clone and leaves its scratch
+# at the clone's root: the unpacked slim bundle, the volumes the relabel scripts unpack,
+# the re-drawn charts, Martian's checkout and Qodo's ground truth. Root-anchored;
+# tests/hf-card.test.ts derives the list from the card's commands.
+/slim/
+/work/
+/charts-out/
+/martian/
+/qodo/
+
 # DigitalOcean benchmark model access key, supplied locally via --env-file.
 /bench/aacr/digitalocean.env
 

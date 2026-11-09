@@ -1068,3 +1068,38 @@ IDEAS = {
     "idea-price-per-bug": idea_price_per_bug,
     "idea-uncredited": idea_uncredited,
 }
+
+# The files an idea reads that neither the repository nor the dataset publishes (a write-up kept
+# private, a hand-label file under the data root). Where one is absent, build_ideas does not build
+# that idea: it keeps the entry data/v3.json already holds and says so, rather than failing the run.
+UNPUBLISHED_SOURCES = {
+    "idea-uncredited": lambda ctx: [os.path.join(ctx.aacr, "ext", "martian-tuning", "FAIR-COMPARISON.md"),
+                                    os.path.join(ctx.data_root, "ext-cache", "qodo", "unlisted-check.json")],
+}
+
+
+def build_ideas(ctx, committed, log=print, ideas=None):
+    """Every idea's entry, built from ctx; an idea whose unpublished source is absent is not built and
+    keeps its `committed` entry (data/v3.json's "ideas"), or has none. Returns (ideas, not_rebuilt), the
+    second {idea: the absent sources} so data/v3.json records which entries were carried over."""
+    import time
+
+    def shown(p):  # bench/aacr/... for the repository's files, <data root>/... for the data root's
+        if os.path.commonpath([ctx.aacr, p]) == ctx.aacr:
+            return "bench/aacr/" + os.path.relpath(p, ctx.aacr)
+        return "<data root>/" + os.path.relpath(p, ctx.data_root)
+    out, kept = {}, {}
+    for name, build in (IDEAS if ideas is None else ideas).items():
+        gone = [shown(p) for p in UNPUBLISHED_SOURCES.get(name, lambda c: [])(ctx) if not os.path.exists(p)]
+        if gone:
+            kept[name] = gone
+            have = name in committed
+            if have:
+                out[name] = committed[name]
+            log(f"skipped {name}: not rebuilt, {' and '.join(gone)} not here (unpublished); "
+                + ("data/v3.json keeps its committed entry" if have else "it has no entry, so its figure cannot be drawn"))
+            continue
+        t0 = time.time()
+        out[name] = build(ctx)
+        log(f"built {name} in {time.time() - t0:.1f}s")
+    return out, kept
