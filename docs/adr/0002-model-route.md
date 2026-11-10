@@ -160,6 +160,9 @@ token mix depends on the pack. A run has one price basis:
 | `unpriced`   | pi has no list price for the model                         | no dollar stop; spend is recorded as unknown, never `$0.00`; time and turn limits hold   |
 | `unknown`    | no route resolves                                          | no price; a start refuses                                                                |
 
+Where a route resolves, the repo's own rates win over the other bases, for
+any model.
+
 Spend is counted from pi's own per-call cost. The JSON contract gains a
 second review schema with a nullable estimate and the route's fields; the
 first contract refuses where it cannot state a price, and never prints a

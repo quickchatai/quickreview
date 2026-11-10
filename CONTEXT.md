@@ -149,7 +149,7 @@ Where a `qcr scan start` driver runs by default: a throwaway container from the 
 _Avoid_: scan container (it is one, but the term names the boundary), companion (the companion is the long-lived session)
 
 **Hard stop**:
-The dollar cap a run never spends past — for a scan, the estimate the operator approved (the calibration cap for a calibration run); for a review, twice its estimate on a measured model and the spend limit on an unmeasured one. Reaching it aborts what is in flight, and a scan's ledger holds only what finished. A run on an unpriced model has no hard stop: no dollar figure can hold it, so its time and turn limits do.
+The dollar cap a run never spends past — for a scan, the estimate the operator approved (the calibration cap for a calibration run); for a review, twice its estimate where there is one (a measured model, or the repo's own rates) and the spend limit on an unmeasured model. Reaching it aborts what is in flight, and a scan's ledger holds only what finished. A run on an unpriced model has no hard stop: no dollar figure can hold it, so its time and turn limits do.
 _Avoid_: budget (that is what the operator gives stage 2's proposal), estimate (the estimate is what a run is expected to cost; the stop is what holds it)
 
 **Deep-lens suggestion**:
@@ -219,11 +219,11 @@ One of light, standard, deep: a thinking level and, when pinned, a model, that a
 _Avoid_: terra-med, sol-med, sol-high (the older names, read on every input and never written), rung, depth (that is a scan's)
 
 **Measured model**:
-A model the review estimate was fitted on; only a run wholly on it shows an estimate.
+A model the review estimate was fitted on; only a run wholly on it shows the fitted estimate (a repo that sets its own rates gets an estimate at those rates on any model).
 _Avoid_: default model, supported model (every model pi offers is supported)
 
 **Unmeasured**:
-Priced by pi, never fitted: a run on such a model shows no estimate and is held by a spend limit.
+Priced by pi, never fitted: a run on such a model shows no estimate and is held by a spend limit, unless the repo sets its own rates.
 _Avoid_: unsupported, unknown price (the list price is known; what a review costs on it is not)
 
 **Unpriced**:
