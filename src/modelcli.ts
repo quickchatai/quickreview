@@ -46,6 +46,7 @@ import {
   type SkippedLogin,
 } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import {
+  isPinned,
   splitModelSpec,
   TIER_LEVELS,
   type ModelsConfig,
@@ -95,7 +96,7 @@ export interface ModelCliJson {
   refusal?: { code: RouteRefusal["code"]; text: string };
   /** The remembered choice, or null. */
   choice: ModelChoice | null;
-  /** `[models] model` as the config writes it, or null when it pins nothing. */
+  /** `[models] model` as the config writes it, or null when it names no model. */
   config_pin: string | null;
   /** The stored logins left out because they cannot last a review here. */
   skipped: SkippedLogin[];
@@ -122,6 +123,13 @@ const isHelp = (arg: string | undefined): boolean =>
 /** Where the config that pins the model is, in words. */
 const configWhere = (deps: ModelCliDeps): string => deps.configPath ?? "the shipped defaults";
 
+/** `[models] model` when it names a model, else null. A config that pins
+ * nothing may still hold a level there (`":high"`, what `[models] effort` or
+ * a review preset makes of it): that is no pin, and it is never handed to
+ * pi's parser, which would match some model to the text. */
+const configPin = (deps: ModelCliDeps): string | null =>
+  isPinned(deps.models.model) ? deps.models.model : null;
+
 /**
  * Resolve the route as a review here would. `choice` replaces the remembered
  * one (a choice being tried before it is written); `pin: false` leaves the
@@ -144,7 +152,7 @@ async function resolve(
   });
   const modelEnv =
     deps.secretsDir !== null ? modelEnvFrom(deps.secretsDir, { warn: deps.err }) : {};
-  const pin = o.pin === false ? "" : deps.models.model;
+  const pin = o.pin === false ? null : configPin(deps);
   // Loaded here, not at the top: the pi SDK is needed only once a route is asked for.
   const [{ routeHost }, { piSavedProvider }] = await Promise.all([
     import("@quickchatai/pi-quickreview/src/reviewhost.js"),
@@ -159,7 +167,7 @@ async function resolve(
     authEnv: { ...deps.env, ...modelEnv },
     route: {
       skipped: borrowed.skipped,
-      ...(pin !== "" ? { pin: { text: pin, from: "config" as const } } : {}),
+      ...(pin !== null ? { pin: { text: pin, from: "config" as const } } : {}),
       ...(choice !== null ? { choice } : {}),
       ...(piProvider !== undefined
         ? { piProvider: { provider: piProvider, from: "pi-settings" as const } }
@@ -224,7 +232,7 @@ function stateJson(deps: ModelCliDeps, r: Resolved): ModelCliJson {
           },
         }),
     choice: r.choice,
-    config_pin: deps.models.model !== "" ? deps.models.model : null,
+    config_pin: configPin(deps),
     skipped: r.skipped,
   };
 }
@@ -374,10 +382,9 @@ async function use(target: string, json: boolean, deps: ModelCliDeps): Promise<n
     for (const login of refusal.logins) deps.out(`note: ${skippedWords(deps, login)}`);
   else if (refusal !== null)
     deps.out(`pi has no credential for ${provider} yet: qcr login ${provider}`);
-  if (deps.models.model !== "")
-    deps.out(
-      `[models] model in ${configWhere(deps)} still pins ${deps.models.model}: the config wins`,
-    );
+  const pin = configPin(deps);
+  if (pin !== null)
+    deps.out(`[models] model in ${configWhere(deps)} still pins ${pin}: the config wins`);
   return 0;
 }
 

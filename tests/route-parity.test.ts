@@ -55,7 +55,12 @@ import {
   type ModelRoute,
   type RouteResult,
 } from "@quickchatai/pi-quickreview/src/modelroute.js";
-import { cmdModel, REVIEW_WINDOW_MS, type ModelCliJson } from "../src/modelcli.js";
+import {
+  cmdModel,
+  REVIEW_WINDOW_MS,
+  type ModelCliDeps,
+  type ModelCliJson,
+} from "../src/modelcli.js";
 import { MODEL_ENV_DIR, modelEnvFrom } from "../src/modelenv.js";
 import { FAKE_ROUTE_MODEL, writeFakeProvider } from "./helpers/fake-openai.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
@@ -68,7 +73,16 @@ const BUILTIN_ENV = "DEEPSEEK_API_KEY";
 /** Never listened on: no leg sends a request. */
 const NOWHERE = "http://127.0.0.1:9/v1";
 /** A config that pins nothing. */
-const UNPINNED = { model: "", tiers: { light: ":medium", standard: ":medium", deep: ":high" } };
+const UNPINNED: ModelCliDeps["models"] = {
+  model: "",
+  tiers: { light: ":medium", standard: ":medium", deep: ":high" },
+};
+/** The same config under `[models] effort` or a review preset: every spec
+ * carries the level, and `[models] model` still names no model. */
+const UNPINNED_AT_A_LEVEL: ModelCliDeps["models"] = {
+  model: ":high",
+  tiers: { light: ":high", standard: ":high", deep: ":high" },
+};
 
 let dir: string;
 let home: string;
@@ -158,14 +172,14 @@ async function viaRegistry(): Promise<RouteResult> {
   });
 }
 
-/** The CLI: `qcr model --json`. */
-async function viaCli(): Promise<ModelCliJson> {
+/** The CLI: `qcr model --json`, over a config whose `[models]` is `models`. */
+async function viaCli(models: ModelCliDeps["models"]): Promise<ModelCliJson> {
   const out: string[] = [];
   await cmdModel([], true, {
     env: {},
     agentDir: home,
     tmpDir: join(dir, "state", "tmp"),
-    models: UNPINNED,
+    models,
     configPath: null,
     secretsDir: secrets,
     daemon: false,
@@ -179,12 +193,14 @@ async function viaCli(): Promise<ModelCliJson> {
 /** A route as JSON carries it: what the CLI's answer is compared in. */
 const plain = (route: ModelRoute): unknown => JSON.parse(JSON.stringify(route));
 
-/** Resolve the home through every leg, hold the answers equal, and return it. */
-async function sameOnEveryRoute(): Promise<ModelRoute> {
+/** Resolve the home through every leg, hold the answers equal, and return it.
+ * `models` is the config the CLI leg reads: one that pins nothing. */
+async function sameOnEveryRoute(models: ModelCliDeps["models"] = UNPINNED): Promise<ModelRoute> {
   const host = await viaHost();
   if (!host.ok) throw new Error(`the host has no route: ${JSON.stringify(host.refusal)}`);
   expect(await viaRegistry(), "the registry leg").toEqual(host);
-  const cli = await viaCli();
+  const cli = await viaCli(models);
+  expect(cli.config_pin, "the CLI leg").toBeNull();
   expect(cli.ok, "the CLI leg").toBe(true);
   expect(cli.route, "the CLI leg").toEqual(plain(host.route));
   return host.route;
@@ -201,10 +217,15 @@ describe("one rule on every route: the host, the registry and qcr model agree", 
     });
   });
 
+  // The CLI leg reads a config under an effort setting here: its level-only
+  // `[models] model` is no pin, so the leg still answers by the rule.
+  // MUTATION: test the pin with `deps.models.model !== ""` in resolve() of
+  // src/modelcli.ts — the CLI leg resolves ":high" as a pin, differs from the
+  // host and this fails.
   it("several providers: the one pi holds a key for before the one keyed in the environment", async () => {
     withLocal();
     modelEnvKey(BUILTIN_ENV);
-    const route = await sameOnEveryRoute();
+    const route = await sameOnEveryRoute(UNPINNED_AT_A_LEVEL);
     expect(route).toMatchObject({
       spec: FAKE_ROUTE_MODEL,
       source: "credential-order",

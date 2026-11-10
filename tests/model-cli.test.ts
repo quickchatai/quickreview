@@ -16,6 +16,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -184,6 +185,33 @@ describe("qcr model: the route, and why", () => {
     // Zero-config: the shipped defaults are the config.
     const shipped = await run([], { models: { ...UNPINNED, model: "local/m" } });
     expect(shipped.out[1]).toBe("  why: pinned by [models] model in the shipped defaults");
+  });
+
+  // An unpinned config under `[models] effort` or a review preset holds a level
+  // and no model there (`":high"`). That pins nothing: the text never reaches
+  // pi's parser, which would match some model to it.
+  // MUTATION: test the pin with `deps.models.model !== ""` in resolve() of
+  // src/modelcli.ts — ":high" is resolved as the config's pin and this fails.
+  it("a [models] model that names only a level pins nothing", async () => {
+    withLocal();
+    const env = { [BUILTIN_ENV]: "not-a-key" };
+    const level: ModelCliDeps["models"] = { ...UNPINNED, model: ":high" };
+    const plain = await run([], { env });
+    const r = await run([], { env, models: level, configPath: "/etc/qcr/config.toml" });
+    expect(r.code).toBe(0);
+    expect(r.out).toEqual(plain.out);
+    expect(r.text).not.toContain("pinned by");
+    const j = await runJson([], { env, models: level });
+    expect(j.json.config_pin).toBeNull();
+    expect(j.json.route).toEqual((await runJson([], { env })).json.route);
+    expect(j.json.route).toMatchObject({ spec: FAKE_ROUTE_MODEL, source: "credential-order" });
+    // Nothing in the config stands over a choice either.
+    const used = await run(["use", BUILTIN], { env, models: level });
+    expect(used.out).toHaveLength(1);
+    expect(used.text).not.toContain("still pins");
+    expect((await run([], { env, models: level })).out[1]).toBe(
+      "  why: you chose it (qcr model use)",
+    );
   });
 
   it("a tier the config pins to a model of its own is shown whole", async () => {
@@ -473,6 +501,28 @@ describe("qcr model use", () => {
     expect(r.out[1]).toBe(
       "[models] model in /etc/qcr/config.toml still pins local/m: the config wins",
     );
+  });
+
+  // A person with a provider key in the environment who never ran pi has no
+  // agent dir yet, and no config to pin in: the file is all there is.
+  // MUTATION: drop the mkdirSync from store() in
+  // packages/pi-plugin/src/modelchoice.ts — the write is ENOENT, the exit
+  // status is 1 and this fails.
+  it("pi's agent dir does not exist yet: it is made, and the choice is remembered", async () => {
+    const fresh = join(dir, "never-ran-pi", "agent");
+    const over = { agentDir: fresh, env: { [BUILTIN_ENV]: "not-a-key" } };
+    expect((await run([], over)).code).toBe(0);
+    expect(existsSync(fresh)).toBe(false);
+    const r = await run(["use", BUILTIN], over);
+    expect(r.err).toEqual([]);
+    expect(r.code).toBe(0);
+    expect(r.out).toEqual([
+      `remembered: ${BUILTIN}. Reviews on this pi run on it; qcr model reset makes the choice automatic again.`,
+    ]);
+    expect(readdirSync(fresh)).toEqual([MODEL_CHOICE_FILE]);
+    expect(statSync(fresh).mode & 0o777).toBe(0o700);
+    expect(readModelChoice(fresh).choice).toMatchObject({ provider: BUILTIN, via: "use" });
+    expect((await run([], over)).out[1]).toBe("  why: you chose it (qcr model use)");
   });
 
   it("keeps the no-estimate answers the file already holds", async () => {

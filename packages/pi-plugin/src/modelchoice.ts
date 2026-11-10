@@ -15,7 +15,15 @@
 // throws: a file that cannot be read or does not hold a choice is "nothing
 // remembered", with a notice the caller may show. A write that fails says so
 // in a sentence and leaves the run to go on with the choice for that run.
-import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { ModelChoice } from "./modelroute.js";
 
@@ -106,7 +114,9 @@ export function readModelChoice(agentDir: string): ModelChoiceRead {
   };
 }
 
-/** Write the file: aside, then renamed into place, 0600. */
+/** Write the file: aside, then renamed into place, 0600. An agent dir that
+ * does not exist yet (a provider key in the environment, pi never run) is
+ * made first, for its owner alone as pi makes it. */
 function store(
   agentDir: string,
   data: { choice?: ModelChoiceInput; noEstimateOk: readonly string[] },
@@ -125,6 +135,7 @@ function store(
     no_estimate_ok: [...data.noEstimateOk],
   };
   try {
+    mkdirSync(agentDir, { recursive: true, mode: 0o700 });
     writeFileSync(tmp, JSON.stringify(body, null, 2) + "\n", { mode: 0o600 });
     chmodSync(tmp, 0o600);
     renameSync(tmp, file);

@@ -95,6 +95,22 @@ describe("the remembered model choice", () => {
     expect(readFileSync(file, "utf8").endsWith("\n")).toBe(true);
   });
 
+  // A machine that has a provider key in the environment and never ran pi
+  // has no agent dir yet.
+  // MUTATION: drop the mkdirSync from store() — the write is ENOENT and this fails.
+  it("an agent dir that does not exist yet is made, for its owner alone", () => {
+    const fresh = join(dir, "never-ran-pi", "agent");
+    expect(writeModelChoice(fresh, { provider: "alpha", model: null, via: "ask" })).toEqual({
+      ok: true,
+    });
+    expect(statSync(fresh).mode & 0o777).toBe(0o700);
+    expect(readdirSync(fresh)).toEqual([MODEL_CHOICE_FILE]);
+    expect(readModelChoice(fresh).choice).toMatchObject({ provider: "alpha", via: "ask" });
+    const other = join(dir, "another", "agent");
+    expect(allowNoEstimate(other, "alpha/a")).toEqual({ ok: true });
+    expect(readModelChoice(other).noEstimateOk).toEqual(["alpha/a"]);
+  });
+
   it("the no-estimate answers are kept beside the choice, and survive a new choice", () => {
     expect(allowNoEstimate(dir, "alpha/alpha-5.1")).toEqual({ ok: true });
     // No choice yet: the file holds the answers alone.
