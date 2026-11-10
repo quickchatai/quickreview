@@ -36,6 +36,12 @@
 //      all, a sticky PR session's transcript keep the name they were written
 //      with, so the session goes on calling `pass-x--sol-high` and writing
 //      `tier: "sol-high"` for as long as its pull request lives.
+//   5. the [models] keys: `conversation` and `default` are the review's
+//      `model` (parseModels, packages/pi-plugin/src/reviewconfig.ts; as
+//      `--config` levers, applyConfigOverrides in engine/context.ts), and
+//      `[models.pricing]` is a table a file may carry. Every config.toml
+//      written before `model` existed names its models this way, and so does
+//      every recorded bench plan.
 // Not a fold: regression.ts's Recommendation "ask-owner-legacy" → "ask-owner" —
 // that value is produced and rendered only, never parsed back, so there is no
 // input side to keep.
@@ -45,6 +51,7 @@
 // shared with every other extension, so an alias would keep the collision the
 // rename removes. They are /qcr-review and /qcr-scan, and /selfimprove is the
 // app's own pi's; the last block below holds that no alias creeps back.
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -69,9 +76,20 @@ import { createQuickReview } from "@quickchatai/pi-quickreview/extensions/quickr
 import { applyConfigOverrides } from "@quickchatai/pi-quickreview/src/engine/context.js";
 import { loadBuiltAgents } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
-import { parseLensTable } from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import {
+  buildAgents,
+  configAddenda,
+  identityVars,
+  PASS_ADDENDA,
+} from "@quickchatai/pi-quickreview/src/include.js";
+import {
+  lensTuningAddenda,
+  parseLensTable,
+  roundAgentModels,
+} from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import { ALL_PASSES } from "@quickchatai/pi-quickreview/src/passes.js";
 import { parseReviewCommand } from "@quickchatai/pi-quickreview/src/plugin/args.js";
+import { postingPolicyAddenda } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 import {
   parseCoreConfig,
   parseModels,
@@ -101,6 +119,7 @@ import {
   type PassPlanEntry,
   type SessionHooks,
 } from "@quickchatai/pi-quickreview/src/types.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { fakeStreams, installScanRig, okSsh } from "./helpers/tui-rig.js";
 
 // ---- fold 1: the tier string --------------------------------------------
@@ -888,6 +907,195 @@ describe("pass tiers: the older names are read forever", () => {
     );
     const alt = /TIER_SUFFIX = re\.compile\(r"--\(\?:([^)]*)\)\$"\)/.exec(src)?.[1]?.split("|");
     expect(alt?.sort()).toEqual([...OLDER, ...NEWER].sort());
+  });
+});
+
+// ---- fold 5: the [models] keys ---------------------------------------------
+
+describe("models: the older keys are read forever", () => {
+  // MUTATION: make parseModels require "model" (`String(req(raw, "model"))`
+  // in place of the fold) — the models block fails: no config written before
+  // the key existed loads.
+  const ROOT = join(import.meta.dirname, "..");
+  const FIXTURE = readFileSync(join(import.meta.dirname, "fixtures", "config.toml"), "utf8");
+  /** What the fixture's `conversation` says. */
+  const WRITTEN = /^conversation = "(.*)"$/m.exec(FIXTURE)?.[1];
+  /** The lines a parse said about `[models]`, with the config it gave. */
+  const heard = (toml: string) => {
+    const lines: string[] = [];
+    const cfg = parseCoreConfig(toml, { warn: (line) => lines.push(line) });
+    return { cfg, lines: lines.filter((line) => line.includes("[models]")) };
+  };
+
+  it("the fixture every test parses is written in the older keys", () => {
+    // Were it rewritten to `model`, the cases below would hold with the fold gone.
+    expect(WRITTEN).toMatch(/^[\w-]+\/[\w.-]+$/);
+    expect(FIXTURE).toMatch(/^default = "/m);
+    expect(FIXTURE).not.toMatch(/^model = /m);
+  });
+
+  it("conversation is the model, then default; model wins over both", () => {
+    expect(parseModels({ conversation: "prov/c:high", default: "prov/d" }).model).toBe(
+      "prov/c:high",
+    );
+    expect(parseModels({ default: "prov/d" }).model).toBe("prov/d");
+    expect(parseModels({ model: "prov/m", conversation: "prov/c", default: "prov/d" }).model).toBe(
+      "prov/m",
+    );
+    // "Pin nothing" is the newer key speaking too.
+    expect(parseModels({ model: "", conversation: "prov/c" }).model).toBe("");
+    // An older key is taken as written, as it always was: a bare id is pi's
+    // to resolve, and only `model` is held to "provider/model".
+    expect(parseModels({ conversation: "bare-id" }).model).toBe("bare-id");
+    expect(() => parseModels({ model: "bare-id" })).toThrow(/\[models\] model must be/);
+    // The pin is held once: neither older name is a field of the parsed config.
+    const folded = parseModels({ conversation: "prov/c", default: "prov/d" });
+    expect(folded).not.toHaveProperty("conversation");
+    expect(folded).not.toHaveProperty("default");
+  });
+
+  it("both parsers fold the fixture, and say nothing about it", () => {
+    const core = heard(FIXTURE);
+    expect(core.cfg.models.model).toBe(WRITTEN);
+    // A folded key stays accepted for good, so no line is owed for one.
+    expect(core.lines).toEqual([]);
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "warn").mockImplementation((line) => void lines.push(line));
+    try {
+      expect(parseConfig(FIXTURE).models.model).toBe(WRITTEN);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(lines.filter((line) => String(line).includes("[models]"))).toEqual([]);
+  });
+
+  // MUTATION: drop the model/conversation line from configDeprecations
+  // (packages/pi-plugin/src/reviewconfig.ts) — this fails.
+  it("a model beside a different conversation: model is used, and the file is told once", () => {
+    const both = FIXTURE.replace(
+      /^conversation = .*$/m,
+      'model = "prov/new:high"\nconversation = "prov/old"',
+    );
+    const { cfg, lines } = heard(both);
+    expect(cfg.models.model).toBe("prov/new:high");
+    expect(lines).toEqual([
+      "[quickreviewd] config.toml [models]: model = prov/new:high is used; conversation = prov/old is the older key",
+    ]);
+    // The same model under both keys is a file half-way through the rename: nothing to say.
+    const same = FIXTURE.replace(/^conversation = (.*)$/m, "model = $1\nconversation = $1");
+    expect(heard(same)).toMatchObject({ cfg: { models: { model: WRITTEN } }, lines: [] });
+  });
+
+  it("[models.pricing] loads and changes nothing else", () => {
+    expect(FIXTURE).toContain("[models.pricing]");
+    const table = { "gpt-x": { input_per_mtok: 1.25, output_per_mtok: 10 } };
+    const { pricing: _with, ...withTable } = parseModels({ model: "prov/m", pricing: table });
+    const { pricing: _without, ...without } = parseModels({ model: "prov/m" });
+    expect(withTable).toEqual(without);
+    const filled = FIXTURE.replace(
+      "[models.pricing]",
+      '[models.pricing]\n"gpt-x" = { input_per_mtok = 1.25, output_per_mtok = 10.0 }',
+    );
+    const { pricing: _a, ...a } = parseCoreConfig(filled).models;
+    const { pricing: _b, ...b } = parseCoreConfig(FIXTURE).models;
+    expect(a).toEqual(b);
+  });
+
+  // MUTATION: drop "models.conversation" from MODEL_LEVER_KEYS
+  // (packages/pi-plugin/src/engine/context.ts) — the lever is `no key
+  // "models.conversation"` and this fails.
+  it("a --config lever in an older key sets the model; the strongest key of one set wins", () => {
+    const base = parseCoreConfig(FIXTURE);
+    const model = (levers: string) => applyConfigOverrides(base, levers).models.model;
+    expect(model("models.conversation=prov/levered:high")).toBe("prov/levered:high");
+    expect(model("models.default=prov/levered")).toBe("prov/levered");
+    // model > conversation > default, wherever each stands in the set.
+    expect(model("models.default=prov/d,models.conversation=prov/c")).toBe("prov/c");
+    expect(model("models.conversation=prov/c,models.model=prov/m,models.default=prov/d")).toBe(
+      "prov/m",
+    );
+    // A recorded bench plan: five strings, in the keys and tier names of its day.
+    const plan = applyConfigOverrides(
+      base,
+      [
+        "models.default=prov/x",
+        "models.conversation=prov/x",
+        "models.tiers.terra-med=prov/x:medium",
+        "models.tiers.sol-med=prov/x:medium",
+        "models.tiers.sol-high=prov/x:high",
+      ].join(","),
+    );
+    expect(plan.models.model).toBe("prov/x");
+    expect(plan.models.tiers).toEqual({
+      [PASS_TIER_ORDER[0]]: "prov/x:medium",
+      [PASS_TIER_ORDER[1]]: "prov/x:medium",
+      [PASS_TIER_ORDER[2]]: "prov/x:high",
+    });
+    expect(plan.models).not.toHaveProperty("conversation");
+    expect(plan.models).not.toHaveProperty("default");
+    // The input config is untouched.
+    expect(base.models.model).toBe(WRITTEN);
+  });
+
+  describe("the agents a config in the older keys builds", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "qcr-legacy-models-agents-"));
+    });
+    afterEach(() => rmSync(dir, { recursive: true, force: true }));
+    /** sha256 of every agent file the daemon's build writes for `toml`, as
+     * tests/built-agents-golden.test.ts takes it. */
+    const built = (toml: string): Record<string, string> => {
+      const cfg = parseConfig(toml);
+      buildAgents(join(ROOT, "agents"), dir, {
+        root: ROOT,
+        tiers: cfg.models.tiers,
+        riskPasses: cfg.models.risk_passes,
+        validateTier: cfg.models.validate_tier,
+        vars: identityVars(cfg),
+        models: roundAgentModels(cfg),
+        addenda: [
+          ...PASS_ADDENDA,
+          ...configAddenda(cfg.review),
+          ...lensTuningAddenda(cfg.lenses),
+          ...postingPolicyAddenda(cfg.posting),
+        ],
+      });
+      return Object.fromEntries(
+        readdirSync(dir)
+          .sort()
+          .map((f) => [
+            f,
+            createHash("sha256")
+              .update(readFileSync(join(dir, f)))
+              .digest("hex"),
+          ]),
+      );
+    };
+
+    it(
+      "five explicit strings build what they built before the key existed, in either spelling",
+      { timeout: HEAVY_TIMEOUT_MS },
+      () => {
+        const golden = (
+          JSON.parse(
+            readFileSync(join(import.meta.dirname, "fixtures", "built-agents-golden.json"), "utf8"),
+          ) as { vm: Record<string, string> }
+        ).vm;
+        expect(Object.keys(golden).length).toBeGreaterThan(20);
+        // The golden was recorded from this fixture while `default` and
+        // `conversation` were the fields.
+        expect(built(FIXTURE)).toEqual(golden);
+        // The same five strings under the newer key build the same bytes.
+        const newer = FIXTURE.replace(/^default = .*\n/m, "").replace(
+          /^conversation = (.*)$/m,
+          "model = $1",
+        );
+        expect(newer).toMatch(/^model = "/m);
+        expect(newer).not.toMatch(/^(default|conversation) = /m);
+        expect(built(newer)).toEqual(golden);
+      },
+    );
   });
 });
 

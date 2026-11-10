@@ -513,8 +513,7 @@ function fakeAuth(
 describe("the borrowed login", () => {
   const cfg = {
     models: {
-      conversation: "openai-codex/gpt-6.1-sol",
-      default: "openai-codex/gpt-6.1-sol",
+      model: "openai-codex/gpt-6.1-sol",
       tiers: { deep: "openai-codex/gpt-6.1-sol:high", light: "anthropic/x:medium" },
       pass_models: { "pass-x": "google/g" },
     },

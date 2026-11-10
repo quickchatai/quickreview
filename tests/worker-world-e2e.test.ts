@@ -144,7 +144,7 @@ async function buildWorld(): Promise<World> {
     github: { ...base.github, repo: GH_REPO, secrets_dir: secrets },
     server: { ...base.server, port },
     openviking: { ...base.openviking, enabled: false },
-    models: { ...base.models, conversation: FAKE_MODEL },
+    models: { ...base.models, model: FAKE_MODEL },
     pi: { ...base.pi, engine_wave: false },
     login_refresh: { ...base.login_refresh, enabled: false },
   };

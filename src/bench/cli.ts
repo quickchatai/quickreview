@@ -457,7 +457,7 @@ async function main(): Promise<number> {
       ...authFingerprint(),
       models: {
         effort: ctx.cfg.models.effort,
-        conversation: ctx.cfg.models.conversation,
+        conversation: ctx.cfg.models.model,
         tiers: ctx.cfg.models.tiers,
         validate_tier: ctx.cfg.models.validate_tier,
       },

@@ -445,7 +445,7 @@ async function sandboxPorts(
   const model = (): string => {
     const tiers: Record<string, string> = cfg?.models.tiers ?? {};
     const tier = settingsOf()?.scan.tier ?? cfg?.scan.tier ?? "";
-    return tiers[tier] ?? cfg?.models.default ?? "";
+    return tiers[tier] ?? cfg?.models.model ?? "";
   };
   const detach =
     sandbox.sandbox === "host"

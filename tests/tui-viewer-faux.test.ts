@@ -69,7 +69,7 @@ async function fauxOneShot(stateRoot: string, key: string): Promise<void> {
   });
   try {
     const cfg = benchConfig("");
-    cfg.models.conversation = "faux/m";
+    cfg.models.model = "faux/m";
     const result = await runRound(
       {
         root: mkRoot(tmp, "root"),

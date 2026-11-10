@@ -443,7 +443,7 @@ describe.skipIf(!hasScript || process.platform !== "linux")(
       mkdirSync(cwd);
       copyFileSync(join(ROOT, REVIEWER_STUB), join(cwd, HOST_CONTEXT_STUB));
       const cfg = benchConfig("");
-      cfg.models.conversation = FAKE_MODEL;
+      cfg.models.model = FAKE_MODEL;
       server.script(Array.from({ length: 12 }, () => ({ text: "ok" })));
 
       const result = await runDebugRound(

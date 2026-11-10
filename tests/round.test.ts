@@ -209,7 +209,7 @@ async function run(
   const id = `${h.name}-${n++}`;
   const outDir = join(tmp, `out-${id}`);
   const cfg = benchConfig("");
-  cfg.models.conversation = h.model;
+  cfg.models.model = h.model;
   const b = await h.build(outDir, turns);
   built.push(b);
   const result = await runRound(
@@ -362,7 +362,7 @@ describe.each([proc, sdk])("runRound on the $name runtime", (h) => {
   it("refuses a login that would expire inside the run, before writing anything", async () => {
     const outDir = join(tmp, `out-auth-${h.name}`);
     const cfg = benchConfig("");
-    cfg.models.conversation = h.model;
+    cfg.models.model = h.model;
     const rt: Runtime = {
       create: () => Promise.reject(new Error("no session may start")),
       resume: () => Promise.reject(new Error("no session may start")),
@@ -463,7 +463,7 @@ describe("runRound and a stop", () => {
   /** A round spec under `id`, stopped by `signal`. */
   const stopSpec = (id: string, signal: AbortSignal): RoundSpec => {
     const cfg = benchConfig("");
-    cfg.models.conversation = "faux/m";
+    cfg.models.model = "faux/m";
     return {
       root: mkRoot(tmp, `root-${id}`),
       agentDir: join(tmp, "agent"),

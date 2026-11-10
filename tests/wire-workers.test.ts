@@ -87,7 +87,7 @@ function rig(over: Partial<Config["openviking"]> = {}) {
   const cfg: Config = {
     ...base,
     dry_run: true,
-    models: { ...base.models, conversation: "local/m" },
+    models: { ...base.models, model: "local/m" },
     openviking: { ...base.openviking, enabled: true, ...over },
   };
   const tmuxCalls: string[][] = [];

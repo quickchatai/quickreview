@@ -149,7 +149,7 @@ async function engineLensRound(
     ),
   });
   const cfg = benchConfig("");
-  cfg.models.conversation = "faux/m";
+  cfg.models.model = "faux/m";
   const r = await runRound(
     {
       root: mkRoot(tmp, `root-${n++}`),
@@ -311,7 +311,7 @@ describe("a bench review round on the SDK with the engine's planned wave", () =>
       plannedWave: true,
     });
     const cfg = benchConfig("");
-    cfg.models.conversation = "faux/m";
+    cfg.models.model = "faux/m";
     const r = await runRound(
       {
         root: mkRoot(tmp, `root-${n++}`),

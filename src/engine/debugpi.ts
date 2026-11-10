@@ -204,7 +204,7 @@ export async function runDebugRound(i: RoundSpec, deps: DebugRoundDeps = {}): Pr
       root: i.root,
       // An OpenAI model runs on the OpenAI login the run's agent dir holds
       // (packages/pi-plugin/src/modelroute.ts).
-      model: routeModelSpecForLogin(i.cfg.models.conversation, loginIn(i.agentDir), env),
+      model: routeModelSpecForLogin(i.cfg.models.model, loginIn(i.agentDir), env),
       sysPath: prep.sysPath,
       sessionDir: prep.sessionDir,
       sessionName: prep.sessionName,

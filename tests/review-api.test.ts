@@ -78,7 +78,7 @@ for (const e of readdirSync(ROOT))
 const toml = readFileSync(join(ROOT, "config.example.toml"), "utf8");
 const parsed = parseCoreConfig(toml);
 const ctx = contextFrom(root, { cfg: parsed, toml }, parsed.review.profile, "", {});
-const config = { ...ctx.cfg, models: { ...ctx.cfg.models, conversation: "faux/m" } };
+const config = { ...ctx.cfg, models: { ...ctx.cfg.models, model: "faux/m" } };
 
 const record = JSON.stringify({
   findings: [

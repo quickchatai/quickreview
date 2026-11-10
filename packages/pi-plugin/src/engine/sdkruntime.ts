@@ -361,7 +361,8 @@ export function sdkRuntime(host: PiHost, options: SdkRuntimeOptions = {}): Runti
     // The two files exist from the start, as they do for a spawned pi.
     for (const f of [spec.eventsFile, spec.stderrFile]) closeSync(openSync(f, "a"));
     // `provider/id:level` is pi's spelling of a model and its thinking level
-    // (--model takes it whole); the host takes them apart.
+    // (--model takes it whole); the host takes them apart. A spec with no
+    // model part (`""`, `":high"`) is the host's route.
     const { model, thinking } = splitModelSpec(spec.model);
     const hostSpec: HostSessionSpec = {
       cwd: spec.cwd,

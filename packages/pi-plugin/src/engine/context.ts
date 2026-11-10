@@ -9,6 +9,8 @@ import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import { applyProfileOverlays, loadProfileEcosystem, type ProfileLookup } from "../profiles.js";
 import {
   applyReviewEffort,
+  isModelSpec,
+  modelSpecError,
   parseCoreConfig,
   parseEffort,
   parsePreset,
@@ -79,10 +81,22 @@ const TIER_VALUED_KEYS: readonly string[] = [
   "scan.tier",
 ];
 
+/** `--config` keys that name the review's model, strongest first. The two
+ * older keys fold to `models.model` as config.toml's do: in one lever set
+ * the strongest key given is the model, and a weaker one beside it is
+ * accepted and read by nothing. */
+const MODEL_LEVER_KEYS: readonly string[] = [
+  "models.model",
+  "models.conversation",
+  "models.default",
+];
+
 /** A lever's key as the path it sets. `models.tiers.<name>` names a tier,
  * in either spelling: the path is the ladder's name, the key the config
- * holds. */
+ * holds. A key that names the review's model, in any of its spellings, sets
+ * `models.model`. */
 function leverPath(key: string): string[] {
+  if (MODEL_LEVER_KEYS.includes(key)) return ["models", "model"];
   const path = key.split(".");
   if (path.length === 3 && path[0] === "models" && path[1] === "tiers")
     path[2] = foldTier(path[2] as string) ?? (path[2] as string);
@@ -130,20 +144,37 @@ export function applyConfigOverrides<C extends CoreConfig>(
   const rest = pairs.filter((p) => p !== presetPair);
   if (rest.length === 0) return base;
   const out = structuredClone(base) as unknown as Record<string, unknown>;
+  /** The spelling of the review's model this lever set is read by. */
+  const modelKey = MODEL_LEVER_KEYS.find((k) => rest.some((p) => keyOf(p) === k));
   for (const pair of rest) {
     const eq = pair.indexOf("=");
     if (eq <= 0) throw new Error(`--config: "${pair}" is not key=value`);
+    const named = pair.slice(0, eq).trim();
     // The overseer session is deleted: bench plans still pin its model, so
     // the key is accepted, named once and ignored (like the config file's).
-    if (RETIRED_CONFIG_KEYS.has(pair.slice(0, eq).trim())) {
-      warn(
-        `--config: ${pair.slice(0, eq).trim()} is deprecated and ignored (the overseer session was deleted)`,
-      );
+    if (RETIRED_CONFIG_KEYS.has(named)) {
+      warn(`--config: ${named} is deprecated and ignored (the overseer session was deleted)`);
       continue;
     }
-    const path = leverPath(pair.slice(0, eq).trim());
+    // An older spelling of the model beside a stronger one: read by nothing.
+    if (MODEL_LEVER_KEYS.includes(named) && named !== modelKey) continue;
+    const path = leverPath(named);
     const key = path.join(".");
     const written = pair.slice(eq + 1).trim();
+    // A model the lever writes is checked as the file's is: `model` itself
+    // and a tier's spec. An older spelling is taken as written, as the
+    // file's older keys are.
+    const misspelt =
+      named === "models.model"
+        ? !isModelSpec(written, "whole")
+        : key.startsWith("models.tiers.") && !isModelSpec(written, "any");
+    if (misspelt) {
+      const where =
+        named === "models.model"
+          ? "[models] model"
+          : `[models.tiers] ${key.slice("models.tiers.".length)}`;
+      throw new Error(`--config: ${modelSpecError(where, written).message}`);
+    }
     // A lever that names a tier names it in either spelling, as the file may.
     const raw = TIER_VALUED_KEYS.some((k) => (k.endsWith(".") ? key.startsWith(k) : key === k))
       ? (foldTier(written) ?? written)
@@ -267,8 +298,7 @@ export function withAuthModels<C extends CoreConfig>(
   if (mode !== "api-key") return cfg;
   const out = structuredClone(cfg);
   const m = out.models;
-  m.default = modelForAuth(m.default, mode);
-  m.conversation = modelForAuth(m.conversation, mode);
+  m.model = modelForAuth(m.model, mode);
   for (const k of Object.keys(m.tiers) as (keyof typeof m.tiers)[])
     m.tiers[k] = modelForAuth(m.tiers[k], mode);
   for (const pass of Object.keys(m.pass_models))

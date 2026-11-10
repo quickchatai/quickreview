@@ -362,7 +362,7 @@ export function runFingerprint(
     profile,
     ...(overrides ? { overrides } : {}),
     ...authFingerprint(),
-    conversation: cfg.models.conversation,
+    conversation: cfg.models.model,
     tiers: { ...cfg.models.tiers },
     validate_tier: cfg.models.validate_tier,
     pass_tiers: { ...(cfg.models.pass_tiers ?? {}) },

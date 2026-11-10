@@ -252,11 +252,7 @@ describe("dry config check: a fresh clone's config on the key route", () => {
       { QCR_BENCH_AUTH: "api-key" },
       () => contextFor(ROOT, "", "models.tiers.sol-med=openai-codex/gpt-6-sol:medium").cfg,
     );
-    const specs = (c: typeof login) => [
-      c.models.default,
-      c.models.conversation,
-      ...Object.values(c.models.tiers),
-    ];
+    const specs = (c: typeof login) => [c.models.model, ...Object.values(c.models.tiers)];
     // The published route is untouched: the example's own provider.
     expect(specs(login).every((s) => s.startsWith("openai-codex/"))).toBe(true);
     expect(specs(keyed).every((s) => s.startsWith("openai/"))).toBe(true);
@@ -313,7 +309,7 @@ describe("dry config check: a fresh clone's config on the key route", () => {
       { QCR_BENCH_AUTH: "api-key", QCR_BENCH_PROVIDER: "digitalocean" },
       () => contextFor(ROOT, "", overrides).cfg,
     );
-    expect(cfg.models.conversation).toBe(model);
+    expect(cfg.models.model).toBe(model);
     const out = mkdtempSync(join(tmpdir(), "bench-glm-agents-"));
     try {
       buildAgents(join(ROOT, "agents"), out, {

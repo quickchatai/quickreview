@@ -350,7 +350,7 @@ export class ScratchReplay {
       // the same clone worktrees.ts maintains, whatever the repo is called.
       baseClone: opts.baseClone ?? join(opts.sandboxRoot, githubCloneDir(opts.cfg.github)),
       baseBranch: opts.baseBranch ?? opts.cfg.github.base_branch,
-      model: opts.model ?? opts.cfg.models.conversation,
+      model: opts.model ?? opts.cfg.models.model,
       timeoutMs: opts.timeoutMs ?? DEFAULTS.timeoutMs,
       pollMs: opts.pollMs ?? DEFAULTS.pollMs,
       runId: opts.runId ?? `${Date.now()}-${process.pid}`,

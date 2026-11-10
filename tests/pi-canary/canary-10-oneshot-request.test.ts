@@ -88,7 +88,7 @@ beforeEach(async () => {
   mkdirSync(cwd);
   copyFileSync(join(ROOT, REVIEWER_STUB), join(cwd, HOST_CONTEXT_STUB));
   const cfg = benchConfig("");
-  cfg.models.conversation = FAKE_MODEL;
+  cfg.models.model = FAKE_MODEL;
   rig = {
     root,
     cwd,
@@ -138,7 +138,7 @@ async function round(kind: "proc" | "sdk"): Promise<Run> {
   server.script([{ text: "ok" }, { text: "ok" }]);
   const before = server.requests.length;
   const cfg = benchConfig("");
-  cfg.models.conversation = FAKE_MODEL;
+  cfg.models.model = FAKE_MODEL;
   // One root, tree, out dir and rendering for both runs: their paths and the
   // issue time are part of the request, and are not what this canary compares.
   const spec: RoundSpec = {

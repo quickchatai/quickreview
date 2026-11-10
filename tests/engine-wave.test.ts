@@ -200,7 +200,7 @@ function prompts(outDir: string): OneShotPrompts {
 
 async function round(r: Rig, over: Partial<RoundSpec> = {}) {
   const cfg = benchConfig("");
-  cfg.models.conversation = "faux/m";
+  cfg.models.model = "faux/m";
   return runRound(
     {
       root: mkRoot(tmp, `root-${n++}`),

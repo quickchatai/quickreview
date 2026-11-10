@@ -94,7 +94,7 @@ describe("zero-config", () => {
       "",
       homeProfileLookup(env),
     );
-    expect(cfg.models.default).toBe(expected.models.default);
+    expect(cfg.models.model).toBe(expected.models.model);
   });
 
   it("the install's own config wins over the defaults", () => {

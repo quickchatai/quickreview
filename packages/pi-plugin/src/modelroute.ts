@@ -570,12 +570,7 @@ export function moveToCredentialed(
  * `provider/` prefix, in first-seen order. */
 export function reviewProviders(cfg: Pick<CoreConfig, "models">): string[] {
   const m = cfg.models;
-  const specs = [
-    m.conversation,
-    m.default,
-    ...Object.values(m.tiers),
-    ...Object.values(m.pass_models),
-  ];
+  const specs = [m.model, ...Object.values(m.tiers), ...Object.values(m.pass_models)];
   const out: string[] = [];
   for (const spec of specs) {
     const slash = spec.indexOf("/");

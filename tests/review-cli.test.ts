@@ -344,7 +344,7 @@ describe("qcr review: under and over the limit", () => {
     });
     const deps = {
       ...h.deps,
-      cfg: { ...h.deps.cfg, models: { ...h.deps.cfg.models, conversation: "faux/m" } },
+      cfg: { ...h.deps.cfg, models: { ...h.deps.cfg.models, model: "faux/m" } },
       runtime,
     };
     const code = await runReviewCli([], false, deps);

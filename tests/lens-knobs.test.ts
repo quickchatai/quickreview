@@ -497,4 +497,54 @@ describe("validateLensKnobs", () => {
   it("passes the shipped configs", () => {
     for (const cfg of [baseCfg, example]) expect(() => validateLensKnobs(cfg)).not.toThrow();
   });
+
+  describe("[models.pass_models]: a lens's model is a model spec", () => {
+    const moved = (spec: unknown) => () => {
+      const cfg = structuredClone(baseCfg);
+      cfg.models.pass_models = { "pass-style": spec as string };
+      validateLensKnobs(cfg);
+    };
+    const refusal = (spec: unknown) =>
+      `config.toml [models.pass_models] pass-style must be "provider/model" with an optional ":<thinking level>" (got ${JSON.stringify(spec)})`;
+
+    // MUTATION: put the pattern `/^[\w.-]+\/[\w.:-]+$/` back in
+    // validateLensKnobs — pi's ids with a second slash or an @ are refused and
+    // this fails.
+    it("takes any id pi has, with or without a level", () => {
+      for (const id of [
+        "prov/small",
+        "openrouter/moonshotai/kimi-k2.6",
+        "fireworks/accounts/fireworks/models/kimi-k3",
+        "cloudflare-workers-ai/@cf/meta/llama-4",
+      ]) {
+        expect(moved(id)).not.toThrow();
+        expect(moved(`${id}:low`)).not.toThrow();
+      }
+    });
+
+    it("refuses what names no provider's model, in the words every model key uses", () => {
+      for (const spec of ["small", "small:low", "prov/", "/small", "", 7, null])
+        expect(moved(spec)).toThrow(refusal(spec));
+    });
+
+    // What `stripPins` leaves of an override when a run names its one model:
+    // the level stays, on the model the lens would have run on.
+    it("takes a level with no model", () => {
+      expect(moved(":low")).not.toThrow();
+      const models = passTierModels({}, baseCfg.models.tiers, {}, { "pass-style": ":low" });
+      expect(models["pass-style--deep"]).toBe(":low");
+    });
+
+    it("the same refusal reaches a --config lever", () => {
+      expect(() => applyConfigOverrides(baseCfg, "models.pass_models.pass-style=small")).toThrow(
+        refusal("small"),
+      );
+      expect(
+        applyConfigOverrides(
+          baseCfg,
+          "models.pass_models.pass-style=openrouter/moonshotai/kimi-k2.6:low",
+        ).models.pass_models,
+      ).toEqual({ "pass-style": "openrouter/moonshotai/kimi-k2.6:low" });
+    });
+  });
 });

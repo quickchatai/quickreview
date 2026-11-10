@@ -395,7 +395,7 @@ export function prepareRound(
       version: 1,
       sessionName,
       cwd: i.cwd ?? root,
-      model: cfg.models.conversation,
+      model: cfg.models.model,
       env: openEnvOf(env),
     });
     const sessionDir = join(outDir, MAIN_SESSION_DIR);
@@ -459,7 +459,7 @@ export async function runRound(i: RoundSpec, runtime: Runtime): Promise<RoundRes
     session = await runtime.create({
       cwd,
       env,
-      model: cfg.models.conversation,
+      model: cfg.models.model,
       systemPromptFile: sysPath,
       // The extension list is the whole list: the session discovers none.
       // The modules are the core's own, found beside this one however the
