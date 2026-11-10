@@ -461,6 +461,50 @@ describe("[models] tiered pass scheme", () => {
     }
   });
 
+  // MUTATION: restore `req(raw, "models")` in parseCoreConfig or in
+  // parseConfig — a config with no [models] section is `missing key 'models'`
+  // in that parser, and this fails.
+  it("a config with no [models] section at all pins nothing, in both parsers", () => {
+    const none = readFileSync(configPath, "utf8").replace(/\[models\][\s\S]*?(?=\n\[tui\])/, "");
+    expect(none).not.toMatch(/^\[models/m);
+    for (const parse of [parseConfig, parseCoreConfig]) {
+      const m = parse(none).models;
+      expect(m.model).toBe("");
+      expect(m.tiers).toEqual(MODELS_TIER_DEFAULTS.tiers);
+      expect(Object.values(m.tiers).some(isPinned)).toBe(false);
+      expect(m.risk_passes).toEqual(withSecurityFamily(MODELS_TIER_DEFAULTS.risk_passes));
+      expect(m.validate_tier).toBe("deep");
+      expect(m.small_diff_lines).toBe(150);
+      expect(m.pass_models).toEqual({});
+    }
+    // A `models` that is no table is not an absent one.
+    for (const parse of [parseConfig, parseCoreConfig])
+      expect(() => parse(`models = "prov/model-a"\n${none}`)).toThrow(/\[models\] must be a table/);
+  });
+
+  // The shipped defaults name no model: each tier is the run's route at its
+  // level. A [models.tiers] entry is laid over them key by key.
+  // MUTATION: put a `provider/id` back into MODELS_TIER_DEFAULTS.tiers — this fails.
+  it("the default tiers pin no model and carry the tier levels", () => {
+    expect(MODELS_TIER_DEFAULTS.tiers).toEqual({
+      light: `:${TIER_LEVELS.light}`,
+      standard: `:${TIER_LEVELS.standard}`,
+      deep: `:${TIER_LEVELS.deep}`,
+    });
+    expect(MODELS_TIER_DEFAULTS.tiers).toEqual({
+      light: ":medium",
+      standard: ":medium",
+      deep: ":high",
+    });
+    const one = parseModels({ tiers: { deep: "prov/model-a:xhigh" } });
+    expect(one.tiers).toEqual({
+      light: ":medium",
+      standard: ":medium",
+      deep: "prov/model-a:xhigh",
+    });
+    expect(one.model).toBe("");
+  });
+
   it("refuses a validate_tier outside the tier ladder (selfscan)", () => {
     const typo = readFileSync(configPath, "utf8").replace(
       /^validate_tier = .*$/m,
@@ -787,6 +831,23 @@ describe("config.example.toml", () => {
     expect(cfg.dry_run).toBe(true); // safe default: a fresh install never mutates GitHub
     expect(cfg.slack.enabled).toBe(false); // enabling Slack is a deliberate act
     expect(cfg.server.port).toBe(8787);
+  });
+
+  // The example is what a fresh install runs: it names no model, so a
+  // review runs on whatever provider pi has a credential for.
+  // MUTATION: uncomment `model = ` in config.example.toml's [models], or a
+  // line of its [models.tiers] — this fails.
+  it("pins no model: the review's model and every tier are the route's", () => {
+    const cfg = loadConfig(examplePath);
+    expect(cfg.models.model).toBe("");
+    expect(cfg.models.tiers).toEqual(MODELS_TIER_DEFAULTS.tiers);
+    expect(cfg.models.pass_models).toEqual({});
+    // The older keys are gone from the file: nothing folds to a pin.
+    const text = readFileSync(examplePath, "utf8");
+    const models = text.slice(text.indexOf("\n[models]\n"), text.indexOf("\n[models.pricing]\n"));
+    expect(models).not.toMatch(/^\s*"?(model|default|conversation|light|standard|deep)"?\s*=/m);
+    // …and the pin is there to uncomment, in pi's own spelling.
+    expect(models).toMatch(/^# model = "provider\/id"$/m);
   });
 
   it("ships empty identities for the values an operator must fill", () => {

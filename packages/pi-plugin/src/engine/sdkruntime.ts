@@ -345,6 +345,18 @@ class SdkSession implements RuntimeSession {
   }
 }
 
+/** The level the host's route carries (its pin's `:level`), or null: no
+ * route, or a route that names none. A host with no route says so when the
+ * session is made, not here. */
+async function routeLevel(host: PiHost): Promise<string | null> {
+  try {
+    const routed = await host.route();
+    return routed.ok ? routed.route.thinking : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The runtime that hosts a session in this process, on `host`'s pi SDK. */
 export function sdkRuntime(host: PiHost, options: SdkRuntimeOptions = {}): Runtime {
   /** One session from a spec, new or reopened. `persist` is the one place the
@@ -362,13 +374,16 @@ export function sdkRuntime(host: PiHost, options: SdkRuntimeOptions = {}): Runti
     for (const f of [spec.eventsFile, spec.stderrFile]) closeSync(openSync(f, "a"));
     // `provider/id:level` is pi's spelling of a model and its thinking level
     // (--model takes it whole); the host takes them apart. A spec with no
-    // model part (`""`, `":high"`) is the host's route.
+    // model part (`""`, `":high"`) is the host's route, and one that names no
+    // level either takes the level the route's pin named, when it named one
+    // (`--model provider/id:high` on a config that pins nothing).
     const { model, thinking } = splitModelSpec(spec.model);
+    const level = thinking ?? (model === "" ? await routeLevel(host) : null);
     const hostSpec: HostSessionSpec = {
       cwd: spec.cwd,
       env: spec.env,
       model,
-      ...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
+      ...(level ? { thinkingLevel: level as ThinkingLevel } : {}),
       ...(spec.systemPromptFile !== undefined
         ? { systemPrompt: stripBom(readFileSync(spec.systemPromptFile, "utf8")) }
         : {}),

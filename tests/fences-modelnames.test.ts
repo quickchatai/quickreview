@@ -225,8 +225,6 @@ const ALLOWLIST: Readonly<Record<string, string>> = {
     "the two-provider twin, still exported for the routes that have not moved to resolveRoute. It goes with its last caller.",
   "packages/pi-plugin/src/pricing.ts":
     "the hand price table and the measured model's ids. The table leaves the core for the bench harness, and the measured id moves to the data it was measured on.",
-  "packages/pi-plugin/src/reviewconfig.ts":
-    "the shipped tier defaults pin a model. They stop when the shipped config names none.",
   "src/config.ts":
     "the home's and the companion's shipped model pins, which go with the shipped pins. What stays in this file is the hosted embedder's own names.",
   "src/home/model.ts":

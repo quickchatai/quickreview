@@ -98,6 +98,10 @@ import {
   parseScanTable,
   presetOf,
 } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  foldUnitKey,
+  planLaunch,
+} from "@quickchatai/pi-quickreview/src/engine/lens/launch-plan.js";
 import { lensForAgent } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import {
   measuredRate,
@@ -760,7 +764,7 @@ describe("pass tiers: the older names are read forever", () => {
         env: {},
         home: dir,
         runtime: () => {
-          throw new Error("no runtime: the case must stop at the model check");
+          throw new Error("no runtime here: the agent was found");
         },
       });
       const run = (agent: string) =>
@@ -768,11 +772,12 @@ describe("pass tiers: the older names are read forever", () => {
           { id: "c1", unit: "u", agent, files: [], prompt: "p" },
           new AbortController().signal,
         );
-      // Found: the case gets as far as the agent's (absent) model.
+      // Found: the case gets as far as its session. (The built file names no
+      // model, which is a leaf on the run's route, not a refusal.)
       for (const name of bothAt(1))
         expect(await run(`pass-scan--${name}`)).toMatchObject({
           ok: false,
-          reason: expect.stringContaining("names no model and none is set"),
+          reason: expect.stringContaining("no runtime here: the agent was found"),
         });
       // Not found: a rung with no built file, under either name.
       for (const name of bothAt(2))
@@ -780,6 +785,82 @@ describe("pass tiers: the older names are read forever", () => {
           ok: false,
           reason: expect.stringContaining("no agent pass-scan--"),
         });
+    });
+  });
+
+  // A sticky session's transcript keeps the agent names it started with, so
+  // it goes on naming `pass-x--sol-high` in a launch's `skip` and `extra`
+  // after the round's task files are written as `pass-x--deep`; and a round
+  // planned before the rename still has its files under the older names.
+  // MUTATION: match a row key by `unitKeys(u).includes(key)` again
+  // (launch-plan.ts) — a key in the other spelling answers to no row, and
+  // this fails.
+  describe("a launch's skip and extra keys against the round's task files", () => {
+    let root: string;
+    let tasks: string;
+    beforeEach(() => {
+      root = mkdtempSync(join(tmpdir(), "qcr-legacy-launch-"));
+      tasks = join(root, "state", "pr-7-round-2-passes", "tasks");
+      mkdirSync(tasks, { recursive: true });
+    });
+    afterEach(() => rmSync(root, { recursive: true, force: true }));
+    const write = (file: string): void => writeFileSync(join(tasks, file), `# task ${file}\n`);
+    const plan = (params: Record<string, unknown>) =>
+      planLaunch({ dirs: [tasks], ...params }, { QCR_SANDBOX_ROOT: root });
+
+    // Each direction: the files in one spelling of the top rung, the keys in
+    // the other (and in the same one, which always matched).
+    for (const [filed, said] of [
+      [bothAt(2)[1], bothAt(2)[0]],
+      [bothAt(2)[0], bothAt(2)[1]],
+      [bothAt(2)[1], bothAt(2)[1]],
+    ] as const) {
+      it(`files named --${filed}, keys named --${said}`, () => {
+        write(`01-pass-x--${filed}.md`);
+        write(`02-pass-y--${filed}@delta.md`);
+        write(`03-pass-z--${bothAt(1)[1]}.md`);
+        // skip: by agent, by file name with and without `.md`, by agent@strategy.
+        for (const key of [`pass-x--${said}`, `01-pass-x--${said}`, `01-pass-x--${said}.md`]) {
+          const p = plan({ skip: [key] });
+          expect(p.ok && p.skipped.map((u) => u.file), key).toEqual([`01-pass-x--${filed}.md`]);
+          expect(p.ok && p.units.map((u) => u.row), key).toEqual([2, 3]);
+        }
+        const strategy = plan({ skip: [`pass-y--${said}@delta`] });
+        expect(strategy.ok && strategy.skipped.map((u) => u.row)).toEqual([2]);
+        // extra: the text lands on the row the key names, and only there.
+        const extra = plan({ extra: { [`pass-x--${said}`]: "PRIOR FINDINGS" } });
+        if (!extra.ok) throw new Error(extra.error);
+        expect(extra.units.map((u) => u.task.includes("PRIOR FINDINGS"))).toEqual([
+          true,
+          false,
+          false,
+        ]);
+        // The unit keeps the name its file carries: the fold is the match only.
+        expect(extra.units[0]!.agent).toBe(`pass-x--${filed}`);
+      });
+    }
+
+    it("a key for another rung, or no row at all, still answers to nothing", () => {
+      write(`01-pass-x--${bothAt(2)[1]}.md`);
+      for (const name of bothAt(1)) {
+        expect(plan({ skip: [`pass-x--${name}`] })).toEqual({
+          ok: false,
+          error: `skip: no row answers to "pass-x--${name}"`,
+        });
+        expect(plan({ extra: { [`pass-x--${name}`]: "t" } })).toMatchObject({ ok: false });
+      }
+      expect(plan({ skip: ["pass-nope--sol-high"] })).toMatchObject({ ok: false });
+    });
+
+    it("foldUnitKey folds the agent in every key shape and leaves the rest", () => {
+      const [older, newer] = bothAt(2);
+      expect(foldUnitKey(`pass-x--${older}`)).toBe(`pass-x--${newer}`);
+      expect(foldUnitKey(`04-pass-x--${older}.md`)).toBe(`04-pass-x--${newer}.md`);
+      expect(foldUnitKey(`04-pass-x--${older}`)).toBe(`04-pass-x--${newer}`);
+      expect(foldUnitKey(`pass-x--${older}@delta`)).toBe(`pass-x--${newer}@delta`);
+      expect(foldUnitKey(`04-pass-x--${older}@delta.md`)).toBe(`04-pass-x--${newer}@delta.md`);
+      for (const same of ["3", "sweep:3", "plan:*", "*", "pass-x", `pass-x--${newer}`])
+        expect(foldUnitKey(same)).toBe(same);
     });
   });
 

@@ -204,6 +204,26 @@ export function applyModelOverride(frontmatter: string, model: string): string {
   return applyField(frontmatter, "model", model);
 }
 
+/** Take a scalar frontmatter field out, line and all. */
+function dropField(frontmatter: string, field: string): string {
+  return frontmatter.replace(new RegExp(`^${field}:[ \\t]*.*\\n?`, "m"), "");
+}
+
+/**
+ * Put a model spec on a variant's frontmatter. A spec that names a model goes
+ * whole into `model:` (`provider/model:level`). One that names none leaves no
+ * `model:` line at all, whatever the source carried: the variant runs on the
+ * run's route, and a `model:` with no model in it would be read as a model
+ * by whatever takes the field as written. The level, when the spec names
+ * one, is the `thinking:` field either way.
+ */
+export function applyModelSpec(frontmatter: string, spec: string): string {
+  const { model, thinking } = splitModelSpec(spec);
+  const routed =
+    model === "" ? dropField(frontmatter, "model") : applyModelOverride(frontmatter, spec);
+  return thinking === null ? routed : applyThinkingOverride(routed, thinking);
+}
+
 /** Rewrite the `name:` frontmatter field. Adds it when absent. */
 export function applyNameOverride(frontmatter: string, name: string): string {
   return applyField(frontmatter, "name", name);
@@ -2038,7 +2058,9 @@ export function composeAddendum(
 export interface BuildAgentsOptions {
   /** Sandbox root for include resolution. Defaults to `srcDir`'s parent. */
   root?: string;
-  /** config.models.tiers — PassTier → model spec ("provider/model:thinking"). */
+  /** config.models.tiers — PassTier → model spec (`[provider/model][:thinking]`).
+   * A spec with no model part is a tier on the run's route: its variants
+   * carry no `model:` line. Absent, the shipped defaults, which name none. */
   tiers?: Record<PassTier, string>;
   /** config.models.risk_passes — build only the deep variant. Absent,
    * the shipped default joined with the security family, the same set a
@@ -2118,7 +2140,8 @@ export interface BuiltAgent {
   source: string;
   output: string;
   /** Model id with the thinking suffix split off (the frontmatter's `model:`
-   * carries the whole spec). */
+   * carries the whole spec). Null for a variant whose spec names no model:
+   * its file has no `model:` line and it runs on the run's route. */
   model: string | null;
   /** Thinking level written to frontmatter, when the spec carried one. */
   thinking: string | null;
@@ -2289,15 +2312,14 @@ export function buildAgents(
       frontmatter = extensionFree
         ? applyScanLeafTools(frontmatter)
         : applyMemoryTools(dropNonPiTools(frontmatter), memory ? LEAF_MEMORY_TOOLS : []);
-      // The full spec ("provider/model:thinking") goes into `model:`.
-      // The native subagent extension reads only the `model` frontmatter field
-      // and passes it verbatim as `--model`, and pi's CLI accepts the
-      // `:<thinking>` suffix as a shorthand (verified statically at 0.84.4,
-      // dist/main.js) — that is how per-tier thinking survives the fan-out.
-      // The separate `thinking:` field is still rewritten so the built file
-      // stays human-accurate, but the native extension ignores it.
-      frontmatter = applyModelOverride(frontmatter, spec);
-      if (thinking !== null) frontmatter = applyThinkingOverride(frontmatter, thinking);
+      // A spec that names a model goes whole ("provider/model:thinking") into
+      // `model:`: a reader that takes the field as written and hands it to
+      // pi's `--model` keeps the level, since pi's CLI reads the `:<thinking>`
+      // suffix. A spec that names none (an unpinned tier) writes no `model:`
+      // line, and the variant runs on the run's route. Either way the level
+      // is the `thinking:` field, which is where a variant without a model
+      // carries it.
+      frontmatter = applyModelSpec(frontmatter, spec);
       const out = join(outDir, `${name}.md`);
       // Atomic per-file: rebuilds happen at webhook time while
       // a session's subagent tool may be discovering agents — a
@@ -2306,7 +2328,15 @@ export function buildAgents(
       const tmp = `${out}.tmp`;
       writeFileSync(tmp, joinFrontmatter({ ...doc, frontmatter, body }));
       renameSync(tmp, out);
-      built.push({ name, pass, tier, source: src, output: out, model, thinking });
+      built.push({
+        name,
+        pass,
+        tier,
+        source: src,
+        output: out,
+        model: model === "" ? null : model,
+        thinking,
+      });
     }
   }
   // Sweep stale definitions (e.g. un-suffixed builds): anything

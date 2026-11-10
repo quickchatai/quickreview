@@ -29,6 +29,11 @@
 //     wave at once blocks the event loop for seconds (docs/cpu-gate.md, finding 4).
 //   - Bounded in time. With a deadline, an attempt the timer ends is aborted and
 //     retried once on a FRESH session; a second timeout answers timedOut.
+//   - On the host's route, unless its agent names a model. An agent file with
+//     no `model:` (an unpinned tier's) runs on the model the host resolved for
+//     the run (PiHost.route): asked once per runner, that model's spec is the
+//     pass's cache group and the model it reports, and the session is made with
+//     no model of its own. A host with no route fails the pass with the reason.
 //   - Never fatal. runLens does not reject. A host that cannot build the
 //     session, an extension that throws, a provider that fails, a caller's
 //     abort: each is a failed LensResult, with the spend so far in its usage,
@@ -38,6 +43,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { refusalText } from "../../modelroute.js";
 import { THINKING_LEVELS } from "../../reviewconfig.js";
 import type {
   AgentSession,
@@ -127,7 +133,8 @@ export interface LensRunConfig {
   /** context files. Omitted: the host's. */
   agentsFiles?: readonly AgentsFile[];
   bashEnv?: BashEnvOptions;
-  /** `provider/id` for an agent file that names no model. */
+  /** `provider/id` for an agent file that names no model. Omitted: such an
+   * agent runs on the host's route. */
   defaultModel?: string;
   /** Per-attempt deadline. Omitted: none. */
   deadlineMs?: number;
@@ -213,6 +220,19 @@ async function awaitCreationSlot(host: PiHost, gapMs: number, signal?: AbortSign
 }
 
 const THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
+
+/** What a pass runs on: the spec that names it (its cache group, and the
+ * model it reports) and what its session is asked for. `model` undefined is
+ * the host's route. */
+interface PassModel {
+  spec: string;
+  model: string | undefined;
+}
+
+/** Why a pass has no model to run on. */
+interface NoPassModel {
+  refused: string;
+}
 
 /** A failed pass's envelope: no text, exit 1, `error` unless `extra` says more. */
 function failedRun(
@@ -330,6 +350,46 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       : undefined;
   const sessionGapMs = config.sessionGapMs ?? DEFAULT_SESSION_GAP_MS;
 
+  /** The host's route, asked once for every pass of this runner that names no
+   * model. A refusal is kept too: each such pass fails with its words. A host
+   * that could not answer is asked again by the next pass. */
+  let routed: Promise<PassModel | NoPassModel> | undefined;
+  /** The route's spec, once the host has answered with one. */
+  let routeSpec: string | undefined;
+  const hostRoute = (): Promise<PassModel | NoPassModel> => {
+    routed ??= Promise.resolve()
+      .then(() => config.host.route())
+      .then((r): PassModel | NoPassModel => {
+        if (!r.ok) return { refused: refusalText(r.refusal, "app") };
+        routeSpec = r.route.spec;
+        return { spec: r.route.spec, model: undefined };
+      })
+      .catch((e: unknown) => {
+        routed = undefined;
+        return {
+          refused: `the host could not resolve a model: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      });
+    return routed;
+  };
+  /** The model `agent` runs on: its own, else the run's default, else the
+   * host's route. An agent's `model:` that names only a level names no model. */
+  const passModel = async (agent: LensAgent): Promise<PassModel | NoPassModel> => {
+    const named = agent.modelId || config.defaultModel;
+    return named ? { spec: named, model: named } : hostRoute();
+  };
+  /** The model a pass reports: its agent's `model:` as written when that
+   * names one, else the run's default, else the route's spec. */
+  const reported = (agent: LensAgent, on: PassModel): string =>
+    agent.modelId ? (agent.model ?? on.spec) : on.spec;
+  /** The model a pass that never got as far as its model reports: what its
+   * agent or the run names, else the route when the host has answered. */
+  const namedModel = (agent: LensAgent | undefined): string =>
+    (agent?.modelId ? agent.model : undefined) ??
+    config.defaultModel ??
+    (agent !== undefined ? routeSpec : undefined) ??
+    "unknown";
+
   const transition = (id: string, entry: ProgressTransition): void => {
     const p = config.progress;
     if (p === undefined) return;
@@ -373,15 +433,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       usage: LensUsage,
       errorMessage: string,
       extra: Partial<LensResult> = {},
-    ): LensRun =>
-      failedRun(
-        id,
-        request.agent,
-        agent?.model ?? config.defaultModel ?? "unknown",
-        usage,
-        errorMessage,
-        extra,
-      );
+    ): LensRun => failedRun(id, request.agent, namedModel(agent), usage, errorMessage, extra);
     const finish = (out: LensRun): LensRun => {
       record(id, out.result, startedAt);
       return out;
@@ -439,11 +491,12 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
   /** The pass under its permit: joins its cache group, if any, and leaves it
    * once its last attempt is done. Never throws. */
   async function execute(id: string, agent: LensAgent, request: LensRequest): Promise<LensRun> {
-    const modelSpec = agent.modelId ?? config.defaultModel;
-    const lease =
-      groups !== undefined && modelSpec !== undefined ? groups.join(modelSpec, now()) : undefined;
+    const on = await passModel(agent);
+    if ("refused" in on)
+      return failedRun(id, agent.name, namedModel(agent), ZERO_USAGE, on.refused);
+    const lease = groups !== undefined ? groups.join(on.spec, now()) : undefined;
     try {
-      return await executeIn(id, agent, request, lease);
+      return await executeIn(id, agent, request, on, lease);
     } finally {
       lease?.release();
     }
@@ -452,12 +505,13 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
   /** Session spec the warm-up and the passes share: the host-facing part. */
   const baseSpec = (
     agent: LensAgent,
-    modelSpec: string,
+    on: PassModel,
     extensions: ExtensionFactory[],
   ): HostSessionSpec => ({
     cwd: config.cwd,
     env: config.env,
-    model: modelSpec,
+    // No model of its own: the host's route.
+    ...(on.model !== undefined ? { model: on.model } : {}),
     ...(agent.thinking !== null
       ? { thinkingLevel: agent.thinking as HostSessionSpec["thinkingLevel"] }
       : {}),
@@ -474,7 +528,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
    * the group's disposal. One ledger line, kind "warmup". */
   async function warmUp(
     agent: LensAgent,
-    modelSpec: string,
+    on: PassModel,
     lease: CacheLease,
     pack: string,
     keep: (s: AgentSession) => void,
@@ -491,7 +545,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       await awaitCreationSlot(config.host, sessionGapMs, stop);
       stop.throwIfAborted();
       session = await config.host.makeSession({
-        ...baseSpec(agent, modelSpec, [
+        ...baseSpec(agent, on, [
           config.bashGuard,
           leafCache({ pack, cacheKey: lease.key, onUnexpected: () => (unexpected = true) }),
         ]),
@@ -544,7 +598,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       id,
       {
         agent: "warmup",
-        model: agent.model ?? config.defaultModel ?? "unknown",
+        model: reported(agent, on),
         usage: spent,
         messages: [],
         exitCode: failure === undefined ? 0 : 1,
@@ -561,7 +615,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
    * after the group's first pass, an awaited delay. */
   async function groupReady(
     agent: LensAgent,
-    modelSpec: string,
+    on: PassModel,
     lease: CacheLease,
     signal: AbortSignal | undefined,
   ): Promise<void> {
@@ -572,7 +626,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     }
     const waitMs = cache?.warmupWaitMs ?? WARMUP_WAIT_MS;
     const warm = lease.first
-      ? lease.startWarmup((keep) => warmUp(agent, modelSpec, lease, pack, keep, waitMs * 2))
+      ? lease.startWarmup((keep) => warmUp(agent, on, lease, pack, keep, waitMs * 2))
       : lease.warmup();
     if (warm === undefined) return;
     if (!(await settledWithin(warm, waitMs, signal)) && !signal?.aborted)
@@ -586,10 +640,11 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     id: string,
     agent: LensAgent,
     request: LensRequest,
+    on: PassModel,
     lease: CacheLease | undefined,
   ): Promise<LensRun> {
     const activity = new LensActivityTracker(now(), now, config.cwd);
-    const out = await attemptsOf(id, agent, request, lease, activity);
+    const out = await attemptsOf(id, agent, request, on, lease, activity);
     activity.settle();
     return { ...out, activity: activity.view() };
   }
@@ -600,21 +655,14 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     id: string,
     agent: LensAgent,
     request: LensRequest,
+    on: PassModel,
     lease: CacheLease | undefined,
     activity: LensActivityTracker,
   ): Promise<LensRun> {
     let spent = ZERO_USAGE;
-    const modelSpec = agent.modelId ?? config.defaultModel;
     const thinking = agent.thinking;
     const fail = (errorMessage: string, extra: Partial<LensResult> = {}): LensRun =>
-      failedRun(
-        id,
-        agent.name,
-        agent.model ?? config.defaultModel ?? "unknown",
-        spent,
-        errorMessage,
-        extra,
-      );
+      failedRun(id, agent.name, reported(agent, on), spent, errorMessage, extra);
     // The provider error pi is retrying, across both attempts: a timeout
     // while it retries names it (`passTimeoutMessage`).
     const providerRetry = new ProviderRetryWatch();
@@ -626,8 +674,6 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         // a listener's failure is not the pass's
       }
     };
-    if (modelSpec === undefined)
-      return fail(`agent ${agent.name} names no model and the run has no default`);
     if (thinking !== null && !THINKING_LEVEL_SET.has(thinking))
       return fail(`agent ${agent.name} asks for an unknown thinking level "${thinking}"`);
 
@@ -648,7 +694,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       try {
         const pack = cache?.pack;
         const spec: HostSessionSpec = {
-          ...baseSpec(agent, modelSpec, [
+          ...baseSpec(agent, on, [
             config.bashGuard,
             ...(lease !== undefined && pack !== undefined
               ? [
@@ -756,7 +802,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
 
     let outcome: Reading | "timed_out";
     try {
-      if (lease !== undefined) await groupReady(agent, modelSpec, lease, request.signal);
+      if (lease !== undefined) await groupReady(agent, on, lease, request.signal);
       request.signal?.throwIfAborted();
       outcome =
         config.deadlineMs !== undefined
@@ -780,7 +826,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       result: {
         id,
         agent: agent.name,
-        model: outcome.model ?? agent.model ?? config.defaultModel ?? "unknown",
+        model: outcome.model ?? reported(agent, on),
         usage: spent,
         messages: outcome.messages,
         exitCode: bad ? 1 : 0,

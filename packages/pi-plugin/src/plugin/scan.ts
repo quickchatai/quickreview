@@ -280,7 +280,8 @@ function buildRepoScan(host: PluginHost, home: string, deps: ScanCommandDeps): R
         host: () => repo?.host ?? host,
         root,
         home,
-        // the configuration the latest start built its agents from
+        // the configuration the latest start built its agents from; empty
+        // when it pins no model, and a case then borrows the whole login
         providers: () => {
           const c = config();
           return c.ok ? reviewProviders(c.cfg) : [];

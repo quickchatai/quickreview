@@ -3,8 +3,10 @@
 // /qcr-setup detects afresh.
 //
 //   pi version     the running pi is inside the plugin's declared range
-//   login          pi has a login for every provider the review runs on (only
-//                  a key for another provider is missing, with the /login hint)
+//   login          pi has a login the review can run on: any stored login
+//                  when the config pins no model; with pinned models, one for
+//                  every provider they name (only a key for another provider
+//                  is then missing, with the /login hint)
 //   git            git is on PATH (every review target is a git one)
 //   GitHub         a credential for PR targets: GH_TOKEN or GITHUB_TOKEN set,
 //                  or `gh` logged in (only their presence is read, never a
@@ -164,7 +166,7 @@ export function pluginSetupSteps(o: PluginSetupOptions): SetupStep[] {
       {
         id: PLUGIN_SETUP_STEPS.login,
         title: "login",
-        explain: "pi has a login for every provider the review runs on.",
+        explain: "pi has a login the review can run on.",
         order: 2,
       },
       async () => {
@@ -172,8 +174,24 @@ export function pluginSetupSteps(o: PluginSetupOptions): SetupStep[] {
         if (typeof cfg === "string")
           return { missing: `the review's config cannot be read: ${cfg}` };
         const logins = host.auth.logins();
+        const named = reviewProviders(cfg);
+        // A config that pins no model names no provider: the review runs on
+        // whichever one pi holds a login for, so any stored login is the
+        // login. (What pi stores is all this check can list: a key that is
+        // only in the environment is found by the review itself.)
+        if (named.length === 0) {
+          const held = Object.keys(logins);
+          return held.length > 0
+            ? {
+                found: `pi has a login for ${held.join(", ")}: the review runs on a provider pi is signed in to`,
+              }
+            : {
+                missing:
+                  "pi stores no login. Run /login in pi and sign in to any provider, then /qcr-review again. A provider key in the environment works too.",
+              };
+        }
         // the providers a review would run on, twins rerouted as borrowLogin does
-        const providers = routedProviders(reviewProviders(cfg), host.auth);
+        const providers = routedProviders(named, host.auth);
         const missing = providers.filter((p) => !canUseProvider(p, host.auth));
         if (missing.length === 0)
           return {

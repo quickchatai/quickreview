@@ -287,8 +287,10 @@ async function reviewJob(
       ui,
       `${host.cwd} is not inside a git repository: /qcr-review reviews a git checkout`,
     );
-  // The providers whose logins ride into the run: the config's, routed by
-  // borrowLogin to the OpenAI login that exists.
+  // The providers whose logins ride into the run: the ones the config's
+  // pinned models name, routed by borrowLogin to the OpenAI login that
+  // exists. A config that pins none names none: the list is empty, and that
+  // is the whole login (borrowLogin, prepareReviewHost), never none of it.
   let runProviders = reviewProviders(cfg);
   const progress: ReviewProgress = {
     label,
@@ -399,7 +401,8 @@ async function reviewJob(
     },
     // Only the review's providers ride into the run, as borrowLogin renewed
     // (and, for an OpenAI model, routed) them: a person's pi holds other
-    // logins, which neither go along nor refuse the run.
+    // logins, which neither go along nor refuse the run. For a review that
+    // names no provider these are the stored logins borrowLogin kept.
     prepareHost: (req) =>
       prepareReviewHost({
         ...req,

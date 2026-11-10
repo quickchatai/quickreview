@@ -26,14 +26,26 @@ import {
   frontmatterName,
   joinFrontmatter,
   splitFrontmatter,
+  passTierModels,
   splitModelSpec,
   tiersForPass,
 } from "@quickchatai/pi-quickreview/src/include.js";
+import { parseAgentFile } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
+import { MODELS_TIER_DEFAULTS, TIER_LEVELS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import type { PassTier } from "@quickchatai/pi-quickreview/src/types.js";
 import { renderMigrationPrecheckDegradedNote } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import { renderNitScopeNote } from "@quickchatai/pi-quickreview/src/templates.js";
 import { loadProfileAddenda } from "@quickchatai/pi-quickreview/src/profiles.js";
 import { homeProfileLookup } from "../src/install.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
+
+/** Three tiers pinned to a model, at the shipped levels: for the cases that
+ * read a `model:` line. The shipped defaults pin none. */
+const PINNED_TIERS: Record<PassTier, string> = {
+  light: "prov/model-a:medium",
+  standard: "prov/model-a:medium",
+  deep: "prov/model-a:high",
+};
 
 /** In-memory fs for the pure expansion tests. */
 function fakeFs(files: Record<string, string>) {
@@ -233,23 +245,113 @@ describe("buildAgents", () => {
 
   it("writes variant name/model/thinking frontmatter, other fields untouched", () => {
     const out = join(root, "state", "agents");
-    buildAgents(join(root, "agents"), out, { root });
+    buildAgents(join(root, "agents"), out, { root, tiers: PINNED_TIERS });
     const alpha = readFileSync(join(out, "pass-alpha--light.md"), "utf8");
     // `tools:` carries the seed's list — no memory tool, since no lens leaf
     // loads the memory extension — and the seed itself is untouched.
     expect(
       alpha.startsWith(
-        "---\nname: pass-alpha--light\ndescription: a\ntools: read, bash\nmodel: openai-codex/gpt-6.1-sol:medium\n",
+        "---\nname: pass-alpha--light\ndescription: a\ntools: read, bash\nmodel: prov/model-a:medium\n",
       ),
     ).toBe(true);
     expect(alpha).toContain("thinking: medium\n");
     const high = readFileSync(join(out, "pass-alpha--deep.md"), "utf8");
     expect(high).toContain("name: pass-alpha--deep\n");
-    // The model field carries the whole spec — the native subagent
-    // extension reads only `model:`, and pi's --model accepts the :thinking
-    // suffix. The separate thinking field stays as human documentation.
-    expect(high).toContain("model: openai-codex/gpt-6.1-sol:high\n");
+    // The model field carries the whole spec: a reader that hands the field
+    // to pi's --model keeps the level, since pi reads the :thinking suffix.
+    // The thinking field says the same level.
+    expect(high).toContain("model: prov/model-a:high\n");
     expect(high).toContain("thinking: high\n");
+  });
+
+  // Fence: an unpinned tier has no model line. A tier whose spec names no
+  // model runs on the run's route, and a `model:` line with no model in it
+  // would be handed to pi as a model by whatever reads the field as written.
+  // MUTATION: write `model: ` for an empty model in buildAgents (call
+  // applyModelOverride(frontmatter, spec) whatever the spec names) — this fails.
+  describe("an unpinned tier has no model line", () => {
+    const modelLines = (text: string): string[] =>
+      text
+        .slice(0, text.indexOf("\n---\n", 4))
+        .split("\n")
+        .filter((l) => /^model:/.test(l));
+    const thinkingOf = (text: string): string | undefined =>
+      /^thinking:[ \t]*(.*)$/m.exec(text.slice(0, text.indexOf("\n---\n", 4)))?.[1];
+
+    it("with no tiers passed (the shipped defaults): no model line, the tier's level as thinking", () => {
+      const out = join(root, "state", "agents");
+      const built = buildAgents(join(root, "agents"), out, { root });
+      expect(built).toHaveLength(6);
+      for (const b of built) {
+        const text = readFileSync(b.output, "utf8");
+        // The seed's own `model:` line is taken out, not left behind.
+        expect(modelLines(text), b.name).toEqual([]);
+        expect(thinkingOf(text), b.name).toBe(TIER_LEVELS[b.tier]);
+        expect(b.model, b.name).toBeNull();
+        expect(b.thinking, b.name).toBe(TIER_LEVELS[b.tier]);
+        // …and the rest of the frontmatter is still there.
+        expect(text.startsWith(`---\nname: ${b.name}\n`), b.name).toBe(true);
+      }
+      expect(readFileSync(join(out, "pass-alpha--light.md"), "utf8")).toContain(
+        "tools: read, bash\n",
+      );
+    });
+
+    it("the registry reads such a file as an agent with no model and its level", () => {
+      const out = join(root, "state", "agents");
+      buildAgents(join(root, "agents"), out, { root });
+      const agent = parseAgentFile(
+        readFileSync(join(out, "pass-alpha--deep.md"), "utf8"),
+        "pass-alpha--deep.md",
+        "built",
+      );
+      expect(agent).toMatchObject({
+        name: "pass-alpha--deep",
+        model: undefined,
+        modelId: undefined,
+        thinking: TIER_LEVELS.deep,
+      });
+    });
+
+    it("a pinned tier beside unpinned ones keeps its model line, and only it", () => {
+      const out = join(root, "state", "agents");
+      buildAgents(join(root, "agents"), out, {
+        root,
+        tiers: { light: ":low", standard: "", deep: "prov/model-a:high" },
+      });
+      const light = readFileSync(join(out, "pass-alpha--light.md"), "utf8");
+      expect(modelLines(light)).toEqual([]);
+      expect(thinkingOf(light)).toBe("low");
+      // A spec that names neither a model nor a level writes neither field.
+      const standard = readFileSync(join(out, "pass-alpha--standard.md"), "utf8");
+      expect(modelLines(standard)).toEqual([]);
+      expect(thinkingOf(standard)).toBeUndefined();
+      const deep = readFileSync(join(out, "pass-alpha--deep.md"), "utf8");
+      expect(modelLines(deep)).toEqual(["model: prov/model-a:high"]);
+      expect(thinkingOf(deep)).toBe("high");
+    });
+
+    // A lens override that names only a level, on a tier that is itself
+    // unpinned: the variant's spec is `:low`, which is a level and no model.
+    it("a level-only lens override on an unpinned tier writes thinking and no model line", () => {
+      const out = join(root, "state", "agents");
+      const tiers = MODELS_TIER_DEFAULTS.tiers;
+      const built = buildAgents(join(root, "agents"), out, {
+        root,
+        tiers,
+        models: passTierModels({}, tiers, {}, { "pass-alpha": ":low" }),
+      });
+      for (const b of built.filter((x) => x.pass === "pass-alpha")) {
+        const text = readFileSync(b.output, "utf8");
+        expect(modelLines(text), b.name).toEqual([]);
+        expect(thinkingOf(text), b.name).toBe("low");
+        expect(b.model, b.name).toBeNull();
+      }
+      // The lens beside it keeps its tier's own level.
+      const beta = readFileSync(join(out, "pass-beta--deep.md"), "utf8");
+      expect(modelLines(beta)).toEqual([]);
+      expect(thinkingOf(beta)).toBe(TIER_LEVELS.deep);
+    });
   });
 
   it("with memory: true, grants every built pass exactly two read-only memory tools", () => {
@@ -323,6 +425,7 @@ describe("buildAgents", () => {
     const out = join(root, "state", "agents");
     const built = buildAgents(join(root, "agents"), out, {
       root,
+      tiers: PINNED_TIERS,
       riskPasses: ["pass-alpha"],
       validateTier: "light",
     });
@@ -336,7 +439,7 @@ describe("buildAgents", () => {
     ]);
     expect(built.filter((b) => b.pass === "pass-beta")).toHaveLength(3);
     const validate = readFileSync(join(out, "pass-validate--light.md"), "utf8");
-    expect(validate).toContain("model: openai-codex/gpt-6.1-sol:medium\n");
+    expect(validate).toContain("model: prov/model-a:medium\n");
     expect(validate).toContain("thinking: medium\n");
   });
 
@@ -373,6 +476,7 @@ describe("buildAgents", () => {
     const out = join(root, "state", "agents");
     const built = buildAgents(join(root, "agents"), out, {
       root,
+      tiers: PINNED_TIERS,
       validateTier: "standard",
       models: { "pass-validate--deep": "openai-codex/override-validate:high" },
     });
@@ -383,7 +487,7 @@ describe("buildAgents", () => {
     // The floor variant takes the tier's spec, split the usual way…
     const floor = readFileSync(join(out, "pass-validate--standard.md"), "utf8");
     expect(floor).toContain("name: pass-validate--standard\n");
-    expect(floor).toContain("model: openai-codex/gpt-6.1-sol:medium\n");
+    expect(floor).toContain("model: prov/model-a:medium\n");
     expect(floor).toContain("thinking: medium\n");
     // …and the per-variant override wins over it, exactly as for a lens.
     const high = built.find((b) => b.name === "pass-validate--deep")!;
@@ -542,9 +646,12 @@ describe("the real seeded content", () => {
       expect(built).toHaveLength(96);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
-        // No lens file names a model: the built variant carries exactly the
-        // configured tier's spec.
-        expect(text).toMatch(/\nmodel: openai-codex\/gpt-6\.1-sol:(medium|high)\n/);
+        // No lens file names a model and the shipped tiers pin none: the
+        // built variant carries no model line, and its tier's level.
+        const front = text.slice(0, text.indexOf("\n---\n", 4));
+        expect(front, b.name).not.toMatch(/^model:/m);
+        expect(front, b.name).toMatch(/^thinking: (medium|high)$/m);
+        expect(front, b.name).toContain(`thinking: ${TIER_LEVELS[b.tier]}`);
         expect(text).not.toContain("{{include:");
         // Identity variables resolve at build time — leaves must see
         // plain text, and no unexpanded {{…}} of any kind may reach a session.

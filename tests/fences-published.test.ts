@@ -7,6 +7,13 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { loadConfig } from "../src/config.js";
+import {
+  MODELS_TIER_DEFAULTS,
+  isPinned,
+  parseCoreConfig,
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { PASS_TIER_ORDER } from "@quickchatai/pi-quickreview/src/types.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -122,6 +129,66 @@ describe("[T11] the shipped configs describe the system that exists", () => {
       );
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// The shipped config pins no model
+// ---------------------------------------------------------------------------
+
+describe("the shipped config pins nothing", () => {
+  /**
+   * A review runs on whatever provider pi has a credential for. A model named
+   * in the file a stranger copies, or in the defaults a run with no file
+   * takes, would send every such review to one vendor's model and refuse the
+   * person who is signed in to another. So the example names none, and
+   * neither do the code's own tier defaults: a tier's shipped spec is a
+   * level and no model.
+   *
+   * This is the `[models]` half. The home's and the companion's shipped
+   * models are fenced with their own defaults.
+   *
+   * MUTATION: uncomment `model = ` in config.example.toml's [models] — this fails.
+   * MUTATION: uncomment a line of its [models.tiers] — this fails.
+   * MUTATION: write a `provider/id` into MODELS_TIER_DEFAULTS.tiers
+   * (packages/pi-plugin/src/reviewconfig.ts) — this fails.
+   */
+  const example = join(ROOT, "config.example.toml");
+
+  it("config.example.toml: no review model, and no tier, names a model", () => {
+    // Both parsers a shipped config goes through: the app's whole-file one
+    // and the core's, which a one-shot review reads the same file with.
+    for (const models of [
+      loadConfig(example).models,
+      parseCoreConfig(readFileSync(example, "utf8")).models,
+    ]) {
+      expect(models.model).toBe("");
+      expect(Object.keys(models.tiers).sort()).toEqual([...PASS_TIER_ORDER].sort());
+      for (const tier of PASS_TIER_ORDER)
+        expect(isPinned(models.tiers[tier]), `tier ${tier} = ${models.tiers[tier]}`).toBe(false);
+      for (const [pass, spec] of Object.entries(models.pass_models))
+        expect(isPinned(spec), `[models.pass_models] ${pass} = ${spec}`).toBe(false);
+    }
+  });
+
+  it("the tier defaults of a config with no [models.tiers] name no model", () => {
+    expect(Object.keys(MODELS_TIER_DEFAULTS.tiers).sort()).toEqual([...PASS_TIER_ORDER].sort());
+    for (const tier of PASS_TIER_ORDER) {
+      const spec = MODELS_TIER_DEFAULTS.tiers[tier];
+      expect(isPinned(spec), `MODELS_TIER_DEFAULTS.tiers.${tier} = ${spec}`).toBe(false);
+      // A level and nothing else: `:medium`, never an empty spec.
+      expect(spec).toMatch(/^:[a-z]+$/);
+    }
+    expect(MODELS_TIER_DEFAULTS.pass_models).toEqual({});
+  });
+
+  // The check itself: a spec that names a model reads as pinned, so the two
+  // cases above cannot pass on a file that pins one.
+  it("isPinned tells a spec that names a model from one that names none", () => {
+    for (const pinned of ["prov/model-a", "prov/model-a:high", "prov/a/b:low"])
+      expect(isPinned(pinned), pinned).toBe(true);
+    for (const unpinned of ["", ":medium", ":high"])
+      expect(isPinned(unpinned), unpinned).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

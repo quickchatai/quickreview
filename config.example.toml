@@ -229,13 +229,13 @@ issues_per_day = 3
 improvement_pr_deny_prefixes = ["migrations/", "infra/", "ansible/", ".github/workflows/"]
 
 [models]
-# default for every role; tiered pass models below
-# Provider prefix is `openai-codex/` — the ChatGPT-OAuth route's provider key
-# in pi's auth.json. Any OpenAI login serves it: when pi holds no
-# `openai-codex` login but an `openai` one (pi 1.4's Sign in with ChatGPT, or
-# an OpenAI API key), the same model runs on `openai` (docs/llm-setup.md).
-default = "openai-codex/gpt-6.1-sol"
-conversation = "openai-codex/gpt-6.1-sol"
+# The review's model. Shipped: none is named, and a review runs on a provider
+# pi has a credential for (a login, or a key in the environment), on the newest
+# model that provider offers; `qcr model` shows which, and why. A model spec is
+# "provider/id" with an optional ":<thinking level>", in pi's own spelling.
+# Uncomment to pin one model for the whole review; a ":<level>" on it is the
+# main session's level.
+# model = "provider/id"
 # Passes always run at deep — single variant, not raisable (already top).
 # The fourteen security-family lenses (pass-sec-*) always join this list,
 # whatever it says, and a profile's [lenses.<pass>] risk = true adds its lens.
@@ -250,7 +250,7 @@ small_diff_lines = 150
 # [models.pass_tiers] — per-lens tier pins: pass name → tier
 # name (a key of [models.tiers]). SHIPPED DEFAULT (src/config.ts
 # DEFAULT_PASS_TIERS): pass-baseline, pass-sweep and
-# pass-behaviour-delta at "deep" (gpt-6.1-sol at high effort) — measured
+# pass-behaviour-delta at "deep" (the review's model at high effort) — measured
 # +6 defects on 18 AACR PRs for +18% cost per PR. An entry here replaces that
 # lens's default pin (e.g. "pass-baseline" = "standard"); a repo profile lowers
 # one lens's thinking with [lenses.<pass>] effort = "medium". A pinned lens
@@ -266,12 +266,17 @@ small_diff_lines = 150
 #   "pass-baseline" = "deep"
 
 [models.tiers]
-# PassTier → model spec; the whole spec (incl. the `:thinking` suffix) rides
-# the built agent's `model:` field — pi's --model accepts the suffix, and the
-# native subagent extension reads only that field.
-"light" = "openai-codex/gpt-6.1-sol:medium"
-"standard" = "openai-codex/gpt-6.1-sol:medium"
-"deep" = "openai-codex/gpt-6.1-sol:high"
+# PassTier → model spec. Shipped: no tier names a model, so each runs on the
+# review's model (`model` above, else the one pi's credential decides) at its
+# own thinking level: light and standard at medium, deep at high. A built
+# agent for such a tier carries no `model:` line, only `thinking:`.
+# Uncomment a line to pin that tier to a model of its own; the whole spec
+# (incl. the `:thinking` suffix) then rides the built agent's `model:` field.
+# An entry that names only a level (":low") moves the tier's level and
+# leaves it on the review's model.
+# "light" = "provider/id:medium"
+# "standard" = "provider/id:medium"
+# "deep" = "provider/id:high"
 
 [models.pricing]
 # Spend rates keyed by bare model id, USD per million tokens. Consumed by

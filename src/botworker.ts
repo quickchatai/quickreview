@@ -29,8 +29,15 @@
 //   1. connect, ask for the spec, and verify the payload against the sha256 the
 //      daemon recorded at dispatch;
 //   2. borrow the login: a refresh-blanked copy read once from the agent dir the
-//      login refresher owns, refused when the token would expire inside
-//      this worker's wall-clock cap. The worker never refreshes it;
+//      login refresher owns. A stored login that would expire inside this
+//      worker's wall-clock cap is left out of the copy, never refused: the
+//      worker never refreshes it, so it is not a login this command can run on;
+//   2a. resolve the model route, before any session exists: from the spec's
+//      model when the config pins one, else from the remembered choice and
+//      pi's saved provider (both read where the login is read) over what the
+//      borrowed login and the worker's environment hold a credential for. No
+//      route (no credential, the pinned provider's login left out, no model
+//      that passes) ends the command with the login exit code and the reason;
 //   3. open the PR's session: resume the newest JSONL under its session dir
 //      under the SAME id (the provider's cache key), or start one at birth;
 //   4. start the planned discovery wave (the engine, rule 9), then send the
@@ -50,7 +57,8 @@
 // Exit codes: 0 the round was served (a verdict may or may not have been
 // written: `done` says), 1 a turn failed (timeout, cap, stream, refused
 // login), 2 bad usage, 3 the handshake or the
-// payload could not be trusted, 4 the login was refused up front, 5 the session
+// payload could not be trusted, 4 the login was refused up front (unreadable, or
+// no model route over it), 5 the session
 // could not be opened, 6 the operator aborted the round, 75 the daemon went away, 76 the daemon fenced this
 // worker (a stale generation or an inactive command), 143 terminated.
 import { existsSync, readFileSync } from "node:fs";
@@ -60,9 +68,9 @@ import { EventCostMeter } from "./bench/cost.js";
 import { CONTEXT_PACK_FILE } from "@quickchatai/pi-quickreview/src/contextpack.js";
 import {
   AuthError,
+  borrowedCredentials,
   classifyAuthFailure,
-  engineCredentials,
-  type EngineAuth,
+  type BorrowedAuth,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { agentDirSettings } from "@quickchatai/pi-quickreview/src/engine/agentdir.js";
 import { COMMIT_VERDICT_RE } from "./engine/answerguard.js";
@@ -92,8 +100,17 @@ import {
 import {
   PiHost,
   headerId,
+  piSavedProvider,
   type PiHostOptions,
 } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
+import {
+  RouteRefused,
+  refusalText,
+  type RouteRefusal,
+  type RouteResult,
+} from "@quickchatai/pi-quickreview/src/modelroute.js";
+import { isPinned } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import type {
   RuntimeSession,
   SessionSpec,
@@ -232,6 +249,81 @@ export interface WorkerDeps {
   now?: () => number;
   /** Diagnostics: one line, no secret. */
   log?: (line: string) => void;
+}
+
+/** What a worker's host is built with to resolve its model: the borrowed
+ * login, and the route's inputs. */
+export interface WorkerRoute {
+  credentials: BorrowedAuth["credentials"];
+  /** `PiHostOptions.route`: the pin, the choice, pi's provider, the logins left out. */
+  route: NonNullable<PiHostOptions["route"]>;
+}
+
+/**
+ * The worker's own sequence for its model, up to the host: borrow the login
+ * by type, and gather what the route is resolved from. Everything is read
+ * from one directory, the one the login is in (`login_dir`, else the agent
+ * dir): the worker derives no path of its own.
+ *
+ *  - The login: every stored key, and every stored login that lasts the
+ *    command's wall clock. Nothing renews a login for the worker, so one that
+ *    would run out is left out before the route is chosen, and is then never
+ *    picked. A login file that is there and cannot be read throws
+ *    (`AuthUnreadable`): an unknown store is never an empty one.
+ *  - The pin: the spec's model when it names one (the config's `[models]
+ *    model`). A spec with no model part pins nothing.
+ *  - The remembered choice (`qcr-model.json`) and pi's saved provider.
+ *
+ * `note` hears why a remembered choice that is there was not used.
+ */
+export function workerRoute(
+  spec: Pick<WorkerSpec, "agent_dir" | "login_dir" | "model" | "wall_clock_ms">,
+  o: { now?: () => number; note?: (line: string) => void } = {},
+): WorkerRoute {
+  const loginDir = spec.login_dir ?? spec.agent_dir;
+  const borrowed = borrowedCredentials({
+    srcDir: loginDir,
+    needMs: spec.wall_clock_ms,
+    // Nothing is told to renew the login for this worker.
+    owner: false,
+    ...(o.now ? { now: o.now } : {}),
+  });
+  const remembered = readModelChoice(loginDir);
+  if (remembered.notice !== undefined) o.note?.(remembered.notice);
+  const piProvider = piSavedProvider(loginDir);
+  return {
+    credentials: borrowed.credentials,
+    route: {
+      skipped: borrowed.skipped,
+      ...(isPinned(spec.model) ? { pin: { text: spec.model, from: "config" as const } } : {}),
+      ...(remembered.choice !== undefined ? { choice: remembered.choice } : {}),
+      ...(piProvider !== undefined
+        ? { piProvider: { provider: piProvider, from: "pi-settings" as const } }
+        : {}),
+    },
+  };
+}
+
+/** Why the worker has no model, in the words the operator reads. */
+function routeRefusalWords(
+  refusal: RouteRefusal,
+  host: PiHost,
+  spec: WorkerSpec,
+  now: () => number,
+): string {
+  const names = new Map(host.modelRuntime.getProviders().map((p) => [p.id, p.name]));
+  const nameOf = (provider: string): string => names.get(provider) ?? provider;
+  // The borrow reads a login file and knows no provider's display name.
+  const named: RouteRefusal =
+    refusal.code === "login-too-short"
+      ? { ...refusal, logins: refusal.logins.map((l) => ({ ...l, name: nameOf(l.provider) })) }
+      : refusal;
+  return refusalText(named, "app", {
+    agentDir: spec.login_dir ?? spec.agent_dir,
+    needMs: spec.wall_clock_ms,
+    nameOf,
+    now,
+  });
 }
 
 /** A user turn's closing marker, in the inject bridge's own spelling. */
@@ -468,17 +560,11 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     const mayPost =
       answering && spec.may_post === true && operatorMayPost(verified.payload.toString("utf8"));
 
-    // The login: borrowed, blanked, and checked against this worker's own cap.
-    let auth: EngineAuth;
+    // The login: borrowed, blanked, and filtered against this worker's own
+    // cap; with it, what the model route is resolved from.
+    let routing: WorkerRoute;
     try {
-      auth = engineCredentials({
-        srcDir: spec.login_dir ?? spec.agent_dir,
-        needMs: spec.wall_clock_ms,
-        now,
-        // a shared pi home holds the person's other logins too: only the
-        // review's providers are admitted
-        ...(spec.providers !== undefined ? { providers: spec.providers } : {}),
-      });
+      routing = workerRoute(spec, { now, note: (m) => log(`botworker: ${m}`) });
     } catch (e) {
       if (e instanceof AuthError) throw new Stop(EXIT.auth, e.message);
       throw e;
@@ -492,10 +578,11 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     let lensRuns = 0;
     const marker = sessionCommandMarker(spec.command_id, spec.payload_sha256);
     let opened: Opened;
+    let made: PiHost;
     try {
       checkToolUid(env, { what: "the bot worker", instead: "", isolated: true });
       const ids = toolIdsOf(env);
-      host = await (deps.makeHost ?? PiHost.create)({
+      made = await (deps.makeHost ?? PiHost.create)({
         agentDir: spec.agent_dir,
         ownsProcess: true,
         homeDir: homedir(),
@@ -505,13 +592,34 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
           ...(spec.login_dir ? [spec.login_dir] : []),
           ...credentialPaths(env, spec.env),
         ],
-        credentials: auth.credentials,
+        credentials: routing.credentials,
+        route: routing.route,
+        // A provider key reaches pi from the worker's own environment.
+        authEnv: env,
         settings: { retry: BOT_RETRY, ...agentDirSettings(spec.agent_dir) },
       });
+      host = made;
+    } catch (e) {
+      throw new Stop(EXIT.session, `could not open the session: ${errText(e)}`);
+    }
+    // The route, before the first session: the main session and every lens
+    // pass that names no model run on it, and a worker with none says why
+    // once, here, instead of failing each of them.
+    let routed: RouteResult;
+    try {
+      routed = await made.route();
+    } catch (e) {
+      throw new Stop(EXIT.session, `could not resolve the model: ${errText(e)}`);
+    }
+    if (!routed.ok) throw new Stop(EXIT.auth, routeRefusalWords(routed.refusal, made, spec, now));
+    log(`botworker: model ${routed.route.spec} (${routed.route.source})`);
+    for (const notice of routed.route.notices) log(`botworker: ${notice}`);
+    checkpoint();
+    try {
       // The lens cap is the daemon's, over every worker: a pass asks the broker.
       const permits = brokerPermits(client, (m) => log(`botworker: ${m}`));
       opened = await openSession(
-        host,
+        made,
         spec,
         env,
         wave,
@@ -526,6 +634,9 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
         answering ? { mayPost } : undefined,
       );
     } catch (e) {
+      // A session whose own spec names a provider with no credential here.
+      if (e instanceof RouteRefused)
+        throw new Stop(EXIT.auth, routeRefusalWords(e.refusal, made, spec, now));
       throw new Stop(EXIT.session, `could not open the session: ${errText(e)}`);
     }
     const { tools, resumed, continuing } = opened;

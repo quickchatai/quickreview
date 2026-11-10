@@ -5,8 +5,12 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { parseConfig, parseScanTable, SCAN_DEFAULTS, type Config } from "../src/config.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
+import { agentThinking, sdkCaseRunner } from "@quickchatai/pi-quickreview/src/scan/scanleaves.js";
 import { globMatcher, globProblem } from "@quickchatai/pi-quickreview/src/glob.js";
 import {
   PASS_ADDENDA,
@@ -23,6 +27,11 @@ import {
   scanConfig,
   scanSettings,
 } from "../src/setup/scanbuild.js";
+import { ROUTABLE_FAUX_MODEL, routableFaux } from "./helpers/priced-faux.js";
+import { useOfflineGuard } from "./pi-canary/harness.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+
+useOfflineGuard();
 
 const sandbox = join(import.meta.dirname, "..");
 const fixtureToml = readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8");
@@ -158,6 +167,29 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
     );
   });
 
+  // The shipped config pins no model. The scan build then writes no model
+  // line: a leaf runs on the scan's route, and the level each variant runs at
+  // (its tier's, or `[scan] effort` for pass-scan) is its `thinking:` field.
+  // MUTATION: write the spec into `model:` whatever it names (buildAgents) —
+  // pass-scan gets `model: :low`, and this fails.
+  it("with no model pinned: no variant carries a model line, and each carries its level", () => {
+    const shipped = parseConfig(readFileSync(join(sandbox, "config.example.toml"), "utf8"));
+    expect(Object.values(shipped.models.tiers)).toEqual([":medium", ":medium", ":high"]);
+    const agents = scanBuild(shipped);
+    expect(agents.size).toBeGreaterThan(10);
+    const front = (name: string): string => {
+      const text = agents.get(name)!;
+      return text.slice(0, text.indexOf("\n---\n", 4));
+    };
+    for (const name of agents.keys()) expect(front(name), name).not.toMatch(/^model:/m);
+    expect(shipped.scan.tier).toBe("standard");
+    expect(shipped.scan.effort).toBe("low");
+    expect(front("pass-scan--standard")).toMatch(/^thinking: low$/m);
+    expect(front("pass-baseline--standard")).toMatch(/^thinking: medium$/m);
+    expect(front("pass-baseline--deep")).toMatch(/^thinking: high$/m);
+    expect(front(`${VALIDATE_PASS}--light`)).toMatch(/^thinking: medium$/m);
+  });
+
   it("refuses an agent name found in two source directories", () => {
     const extra = join(dir, "extra");
     mkdirSync(extra);
@@ -169,6 +201,155 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
       }),
     ).toThrow(/more than one source directory/);
   });
+});
+
+// What the unpinned build is for: the leaf runner (scanleaves.ts) takes a
+// built file with no `model:` to the host's route, at the file's level.
+describe("a scan leaf built with no model runs on the host's route", () => {
+  const hosts: PiHost[] = [];
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const h of hosts.splice(0)) h.dispose();
+  });
+
+  /** The shipped (unpinned) scan build, and a leaf runner over it on a host
+   * whose only provider is a faux one. Its environment holds no key. */
+  async function leafOn(routable: boolean) {
+    const shipped = parseConfig(readFileSync(join(sandbox, "config.example.toml"), "utf8"));
+    const agentsDir = join(dir, "scan-agents");
+    buildScanAgents(sandbox, agentsDir, shipped, homeProfileLookup(env));
+    const faux = routable ? routableFaux() : fauxProvider();
+    const host = await PiHost.create({
+      agentDir: join(dir, "host-agent"),
+      authEnv: {},
+      settings: { compaction: { enabled: false }, retry: { enabled: false } },
+      configureModels: (r) => r.registerNativeProvider(faux.provider),
+    });
+    hosts.push(host);
+    const asked: Array<{ model: unknown; thinkingLevel: unknown }> = [];
+    const real = host.makeSession.bind(host);
+    vi.spyOn(host, "makeSession").mockImplementation(async (spec) => {
+      asked.push({ model: spec.model, thinkingLevel: spec.thinkingLevel });
+      return real(spec);
+    });
+    const runner = sdkCaseRunner({
+      agentsDir,
+      cwd: dir,
+      env: { PATH: process.env["PATH"], HOME: dir },
+      home: dir,
+      runtime: (extras) => sdkRuntime(host, { extras }),
+    });
+    const run = () =>
+      runner.run(
+        { id: "c1", unit: "u", agent: "pass-scan--standard", files: [], prompt: "Answer NONE." },
+        new AbortController().signal,
+      );
+    return { host, faux, asked, run, agentsDir };
+  }
+
+  it("agentThinking reads a built file's level, and nothing from a file without one", () => {
+    expect(agentThinking("---\nname: a\nthinking: low\n---\nbody\n")).toBe("low");
+    expect(agentThinking('---\nname: a\nthinking: "high"\n---\nbody\n')).toBe("high");
+    expect(agentThinking("---\nname: a\nmodel: prov/m:high\n---\nthinking: low\n")).toBeNull();
+    expect(agentThinking("no frontmatter\nthinking: low\n")).toBeNull();
+  });
+
+  // MUTATION: restore the refusal of an agent with no model in sdkCaseRunner
+  // (`names no model and none is set`) — the case never starts, and this fails.
+  // MUTATION: drop `?? fileLevel` in sdkCaseRunner — the session is asked for
+  // no level, and the thinkingLevel assertion fails.
+  it(
+    "the session is asked for no model and the file's level, and answers on the route's model",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const { host, faux, asked, run, agentsDir } = await leafOn(true);
+      const file = readFileSync(join(agentsDir, "pass-scan--standard.md"), "utf8");
+      expect(file.slice(0, file.indexOf("\n---\n", 4))).not.toMatch(/^model:/m);
+      faux.setResponses([() => fauxAssistantMessage("NONE")]);
+      const out = await run();
+      expect(out).toMatchObject({ ok: true, output: "NONE" });
+      expect(asked).toEqual([{ model: "", thinkingLevel: "low" }]);
+      const routed = await host.route();
+      expect(routed.ok && routed.route.spec).toBe(`faux/${ROUTABLE_FAUX_MODEL.id}`);
+    },
+  );
+
+  it(
+    "a host with no route fails the case with the reason, before any turn",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const { faux, run } = await leafOn(false);
+      const out = await run();
+      expect(out.ok).toBe(false);
+      expect(!out.ok && out.reason).toMatch(/could not start the session: .*none of their models/);
+      expect(!out.ok && out.reason).not.toMatch(/names no model and none is set/);
+      expect(faux.state.callCount).toBe(0);
+    },
+  );
+});
+
+// The runtime's own half of the same rule (engine/sdkruntime.ts): a session
+// spec with no model part runs on the host's route, and one that names no
+// level either takes the level the route's pin named.
+describe("a session spec with no model takes its level from the route's pin", () => {
+  const hosts: PiHost[] = [];
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const h of hosts.splice(0)) h.dispose();
+  });
+
+  /** What the host's session is asked for, for a spec whose model is `model`,
+   * on a host whose route is pinned to `pin`. */
+  async function askedFor(model: string, pin: string | null) {
+    const faux = routableFaux();
+    const host = await PiHost.create({
+      agentDir: join(dir, `host-${hosts.length}`),
+      authEnv: {},
+      settings: { compaction: { enabled: false }, retry: { enabled: false } },
+      configureModels: (r) => r.registerNativeProvider(faux.provider),
+      ...(pin !== null ? { route: { pin: { text: pin, from: "flag" as const } } } : {}),
+    });
+    hosts.push(host);
+    const asked: Array<{ model: unknown; thinkingLevel: unknown }> = [];
+    const real = host.makeSession.bind(host);
+    vi.spyOn(host, "makeSession").mockImplementation(async (spec) => {
+      asked.push({ model: spec.model, thinkingLevel: spec.thinkingLevel });
+      return real(spec);
+    });
+    const session = await sdkRuntime(host).create({
+      cwd: dir,
+      env: { PATH: process.env["PATH"], HOME: dir },
+      model,
+      tools: [],
+      eventsFile: join(dir, `events-${hosts.length}.jsonl`),
+      stderrFile: join(dir, `stderr-${hosts.length}.txt`),
+      limits: { timeoutMs: 5_000 },
+    });
+    await session.dispose();
+    return asked[0];
+  }
+  const ROUTED = `faux/${ROUTABLE_FAUX_MODEL.id}`;
+
+  // MUTATION: drop the route's level in sdkRuntime's open (`thinking ?? null`)
+  // — the first case asks for no level, and this fails.
+  it(
+    "the pin's level, unless the spec names one; a spec with a model is left alone",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      // No model, no level: the route's.
+      expect(await askedFor("", `${ROUTED}:high`)).toEqual({ model: "", thinkingLevel: "high" });
+      // The spec's own level wins over the pin's.
+      expect(await askedFor(":low", `${ROUTED}:high`)).toEqual({ model: "", thinkingLevel: "low" });
+      // A pin that names no level, and a host with no pin, give none.
+      expect(await askedFor("", ROUTED)).toEqual({ model: "", thinkingLevel: undefined });
+      expect(await askedFor("", null)).toEqual({ model: "", thinkingLevel: undefined });
+      // A spec that names a model never reads the route's level.
+      expect(await askedFor(ROUTED, `${ROUTED}:high`)).toEqual({
+        model: ROUTED,
+        thinkingLevel: undefined,
+      });
+    },
+  );
 });
 
 describe("[scan] — config.toml defaults, the profile's overrides", () => {

@@ -52,9 +52,10 @@ export interface PluginScanCasesOptions {
   root: string;
   /** The scan's state home. */
   home: string;
-  /** The providers the scan's models name (login.ts `reviewProviders`), read
-   * per case: the runner outlives one command, and a later start reloads the
-   * configuration its agents are built from. */
+  /** The providers the scan's pinned models name (modelroute.ts
+   * `reviewProviders`), read per case: the runner outlives one command, and a
+   * later start reloads the configuration its agents are built from. Empty
+   * for a configuration that pins no model: the case borrows the whole login. */
   providers: () => readonly string[];
   agentsDir: string;
   transcriptDir: string;
@@ -81,9 +82,11 @@ function releasing(s: RuntimeSession, release: () => void): RuntimeSession {
 }
 
 /** Fill a case's private agent dir from the host pi's: a refresh-disabled
- * copy of `providers`' login, and the person's custom provider list. A host
- * with no login file runs on an environment key borrowLogin admitted, so the
- * case gets an empty store, as the review's host run does (reviewhost.ts). */
+ * copy of `providers`' login, and the person's custom provider list. An
+ * empty `providers` is the whole login, never none of it: nothing was named
+ * to narrow it to. A host with no login file runs on an environment key
+ * borrowLogin admitted, so the case gets an empty store, as the review's
+ * host run does (reviewhost.ts). */
 export function fillCaseAgentDir(
   hostAgentDir: string,
   agentDir: string,
@@ -95,7 +98,7 @@ export function fillCaseAgentDir(
       dstDir: agentDir,
       needMs: PLUGIN_CASE_MS,
       words: SCAN_AUTH_WORDS,
-      providers,
+      ...(providers.length > 0 ? { providers } : {}),
     });
   else writeFileSync(join(agentDir, "auth.json"), "{}\n", { mode: 0o600 });
   const models = join(hostAgentDir, "models.json");

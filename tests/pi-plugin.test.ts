@@ -41,6 +41,8 @@ import {
 } from "@quickchatai/pi-quickreview/src/reviewdest.js";
 import { borrowLogin, type HostAuth } from "@quickchatai/pi-quickreview/src/plugin/login.js";
 import { reviewProviders } from "@quickchatai/pi-quickreview/src/modelroute.js";
+import { parseCoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { prepareReviewHost } from "@quickchatai/pi-quickreview/src/reviewhost.js";
 import {
   KEEP_IT_HERE,
   REVIEW_MESSAGE,
@@ -619,7 +621,148 @@ describe("the borrowed login", () => {
       await borrowLogin({ providers: ["anthropic"], host: keyed, needMs: 1, marginMs: 0 }),
     ).toEqual({ ok: true, refreshed: [], providers: ["anthropic"] });
   });
+
+  // A config that pins no model names no provider. An empty list is then the
+  // whole login, never none of it.
+  describe("a review that names no provider borrows the whole login", () => {
+    const unpinned = {
+      models: { model: "", tiers: { light: ":medium", deep: ":high" }, pass_models: {} },
+    } as unknown as Parameters<typeof reviewProviders>[0];
+
+    it("the shipped config names no provider, and a level-only spec names none either", () => {
+      expect(reviewProviders(unpinned)).toEqual([]);
+      const shipped = parseCoreConfig(readFileSync(join(ROOT, "config.example.toml"), "utf8"));
+      expect(reviewProviders(shipped)).toEqual([]);
+    });
+
+    // MUTATION: return `{ ok: true, refreshed: [], providers: [] }` for an
+    // empty list without looking at the login (the loop over no providers) —
+    // the short login is never refreshed, and this fails.
+    it("keeps every stored key and lasting login, and has the host refresh a short one", async () => {
+      const now = Date.now();
+      const host = fakeAuth({
+        anthropic: { type: "api_key", expires: null },
+        "github-copilot": { type: "oauth", expires: now + 600_000 },
+        "openai-codex": { type: "oauth", expires: now + 5 * 3600_000 },
+      });
+      expect(
+        await borrowLogin({ providers: [], host, needMs: 3600_000, marginMs: 300_000 }),
+      ).toEqual({
+        ok: true,
+        refreshed: ["github-copilot"],
+        providers: ["anthropic", "github-copilot", "openai-codex"],
+      });
+      expect(host.refreshed).toEqual([["github-copilot", 3900_000]]);
+    });
+
+    // MUTATION: refuse the run when any stored login cannot be refreshed —
+    // the review that would run on the key is refused, and this fails.
+    it("leaves out a login pi cannot renew, and runs on what is left", async () => {
+      const now = Date.now();
+      const host = fakeAuth(
+        {
+          anthropic: { type: "api_key", expires: null },
+          "github-copilot": { type: "oauth", expires: now + 1000 },
+        },
+        { refuse: true },
+      );
+      expect(await borrowLogin({ providers: [], host, needMs: 3600_000, marginMs: 0 })).toEqual({
+        ok: true,
+        refreshed: [],
+        providers: ["anthropic"],
+      });
+    });
+
+    it("refuses only when pi stores logins and none of them can last, with the first one's reason", async () => {
+      const now = Date.now();
+      const refused = fakeAuth(
+        { "github-copilot": { type: "oauth", expires: now + 1000 } },
+        { refuse: true },
+      );
+      const r1 = await borrowLogin({ providers: [], host: refused, needMs: 3600_000, marginMs: 0 });
+      expect(!r1.ok && r1.error).toMatch(/pi could not refresh your github-copilot login/);
+      const stillShort = fakeAuth(
+        { "github-copilot": { type: "oauth", expires: now + 1000 } },
+        { refreshTo: now + 60_000 },
+      );
+      const r2 = await borrowLogin({
+        providers: [],
+        host: stillShort,
+        needMs: 3600_000,
+        marginMs: 0,
+      });
+      expect(!r2.ok && r2.error).toMatch(/does not last/);
+    });
+
+    it("a pi that stores no login borrows nothing: a key in the environment is then the route", async () => {
+      const host = fakeAuth({}, { configured: ["anthropic"] });
+      expect(await borrowLogin({ providers: [], host, needMs: 3600_000, marginMs: 0 })).toEqual({
+        ok: true,
+        refreshed: [],
+        providers: [],
+      });
+      expect(host.refreshed).toEqual([]);
+    });
+
+    // The copies downstream read the same rule: an empty list is the whole
+    // login. MUTATION: pass `providers: []` on to copyPiAuth from
+    // prepareReviewHost or fillCaseAgentDir — the copy holds no login, and
+    // this fails.
+    it("an empty list copies the whole login into a run's and a case's agent dir", () => {
+      const src = mkdtempSync(join(tmp, "whole-login-"));
+      writeFileSync(
+        join(src, "auth.json"),
+        JSON.stringify({
+          openai: { type: "api_key", key: "k1" },
+          anthropic: { type: "api_key", key: "k2" },
+        }),
+      );
+      const caseDir = mkdtempSync(join(tmp, "case-agent-"));
+      fillCaseAgentDir(src, caseDir, []);
+      expect(
+        Object.keys(JSON.parse(readFileSync(join(caseDir, "auth.json"), "utf8"))).sort(),
+      ).toEqual(["anthropic", "openai"]);
+      const run = mkdtempSync(join(tmp, "run-"));
+      const cfg = parseCoreConfig(readFileSync(join(ROOT, "config.example.toml"), "utf8"));
+      const prepared = prepareReviewHost({
+        root: ROOT,
+        srcAgentDir: src,
+        agentDir: join(run, "agent"),
+        cwd: join(run, "out"),
+        cfg,
+        needMs: 60_000,
+        checkouts: [],
+        profile: { lookup: {} },
+        authProviders: [],
+      });
+      expect(
+        Object.keys(JSON.parse(readFileSync(join(prepared.agentDir, "auth.json"), "utf8"))).sort(),
+      ).toEqual(["anthropic", "openai"]);
+      // …and a named list still narrows it.
+      const narrowed = prepareReviewHost({
+        root: ROOT,
+        srcAgentDir: src,
+        agentDir: join(run, "agent-2"),
+        cwd: join(run, "out-2"),
+        cfg,
+        needMs: 60_000,
+        checkouts: [],
+        profile: { lookup: {} },
+        authProviders: ["openai"],
+      });
+      expect(
+        Object.keys(JSON.parse(readFileSync(join(narrowed.agentDir, "auth.json"), "utf8"))),
+      ).toEqual(["openai"]);
+    });
+  });
 });
+
+/** Two logins, each the only one a pi holds: a stored key, and an OAuth login
+ * that lasts. Neither is for a provider any config here names. */
+const anyOneLogin = (): Array<Parameters<typeof fakeAuth>[0]> => [
+  { anthropic: { type: "api_key", expires: null } },
+  { "github-copilot": { type: "oauth", expires: Date.now() + 10 * 3600_000 } },
+];
 
 /** A session UI that records what reaches the person. */
 function fakeUi(o: Partial<SessionUi> & { picks?: string[]; yes?: boolean } = {}): SessionUi & {
@@ -665,6 +808,18 @@ function fakeUi(o: Partial<SessionUi> & { picks?: string[]; yes?: boolean } = {}
     told,
     escape: () => esc?.(),
   };
+}
+
+/** The shipped config with `[models] model` pinned to `model`, written under
+ * `dir`: for the cases about a review whose config names a provider. The
+ * shipped one names none. */
+function pinnedConfig(dir: string, model: string): string {
+  const shipped = readFileSync(join(ROOT, "config.example.toml"), "utf8");
+  const pinned = shipped.replace(/^# model = "provider\/id"$/m, `model = "${model}"`);
+  if (pinned === shipped) throw new Error("config.example.toml has no model line to pin");
+  const file = join(dir, "qcr-config-pinned.toml");
+  writeFileSync(file, pinned);
+  return file;
 }
 
 let hostN = 0;
@@ -806,10 +961,29 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
     expect(JSON.parse(uj.printed[0]!)).toEqual({ schema_version: 1, ok: true });
   });
 
-  it("refuses with pi's /login when only a key is there, before anything runs", async () => {
+  // The shipped config pins no model, so the review runs on whichever
+  // provider pi has a credential for: no login is "the wrong one".
+  // MUTATION: restore a pinned model in MODELS_TIER_DEFAULTS or the example
+  // config — the review is refused for want of that provider's login, and
+  // this fails.
+  it("runs on whatever login pi has: a key for any provider is enough", async () => {
+    for (const logins of anyOneLogin()) {
+      const deps = fakeReview();
+      const ui = fakeUi();
+      await runReviewCommand("", fakeHost({ auth: fakeAuth(logins) }), ui, deps);
+      expect(ui.notes.filter(([l]) => l === "error")).toEqual([]);
+      expect(deps.calls).toHaveLength(1);
+      expect(deps.calls[0]!.mode).toBe("review");
+    }
+  });
+
+  // A config that pins a model still names its provider, and the review runs
+  // on that model or not at all.
+  it("with a pinned model, refuses with pi's /login when only another provider's key is there", async () => {
     const deps = fakeReview();
     const ui = fakeUi();
     const host = fakeHost({ auth: fakeAuth({ anthropic: { type: "api_key", expires: null } }) });
+    host.env["QCR_CONFIG"] = pinnedConfig(host.home, "openai-codex/some-model");
     await runReviewCommand("", host, ui, deps);
     expect(deps.calls).toHaveLength(0);
     expect(ui.notes.find(([l]) => l === "error")?.[1]).toMatch(
@@ -1631,9 +1805,8 @@ describe("/qcr-scan (the plugin's own engine)", () => {
   // credentials stay the old config's, and this fails.
   it("each case borrows the providers of the config as it reads now", async () => {
     const host = scanHost();
-    const config = join(host.home, "qcr-config.toml");
-    const shipped = readFileSync(join(ROOT, "config.example.toml"), "utf8");
-    writeFileSync(config, shipped);
+    const config = pinnedConfig(host.home, "openai-codex/some-model");
+    const pinned = readFileSync(config, "utf8");
     host.env["QCR_CONFIG"] = config;
     const seen: { providers?: () => readonly string[] } = {};
     const deps = fakeScan(host, { built: (o) => (seen.providers = o.providers) });
@@ -1642,10 +1815,13 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     await sessions.idle();
     const providers = seen.providers;
     if (providers === undefined) throw new Error("no case runner was built");
-    expect(providers()).toContain("openai-codex");
-    writeFileSync(config, shipped.replaceAll('"openai-codex/', '"anthropic/'));
-    expect(providers()).toContain("anthropic");
-    expect(providers()).not.toContain("openai-codex");
+    expect(providers()).toEqual(["openai-codex"]);
+    writeFileSync(config, pinned.replaceAll('"openai-codex/', '"anthropic/'));
+    expect(providers()).toEqual(["anthropic"]);
+    // The shipped config pins no model: no provider is named, and a case
+    // then borrows the whole login (fillCaseAgentDir).
+    writeFileSync(config, readFileSync(join(ROOT, "config.example.toml"), "utf8"));
+    expect(providers()).toEqual([]);
   });
 
   // MUTATION: drop fillCaseAgentDir's no-file branch (copyPiAuth on a host
@@ -1741,11 +1917,35 @@ describe("/qcr-setup", () => {
     );
   });
 
-  it("leaves the login missing with the /login hint when only another provider's key is there", async () => {
+  // The shipped config pins no model: any stored login is one a review can
+  // run on. MUTATION: check the login step against a provider the config no
+  // longer names (an empty list reads as "pi can reach" nothing, done) or
+  // against a fixed provider — one of the two halves fails.
+  it("with no model pinned, any stored login is the login, and none is missing", async () => {
+    for (const logins of anyOneLogin()) {
+      const host = fakeHost({ runner: scriptedRunner({}), auth: fakeAuth(logins) });
+      const lines = await runSetupChecks({ host, range, root: () => ROOT });
+      const login = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
+      expect(login.status).toBe("done");
+      expect(login.found).toBe(
+        `pi has a login for ${Object.keys(logins)[0]}: the review runs on a provider pi is signed in to`,
+      );
+    }
+    const none = fakeHost({ runner: scriptedRunner({}), auth: fakeAuth({}) });
+    const lines = await runSetupChecks({ host: none, range, root: () => ROOT });
+    const login = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
+    expect(login.status).toBe("pending");
+    expect(login.note).toMatch(/Run \/login in pi and sign in to any provider/);
+    expect(renderChecklist(lines)).toMatch(/✗ \*\*login\*\*/);
+    expect(renderChecklist(lines)).toMatch(/1 check failed\./);
+  });
+
+  it("with a pinned model, leaves the login missing when only another provider's key is there", async () => {
     const host = fakeHost({
       runner: scriptedRunner({}),
       auth: fakeAuth({ anthropic: { type: "api_key", expires: null } }),
     });
+    host.env["QCR_CONFIG"] = pinnedConfig(host.home, "openai-codex/some-model");
     const lines = await runSetupChecks({ host, range, root: () => ROOT });
     const login = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
     expect(login.status).toBe("pending");
@@ -1755,17 +1955,19 @@ describe("/qcr-setup", () => {
     expect(renderChecklist(lines)).toMatch(/1 check failed\./);
   });
 
-  // The checklist reads the login the way a review borrows it: the shipped
-  // openai-codex models run on an openai login when only that one exists.
+  // The checklist reads the login the way a review borrows it: a config
+  // pinned to an openai-codex model runs on an openai login when only that
+  // one exists.
   // MUTATION: check reviewProviders(cfg) instead of routedProviders(…) in the
   // login step — the twin's login reads missing and this fails.
-  it("counts the OpenAI twin's login or key as the login a review runs on", async () => {
+  it("counts the OpenAI twin's login or key as the login a pinned review runs on", async () => {
     for (const login of [
       { type: "oauth", expires: Date.now() + 10 * 3600_000 },
       { type: "api_key", expires: null },
     ]) {
       const auth = fakeAuth({ openai: login });
       const host = fakeHost({ runner: scriptedRunner({}), auth });
+      host.env["QCR_CONFIG"] = pinnedConfig(host.home, "openai-codex/some-model");
       const lines = await runSetupChecks({ host, range, root: () => ROOT });
       const step = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
       expect(step.status, login.type).toBe("done");

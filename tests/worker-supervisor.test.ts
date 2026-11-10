@@ -67,6 +67,8 @@ interface RigOptions {
   buildEnv?: Record<string, string>;
   /** The central lens permit broker, handed to the supervisor. */
   permits?: PermitBroker;
+  /** The built spec's model. Omitted: a pinned one. */
+  model?: string;
 }
 
 let dir: string;
@@ -128,7 +130,7 @@ async function rig(o: RigOptions = {}) {
         agent_dir: join(base, "agent"),
         session_dir: join(base, "sessions"),
         system_prompt_file: join(base, "system.md"),
-        model: "faux/faux-1",
+        model: o.model ?? "faux/faux-1",
         env: { PATH: process.env["PATH"] ?? "/usr/bin", ...o.buildEnv },
         events_file: join(base, "ev.jsonl"),
         stderr_file: join(base, "err.log"),
@@ -242,6 +244,23 @@ describe("the worker's life", () => {
     expect(r.caps.get(row.id)).toBeUndefined();
     expect(readdirSync(join(r.runDir, "workers"))).toEqual([]);
     expect(r.events("worker_exited")[0]).toMatchObject({ outcome: "acked", code: 0 });
+  });
+
+  // A config that pins no model builds a spec whose model is empty (or a
+  // bare level): the supervisor checks every spec it built before it starts a
+  // worker, and that check must let such a spec through as it is.
+  // MUTATION: read `model` as a non-empty string in parseWorkerSpec
+  // (src/ipc/workerspec.ts) — the launch is refused and this fails.
+  it("launches a command whose spec names no model, and hands it over as built", async () => {
+    for (const model of ["", ":high"]) {
+      const r = await rig({ model });
+      const row = r.submit();
+      await r.sup.launch(row.id);
+      await until(finished(r.sup));
+      expect(r.store.getSessionCommand(row.id)!.status, JSON.stringify(model)).toBe("acked");
+      const spec = JSON.parse(r.out(row.id, "spec.json")) as WorkerSpec;
+      expect(spec.model).toBe(model);
+    }
   });
 
   it("launching a worker leaves the socket's dir as the server opened it", async () => {

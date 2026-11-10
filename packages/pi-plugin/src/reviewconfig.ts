@@ -1043,7 +1043,9 @@ function parsePiLensRuntime<T extends { lens_runtime: unknown; engine_wave: unkn
   return pi;
 }
 
-/** Defaults for the tiered [models] knobs — older configs keep parsing. */
+/** Defaults for the tiered [models] knobs — older configs keep parsing. No
+ * tier names a model: each runs on the run's route, at its `TIER_LEVELS`
+ * level, until a config pins one. */
 export const MODELS_TIER_DEFAULTS: Pick<
   ModelsConfig,
   | "tiers"
@@ -1061,9 +1063,9 @@ export const MODELS_TIER_DEFAULTS: Pick<
   effort: "",
   effort_max: "max",
   tiers: {
-    [BASE_TIER]: "openai-codex/gpt-6.1-sol:medium",
-    [ADD_TIER]: "openai-codex/gpt-6.1-sol:medium",
-    [RISK_TIER]: "openai-codex/gpt-6.1-sol:high",
+    [BASE_TIER]: `:${TIER_LEVELS[BASE_TIER]}`,
+    [ADD_TIER]: `:${TIER_LEVELS[ADD_TIER]}`,
+    [RISK_TIER]: `:${TIER_LEVELS[RISK_TIER]}`,
   },
   risk_passes: ["pass-security", "pass-prod-risk", "pass-data-safety"],
   validate_tier: RISK_TIER,
@@ -1529,6 +1531,17 @@ function parseModelPin(raw: Record<string, any>): string {
   return raw.model;
 }
 
+/** `[models]` as written, or an empty table: a config with no `[models]`
+ * section pins nothing and takes every default. A `models` that is no table
+ * is refused. */
+export function modelsTable(raw: Record<string, any>): Record<string, any> {
+  const models: unknown = raw.models;
+  if (models === undefined) return {};
+  if (typeof models !== "object" || models === null || Array.isArray(models))
+    throw new Error(`config.toml [models] must be a table (got ${JSON.stringify(models)})`);
+  return models as Record<string, any>;
+}
+
 export function parseModels(
   raw: Record<string, any>,
   presetEffort: ReviewEffort = "",
@@ -1959,7 +1972,7 @@ export function parseCoreConfig(
   const cfg: CoreConfig = {
     dry_run: Boolean(req(raw, "dry_run")),
     github,
-    models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
+    models: parseModels(modelsTable(raw), REVIEW_PRESETS[preset].effort),
     engine,
     pi: parsePiSection(raw),
     guards: parseGuardsSection(raw),

@@ -200,6 +200,10 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
     );
     const workers = join(stateDir, "workers");
     mkdirSync(workers, { recursive: true });
+    // The providers the config's pinned models name. A config that pins none
+    // names none, and the spec then carries no list: an empty one would read
+    // as "no provider", and the worker runs on whatever the login holds.
+    const providers = reviewProviders(cfg);
     return {
       mode,
       command_id: row.id,
@@ -212,9 +216,11 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
       cwd: root,
       agent_dir: o.agentDir,
       ...(o.loginDir !== undefined && o.loginDir !== o.agentDir ? { login_dir: o.loginDir } : {}),
-      providers: reviewProviders(cfg),
+      ...(providers.length > 0 ? { providers } : {}),
       session_dir: sessions.sessionDir(row.session),
       system_prompt_file: sessions.writeSystemPrompt(row.session, prompt),
+      // The review's pin, or a spec with no model part ("" or a bare level):
+      // the worker then resolves the model from the login it reads.
       model: cfg.models.model,
       env: workerEnvFor(row, worktree, title),
       events_file: join(workers, `${row.id}.events.jsonl`),

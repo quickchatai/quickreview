@@ -13,6 +13,10 @@
 //     names, or not at all. The one exception is the OpenAI family: an
 //     `openai-codex/` model runs on an `openai` login (and back) when only
 //     that one exists (modelroute.ts), the same model id on either.
+// A config that pins no model names no provider. The run is then on
+// whichever provider the login holds, so the whole login is borrowed: every
+// stored login is made to last the same way, and one the host cannot renew is
+// left out, since nothing says the review needs it.
 // The run then reads a refresh-disabled copy of the login (engine/auth.ts):
 // nothing in it can refresh, so a rotated token never leaves the host.
 import type { LoginSummary } from "../engine/auth.js";
@@ -36,7 +40,9 @@ export type BorrowResult =
       ok: true;
       refreshed: string[];
       /** The providers the run uses, each OpenAI one on the login that exists:
-       * the run's login copy carries exactly these. */
+       * the run's login copy carries exactly these. For a review that names
+       * no provider: the stored logins that last the run, and empty when pi
+       * stores none (the copy is then the whole login, which is nothing). */
       providers: string[];
     }
   | { ok: false; error: string };
@@ -81,47 +87,95 @@ export function canUseProvider(
   return host.logins()[provider]?.type === "oauth" || host.configured(provider);
 }
 
-/**
- * Make sure every provider the review needs is usable for `needMs` from now,
- * refreshing a short OAuth login through the host. `marginMs` is added to the
- * window the host must cover.
- */
-export async function borrowLogin(o: {
+/** What `borrowLogin` is asked. */
+interface BorrowRequest {
+  /** The providers the review's pinned models name. Empty: the review names
+   * none, and the whole login is borrowed. */
   providers: readonly string[];
   host: HostAuth;
   needMs: number;
   marginMs: number;
   now?: () => number;
-}): Promise<BorrowResult> {
+}
+
+/**
+ * Make one stored OAuth login last `want` more milliseconds, asking the host
+ * pi to refresh it when it would not. Resolves to whether pi refreshed it,
+ * or to the reason it cannot last.
+ */
+async function lastOrRefresh(
+  o: BorrowRequest,
+  provider: string,
+  want: number,
+): Promise<{ refreshed: boolean } | { error: string }> {
   const now = o.now ?? Date.now;
-  const want = o.needMs + o.marginMs;
+  const held = o.host.logins()[provider];
+  if (held?.type === "oauth" && held.expires !== null && held.expires >= now() + want)
+    return { refreshed: false };
+  try {
+    await o.host.refresh(provider, want);
+  } catch (err) {
+    return {
+      error: `pi could not refresh your ${provider} login (${err instanceof Error ? err.message : String(err)}). Run /login ${provider} in pi, then /qcr-review again.`,
+    };
+  }
+  const after = o.host.logins()[provider];
+  if (after?.type !== "oauth" || after.expires === null || after.expires < now() + want)
+    return {
+      error: `your ${provider} login does not last this review's ${Math.round(o.needMs / 60_000)} minutes even after pi refreshed it. Run /login ${provider} in pi, then /qcr-review again.`,
+    };
+  return { refreshed: true };
+}
+
+/**
+ * The whole login, for a review that names no provider: every stored key,
+ * and every stored OAuth login that lasts the run or that pi refreshed to
+ * last it. A login pi cannot renew is left out, not a refusal: the review
+ * runs on another one. Only when pi stores logins and none of them can last
+ * is the run refused, with the first one's reason. A pi that stores no login
+ * borrows nothing, and a key in the environment is then the route.
+ */
+async function borrowWholeLogin(o: BorrowRequest, want: number): Promise<BorrowResult> {
   const refreshed: string[] = [];
-  let logins = o.host.logins();
+  const kept: string[] = [];
+  let firstError: string | undefined;
+  for (const [provider, login] of Object.entries(o.host.logins())) {
+    if (login.type !== "oauth") {
+      kept.push(provider);
+      continue;
+    }
+    const lasting = await lastOrRefresh(o, provider, want);
+    if ("error" in lasting) {
+      firstError ??= lasting.error;
+      continue;
+    }
+    if (lasting.refreshed) refreshed.push(provider);
+    kept.push(provider);
+  }
+  if (kept.length === 0 && firstError !== undefined) return { ok: false, error: firstError };
+  return { ok: true, refreshed, providers: kept };
+}
+
+/**
+ * Make sure every provider the review needs is usable for `needMs` from now,
+ * refreshing a short OAuth login through the host. `marginMs` is added to the
+ * window the host must cover. An empty `providers` is the whole login
+ * (`borrowWholeLogin`), never no login at all.
+ */
+export async function borrowLogin(o: BorrowRequest): Promise<BorrowResult> {
+  const want = o.needMs + o.marginMs;
+  if (o.providers.length === 0) return borrowWholeLogin(o, want);
+  const refreshed: string[] = [];
   const providers = routedProviders(o.providers, o.host);
   for (const p of providers) {
-    const login = logins[p];
-    if (login?.type === "oauth") {
-      if (login.expires !== null && login.expires >= now() + want) continue;
-      try {
-        await o.host.refresh(p, want);
-      } catch (err) {
-        return {
-          ok: false,
-          error: `pi could not refresh your ${p} login (${err instanceof Error ? err.message : String(err)}). Run /login ${p} in pi, then /qcr-review again.`,
-        };
-      }
-      logins = o.host.logins();
-      const after = logins[p];
-      if (after?.type !== "oauth" || after.expires === null || after.expires < now() + want)
-        return {
-          ok: false,
-          error: `your ${p} login does not last this review's ${Math.round(o.needMs / 60_000)} minutes even after pi refreshed it. Run /login ${p} in pi, then /qcr-review again.`,
-        };
-      refreshed.push(p);
+    if (o.host.logins()[p]?.type === "oauth") {
+      const lasting = await lastOrRefresh(o, p, want);
+      if ("error" in lasting) return { ok: false, error: lasting.error };
+      if (lasting.refreshed) refreshed.push(p);
       continue;
     }
     if (o.host.configured(p)) continue;
-    const keyed = Object.entries(logins)
+    const keyed = Object.entries(o.host.logins())
       .filter(([name, l]) => name !== p && l.type === "api_key")
       .map(([name]) => name);
     return { ok: false, error: noLoginHint(p, keyed) };

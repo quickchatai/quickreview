@@ -173,7 +173,9 @@ export function prepareReviewHost(o: {
   /** Carry (and check) only these providers' logins into the run: a host
    * whose login holds other providers' tokens (a person's own pi) gives the
    * review's providers here, so an unrelated short-lived login neither rides
-   * along nor refuses the run. Omitted: the whole login. */
+   * along nor refuses the run. Omitted or empty: the whole login. A config
+   * that pins no model names no provider, and the run is then on whichever
+   * provider the login holds, so an empty list never means "carry nothing". */
   authProviders?: readonly string[];
   /** How the run's sessions get the login. `copy` (the default): the
    * refresh-disabled copy is written into the private agent dir, and checked
@@ -199,7 +201,9 @@ export function prepareReviewHost(o: {
         needMs: o.needMs,
         ...(o.now ? { now: o.now } : {}),
         words: o.authWords ?? ENGINE_AUTH_WORDS,
-        ...(o.authProviders ? { providers: o.authProviders } : {}),
+        ...(o.authProviders !== undefined && o.authProviders.length > 0
+          ? { providers: o.authProviders }
+          : {}),
       });
     } else {
       // No login: an API key in the environment is the route (as the bench's).

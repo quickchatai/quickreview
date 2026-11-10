@@ -45,16 +45,21 @@ export interface WorkerSpec {
   agent_dir: string;
   /** Where the login is borrowed from instead, when it is not in `agent_dir`:
    * the single box's shared login (src/loginrefresh/supervisor.ts
-   * `loginDirOf`). Absent: `agent_dir`. */
+   * `loginDirOf`). Absent: `agent_dir`. The remembered model choice and pi's
+   * saved provider are read from the same directory as the login. */
   login_dir?: string;
-  /** The providers the review's models name (the config's, plugin/login.ts
-   * `reviewProviders`): the login's admission checks only theirs. Omitted:
-   * every login in it. */
+  /** The providers the config's pinned models name (modelroute.ts
+   * `reviewProviders`). Omitted: the config pins no model. The worker's
+   * borrow does not narrow by it: it takes every login that lasts the
+   * command and leaves out, never refuses, one that does not. */
   providers?: string[];
   /** Where the PR's main JSONL lives (`state/pi-sessions/pr-<n>`). The worker
    * resumes the newest one under it, or starts a session there at birth. */
   session_dir: string;
   system_prompt_file: string;
+  /** The main session's model spec, `[provider/id][:level]`: the review's pin,
+   * or one with no model part (`""`, `":high"`) when the config pins none.
+   * The worker then runs on the route it resolves over the login it reads. */
   model: string;
   /** What the model's tools see. Never a GitHub token (rule 3), and none of the
    * IPC names: the worker adds those to the main session's env itself. */
@@ -107,6 +112,13 @@ function bad(why: string): never {
 function str(o: Record<string, unknown>, key: string): string {
   const x = o[key];
   if (typeof x !== "string" || x === "") return bad(`\`${key}\` must be a non-empty string`);
+  return x;
+}
+
+/** A string that may be empty (a model spec that names no model). */
+function text(o: Record<string, unknown>, key: string): string {
+  const x = o[key];
+  if (typeof x !== "string") return bad(`\`${key}\` must be a string`);
   return x;
 }
 
@@ -163,7 +175,7 @@ export function parseWorkerSpec(raw: unknown): WorkerSpec {
     agent_dir: abs(raw, "agent_dir"),
     session_dir: abs(raw, "session_dir"),
     system_prompt_file: abs(raw, "system_prompt_file"),
-    model: str(raw, "model"),
+    model: text(raw, "model"),
     env,
     events_file: abs(raw, "events_file"),
     stderr_file: abs(raw, "stderr_file"),
