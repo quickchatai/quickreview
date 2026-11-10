@@ -57800,9 +57800,9 @@
   },
   {
    "file": "README.md",
-   "anchor": "not blocked, but only 26+ is supported",
+   "anchor": "not blocked, but only 22.19+ is supported",
    "tokens": [
-    "26"
+    "22.19"
    ],
    "why": "a version (Node)"
   },
