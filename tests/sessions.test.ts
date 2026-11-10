@@ -285,6 +285,35 @@ describe("buildPiCommand", () => {
     ]);
   });
 
+  // MUTATION: pass `--model spec.model` whatever it holds — a session whose
+  // spec names no model starts pi with an empty `--model` and this fails.
+  it("names a model only for a spec that names one: with none pi starts on its own choice", () => {
+    const at = {
+      piBin: "pi",
+      sessionDir: "d",
+      systemPromptPath: "p",
+      extensionPaths: [],
+      sessionName: "s",
+    };
+    const pinned = buildPiCommand({ ...at, model: "made-up/large-3:high" });
+    expect(pinned[pinned.indexOf("--model") + 1]).toBe("made-up/large-3:high");
+    const unpinned = buildPiCommand({ ...at, model: "" });
+    expect(unpinned).toEqual([
+      "pi",
+      "--approve",
+      "--session-dir",
+      "d",
+      "--system-prompt",
+      "p",
+      "--name",
+      "s",
+    ]);
+    // A level with no model is the level alone.
+    const level = buildPiCommand({ ...at, model: ":high" });
+    expect(level).not.toContain("--model");
+    expect(level[level.indexOf("--thinking") + 1]).toBe("high");
+  });
+
   it("carries no update/auto-update flag (version is pinned by config)", () => {
     const argv = buildPiCommand({
       piBin: "pi",

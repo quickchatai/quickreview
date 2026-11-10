@@ -41,7 +41,7 @@ import {
   stateHome,
   type InstallEnv,
 } from "../install.js";
-import { COMPANION_IMAGE, type CompanionConfig } from "../config.js";
+import { COMPANION_IMAGE, isPinned, piModelFlags, type CompanionConfig } from "../config.js";
 import { writeAtomic } from "../channelfs.js";
 import { appStamp } from "../appstamp.js";
 import { TOKEN_FILE } from "./ghread.js";
@@ -641,8 +641,10 @@ export class CompanionLifecycle {
     for (const m of this.mountSpec())
       argv.push("--volume", `${m.source}:${m.dest}${m.mode ? `:${m.mode}` : ""}`);
     argv.push(...this.memoryEnvArgv());
-    // pi's default model, set by the entrypoint on every start.
-    argv.push("--env", `QCR_PI_DEFAULT_MODEL=${this.cfg.model}`);
+    // A pinned `[companion] model` is pi's default, set by the entrypoint on
+    // every start. With none pinned the name is not passed at all: the
+    // entrypoint writes no default and pi starts on its own choice.
+    if (isPinned(this.cfg.model)) argv.push("--env", `QCR_PI_DEFAULT_MODEL=${this.cfg.model}`);
     if (this.socketPath !== undefined) argv.push("--env", `${TMUX_SOCKET_ENV}=${this.socketPath}`);
     // The agent is reached by its mounted socket; no key is in the container.
     if (this.sshSources().agent !== undefined) argv.push("--env", `SSH_AUTH_SOCK=${SSH.agent}`);
@@ -700,10 +702,10 @@ export class CompanionLifecycle {
       `${ext}/muted-theme.json`,
       "--extension",
       // The login route (extensions/login-route.ts), before the inject bridge so
-      // the day-open delivery meets a routed model: a companion whose model's
-      // provider has no login runs the same model on the other OpenAI login
-      // when that one exists, and a companion with no usable login at all says
-      // which logins work and leaves `/login` on its input line.
+      // the day-open delivery meets a routed model: a companion whose model
+      // has a credential keeps it, one whose model has none runs on the
+      // review's route over the logins that exist, and a companion with no
+      // usable login at all says so and leaves `/login` on its input line.
       `${ext}/cli/login-route.ts`,
       "--extension",
       // Day-open channel: the daemon's inject bridge, unmodified. It
@@ -746,8 +748,9 @@ export class CompanionLifecycle {
       // header; byte-identical at 0.84.1 and 0.84.4). QoL for the operator
       // typing into the mirrored terminal.
       `${ext}/inline-bash.ts`,
-      "--model",
-      this.cfg.model,
+      // `--model` only for a pinned `[companion] model` (config.ts
+      // piModelFlags): with none, pi starts on its own choice for the login.
+      ...piModelFlags(this.cfg.model),
       "--session-dir",
       companionSessionDir(this.cfg.session),
       "--system-prompt",

@@ -63,6 +63,7 @@ import { loginInPi } from "./pilogin.js";
 import { appStamp } from "./appstamp.js";
 import { isInside } from "@quickchatai/pi-quickreview/src/pathinside.js";
 import type { ScanSandboxConfig } from "./config.js";
+import { isPinned } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import type { LoginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   PI_REFRESH_MARGIN_MS,
@@ -345,8 +346,9 @@ export async function scanLoginRoute(
       ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
       "--mount",
       mountSpec({ dest: SCANBOX.piHome, source: vol }),
-      "--env",
-      `QCR_PI_DEFAULT_MODEL=${companion.model}`,
+      // A pinned `[companion] model` is the default the entrypoint writes;
+      // with none pinned nothing is passed, and nothing is written.
+      ...(isPinned(companion.model) ? ["--env", `QCR_PI_DEFAULT_MODEL=${companion.model}`] : []),
       s.image,
       ...pi,
     ],

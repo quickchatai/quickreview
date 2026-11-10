@@ -310,16 +310,31 @@ describe("the pi the pane starts", () => {
     expect(argv).not.toContain("--continue");
     expect(argv).not.toContain("--session-dir");
     expect(argv.at(-1)).toBe(DEBUG_START_MESSAGE);
-    // extensions in the spec's order; bash-guard first
-    expect(argv.flatMap((a, i) => (argv[i - 1] === "--extension" ? [a] : []))).toEqual(
-      withFile.extensions,
-    );
+    // extensions in the spec's order, bash-guard first; then the login route
+    expect(argv.flatMap((a, i) => (argv[i - 1] === "--extension" ? [a] : []))).toEqual([
+      ...withFile.extensions,
+      join(withFile.root, "extensions", "cli", "login-route.ts"),
+    ]);
     // no tools allowlist: the round's own tools (the lens pair, bash, the file tools)
     expect(argv).not.toContain("--tools");
     // a PR with no JSONL gets one born in its session dir
     const born = debugRoundArgv(specOf());
     expect(born).toContain("--session-dir");
     expect(born).not.toContain("--session");
+  });
+
+  // MUTATION: pass `--model spec.model` whatever it holds — an unpinned round
+  // starts pi with an empty `--model` and this fails.
+  it("names a model only when the config pins one: with none the session resumes on the model it last ran on", () => {
+    const pinned = debugRoundArgv(specOf());
+    expect(pinned[pinned.indexOf("--model") + 1]).toBe("faux/faux-1");
+    const unpinned = debugRoundArgv(specOf({ model: "" }));
+    expect(unpinned).not.toContain("--model");
+    expect(unpinned).not.toContain("--thinking");
+    expect(unpinned.at(-1)).toBe(DEBUG_START_MESSAGE);
+    const level = debugRoundArgv(specOf({ model: ":high" }));
+    expect(level).not.toContain("--model");
+    expect(level[level.indexOf("--thinking") + 1]).toBe("high");
   });
 
   it("gets an env with no GitHub token of any name, the round's own names, and the debug names", () => {
@@ -349,6 +364,8 @@ describe("the pi the pane starts", () => {
       QCR_DEBUG_PACK_FILE: join(spec.passes_dir, "context-pack.md"),
       QCR_DEBUG_STUB_FILE: spec.stub_file,
       QCR_DEBUG_TASKS_DIR: spec.passes_dir,
+      // the login is a borrowed copy: the login route offers no /login there
+      QCR_LOGIN_OPEN: "none",
     });
     // a round with no planned wave names no task dir
     expect(debugRoundEnv({}, specOf())["QCR_DEBUG_TASKS_DIR"]).toBeUndefined();

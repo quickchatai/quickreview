@@ -227,9 +227,9 @@ export function createOnboarding(config: OnboardingConfig): ExtensionFactory {
 
 /**
  * The onboarding session's first-run login: when pi has no usable model
- * login, pi's own /login menu opens with a widget that says which logins work
- * (any OpenAI one), and an OpenAI model whose provider has no login runs on
- * the twin login that exists (extensions/login-route.ts). The wizard's
+ * login, pi's own /login menu opens with a widget that says any provider's
+ * login works, and a session whose model has no credential runs on the
+ * review's route over the logins that exist (extensions/login-route.ts). The wizard's
  * session registers it with the tools; a host that builds its own onboarding
  * extension over `toolDefinitions` + `registerQcrTool` calls it too.
  */

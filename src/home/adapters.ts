@@ -67,7 +67,8 @@ import {
   type SpendPort,
 } from "./ports.js";
 
-/** The launch hands the child pi its model and tool set in these. */
+/** The launch hands the child pi its tool set, and its model when the config
+ * pins one, in these. */
 export const HOME_MODEL_ENV = "QCR_HOME_MODEL";
 export const HOME_TOOLS_ENV = "QCR_HOME_TOOLS";
 
@@ -384,7 +385,11 @@ export function seedStack(root: string, pkgRoot: string): void {
 /** The home's options from a process's environment: the env shim's one call. */
 export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefined>>): {
   adapters: HomeAdapters;
+  /** The model the launch pinned, `provider/id`; "" when it pinned none. */
   model: string;
+  /** pi's agent dir: the login the chat and the reviews share, and where the
+   * remembered model choice is. */
+  agentDir: string;
   tools: HomeToolSet;
   tune: TunePort;
   advanced: AdvancedPort;
@@ -394,9 +399,11 @@ export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefin
   const root = homeStackRoot(env);
   seedStack(root, sandboxRoot());
   const configPath = (): string => locateConfig({ env }).path;
+  const agentDir = piAgentDir(env);
   return {
+    agentDir,
     adapters: realHomeAdapters({
-      agentDir: piAgentDir(env),
+      agentDir,
       configPath,
       reviews: realReviewsPort(env, { root, runner: stepRunner }),
       root,

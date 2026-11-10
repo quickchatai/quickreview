@@ -3,6 +3,11 @@
 // env shim, extensions/cli/home.ts, beside the plugin; a factory over explicit
 // options, so it reads no process state.
 //
+// The chat keeps the model pi started on (its saved default, the resumed
+// session's, or the `[home] model` pin) while that model has a credential; a
+// chat whose model has none is moved to the review's route, by the route step
+// of extensions/login-route.ts, which is registered here with no login hint.
+//
 // Every action is one HomeModel method (src/home/model.ts), called by a key
 // and by a tool alike:
 //
@@ -68,6 +73,7 @@ import {
   textResult,
   type QcrTool,
 } from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
+import { readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import { REVIEW_MESSAGE } from "@quickchatai/pi-quickreview/src/plugin/messages.js";
 import { readQuickReviewSettings } from "@quickchatai/pi-quickreview/src/plugin/settings.js";
 import type { HomeToolSet } from "../src/config.js";
@@ -84,13 +90,18 @@ import { SETUP_OVERLAY, SetupCard } from "../src/home/setupcard.js";
 import { setupTools } from "../src/home/setuptools.js";
 import { HOME_TOOL_NAMES } from "../src/home/toolnames.js";
 import { HomeTune, type TunePort } from "../src/home/tune.js";
+import { registerModelRoute } from "./login-route.js";
 
 type HomeToolName = (typeof HOME_TOOL_NAMES)[number];
 
 export interface HomeOptions {
   adapters: HomeAdapters;
-  /** The model the home was launched on, `provider/id`. */
+  /** The model the launch pinned, `provider/id`; "" when it pinned none and
+   * the chat runs on the model pi started on. */
   model: string;
+  /** pi's agent dir, whose remembered model choice the model route honours.
+   * Omitted: no choice is read. */
+  agentDir?: string;
   /** The tool set it was launched with, shown on the login line. */
   tools: HomeToolSet;
   /** Run `fn` every `ms` until the returned stop is called. */
@@ -301,6 +312,15 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       refresh();
     });
     pi.on("model_select", (e) => model.setChatModel(e.model.provider));
+    // The chat keeps the model pi started on while it has a credential, and
+    // runs on the review's route when it has none (the route step of
+    // extensions/login-route.ts). No login hint comes with it: signing in is
+    // the setup card's step.
+    const agentDir = o.agentDir;
+    registerModelRoute(
+      pi,
+      agentDir !== undefined ? { choice: () => readModelChoice(agentDir).choice } : {},
+    );
     // pi's own word on the login: a reply refused for it, or one that came back
     pi.on("message_end", (e) => {
       const m = e.message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };

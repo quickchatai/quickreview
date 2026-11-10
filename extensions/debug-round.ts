@@ -260,8 +260,10 @@ export function activateDebugRound(
   const lens = interactiveLensBoard(
     env,
     () => cwd,
-    async (dir) => {
-      const host = await makeHost(dir);
+    // The session's model is passed on as given: a lens that pins no model
+    // runs on the model this round's session is on.
+    async (dir, route) => {
+      const host = await makeHost(dir, route);
       // Evidence that the lens sessions share this pi's dispatcher.
       patchStatus(statusFile, { dispatcher: host.dispatcher });
       return host;

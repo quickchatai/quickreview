@@ -88,8 +88,8 @@
     },
     {
       "id": "session-cwd-and-cache-id",
-      "assumes": "SessionManager.open defaults its cwd to the spec's; inMemory({id}) sets the id the provider keys its cache on. The file's four other tags are the model route's reads of pi, each held by its own entry and its own offline test: pi-default-probe, pi-auth-status-origin, pi-offline-refresh and pi-model-text-parse.",
-      "files": { "packages/pi-plugin/src/engine/pisdk.ts": 6 },
+      "assumes": "SessionManager.open defaults its cwd to the spec's; inMemory({id}) sets the id the provider keys its cache on. The file's other tag is the host's offline refresh, held by its own entry and its own offline test: pi-offline-refresh.",
+      "files": { "packages/pi-plugin/src/engine/pisdk.ts": 3 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -277,13 +277,23 @@
       }
     },
     {
-      "id": "any-openai-login",
-      "assumes": "getProviderAuthStatus(p).configured covers every credential kind and pi.setModel refuses a provider without one; setEditorComponent wires the default editor's onSubmit synchronously.",
+      "id": "login-route-session-model",
+      "assumes": "ModelRegistry.getAvailable() lists a provider's models only when the provider has a credential of any kind, and pi.setModel refuses a provider without one; setEditorComponent wires the default editor's onSubmit synchronously.",
       "files": { "extensions/login-route.ts": 2 },
       "signal": {
         "source": "none",
         "kind": "gap",
-        "needs": "a first onboarding run whose companion transcript shows /login opened by itself and the session's model moved to the login that exists; no extract field names either yet"
+        "needs": "a first onboarding run whose companion transcript shows /login opened by itself, and a session whose model had no credential moved to the route's model; no extract field names either yet"
+      }
+    },
+    {
+      "id": "route-registry-reads",
+      "assumes": "The model route's three reads of pi's registry facade, shared by an SDK host and an extension inside a running pi: where a provider's credential came from, pi's own default model per provider, and pi's own parse of a model text. Each is held by its own entry and its own offline test: pi-auth-status-origin, pi-default-probe and pi-model-text-parse.",
+      "files": { "packages/pi-plugin/extensions/route-registry.ts": 3 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review started with no model pinned whose start names the provider, the credential and the model the route resolved; no extract field names the resolved route yet"
       }
     },
     {

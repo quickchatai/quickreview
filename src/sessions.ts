@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { coreExtensionPath } from "./coreext.js";
-import type { Config } from "./config.js";
+import { piModelFlags, type Config } from "./config.js";
 import {
   DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S,
   githubCloneDir,
@@ -134,6 +134,7 @@ export function isSandboxSession(name: string): boolean {
 
 export interface PiCommandSpec {
   piBin: string;
+  /** `[provider/id][:level]`; "" names no model. */
   model: string;
   sessionDir: string;
   systemPromptPath: string;
@@ -147,7 +148,9 @@ export interface PiCommandSpec {
  * The pi argv for a session.
  *
  * VERIFY-ON-PIN, every flag:
- * - `--model <provider/id>` — documented.
+ * - `--model <provider/id>` — documented. Passed only for a spec that names
+ *   a model (config.ts piModelFlags): one that names none starts pi on its
+ *   own choice, and one that names only a level passes `--thinking`.
  * - `--session-dir <path>` — documented for RPC mode; assumed to
  *   apply to the interactive TUI as well. Per-session dir (not the shared
  *   store) so archival can pick "the newest .jsonl" unambiguously — all PR
@@ -174,8 +177,7 @@ export function buildPiCommand(spec: PiCommandSpec): string[] {
     // project folder?" modal and the session stalls forever. The reviewer
     // never blocks on interactive input.
     "--approve",
-    "--model",
-    spec.model,
+    ...piModelFlags(spec.model),
     "--session-dir",
     spec.sessionDir,
     "--system-prompt",

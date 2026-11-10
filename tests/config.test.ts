@@ -13,6 +13,7 @@ import {
   loadConfig,
   parseCaps,
   parseConfig,
+  piModelFlags,
   tierModel,
 } from "../src/config.js";
 import { tuiMemoryContainer } from "../src/tui/memforward.js";
@@ -701,6 +702,41 @@ describe("[models] model and the model spec grammar", () => {
       const once = stripPins(pinned).cfg;
       expect(stripPins(once)).toEqual({ cfg: once, replaced: 0 });
     });
+  });
+});
+
+describe("a model spec as the flags a CLI pi is started with", () => {
+  // MUTATION: return `["--model", spec]` for every spec — a launcher with no
+  // pin starts pi on an empty model name and this fails.
+  it("names a model only for a spec that names one", () => {
+    expect(piModelFlags("prov/model-a")).toEqual(["--model", "prov/model-a"]);
+    // The level rides the spec: pi reads `provider/id:level` itself.
+    expect(piModelFlags("prov/model-a:high")).toEqual(["--model", "prov/model-a:high"]);
+    // An id that holds a colon is still a model: only a thinking level is a suffix.
+    expect(piModelFlags("prov/a/b:free")).toEqual(["--model", "prov/a/b:free"]);
+    // Nothing pinned: pi starts on its own choice, and the route decides the rest.
+    expect(piModelFlags("")).toEqual([]);
+    expect(piModelFlags("  ")).toEqual([]);
+    // A level with no model is the level alone.
+    expect(piModelFlags(":high")).toEqual(["--thinking", "high"]);
+  });
+
+  it("the home and the companion ship with no model, and take a pin as written", () => {
+    const base = readFileSync(configPath, "utf8");
+    const shipped = parseConfig(base);
+    expect(shipped.home).toEqual({ model: "", tools: "reviewer" });
+    expect(shipped.companion.model).toBe("");
+    const pinned = parseConfig(
+      base.replace(
+        "\n[companion]\n",
+        '\n[home]\nmodel = "prov/model-a"\n\n[companion]\nmodel = "prov/model-b:low"\n',
+      ),
+    );
+    expect(pinned.home?.model).toBe("prov/model-a");
+    expect(pinned.companion.model).toBe("prov/model-b:low");
+    expect(() =>
+      parseConfig(base.replace("\n[companion]\n", '\n[home]\nmodel = "model-a"\n\n[companion]\n')),
+    ).toThrow(/\[home\]: model must be "provider\/id", or ""/);
   });
 });
 

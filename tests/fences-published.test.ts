@@ -7,7 +7,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../src/config.js";
+import { COMPANION_DEFAULTS, HOME_DEFAULTS, loadConfig, parseHomeSection } from "../src/config.js";
 import {
   MODELS_TIER_DEFAULTS,
   isPinned,
@@ -144,13 +144,18 @@ describe("the shipped config pins nothing", () => {
    * neither do the code's own tier defaults: a tier's shipped spec is a
    * level and no model.
    *
-   * This is the `[models]` half. The home's and the companion's shipped
-   * models are fenced with their own defaults.
+   * The same holds for the two CLI pis the app starts for a person, the home
+   * (a bare `qcr`) and the companion: each starts on pi's own choice for the
+   * login it has, so `[home] model` and `[companion] model` ship empty, in
+   * the example and in the code's defaults alike.
    *
    * MUTATION: uncomment `model = ` in config.example.toml's [models] — this fails.
    * MUTATION: uncomment a line of its [models.tiers] — this fails.
    * MUTATION: write a `provider/id` into MODELS_TIER_DEFAULTS.tiers
    * (packages/pi-plugin/src/reviewconfig.ts) — this fails.
+   * MUTATION: uncomment `model = ` under [home] or [companion] in
+   * config.example.toml, or write a `provider/id` into HOME_DEFAULTS.model or
+   * COMPANION_DEFAULTS.model (src/config.ts) — this fails.
    */
   const example = join(ROOT, "config.example.toml");
 
@@ -181,7 +186,27 @@ describe("the shipped config pins nothing", () => {
     expect(MODELS_TIER_DEFAULTS.pass_models).toEqual({});
   });
 
-  // The check itself: a spec that names a model reads as pinned, so the two
+  it("config.example.toml and the code's defaults: the home and the companion name no model", () => {
+    const cfg = loadConfig(example);
+    expect(cfg.home?.model).toBe("");
+    expect(cfg.companion.model).toBe("");
+    // A config with neither section takes the code's defaults, which name none.
+    expect(HOME_DEFAULTS.model).toBe("");
+    expect(parseHomeSection(undefined).model).toBe("");
+    expect(COMPANION_DEFAULTS.model).toBe("");
+    // Neither section of the example sets the key at all: it is there to uncomment.
+    const text = readFileSync(example, "utf8");
+    for (const section of ["home", "companion"]) {
+      const at = text.indexOf(`\n[${section}]\n`);
+      expect(at, `[${section}] is in the example`).toBeGreaterThan(-1);
+      const next = text.indexOf("\n[", at + 1);
+      const body = text.slice(at, next === -1 ? undefined : next);
+      expect(body, `[${section}]`).not.toMatch(/^\s*model\s*=/m);
+      expect(body, `[${section}]`).toMatch(/^# model = "provider\/id(:[a-z]+)?"/m);
+    }
+  });
+
+  // The check itself: a spec that names a model reads as pinned, so the
   // cases above cannot pass on a file that pins one.
   it("isPinned tells a spec that names a model from one that names none", () => {
     for (const pinned of ["prov/model-a", "prov/model-a:high", "prov/a/b:low"])

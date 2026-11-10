@@ -30,6 +30,7 @@ import {
   type ScanSandboxConfig,
 } from "../src/config.js";
 import { appStamp, BAKED_PATHS } from "../src/appstamp.js";
+import { agentModelFlags, parseAgentFile } from "../src/setup/caserunner.js";
 import {
   DRIVER_LOG_ENV,
   IN_SANDBOX_ENV,
@@ -468,10 +469,11 @@ describe("the scan container's argv", () => {
     expect(argv.join(" ")).not.toMatch(/OPENVIKING|--env-file/);
   });
 
+  // The shipped companion pins no model.
   const companionOf = {
     container_name: "qcr-companion",
     pihome_volume: "companion-pihome",
-    model: "openai-codex/gpt-6.1-sol:medium",
+    model: "",
   };
   const LOGIN = loginInPi();
   const companionDocker =
@@ -521,14 +523,63 @@ describe("the scan container's argv", () => {
         ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
         "--mount",
         "type=volume,src=companion-pihome,dst=/home/companion/.pi",
-        "--env",
-        "QCR_PI_DEFAULT_MODEL=openai-codex/gpt-6.1-sol:medium",
         "qcr-companion",
         ...LOGIN,
       ]);
       expect(r.say).toMatch(/not running/);
       expect(r.say).toMatch(/companion-pihome/);
     }
+  });
+
+  // A scan case in the sandbox is a child pi (src/setup/caserunner.ts): what
+  // its agent file says of a model becomes that child's flags.
+  // MUTATION: push `--model agent.model` whenever the field is set — an agent
+  // whose model line names only a level starts the child on a model called
+  // ":low" and this fails.
+  it("a case's child pi is told a model only when its agent file pins one, else only the level", () => {
+    const file = (front: string): string =>
+      `---\nname: pass-x\ndescription: x\n${front}tools: read\n---\nYou are pass-x.\n`;
+    const flags = (front: string): string[] => {
+      const text = file(front);
+      return agentModelFlags(parseAgentFile(text)!, text);
+    };
+    expect(flags("model: made-up/large-3:low\n")).toEqual(["--model", "made-up/large-3:low"]);
+    expect(flags("model: made-up/large-3\nthinking: high\n")).toEqual([
+      "--model",
+      "made-up/large-3",
+    ]);
+    // An unpinned tier's built agent: no `model:` line, its level in `thinking:`.
+    expect(flags("thinking: high\n")).toEqual(["--thinking", "high"]);
+    expect(flags('thinking: "medium"\n')).toEqual(["--thinking", "medium"]);
+    // A model line that names only a level (an agent built before the line was dropped).
+    expect(flags("model: :low\n")).toEqual(["--thinking", "low"]);
+    // Neither, or a level pi does not know: the child runs on its own defaults.
+    expect(flags("")).toEqual([]);
+    expect(flags("thinking: loud\n")).toEqual([]);
+    // A `thinking:` in the body is prose, not the field.
+    expect(agentModelFlags({ model: null }, `${file("")}thinking: high\n`)).toEqual([]);
+  });
+
+  // MUTATION: pass QCR_PI_DEFAULT_MODEL whatever `[companion] model` holds —
+  // the shipped companion's login container gets an empty default (the case
+  // above) and this fails with it.
+  it("`qcr scan login` hands the throwaway container a default model only when [companion] model pins one", async () => {
+    const pinned = await scanLoginRoute(companionDocker("false"), SANDBOX, {
+      ...companionOf,
+      model: "made-up/large-3:medium",
+    });
+    const at = pinned.argv.indexOf("--env");
+    expect(pinned.argv.slice(at, at + 2)).toEqual([
+      "--env",
+      "QCR_PI_DEFAULT_MODEL=made-up/large-3:medium",
+    ]);
+    expect(at).toBeLessThan(pinned.argv.indexOf("qcr-companion"));
+    // A level alone names no model: nothing is handed over.
+    const level = await scanLoginRoute(companionDocker("false"), SANDBOX, {
+      ...companionOf,
+      model: ":medium",
+    });
+    expect(level.argv.join(" ")).not.toContain("QCR_PI_DEFAULT_MODEL");
   });
 
   it("`qcr scan login` over an overridden [scan] pihome_volume never execs into the companion", async () => {

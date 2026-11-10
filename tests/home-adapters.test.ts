@@ -202,15 +202,23 @@ describe("the ports without an adapter yet", () => {
 });
 
 describe("the home's options from the env", () => {
-  it("take the launch's model and tool set, else the defaults", () => {
+  // MUTATION: fall back to a model name when QCR_HOME_MODEL is unset — this fails.
+  it("take the launch's pinned model and tool set, else no model and the reviewer tools", () => {
     const a = homeOptionsFromEnv({
       HOME: "/h",
-      QCR_HOME_MODEL: "anthropic/claude-x",
+      QCR_HOME_MODEL: "made-up/large-3",
       QCR_HOME_TOOLS: "full",
     });
-    expect([a.model, a.tools]).toEqual(["anthropic/claude-x", "full"]);
+    expect([a.model, a.tools]).toEqual(["made-up/large-3", "full"]);
     const b = homeOptionsFromEnv({ HOME: "/h" });
-    expect([b.model, b.tools]).toEqual(["openai-codex/gpt-6.1-sol", "reviewer"]);
+    expect([b.model, b.tools]).toEqual(["", "reviewer"]);
+  });
+
+  it("name pi's agent dir, where the model route reads the remembered choice", () => {
+    expect(homeOptionsFromEnv({ HOME: "/h" }).agentDir).toBe("/h/.pi/agent");
+    expect(homeOptionsFromEnv({ HOME: "/h", PI_CODING_AGENT_DIR: "/srv/pi" }).agentDir).toBe(
+      "/srv/pi",
+    );
   });
 
   it("read the login from the agent dir pi itself reads", async () => {

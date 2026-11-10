@@ -17,7 +17,13 @@
 //   3. runs interactive pi on the PR's REAL session JSONL (`--session`, which
 //      appends: not a fork) in the production tree's root even when the JSONL's
 //      header names the legacy tree (src/picwd.ts), with bash-guard (its takeover policy blocks the post
-//      scripts), the read tools and bash, and no write tools;
+//      scripts), the read tools and bash, and no write tools. `--model` is
+//      passed only for a model the config pins: with none, pi resumes the
+//      session on the model it last ran on, which is the one the worker's
+//      route resolved. The login route (extensions/login-route.ts) rides
+//      along with its prompt off: a session whose model has no credential in
+//      the borrowed copy is moved by the route's rule, and one with no route
+//      at all is told why, never offered a `/login` the copy would lose;
 //   4. returns pi's exit code. The tmux session ends with this process, and the
 //      daemon's sweep frees the lease.
 //
@@ -28,7 +34,7 @@ import { chmodSync, copyFileSync, existsSync, readFileSync, unlinkSync } from "n
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
-import { routeModelSpecForLogin } from "@quickchatai/pi-quickreview/src/modelroute.js";
+import { piModelFlags } from "./config.js";
 import { CAP_FD_INDEX } from "./ipc/capability.js";
 import {
   PI_REFRESH_MARGIN_MS,
@@ -104,14 +110,16 @@ export function readTakeoverSpec(file: string): TakeoverSpec {
   return raw as TakeoverSpec;
 }
 
-/** The login file in an agent dir, as text; null when there is none. */
-export function readLogin(agentDir: string): string | null {
-  try {
-    return readFileSync(join(agentDir, "auth.json"), "utf8");
-  } catch {
-    return null;
-  }
+/** The login route's env shim under the production tree `root`. A pane's pi
+ * loads it after the daemon's own extensions (bash-guard stays first). */
+export function loginRouteExtension(root: string): string {
+  return join(root, "extensions", "cli", "login-route.ts");
 }
+
+/** The name the login route's shim reads, and the value that says "this pi
+ * runs on a borrowed copy of a login": no `/login` is opened or prefilled. */
+export const LOGIN_OPEN_ENV = "QCR_LOGIN_OPEN";
+export const LOGIN_OPEN_BORROWED = "none";
 
 /**
  * The pi's own agent dir: the owner's login borrowed as a refresh-blanked copy
@@ -165,22 +173,23 @@ export function takeoverArgv(spec: TakeoverSpec): string[] {
     // pi discovers no extension or skill of its own.
     "-ne",
     "-ns",
-    "--model",
-    spec.model,
+    // Only a pin: with none, the session resumes on the model it last ran on.
+    ...piModelFlags(spec.model),
     // The PR's real session, written to (not forked).
     "--session",
     spec.session_file,
     "--tools",
     spec.tools,
     ...(spec.system_prompt_file ? ["--system-prompt", spec.system_prompt_file] : []),
-    ...spec.extensions.flatMap((e) => ["--extension", e]),
+    ...[...spec.extensions, loginRouteExtension(spec.root)].flatMap((e) => ["--extension", e]),
     "--name",
     spec.session,
   ];
 }
 
 /** The env the pi is started with: the allowlisted part of the pane's env, then the
- * daemon's spec env, then the agent dir. No GitHub token of any name. */
+ * daemon's spec env, then the agent dir and the login route's word that the
+ * login is a borrowed copy. No GitHub token of any name. */
 export function takeoverEnv(
   base: Readonly<Record<string, string | undefined>>,
   spec: Pick<TakeoverSpec, "env" | "borrow_dir">,
@@ -189,6 +198,7 @@ export function takeoverEnv(
   for (const name of TAKEOVER_ENV_ALLOW) if (base[name] !== undefined) env[name] = base[name];
   Object.assign(env, spec.env);
   env["PI_CODING_AGENT_DIR"] = spec.borrow_dir;
+  env[LOGIN_OPEN_ENV] = LOGIN_OPEN_BORROWED;
   for (const name of GITHUB_TOKEN_ENVS) delete env[name];
   return env;
 }
@@ -270,9 +280,6 @@ export async function runTakeover(specFile: string, deps: TakeoverRunDeps = {}):
     return 3;
   }
   const env = takeoverEnv(procEnv, spec);
-  // An OpenAI model runs on the OpenAI login the borrowed copy holds
-  // (packages/pi-plugin/src/modelroute.ts): the spec's own provider when it is there.
-  spec = { ...spec, model: routeModelSpecForLogin(spec.model, readLogin(spec.borrow_dir), env) };
   const pi = paneLaunch(takeoverArgv(spec), deps.piBin ?? spec.pi_bin);
   const launch = toolIsolation(pi.bin, pi.argv, procEnv);
   if ("refused" in launch) {

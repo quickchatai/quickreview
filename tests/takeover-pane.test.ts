@@ -31,6 +31,7 @@ import {
   takeoverEnv,
 } from "../src/takeoverpi.js";
 import { TAKEOVER_TOOLS, type TakeoverSpec } from "../src/takeover.js";
+import { loginRouteConfigFromEnv } from "../extensions/login-route.js";
 import { LOCK_FILE } from "../src/loginrefresh/refresher.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 import { bornReference, rehearseFile, type RequestShape } from "./helpers/resume-rehearsal.js";
@@ -235,7 +236,7 @@ describe("the takeover's login is a refresh-blanked borrowed copy", () => {
 });
 
 describe("the pi the pane starts", () => {
-  it("resumes the real session (not a fork) with the read tools and bash-guard only", () => {
+  it("resumes the real session (not a fork) with the read tools, bash-guard and the login route", () => {
     const spec = JSON.parse(readFileSync(specFile(), "utf8")) as TakeoverSpec;
     const argv = takeoverArgv(spec);
     expect(argv).toEqual(
@@ -254,8 +255,12 @@ describe("the pi the pane starts", () => {
     );
     expect(argv).not.toContain("--fork");
     expect(argv).not.toContain("--continue");
-    // extensions: the guard and nothing else (no inject bridge, no lens, no memory)
-    expect(argv.filter((a) => a === "--extension")).toHaveLength(1);
+    // extensions: the guard first, then the login route, and nothing else (no
+    // inject bridge, no lens, no memory)
+    expect(argv.flatMap((a, i) => (a === "--extension" ? [argv[i + 1]] : []))).toEqual([
+      spec.extensions[0]!,
+      join(dir, "root", "extensions", "cli", "login-route.ts"),
+    ]);
     expect(argv.join(" ")).not.toMatch(/inject-bridge|subagents|lens|ledger-pin|openviking/);
     expect(argv[argv.indexOf("--tools") + 1]!.split(",")).toEqual([
       "read",
@@ -264,6 +269,39 @@ describe("the pi the pane starts", () => {
       "ls",
       "bash",
     ]);
+  });
+
+  // MUTATION: pass `--model spec.model` whatever it holds — an unpinned
+  // takeover starts pi with an empty `--model` and this fails.
+  it("names a model only when the config pins one: with none the session resumes on its own", () => {
+    const spec = JSON.parse(readFileSync(specFile(), "utf8")) as TakeoverSpec;
+    const pinned = takeoverArgv(spec);
+    expect(pinned[pinned.indexOf("--model") + 1]).toBe("faux/faux-1");
+    const withLevel = takeoverArgv({ ...spec, model: "faux/faux-1:high" });
+    expect(withLevel[withLevel.indexOf("--model") + 1]).toBe("faux/faux-1:high");
+    const unpinned = takeoverArgv({ ...spec, model: "" });
+    expect(unpinned).not.toContain("--model");
+    expect(unpinned).not.toContain("--thinking");
+    expect(unpinned).toEqual(expect.arrayContaining(["--session", spec.session_file]));
+    // A level with no model is the level alone.
+    const level = takeoverArgv({ ...spec, model: ":high" });
+    expect(level).not.toContain("--model");
+    expect(level[level.indexOf("--thinking") + 1]).toBe("high");
+  });
+
+  // MUTATION: drop QCR_LOGIN_OPEN from takeoverEnv — the login route prefills
+  // `/login` on the borrowed copy, where a login is thrown away, and this fails.
+  it("tells the login route the login is a borrowed copy: no /login is offered there", () => {
+    const spec = JSON.parse(readFileSync(specFile(), "utf8")) as TakeoverSpec;
+    const env = takeoverEnv({ PATH: "/usr/bin", QCR_LOGIN_OPEN: "submit" }, spec);
+    expect(env["QCR_LOGIN_OPEN"]).toBe("none");
+    expect(loginRouteConfigFromEnv(env)).toEqual({ open: "prefill", prompt: false });
+    // even a spec that asks for the menu does not get one
+    expect(
+      takeoverEnv({}, { ...spec, env: { ...spec.env, QCR_LOGIN_OPEN: "submit" } })[
+        "QCR_LOGIN_OPEN"
+      ],
+    ).toBe("none");
   });
 
   it("gets an env with no GitHub token of any name and nothing it was not given", () => {
@@ -288,6 +326,7 @@ describe("the pi the pane starts", () => {
         "PI_CODING_AGENT_DIR",
         "QCR_IPC_CAP_FD",
         "QCR_IPC_COMMAND_ID",
+        "QCR_LOGIN_OPEN",
         "QCR_SANDBOX_ROOT",
         "QCR_TAKEOVER",
       ].sort(),

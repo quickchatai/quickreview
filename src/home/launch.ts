@@ -8,11 +8,15 @@
 //   quiet      no logo, resource list, trust prompt, changelog or model
 //              warning, and nothing written to the person's global pi
 //              settings: the quiet start is project settings in the home's
-//              own working directory (in the app's state home), the per-run
-//              trust flag `--approve`, and an explicit `--model`. The
-//              project settings also carry the pinned pi's version as the
-//              last changelog seen, or pi would record it in the global
-//              settings on a first run.
+//              own working directory (in the app's state home) and the
+//              per-run trust flag `--approve`. The project settings also
+//              carry the pinned pi's version as the last changelog seen, or
+//              pi would record it in the global settings on a first run.
+//   model      `--model` only when `[home] model` pins one. With none the
+//              chat keeps the model pi starts on (its saved default, or the
+//              one the resumed session last ran on), and the home's
+//              extension moves it to the review's route only when that model
+//              has no credential (extensions/login-route.ts).
 //   resume     the sessions live in the state home (`--session-dir`), and
 //              `--continue` opens the most recent one there, or a new one.
 //   tools      `[home] tools = "reviewer"` (the default) names the allowed
@@ -95,6 +99,8 @@ export function homeLaunch(o: HomeLaunchInput): HomeLaunch {
   const p = homePaths(o.stateHome);
   const tools =
     o.home.tools === "reviewer" ? ["--tools", reviewerToolAllowlist().join(","), "--no-mcp"] : [];
+  // A pin, or nothing: pi starts on its own choice and the extension routes it.
+  const pinned = o.home.model.trim() !== "";
   return {
     args: [
       o.piCli,
@@ -104,8 +110,7 @@ export function homeLaunch(o: HomeLaunchInput): HomeLaunch {
       o.pluginDir,
       "-e",
       homeExtensionPath(o.appRoot),
-      "--model",
-      o.home.model,
+      ...(pinned ? ["--model", o.home.model] : []),
       ...tools,
       "--session-dir",
       p.sessions,
@@ -116,7 +121,8 @@ export function homeLaunch(o: HomeLaunchInput): HomeLaunch {
     env: {
       ...o.env,
       PI_SKIP_VERSION_CHECK: "1",
-      [HOME_MODEL_ENV]: o.home.model,
+      // Only a pin is handed over: a name left in the person's shell is not one.
+      [HOME_MODEL_ENV]: pinned ? o.home.model : undefined,
       [HOME_TOOLS_ENV]: o.home.tools,
       ...(o.githubToken ? { GH_TOKEN: o.githubToken } : {}),
     },

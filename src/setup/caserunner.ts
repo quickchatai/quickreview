@@ -35,6 +35,7 @@ import {
   transcriptFile,
   type AgentFile,
 } from "@quickchatai/pi-quickreview/src/scan/caseread.js";
+import { THINKING_LEVELS, splitModelSpec } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./engine.js";
 
 export { parseAgentFile, type AgentFile } from "@quickchatai/pi-quickreview/src/scan/caseread.js";
@@ -47,6 +48,24 @@ export {
   stderrExcerpt,
   transcriptFile,
 } from "@quickchatai/pi-quickreview/src/scan/caseread.js";
+
+/**
+ * pi's flags for the model an agent file names. A file that pins a model
+ * passes it whole (`--model`, which reads its `:level`). A file that pins none
+ * (an unpinned tier's: no `model:` line, a `thinking:` one) passes only that
+ * level, so the child pi runs on its own choice for the login it was given. A
+ * level pi does not know is not passed.
+ */
+export function agentModelFlags(agent: Pick<AgentFile, "model">, text: string): string[] {
+  const named = splitModelSpec(agent.model ?? "");
+  if (named.model !== "") return ["--model", agent.model as string];
+  const front = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text.replace(/\r\n/g, "\n"))?.[1] ?? "";
+  const level =
+    named.thinking ?? /^thinking:[ \t]*["']?([A-Za-z]+)["']?[ \t]*$/m.exec(front)?.[1] ?? null;
+  return level !== null && (THINKING_LEVELS as readonly string[]).includes(level)
+    ? ["--thinking", level]
+    : [];
+}
 
 /** The spawn this runner needs — `child_process.spawn`'s shape, narrowed so
  * tests hand in a fake child. */
@@ -208,8 +227,10 @@ export function piCaseRunner(opts: {
           cost_usd: 0,
         };
       let agent: AgentFile | null;
+      let agentText: string;
       try {
-        agent = parseAgentFile(readFileSync(join(opts.agentsDir, `${spec.agent}.md`), "utf8"));
+        agentText = readFileSync(join(opts.agentsDir, `${spec.agent}.md`), "utf8");
+        agent = parseAgentFile(agentText);
       } catch {
         return { ok: false, reason: `no agent ${spec.agent} in ${opts.agentsDir}`, cost_usd: 0 };
       }
@@ -248,7 +269,10 @@ export function piCaseRunner(opts: {
           join(opts.root ?? opts.cwd, "extensions", "cli", "bash-guard.ts"),
           "--approve",
         ];
-        if (agent.model) args.push("--model", agent.model);
+        // A model only when the agent file pins one. A file with none (an
+        // unpinned tier's) leaves the child pi on its own choice for the
+        // login, at the level the file's `thinking:` names.
+        args.push(...agentModelFlags(agent, agentText));
         if (agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
         args.push("--append-system-prompt", promptFile, `Task: ${spec.prompt}`);
         // The transcript: opened before the child, appended chunk by chunk,

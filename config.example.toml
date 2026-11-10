@@ -387,13 +387,15 @@ session_dir = "state/pi-sessions"
 # The home: a bare `qcr` opens the app's own pinned pi, on your own pi login
 # ($PI_CODING_AGENT_DIR, default ~/.pi/agent), with a panel of the
 # repository's pull requests. Every key is optional.
-#   model — the chat's model, "provider/id". The panel counts only this
-#           model's provider as signed in: a login under another provider
-#           cannot run the chat.
+#   model — the chat's model, "provider/id". Shipped: none is named, and
+#           the chat runs on the model pi itself starts on (its saved
+#           default, or the one the session last ran on); when that model
+#           has no credential, on the review's model (`qcr model` shows it).
+#           Uncomment to pin one.
 #   tools — "reviewer": the model may call the plugin's tools, the home's
 #           own home_* tools and pi's read tools (read, grep, find, ls), and
 #           no MCP server starts. "full": every tool pi has.
-model = "openai-codex/gpt-6.1-sol"
+# model = "provider/id"
 tools = "reviewer"
 
 [memory]
@@ -667,7 +669,8 @@ local_embedder_threads = 1
 #                                  # local build exists; a ghcr.io/quickchatai/quickreview tag set here is pulled, never built over
 # pihome_volume = "companion-pihome"   # its OWN pi auth — never the VM's auth.json
 # session = "companion"           # tmux session inside the container
-# model = "openai-codex/gpt-6.1-sol:medium"
+# model = "provider/id:medium"    # shipped: none named, so the companion's pi runs on its own
+#                                 # choice for the login it has; uncomment to pin one
 # repo_dir = ""                   # host review-sandbox repo → /workspace (rw);
 #                                 # empty = this sandbox root
 # tracker_dir = "~/projects/your-tracker"                  # → /tracker (rw)

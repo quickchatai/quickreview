@@ -231,6 +231,31 @@ describe("lens children's usage, from the parent's tool results", () => {
     });
   });
 
+  // MUTATION: cut every `:suffix` off a child's model again
+  // (`replace(/:[a-z]+$/, "")`) — the id that ends in a routing suffix is
+  // counted under the bare id beside it and this fails.
+  it("cuts only a thinking level off a child's model: an id that holds a colon stays whole", async () => {
+    const fs = fakeFs({
+      "/s/pr-7/a.jsonl": toolResult(START, "subagent", [
+        child("made-up/pro-5:free:high", 100, 10, 0, 0.1),
+        child("made-up/pro-5:nitro", 200, 20, 0, 0.2),
+        child("made-up/pro-5", 400, 40, 0, 0.4),
+        child("made-up/pro-5:medium", 800, 80, 0, 0.8),
+      ]),
+    });
+    const usage = await measureRoundUsage({
+      sessionDir: "/s/pr-7",
+      startedAt: START,
+      finishedAt: END,
+      fs,
+    });
+    expect(usage.models).toEqual({
+      "made-up/pro-5:free": { in: 100, out: 10 },
+      "made-up/pro-5:nitro": { in: 200, out: 20 },
+      "made-up/pro-5": { in: 1200, out: 120 },
+    });
+  });
+
   it("a round with no child results is the main session's alone, as before", async () => {
     const fs = fakeFs({ "/s/pr-7/a.jsonl": costed(START, 100, 10, 0.1) });
     const usage = await measureRoundUsage({

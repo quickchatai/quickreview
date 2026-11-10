@@ -32,6 +32,7 @@ import {
   lensIdOf,
   type LensLedgerLine,
 } from "@quickchatai/pi-quickreview/src/lensresult.js";
+import { splitModelSpec } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import {
   normalizeRedirections,
   opensUnmodelledQuoting,
@@ -196,9 +197,11 @@ export function parseTranscriptLine(
   };
 }
 
-/** A child's model without its `:<thinking>` suffix (the pricing table's key). */
+/** A child's model without its `:<thinking>` suffix (the pricing table's key).
+ * Only a thinking level is a suffix: a model id may itself hold a colon. */
 function childModel(model: unknown): string {
-  return typeof model === "string" && model ? model.replace(/:[a-z]+$/, "") : UNKNOWN_MODEL;
+  if (typeof model !== "string") return UNKNOWN_MODEL;
+  return splitModelSpec(model).model || UNKNOWN_MODEL;
 }
 
 /** What one lens-ledger line contributes: its run's usage, keyed by its id. */
