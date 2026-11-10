@@ -28,6 +28,7 @@ import {
   splitProvider,
   type ModelRoute,
   type ProviderInventory,
+  type SkippedLogin,
 } from "./modelroute.js";
 import { splitModelSpec, TIER_LEVELS, type ModelsConfig } from "./reviewconfig.js";
 import { foldTier, PASS_TIER_ORDER, type PassTier } from "./types.js";
@@ -582,16 +583,21 @@ export interface RunRoute {
   /** The remembered provider: it breaks a tie between unrelated candidates
    * when a spec moves off a provider with no credential. */
   prefer?: string;
+  /** The stored logins left out as too short for the run: a spec on one of
+   * their providers is not moved, since the run refuses it as such. */
+  skipped?: readonly SkippedLogin[];
 }
 
 /**
- * A model spec as it will run. One that names no model runs on the route, at
+ * A model spec as it will run (engine/pisdk.ts `resolveModel` decides the
+ * same way at the start). One that names no model runs on the route, at
  * its own level, else at `level`. One whose provider has no credential here
  * runs on the provider the route's own rule moves it to
  * (modelroute.ts `moveToCredentialed`), and stays as written where that rule
- * has no answer: the run refuses it then. With nothing to resolve against
- * (`on` null, or no route for a spec that names no model) the spec stays as
- * written, so what is not known is never filled in.
+ * has no answer or the provider's login was left out as too short: the run
+ * refuses it then. With nothing to resolve against (`on` null, or no route
+ * for a spec that names no model) the spec stays as written, so what is not
+ * known is never filled in.
  */
 export function specAsRun(spec: string, on: RunRoute | null, level?: string | null): string {
   const { model, thinking } = splitModelSpec(spec);
@@ -602,6 +608,8 @@ export function specAsRun(spec: string, on: RunRoute | null, level?: string | nu
   if (on === null) return spec;
   const named = splitProvider(model);
   if (named === null || on.inventory.some((e) => e.provider === named.provider)) return spec;
+  // A login that exists and is too short is refused as such, never moved.
+  if (on.skipped?.some((l) => l.provider === named.provider)) return spec;
   const move = moveToCredentialed(
     { provider: named.provider, id: named.rest },
     on.inventory,

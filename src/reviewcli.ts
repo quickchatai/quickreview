@@ -471,6 +471,7 @@ function routeRun(o: {
       result: withNames(result, borrowed.skipped, nameOf),
       inventory,
       ...(choice !== undefined ? { prefer: choice.provider } : {}),
+      skipped: borrowed.skipped,
       surface: "app",
       facts: {
         agentDir: o.agentDir,

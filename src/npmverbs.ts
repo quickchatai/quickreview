@@ -25,9 +25,11 @@ import { spawnSync, type SpawnSyncOptions } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import type { ModelRoute } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import { pluginPackageDir } from "./coreext.js";
 import { detectInstall, type Installer } from "./installkind.js";
 import type { RefresherHold } from "./loginrefresh/handover.js";
+import type { ModelCliJson } from "./modelcli.js";
 import { piAgentDir } from "./piagentdir.js";
 import { piCliPath } from "./picli.js";
 
@@ -133,13 +135,31 @@ export function npmVerbDeps(pkgRoot: string): NpmVerbDeps {
       ]);
       const printed: string[] = [];
       await runModelCli([], true, process.env, { out: (l) => printed.push(l), err: () => {} });
-      const state = JSON.parse(printed[0] ?? "null") as import("./modelcli.js").ModelCliJson | null;
-      if (state === null) return [];
-      return state.route !== null
-        ? routeNoticeLines(state.route, "app")
-        : ["model: none", ...(state.refusal ? [state.refusal.text] : [])];
+      return loginRouteLines(printed[0], (route) => routeNoticeLines(route, "app"));
     },
   };
+}
+
+/**
+ * What `qcr login` says about the model, from the one line `qcr model --json`
+ * printed. A route is its own lines (`said`); a refusal is `model: none` and
+ * the refusal's words. Anything else says nothing: the route could not be
+ * read (a config that does not load, a login file that does not parse, no
+ * line at all), and what was not read is not "none".
+ */
+export function loginRouteLines(
+  printed: string | undefined,
+  said: (route: ModelRoute) => string[],
+): string[] {
+  let state: Partial<ModelCliJson> | null;
+  try {
+    state = JSON.parse(printed ?? "null") as Partial<ModelCliJson> | null;
+  } catch {
+    return [];
+  }
+  if (state === null || typeof state !== "object") return [];
+  if (state.route) return said(state.route);
+  return typeof state.refusal?.text === "string" ? ["model: none", state.refusal.text] : [];
 }
 
 /** The app's own extensions `qcr pi` loads beside the plugin, as paths under

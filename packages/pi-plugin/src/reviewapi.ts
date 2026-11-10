@@ -67,6 +67,7 @@ import {
   type RefusalFacts,
   type RouteResult,
   type RouteSurface,
+  type SkippedLogin,
 } from "./modelroute.js";
 import { MEMORY_NOT_SET_UP, type ReviewMemoryPort, type RoundMemory } from "./memoryport.js";
 import type { ProfilePlace } from "./profilelookup.js";
@@ -188,6 +189,9 @@ export interface ReviewRouted {
   inventory: readonly ProviderInventory[];
   /** The remembered provider: it breaks a tie when such a spec moves. */
   prefer?: string;
+  /** The stored logins the host left out as too short for this run: a spec
+   * pinned to one of their providers is refused at the start, not moved. */
+  skipped?: readonly SkippedLogin[];
   /** Whose words the model line and a refusal are said in. */
   surface: RouteSurface;
   /** What a refusal's words need beyond the refusal. */
@@ -1014,6 +1018,7 @@ async function runPipeline(
           route,
           inventory: routed.inventory,
           ...(routed.prefer !== undefined ? { prefer: routed.prefer } : {}),
+          ...(routed.skipped !== undefined ? { skipped: routed.skipped } : {}),
         };
   // Every spec the run will use, as it will run: with no route given they
   // are the config's own, so a changed pin still moves the key.

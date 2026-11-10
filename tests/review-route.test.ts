@@ -5,6 +5,9 @@
 // start gets, what `--model` replaces, the models in the preview key, and the
 // host: the one the route was resolved on runs the round.
 //
+// Last, what `qcr login` says of the route (src/npmverbs.ts): its help, and the
+// model line after a login.
+//
 // Every route here is resolved by the real pi over a temp pi home, on
 // credentials the case gives: a provider of the home's own `models.json`, a
 // built-in provider keyed through the case's environment, or pi-ai's faux
@@ -49,6 +52,8 @@ vi.stubEnv(
 
 const { parseReviewArgs, providerRows, reviewHelp, runReviewCli } =
   await import("../src/reviewcli.js");
+const { cmdLogin, loginRouteLines } = await import("../src/npmverbs.js");
+type NpmVerbDeps = import("../src/npmverbs.js").NpmVerbDeps;
 type ReviewCliDeps = import("../src/reviewcli.js").ReviewCliDeps;
 type ReviewRunHost = import("../src/reviewcli.js").ReviewRunHost;
 
@@ -403,6 +408,55 @@ describe("qcr review: a start with no route is refused, in the route's words", (
   });
 });
 
+describe("qcr review: a tier pinned to a provider whose login is too short", () => {
+  const NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
+  const pin = `${BUILTIN}/${BUILTIN_MODEL}`;
+  const cfg: CoreConfig = {
+    ...UNPINNED,
+    models: {
+      ...UNPINNED.models,
+      tiers: { ...UNPINNED.models.tiers, standard: `${pin}:medium` },
+    },
+  };
+  /** A home whose own provider also serves the pinned id. */
+  const homeServingThePin = (): string => {
+    const home = mkHome({ local: true });
+    const file = join(home, "models.json");
+    const models = JSON.parse(readFileSync(file, "utf8")) as {
+      providers: { local: { models: Array<Record<string, unknown>> } };
+    };
+    const routable = models.providers.local.models.find((m) => m["id"] === "r")!;
+    models.providers.local.models.push({ ...routable, id: BUILTIN_MODEL, name: BUILTIN_MODEL });
+    writeFileSync(file, JSON.stringify(models));
+    return home;
+  };
+
+  // MUTATION: drop `skipped: borrowed.skipped` from what routeRun's route
+  // returns (src/reviewcli.ts) — the preview says the tier runs on `local`,
+  // which the run refuses, and this fails.
+  it("the preview keeps the tier as the config writes it, as the run will refuse it; with no login at all it moves", async () => {
+    const short = homeServingThePin();
+    writeFileSync(
+      join(short, "auth.json"),
+      JSON.stringify({
+        [BUILTIN]: { type: "oauth", access: "a", refresh: "r", expires: NOW + 8 * 60_000 },
+      }),
+    );
+    const h = harness({ home: short, cfg, now: () => NOW });
+    expect(await runReviewCli(["--preview"], true, h.deps), h.text()).toBe(0);
+    expect(previewOf(h)["model"]).toMatchObject({ provider: "local" });
+    expect((previewOf(h)["tiers"] as Record<string, string>)["standard"]).toBe(`${pin}:medium`);
+
+    // the control: the same pin with no login for its provider runs on the
+    // one provider that serves the id
+    const none = harness({ home: homeServingThePin(), cfg, now: () => NOW });
+    expect(await runReviewCli(["--preview"], true, none.deps), none.text()).toBe(0);
+    expect((previewOf(none)["tiers"] as Record<string, string>)["standard"]).toBe(
+      `local/${BUILTIN_MODEL}:medium`,
+    );
+  });
+});
+
 describe("qcr review: one host, and the question", () => {
   // MUTATION: drop `prebuilt` from what routeRun hands the runtime
   // (src/reviewcli.ts) — the round's session is built on a second host, which
@@ -662,6 +716,30 @@ describe("a spec as it will run", () => {
     expect(specAsRun("gone/shared", { ...two, prefer: "b" })).toBe("b/shared");
   });
 
+  // MUTATION: drop the `on.skipped` line from specAsRun
+  // (packages/pi-plugin/src/localreview.ts) — the spec moves to `held`, and this fails.
+  it("a pinned spec whose provider's login was left out as too short stays as written: the run refuses it, it does not move it", () => {
+    const short = { provider: "gone", name: "Gone", expiresAt: 1 };
+    expect(specAsRun("gone/shared:high", { ...on, skipped: [short] })).toBe("gone/shared:high");
+    // another provider's short login says nothing about this one
+    expect(specAsRun("gone/shared:high", { ...on, skipped: [{ ...short, provider: "x" }] })).toBe(
+      "held/shared:high",
+    );
+    const m = runModels(
+      {
+        ...UNPINNED,
+        models: {
+          ...UNPINNED.models,
+          tiers: { light: ":low", standard: "gone/shared:medium", deep: ":high" },
+        },
+      },
+      ["pass-contracts--standard"],
+      { ...on, skipped: [short] },
+    );
+    expect(m.tiers.standard).toBe("gone/shared:medium");
+    expect(m.all).toContain("gone/shared:medium");
+  });
+
   it("what is not known is not filled in: no route, or no route given", () => {
     expect(specAsRun(":high", { route: null, inventory: [] })).toBe(":high");
     expect(specAsRun("gone/shared:high", null)).toBe("gone/shared:high");
@@ -692,5 +770,98 @@ describe("a spec as it will run", () => {
     expect(m.all).toEqual(
       ["held/x:xhigh", "held/x:minimal", "held/shared:medium", "held/x:high"].sort(),
     );
+  });
+});
+
+describe("qcr login: the help and the route line", () => {
+  /** The verb over fakes: no tmux on the PATH, so pi "opens" through `run`,
+   * which leaves a login in the case's own agent dir. */
+  function login(routeLines?: NpmVerbDeps["routeLines"]) {
+    const home = mkHome();
+    const out: string[] = [];
+    const err: string[] = [];
+    const deps: NpmVerbDeps = {
+      env: { PATH: join(tmp, "no-tmux"), PI_CODING_AGENT_DIR: home },
+      pkgRoot: join(tmp, "pkg"),
+      piCli: () => join(tmp, "pkg", "pi-cli.js"),
+      pluginDir: () => join(tmp, "pkg", "plugin"),
+      run: () => {
+        writeFileSync(
+          join(home, "auth.json"),
+          JSON.stringify({ [BUILTIN]: { type: "oauth", access: "a", refresh: "r", expires: 1 } }),
+        );
+        return { status: 0 };
+      },
+      interactive: true,
+      out: (l) => out.push(l),
+      err: (l) => err.push(l),
+      execPath: "node",
+      holdLogin: () => Promise.resolve({ ok: true, held: false, release: () => {} }),
+      ...(routeLines ? { routeLines } : {}),
+    };
+    return { deps, out, err, home };
+  }
+
+  it("the help says any provider works and where the choice is made", async () => {
+    const f = login();
+    expect(await cmdLogin(["--help"], f.deps)).toBe(0);
+    const help = f.out.join("\n").split("\n");
+    const at = help.indexOf("qcr login [provider]   log in with pi's own /login");
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(help.slice(at + 1, at + 3)).toEqual([
+      "  Any provider pi offers works: the review runs on the login you have.",
+      "  With several, `qcr model` shows which one runs and `qcr model use <provider>` changes it.",
+    ]);
+  });
+
+  // MUTATION: drop the `deps.routeLines` loop from runLogin (src/npmverbs.ts) —
+  // a login says nothing of the model, and this fails.
+  it("after a login the route's lines come straight after the login line", async () => {
+    const lines = ["model: local/r (the provider pi has a credential for)", "a notice"];
+    const f = login(() => Promise.resolve(lines));
+    expect(await cmdLogin([], f.deps)).toBe(0);
+    expect(f.out.slice(-3)).toEqual([
+      `qcr login: logged in to ${BUILTIN} (pi's agent dir ${f.home}).`,
+      ...lines,
+    ]);
+  });
+
+  it("a route that cannot be read costs the login nothing and adds no line", async () => {
+    const f = login(() => Promise.reject(new Error("the config does not load")));
+    expect(await cmdLogin([], f.deps)).toBe(0);
+    expect(f.out.at(-1)).toBe(`qcr login: logged in to ${BUILTIN} (pi's agent dir ${f.home}).`);
+    expect(f.err).toEqual([]);
+  });
+
+  describe("the lines, from what `qcr model --json` printed", () => {
+    const said = (route: ModelRoute): string[] => [`model: ${route.spec}`];
+
+    it("a route is its own lines; a refusal is `model: none` and the refusal's words", () => {
+      expect(
+        loginRouteLines(JSON.stringify({ ok: true, route: { spec: "held/x" } }), said),
+      ).toEqual(["model: held/x"]);
+      expect(
+        loginRouteLines(
+          JSON.stringify({
+            ok: false,
+            route: null,
+            refusal: { code: "no-credential", text: "pi has no model credential." },
+          }),
+          said,
+        ),
+      ).toEqual(["model: none", "pi has no model credential."]);
+    });
+
+    // MUTATION: answer ["model: none"] for a state with no refusal in
+    // loginRouteLines (src/npmverbs.ts) — a route that was not read is said
+    // to be none, and this fails.
+    it("a route that could not be read is not `none`: nothing is said", () => {
+      // what `qcr model --json` prints for a failure that is not a refusal
+      const unread = JSON.stringify({ ok: false, route: null, error: "config: bad toml" });
+      expect(loginRouteLines(unread, said)).toEqual([]);
+      expect(loginRouteLines(undefined, said)).toEqual([]);
+      expect(loginRouteLines("not json", said)).toEqual([]);
+      expect(loginRouteLines("null", said)).toEqual([]);
+    });
   });
 });
