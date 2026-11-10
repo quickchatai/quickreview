@@ -24,12 +24,16 @@ import { buildRoundOrder } from "@quickchatai/pi-quickreview/src/planner.js";
 import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 import {
   PASS_TIER_ORDER,
+  foldTier,
   type PassTier,
   type VerdictPassEntry,
 } from "@quickchatai/pi-quickreview/src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
-const tierIndex = (t: string | null | undefined): number => PASS_TIER_ORDER.indexOf(t as PassTier);
+/** A tier's place on the ladder, read in either spelling: a stored round and
+ * a session's report keep the name they were written with. -1 is unknown. */
+const tierIndex = (t: string | null | undefined): number =>
+  typeof t === "string" ? PASS_TIER_ORDER.indexOf(foldTier(t) as PassTier) : -1;
 
 /**
  * The post-hoc property, as a pure function over one round's telemetry, so it
@@ -148,6 +152,28 @@ describe("[#22] the validator tier", () => {
     ).toEqual([]);
   });
 
+  /**
+   * Rows keep the tier names they were written with (there is no migration),
+   * and a sticky session may go on reporting a tier's older name, so either
+   * side of the comparison can carry either spelling.
+   *
+   * MUTATION: drop `foldTier` from `tierIndex` — an older name reads as
+   * unknown, a round stored under one is never a breach, and this fails.
+   */
+  it("reads a tier in either spelling, on the round's side and on the session's", () => {
+    const below: VerdictPassEntry = { name: "pass-validate", tier: "sol-med" };
+    expect(validatorBelowFloor("sol-high", [below])).toEqual([below]);
+    expect(validatorBelowFloor("deep", [below])).toEqual([below]);
+    const reported: VerdictPassEntry = { name: "pass-validate", tier: "standard" };
+    expect(validatorBelowFloor("sol-high", [reported])).toEqual([reported]);
+    expect(validatorBelowFloor("sol-med", [{ name: "pass-validate", tier: "standard" }])).toEqual(
+      [],
+    );
+    expect(validatorBelowFloor("standard", [{ name: "pass-validate", tier: "sol-high" }])).toEqual(
+      [],
+    );
+  });
+
   it("unknowns and a round with no validator are never breaches", () => {
     expect(validatorBelowFloor(null, [{ name: "pass-validate", tier: "light" }])).toEqual([]);
     expect(validatorBelowFloor("deep", null)).toEqual([]);
@@ -192,6 +218,13 @@ describe("[#22] the validator tier", () => {
       { name: "pass-validate", tier: "standard" },
     ]);
 
+    // A round stored before the tiers were renamed: both columns hold the
+    // older names, as written.
+    const stored = round("sol-high", [
+      { name: "pass-baseline", tier: "sol-high" },
+      { name: "pass-validate", tier: "sol-med" },
+    ]);
+
     const check = (id: number) => {
       const r = store.db
         .prepare("SELECT validate_tier, executed_passes FROM rounds WHERE id = ?")
@@ -210,6 +243,10 @@ describe("[#22] the validator tier", () => {
     expect(
       check(bad).map((p) => p.name),
       "a validator run below the tier the round fixed is the violation",
+    ).toEqual(["pass-validate"]);
+    expect(
+      check(stored).map((p) => p.name),
+      "a round stored under the older tier names is read, not skipped as unknown",
     ).toEqual(["pass-validate"]);
     store.close();
   });

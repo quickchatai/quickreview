@@ -55,6 +55,7 @@ import {
   identityVars,
   PASS_ADDENDA,
 } from "@quickchatai/pi-quickreview/src/include.js";
+import { LEGACY_TIER_NAMES } from "@quickchatai/pi-quickreview/src/types.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE = join(ROOT, "config.example.toml");
@@ -401,6 +402,116 @@ describe("dry config check: a fresh clone's config on the key route", () => {
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the open-model preflight's model check (openbench.sh, modelspecs.py)", () => {
+  // The preflight refuses a run where a reviewer model spec would still name
+  // another model. It reads the image's baked config.toml and the run's
+  // levers as text, so it folds a tier's key itself, on both sides: the
+  // reviewer applies a lever under either spelling to a config under either.
+  const openbench = readFileSync(join(ROOT, "bench", "aacr", "openmodels", "openbench.sh"), "utf8");
+  const script = join(ROOT, "bench", "aacr", "openmodels", "modelspecs.py");
+  const model = "digitalocean/glm-5.3-flash";
+  // The run's own levers, as openbench.sh writes them: the model on every role and tier.
+  const written = /^MODEL_CONFIG="([^"\n]+)"$/m.exec(openbench)?.[1];
+  const levers = (written ?? "").replaceAll("$M", model);
+  const tiersOf = (over: string) =>
+    over
+      .split(",")
+      .map((p) => /^models\.tiers\.([^=]+)=/.exec(p)?.[1])
+      .filter((t): t is string => t !== undefined);
+  const check = (config: string, over: string) => {
+    const r = spawnSync("python3", ["-I", script, over, model], {
+      input: config,
+      encoding: "utf8",
+    });
+    return { code: r.status, out: r.stdout.trim() };
+  };
+  const config = (tiers: readonly string[], extra = "") =>
+    [
+      "[models]",
+      'default = "openai-codex/gpt-6.1-sol"',
+      'conversation = "openai-codex/gpt-6.1-sol"',
+      "[models.tiers]",
+      ...tiers.map((t) => `"${t}" = "openai-codex/gpt-6.1-sol:medium"`),
+      extra,
+    ].join("\n");
+  const older = Object.keys(LEGACY_TIER_NAMES);
+  const ladder = Object.values(LEGACY_TIER_NAMES);
+
+  it("openbench.sh hands the check its own levers and the model", () => {
+    expect(written, "MODEL_CONFIG not found in openbench.sh").toBeDefined();
+    expect(tiersOf(levers)).toHaveLength(ladder.length);
+    expect(openbench).toContain('python3 -I "$HERE/modelspecs.py" "$MODEL_CONFIG" "$M"');
+  });
+
+  // MUTATION: key the config's tiers as written in modelspecs.py's `check`
+  // (`f"{TIERS}{k}"` without `fold_key`), or leave the levers' keys unfolded —
+  // a lever under one spelling no longer meets a config under the other, and
+  // this fails.
+  it("passes the run's levers over a config in either tier spelling, and levers in either spelling", () => {
+    const example = readFileSync(EXAMPLE, "utf8");
+    const ok =
+      /^ok {3}every reviewer model spec is digitalocean\/glm-5\.3-flash \(\d+ specs, 0 per-lens pins re-pointed\)$/;
+    // The two sides really differ in spelling, or the case proves nothing.
+    expect(tiersOf(levers).sort()).not.toEqual([...ladder].sort());
+    for (const t of ladder) expect(example).toMatch(new RegExp(`^"${t}" = `, "m"));
+    expect(check(example, levers)).toEqual({ code: 0, out: expect.stringMatching(ok) });
+    expect(check(config(ladder), levers).code).toBe(0);
+    expect(check(config(older), levers).code).toBe(0);
+    const renamed = older.reduce(
+      (over, t) => over.replace(`models.tiers.${t}=`, `models.tiers.${LEGACY_TIER_NAMES[t]}=`),
+      levers,
+    );
+    expect(tiersOf(renamed).sort()).toEqual([...ladder].sort());
+    expect(check(config(older), renamed).code).toBe(0);
+    expect(check(config(ladder), renamed).code).toBe(0);
+  });
+
+  it("still refuses a tier or a per-lens pin the levers leave on another model", () => {
+    const deepLever = levers.split(",").find((p) => /^models\.tiers\.(deep|sol-high)=/.test(p));
+    expect(deepLever).toBeDefined();
+    const withoutDeep = levers
+      .split(",")
+      .filter((p) => p !== deepLever)
+      .join(",");
+    for (const tiers of [ladder, older])
+      expect(check(config(tiers), withoutDeep)).toEqual({
+        code: 1,
+        out: `FAIL not ${model}: models.tiers.deep`,
+      });
+    const pinned = config(
+      ladder,
+      '[models.pass_models]\n"pass-style" = "openai-codex/gpt-6-luna:low"',
+    );
+    expect(check(pinned, levers)).toEqual({
+      code: 1,
+      out: `FAIL not ${model}: models.pass_models.pass-style`,
+    });
+    expect(check(pinned, `${levers},models.pass_models.pass-style=${model}:low`).code).toBe(0);
+  });
+
+  // The script cannot import LEGACY_TIER_NAMES, so its map is a hand-kept copy.
+  // MUTATION: drop "sol-med" from LEGACY_TIERS in modelspecs.py (or add a name
+  // to LEGACY_TIER_NAMES) — this fails.
+  it("folds exactly the tier names the reviewer folds", () => {
+    const r = spawnSync(
+      "python3",
+      [
+        "-c",
+        [
+          "import importlib.util, json, sys",
+          "spec = importlib.util.spec_from_file_location('ms', sys.argv[1])",
+          "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+          "print(json.dumps(m.LEGACY_TIERS))",
+        ].join("\n"),
+        script,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ ...LEGACY_TIER_NAMES });
   });
 });
 
