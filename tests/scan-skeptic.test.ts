@@ -120,8 +120,8 @@ describe("the skeptic addendum is a scan-mode registry entry for the validator a
     const validators = [...agents.keys()].filter((n) => n.startsWith(`${VALIDATE_PASS}--`)).sort();
     expect(validators).toEqual([
       "pass-validate--deep",
-      "pass-validate--standard",
       "pass-validate--light",
+      "pass-validate--standard",
     ]);
     for (const name of validators) {
       const body = agents.get(name)!;

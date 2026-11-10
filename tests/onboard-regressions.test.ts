@@ -20,6 +20,10 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "qcr-onboard-regressions-"));
   mkdirSync(join(root, "state"));
   writeFileSync(join(root, "config.toml"), template);
+  // The LLM step reads the host's pi login from $HOME: a scratch home, so a
+  // case decides its route from what it wrote and never from the login of the
+  // person running the suite.
+  vi.stubEnv("HOME", root);
 });
 afterEach(() => {
   vi.useRealTimers();

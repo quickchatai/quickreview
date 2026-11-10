@@ -285,6 +285,29 @@ describe.skipIf(!hasOpenssl)("the scripted stub", () => {
     ]);
   });
 
+  // MUTATION: drop `light|standard|deep|` from AGENT_RE in
+  // scripts/worker-rehearsal/stub.mjs - the stub finds no validator in an
+  // order from this build, and the two cases above fail.
+  // MUTATION: drop `(?:sol|terra|luna)-(?:high|med|low)` from it - this fails.
+  it("reads an order that names the tiers as an older build did", async () => {
+    await post("/admin/mode", { mode: "round" });
+    const older = `# Review round — first review\n**ROUND: first** — PR #7 ("t")\nplan: pass-baseline--sol-high pass-tests--terra-med pass-validate--sol-high\n<!-- qcr-round: pr-7 round-5 -->`;
+    const validator = await next(older, 1);
+    expect(validator.tool).toBe("lens");
+    expect(validator.args.agent).toBe("pass-validate--sol-high");
+    const verdict = await next(older, 3);
+    expect(
+      JSON.parse(verdict.args.content).passes.map((p: { name: string; tier: string }) => [
+        p.name,
+        p.tier,
+      ]),
+    ).toEqual([
+      ["pass-baseline", "sol-high"],
+      ["pass-tests", "terra-med"],
+      ["pass-validate", "sol-high"],
+    ]);
+  });
+
   it("plays a round a worker took over from its order, not as a lens leaf", async () => {
     await post("/admin/mode", { mode: "round" });
     // the killed worker's order, then the taking-over worker's continuation turn
