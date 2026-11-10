@@ -120,6 +120,36 @@ describe("zero-config", () => {
     expect(() => loadOneShotConfig({ root, env })).toThrow(/qcr install migrate/);
   });
 
+  // The secrets dir of a one-shot is the install's. One caller, the verb a
+  // wizard asks (src/modelcli.ts), hands the wizards' override on.
+  // MUTATION: drop `override` from loadOneShotConfig's locateSecrets call in
+  // packages/pi-plugin/src/homes.ts — the override is not read and this fails.
+  it("a caller's secrets override sits below a configured secrets dir, and is not read unasked", () => {
+    const override = join(dir, "wizard-secrets");
+    const home = locateSecrets({ configured: "", env }).path;
+    expect(loadOneShotConfig({ root: ROOT, env }).cfg.github.secrets_dir).toBe(home);
+    // Not read off the environment by the loader itself.
+    const inEnv: Record<string, string> = { ...env, QC_SECRETS_DIR: override };
+    expect(loadOneShotConfig({ root: ROOT, env: inEnv }).cfg.github.secrets_dir).toBe(home);
+    expect(
+      loadOneShotConfig({ root: ROOT, env, secretsOverride: override }).cfg.github.secrets_dir,
+    ).toBe(override);
+    for (const blank of [undefined, null, "", "  "])
+      expect(
+        loadOneShotConfig({ root: ROOT, env, secretsOverride: blank }).cfg.github.secrets_dir,
+      ).toBe(home);
+    const configHome = join(env["XDG_CONFIG_HOME"]!, "qcr", "default");
+    mkdirSync(configHome, { recursive: true });
+    const named = join(dir, "named-secrets");
+    writeFileSync(
+      join(configHome, "config.toml"),
+      EXAMPLE.replace(/^secrets_dir = ""$/m, `secrets_dir = "${named}"`),
+    );
+    expect(
+      loadOneShotConfig({ root: ROOT, env, secretsOverride: override }).cfg.github.secrets_dir,
+    ).toBe(named);
+  });
+
   it("the daemon's loader still refuses to start without a config", () => {
     // The test setup points the locator at an empty config home.
     expect(() => loadConfig()).toThrow(/no config at/);

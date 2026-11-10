@@ -15,6 +15,13 @@
 // chooses among (packages/pi-plugin/src/modelchoice.ts), never in a config
 // home: `use` writes it, `reset` removes it.
 //
+// Where the daemon is handed a login that is not in its pi's agent dir (the
+// single box's shared login, `QCR_LOGIN_DIR`), the verb reads what a worker
+// reads there: the login, the remembered choice and pi's saved provider come
+// from that directory, and only the catalog from the agent dir. So the
+// answer in a daemon's container is the daemon's, not that of a pi home it
+// does not review on.
+//
 // `--json` prints one object, for the wizard, the scan sandbox and the smoke
 // scripts: `{ ok, route, refusal?, choice, config_pin, skipped }`, where `ok`
 // says a route resolves. `use` and `reset` print the same object for the
@@ -67,8 +74,13 @@ export const MODEL_USAGE = [
 export interface ModelCliDeps {
   /** The environment pi's credential lookups read (with the model env over it). */
   env: Readonly<Record<string, string | undefined>>;
-  /** pi's agent dir: the logins, the catalog and the remembered choice. */
+  /** pi's agent dir: the catalog, and the login unless `loginDir` names it. */
   agentDir: string;
+  /** Where the login, the remembered choice and pi's saved provider are when
+   * that is not `agentDir`: the single box's shared login
+   * (src/loginrefresh/supervisor.ts `loginDirOf`), as a worker reads them
+   * from `login_dir`. Absent: `agentDir`. */
+  loginDir?: string;
   /** Where the route host's private agent dir is made and removed: the state
    * home's tmp. */
   tmpDir: string;
@@ -117,6 +129,10 @@ interface Resolved {
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+/** The directory the login is in, and with it the remembered choice and pi's
+ * saved provider. */
+const loginHome = (deps: ModelCliDeps): string => deps.loginDir ?? deps.agentDir;
+
 const isHelp = (arg: string | undefined): boolean =>
   arg === "--help" || arg === "-h" || arg === "help";
 
@@ -139,13 +155,14 @@ async function resolve(
   deps: ModelCliDeps,
   o: { choice?: ModelChoice; pin?: boolean } = {},
 ): Promise<Resolved> {
-  const read = readModelChoice(deps.agentDir);
+  const loginDir = loginHome(deps);
+  const read = readModelChoice(loginDir);
   if (read.notice !== undefined) deps.err(`note: ${read.notice}`);
   const choice = o.choice ?? read.choice ?? null;
   // Throws when the login file is there and cannot be read: an unknown store
   // is never taken for an empty one.
   const borrowed = borrowedCredentials({
-    srcDir: deps.agentDir,
+    srcDir: loginDir,
     needMs: deps.needMs ?? REVIEW_WINDOW_MS,
     owner: false,
     ...(deps.now ? { now: deps.now } : {}),
@@ -158,8 +175,9 @@ async function resolve(
     import("@quickchatai/pi-quickreview/src/reviewhost.js"),
     import("@quickchatai/pi-quickreview/src/engine/pisdk.js"),
   ]);
-  const piProvider = piSavedProvider(deps.agentDir);
+  const piProvider = piSavedProvider(loginDir);
   const made = await routeHost({
+    // The catalog stays in pi's own agent dir wherever the login is.
     srcAgentDir: deps.agentDir,
     tmpDir: deps.tmpDir,
     credentials: borrowed.credentials,
@@ -211,7 +229,7 @@ function named(
 
 function refusalWords(deps: ModelCliDeps, r: Resolved, refusal: RouteRefusal): string {
   return refusalText(refusal, "app", {
-    agentDir: deps.agentDir,
+    agentDir: loginHome(deps),
     needMs: deps.needMs ?? REVIEW_WINDOW_MS,
     configPath: deps.configPath,
     nameOf: r.nameOf,
@@ -341,7 +359,7 @@ async function use(target: string, json: boolean, deps: ModelCliDeps): Promise<n
     // A level is not part of a choice: each tier keeps its own.
     model: given === null ? null : splitModelSpec(given).model,
     via: "use",
-    no_estimate_ok: readModelChoice(deps.agentDir).noEstimateOk,
+    no_estimate_ok: readModelChoice(loginHome(deps)).noEstimateOk,
   };
   // The choice on its own, through pi's own reading of the text: the config's
   // pin is left out here and named afterwards.
@@ -365,7 +383,7 @@ async function use(target: string, json: boolean, deps: ModelCliDeps): Promise<n
       : tried.result.ok
         ? tried.result.route.modelId
         : candidate.model;
-  const written = writeModelChoice(deps.agentDir, { provider, model, via: "use" });
+  const written = writeModelChoice(loginHome(deps), { provider, model, via: "use" });
   if (!written.ok) return fail(deps, json, written.error, 1);
   if (json) {
     printState(deps, true, await resolve(deps));
@@ -389,7 +407,7 @@ async function use(target: string, json: boolean, deps: ModelCliDeps): Promise<n
 }
 
 async function reset(json: boolean, deps: ModelCliDeps): Promise<number> {
-  const cleared = clearModelChoice(deps.agentDir);
+  const cleared = clearModelChoice(loginHome(deps));
   if (!cleared.ok) return fail(deps, json, cleared.error, 1);
   const r = await resolve(deps);
   if (json) {
@@ -430,15 +448,24 @@ export async function cmdModel(
   return fail(deps, json, `unknown arguments: ${args.join(" ")}\n${MODEL_USAGE}`, 2);
 }
 
-/** `qcr model` for this process: the install's config and homes, pi's agent
- * dir as pi finds it. */
+/**
+ * `qcr model` for this process: the install's config and homes, pi's agent
+ * dir as pi finds it, and the login where the daemon reads it.
+ *
+ * The secrets dir is the install's, with the wizards' override
+ * (`$QC_SECRETS_DIR`) below a configured one: the wizard's model step asks
+ * this verb before any config names a secrets dir, and tells the person to
+ * put a key in the directory its own locate reaches
+ * (src/onboard/steps/ingress.ts `secretsDirFor`), so both read one place.
+ */
 export async function runModelCli(
   args: readonly string[],
   json: boolean,
   env: NodeJS.ProcessEnv = process.env,
+  io: Partial<Pick<ModelCliDeps, "out" | "err">> = {},
 ): Promise<number> {
-  const out = (line: string): void => console.log(line);
-  const err = (line: string): void => console.error(line);
+  const out = io.out ?? ((line: string): void => console.log(line));
+  const err = io.err ?? ((line: string): void => console.error(line));
   // The usage needs no config and no pi home.
   if (isHelp(args[0])) {
     out(MODEL_USAGE);
@@ -446,16 +473,26 @@ export async function runModelCli(
   }
   let deps: ModelCliDeps;
   try {
-    const [{ assetRoot }, { loadOneShotConfig, stateHome }, { piAgentDir }] = await Promise.all([
-      import("@quickchatai/pi-quickreview/src/assetroot.js"),
-      import("./homes.js"),
-      import("./piagentdir.js"),
-    ]);
+    const [{ assetRoot }, { loadOneShotConfig, stateHome }, { piAgentDir }, { loginDirOf }] =
+      await Promise.all([
+        import("@quickchatai/pi-quickreview/src/assetroot.js"),
+        import("./homes.js"),
+        import("./piagentdir.js"),
+        import("./loginrefresh/supervisor.js"),
+      ]);
     // The install's config, or the shipped defaults when it has none.
-    const loaded = loadOneShotConfig({ root: assetRoot(), env, warn: err });
+    const loaded = loadOneShotConfig({
+      root: assetRoot(),
+      env,
+      warn: err,
+      secretsOverride: env["QC_SECRETS_DIR"],
+    });
+    const agentDir = piAgentDir(env);
     deps = {
       env,
-      agentDir: piAgentDir(env),
+      agentDir,
+      // The login the daemon was handed, when that is not its pi's own.
+      loginDir: loginDirOf(env, agentDir),
       tmpDir: join(stateHome(env), "tmp"),
       models: loaded.cfg.models,
       configPath: loaded.path,

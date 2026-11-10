@@ -10,6 +10,8 @@
 //   - the daemon's own answer is the step's, whatever provider it names; this
 //     machine's pi stands in only for a daemon on this computer that is not
 //     running yet, and for nothing on a server;
+//   - a red check names the login the daemon reads (this machine's, where the
+//     stack mounts it) and the secrets dir this machine's `qcr model` reads;
 //   - an answer that cannot be read is said as that, never as a route;
 //   - there is no route question, no key question, no config rewrite and no
 //     key file; what an older wizard recorded is not read;
@@ -542,6 +544,79 @@ describe("the daemon on this computer", () => {
     );
   });
 
+  // A stack the home switched on mounts this machine's login for the daemon
+  // (steps/loginshare.ts writes QCR_PI_LOGIN_DIR into the project .env), and
+  // the daemon reads no other: the container's own login mode would sign in
+  // to a pi home it does not review on.
+  // MUTATION: make sharedLoginOf in src/onboard/steps/llmauth.ts return null
+  // — the red checks name the container's login mode again and this fails.
+  it("a daemon that reviews on this machine's login is signed in on this machine, never in its container", async () => {
+    const piHome = join(root, "home", ".pi", "agent");
+    writeFileSync(join(root, ".env"), `QCR_VERSION=1.0.0\nQCR_PI_LOGIN_DIR=${piHome}\n`);
+    writeConfig(`[github]\nsecrets_dir = '${secretsDir}'\n`);
+    const none = await engine({
+      host: NO_CREDENTIAL,
+      daemon: { running: true, model: NO_CREDENTIAL },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(none.ok).toBe(false);
+    expect(detailOf(none.checks, "daemon_model")).toBe(
+      `the daemon's pi has no model credential. The daemon reviews on this machine's login (${piHome}), ` +
+        "not on one of its container's own: sign in here with /login in this pi session, or `qcr login` in a terminal " +
+        `(pi's /login lists every provider), or put a provider key in ${join(secretsDir, "model-env", "<ENV_NAME>")}.`,
+    );
+    const short = await engine({
+      host: LOGIN_TOO_SHORT,
+      daemon: { running: true, model: LOGIN_TOO_SHORT },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(short.ok).toBe(false);
+    const detail = detailOf(short.checks, "daemon_model");
+    expect(detail).toContain("your Anthropic login expired");
+    expect(detail).toContain(
+      `The daemon reviews on this machine's login (${piHome}), not on one of its container's own: ` +
+        "sign in again here with /login in this pi session, or `qcr login` in a terminal",
+    );
+    for (const said of [detailOf(none.checks, "daemon_model"), detail])
+      expect(said).not.toContain("entrypoint.sh login");
+    // A daemon with a route is green as before: the line names no login.
+    const green = await engine({
+      host: routeJson(),
+      daemon: { running: true, model: routeJson() },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(green.ok, green.failures.join("; ")).toBe(true);
+    // An .env that names no login (the compose default) keeps the container's own.
+    writeFileSync(join(root, ".env"), "QCR_VERSION=1.0.0\nQCR_PI_LOGIN_DIR=\n");
+    const own = await engine({
+      host: routeJson(),
+      daemon: { running: true, model: NO_CREDENTIAL },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(detailOf(own.checks, "daemon_model")).toContain(
+      "Sign in there with `docker compose exec daemon /opt/qcr/docker/entrypoint.sh login`",
+    );
+  });
+
+  // The place the red check names for a key is the one this machine's
+  // `qcr model` reads (tests/model-cli.test.ts pins the verb's half): before
+  // any config names a secrets dir, that is `$QC_SECRETS_DIR` when it is set.
+  // MUTATION: drop `override: env.QC_SECRETS_DIR` from secretsDirFor
+  // (src/onboard/steps/ingress.ts) — the detail names the config home's
+  // secrets dir, where the verb asked with that override does not look, and
+  // this fails.
+  it("with no secrets dir in any config, the key's place is $QC_SECRETS_DIR, as the verb reads it", async () => {
+    const override = join(root, "wizard-secrets");
+    vi.stubEnv("QC_SECRETS_DIR", override);
+    const r = await engine({ host: NO_CREDENTIAL }).runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok).toBe(false);
+    expect(detailOf(r.checks, "host_model")).toContain(
+      `or put a provider key in ${join(override, "model-env", "<ENV_NAME>")}; then run this step again.`,
+    );
+    // A config that names one wins over it, on both sides.
+    writeConfig(`[github]\nsecrets_dir = '${secretsDir}'\n`);
+    const named = await engine({ host: NO_CREDENTIAL }).runStep(LLM_AUTH_STEP_ID);
+    expect(detailOf(named.checks, "host_model")).toContain(
+      join(secretsDir, "model-env", "<ENV_NAME>"),
+    );
+  });
+
   // MUTATION: make askDaemon in src/onboard/steps/llmauth.ts report a silent
   // exec as an answer (`asked: true`), or daemonUnaskedCheck claim a route —
   // this fails.
@@ -636,6 +711,25 @@ describe("the daemon on a server", () => {
         `\`ssh -t review-vm sudo docker exec -it ${CONTAINER} /opt/qcr/docker/entrypoint.sh login\` ` +
         "(pi's /login lists every provider), or put a provider key in the server's secrets dir, as model-env/<ENV_NAME>.",
     );
+  });
+
+  // MUTATION: read the project .env's login for a server too (drop
+  // `sharedLogin: null` from the vm branch of daemonPlace in
+  // src/onboard/steps/llmauth.ts) — the server's daemon is told to sign in on
+  // this machine and this fails.
+  it("a login this machine's stack once shared is never the server's way in", async () => {
+    writeFileSync(join(root, ".env"), `QCR_PI_LOGIN_DIR=${join(root, "home", ".pi", "agent")}\n`);
+    seedChecklist(onServer());
+    const r = await engine({
+      host: routeJson(),
+      remote: { alias: "review-vm", running: true, model: NO_CREDENTIAL },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok).toBe(false);
+    const detail = detailOf(r.checks, "daemon_model");
+    expect(detail).toContain(
+      `Sign in there with \`ssh -t review-vm sudo docker exec -it ${CONTAINER} /opt/qcr/docker/entrypoint.sh login\``,
+    );
+    expect(detail).not.toContain("this machine's login");
   });
 
   it("an unreachable server is said as that: not a route, and not a failure of this step", async () => {

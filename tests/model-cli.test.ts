@@ -4,6 +4,10 @@
 // surface shares (packages/pi-plugin/src/modelroute.ts): the route notice and
 // the five refusals.
 //
+// Then the verb as a process runs it (`runModelCli`), where the environment
+// decides which directories it reads: the login a daemon was handed
+// (`QCR_LOGIN_DIR`) and the wizards' secrets dir (`QC_SECRETS_DIR`).
+//
 // Every route here is resolved by the real pi over a temp agent dir whose
 // `models.json` defines a provider of its own, with a built-in provider keyed
 // through the environment the case names. Nothing is sent anywhere, and the
@@ -23,8 +27,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { builtinProviders, getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
-// Loaded here so the verb's own lazy import of the pi SDK is not on a test's clock.
+// Loaded here so the verb's own lazy imports (the pi SDK, and what
+// `runModelCli` reads its homes with) are not on a test's clock.
 import "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import "@quickchatai/pi-quickreview/src/assetroot.js";
+import "../src/homes.js";
+import "../src/piagentdir.js";
 import { MODEL_CHOICE_FILE, readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import {
   credentialWords,
@@ -35,14 +43,18 @@ import {
   routeWhy,
   type ModelRoute,
 } from "@quickchatai/pi-quickreview/src/modelroute.js";
+import { CONTAINER_LOGIN_DIR, LOGIN_DIR_ENV } from "../src/loginrefresh/supervisor.js";
 import {
   cmdModel,
   MODEL_USAGE,
   REVIEW_WINDOW_MS,
+  runModelCli,
   type ModelCliDeps,
   type ModelCliJson,
 } from "../src/modelcli.js";
 import { MODEL_ENV_DIR } from "../src/modelenv.js";
+import type { OnboardAdapters } from "../src/onboard/engine.js";
+import { secretsDirFor } from "../src/onboard/steps/ingress.js";
 import { FAKE_ROUTE_MODEL, writeFakeProvider } from "./helpers/fake-openai.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
@@ -654,6 +666,176 @@ const alt = (provider: string, credential: ModelRoute["credential"]) => ({
   spec: `${provider}/${provider}-4.0`,
   credential,
   priced: true,
+});
+
+// ---- the login a daemon was handed --------------------------------------------
+//
+// On a single box the daemon reviews on the host's login, mounted beside its
+// own pi home: only the login moves, and with it the remembered choice and
+// pi's saved provider (src/botworker.ts `workerRoute`). The verb is what the
+// wizard asks in the daemon's container, so it reads the same directory.
+
+describe("qcr model where the login is not in pi's agent dir", () => {
+  let login: string;
+
+  beforeEach(() => {
+    login = join(dir, "login");
+    mkdirSync(login, { recursive: true });
+  });
+
+  /** The only credential anywhere: a key stored by /login, in the login dir. */
+  const storedKey = (): void =>
+    writeFileSync(
+      join(login, "auth.json"),
+      JSON.stringify({ [BUILTIN]: { type: "api_key", key: "not-a-key" } }),
+    );
+
+  // MUTATION: borrow from `deps.agentDir` in resolve (src/modelcli.ts) — the
+  // stored key is not seen, the built-in provider is gone from the answer and
+  // this fails. Or hand routeHost the login dir as `srcAgentDir` — the catalog
+  // of pi's own agent dir is not read, `local` is gone and this fails.
+  it("the login is read from the login dir, the catalog from pi's agent dir", async () => {
+    storedKey();
+    withLocal();
+    const usable = (j: ModelCliJson): Record<string, string> =>
+      Object.fromEntries(
+        (j.route ? [j.route, ...j.route.alternatives] : []).map((r) => [
+          r.provider,
+          r.credential.origin,
+        ]),
+      );
+    const j = await runJson([], { loginDir: login });
+    expect(j.code).toBe(0);
+    expect(usable(j.json)).toEqual({ local: "models-json", [BUILTIN]: "stored" });
+    expect(JSON.stringify(j.json)).not.toContain("not-a-key");
+    // Asked of the agent dir alone, the login is not there.
+    expect(usable((await runJson([])).json)).toEqual({ local: "models-json" });
+    // With no catalog key either, the box's one credential is the login's.
+    rmSync(join(home, "models.json"));
+    const only = await runJson([], { loginDir: login });
+    expect(only.json.route).toMatchObject({
+      provider: BUILTIN,
+      credential: { kind: "api_key", origin: "stored" },
+    });
+    const own = await runJson([]);
+    expect(own.code).toBe(1);
+    expect(own.json.refusal?.code).toBe("no-credential");
+    // Neither directory was written to.
+    expect(readdirSync(login)).toEqual(["auth.json"]);
+    expect(readdirSync(home)).toEqual([]);
+  });
+
+  // MUTATION: write the choice with `deps.agentDir` in use (src/modelcli.ts)
+  // — the file lands in the agent dir, where no worker reads it, and this fails.
+  it("the remembered choice is written, read and removed beside the login", async () => {
+    storedKey();
+    const used = await run(["use", BUILTIN], { loginDir: login });
+    expect(used.code).toBe(0);
+    expect(existsSync(join(login, MODEL_CHOICE_FILE))).toBe(true);
+    expect(existsSync(join(home, MODEL_CHOICE_FILE))).toBe(false);
+    expect(readModelChoice(login).choice).toMatchObject({ provider: BUILTIN, via: "use" });
+    const now = await run([], { loginDir: login });
+    expect(now.out[1]).toBe("  why: you chose it (qcr model use)");
+    const reset = await run(["reset"], { loginDir: login });
+    expect(reset.code).toBe(0);
+    expect(existsSync(join(login, MODEL_CHOICE_FILE))).toBe(false);
+  });
+
+  it("a refusal names the directory the login is read from", async () => {
+    const r = await run([], { loginDir: login });
+    expect(r.code).toBe(1);
+    expect(r.out[1]).toContain(`(agent dir ${login})`);
+  });
+});
+
+// ---- the verb as a process runs it ---------------------------------------------
+//
+// `runModelCli` is where the environment becomes directories. Each case gives
+// the whole environment: a scratch HOME and XDG homes, so the install's config
+// is the shipped defaults and nothing of the person running the suite counts.
+
+describe("qcr model for a process: which directories its environment names", () => {
+  let agent: string;
+
+  beforeEach(() => {
+    agent = join(dir, "container-pi", "agent");
+    mkdirSync(agent, { recursive: true });
+  });
+
+  const envOf = (over: Record<string, string> = {}): NodeJS.ProcessEnv => ({
+    HOME: join(dir, "user"),
+    XDG_CONFIG_HOME: join(dir, "xdg-config"),
+    XDG_STATE_HOME: join(dir, "xdg-state"),
+    PI_CODING_AGENT_DIR: agent,
+    ...over,
+  });
+
+  async function asProcess(env: NodeJS.ProcessEnv): Promise<ModelCliJson> {
+    const out: string[] = [];
+    await runModelCli([], true, env, { out: (l) => out.push(l), err: () => {} });
+    expect(out).toHaveLength(1);
+    return JSON.parse(out[0]!) as ModelCliJson;
+  }
+
+  // The wizard's model step asks this in the daemon's container
+  // (src/onboard/steps/llmauth.ts), whose environment the compose file gives
+  // QCR_LOGIN_DIR on a box that shares the host's login.
+  // MUTATION: drop `loginDir: loginDirOf(env, agentDir)` from runModelCli's
+  // deps (src/modelcli.ts) — the verb asks the container's own pi home, which
+  // holds no login, answers no-credential and this fails.
+  it("QCR_LOGIN_DIR names the login the daemon reviews on: the verb answers for that one", async () => {
+    expect(LOGIN_DIR_ENV).toBe("QCR_LOGIN_DIR");
+    // The mount, as the container sees it: the one login on the box.
+    const shared = join(dir, CONTAINER_LOGIN_DIR);
+    mkdirSync(shared, { recursive: true });
+    writeFileSync(
+      join(shared, "auth.json"),
+      JSON.stringify({ [BUILTIN]: { type: "api_key", key: "not-a-key" } }),
+    );
+    const handed = await asProcess(envOf({ [LOGIN_DIR_ENV]: shared }));
+    expect(handed.ok).toBe(true);
+    expect(handed.route).toMatchObject({
+      provider: BUILTIN,
+      credential: { kind: "api_key", origin: "stored" },
+    });
+    // A daemon that is handed none keeps the login of its own pi home: the
+    // compose file sets the variable empty then.
+    for (const none of [envOf(), envOf({ [LOGIN_DIR_ENV]: "" })]) {
+      const own = await asProcess(none);
+      expect(own.ok).toBe(false);
+      expect(own.refusal?.code).toBe("no-credential");
+    }
+  });
+
+  // The step tells the person where a provider key goes
+  // (`secretsDirFor`, the wizards' one resolution) and then asks this verb
+  // whether pi has a credential: the two must reach one directory, also
+  // before any config names a secrets dir, when only `$QC_SECRETS_DIR` does.
+  // MUTATION: drop `secretsOverride` from runModelCli's loadOneShotConfig call
+  // (src/modelcli.ts) — the verb reads `<config home>/secrets`, the key the
+  // step asked for is not seen and this fails.
+  it("QC_SECRETS_DIR: a key put where the wizard's step says is the key the verb reads", async () => {
+    const env = envOf({ QC_SECRETS_DIR: join(dir, "wizard-secrets") });
+    // The step's side: no config.toml yet, no recorded choice.
+    const paths = {
+      stateDir: join(dir, "checkout", "state"),
+      configPath: join(dir, "xdg-config", "qcr", "default", "config.toml"),
+    };
+    const said = secretsDirFor({ paths } as OnboardAdapters, {}, env);
+    expect(said).toBe(join(dir, "wizard-secrets"));
+    expect((await asProcess(env)).refusal?.code).toBe("no-credential");
+    mkdirSync(join(said, MODEL_ENV_DIR), { recursive: true });
+    writeFileSync(join(said, MODEL_ENV_DIR, BUILTIN_ENV), "value-from-the-secrets-dir\n");
+    const now = await asProcess(env);
+    expect(now.ok).toBe(true);
+    expect(now.route).toMatchObject({
+      provider: BUILTIN,
+      credential: { origin: "env-key", label: BUILTIN_ENV },
+    });
+    expect(JSON.stringify(now)).not.toContain("value-from-the-secrets-dir");
+    // With no override, the install's own secrets dir is the one read.
+    expect((await asProcess(envOf())).ok).toBe(false);
+  });
 });
 
 describe("routeNotice: one line that names the route, why, and how to change it", () => {

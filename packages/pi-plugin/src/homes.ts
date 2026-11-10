@@ -393,11 +393,19 @@ export function loadOneShotConfig(opts: {
   env: InstallEnv;
   /** Hears each deprecated key the config still sets. */
   warn?: (line: string) => void;
+  /** A caller's override of the secrets dir (`$QC_SECRETS_DIR`, the
+   * wizards'), below a configured value: `locateSecrets`' `override`. Only
+   * the caller a wizard asks passes it. */
+  secretsOverride?: string | null | undefined;
 }): OneShotConfig {
   const env = opts.env;
   const { path, file } = oneShotConfigFile({ root: opts.root, env });
   const toml = readFileSync(file, "utf8");
   const cfg = parseCoreConfig(toml, opts.warn ? { warn: opts.warn } : {});
-  cfg.github.secrets_dir = locateSecrets({ configured: cfg.github.secrets_dir, env }).path;
+  cfg.github.secrets_dir = locateSecrets({
+    configured: cfg.github.secrets_dir,
+    override: opts.secretsOverride ?? null,
+    env,
+  }).path;
   return { cfg, toml, path };
 }

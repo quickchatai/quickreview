@@ -9,7 +9,9 @@
 //
 //   in the daemon's container   the answer that counts, once the daemon runs.
 //                               `qcr model` reads the secrets dir's model
-//                               environment itself (src/modelenv.ts), so the
+//                               environment itself (src/modelenv.ts), and the
+//                               login where the daemon was handed one
+//                               (`QCR_LOGIN_DIR`, src/modelcli.ts), so the
 //                               exec sees what a worker sees.
 //   on this machine             the home's pi. On this computer it stands in
 //                               for a daemon that is not running yet: the
@@ -18,6 +20,13 @@
 //                               machine's login (steps/loginshare.ts). On a
 //                               server it stands in for nothing, because no
 //                               login is ever copied there: the line is a note.
+//
+// Where a red check says how to sign in, it names the login the daemon reads.
+// A stack that mounts this machine's login (the project .env's
+// QCR_PI_LOGIN_DIR, steps/loginshare.ts) reviews on that one, so the way in
+// is this machine's /login: the container's own login mode would sign in to a
+// pi home the daemon does not read. And the place it names for a key is the
+// secrets dir this machine's `qcr model` reads, `$QC_SECRETS_DIR` included.
 //
 // So there is no route question, no key question, no config rewrite and no key
 // file here: the step names no provider and no model, and a daemon signed in
@@ -54,7 +63,9 @@ import type {
   StepContext,
   StepReport,
 } from "../engine.js";
-import { secretsDirFor } from "./compose.js";
+import { readEnvText, rootOf, secretsDirFor } from "./compose.js";
+import { readEnvKey } from "./ingress.js";
+import { PI_LOGIN_DIR_ENV } from "./loginshare.js";
 import { topologyOf } from "./topology.js";
 import {
   remoteFactsFor,
@@ -223,8 +234,33 @@ interface DaemonPlace {
   where: string;
   /** The command that opens pi's /login on the daemon's own pi home. */
   login: string;
+  /** This machine's pi agent dir, when the stack mounts it as the daemon's
+   * login (steps/loginshare.ts); null when the daemon keeps a login of its
+   * own. Never set on a server: no login is copied there. */
+  sharedLogin: string | null;
   /** Where a provider key goes for the daemon, as a path a person can follow. */
   keyFile: string;
+}
+
+/** The host login the stack on this machine mounts for its daemon, as the
+ * project .env names it; null when it names none. */
+function sharedLoginOf(ctx: StepContext): string | null {
+  const dir = (readEnvKey(readEnvText(rootOf(ctx.adapters)), PI_LOGIN_DIR_ENV) ?? "").trim();
+  return dir !== "" ? dir : null;
+}
+
+/** The ways to sign in on this machine, as the words after "sign in". */
+const HOST_SIGN_IN =
+  "with /login in this pi session, or `qcr login` in a terminal (pi's /login lists every provider)";
+
+/** How the daemon gets a login, with no closing stop: through the login it
+ * reads, which is this machine's where the stack mounts that one. */
+function daemonSignIn(place: DaemonPlace, again = false): string {
+  const more = again ? " again" : "";
+  return place.sharedLogin !== null
+    ? `The daemon reviews on this machine's login (${place.sharedLogin}), not on one of its container's own: ` +
+        `sign in${more} here ${HOST_SIGN_IN}`
+    : `Sign in${more} there with \`${place.login}\`${again ? "" : " (pi's /login lists every provider)"}`;
 }
 
 function daemonPlace(ctx: StepContext, transport: StackTransport): DaemonPlace {
@@ -235,6 +271,7 @@ function daemonPlace(ctx: StepContext, transport: StackTransport): DaemonPlace {
       where: transport.where,
       // pi's login is interactive: a terminal on both hops.
       login: `ssh -t ${facts.alias || "<vm>"} ${facts.sudo ? "sudo " : ""}docker exec -it ${facts.container} ${CONTAINER_LOGIN}`,
+      sharedLogin: null,
       keyFile: `the server's secrets dir, as ${MODEL_ENV_DIR}/<ENV_NAME>`,
     };
   }
@@ -242,6 +279,7 @@ function daemonPlace(ctx: StepContext, transport: StackTransport): DaemonPlace {
     server: false,
     where: transport.where,
     login: transport.execCommand(CONTAINER_LOGIN),
+    sharedLogin: sharedLoginOf(ctx),
     keyFile: join(secretsDirFor(ctx.adapters, ctx.choices), MODEL_ENV_DIR, "<ENV_NAME>"),
   };
 }
@@ -265,12 +303,10 @@ function daemonAnswerCheck(
         ok: false,
         detail:
           answer.code === NO_CREDENTIAL
-            ? `the daemon's pi has no model credential. Sign in there with \`${place.login}\` (pi's /login lists every provider), ` +
+            ? `the daemon's pi has no model credential. ${daemonSignIn(place)}, ` +
               `or put a provider key in ${place.keyFile}.`
             : `the daemon's pi cannot run a review: ${answer.text}` +
-              (answer.code === LOGIN_TOO_SHORT
-                ? ` Sign in again there with \`${place.login}\`.`
-                : ""),
+              (answer.code === LOGIN_TOO_SHORT ? ` ${daemonSignIn(place, true)}.` : ""),
       };
     case "failed":
       return {
@@ -322,8 +358,8 @@ function hostDecidingCheck(answer: ModelAnswer, place: DaemonPlace): CheckResult
         ok: false,
         detail:
           answer.code === NO_CREDENTIAL
-            ? "this machine's pi has no model credential. Sign in with /login in this pi session, or `qcr login` in a terminal " +
-              `(pi's /login lists every provider), or put a provider key in ${place.keyFile}; then run this step again.`
+            ? `this machine's pi has no model credential. Sign in ${HOST_SIGN_IN}, ` +
+              `or put a provider key in ${place.keyFile}; then run this step again.`
             : `this machine's pi cannot run a review: ${answer.text}`,
       };
     case "failed":
