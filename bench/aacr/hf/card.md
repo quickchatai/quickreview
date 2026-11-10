@@ -722,8 +722,6 @@ text are the third-party omissions above and the `qcr_commit` remap (see
 - The public repository's stand-ins: where QuickReview's prompts, as built
   at run time, carried examples from private work, the same stand-ins the
   public repository's history carries replace them, by the same rules.
-- Paths under `profiles/quickchat` are left as they are: the public
-  repository holds that profile.
 
 The archive's README gives the count of every rewrite over the whole archive.
 
