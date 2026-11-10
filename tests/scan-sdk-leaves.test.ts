@@ -11,6 +11,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -21,10 +22,17 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import {
   LEAF_TURN_TIMEOUT_MS,
+  caseHostRoute,
   scanAuthSource,
+  scanAuthWindowMs,
+  scanRefusalWords,
+  scanRoute,
   scanSdkCases,
   sdkCaseRunner,
 } from "../src/engine/caserunner-sdk.js";
+import { SCAN_CASE_AUTH_BUDGET_MS } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { MODEL_CHOICE_FILE } from "@quickchatai/pi-quickreview/src/modelchoice.js";
+import type { ModelRoute } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   LENS_SESSIONS_DIR,
@@ -42,7 +50,8 @@ import {
   writeFakeProvider,
   type FakeOpenAI,
 } from "./helpers/fake-openai.js";
-import { pricedFaux } from "./helpers/priced-faux.js";
+import { ROUTABLE_FAUX_MODEL, pricedFaux, routableFaux } from "./helpers/priced-faux.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 useOfflineGuard({ loopback: true });
 
@@ -357,11 +366,38 @@ describe("the driver's host: a login per case, refused and read-only", () => {
       anthropic: { type: "oauth", access: "tok", refresh, expires },
     });
 
-  function driver(env: NodeJS.ProcessEnv, onExpired: (r: string) => void) {
-    writeFileSync(join(agentsDir, "pass-survey.md"), AGENT("faux/m"));
+  /** The scan's route on the faux model, as a driver resolved it. */
+  const FAUX_ROUTE: ModelRoute = {
+    provider: "faux",
+    modelId: "m",
+    providerName: "Faux",
+    spec: "faux/m",
+    thinking: null,
+    source: "only-credential",
+    pick: "newest",
+    piDefaultId: null,
+    custom: false,
+    movedFrom: null,
+    credential: { kind: "api_key", origin: "stored", subscription: false },
+    priced: true,
+    ask: false,
+    alternatives: [],
+    notices: [],
+  };
+
+  function driver(
+    env: NodeJS.ProcessEnv,
+    onExpired: (r: string) => void,
+    /** The scan's route, and an agent file that pins no model of its own. */
+    route?: () => ModelRoute | undefined,
+  ) {
+    writeFileSync(
+      join(agentsDir, "pass-survey.md"),
+      route ? AGENT("faux/m").replace("model: faux/m\n", "thinking: low\n") : AGENT("faux/m"),
+    );
     const faux = pricedFaux(() => 0.01, { provider: "faux", models: [{ id: "m" }] });
     faux.appendResponses(Array.from({ length: 4 }, () => fauxAssistantMessage("NONE")));
-    const made: Array<{ agentDir: string; credentials: unknown }> = [];
+    const made: Array<{ agentDir: string; credentials: unknown; route?: unknown }> = [];
     /** The providers the host found a key for in the env, each with the variable. */
     const keyed: Array<[string, string | undefined]> = [];
     const cases = scanSdkCases({
@@ -370,12 +406,14 @@ describe("the driver's host: a login per case, refused and read-only", () => {
       env,
       agentDir: join(dir, "sdk-agent"),
       onExpired,
+      ...(route ? { route } : {}),
       makeHost: async (o) => {
         made.push(o);
         const host = await PiHost.create({
           agentDir: o.agentDir,
           credentials: o.credentials as never,
           authEnv: o.authEnv,
+          ...(o.route ? { route: o.route } : {}),
           configureModels: async (r) => {
             r.registerNativeProvider(faux.provider);
             // The key-only route: the faux model's key stands in for the
@@ -514,6 +552,95 @@ describe("the driver's host: a login per case, refused and read-only", () => {
     expect(existsSync(join(dir, "sdk-agent", "models.json"))).toBe(false);
   });
 
+  // MUTATION: drop `...hostRoute` from the host scanSdkCases builds — the
+  // case's host is handed no route and resolves one of its own from the
+  // login (another provider's, here), and this fails.
+  it("with the scan's route, each case's host is handed it as fixed and runs on it", async () => {
+    const src = join(dir, "src-agent");
+    mkdirSync(src);
+    writeFileSync(join(src, "auth.json"), login(Date.now() + 3 * 3_600_000));
+    let asked = 0;
+    const { cases, made } = driver(
+      { PATH: "/bin", HOME: dir, QCR_SCAN_AUTH_SRC: src },
+      () => {},
+      () => {
+        asked++;
+        return FAUX_ROUTE;
+      },
+    );
+    const signal = new AbortController().signal;
+    const first = await cases.run(spec, signal);
+    expect(first, JSON.stringify(first)).toMatchObject({ ok: true, output: "NONE" });
+    await cases.run(spec, signal);
+    // Asked per case, and every host got the same route to run on.
+    expect(asked).toBe(2);
+    expect(made.map((m) => m.route)).toEqual([{ fixed: FAUX_ROUTE }, { fixed: FAUX_ROUTE }]);
+    // An id pi's catalog does not hold goes as a pin: the host makes pi's own
+    // model object for it, which a fixed route does not carry.
+    expect(caseHostRoute({ ...FAUX_ROUTE, custom: true })).toEqual({
+      pin: { text: "faux/m", from: "flag" },
+    });
+  });
+
+  it("before the driver resolved a route, a case's host is handed none", async () => {
+    const src = join(dir, "src-agent");
+    mkdirSync(src);
+    writeFileSync(join(src, "auth.json"), login(Date.now() + 3 * 3_600_000));
+    const { cases, made } = driver(
+      { PATH: "/bin", HOME: dir, QCR_SCAN_AUTH_SRC: src },
+      () => {},
+      () => undefined,
+    );
+    // The agent pins its own model here: with no route the host is asked for none.
+    writeFileSync(join(agentsDir, "pass-survey.md"), AGENT("faux/m"));
+    const out = await cases.run(spec, new AbortController().signal);
+    expect(out, JSON.stringify(out)).toMatchObject({ ok: true, output: "NONE" });
+    expect(made).toHaveLength(1);
+    expect("route" in made[0]!).toBe(false);
+  });
+
+  // The login beside the route's holds a token that ends in a minute. The
+  // scan runs on the faux key: that other login is not its business.
+  // MUTATION: drop `providers: [route.provider]` from the case's
+  // engineCredentials — the case is refused for the other login, and this fails.
+  it("with a route, only its provider's login has to last the case", async () => {
+    const src = join(dir, "src-agent");
+    mkdirSync(src);
+    writeFileSync(join(src, "auth.json"), login(Date.now() + 60_000));
+    const whole: string[] = [];
+    const unrouted = driver({ PATH: "/bin", HOME: dir, QCR_SCAN_AUTH_SRC: src }, (r) =>
+      whole.push(r),
+    );
+    expect(await unrouted.cases.run(spec, new AbortController().signal)).toMatchObject({
+      ok: false,
+    });
+    expect(whole).toHaveLength(1);
+    const expired: string[] = [];
+    const routed = driver(
+      { PATH: "/bin", HOME: dir, QCR_SCAN_AUTH_SRC: src },
+      (r) => expired.push(r),
+      () => FAUX_ROUTE,
+    );
+    const out = await routed.cases.run(spec, new AbortController().signal);
+    expect(out, JSON.stringify(out)).toMatchObject({ ok: true, output: "NONE" });
+    expect(expired).toEqual([]);
+  });
+
+  // MUTATION: copy models.json alone in scanSdkCases — the models pi learned
+  // since its build are unknown to the case's host, and this fails.
+  it("gives the host both of pi's catalog files, as the route's host had them", async () => {
+    const src = join(dir, "src-agent");
+    mkdirSync(src);
+    writeFileSync(join(src, "auth.json"), login(Date.now() + 3 * 3_600_000));
+    writeFileSync(join(src, "models-store.json"), JSON.stringify({}));
+    const { cases } = driver({ PATH: "/bin", HOME: dir, QCR_SCAN_AUTH_SRC: src }, () => {});
+    await cases.run(spec, new AbortController().signal);
+    expect(existsSync(join(dir, "sdk-agent", "models-store.json"))).toBe(true);
+    rmSync(join(src, "models-store.json"));
+    await cases.run(spec, new AbortController().signal);
+    expect(existsSync(join(dir, "sdk-agent", "models-store.json"))).toBe(false);
+  });
+
   it("gives the host the login's custom model list, and refuses a relative agent dir", async () => {
     const src = join(dir, "src-agent");
     mkdirSync(src);
@@ -531,6 +658,183 @@ describe("the driver's host: a login per case, refused and read-only", () => {
         onExpired: () => {},
       }),
     ).toThrow(/absolute/);
+  });
+});
+
+// The scan's one route, resolved over the login the driver reads: no session
+// is started and nothing is sent.
+describe("the scan's route", () => {
+  const FAUX_SPEC = (id: string): string => `${id}/${ROUTABLE_FAUX_MODEL.id}`;
+  /** Registers these faux providers on every host the resolver builds. */
+  const providers =
+    (...ids: string[]) =>
+    (r: { registerNativeProvider(p: unknown): void }): void => {
+      for (const id of ids) r.registerNativeProvider(routableFaux({ provider: id }).provider);
+    };
+  const home = (): string => {
+    const src = join(dir, "pi-agent");
+    mkdirSync(src, { recursive: true });
+    return src;
+  };
+  const resolve = (o: Partial<Parameters<typeof scanRoute>[0]> & { src: string; ids?: string[] }) =>
+    scanRoute({
+      env: { PATH: "/bin", HOME: dir, PI_CODING_AGENT_DIR: o.src },
+      tmpDir: join(dir, "route-tmp"),
+      configureModels: providers(...(o.ids ?? ["alpha"])) as never,
+      ...o,
+    });
+
+  it("is what pi has a credential for, resolved on a host that is gone again", async () => {
+    const src = home();
+    const answer = await resolve({ src });
+    expect(answer.result.ok && answer.result.route).toMatchObject({
+      spec: FAUX_SPEC("alpha"),
+      source: "only-credential",
+      ask: false,
+    });
+    expect(answer.refusal).toBeUndefined();
+    // The answer is plain data: the scan image prints it, the host reads it back.
+    expect(JSON.parse(JSON.stringify(answer))).toEqual(answer);
+    // Nothing is left of the route's host, and nothing was written beside the login.
+    expect(readdirSync(join(dir, "route-tmp"))).toEqual([]);
+    expect(readdirSync(src)).toEqual([]);
+  });
+
+  // MUTATION: drop `pin` from the route inputs in scanRoute — the order's
+  // pick answers in place of the pinned provider, and this fails.
+  it("--model is the pin, and a pin pi does not know is refused in words that name the fix", async () => {
+    const src = home();
+    const pinned = await resolve({
+      src,
+      ids: ["alpha", "beta"],
+      pin: { text: FAUX_SPEC("beta"), from: "flag" },
+    });
+    expect(pinned.result.ok && pinned.result.route).toMatchObject({
+      spec: FAUX_SPEC("beta"),
+      source: "flag",
+      pick: "pinned",
+    });
+    const unknown = await resolve({
+      src,
+      pin: { text: "no-such-provider/no-such-model", from: "flag" },
+    });
+    expect(unknown.result).toMatchObject({ ok: false, refusal: { code: "pin-unknown" } });
+    expect(unknown.refusal).toMatch(/pi knows no model "no-such-provider\/no-such-model"/);
+  });
+
+  it("no credential: refused, naming the way in for a host scan and for the sandbox", async () => {
+    const src = home();
+    const none = await resolve({ src, ids: [] });
+    expect(none.result).toEqual({ ok: false, refusal: { code: "no-credential" } });
+    expect(none.refusal).toMatch(/pi has no model credential .*Run `qcr login`/);
+    const boxed = await scanRoute({
+      env: { PATH: "/bin", HOME: dir, QCR_SCAN_AUTH_SRC: src },
+      tmpDir: join(dir, "route-tmp"),
+      configureModels: providers() as never,
+    });
+    expect(boxed.refusal).toMatch(/no pi login in the companion's pi home .*run `qcr scan login`/);
+  });
+
+  // The read waits out a login that is being rewritten before it gives up.
+  it(
+    "a login file that cannot be read is an error, never an empty login",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const src = home();
+      writeFileSync(join(src, "auth.json"), "{ not json");
+      await expect(resolve({ src })).rejects.toThrow(/auth\.json/);
+    },
+  );
+
+  // MUTATION: drop the re-resolve after the answer in scanRoute — the route
+  // stays the order's pick though the person chose the other, and this fails.
+  it("two providers tie: a person is asked once, and the answer is remembered beside the login", async () => {
+    const src = home();
+    const asked: Array<{ question: string; rows: readonly string[] }> = [];
+    const said: string[] = [];
+    const choose = async (question: string, rows: readonly string[]): Promise<number> => {
+      asked.push({ question, rows });
+      return 1;
+    };
+    const first = await resolve({ src, ids: ["alpha", "beta"], choose, say: (l) => said.push(l) });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.question).toBe("pi can run this scan on more than one provider:");
+    // The first row is the one the order takes.
+    expect(asked[0]!.rows.map((r) => r.split(/\s+/)[0])).toEqual([
+      FAUX_SPEC("alpha"),
+      FAUX_SPEC("beta"),
+    ]);
+    expect(first.result.ok && first.result.route).toMatchObject({
+      spec: FAUX_SPEC("beta"),
+      source: "remembered",
+    });
+    expect(JSON.parse(readFileSync(join(src, MODEL_CHOICE_FILE), "utf8"))).toMatchObject({
+      provider: "beta",
+      model: null,
+      via: "ask",
+    });
+    expect(said.join("\n")).toMatch(/^Remembered: .+\. qcr model use <provider> changes it\.$/m);
+    // The next plan, and the start after it, are not asked.
+    const again = await resolve({ src, ids: ["alpha", "beta"], choose });
+    expect(asked).toHaveLength(1);
+    expect(again.result.ok && again.result.route.spec).toBe(FAUX_SPEC("beta"));
+  });
+
+  it("with nobody to ask, the order decides and the route says a host may ask", async () => {
+    const src = home();
+    const answer = await resolve({ src, ids: ["alpha", "beta"] });
+    expect(answer.result.ok && answer.result.route).toMatchObject({
+      spec: FAUX_SPEC("alpha"),
+      ask: true,
+    });
+    expect(existsSync(join(src, MODEL_CHOICE_FILE))).toBe(false);
+  });
+
+  it("a login must last one case: the container's case budget, the host's whole turn", () => {
+    expect(scanAuthWindowMs({ QCR_SCAN_AUTH_SRC: "/mnt/pi" })).toBe(SCAN_CASE_AUTH_BUDGET_MS);
+    expect(scanAuthWindowMs({ PI_CODING_AGENT_DIR: "/x" })).toBe(LEAF_TURN_TIMEOUT_MS);
+  });
+
+  // The route's refusals speak of a review; a scan's say scan.
+  // MUTATION: return `refusalText(...)` as it is from scanRefusalWords — the
+  // words tell a person scanning to run a review, and this fails.
+  it("a refusal names the scan, its own way into pi, and in the sandbox the companion's login", () => {
+    const NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
+    const o = { src: "/pi", needMs: 45 * 60_000, now: () => NOW };
+    const short = {
+      code: "login-too-short" as const,
+      logins: [{ provider: "p", name: "Prov", expiresAt: NOW + 10 * 60_000 }],
+    };
+    const refusals = [
+      { code: "no-credential" as const },
+      short,
+      { code: "no-model" as const, providers: ["p"] },
+      {
+        code: "pin-no-credential" as const,
+        pin: "p/m",
+        provider: "p",
+        from: "flag" as const,
+        candidates: [],
+      },
+      { code: "pin-unknown" as const, pin: "x", detail: "no match" },
+    ];
+    for (const refusal of refusals) {
+      const host = scanRefusalWords(refusal, { ...o, sandboxed: false });
+      expect(host, refusal.code).not.toMatch(/review/i);
+      expect(host, refusal.code).not.toMatch(/qcr scan login/);
+      const boxed = scanRefusalWords(refusal, { ...o, sandboxed: true });
+      expect(boxed, refusal.code).not.toMatch(/review/i);
+      expect(boxed, refusal.code).toMatch(/qcr scan login/);
+    }
+    const host = scanRefusalWords(short, { ...o, sandboxed: false });
+    expect(host).toMatch(/your Prov login expires at .* inside this scan's 45-minute budget/);
+    expect(host).toMatch(/Run the scan inside pi \(\/qcr-scan\)/);
+    expect(scanRefusalWords(short, { ...o, needMs: 30 * 60_000, sandboxed: true })).toMatch(
+      /the companion's Prov access token expires at .* inside a scan case's 30-minute budget/,
+    );
+    expect(scanRefusalWords(refusals[3]!, { ...o, sandboxed: false })).toMatch(
+      /^this scan is pinned to p\/m \(--model\)/,
+    );
   });
 });
 

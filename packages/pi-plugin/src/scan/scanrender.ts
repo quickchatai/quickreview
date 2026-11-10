@@ -29,6 +29,7 @@ import { escapeControls } from "./textsniff.js";
 import {
   SCAN_TRANSCRIPTS_DIR,
   THREAT_MODEL_DRAFT_FILE,
+  type ScanModelView,
   type ScanRunner,
   type ScanPreview,
   type ScanRun,
@@ -38,6 +39,7 @@ import {
   type ThreatModelPreview,
 } from "./scanrun.js";
 import { REPO_THREAT_MODEL_PATH } from "../threatmodel.js";
+import { foldTier } from "../types.js";
 
 /** What closing the tickets of the findings a match fixed did: the tickets
  * closed, and the closes the tracker refused. A host with no tracker has no
@@ -122,6 +124,18 @@ function owedClause(d: ScanPreview["delta"]): string {
   return `; ${parts.join("; ")} — read first`;
 }
 
+/** The scan's model in a plan, as one block: the model line (which model,
+ * why, and how to change it) and what the host added under it. Nothing when
+ * the plan's host named no model. */
+function modelBlock(p: ScanModelView): string[] {
+  const lines = p.model_lines ?? [];
+  return lines.length > 0 ? [lines.join("\n")] : [];
+}
+
+/** A stored tier name in the ladder's spelling: a proposal written under the
+ * older names never shows one. */
+const tierName = (tier: string): string => foldTier(tier) ?? tier;
+
 export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): string {
   const out: string[] = [];
   const deep = p.depth === "deep";
@@ -155,6 +169,7 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
         `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate.`,
     );
   }
+  out.push(...modelBlock(p));
   if (deep) {
     out.push(
       "DEEP: pass-scan names a deep lens for every focus file, and a file the ledger holds only a standard reading of is read again. " +
@@ -222,12 +237,20 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
     out.push(
       "FIRST, before this scan reads anything: the threat model ([scan] threat_model). " +
         `Start stage 0 below; ${reads} ${off}`,
+      // Stage 0 runs on the scan's model, which is said above.
       renderThreatModelPreview(stage0, verbs),
     );
   } else if (p.blockers.length === 0) {
     out.push(`To run it: ${verbs.start(p)} — only after the operator agreed to the cost.`);
   }
   return out.join("\n\n");
+}
+
+/** A plan less its model lines: a structured result carries the `model`
+ * object instead. */
+function withoutModelLines<T extends ScanModelView>(p: T): Omit<T, "model_lines"> {
+  const { model_lines: _lines, ...rest } = p;
+  return rest;
 }
 
 /** The ratified model a stage-0 draft would revise, by name. */
@@ -264,10 +287,12 @@ function tierCounts(r: NonNullable<ScanStatus["run"]>, findings: number, doubted
 }
 
 /** The threat-model stage's proposal: why it runs (or not), what it reads,
- * its price and how to start it. */
+ * its price and how to start it. `model` is what the proposing host resolved
+ * of the scan's model (scanrun.ts `proposeThreatModel`), said under the head. */
 export function renderThreatModelPreview(
   p: ThreatModelPreview,
   verbs: ScanVerbs = TOOL_VERBS,
+  model: ScanModelView = {},
 ): string {
   const out: string[] = [];
   out.push(
@@ -282,6 +307,7 @@ export function renderThreatModelPreview(
           `It revises ${existingName(p.existing.source)} (sha256 ${p.existing.hash.slice(0, 12)}): scans keep reading that model, ` +
           `and the draft takes effect only once a person copies it over ${p.existing.source === "repo" ? REPO_THREAT_MODEL_PATH : "the profile's threat-model.md"}.`,
   );
+  out.push(...modelBlock(model));
   out.push(
     p.inventory !== ""
       ? `What it starts from — the route inventory, read by line parsers:\n${p.inventory}`
@@ -323,6 +349,8 @@ export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): stri
           `${findings} finding(s)${tierCounts(r, findings, doubted)}, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}` +
           unpriced,
       );
+    // The one model every case of the run was handed, when its host named one.
+    if (r.settings.model !== undefined) out.push(`Model: ${r.settings.model}`);
     if (r.mode !== "threat-model" && r.threat_model) out.push(threatModelLine(r.threat_model));
     const offKind = r.cases.reduce((n, c) => n + (c.off_kind ?? 0), 0);
     if (offKind > 0)
@@ -516,7 +544,7 @@ function renderFloor(p: StoredStage2Proposal): string[] {
     const covered = rows.filter((r) => r.status === "covered");
     const ids = rows.length === 1 ? rows[0]!.id : `${rows[0]!.id}…${rows[rows.length - 1]!.id}`;
     out.push(
-      `  ${lens} (floor ${ids}) at ${rows[0]!.tier}: ${rows.length} row(s) over ${[...new Set(rows.flatMap((r) => r.units))].length} unit(s), ` +
+      `  ${lens} (floor ${ids}) at ${tierName(rows[0]!.tier)}: ${rows.length} row(s) over ${[...new Set(rows.flatMap((r) => r.units))].length} unit(s), ` +
         `${rows.reduce((n, r) => n + r.files.length, 0)} file(s), ${rows.reduce((n, r) => n + r.lines, 0)} lines — ` +
         `${run.length} to run, ~${usd(run.reduce((n, r) => n + r.estimate_usd, 0))} (${priceLabel(rows[0]!.price)})` +
         (covered.length ? `; ${covered.length} covered (free)` : "") +
@@ -549,7 +577,14 @@ function renderFloor(p: StoredStage2Proposal): string[] {
   return out;
 }
 
-export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_VERBS): string {
+/** The stored proposal in words. `model` is what the proposing host resolved
+ * of the scan's model (scanrun.ts `proposeStage2`): it is said under the
+ * head, and a proposal with no model names no start. */
+export function renderProposal(
+  p: StoredStage2Proposal,
+  verbs: ScanVerbs = TOOL_VERBS,
+  model: ScanModelView = {},
+): string {
   const out: string[] = [];
   const run = p.rows.filter((r) => r.status === "run");
   const deep = p.depth === "deep";
@@ -558,6 +593,7 @@ export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_
       (p.budget_usd !== null ? `, fitted to a ${usd(p.budget_usd)} budget` : "") +
       `; validator ${p.validator ? "on" : "off"}.`,
   );
+  out.push(...modelBlock(model));
   if (deep) {
     const own = run.filter((r) => !r.floor);
     const floor = run.filter((r) => r.floor);
@@ -579,7 +615,7 @@ export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_
             : ` — OVER BUDGET (${usd(r.estimate_usd)}, left out)`;
       const price = priceLabel(r.price);
       return [
-        `  ${r.id}: ${rowLensKey(r.lens, r.strategy)} at ${r.tier} over ${r.units.join(" + ")}${r.units.length > 1 ? " (cross-module)" : ""} — ${r.files.length} file(s)` +
+        `  ${r.id}: ${rowLensKey(r.lens, r.strategy)} at ${tierName(r.tier)} over ${r.units.join(" + ")}${r.units.length > 1 ? " (cross-module)" : ""} — ${r.files.length} file(s)` +
           (r.tests.length ? ` + ${r.tests.length} paired test(s)` : "") +
           `, ${r.lines} lines, ~${usd(r.estimate_usd)} (${price})${mark}`,
         `      ${r.reason}`,
@@ -601,7 +637,9 @@ export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_
     );
   }
   if (p.over_budget_usd > 0) out.push(`Left out by the budget: ${usd(p.over_budget_usd)} of rows.`);
-  if (p.runnable > 0) {
+  if (p.runnable > 0 && model.model === null) {
+    out.push("✗ nothing starts without a model: see the model line above, then propose again.");
+  } else if (p.runnable > 0) {
     out.push(`To run it: ${verbs.stage2Start(p.key)}`);
   } else out.push("✗ nothing to run: every row is covered or over the budget.");
   return out.join("\n\n");
@@ -613,10 +651,20 @@ export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_
 // the checks, the orders and the structured results. Each surface renders
 // them its own way; neither carries a rule of its own.
 
+/** A plan's fields about the model as a structured result carries them: the
+ * `model` object and what goes with it, never the lines written for a person. */
+export function modelDetails(p: ScanModelView): Omit<ScanModelView, "model_lines"> {
+  return {
+    ...(p.model !== undefined ? { model: p.model } : {}),
+    ...(p.alternatives !== undefined ? { alternatives: p.alternatives } : {}),
+    ...(p.tiers !== undefined ? { tiers: p.tiers } : {}),
+  };
+}
+
 /** A preview's structured result: its cases summarised (counts, not files). */
 export function previewDetails(p: ScanPreview): Record<string, unknown> {
   return {
-    ...p,
+    ...withoutModelLines(p),
     cases: p.cases.map((c) => ({
       id: c.id,
       files: c.files.length,

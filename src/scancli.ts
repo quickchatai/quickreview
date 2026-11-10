@@ -20,19 +20,51 @@
 //
 // Host-side beside them: `units` — the setup belt's unit-cut tools
 // (extensions/setup.ts) — and the sandbox's `login`, `doctor` and `rebuild`.
+//
+// The model. A scan runs on one model, the route (`scanRoutePort`): what pi
+// has a credential for, under `--model`, the config's `[models] model` and a
+// remembered choice, resolved the way `qcr review` resolves its own
+// (src/engine/caserunner-sdk.ts `scanRoute`). It is resolved where the login
+// is:
+//   - a driver (a foreground start: here, in the detached host process, or in
+//     the scan container) resolves it in its own process, once, before the
+//     run is recorded, and hands it to every case's host as fixed;
+//   - a plan (`preview`, the two proposals) for a host scan resolves it here;
+//   - a plan for a sandboxed scan asks the scan image, over the companion's
+//     login read-only (src/scanbox.ts `askOnLogin`, running that same
+//     function there): the host cannot read that login.
+// The plan's key covers the route, so a start whose driver resolves another
+// model than the plan showed is refused there. `--model` is also the whole
+// scan's model: the config the run reads keeps no tier or lens on a model of
+// its own (src/setup/scanbuild.ts `SCAN_MODEL_ENV`).
 import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, sandboxRoot } from "./config.js";
+import { loadConfig, sandboxRoot, type ScanSandboxConfig } from "./config.js";
 import { stateHome } from "./install.js";
+import { oneShotConfigFile } from "./homes.js";
 import { mountedCheckout, scanEnv } from "./scanenv.js";
 import {
   IN_SANDBOX_ENV,
+  SCANBOX,
+  SCANBOX_SCRATCH,
   STARTED_FILE_ENV,
+  askOnLogin,
   renderDoctor,
   writeStartedFile,
   type DoctorReport,
 } from "./scanbox.js";
+import { SCAN_MODEL_ENV, loadScanConfig } from "./setup/scanbuild.js";
+import type { DockerRunner } from "./tui/companion.js";
+import type { ScanRouteAnswer } from "./engine/caserunner-sdk.js";
+import type { ModelRoute, RouteInput } from "@quickchatai/pi-quickreview/src/modelroute.js";
+import {
+  isPinned,
+  splitModelSpec,
+  tierSpec,
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { PASS_TIER_ORDER, type PassTier } from "@quickchatai/pi-quickreview/src/types.js";
+import type { ScanRouted } from "@quickchatai/pi-quickreview/src/scan/scanrun.js";
 import {
   DETACH_TIMEOUT_MS,
   DRIVER_LOG,
@@ -110,6 +142,177 @@ export { DETACH_TIMEOUT_MS, DRIVER_LOG, DRIVER_LOG_MAX };
 /** The SDK leaf host's private agent dir, under the state home: its own models
  * list lives here, never in the operator's pi home. */
 const SCAN_SDK_AGENT_DIR = "scan/sdk-agent";
+
+/** `--model`'s value among a subcommand's arguments, as written, or
+ * undefined. The verbs parse the flag themselves and refuse a misuse of it;
+ * this only reads it early, for the config the scan is assembled over. */
+export function modelFlagOf(rest: readonly string[]): string | undefined {
+  const at = rest.lastIndexOf("--model");
+  const v = at < 0 ? undefined : rest[at + 1]?.trim();
+  return v === undefined || v === "" || v.startsWith("--") ? undefined : v;
+}
+
+// ---- the scan's route ------------------------------------------------------------
+
+/**
+ * Run in the scan image by `askOnLogin`: the scan's route over the login the
+ * container is given, by the function the driver inside resolves it with.
+ * Its arguments: the scratch dir, then the pin's text and where it is from
+ * (both empty with no pin), then the config that holds the pin. Prints one
+ * JSON line: a `ScanRouteAnswer`, or `{ error }` when the login cannot be read.
+ */
+export const SCAN_ROUTE_SCRIPT =
+  `const [tmpDir, text, from, configPath] = process.argv.slice(1);` +
+  `let answer;` +
+  `try {` +
+  `const { scanRoute } = await import("${SCANBOX.app}/dist/src/engine/caserunner-sdk.js");` +
+  `answer = await scanRoute({ env: process.env, tmpDir,` +
+  ` ...(text ? { pin: { text, from: from === "config" ? "config" : "flag" } } : {}),` +
+  ` configPath: configPath || null });` +
+  `} catch (e) { answer = { error: e instanceof Error ? e.message : String(e) }; }` +
+  `console.log(JSON.stringify(answer));`;
+
+/** The image's answer read as a route answer, or why it is not one. */
+export function readRouteAnswer(
+  answer: unknown,
+): { ok: true; answer: ScanRouteAnswer } | { ok: false; error: string } {
+  const a = answer as { error?: unknown; result?: { ok?: unknown } & Record<string, unknown> };
+  if (typeof a !== "object" || a === null)
+    return { ok: false, error: "the scan image did not answer with a route" };
+  if (typeof a.error === "string") return { ok: false, error: a.error };
+  const r = a.result;
+  const route = r?.["route"] as Partial<ModelRoute> | undefined;
+  const refusal = r?.["refusal"] as { code?: unknown } | undefined;
+  const known =
+    r?.ok === true
+      ? typeof route?.spec === "string" &&
+        typeof route.provider === "string" &&
+        Array.isArray(route.alternatives) &&
+        Array.isArray(route.notices)
+      : r?.ok === false && typeof refusal?.code === "string";
+  return known
+    ? { ok: true, answer: answer as ScanRouteAnswer }
+    : { ok: false, error: "the scan image did not answer with a route" };
+}
+
+/** What the scan's route is resolved over in one `qcr scan` process. */
+export interface ScanRouteWorld {
+  /** The env the scan is assembled under: its login source, and its `--model`. */
+  env: NodeJS.ProcessEnv;
+  root: string;
+  /** The state home: the route host's scratch dir is under it. */
+  home: string;
+  /** Where a run this process plans would be driven when not here: the scan
+   * sandbox, asked through its image. Null: this process's own login decides
+   * (a host scan, or the driver inside a sandbox). */
+  sandbox: {
+    docker: DockerRunner;
+    config: Pick<ScanSandboxConfig, "image" | "pihome_volume">;
+    stamp: () => string;
+  } | null;
+  /** Ask the person at the terminal which provider. Null: nobody to ask. */
+  choose: ((question: string, rows: readonly string[]) => Promise<number | null>) | null;
+  /** The route a driver resolved, kept for the cases it then runs. */
+  resolved: { route?: ModelRoute };
+  /** The route in this process (default `scanRoute`, loaded on first use). */
+  resolveHere?: (o: {
+    env: NodeJS.ProcessEnv;
+    tmpDir: string;
+    pin?: RouteInput["pin"];
+    configPath: string | null;
+    choose: ScanRouteWorld["choose"];
+    say: (line: string) => void;
+  }) => Promise<ScanRouteAnswer>;
+  say?: (line: string) => void;
+}
+
+/**
+ * The verbs' route port over `w` (the header's rules): the pin is `--model`,
+ * else the config's own; a driver's route is resolved here and kept for its
+ * cases; a plan's is resolved where the run would be driven. Beside the route
+ * it answers with each tier's spec as it will run, and says what `--model`
+ * replaced and when stage 1's tier is not on the route at all.
+ */
+export function scanRoutePort(w: ScanRouteWorld): NonNullable<ScanCliDeps["route"]> {
+  const say = w.say ?? ((l: string) => console.error(l));
+  return async (ask) => {
+    // The config the run reads: under `--model`, with no pin below it. One
+    // that cannot be read names no pin; the plan refuses for it on its own.
+    const loaded = loadScanConfig(w.root, w.env);
+    const cfg = loaded.ok ? loaded.cfg : null;
+    let configPath: string | null = null;
+    try {
+      configPath = oneShotConfigFile({ root: w.root, env: w.env }).path;
+    } catch {
+      // No config to name.
+    }
+    const pin: RouteInput["pin"] | undefined =
+      ask.pin !== undefined
+        ? { text: ask.pin, from: "flag" }
+        : cfg !== null && isPinned(cfg.models.model)
+          ? { text: cfg.models.model, from: "config" }
+          : undefined;
+    const notes: string[] = [];
+    if (ask.pin !== undefined && loaded.ok && (loaded.replaced ?? 0) > 0)
+      notes.push(
+        `--model replaces ${loaded.replaced} pinned tier and lens model${loaded.replaced === 1 ? "" : "s"} for this run`,
+      );
+    const routed = (answer: ScanRouteAnswer): ScanRouted => {
+      if (!answer.result.ok)
+        return {
+          result: answer.result,
+          surface: "app",
+          ...(answer.refusal !== undefined ? { refusal: answer.refusal } : {}),
+          notes,
+        };
+      const route = answer.result.route;
+      if (cfg === null) return { result: answer.result, surface: "app", notes };
+      const tiers = Object.fromEntries(
+        PASS_TIER_ORDER.map((tier) => [tier, tierSpec(route, cfg, tier)]),
+      ) as Record<PassTier, string>;
+      // A tier the config pins to a model of its own does not run on the
+      // route: said where stage 1's does, since the model line names another.
+      const own = cfg.models.tiers[cfg.scan.tier];
+      if (isPinned(own) && splitModelSpec(own).model !== route.spec)
+        notes.push(
+          `stage 1 runs on ${own}: [models.tiers] ${cfg.scan.tier} pins it (--model puts the whole scan on one model)`,
+        );
+      return { result: answer.result, surface: "app", tiers, notes };
+    };
+    const box = ask.run ? null : w.sandbox;
+    if (box !== null) {
+      const asked = await askOnLogin(box.docker, {
+        sandbox: box.config,
+        stamp: box.stamp,
+        script: SCAN_ROUTE_SCRIPT,
+        args: [SCANBOX_SCRATCH, pin?.text ?? "", pin?.from ?? "", configPath ?? ""],
+      });
+      const read = asked.ok ? readRouteAnswer(asked.answer) : asked;
+      // The sandbox did not say: the plan is shown with its model unknown.
+      if (!read.ok)
+        return {
+          result: null,
+          surface: "app",
+          refusal: `the scan sandbox could not be asked: ${read.error}`,
+          notes,
+        };
+      return routed(read.answer);
+    }
+    const resolveHere =
+      w.resolveHere ?? (async (o) => (await import("./engine/caserunner-sdk.js")).scanRoute(o));
+    const answer = await resolveHere({
+      env: w.env,
+      tmpDir: join(w.home, "tmp"),
+      ...(pin !== undefined ? { pin } : {}),
+      configPath,
+      choose: ask.ask ? w.choose : null,
+      say,
+    });
+    // A driver's route is the one its cases are handed.
+    if (ask.run && answer.result.ok) w.resolved.route = answer.result.route;
+    return routed(answer);
+  };
+}
 
 /** `--sandbox host|docker`, taken off any subcommand's arguments: where this
  * call runs a scan, over `[scan] sandbox`. The pi plugin's /qcr-scan never
@@ -321,7 +524,14 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
   const { buildScan, watchTuiRequests, STAGE2_POLL_MS } =
     await import("../extensions/setup-scan.js");
   const env = scanEnv(process.env, DEFAULT_REVIEWED_REPO);
+  // `--model` is this run's alone: the config the scan reads is told of it
+  // here, and a value a shell happens to carry is never read.
+  const model = modelFlagOf(rest);
+  if (model !== undefined) env[SCAN_MODEL_ENV] = model;
+  else delete env[SCAN_MODEL_ENV];
   const inSandbox = Boolean(env[IN_SANDBOX_ENV]?.trim());
+  // The route a driver resolves, for the cases it runs.
+  const resolved: { route?: ModelRoute } = {};
   const shared = sharedPorts(env);
   const engine = buildEngine(env, shared, process.cwd());
   const home = stateHome(env);
@@ -336,9 +546,19 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
     // on first use. The companion's pi builds its scan without this.
     async (o) => {
       const { scanSdkCases } = await import("./engine/caserunner-sdk.js");
-      return scanSdkCases({ ...o, agentDir: join(home, SCAN_SDK_AGENT_DIR) });
+      return scanSdkCases({
+        ...o,
+        agentDir: join(home, SCAN_SDK_AGENT_DIR),
+        // One route per scan: every case's host is handed the driver's.
+        route: () => resolved.route,
+      });
     },
   );
+  const ports = inSandbox
+    ? { detach: detachDriver(env, home), units: engine, sandbox: null }
+    : await sandboxPorts(env, home, engine, settingsOf, picked.sandbox);
+  const { sandbox: routeSandbox, ...sandboxDeps } = ports;
+  const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY);
   return runScanCli(rest, json, {
     scan,
     findings,
@@ -348,9 +568,17 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
     home,
     repo: env.QCR_REVIEWED_REPO!,
     out: (line) => console.log(line),
-    ...(inSandbox
-      ? { detach: detachDriver(env, home), units: engine }
-      : await sandboxPorts(env, home, engine, settingsOf, picked.sandbox)),
+    ...sandboxDeps,
+    route: scanRoutePort({
+      env,
+      root: env.QCR_ROOT?.trim() || sandboxRoot(),
+      home,
+      sandbox: routeSandbox,
+      // The choice is remembered beside the login: only where this process
+      // reads the login itself is there anyone to ask.
+      choose: interactive && routeSandbox === null ? chooseOnTerminal : null,
+      resolved,
+    }),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => Date.now(),
     watchStops: (s) => {
@@ -392,15 +620,41 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
   });
 }
 
+/** The provider question at a terminal: the rows numbered, the first the
+ * default. Null when the terminal went away: the order's own pick then runs,
+ * unremembered. */
+async function chooseOnTerminal(question: string, rows: readonly string[]): Promise<number | null> {
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const list = rows.map((r, i) => `  ${i + 1}) ${r}`).join("\n");
+    for (;;) {
+      const a = (await rl.question(`${question}\n${list}\nWhich one? [1] `)).trim();
+      if (a === "") return 0;
+      if (/^\d+$/.test(a) && Number(a) >= 1 && Number(a) <= rows.length) return Number(a) - 1;
+    }
+  } catch {
+    return null;
+  } finally {
+    rl.close();
+  }
+}
+
 /** The host side of `[scan] sandbox`: the launch (a container for
- * `"docker"`, a host process for `"host"`), the doctor and the login. */
+ * `"docker"`, a host process for `"host"`), the doctor and the login, and
+ * where a plan's route is asked (`sandbox`: the scan image for `"docker"`,
+ * null for `"host"`). */
 async function sandboxPorts(
   env: NodeJS.ProcessEnv,
   home: string,
   engine: UnitCutPort,
   settingsOf: () => { scan: { tier: string } } | null,
   sandboxOverride?: "host" | "docker",
-): Promise<Pick<ScanCliDeps, "detach" | "units" | "doctor" | "login" | "rebuild">> {
+): Promise<
+  Pick<ScanCliDeps, "detach" | "units" | "doctor" | "login" | "rebuild"> & {
+    sandbox: ScanRouteWorld["sandbox"];
+  }
+> {
   const [
     { buildScanImage, dockerDetach, effectiveSandbox, scanDoctor, scanLoginRoute },
     companion,
@@ -471,6 +725,10 @@ async function sandboxPorts(
   return {
     detach,
     units: engine,
+    sandbox:
+      sandbox.sandbox === "host"
+        ? null
+        : { docker, config: sandbox, stamp: () => appStamp(appRoot) },
     doctor: () =>
       scanDoctor({
         sandbox,

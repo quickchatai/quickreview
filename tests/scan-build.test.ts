@@ -22,6 +22,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/include.js";
 import { configHome, homeProfileLookup, type InstallEnv } from "../src/install.js";
 import {
+  SCAN_MODEL_ENV,
   buildScanAgents,
   loadScanConfig,
   scanConfig,
@@ -494,6 +495,60 @@ describe("loadScanConfig — the live config, or the shipped defaults on a fresh
     writeFileSync(join(configHome(env), "config.toml"), `${fixtureToml}\n[scan]\nturbo = true\n`);
     const loaded = loadScanConfig(root, live());
     expect(!loaded.ok && loaded.errors[0]).toMatch(/invalid: .*unknown key "turbo"/);
+  });
+});
+
+// `qcr scan --model` is the whole scan's model: the config the scan reads
+// keeps no tier and no lens on a model of its own, so every built agent
+// names none and runs on the scan's route.
+describe("loadScanConfig under a scan's --model", () => {
+  /** The fixture config (every tier pinned) as the install's own, with one
+   * lens moved to a model and a level of its own. */
+  function install(): string {
+    const root = join(dir, "root");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.example.toml"),
+      readFileSync(join(sandbox, "config.example.toml")),
+    );
+    mkdirSync(configHome(env), { recursive: true });
+    writeFileSync(
+      join(configHome(env), "config.toml"),
+      `${fixtureToml}\n[models.pass_models]\n"pass-baseline" = "${fixture.models.tiers.light}"\n`,
+    );
+    return root;
+  }
+
+  it("with no --model the file's pins stand, and nothing is counted", () => {
+    const loaded = loadScanConfig(install(), { ...env });
+    expect(loaded.ok && loaded.cfg.models.tiers).toEqual(fixture.models.tiers);
+    expect(loaded.ok && "replaced" in loaded).toBe(false);
+    // An empty value is no --model.
+    const blank = loadScanConfig(install(), { ...env, [SCAN_MODEL_ENV]: " " });
+    expect(blank.ok && blank.cfg.models.tiers).toEqual(fixture.models.tiers);
+  });
+
+  // MUTATION: return `cfg` unstripped in loadScanConfig when SCAN_MODEL_ENV is
+  // set — the tiers keep their models, and this fails.
+  it("under --model every tier and lens keeps its level and loses its model", () => {
+    const root = install();
+    const loaded = loadScanConfig(root, { ...env, [SCAN_MODEL_ENV]: "some/model" });
+    expect(loaded).toMatchObject({ ok: true, replaced: 4 });
+    if (!loaded.ok) return;
+    expect(loaded.cfg.models.tiers).toEqual({
+      light: ":medium",
+      standard: ":medium",
+      deep: ":high",
+    });
+    expect(loaded.cfg.models.pass_models).toEqual({ "pass-baseline": ":medium" });
+    // What the scan then builds names no model anywhere.
+    const out = join(dir, "flag-agents");
+    buildScanAgents(sandbox, out, loaded.cfg, homeProfileLookup(env));
+    for (const [name, text] of built(out)) {
+      const front = text.slice(0, text.indexOf("\n---\n", 4));
+      expect(front, name).not.toMatch(/^model:/m);
+      expect(front, name).toMatch(/^thinking:/m);
+    }
   });
 });
 

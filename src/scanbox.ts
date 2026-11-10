@@ -40,6 +40,14 @@
 // Before any of that, the image's build stamp must be the checkout's
 // (src/appstamp.ts): a container never drives a scan with other code.
 //
+// The model. The login a sandboxed scan runs on is in the companion's pi
+// home, which the host does not read. So a plan made on the host asks the
+// image which model a scan there runs on (`askOnLogin`): one module script,
+// over the same read-only login mounts and env a scan container's driver
+// gets, with no network and nothing else mounted. The driver inside resolves
+// the same route by the same function when the run starts, and the plan's
+// key holds only when the two agree.
+//
 // This launch is the clone route's (the operator's TUI and companion). A scan
 // started through the host wrapper (scripts/qcr-host.sh, docs/host-wrapper.md)
 // never gets here: the wrapper's per-call release-image container IS the
@@ -414,6 +422,83 @@ export async function readLoginSummary(
     return { ok: true, summary: parsed as LoginSummary };
   } catch {
     return { ok: false, error: `the login summary could not be read: ${last.slice(0, 200)}` };
+  }
+}
+
+// ---- asking the image, over the read-only login ----------------------------------
+
+/** Where a script run by `askOnLogin` may write: the run's private tmpfs pi
+ * home. */
+export const SCANBOX_SCRATCH = `${SCANBOX.piHome}/tmp`;
+/** How long the image is given to answer. */
+export const LOGIN_SCRIPT_TIMEOUT_MS = 90_000;
+
+/** `docker run` of one module script in the scan image, over the companion's
+ * login as a scan container's driver sees it (`loginMounts`, `loginEnvArgv`):
+ * read-only, its sessions hidden, a private tmpfs pi home. No network: what
+ * the script learns, it reads. Its arguments are the script's own
+ * (`process.argv.slice(1)`). */
+export function loginScriptArgv(
+  image: string,
+  pihomeVolume: string,
+  script: string,
+  args: readonly string[],
+): string[] {
+  return [
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    ...loginMounts(pihomeVolume).flatMap((m) => ["--mount", mountSpec(m)]),
+    ...loginEnvArgv(),
+    image,
+    "node",
+    "--input-type=module",
+    "-e",
+    script,
+    ...args,
+  ];
+}
+
+/**
+ * Run `script` in the scan image over the companion's login and read its
+ * answer: the JSON value on its last output line. Checked first, as a launch
+ * checks: the image carries this checkout's code (the script imports it), and
+ * the pi home volume exists (`docker run` would create it empty, and an empty
+ * login would then be read as "never logged in"). Why it cannot be asked, or
+ * did not answer, is the error: never a guess.
+ */
+export async function askOnLogin(
+  docker: DockerRunner,
+  o: {
+    sandbox: Pick<ScanSandboxConfig, "image" | "pihome_volume">;
+    /** The build stamp the image must carry. */
+    stamp: () => string;
+    script: string;
+    args: readonly string[];
+    timeoutMs?: number;
+  },
+): Promise<{ ok: true; answer: unknown } | { ok: false; error: string }> {
+  const problem = await imageProblem(docker, o.sandbox.image, o.stamp());
+  if (problem !== null) return { ok: false, error: problem };
+  const vol = o.sandbox.pihome_volume;
+  const volume = await docker(["volume", "inspect", vol]);
+  if (!volume.ok)
+    return {
+      ok: false,
+      error: /no such volume/i.test(dockerFailureLine(volume))
+        ? `the companion's pi home volume ${vol} does not exist — run \`qcr scan login\` to log the companion's pi in`
+        : `the companion's pi home volume ${vol} cannot be inspected: ${dockerFailureLine(volume)}`,
+    };
+  const r = await docker(loginScriptArgv(o.sandbox.image, vol, o.script, o.args), {
+    timeoutMs: o.timeoutMs ?? LOGIN_SCRIPT_TIMEOUT_MS,
+  });
+  if (!r.ok) return { ok: false, error: dockerFailureLine(r) };
+  const last = r.stdout.trim().split("\n").pop() ?? "";
+  try {
+    return { ok: true, answer: JSON.parse(last) as unknown };
+  } catch {
+    return { ok: false, error: `the scan image's answer could not be read: ${last.slice(0, 200)}` };
   }
 }
 

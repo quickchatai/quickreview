@@ -17,6 +17,14 @@
 // or names no folder of the tree at the scanned sha is a usage error, exit 2,
 // and nothing is planned or priced.
 //
+// `--model TEXT` is the scan's model for one run, on every verb that plans or
+// starts: the pin of the scan's route, over the config's and a remembered
+// choice. The host resolves the route (`ScanVerbDeps.route`), once per verb;
+// the plan shows it, the key covers it, and a start is handed it again, so a
+// start must repeat the `--model` its preview was given (the `start` list a
+// preview answers with carries it). A surface with no route port refuses the
+// flag: it would otherwise be read and change nothing.
+//
 // Exit codes: 0 done; 1 refused (or a waited-for run that did not end
 // complete); 2 usage; 3 `status --wait` gave up at its `--timeout`.
 import { readFileSync } from "node:fs";
@@ -48,6 +56,7 @@ import {
   renderStatus,
   renderSuggestions,
   renderThreatModelPreview,
+  modelDetails,
   stage2StartedLine,
   startedLine,
   stopScan,
@@ -55,19 +64,19 @@ import {
   type TicketsClosed,
 } from "./scanrender.js";
 import { dismissedLookalike, isDoubted, validityOf } from "./scanreport.js";
-import type { ScanRunner, ScanRun, ScanSettings, ScanStatus } from "./scanrun.js";
+import type { ScanRouted, ScanRunner, ScanRun, ScanSettings, ScanStatus } from "./scanrun.js";
 import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "./stage2.js";
 import type { StoredStage2Proposal } from "./stage2request.js";
 import type { UnitCutPort } from "./unitcutstore.js";
 
 export const SCAN_USAGE =
-  "usage: qcr scan preview [--sha REF] [--delta] [--path DIR] | start --key K [--sha REF] [--delta] [--path DIR] [--foreground] | " +
+  "usage: qcr scan preview [--sha REF] [--delta] [--path DIR] [--model M] | start --key K [--sha REF] [--delta] [--path DIR] [--model M] [--foreground] | " +
   "status [--wait [--timeout S]] | stop | " +
   "findings [--state S] [--lens L] [--unit U] [--severity P] [--validity V] [--doubted|--not-doubted] [--limit N] | " +
   "matches | match --key K [OLD=NEW…] | suggestions | " +
-  "stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] [--path DIR] | " +
-  "stage2 start --key K [--rows ID,ID…] [--foreground] | " +
-  "threat-model propose [--sha REF] | threat-model start --key K [--sha REF] [--foreground] | dismiss FP… --reason TEXT | " +
+  "stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] [--path DIR] [--model M] | " +
+  "stage2 start --key K [--rows ID,ID…] [--model M] [--foreground] | " +
+  "threat-model propose [--sha REF] [--model M] | threat-model start --key K [--sha REF] [--model M] [--foreground] | dismiss FP… --reason TEXT | " +
   "units show | units propose [--file F|-] | units adjust --file F|- | units save | login [--provider P] | doctor | rebuild   (every subcommand takes --json, and --sandbox host|docker over [scan] sandbox)";
 
 /** How often `status --wait` and `stop` look again. */
@@ -84,8 +93,16 @@ export interface FindingsQuery {
 }
 
 export type ScanCommand =
-  | { verb: "preview"; sha?: string; delta: boolean; path?: string }
-  | { verb: "start"; key: string; sha?: string; delta: boolean; path?: string; foreground: boolean }
+  | { verb: "preview"; sha?: string; delta: boolean; path?: string; model?: string }
+  | {
+      verb: "start";
+      key: string;
+      sha?: string;
+      delta: boolean;
+      path?: string;
+      model?: string;
+      foreground: boolean;
+    }
   | { verb: "status"; wait: boolean; timeout?: number }
   | { verb: "stop" }
   | { verb: "findings"; query: FindingsQuery }
@@ -99,10 +116,11 @@ export type ScanCommand =
       deep?: boolean;
       sha?: string;
       path?: string;
+      model?: string;
     }
-  | { verb: "stage2-start"; key: string; rows?: string[]; foreground: boolean }
-  | { verb: "threat-model-propose"; sha?: string }
-  | { verb: "threat-model-start"; key: string; sha?: string; foreground: boolean }
+  | { verb: "stage2-start"; key: string; rows?: string[]; model?: string; foreground: boolean }
+  | { verb: "threat-model-propose"; sha?: string; model?: string }
+  | { verb: "threat-model-start"; key: string; sha?: string; model?: string; foreground: boolean }
   | { verb: "dismiss"; fingerprints: string[]; reason: string }
   | { verb: "units-show" }
   | { verb: "units-propose"; file?: string }
@@ -144,6 +162,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
     "--file",
     "--provider",
     "--path",
+    "--model",
   ]);
   const BARE = new Set([
     "--delta",
@@ -190,13 +209,20 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
     if (!p.ok) throw usage(p.why);
     return p.path === null ? {} : { path: p.path };
   };
+  // The scan's model for this run, as written: the host's route reads it.
+  const model = (): { model?: string } => {
+    const raw = str("--model")?.trim();
+    if (raw === undefined) return {};
+    if (raw === "") throw usage("--model needs a model: provider/model");
+    return { model: raw };
+  };
   switch (sub) {
     case "preview":
-      allowed("--sha", "--delta", "--path");
+      allowed("--sha", "--delta", "--path", "--model");
       noPositional();
-      return { verb: "preview", ...sha(), delta: flags.has("--delta"), ...path() };
+      return { verb: "preview", ...sha(), delta: flags.has("--delta"), ...path(), ...model() };
     case "start": {
-      allowed("--key", "--sha", "--delta", "--path", "--foreground");
+      allowed("--key", "--sha", "--delta", "--path", "--model", "--foreground");
       noPositional();
       const key = str("--key");
       if (key === undefined) throw usage("start needs --key — the key a preview showed");
@@ -206,6 +232,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
         ...sha(),
         delta: flags.has("--delta"),
         ...path(),
+        ...model(),
         foreground: flags.has("--foreground"),
       };
     }
@@ -268,7 +295,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
       noPositional();
       return { verb: "suggestions" };
     case "stage2-propose": {
-      allowed("--rows", "--budget", "--deep", "--standard", "--sha", "--path");
+      allowed("--rows", "--budget", "--deep", "--standard", "--sha", "--path", "--model");
       noPositional();
       if (flags.has("--deep") && flags.has("--standard")) throw usage();
       const budget = num("--budget", (n) => n > 0);
@@ -279,10 +306,11 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
         ...(flags.has("--deep") ? { deep: true } : flags.has("--standard") ? { deep: false } : {}),
         ...sha(),
         ...path(),
+        ...model(),
       };
     }
     case "stage2-start": {
-      allowed("--key", "--rows", "--foreground");
+      allowed("--key", "--rows", "--model", "--foreground");
       noPositional();
       const key = str("--key");
       if (key === undefined)
@@ -292,15 +320,16 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
         verb: "stage2-start",
         key,
         ...(rows !== undefined ? { rows: rows.split(",").map((r) => r.trim()) } : {}),
+        ...model(),
         foreground: flags.has("--foreground"),
       };
     }
     case "threat-model-propose":
-      allowed("--sha");
+      allowed("--sha", "--model");
       noPositional();
-      return { verb: "threat-model-propose", ...sha() };
+      return { verb: "threat-model-propose", ...sha(), ...model() };
     case "threat-model-start": {
-      allowed("--key", "--sha", "--foreground");
+      allowed("--key", "--sha", "--model", "--foreground");
       noPositional();
       const key = str("--key");
       if (key === undefined)
@@ -309,6 +338,7 @@ export function parseScanArgs(rest: readonly string[]): ScanCommand {
         verb: "threat-model-start",
         key,
         ...sha(),
+        ...model(),
         foreground: flags.has("--foreground"),
       };
     }
@@ -526,9 +556,53 @@ export interface ScanVerbDeps {
   /** How the answers name the next step (default the `qcr scan` CLI's). */
   verbs?: ScanVerbs;
   cutVerbs?: CutVerbs;
+  /**
+   * The scan's model, resolved by the host: asked once by every verb that
+   * plans (`preview`, the two proposals) and by a start that drives its cases
+   * in this process (`--foreground`). A detached start asks nothing here: its
+   * driver does, and is handed the same `--model`. Rejects when the host
+   * cannot ask at all (a login file it cannot read). Absent: the surface
+   * names no model, every case runs on its own host's choice, and `--model`
+   * is refused.
+   */
+  route?: (ask: ScanRouteAsk) => Promise<ScanRouted>;
+}
+
+/** What a verb asks of the host's route. */
+export interface ScanRouteAsk {
+  /** `--model`, as written. */
+  pin?: string;
+  /** The cases run in this process: its own login decides, and the route is
+   * the one each case's host is then handed. False: a plan, for wherever the
+   * host starts a run. */
+  run: boolean;
+  /** A person may be asked which provider: a plan printed for a person.
+   * Never a start (its key was shown under one model already), never JSON. */
+  ask: boolean;
 }
 
 type Emit = (code: number, human: string, data: Record<string, unknown>) => number;
+
+/** ` --model M` for a start line a person pastes into a shell, quoted when
+ * it holds anything a shell reads. */
+function modelFlag(model: string): string {
+  return ` --model ${/^[\w./@:+-]+$/.test(model) ? model : `'${model.replaceAll("'", "'\\''")}'`}`;
+}
+
+/** The surface's verbs with `--model` repeated on every start they name: a
+ * plan made under `--model` is started under it, or its key no longer holds. */
+function withModel(verbs: ScanVerbs, model: string | undefined): ScanVerbs {
+  if (model === undefined) return verbs;
+  const flag = modelFlag(model);
+  const threatModelStart = verbs.threatModelStart;
+  return {
+    ...verbs,
+    start: (p) => `${verbs.start(p)}${flag}`,
+    // The words after the command explain it: the flag goes on the command.
+    stage2Start: (key) => verbs.stage2Start(key).replace(key, () => `${key}${flag}`),
+    ...(threatModelStart ? { threatModelStart: (p) => `${threatModelStart(p)}${flag}` } : {}),
+  };
+}
 
 /** Run one scan subcommand (`qcr scan …`, `/qcr-scan …`); resolves its exit code. */
 export async function runScanVerb(
@@ -559,14 +633,45 @@ export async function runScanVerb(
     return emit(2, msg, { ok: false, errors: [msg] });
   }
   const { scan } = deps;
+  const pin = "model" in cmd ? cmd.model : undefined;
+  if (pin !== undefined && deps.route === undefined) {
+    const msg = "--model is not available here: this surface resolves no model for a scan";
+    return emit(2, msg, { ok: false, errors: [msg] });
+  }
+  // The scan's model for this verb, or why the host could not ask.
+  const routed = async (
+    run: boolean,
+  ): Promise<{ ok: true; model: { model?: ScanRouted } } | { ok: false; errors: string[] }> => {
+    if (deps.route === undefined) return { ok: true, model: {} };
+    try {
+      const r = await deps.route({
+        ...(pin !== undefined ? { pin } : {}),
+        run,
+        ask: !run && !json,
+      });
+      return { ok: true, model: { model: r } };
+    } catch (err) {
+      return {
+        ok: false,
+        errors: [
+          `the scan's model could not be resolved: ${err instanceof Error ? err.message : String(err)}`,
+        ],
+      };
+    }
+  };
+  // `--model`, repeated wherever an answer names the start of what it showed.
+  const modelArgv = pin !== undefined ? ["--model", pin] : [];
   const repoField = deps.repo !== undefined ? { repo: deps.repo } : {};
   const scanning = deps.repo !== undefined ? `Repository: ${deps.repo}\n\n` : "";
   switch (cmd.verb) {
     case "preview": {
+      const m = await routed(false);
+      if (!m.ok) return refusal("Scan preview", m.errors);
       const r = await scan.preview({
         ...(cmd.sha ? { sha: cmd.sha } : {}),
         delta: cmd.delta,
         ...(cmd.path ? { path: cmd.path } : {}),
+        ...m.model,
       });
       if (!r.ok) return refused("Scan preview", r);
       const p = r.preview;
@@ -577,7 +682,7 @@ export async function runScanVerb(
           ? null
           : stage0 !== undefined
             ? // Stage 0 reads the whole repository: its start takes no --path.
-              ["--key", stage0.key, "--sha", p.sha]
+              ["--key", stage0.key, "--sha", p.sha, ...modelArgv]
             : [
                 "--key",
                 p.key,
@@ -585,8 +690,9 @@ export async function runScanVerb(
                 p.sha,
                 ...(p.mode === "delta" ? ["--delta"] : []),
                 ...(p.path !== null ? ["--path", p.path] : []),
+                ...modelArgv,
               ];
-      return emit(0, `${scanning}${renderPreview(p, CLI_VERBS)}`, {
+      return emit(0, `${scanning}${renderPreview(p, withModel(CLI_VERBS, pin))}`, {
         ok: true,
         ...repoField,
         preview: previewDetails(p),
@@ -594,14 +700,17 @@ export async function runScanVerb(
       });
     }
     case "threat-model-propose": {
-      const r = await scan.proposeThreatModel(cmd.sha ? { sha: cmd.sha } : {});
+      const m = await routed(false);
+      if (!m.ok) return refusal("Threat-model proposal", m.errors);
+      const r = await scan.proposeThreatModel({ ...(cmd.sha ? { sha: cmd.sha } : {}), ...m.model });
       if (!r.ok) return refusal("Threat-model proposal", r.errors);
       const p = r.preview;
-      return emit(0, `${scanning}${renderThreatModelPreview(p, CLI_VERBS)}`, {
+      return emit(0, `${scanning}${renderThreatModelPreview(p, withModel(CLI_VERBS, pin), r)}`, {
         ok: true,
         ...repoField,
-        preview: p,
-        start: p.blockers.length > 0 ? null : ["--key", p.key, "--sha", p.sha],
+        // The model beside the plan's own fields, where a scan preview holds it.
+        preview: { ...p, ...modelDetails(r) },
+        start: p.blockers.length > 0 ? null : ["--key", p.key, "--sha", p.sha, ...modelArgv],
       });
     }
     case "start":
@@ -617,15 +726,24 @@ export async function runScanVerb(
               ...(cmd.sha ? ["--sha", cmd.sha] : []),
               ...(cmd.delta ? ["--delta"] : []),
               ...(cmd.path ? ["--path", cmd.path] : []),
+              ...modelArgv,
             ]
           : cmd.verb === "threat-model-start"
-            ? ["threat-model", "start", "--key", cmd.key, ...(cmd.sha ? ["--sha", cmd.sha] : [])]
+            ? [
+                "threat-model",
+                "start",
+                "--key",
+                cmd.key,
+                ...(cmd.sha ? ["--sha", cmd.sha] : []),
+                ...modelArgv,
+              ]
             : [
                 "stage2",
                 "start",
                 "--key",
                 cmd.key,
                 ...(cmd.rows ? ["--rows", cmd.rows.join(",")] : []),
+                ...modelArgv,
               ];
       const what = stage2
         ? "Stage 2 start"
@@ -656,6 +774,13 @@ export async function runScanVerb(
           },
         );
       }
+      // The cases run here: the route is this process's, resolved once, and
+      // the key holds only when it is the one the plan was shown under.
+      const m = await routed(true);
+      if (!m.ok) {
+        deps.onStart?.({ ok: false, errors: m.errors });
+        return refusal(what, m.errors);
+      }
       const r =
         cmd.verb === "start"
           ? await scan.start({
@@ -663,10 +788,19 @@ export async function runScanVerb(
               ...(cmd.sha ? { sha: cmd.sha } : {}),
               delta: cmd.delta,
               ...(cmd.path ? { path: cmd.path } : {}),
+              ...m.model,
             })
           : cmd.verb === "threat-model-start"
-            ? await scan.startThreatModel({ key: cmd.key, ...(cmd.sha ? { sha: cmd.sha } : {}) })
-            : await scan.startStage2({ key: cmd.key, ...(cmd.rows ? { rows: cmd.rows } : {}) });
+            ? await scan.startThreatModel({
+                key: cmd.key,
+                ...(cmd.sha ? { sha: cmd.sha } : {}),
+                ...m.model,
+              })
+            : await scan.startStage2({
+                key: cmd.key,
+                ...(cmd.rows ? { rows: cmd.rows } : {}),
+                ...m.model,
+              });
       if (!r.ok) {
         deps.onStart?.({ ok: false, errors: r.errors, ...(r.usage ? { usage: true } : {}) });
         return refused(what, r);
@@ -792,17 +926,23 @@ export async function runScanVerb(
           ]);
         }
       }
+      const m = await routed(false);
+      if (!m.ok) return refusal("Stage 2 proposal", m.errors);
       const r = await scan.proposeStage2({
         rows,
         ...(cmd.budget !== undefined ? { budget_usd: cmd.budget } : {}),
         ...(cmd.sha ? { sha: cmd.sha } : {}),
         ...(cmd.deep !== undefined ? { deep: cmd.deep } : {}),
         ...(cmd.path ? { path: cmd.path } : {}),
+        ...m.model,
       });
       if (!r.ok) return refused("Stage 2 proposal", r);
-      return emit(0, renderProposal(r.proposal, CLI_VERBS), {
+      return emit(0, renderProposal(r.proposal, withModel(CLI_VERBS, pin), r), {
         ok: true,
         proposal: proposalJson(r.proposal),
+        // What the proposal's key was made under; absent when the surface
+        // names no model.
+        ...modelDetails(r),
       });
     }
     case "dismiss": {

@@ -6,6 +6,8 @@
 // `qcr scan login` / `doctor`, the image's build, its ignore list and its
 // one-shot entrypoint mode are pinned beside them.
 import { execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import {
   existsSync,
   mkdirSync,
@@ -30,11 +32,20 @@ import {
   type ScanSandboxConfig,
 } from "../src/config.js";
 import { appStamp, BAKED_PATHS } from "../src/appstamp.js";
-import { agentModelFlags, parseAgentFile } from "../src/setup/caserunner.js";
+import {
+  agentModelFlags,
+  parseAgentFile,
+  piCaseRunner,
+  type SpawnFn,
+} from "../src/setup/caserunner.js";
 import {
   DRIVER_LOG_ENV,
   IN_SANDBOX_ENV,
+  LOGIN_SCRIPT_TIMEOUT_MS,
   SCANBOX,
+  SCANBOX_SCRATCH,
+  askOnLogin,
+  loginScriptArgv,
   STAMP_LABEL,
   STARTED_FILE_ENV,
   dockerDetach,
@@ -55,7 +66,13 @@ import {
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
-import { checkoutOf, mountedCheckout, scanEnv, scanTranscriptsDir } from "../src/scancli.js";
+import {
+  SCAN_ROUTE_SCRIPT,
+  checkoutOf,
+  mountedCheckout,
+  scanEnv,
+  scanTranscriptsDir,
+} from "../src/scancli.js";
 import { repoScanHome, stateHome } from "../src/install.js";
 import {
   CompanionLifecycle,
@@ -560,6 +577,86 @@ describe("the scan container's argv", () => {
     expect(agentModelFlags({ model: null }, `${file("")}thinking: high\n`)).toEqual([]);
   });
 
+  // A child pi has no host to resolve the run's route: it is handed the
+  // literal spec, the route's at the file's level.
+  // MUTATION: ignore `route` in agentModelFlags — an unpinned file's child is
+  // told only a level and runs on pi's own choice; this fails.
+  // MUTATION: let the route replace a file's own model — the pinned case fails.
+  it("with the run's route, a file that pins no model runs on it at the file's level", () => {
+    const route = { spec: "made-up/route-9" };
+    const file = (name: string, front: string): string =>
+      `---\nname: ${name}\ndescription: x\n${front}tools: read\n---\nbody\n`;
+    const flags = (name: string, front: string): string[] => {
+      const text = file(name, front);
+      return agentModelFlags(parseAgentFile(text)!, text, route);
+    };
+    expect(flags("pass-x--deep", "thinking: low\n")).toEqual(["--model", "made-up/route-9:low"]);
+    expect(flags("pass-x--deep", "model: :medium\n")).toEqual([
+      "--model",
+      "made-up/route-9:medium",
+    ]);
+    // No level in the file: the level of the tier its name ends in, in
+    // either spelling of the tier.
+    expect(flags("pass-x--deep", "")).toEqual(["--model", "made-up/route-9:high"]);
+    expect(flags("pass-x--sol-high", "")).toEqual(["--model", "made-up/route-9:high"]);
+    expect(flags("pass-x--standard", "thinking: loud\n")).toEqual([
+      "--model",
+      "made-up/route-9:medium",
+    ]);
+    // No tier either: the route's model, at pi's own level.
+    expect(flags("pass-survey", "")).toEqual(["--model", "made-up/route-9"]);
+    // A file's own model stands.
+    expect(flags("pass-x--deep", "model: made-up/large-3:low\n")).toEqual([
+      "--model",
+      "made-up/large-3:low",
+    ]);
+  });
+
+  // MUTATION: drop `opts.route?.()` from piCaseRunner's argv — the child is
+  // started with `--thinking` alone, and this fails.
+  it("the child case runner hands each case the run's route, asked per case", async () => {
+    const agentsDir = join(dir, "agents");
+    mkdirSync(agentsDir);
+    writeFileSync(
+      join(agentsDir, "pass-x--deep.md"),
+      "---\nname: pass-x--deep\ndescription: x\nthinking: high\ntools: read\n---\nbody\n",
+    );
+    const started: string[][] = [];
+    const spawn: SpawnFn = (_command, args) => {
+      started.push(args);
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+        kill: () => boolean;
+      };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = () => true;
+      setImmediate(() => child.emit("close", 0));
+      return child as unknown as ReturnType<SpawnFn>;
+    };
+    let route: { spec: string } | undefined = { spec: "made-up/route-9" };
+    const runner = piCaseRunner({
+      agentsDir,
+      cwd: dir,
+      spawn,
+      invocation: { command: "pi", prefix: [] },
+      route: () => route,
+    });
+    const spec = { id: "c1", unit: "u", agent: "pass-x--deep", files: [], prompt: "p" };
+    await runner.run(spec, new AbortController().signal);
+    route = undefined;
+    await runner.run(spec, new AbortController().signal);
+    const model = (args: string[]): string[] => {
+      const at = args.findIndex((a) => a === "--model" || a === "--thinking");
+      return args.slice(at, at + 2);
+    };
+    expect(started.map(model)).toEqual([
+      ["--model", "made-up/route-9:high"],
+      ["--thinking", "high"],
+    ]);
+  });
+
   // MUTATION: pass QCR_PI_DEFAULT_MODEL whatever `[companion] model` holds —
   // the shipped companion's login container gets an empty default (the case
   // above) and this fails with it.
@@ -592,6 +689,159 @@ describe("the scan container's argv", () => {
     expect(r.route).toBe("run");
     expect(r.argv).toContain("type=volume,src=other-pihome,dst=/home/companion/.pi");
     expect(r.argv.slice(-3)).toEqual(loginInPi("anthropic"));
+  });
+});
+
+// ---- asking the image ------------------------------------------------------------
+
+describe("asking the scan image over the companion's login", () => {
+  const stamped = (stamp: string) => (a: string[]) =>
+    a[0] === "image" && a[1] === "inspect" ? { ...OK, stdout: `${stamp}\n` } : undefined;
+  const volume = (a: string[]): DockerResult | undefined =>
+    a[0] === "volume" && a[1] === "inspect" ? OK : undefined;
+  const ask = (docker: DockerRunner, stamp = "s1") =>
+    askOnLogin(docker, {
+      sandbox: SANDBOX,
+      stamp: () => stamp,
+      script: "SCRIPT",
+      args: ["one", "", "three"],
+    });
+
+  // MUTATION: mount the pi home volume writable in loginScriptArgv, or drop
+  // `--network none` — this fails.
+  it("runs one script over the login read-only, with the driver's login env, no network and nothing else", () => {
+    const argv = loginScriptArgv("img", "vol", "SCRIPT", ["a", ""]);
+    expect(argv.slice(0, 4)).toEqual(["run", "--rm", "--network", "none"]);
+    const mounts = argv.filter((_, i) => argv[i - 1] === "--mount");
+    expect(mounts).toEqual([
+      "type=volume,src=vol,dst=/pi-agent-src,volume-subpath=agent,readonly",
+      "type=tmpfs,dst=/pi-agent-src/sessions",
+      "type=tmpfs,dst=/home/companion/.pi,tmpfs-mode=1777",
+    ]);
+    const envs = argv.filter((_, i) => argv[i - 1] === "--env");
+    expect(envs).toEqual([
+      `${SCAN_AUTH_SRC_ENV}=/pi-agent-src`,
+      "PI_CODING_AGENT_DIR=/home/companion/.pi/agent",
+    ]);
+    // The script's own arguments follow it, empty ones kept in place.
+    expect(argv.slice(argv.indexOf("img"))).toEqual([
+      "img",
+      "node",
+      "--input-type=module",
+      "-e",
+      "SCRIPT",
+      "a",
+      "",
+    ]);
+    // What a script may write is on the private tmpfs, never the login.
+    expect(SCANBOX_SCRATCH.startsWith(`${SCANBOX.piHome}/`)).toBe(true);
+  });
+
+  it("answers with the JSON value on the script's last output line", async () => {
+    const { docker, calls } = fakeDocker([
+      stamped("s1"),
+      volume,
+      (a) =>
+        a[0] === "run" ? { ...OK, stdout: 'a warning\n{"result":{"ok":true}}\n' } : undefined,
+    ]);
+    expect(await ask(docker)).toEqual({ ok: true, answer: { result: { ok: true } } });
+    const run = calls.find((c) => c[0] === "run")!;
+    expect(run.slice(-4)).toEqual(["SCRIPT", "one", "", "three"]);
+    expect(LOGIN_SCRIPT_TIMEOUT_MS).toBeGreaterThan(0);
+  });
+
+  // MUTATION: drop the volume check in askOnLogin — docker would make the
+  // volume, empty, and the image would answer "never logged in"; this fails.
+  it("is not asked over an image of other code, or a pi home volume that does not exist", async () => {
+    const other = fakeDocker([stamped("s0"), volume]);
+    const stale = await ask(other.docker);
+    expect(stale).toMatchObject({ ok: false });
+    expect(!stale.ok && stale.error).toMatch(/built from other code.*qcr scan rebuild/);
+    expect(other.calls.some((c) => c[0] === "run")).toBe(false);
+    const missing = fakeDocker([
+      stamped("s1"),
+      (a) => (a[0] === "volume" ? fail("Error: no such volume") : undefined),
+    ]);
+    const none = await ask(missing.docker);
+    expect(!none.ok && none.error).toMatch(
+      /volume companion-pihome does not exist.*qcr scan login/,
+    );
+    expect(missing.calls.some((c) => c[0] === "run")).toBe(false);
+  });
+
+  it("a run that fails, or prints no JSON, is an error and never an answer", async () => {
+    const failed = fakeDocker([
+      stamped("s1"),
+      volume,
+      (a) => (a[0] === "run" ? fail("boom") : undefined),
+    ]);
+    expect(await ask(failed.docker)).toEqual({ ok: false, error: "boom" });
+    const noise = fakeDocker([
+      stamped("s1"),
+      volume,
+      (a) => (a[0] === "run" ? { ...OK, stdout: "not json\n" } : undefined),
+    ]);
+    const r = await ask(noise.docker);
+    expect(!r.ok && r.error).toMatch(/could not be read: not json/);
+  });
+
+  // The script the image runs for the scan's route, run by node itself, the
+  // built module it imports stood in for by a stub that answers what it was
+  // handed.
+  // MUTATION: read the arguments from `process.argv.slice(2)` in
+  // SCAN_ROUTE_SCRIPT — the scratch dir is read as the pin, and this fails.
+  describe("the route script", () => {
+    const target = `${SCANBOX.app}/dist/src/engine/caserunner-sdk.js`;
+    function run(stub: string, args: string[]): unknown {
+      const file = join(dir, "stub.mjs");
+      writeFileSync(file, stub);
+      expect(SCAN_ROUTE_SCRIPT).toContain(`import("${target}")`);
+      const out = execFileSync(
+        process.execPath,
+        ["--input-type=module", "-e", SCAN_ROUTE_SCRIPT.replace(target, file), ...args],
+        { encoding: "utf8", env: { PATH: process.env["PATH"], [SCAN_AUTH_SRC_ENV]: "/src" } },
+      );
+      return JSON.parse(out.trim().split("\n").pop()!);
+    }
+    const ECHO =
+      "export async function scanRoute(o) { return { seen: { tmpDir: o.tmpDir, pin: o.pin ?? null, " +
+      `configPath: o.configPath, src: o.env.${SCAN_AUTH_SRC_ENV} } }; }\n`;
+
+    it("calls the driver's own resolver, which the built app exports", () => {
+      const source = readFileSync(join(root, "src/engine/caserunner-sdk.ts"), "utf8");
+      expect(source).toMatch(/^export async function scanRoute\(/m);
+      expect(existsSync(join(root, "src/engine/caserunner-sdk.ts"))).toBe(true);
+    });
+
+    it("hands it the scratch dir, the pin with where it is from, the config path and the env", () => {
+      expect(run(ECHO, ["/scratch", "some/model:high", "config", "/etc/config.toml"])).toEqual({
+        seen: {
+          tmpDir: "/scratch",
+          pin: { text: "some/model:high", from: "config" },
+          configPath: "/etc/config.toml",
+          src: "/src",
+        },
+      });
+      expect(run(ECHO, ["/scratch", "some/model", "flag", ""])).toEqual({
+        seen: {
+          tmpDir: "/scratch",
+          pin: { text: "some/model", from: "flag" },
+          configPath: null,
+          src: "/src",
+        },
+      });
+      // No pin: the two places are empty, and no pin is handed over.
+      expect(run(ECHO, ["/scratch", "", "", ""])).toMatchObject({ seen: { pin: null } });
+    });
+
+    it("a login that cannot be read is an error line, never a stack and never a route", () => {
+      expect(
+        run(
+          'export async function scanRoute() { throw new Error("auth.json cannot be read"); }\n',
+          ["/scratch", "", "", ""],
+        ),
+      ).toEqual({ error: "auth.json cannot be read" });
+    });
   });
 });
 

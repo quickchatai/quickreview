@@ -35,7 +35,13 @@ import {
   transcriptFile,
   type AgentFile,
 } from "@quickchatai/pi-quickreview/src/scan/caseread.js";
-import { THINKING_LEVELS, splitModelSpec } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  THINKING_LEVELS,
+  TIER_LEVELS,
+  splitModelSpec,
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import type { ModelRoute } from "@quickchatai/pi-quickreview/src/modelroute.js";
+import { foldAgentName, foldTier } from "@quickchatai/pi-quickreview/src/types.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./engine.js";
 
 export { parseAgentFile, type AgentFile } from "@quickchatai/pi-quickreview/src/scan/caseread.js";
@@ -49,22 +55,42 @@ export {
   transcriptFile,
 } from "@quickchatai/pi-quickreview/src/scan/caseread.js";
 
+/** The level of the tier a built agent's name ends in (`pass-x--deep`), or
+ * null for a name with no tier. */
+function tierLevelOf(agentName: string | undefined): string | null {
+  const suffix = /--([a-z-]+)$/.exec(foldAgentName(agentName ?? ""))?.[1];
+  const tier = suffix === undefined ? undefined : foldTier(suffix);
+  return tier === undefined ? null : TIER_LEVELS[tier];
+}
+
 /**
  * pi's flags for the model an agent file names. A file that pins a model
  * passes it whole (`--model`, which reads its `:level`). A file that pins none
- * (an unpinned tier's: no `model:` line, a `thinking:` one) passes only that
- * level, so the child pi runs on its own choice for the login it was given. A
- * level pi does not know is not passed.
+ * (an unpinned tier's: no `model:` line, a `thinking:` one) runs on the run's
+ * `route` when its caller resolved one: a child pi has no host to resolve it,
+ * so it is handed the literal spec, `<route spec>:<level>`, the level being
+ * the file's own, else its tier's (what `tierSpec` gives an unpinned tier).
+ * With no route it passes only the file's level, and the child pi runs on its
+ * own choice for the login it was given. A level pi does not know is not
+ * passed.
  */
-export function agentModelFlags(agent: Pick<AgentFile, "model">, text: string): string[] {
+export function agentModelFlags(
+  agent: Pick<AgentFile, "model"> & Partial<Pick<AgentFile, "name">>,
+  text: string,
+  route?: Pick<ModelRoute, "spec">,
+): string[] {
   const named = splitModelSpec(agent.model ?? "");
   if (named.model !== "") return ["--model", agent.model as string];
   const front = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text.replace(/\r\n/g, "\n"))?.[1] ?? "";
-  const level =
+  const own =
     named.thinking ?? /^thinking:[ \t]*["']?([A-Za-z]+)["']?[ \t]*$/m.exec(front)?.[1] ?? null;
-  return level !== null && (THINKING_LEVELS as readonly string[]).includes(level)
-    ? ["--thinking", level]
-    : [];
+  const known = (level: string | null): level is string =>
+    level !== null && (THINKING_LEVELS as readonly string[]).includes(level);
+  if (route !== undefined) {
+    const level = known(own) ? own : tierLevelOf(agent.name);
+    return ["--model", level !== null ? `${route.spec}:${level}` : route.spec];
+  }
+  return known(own) ? ["--thinking", own] : [];
 }
 
 /** The spawn this runner needs — `child_process.spawn`'s shape, narrowed so
@@ -210,6 +236,11 @@ export function piCaseRunner(opts: {
   root?: string;
   /** The env the leaf's env is filtered from. Omitted: process.env. */
   env?: NodeJS.ProcessEnv;
+  /** The run's route, when its caller resolved one (asked per case): a case
+   * whose agent file pins no model is handed it as the child's `--model`, so
+   * every case of the run is on one model. Omitted, or answering nothing:
+   * such a child runs on pi's own choice for its login. */
+  route?: () => Pick<ModelRoute, "spec"> | undefined;
   spawn?: SpawnFn;
   invocation?: { command: string; prefix: string[] };
 }): CaseRunner {
@@ -269,10 +300,10 @@ export function piCaseRunner(opts: {
           join(opts.root ?? opts.cwd, "extensions", "cli", "bash-guard.ts"),
           "--approve",
         ];
-        // A model only when the agent file pins one. A file with none (an
-        // unpinned tier's) leaves the child pi on its own choice for the
-        // login, at the level the file's `thinking:` names.
-        args.push(...agentModelFlags(agent, agentText));
+        // The file's own model when it pins one; else the run's route, at the
+        // file's level; with neither, the child pi is left on its own choice
+        // for the login, at the level the file's `thinking:` names.
+        args.push(...agentModelFlags(agent, agentText, opts.route?.()));
         if (agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
         args.push("--append-system-prompt", promptFile, `Task: ${spec.prompt}`);
         // The transcript: opened before the child, appended chunk by chunk,
