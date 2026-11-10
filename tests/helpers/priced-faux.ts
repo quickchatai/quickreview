@@ -3,11 +3,15 @@
 // use it as it is. This wraps one so each finished assistant message carries a
 // price the test chooses, the way a real provider's final message carries its
 // cost. Nothing else about the faux changes.
+//
+// It also holds the one faux model a route can land on (`ROUTABLE_FAUX_MODEL`),
+// for the tests whose sessions name no model.
 import {
   createAssistantMessageEventStream,
   fauxProvider,
   type AssistantMessage,
   type AssistantMessageEventStream,
+  type FauxModelDefinition,
   type FauxProviderHandle,
   type RegisterFauxProviderOptions,
 } from "@earendil-works/pi-ai";
@@ -28,11 +32,43 @@ function priced(
   return out;
 }
 
+/** A faux model the pick rule accepts (packages/pi-plugin/src/modelpick.ts):
+ * it reasons, and a review fits its window. pi-ai's own faux model does not
+ * reason, so a host whose only provider is a plain faux has no route. A test
+ * that reaches a session with no model of its own registers this one. */
+export const ROUTABLE_FAUX_MODEL: FauxModelDefinition = {
+  id: "faux-reasoner-1",
+  name: "Faux Reasoner 1",
+  reasoning: true,
+  contextWindow: 200_000,
+  maxTokens: 16_384,
+};
+
+/** Faux provider options with the routable model first, so `getModel()` (the
+ * provider's first model) is the one an unpinned session runs on. Models the
+ * caller lists come after it. */
+export function routableFauxOptions(
+  options: RegisterFauxProviderOptions = {},
+): RegisterFauxProviderOptions {
+  return { ...options, models: [ROUTABLE_FAUX_MODEL, ...(options.models ?? [])] };
+}
+
+/** A faux provider whose first model the pick rule accepts. */
+export function routableFaux(options?: RegisterFauxProviderOptions): FauxProviderHandle {
+  return fauxProvider(routableFauxOptions(options));
+}
+
+export interface PricedFauxOptions extends RegisterFauxProviderOptions {
+  /** Put `ROUTABLE_FAUX_MODEL` first: for a test whose sessions name no model. */
+  routable?: boolean;
+}
+
 export function pricedFaux(
   price: (message: AssistantMessage) => number,
-  options?: RegisterFauxProviderOptions,
+  options: PricedFauxOptions = {},
 ): FauxProviderHandle {
-  const faux = fauxProvider(options);
+  const { routable, ...fauxOptions } = options;
+  const faux = fauxProvider(routable === true ? routableFauxOptions(fauxOptions) : fauxOptions);
   const provider = {
     ...faux.provider,
     stream: (...a: Parameters<typeof faux.provider.stream>) =>

@@ -42,6 +42,13 @@
 // nothing from pi's dist/ by file path: the running pi may be a bundle or a
 // binary whose files are not the package's. pi's own location comes from its
 // exported getPackageDir(), never from a module-path walk.
+//
+// The pi-facing half of the model route lives here too, since this is where
+// pi is: the inventory read off pi's registry facade (`registryInventory`),
+// pi's own default per provider, pi's `--model` parser, and the host's one
+// route per run (`PiHost.route`). The rule itself is pure and next door
+// (../modelroute.ts). A session spec with no model runs on that route, and a
+// spec that names a provider with no credential moves by the one rule there.
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -57,6 +64,7 @@ import {
   type ExtensionFactory,
   type ToolDefinition,
   DefaultResourceLoader,
+  ModelRegistry,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -70,10 +78,23 @@ import {
   createWriteToolDefinition,
   getPackageDir,
   main as piCliMain,
+  resolveCliModel,
 } from "@earendil-works/pi-coding-agent";
 import { isProtectedWriteTarget } from "../../extensions/bash-guard.js";
 import { GITHUB_TOKEN_ENVS } from "../envstrip.js";
-import { routeProvider, splitProvider, twinProvider } from "../modelroute.js";
+import {
+  RouteRefused,
+  moveToCredentialed,
+  resolveRoute,
+  splitProvider,
+  type CredentialOrigin,
+  type ModelRoute,
+  type ProviderInventory,
+  type RouteInput,
+  type RouteResult,
+  type SkippedLogin,
+} from "../modelroute.js";
+import { keyOnlyCredentials } from "./auth.js";
 import type { AgentsFile } from "./port.js";
 import {
   FENCED_TOOLS,
@@ -311,34 +332,284 @@ export function buildBashEnv(
 
 /** pi-ai's default auth context expands `~` to the operator's home to look for
  * ambient credentials (google-vertex checks ~/.config/gcloud for ADC). A review
- * host takes its credentials from the auth file it was given and from env, so
- * `~` paths are simply absent. */
-const ISOLATED_AUTH_CONTEXT = {
-  async env(name: string): Promise<string | undefined> {
-    const value = process.env[name];
-    return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+ * host takes its credentials from the store it was given and from an
+ * environment, so `~` paths are simply absent. The environment is the one the
+ * host names (`authEnv`), else the process's, read at each lookup. */
+function isolatedAuthContext(authEnv: Readonly<Record<string, string | undefined>> | undefined) {
+  return {
+    async env(name: string): Promise<string | undefined> {
+      const value = (authEnv ?? process.env)[name];
+      return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+    },
+    async fileExists(path: string): Promise<boolean> {
+      if (path.startsWith("~")) return false;
+      try {
+        await access(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+/** A model store that holds nothing and keeps nothing: what a host with no
+ * stored catalog reads. A host refreshes offline only, and pi persists a
+ * catalog only after fetching one, so nothing is ever written to it. */
+const NO_STORED_MODELS: NonNullable<CreateModelRuntimeOptions["modelsStore"]> = {
+  async read() {
+    return undefined;
   },
-  async fileExists(path: string): Promise<boolean> {
-    if (path.startsWith("~")) return false;
-    try {
-      await access(path);
-      return true;
-    } catch {
-      return false;
-    }
-  },
+  async write() {},
+  async delete() {},
 };
 
 /** ModelRuntime builds its provider collection with pi-ai's default context and
  * exposes no way to pass another, so swap it on the collection. Fails closed:
  * a pi that moved the field has to be looked at (canary 4). */
-function isolateProviderAuth(runtime: ModelRuntime): void {
+function isolateProviderAuth(
+  runtime: ModelRuntime,
+  context: ReturnType<typeof isolatedAuthContext>,
+): void {
   const models = (runtime as unknown as { models?: { authContext?: unknown } }).models;
   if (!models || typeof models.authContext !== "object" || models.authContext === null)
     throw new Error(
       "pi's ModelRuntime no longer holds an authContext pisdk.ts isolates (canary 4)",
     );
-  models.authContext = ISOLATED_AUTH_CONTEXT;
+  models.authContext = context;
+}
+
+// ---- the model route's pi-facing half ------------------------------------------
+
+/** The part of pi's ModelRegistry the inventory reads: its public methods
+ * only. An SDK host wraps its own runtime in one; an extension inside a
+ * running pi is handed one (`ctx.modelRegistry`). */
+export interface RouteRegistry {
+  getAll(): Model<Api>[];
+  getAvailable(): Model<Api>[];
+  getProviderAuthStatus(provider: string): {
+    configured: boolean;
+    source?: string;
+    label?: string;
+  };
+  getProvider(provider: string): { auth: { oauth?: { isSubscription?: boolean } } } | undefined;
+  getProviderDisplayName(provider: string): string;
+  isUsingOAuth(model: Model<Api>): boolean;
+}
+
+/** An environment variable's name that says it carries a key or a token. */
+const ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
+const KEY_WORD = /(^|_)(KEY|TOKEN)(_|$)/;
+
+/**
+ * Where pi found a provider's credential, from its auth status.
+ *
+ * VERIFY-ON-PIN (pi 1.4.0, canary 13): the status sources are `stored`,
+ * `runtime`, `models_json_key`, `models_json_command`, `environment` and
+ * `fallback`, and an `environment` status carries as its label what the
+ * provider's own check named: the variable's name for a key or a token, a
+ * phrase or a non-key variable for an ambient cloud identity (a profile, a
+ * role, default credentials).
+ */
+export function credentialOrigin(status: { source?: string; label?: string }): CredentialOrigin {
+  switch (status.source) {
+    case "stored":
+      return "stored";
+    case "runtime":
+      return "runtime";
+    case "models_json_key":
+    case "models_json_command":
+      return "models-json";
+    case "environment": {
+      const label = status.label ?? "";
+      return ENV_NAME.test(label) && KEY_WORD.test(label) ? "env-key" : "ambient";
+    }
+    default:
+      return "ambient";
+  }
+}
+
+/**
+ * The inventory over pi's registry facade: every provider pi has a credential
+ * for and at least one available model, in pi's own provider order. One
+ * function for an SDK host and for a running pi, so the two cannot drift.
+ * `exclude` names providers this surface cannot use.
+ *
+ * The facade reads pi's availability snapshot: the caller sees that it is
+ * filled (a host refreshes offline; a running pi keeps it).
+ */
+export function registryInventory(
+  registry: RouteRegistry,
+  o: { exclude?: ReadonlySet<string> } = {},
+): ProviderInventory[] {
+  const all = new Map<string, Model<Api>[]>();
+  for (const m of registry.getAll()) {
+    const list = all.get(m.provider);
+    if (list) list.push(m);
+    else all.set(m.provider, [m]);
+  }
+  const available = new Map<string, Model<Api>[]>();
+  for (const m of registry.getAvailable()) {
+    const list = available.get(m.provider);
+    if (list) list.push(m);
+    else available.set(m.provider, [m]);
+  }
+  const out: ProviderInventory[] = [];
+  for (const [provider, known] of all) {
+    const models = available.get(provider);
+    if (models === undefined || models.length === 0 || o.exclude?.has(provider)) continue;
+    const status = registry.getProviderAuthStatus(provider);
+    if (!status.configured) continue;
+    const oauth = registry.isUsingOAuth(models[0]!);
+    const piDefault = piDefaultModelId(provider, known);
+    out.push({
+      provider,
+      name: registry.getProviderDisplayName(provider),
+      credential: {
+        kind: oauth ? "oauth" : "api_key",
+        origin: credentialOrigin(status),
+        ...(status.label !== undefined ? { label: status.label } : {}),
+        subscription: oauth && registry.getProvider(provider)?.auth.oauth?.isSubscription === true,
+      },
+      models,
+      ...(piDefault.id !== undefined ? { piDefaultId: piDefault.id } : {}),
+      ...(piDefault.unread ? { piDefaultUnread: true } : {}),
+    });
+  }
+  return out;
+}
+
+/** Rides the clone pi makes of a provider's default model. */
+const PROBE_ORIGIN = Symbol.for("qcr.route.origin");
+/** An id no provider has, so pi falls back to its "custom model" path. */
+const PROBE_ID = "qcr-default-probe-0000";
+/** The first model of the list the probe hands pi: what pi falls back to when
+ * it names no default for the provider. */
+const PROBE_DECOY = "qcr-default-probe-decoy";
+
+/**
+ * pi's default model id for `provider`, given the provider's models.
+ *
+ * pi does not export its per-provider default table, and a file-path import
+ * is refused inside a running pi. Its root export `resolveCliModel` reads the
+ * table for us: asked for an id the provider does not have, it answers with a
+ * "custom model" that is a shallow clone of the provider's default model, or
+ * of the provider's first model when it names no default. So each model is
+ * tagged with its own id under a symbol, a decoy goes first, and the tag on
+ * the clone says which it was.
+ *
+ * `unread` when pi threw or the clone no longer carries the tag: the guard
+ * then has no reference and the version pick stands. A provider with no
+ * default (a custom `models.json` provider) is normal and is not `unread`.
+ *
+ * VERIFY-ON-PIN (pi 1.4.0, canary 12): `resolveCliModel` touches only
+ * `getModels()` and `hasConfiguredAuth()` of the runtime it is given, and its
+ * custom-id fallback spreads the default model (model-resolver.js
+ * buildFallbackModel).
+ */
+export function piDefaultModelId(
+  provider: string,
+  models: readonly Model<Api>[],
+): { id?: string; unread: boolean } {
+  const first = models[0];
+  if (first === undefined) return { unread: false };
+  try {
+    const list = [
+      { ...first, id: PROBE_DECOY, name: PROBE_DECOY, [PROBE_ORIGIN]: PROBE_DECOY },
+      ...models.map((m) => ({ ...m, [PROBE_ORIGIN]: m.id })),
+    ];
+    const r = resolveCliModel({
+      cliProvider: provider,
+      cliModel: PROBE_ID,
+      modelRuntime: {
+        getModels: () => list,
+        hasConfiguredAuth: () => false,
+      } as unknown as ModelRuntime,
+    });
+    const origin = (r.model as unknown as Record<symbol, unknown> | undefined)?.[PROBE_ORIGIN];
+    if (typeof origin !== "string") return { unread: true };
+    return origin === PROBE_DECOY ? { unread: false } : { id: origin, unread: false };
+  } catch {
+    return { unread: true };
+  }
+}
+
+/** A text up to the end of its first sentence. A `.` inside a model id is
+ * followed by more of the id, never by a space. */
+function firstSentence(text: string): string {
+  const m = /^[\s\S]*?[.!?](?=\s|$)/.exec(text.trim());
+  return m ? m[0] : text.trim();
+}
+
+/**
+ * pi's `--model` parser over a registry, shaped for `resolveRoute`: an exact
+ * `provider/id`, a bare id one credentialed provider serves, a substring, a
+ * `:level` suffix, and an id pi does not know on a provider it does (kept as
+ * a custom id).
+ *
+ * VERIFY-ON-PIN (pi 1.4.0, tests/engine-route.test.ts): `resolveCliModel`
+ * answers with `model` and `thinkingLevel`, or with an `error` whose first
+ * sentence states the fact and whose later ones name pi's own flags; a custom
+ * id comes back as a model the catalog does not hold.
+ */
+export function textResolver(
+  registry: Pick<RouteRegistry, "getAll" | "getProviderAuthStatus">,
+): RouteInput["resolveText"] {
+  return (text) => {
+    const unknown = `Model ${JSON.stringify(text)} not found.`;
+    let r: ReturnType<typeof resolveCliModel>;
+    try {
+      r = resolveCliModel({
+        cliModel: text,
+        modelRuntime: {
+          getModels: () => registry.getAll(),
+          hasConfiguredAuth: (provider: string) =>
+            registry.getProviderAuthStatus(provider).configured,
+        } as unknown as ModelRuntime,
+      });
+    } catch (e) {
+      return { error: firstSentence(e instanceof Error ? e.message : String(e)) };
+    }
+    const model = r.model;
+    if (r.error !== undefined || model === undefined)
+      return { error: firstSentence(r.error ?? unknown) };
+    const known = registry.getAll().some((m) => m.provider === model.provider && m.id === model.id);
+    return {
+      model,
+      ...(r.thinkingLevel !== undefined ? { thinking: r.thinkingLevel } : {}),
+      ...(known ? {} : { custom: true }),
+    };
+  };
+}
+
+/**
+ * pi's saved default provider in an agent dir's global settings; undefined
+ * when there is none. The cwd given to pi is the agent dir itself, never a
+ * reviewed repo, and the project is untrusted, so no project settings are
+ * read. pi locks the settings file to read it, which a read-only agent dir
+ * refuses: the field is then read from the file as it stands.
+ */
+export function piSavedProvider(agentDir: string): string | undefined {
+  const named = (v: unknown): string | undefined =>
+    typeof v === "string" && v.trim() !== "" ? v : undefined;
+  try {
+    // pi does not throw when it cannot load the file: it answers with empty settings.
+    const viaPi = named(
+      SettingsManager.create(agentDir, agentDir, { projectTrusted: false }).getGlobalSettings()
+        .defaultProvider,
+    );
+    if (viaPi !== undefined) return viaPi;
+  } catch {
+    // fall through to the file
+  }
+  try {
+    const raw = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8")) as unknown;
+    return typeof raw === "object" && raw !== null
+      ? named((raw as Record<string, unknown>)["defaultProvider"])
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // ---- the resource loader that discovers nothing -------------------------------
@@ -412,8 +683,19 @@ export interface PiHostOptions {
   hostPi?: boolean;
   /** Idle timeout for provider requests and the dispatcher. */
   httpIdleTimeoutMs?: number;
-  /** Credential storage in place of the file at authPath (read-only copies). */
+  /** The credential store. Omitted: an empty read-only one, so the host holds
+   * no login and pi never creates an `auth.json` of its own in the agent dir;
+   * credentials then come from the environment or `configureModels`. */
   credentials?: CreateModelRuntimeOptions["credentials"];
+  /** What decides the model of a session whose spec names none. Either a
+   * route an earlier step resolved, used as it is (`model`: the pi model it
+   * resolved to, for an id this host's own catalog lacks), or the inputs the
+   * host resolves one from over its own inventory. Omitted: no pin, no choice. */
+  route?:
+    | { fixed: ModelRoute; model?: Model<Api> }
+    | Partial<Pick<RouteInput, "pin" | "choice" | "piProvider" | "skipped">>;
+  /** Where pi's environment lookups for credentials read. Omitted: process.env. */
+  authEnv?: Readonly<Record<string, string | undefined>>;
   /** Runs once on the new ModelRuntime: register a provider, set a runtime key. */
   configureModels?: (runtime: ModelRuntime) => void | Promise<void>;
   /** In-memory pi settings, merged over the host defaults. */
@@ -450,8 +732,10 @@ export interface HostSessionSpec {
   cwd: string;
   /** The environment the model's bash may draw from; nothing else is read. */
   env: Readonly<Record<string, string | undefined>>;
-  /** A model object, or `provider/id` looked up on the host's ModelRuntime. */
-  model: string | Model<Api>;
+  /** A model object, or `provider/id` looked up on the host's ModelRuntime
+   * (and moved to a credentialed provider that serves the same id when the
+   * named one has no credential). Omitted or empty: the host's route. */
+  model?: string | Model<Api>;
   thinkingLevel?: CreateAgentSessionOptions["thinkingLevel"];
   /** The system prompt text. Omitted: pi's own default prompt. */
   systemPrompt?: string;
@@ -505,37 +789,80 @@ function checkToolAllowlist(tools: readonly string[]): void {
       throw new Error(`tool allowlist entries are exact names, got ${JSON.stringify(t)}`);
 }
 
+/** A spec that moved off the provider it named: `id` runs on `to`, since
+ * `from` has no credential on this host. */
+export interface RouteMove {
+  from: string;
+  to: string;
+  id: string;
+}
+
+/** What `resolveModel` reads of a host. `PiHost` hands its own; a test hands a shape. */
+export interface ModelSource {
+  /** pi's model for `provider/id`, or undefined when its catalog has none. */
+  getModel(provider: string, id: string): Model<Api> | undefined;
+  /** The providers the host has a usable credential for. */
+  inventory(): Promise<readonly ProviderInventory[]>;
+  /** The model of the host's route; rejects with `RouteRefused` when there is none. */
+  routeModel(): Promise<Model<Api>>;
+  /** Logins left out of the host's store because they cannot last the run. */
+  skipped?: readonly SkippedLogin[];
+  /** The remembered provider: it breaks a tie between unrelated candidates. */
+  prefer?: string;
+  /** Told of each move, every time one is made. */
+  moved?(move: RouteMove): void;
+}
+
+const unknownModel = (model: string): Error =>
+  new Error(`model ${JSON.stringify(model)} is not known to the host`);
+
 /**
- * The spec's model on this host. An OpenAI spec runs on the login that exists
- * (modelroute.ts): the provider it names when that provider has a credential,
- * else its twin (`openai-codex` <-> `openai`) when the twin has one and serves
- * the same id. pi's own offline auth check decides (ModelRuntime.checkAuth
- * reads the credential store and the runtime keys; the host's snapshot is
- * empty, since it is created without a refresh).
+ * The spec's model on this host.
+ *
+ *  - A model object is itself.
+ *  - No model (`undefined`, `""`) is the host's route.
+ *  - `provider/id` is pi's model for it when the provider has a credential.
+ *    When it has none, the spec runs on another credentialed provider that
+ *    serves the same id, if that choice is not a guess (modelroute.ts
+ *    `moveToCredentialed`); otherwise it is refused, with the candidates named.
+ *    A provider whose login was left out as too short is refused as such.
+ *
+ * An id pi does not know is "not known to the host" whoever holds a credential.
  */
 export async function resolveModel(
-  runtime: Pick<ModelRuntime, "getModel" | "checkAuth">,
-  model: string | Model<Api>,
+  host: ModelSource,
+  model: string | Model<Api> | undefined,
 ): Promise<Model<Api>> {
+  if (model === undefined || model === "") return host.routeModel();
   if (typeof model !== "string") return model;
   const parts = splitProvider(model);
-  if (parts === null) throw new Error(`model ${JSON.stringify(model)} is not known to the host`);
-  const twin = twinProvider(parts.provider);
-  let provider = parts.provider;
-  if (twin !== undefined) {
-    // VERIFY-ON-PIN (pi 1.4.0): checkAuth resolves undefined for a provider with
-    // no credential and an AuthCheck for one with an OAuth or API-key credential.
-    const usable = new Set<string>();
-    for (const p of [parts.provider, twin])
-      if ((await runtime.checkAuth(p).catch(() => undefined)) !== undefined) usable.add(p);
-    provider = routeProvider(parts.provider, parts.rest, {
-      hasCredential: (p) => usable.has(p),
-      hasModel: (p, id) => runtime.getModel(p, id) !== undefined,
-    });
+  if (parts === null) throw unknownModel(model);
+  const { provider, rest: id } = parts;
+  const named = host.getModel(provider, id);
+  const inventory = await host.inventory();
+  if (inventory.some((e) => e.provider === provider)) {
+    if (named === undefined) throw unknownModel(model);
+    return named;
   }
-  const found = runtime.getModel(provider, parts.rest);
-  if (!found) throw new Error(`model ${JSON.stringify(model)} is not known to the host`);
-  return found;
+  const logins = (host.skipped ?? []).filter((l) => l.provider === provider);
+  if (logins.length > 0) throw new RouteRefused({ code: "login-too-short", logins });
+  const move = moveToCredentialed({ provider, id }, inventory, host.prefer);
+  if (move !== null && "provider" in move) {
+    const found = host.getModel(move.provider, id);
+    if (found !== undefined) {
+      host.moved?.({ from: provider, to: move.provider, id });
+      return found;
+    }
+  }
+  // An id pi has never heard of is a wrong name, not a missing credential.
+  if (named === undefined) throw unknownModel(model);
+  throw new RouteRefused({
+    code: "pin-no-credential",
+    pin: model,
+    provider,
+    from: "config",
+    candidates: move !== null && "ambiguous" in move ? move.ambiguous : [],
+  });
 }
 
 /** The id a session JSONL's header carries; null when the file does not start
@@ -620,6 +947,12 @@ export class PiHost {
   /** What the file tools are kept out of, or null. */
   readonly fence: ToolFence | null;
   private readonly sessions = new Set<AgentSession>();
+  private registryFacade: ModelRegistry | undefined;
+  private inventoryOnce: Promise<readonly ProviderInventory[]> | undefined;
+  private routeOnce: Promise<RouteResult> | undefined;
+  /** pi's model objects for ids the catalog does not hold (a custom pin). */
+  private readonly customModels = new Map<string, Model<Api>>();
+  private readonly movesMade: RouteMove[] = [];
 
   private constructor(
     private readonly options: PiHostOptions,
@@ -659,18 +992,145 @@ export class PiHost {
       idleTimeoutMs: idle,
       ...(options.hostPi === true ? { hostPi: true } : {}),
     });
+    const modelsStorePath = join(options.agentDir, "models-store.json");
     const runtime = await ModelRuntime.create({
       authPath: join(options.agentDir, "auth.json"),
       modelsPath: join(options.agentDir, "models.json"),
-      modelsStorePath: join(options.agentDir, "models-store.json"),
-      ...(options.credentials ? { credentials: options.credentials } : {}),
-      // No catalog refresh over the network at create: a review run does not
-      // wait on, or leak to, a model-list endpoint.
+      modelsStorePath,
+      // pi's file store creates the file it is pointed at the first time it is
+      // read. A host with no stored catalog writes none: it gets an empty
+      // store in memory, and the agent dir stays as it was handed over.
+      ...(existsSync(modelsStorePath) ? {} : { modelsStore: NO_STORED_MODELS }),
+      // Always a store of the host's own: pi would otherwise open (and create)
+      // `auth.json` in the agent dir.
+      credentials: options.credentials ?? keyOnlyCredentials(),
+      // Nothing is refreshed inside create: pi would do it before the auth
+      // context is isolated, and over the network when its switch allows.
       refreshOnCreate: false,
     });
-    isolateProviderAuth(runtime);
+    isolateProviderAuth(runtime, isolatedAuthContext(options.authEnv));
+    // The offline refresh: it restores the catalog overlay pi stored in the
+    // agent dir (`models-store.json`, the models pi learned since its build),
+    // so the host knows the models the person's own pi knows, and it fills the
+    // availability snapshot the registry facade reads. It makes no request: a
+    // review run does not wait on, or leak to, a model-list endpoint.
+    // VERIFY-ON-PIN (pi 1.4.0, canary 15): `refresh({ allowNetwork: false })`
+    // runs each provider's restore phase and stops before any network check,
+    // whatever PI_OFFLINE says, and the auth context swapped in above is still
+    // the one in place after it.
+    await runtime.refresh({ allowNetwork: false });
     await options.configureModels?.(runtime);
     return new PiHost(options, runtime, dispatcher, idle);
+  }
+
+  private registry(): ModelRegistry {
+    this.registryFacade ??= new ModelRegistry(this.modelRuntime);
+    return this.registryFacade;
+  }
+
+  /**
+   * Wait until pi's availability snapshot, which the registry facade reads,
+   * agrees with pi asked directly. pi runs its availability passes in the
+   * background (after every provider it is handed, every runtime key), and a
+   * pass a later one supersedes is dropped without a trace, so asking for one
+   * and waiting is not enough: the snapshot is compared, provider by provider,
+   * with pi's own unsnapshotted answer, and a pass is asked for again until
+   * the two agree. Everything here is offline: a credential read and a check.
+   */
+  private async settleAvailability(): Promise<void> {
+    const runtime = this.modelRuntime;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await runtime.getAvailable();
+      const direct = new Set<string>();
+      await Promise.all(
+        runtime.getProviders().map(async (p) => {
+          if ((await runtime.getAvailable(p.id)).length > 0) direct.add(p.id);
+        }),
+      );
+      const snapshot = new Set(runtime.getAvailableSnapshot().map((m) => m.provider));
+      if (direct.size === snapshot.size && [...direct].every((id) => snapshot.has(id))) return;
+    }
+  }
+
+  /** The providers this host has a usable credential for, read once from
+   * pi's registry facade (`registryInventory`). */
+  inventory(): Promise<readonly ProviderInventory[]> {
+    this.inventoryOnce ??= (async () => {
+      await this.settleAvailability();
+      return registryInventory(this.registry());
+    })().catch((e: unknown) => {
+      this.inventoryOnce = undefined;
+      throw e;
+    });
+    return this.inventoryOnce;
+  }
+
+  /** The host's route: the model a session with no model of its own runs on,
+   * or why there is none. Resolved once, on first use. */
+  route(): Promise<RouteResult> {
+    this.routeOnce ??= (async (): Promise<RouteResult> => {
+      const given = this.options.route;
+      if (given !== undefined && "fixed" in given) return { ok: true, route: given.fixed };
+      const resolveText = textResolver(this.registry());
+      return resolveRoute({
+        inventory: await this.inventory(),
+        skipped: given?.skipped ?? [],
+        ...(given?.pin ? { pin: given.pin } : {}),
+        ...(given?.choice ? { choice: given.choice } : {}),
+        ...(given?.piProvider ? { piProvider: given.piProvider } : {}),
+        resolveText: (text) => {
+          const r = resolveText(text);
+          // The route carries ids, not models: keep pi's object for an id the
+          // catalog cannot give back.
+          if (r.model !== undefined && r.custom === true)
+            this.customModels.set(`${r.model.provider}/${r.model.id}`, r.model as Model<Api>);
+          return r;
+        },
+      });
+    })().catch((e: unknown) => {
+      this.routeOnce = undefined;
+      throw e;
+    });
+    return this.routeOnce;
+  }
+
+  /** The moves made so far: each spec that ran on another provider than the
+   * one it named, once per provider pair and id. */
+  moves(): readonly RouteMove[] {
+    return [...this.movesMade];
+  }
+
+  /** pi's model for the host's route. */
+  private async routeModel(): Promise<Model<Api>> {
+    const result = await this.route();
+    if (!result.ok) throw new RouteRefused(result.refusal);
+    const { provider, modelId, spec } = result.route;
+    const given = this.options.route;
+    const found =
+      this.modelRuntime.getModel(provider, modelId) ??
+      this.customModels.get(spec) ??
+      (given !== undefined && "fixed" in given ? given.model : undefined);
+    if (found === undefined) throw unknownModel(spec);
+    return found;
+  }
+
+  /** This host, as `resolveModel` reads one. */
+  private modelSource(): ModelSource {
+    const given = this.options.route;
+    const inputs = given !== undefined && !("fixed" in given) ? given : undefined;
+    return {
+      getModel: (provider, id) => this.modelRuntime.getModel(provider, id),
+      inventory: () => this.inventory(),
+      routeModel: () => this.routeModel(),
+      ...(inputs?.skipped ? { skipped: inputs.skipped } : {}),
+      ...(inputs?.choice ? { prefer: inputs.choice.provider } : {}),
+      moved: (move) => {
+        if (
+          !this.movesMade.some((m) => m.from === move.from && m.to === move.to && m.id === move.id)
+        )
+          this.movesMade.push(move);
+      },
+    };
   }
 
   /** A fresh settings manager per session: sessions never share mutable
@@ -746,7 +1206,7 @@ export class PiHost {
     const { session } = await createAgentSession({
       cwd: spec.cwd,
       agentDir: this.agentDir,
-      model: await resolveModel(this.modelRuntime, spec.model),
+      model: await resolveModel(this.modelSource(), spec.model),
       ...(spec.thinkingLevel ? { thinkingLevel: spec.thinkingLevel } : {}),
       modelRuntime: this.modelRuntime,
       resourceLoader,

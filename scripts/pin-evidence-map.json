@@ -88,8 +88,8 @@
     },
     {
       "id": "session-cwd-and-cache-id",
-      "assumes": "SessionManager.open defaults its cwd to the spec's; inMemory({id}) sets the id the provider keys its cache on; checkAuth resolves undefined for a provider with no credential.",
-      "files": { "packages/pi-plugin/src/engine/pisdk.ts": 3 },
+      "assumes": "SessionManager.open defaults its cwd to the spec's; inMemory({id}) sets the id the provider keys its cache on. The file's four other tags are the model route's reads of pi, each held by its own entry and its own offline test: pi-default-probe, pi-auth-status-origin, pi-offline-refresh and pi-model-text-parse.",
+      "files": { "packages/pi-plugin/src/engine/pisdk.ts": 6 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -314,6 +314,46 @@
         "source": "none",
         "kind": "gap",
         "needs": "a review started with no model pinned whose start names the picked model, on a provider whose row differs from pi's default; no extract field names the resolved model's route yet"
+      }
+    },
+    {
+      "id": "pi-default-probe",
+      "assumes": "pi 1.4.0's root export resolveCliModel, asked for an id a provider does not have, answers with a shallow clone of the provider's default model (or of its first model when pi names no default) and reads only getModels() and hasConfiguredAuth() of the runtime it is given; piDefaultModelId reads pi's per-provider default off that clone.",
+      "files": { "tests/pi-canary/canary-12-default-probe.test.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review started with no model pinned on a provider where the guard decided, whose start names pi's default; no extract field names the resolved route yet"
+      }
+    },
+    {
+      "id": "pi-auth-status-origin",
+      "assumes": "pi 1.4.0's ModelRegistry reports a stored credential as source `stored`, an environment key as `environment` with the variable's name as its label and an ambient cloud identity with a phrase or a non-key variable, and isUsingOAuth is true for a stored OAuth login without refreshing it; the route's credential classes are read from those.",
+      "files": { "tests/pi-canary/canary-13-auth-status.test.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review whose start names the credential it ran on (a stored login, an environment key, an ambient identity); no extract field names the route's credential yet"
+      }
+    },
+    {
+      "id": "pi-offline-refresh",
+      "assumes": "pi 1.4.0's ModelRuntime.refresh({ allowNetwork: false }) makes no request whatever PI_OFFLINE says, restores the catalog overlay stored in the agent dir's models-store.json, fills the availability snapshot the registry facade reads, and leaves the auth context swapped onto the runtime in place.",
+      "files": { "tests/pi-canary/canary-15-offline-refresh.test.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review that ran on a model present only in pi's stored catalog overlay; no extract field tells an overlay model from a built-in one"
+      }
+    },
+    {
+      "id": "pi-model-text-parse",
+      "assumes": "pi 1.4.0's resolveCliModel resolves an exact provider/id, a bare id one provider serves and a :level suffix, keeps an unknown id on a known provider as a custom model, and reports a failure as an error whose first sentence states the fact and whose later sentences name pi's own flags.",
+      "files": { "tests/engine-route.test.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review started with --model or a config pin whose start names the model pi resolved the text to; no extract field names the pin's text beside the resolved model yet"
       }
     }
   ]
