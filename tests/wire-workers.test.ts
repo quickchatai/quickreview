@@ -17,7 +17,8 @@ import { PermitBroker } from "../src/ipc/permits.js";
 import { WorkerSessionHost } from "../src/worker-session-host.js";
 import { WORKER_ENV_DROPPED, buildWorkerWorld, workerSessionEnv } from "../src/workerworld.js";
 import type { ExecFn } from "../src/tmux.js";
-import type { WorkerSpec } from "../src/ipc/workerspec.js";
+import { parseWorkerSpec, type WorkerSpec } from "../src/ipc/workerspec.js";
+import { MODELS_TIER_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import type { SessionCommandRow } from "../src/state.js";
 
 const SRC = resolve(import.meta.dirname, "..", "src");
@@ -79,7 +80,7 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function rig(over: Partial<Config["openviking"]> = {}) {
+function rig(over: Partial<Config["openviking"]> = {}, models: Partial<Config["models"]> = {}) {
   const root = join(dir, "root");
   mkdirSync(join(root, "state"), { recursive: true });
   symlinkSync(resolve(SRC, "..", "prompts"), join(root, "prompts"));
@@ -87,7 +88,7 @@ function rig(over: Partial<Config["openviking"]> = {}) {
   const cfg: Config = {
     ...base,
     dry_run: true,
-    models: { ...base.models, model: "local/m" },
+    models: { ...base.models, model: "local/m", ...models },
     openviking: { ...base.openviking, enabled: true, ...over },
   };
   const tmuxCalls: string[][] = [];
@@ -182,6 +183,30 @@ describe("the worker world", () => {
     expect(spec.env["QCR_WORKTREE"]).toBe(r.sessions.worktrees.worktreePath(7));
     expect(spec.session_dir).toBe(r.sessions.sessionDir("pr-7"));
     expect(spec).toMatchObject({ mode: "round", pr: 7, session: "pr-7", round_no: roundNo });
+  });
+
+  const wake = (r: ReturnType<typeof rig>): WorkerSpec =>
+    r.specOf(r.world.supervisor.submit({ pr: 7, kind: "wake", round_no: null, payload: "w" }));
+
+  it("names a worker the providers a pinned config's models name", () => {
+    // The main model's provider, then the tiers' (the fixture pins them).
+    const spec = wake(rig());
+    expect(spec.providers?.[0]).toBe("local");
+    expect(spec.providers?.length).toBeGreaterThan(1);
+  });
+
+  // MUTATION: put `providers: reviewProviders(cfg)` back in buildSpec
+  // (src/workerworld.ts) — the unpinned spec then carries `providers: []`, and
+  // this fails.
+  it("names a worker no provider and no model when the config pins none", () => {
+    const spec = wake(
+      rig({}, { model: "", tiers: { ...MODELS_TIER_DEFAULTS.tiers }, pass_models: {} }),
+    );
+    // An empty list would read as "no provider": the field is absent, the model
+    // is the empty spec, and it is a spec the worker's own parser takes.
+    expect(spec).not.toHaveProperty("providers");
+    expect(spec.model).toBe("");
+    expect(parseWorkerSpec(JSON.parse(JSON.stringify(spec))).model).toBe("");
   });
 
   it("leaves a session no memory surface when memory is switched off", () => {

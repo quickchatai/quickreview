@@ -65,6 +65,11 @@ async function smokeRound(id: string, order: string): Promise<{ code: number; ma
     makeHost: async (o) => {
       const host = await PiHost.create({
         agentDir: o.agentDir,
+        // What decides the worker's model stays the worker's to give: the
+        // borrowed login, the route's inputs, and the environment pi reads.
+        ...(o.credentials ? { credentials: o.credentials } : {}),
+        ...(o.route ? { route: o.route } : {}),
+        ...(o.authEnv ? { authEnv: o.authEnv } : {}),
         settings: { compaction: { enabled: false }, retry: { enabled: false } },
         configureModels: (r) => {
           r.registerNativeProvider(faux.provider);
