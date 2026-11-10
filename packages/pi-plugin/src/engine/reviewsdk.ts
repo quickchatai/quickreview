@@ -9,9 +9,18 @@
 //
 //   login        read from the dir's auth.json by engineCredentials: an
 //                in-memory, read-only copy, refused up front when the token would
-//                expire inside the turn. A provider key is looked up by pi, by
-//                pi's own names and in pi's own order (a stored credential owns
-//                its provider), in the spec's env over this process's.
+//                expire inside the turn. A route that borrowed the login itself
+//                (`credentials`) hands it over instead, and no file is read. A
+//                provider key is looked up by pi, by pi's own names and in pi's
+//                own order (a stored credential owns its provider), in the
+//                spec's env over this process's.
+//   model        a session whose spec names no model runs on the host's route:
+//                the route an earlier step resolved, or the inputs the host
+//                resolves one from (`route`). A route that had to know its
+//                model before the run (to show it, to ask) builds the host
+//                first, with `reviewHostOptions`, and hands it over
+//                (`prebuilt`): the sessions run on the host the route was
+//                resolved on.
 //   settings     the dir's settings.json supplies what the process route's pi
 //                reads from it: the durable retry and the HTTP idle timeout.
 //   dispatcher   pi's HTTP dispatcher is installed when the route owns its
@@ -39,7 +48,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { lensRunConfigFromEnv } from "../../extensions/lens.js";
 import { CONTEXT_PACK_FILE } from "../contextpack.js";
 import { agentDirSettings } from "./agentdir.js";
-import { engineCredentials, type EngineAuth } from "./auth.js";
+import { engineCredentials } from "./auth.js";
 import { engineLensTools, type EngineLensTools } from "./lens/engine-tools.js";
 import type { LensRunConfig } from "./lens/runlens.js";
 import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./lens/wave.js";
@@ -102,6 +111,20 @@ export interface ReviewSdkOptions {
   /** Paths the tool fence keeps out beside the defaults: where the host's own
    * login lives when no env names it (the plugin's host pi agent dir). */
   fenceDirs?: readonly string[];
+  /** The login, borrowed by the route before the run
+   * (packages/pi-plugin/src/engine/auth.ts `borrowedCredentials`): the host
+   * holds it in memory, and the run's agent dir has no `auth.json` to read or
+   * check. Omitted: the agent dir's own login file, read and checked here. */
+  credentials?: PiHostOptions["credentials"];
+  /** What decides the model of a session whose spec names none
+   * (`PiHostOptions.route`). Omitted: no pin and no choice, so the host
+   * resolves one from its credentials alone. */
+  route?: PiHostOptions["route"];
+  /** A host built before the run over this agent dir, for a route that
+   * resolved its model on it: the dir's sessions run on that host and no other
+   * is built. Undefined for a dir it has no host for. The runtime disposes it
+   * with the hosts it built itself. */
+  prebuilt?: (agentDir: string) => PiHost | undefined;
 }
 
 /** The review SDK runtime: a runtime, carrying the engine route when it has one.
@@ -131,6 +154,64 @@ export function engineLensConfig(host: PiHost, spec: SessionSpec): LensRunConfig
 
 /** `SessionSpec.env` names this dir: the run's private pi agent dir. */
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
+
+/**
+ * What a review's host is built from, over `agentDir`: the runtime's own
+ * options and what the agent dir holds (its settings, and its login unless the
+ * route handed one over). `env` is the session's env, which names what the
+ * run was given; a host built before any session has none. Throws
+ * `AuthExpiring` when the agent dir's login is the one read and it would
+ * expire inside `needMs`.
+ */
+export function reviewHostOptions(
+  options: Pick<
+    ReviewSdkOptions,
+    | "processEnv"
+    | "ownsProcess"
+    | "hostPi"
+    | "homeDir"
+    | "authMarginMs"
+    | "fenceDirs"
+    | "credentials"
+    | "route"
+  >,
+  o: { agentDir: string; needMs: number; env?: NodeJS.ProcessEnv },
+): PiHostOptions {
+  const procEnv = options.processEnv ?? process.env;
+  const env = o.env ?? {};
+  const credentials =
+    options.credentials ??
+    engineCredentials({
+      srcDir: o.agentDir,
+      needMs: o.needMs,
+      ...(options.authMarginMs !== undefined ? { marginMs: options.authMarginMs } : {}),
+    }).credentials;
+  const ids = toolIdsOf(procEnv);
+  const hostPi = options.hostPi === true;
+  return {
+    agentDir: o.agentDir,
+    ownsProcess: !hostPi && options.ownsProcess !== false,
+    ...(hostPi ? { hostPi: true } : {}),
+    ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
+    // The model's bash and every lens session's, as the tool uid.
+    ...(ids !== null && !("refused" in ids) ? { toolUid: ids } : {}),
+    // The round's agent dir is a copy: the login it was copied from (the
+    // wrapper's /qcr-login, group-readable by this uid) is fenced too.
+    fenceDirs: [
+      ...loginSourceDirs(procEnv),
+      ...credentialPaths(procEnv, env),
+      ...(options.fenceDirs ?? []),
+    ],
+    credentials,
+    ...(options.route !== undefined ? { route: options.route } : {}),
+    settings: agentDirSettings(o.agentDir),
+    // Where pi looks for a provider key: the round's env, which names
+    // what the run was given, over this process's, which holds whatever
+    // else the person has. No key is handed to the runtime, so a stored
+    // login keeps its provider, as in pi itself.
+    authEnv: { ...procEnv, ...env },
+  };
+}
 
 /**
  * The review route's SDK runtime. One host per agent dir, built lazily at the
@@ -163,36 +244,17 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
     let built = hosts.get(agentDir);
     if (built === undefined) {
       built = (async (): Promise<{ rt: Runtime; host: PiHost }> => {
-        const auth: EngineAuth = engineCredentials({
-          srcDir: agentDir,
-          needMs: spec.limits.timeoutMs,
-          ...(options.authMarginMs !== undefined ? { marginMs: options.authMarginMs } : {}),
-        });
-        const ids = toolIdsOf(procEnv);
-        const hostPi = options.hostPi === true;
-        const hostOptions: PiHostOptions = {
-          agentDir,
-          ownsProcess: !hostPi && options.ownsProcess !== false,
-          ...(hostPi ? { hostPi: true } : {}),
-          ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
-          // The model's bash and every lens session's, as the tool uid.
-          ...(ids !== null && !("refused" in ids) ? { toolUid: ids } : {}),
-          // The round's agent dir is a copy: the login it was copied from (the
-          // wrapper's /qcr-login, group-readable by this uid) is fenced too.
-          fenceDirs: [
-            ...loginSourceDirs(procEnv),
-            ...credentialPaths(procEnv, spec.env),
-            ...(options.fenceDirs ?? []),
-          ],
-          credentials: auth.credentials,
-          settings: agentDirSettings(agentDir),
-          // Where pi looks for a provider key: the round's env, which names
-          // what the run was given, over this process's, which holds whatever
-          // else the person has. No key is handed to the runtime, so a stored
-          // login keeps its provider, as in pi itself.
-          authEnv: { ...procEnv, ...spec.env },
-        };
-        const host = await (options.makeHost ?? PiHost.create)(hostOptions);
+        // The host the route was resolved on, when there is one; else one is
+        // built now, from what the agent dir and the session's env hold.
+        const host =
+          options.prebuilt?.(agentDir) ??
+          (await (options.makeHost ?? PiHost.create)(
+            reviewHostOptions(options, {
+              agentDir,
+              needMs: spec.limits.timeoutMs,
+              env: spec.env,
+            }),
+          ));
         const tools = engine
           ? engineLensTools(withWarn((engine.config ?? engineLensConfig)(host, spec)), wave)
           : undefined;

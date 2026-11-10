@@ -23,9 +23,12 @@ import {
   preview,
   review,
   type ReviewOptions,
+  type ReviewRouted,
   type ReviewRuntime,
   type ReviewStarted,
 } from "@quickchatai/pi-quickreview/src/reviewapi.js";
+import { AuthUnreadable } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import type { ModelRoute } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import { parseCoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { contextFrom } from "@quickchatai/pi-quickreview/src/engine/context.js";
 import { reviewSdkRuntime } from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
@@ -630,6 +633,238 @@ describe("review(): the local review as a call", () => {
       expect(states.filter((f) => String(f).includes("state"))).toEqual([]);
     },
   );
+});
+
+describe("review(): the model is the host's to resolve", () => {
+  const ROUTE: ModelRoute = {
+    provider: "faux",
+    modelId: "m",
+    providerName: "Faux",
+    spec: "faux/m",
+    thinking: null,
+    source: "pi-provider",
+    pick: "newest",
+    piDefaultId: null,
+    custom: false,
+    movedFrom: null,
+    credential: { kind: "api_key", origin: "env-key", label: "FAUX_KEY", subscription: false },
+    priced: true,
+    ask: true,
+    alternatives: [
+      {
+        provider: "other",
+        providerName: "Other",
+        modelId: "o",
+        spec: "other/o",
+        credential: { kind: "oauth", origin: "stored", subscription: true },
+        priced: false,
+      },
+    ],
+    notices: ["skipped Short: its login expires at 12:08 and nothing here renews it"],
+  };
+  const routedTo = (over: Partial<ReviewRouted> = {}): ReviewRouted => ({
+    result: { ok: true, route: ROUTE },
+    inventory: [],
+    surface: "app",
+    ...over,
+  });
+  /** A runtime that must never be asked for a session. */
+  const noRuntime = (): ReviewRuntime => {
+    throw new Error("no runtime is built");
+  };
+  const modelLinesOf = (text: string): string[] =>
+    text.split("\n").filter((l) => l.trimStart().startsWith("model:"));
+
+  // MUTATION: drop the `routed` spread from previewData (packages/pi-plugin/src/reviewapi.ts) —
+  // the preview carries no model, and this fails.
+  it(
+    "the preview names the model in one line under the lenses and carries model, alternatives and tiers",
+    { timeout: 30_000 },
+    async () => {
+      let asks = 0;
+      const opts: ReviewOptions = {
+        ...optionsOver("route-preview", noRuntime),
+        route: async () => {
+          asks++;
+          return routedTo({
+            notes: ["--model replaces 2 pinned tier and lens models for this run"],
+          });
+        },
+      };
+      const r = await preview({ kind: "branch" }, opts);
+      expect(r.exitCode, r.text).toBe(0);
+      expect(asks).toBe(1);
+      expect(schemaErrors(r.data)).toEqual([]);
+      const p = r.data["preview"] as Record<string, unknown>;
+      expect(p["model"]).toEqual({
+        spec: "faux/m",
+        provider: "faux",
+        id: "m",
+        provider_name: "Faux",
+        source: "pi-provider",
+        pick: "newest",
+        pi_default: null,
+        custom: false,
+        moved_from: null,
+        priced: true,
+        ask: true,
+        // what kind of credential and where pi found it: never its label
+        credential: { kind: "api_key", origin: "env-key", subscription: false },
+      });
+      expect(p["alternatives"]).toEqual([
+        {
+          spec: "other/o",
+          provider: "other",
+          provider_name: "Other",
+          priced: false,
+          credential: { kind: "oauth", origin: "stored", subscription: true },
+        },
+      ]);
+      // the shipped config pins no tier: each runs on the route, at its own level
+      expect(p["tiers"]).toEqual({
+        light: "faux/m:medium",
+        standard: "faux/m:medium",
+        deep: "faux/m:high",
+      });
+      const lines = r.text.split("\n");
+      const at = lines.findIndex((l) => l.startsWith("  lenses:"));
+      expect(lines.slice(at + 1, at + 4)).toEqual([
+        "  model: faux/m (picked among 2 providers pi has credentials for: pi itself starts on Faux). " +
+          "Change it: qcr model use <provider[/model]>, or --model for one run",
+        "  skipped Short: its login expires at 12:08 and nothing here renews it",
+        "  --model replaces 2 pinned tier and lens models for this run",
+      ]);
+      expect(modelLinesOf(r.text)).toHaveLength(1);
+    },
+  );
+
+  it(
+    "a caller that resolves no route gets a preview that says nothing of the model",
+    { timeout: 30_000 },
+    async () => {
+      const r = await preview({ kind: "branch" }, optionsOver("route-none", noRuntime));
+      expect(r.exitCode, r.text).toBe(0);
+      const p = r.data["preview"] as Record<string, unknown>;
+      for (const k of ["model", "alternatives", "tiers"]) expect(p).not.toHaveProperty(k);
+      expect(modelLinesOf(r.text)).toEqual([]);
+    },
+  );
+
+  // MUTATION: drop the `!routed.result.ok && !isPreview` refusal (reviewapi.ts) —
+  // the review goes on to build its runtime, and this fails.
+  it(
+    "with no route a preview still shows the plan, and a start is refused in the route's words before any runtime",
+    { timeout: 30_000 },
+    async () => {
+      const none = routedTo({
+        result: { ok: false, refusal: { code: "no-credential" } },
+        facts: { agentDir: "/pi/home" },
+      });
+      const pre = await preview(
+        { kind: "branch" },
+        { ...optionsOver("route-refused-preview", noRuntime), route: async () => none },
+      );
+      expect(pre.exitCode, pre.text).toBe(0);
+      const p = pre.data["preview"] as Record<string, unknown>;
+      expect(p["model"]).toBeNull();
+      expect(p["alternatives"]).toEqual([]);
+      expect(p["tiers"]).toEqual({ light: ":medium", standard: ":medium", deep: ":high" });
+      expect((p["lenses"] as string[]).length).toBeGreaterThan(0);
+      expect(modelLinesOf(pre.text)).toEqual(["  model: none (no model credential: qcr login)"]);
+
+      const started = await review(
+        { kind: "branch" },
+        { ...optionsOver("route-refused-start", noRuntime), route: async () => none },
+      );
+      expect(started.exitCode).toBe(1);
+      expect(started.data).toMatchObject({ ok: false });
+      expect((started.data["errors"] as string[])[0]).toBe(
+        "pi has no model credential (agent dir /pi/home). Run `qcr login` and sign in to any provider, " +
+          "or set a provider's API key in the environment, then run this again.",
+      );
+
+      // the plugin's words, inside pi
+      const inPi = await preview(
+        { kind: "branch" },
+        {
+          ...optionsOver("route-refused-plugin", noRuntime),
+          route: async () => ({ ...none, surface: "plugin" }),
+        },
+      );
+      expect(modelLinesOf(inPi.text)).toEqual(["  model: none (no model credential: /login)"]);
+      // any other refusal says itself
+      const pinned = await preview(
+        { kind: "branch" },
+        {
+          ...optionsOver("route-refused-pin", noRuntime),
+          route: async () =>
+            routedTo({ result: { ok: false, refusal: { code: "no-model", providers: ["p"] } } }),
+        },
+      );
+      expect(modelLinesOf(pinned.text)).toEqual([
+        "  model: none (pi has a credential for p, but none of their models passes the review's filter)",
+      ]);
+    },
+  );
+
+  it(
+    "a login that cannot be read is said as it is, and a target with nothing to review never asks",
+    { timeout: 30_000 },
+    async () => {
+      const unreadable = await review(
+        { kind: "branch" },
+        {
+          ...optionsOver("route-unreadable", noRuntime),
+          route: async () => {
+            throw new AuthUnreadable("/pi/home/auth.json", new Error("it is not a JSON object"));
+          },
+        },
+      );
+      expect(unreadable.exitCode).toBe(1);
+      expect((unreadable.data["errors"] as string[])[0]).toBe(
+        "could not read pi's credentials at /pi/home/auth.json: it is not a JSON object",
+      );
+
+      let asks = 0;
+      const opts: ReviewOptions = {
+        ...optionsOver("route-nothing", noRuntime),
+        route: async () => {
+          asks++;
+          return routedTo();
+        },
+      };
+      git(opts.repoDir, "checkout", "-q", "main");
+      const nothing = await review({ kind: "branch" }, opts);
+      expect(nothing.exitCode).toBe(1);
+      expect(asks).toBe(0);
+    },
+  );
+
+  // MUTATION: pass the lenses' specs as written to reviewKey, without the
+  // route (runModels(cfg, lenses, null) in reviewapi.ts) — the key is the
+  // same on either route, and this fails.
+  it("the key moves with the route the run is on", { timeout: 30_000 }, async () => {
+    const keyOn = async (name: string, routed: ReviewRouted | null): Promise<string> => {
+      const base = optionsOver(name, noRuntime);
+      const r = await preview(
+        { kind: "branch" },
+        // one repository, so only the route differs
+        { ...base, repoDir: shared, ...(routed ? { route: async () => routed } : {}) },
+      );
+      expect(r.exitCode, r.text).toBe(0);
+      return (r.data["preview"] as { key: string }).key;
+    };
+    const shared = mkRepo("route-key-shared");
+    const a = await keyOn("route-key-a", routedTo());
+    const again = await keyOn("route-key-a2", routedTo());
+    const b = await keyOn(
+      "route-key-b",
+      routedTo({ result: { ok: true, route: { ...ROUTE, spec: "other/o" } } }),
+    );
+    expect(again).toBe(a);
+    expect(b).not.toBe(a);
+    expect(await keyOn("route-key-none", null)).not.toBe(a);
+  });
 });
 
 describe("workTreeFactsIo: an uncommitted head read off the working tree", () => {

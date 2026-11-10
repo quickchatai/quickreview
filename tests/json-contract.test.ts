@@ -38,6 +38,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/contract.js";
 import { renderVersion, versionInfo } from "../src/version.js";
 import { validate } from "./helpers/json-schema-lite.js";
+import { FAKE_ROUTE_MODEL, writeFakeProvider } from "./helpers/fake-openai.js";
 import { FILES, SHA, scanRig } from "./helpers/scan-cli-rig.js";
 
 vi.stubEnv(
@@ -281,12 +282,27 @@ function fakePi(name: string, script: string[]): string {
 
 let root: string;
 let ctx: ReturnType<typeof contextFor>;
+/** The pi home the reviews borrow from: one provider of its own `models.json`,
+ * so a route resolves with no login and no key, and nothing is sent. */
+const piHome = join(tmp, "pi-home");
 beforeAll(() => {
   root = join(tmp, "root");
   mkdirSync(root);
   for (const e of readdirSync(ROOT))
     if (!["wt", ".git", "state"].includes(e)) symlinkSync(join(ROOT, e), join(root, e));
   ctx = contextFor(root, "");
+  writeFakeProvider(piHome, "http://127.0.0.1:9/v1", { routable: true });
+});
+
+/** The fixture config with no model pinned, as the shipped one: the review
+ * runs on the route, and the preview says which model that is. */
+const onTheRoute = (): ReturnType<typeof contextFor>["cfg"] => ({
+  ...ctx.cfg,
+  models: {
+    ...ctx.cfg.models,
+    model: "",
+    tiers: { light: ":medium", standard: ":medium", deep: ":high" },
+  },
 });
 
 async function reviewJson(
@@ -302,10 +318,18 @@ async function reviewJson(
     out: (l: string) => lines.push(l),
     confirm: null,
     root,
-    agentDir: join(tmp, "agent"),
-    cfg: ctx.cfg,
+    agentDir: piHome,
+    cfg: onTheRoute(),
     ecosystem: ctx.ecosystem,
     runtime: piCliRuntime({ bin: piBin }),
+    // The model is resolved as `qcr review` resolves it, over the pi home above.
+    models: {
+      env: {},
+      tmpDir: join(tmp, "state-tmp"),
+      configPath: null,
+      choose: null,
+      host: { ownsProcess: false, homeDir: join(tmp, "no-home") },
+    },
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
     dryrunDir: join(tmp, `dryrun-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
@@ -314,11 +338,23 @@ async function reviewJson(
   return [code, JSON.parse(lines[0]!) as Json];
 }
 
+/** The keys of a payload's `preview` object. */
+const previewKeys = (payload: Json): string[] => Object.keys(payload["preview"] as Json).sort();
+
 describe("qcr review --json", () => {
   it("a preview, a finished review, a capped one and a refusal each carry the version", async () => {
     const [c1, preview] = await reviewJson(mkRepo("pv"), "false", ["--preview"]);
     expect(c1).toBe(0);
     expectContract(review, "review-preview", REVIEW_SCHEMA_VERSION, preview);
+    // The model fields are additions inside `preview`, in the same schema
+    // version: the golden holds them and the live preview has the same keys.
+    // MUTATION: drop `model`, `alternatives` and `tiers` from previewData
+    // (packages/pi-plugin/src/reviewapi.ts) — this fails.
+    expect((preview["preview"] as Json)["model"]).toMatchObject({ spec: FAKE_ROUTE_MODEL });
+    expect(previewKeys(preview)).toEqual(
+      expect.arrayContaining(["alternatives", "model", "tiers"]),
+    );
+    if (!UPDATE) expect(previewKeys(preview)).toEqual(previewKeys(golden("review-preview")));
 
     const happy = fakePi("happy", [
       `echo '{"type":"message_end","message":{"role":"assistant","usage":{"input":1,"output":1,"cost":{"total":0.25}}}}'`,
@@ -328,6 +364,8 @@ describe("qcr review --json", () => {
     const [c2, done] = await reviewJson(mkRepo("done"), happy, []);
     expect(c2).toBe(0);
     expectContract(review, "review-done", REVIEW_SCHEMA_VERSION, done);
+    // a finished review repeats the preview it ran under, model and all
+    if (!UPDATE) expect(previewKeys(done)).toEqual(previewKeys(golden("review-done")));
 
     const runaway = fakePi("runaway", [
       `echo '{"type":"message_end","message":{"role":"assistant","usage":{"cost":{"total":9999}}}}'`,

@@ -5,7 +5,7 @@
 import { parseDestinations, type Destination } from "@quickchatai/pi-quickreview/src/reviewdest.js";
 
 export const REVIEW_USAGE =
-  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--full] [--security] [--to DEST] [--out FILE] [--debug-pi] [--json] | --help";
+  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--model MODEL] [--full] [--security] [--to DEST] [--out FILE] [--debug-pi] [--json] | --help";
 
 export type ReviewCommand =
   | { help: true }
@@ -20,6 +20,9 @@ export type ReviewCommand =
       preview: boolean;
       key?: string;
       limit?: number;
+      /** `--model`: the model the whole review runs on, for this run. The
+       * text is pi's own to read (`provider/id`, an id, a `:level` suffix). */
+      model?: string;
       full: boolean;
       /** `--security`: a security review asked for on top of the plan, as
        * `/qcr-review --security` asks it — the whole security family is
@@ -47,6 +50,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
   let repo: string | undefined;
   let key: string | undefined;
   let limit: number | undefined;
+  let model: string | undefined;
   let to: Destination[] | undefined;
   let out: string | undefined;
   let debugPi = false;
@@ -72,6 +76,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
       i++;
     } else if (a === "--repo") repo = value(i++, a);
     else if (a === "--key") key = value(i++, a);
+    else if (a === "--model") model = value(i++, a).trim();
     else if (a === "--to") {
       try {
         to = parseDestinations(value(i++, a));
@@ -120,6 +125,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     ...(base !== undefined ? { base } : {}),
     ...(key !== undefined ? { key } : {}),
     ...(limit !== undefined ? { limit } : {}),
+    ...(model !== undefined ? { model } : {}),
     ...(to !== undefined ? { to } : {}),
     ...(out !== undefined ? { out } : {}),
   };

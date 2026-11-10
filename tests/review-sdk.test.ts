@@ -3,17 +3,32 @@
 // provider (the real SDK, no network, no model). What it builds its host from,
 // what it refuses before any host exists, and what the process env carries while
 // a session lives.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { AuthExpiring, DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import {
+  AuthExpiring,
+  DISABLED_REFRESH,
+  keyOnlyCredentials,
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import type { SessionSpec } from "@quickchatai/pi-quickreview/src/engine/port.js";
-import { reviewSdkRuntime } from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
+import {
+  reviewHostOptions,
+  reviewSdkRuntime,
+} from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
 import { REPO_ROOT } from "./helpers/round-rig.js";
-import { pricedFaux } from "./helpers/priced-faux.js";
+import { pricedFaux, ROUTABLE_FAUX_MODEL, routableFaux } from "./helpers/priced-faux.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -191,6 +206,96 @@ describe("reviewSdkRuntime", () => {
       auth: { apiKey: "stored-key" },
     });
     await s.dispose();
+  });
+
+  // MUTATION: read the agent dir's auth.json whatever `credentials` says
+  // (reviewHostOptions) — the dir holds none, the run is refused for a
+  // missing login, and this fails.
+  it("a login the route borrowed is the host's: the agent dir holds no login file and none is read", async () => {
+    const seen: PiHostOptions[] = [];
+    const borrowed = keyOnlyCredentials();
+    const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens, credentials: borrowed });
+    const s = await rt.create(spec());
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.credentials).toBe(borrowed);
+    expect(existsSync(join(agentDir, "auth.json"))).toBe(false);
+  });
+
+  // MUTATION: drop `route` from the host options in reviewHostOptions — the
+  // host resolves a route of its own, the pin is lost, and this fails.
+  it("the route's inputs reach the host: a session whose spec names no model runs on the pin", async () => {
+    const seen: PiHostOptions[] = [];
+    const pin = { text: "faux/m", from: "flag" as const };
+    const rt = reviewSdkRuntime({
+      makeHost: fauxHost(seen),
+      lens: noLens,
+      credentials: keyOnlyCredentials(),
+      route: { pin },
+    });
+    const s = await rt.create(spec({ model: "" }));
+    expect(seen[0]!.route).toEqual({ pin });
+    expect(await hosts[0]!.route()).toMatchObject({
+      ok: true,
+      route: { spec: "faux/m", source: "flag" },
+    });
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+  });
+
+  // MUTATION: build a host whatever `prebuilt` answers (runtimeFor) — a second
+  // host is made, `seen` holds its options, and this fails.
+  it("a host built before the run hosts its agent dir's sessions, and no other is built", async () => {
+    const faux = routableFaux();
+    faux.appendResponses([() => fauxAssistantMessage("done")]);
+    // What the route does first: the host, from the options the runtime
+    // itself would build it with, over a dir that holds no login.
+    const options = reviewHostOptions(
+      { processEnv: {}, ownsProcess: false, credentials: keyOnlyCredentials() },
+      { agentDir, needMs: 60_000 },
+    );
+    expect(options).toMatchObject({ agentDir, ownsProcess: false, authEnv: {} });
+    const prebuilt = await PiHost.create({
+      ...options,
+      configureModels: (r) => {
+        r.registerNativeProvider(faux.provider);
+      },
+    });
+    hosts.push(prebuilt);
+    const route = await prebuilt.route();
+    expect(route).toMatchObject({ ok: true, route: { spec: `faux/${ROUTABLE_FAUX_MODEL.id}` } });
+
+    const seen: PiHostOptions[] = [];
+    const asked: string[] = [];
+    const rt = reviewSdkRuntime({
+      makeHost: fauxHost(seen),
+      lens: noLens,
+      prebuilt: (dir) => {
+        asked.push(dir);
+        return dir === agentDir ? prebuilt : undefined;
+      },
+    });
+    const s = await rt.create(spec({ model: "" }));
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+    expect(asked).toEqual([agentDir]);
+    expect(seen).toEqual([]);
+    // the turn was the prebuilt host's provider's
+    expect(faux.state.callCount).toBe(1);
+
+    // a dir it has no host for is built as always
+    const other = join(dir, "other-agent");
+    mkdirSync(other);
+    writeFileSync(join(other, "auth.json"), "{}\n");
+    const t = await rt.create(
+      spec(
+        { eventsFile: join(dir, "e2.jsonl"), stderrFile: join(dir, "s2") },
+        { PI_CODING_AGENT_DIR: other },
+      ),
+    );
+    await t.dispose();
+    expect(seen.map((o) => o.agentDir)).toEqual([other]);
   });
 
   describe("the tool uid", () => {

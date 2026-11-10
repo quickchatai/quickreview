@@ -33,6 +33,12 @@
 // the person's own pi names, so a route resolved in one is known to the other.
 // `routeHost` is that and nothing else: a host to ask for the route, with no
 // session and no run directory.
+//
+// A host that resolves its route before the run starts is built first, over
+// an agent dir that holds what a host reads when it is built
+// (`seedHostAgentDir`: the catalog files and the settings); the run then
+// fills that same directory (`keepAgentDir`), so the host the route was
+// resolved on is the one the round's sessions run on.
 import {
   chmodSync,
   copyFileSync,
@@ -110,6 +116,20 @@ export interface HostRun {
   strayContext: string[];
 }
 
+/**
+ * What a host reads from its agent dir when it is built: pi's catalog files
+ * of `srcAgentDir` and the host's settings. The directory is made 0700 when
+ * missing. No login is written: a host built over it is handed one in memory.
+ */
+export function seedHostAgentDir(o: { root: string; srcAgentDir: string; agentDir: string }): void {
+  mkdirSync(o.agentDir, { recursive: true, mode: 0o700 });
+  // Custom providers the operator configured stay usable, and the host knows
+  // the models the operator's pi knows; nothing else of the operator's pi home
+  // (extensions, skills, prompts, settings) is carried.
+  copyCatalogFiles(o.srcAgentDir, o.agentDir);
+  writeFileSync(join(o.agentDir, "settings.json"), hostSettings(o.root));
+}
+
 /** The path with symlinks resolved as far as it exists. */
 const real = (p: string): string => {
   const abs = resolve(p);
@@ -183,13 +203,16 @@ export function prepareReviewHost(o: {
    * (`borrowedCredentials`) and hands it to its pi host in memory, so no
    * `auth.json` is written and nothing of the login is read or checked here. */
   auth?: "copy" | "injected";
+  /** The agent dir is there already and a host is built over it
+   * (`seedHostAgentDir`): it is filled, never removed and made again. */
+  keepAgentDir?: boolean;
   now?: () => number;
 }): HostRun {
   const cwd = resolve(o.cwd);
   for (const c of [o.root, ...o.checkouts])
     if (isInside(real(cwd), checkoutOf(c)))
       throw new Error(`the run directory ${cwd} is inside the checkout ${c}`);
-  rmSync(o.agentDir, { recursive: true, force: true });
+  if (o.keepAgentDir !== true) rmSync(o.agentDir, { recursive: true, force: true });
   mkdirSync(o.agentDir, { recursive: true, mode: 0o700 });
   const auth = join(o.srcAgentDir, "auth.json");
   // `injected`: the login lives in the host's memory, and the agent dir holds none.
@@ -211,11 +234,7 @@ export function prepareReviewHost(o: {
       chmodSync(join(o.agentDir, "auth.json"), 0o600);
     }
   }
-  // Custom providers the operator configured stay usable, and the host knows
-  // the models the operator's pi knows; nothing else of the operator's pi home
-  // (extensions, skills, prompts, settings) is carried.
-  copyCatalogFiles(o.srcAgentDir, o.agentDir);
-  writeFileSync(join(o.agentDir, "settings.json"), hostSettings(o.root));
+  seedHostAgentDir(o);
   // The lens agents, for the user scope (QCR_SUBAGENT_SCOPE=user): the lens
   // tool reads them from the agent dir's `agents`.
   buildBenchAgents(o.root, o.cfg, join(o.agentDir, "agents"), o.profile);

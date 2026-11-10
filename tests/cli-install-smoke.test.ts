@@ -309,6 +309,14 @@ describe.skipIf(!BUILT)("the installed qcr, offline, with no config", () => {
     const data = lastJson(r.stdout);
     expect(data["schema_version"]).toBe(REVIEW_SCHEMA_VERSION);
     expect(data["ok"], r.stdout).toBe(true);
+    // No login and no provider key in this environment: the preview still
+    // shows the plan, and says there is no model instead of naming one.
+    // MUTATION: leave `models` out of what cmdReview hands runReviewCli
+    // (src/reviewcli.ts) — the preview carries no model field, and this fails.
+    const shown = data["preview"] as Record<string, unknown>;
+    expect(shown["model"]).toBeNull();
+    expect(shown["alternatives"]).toEqual([]);
+    expect((shown["lenses"] as string[]).length).toBeGreaterThan(0);
 
     // MUTATION: keep the review's runs under the package root — this fails.
     expect([...snapshot(prefix).entries()].filter(([p, s]) => before.get(p) !== s)).toEqual([]);

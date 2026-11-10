@@ -22,6 +22,15 @@ import type { PrFileEntry } from "./githubcore.js";
 import { normalizeDisposition, recordNumber, recordString } from "./findingkey.js";
 import { severityRank } from "./severityrank.js";
 import { planKey } from "./plankey.js";
+import { roundAgentModels, type LensTuningMap } from "./lenstuning.js";
+import {
+  moveToCredentialed,
+  splitProvider,
+  type ModelRoute,
+  type ProviderInventory,
+} from "./modelroute.js";
+import { splitModelSpec, TIER_LEVELS, type ModelsConfig } from "./reviewconfig.js";
+import { foldTier, PASS_TIER_ORDER, type PassTier } from "./types.js";
 import { parseUnifiedDiff } from "./diffinput.js";
 import { nodeExec, runOrThrow } from "./execfn.js";
 
@@ -541,18 +550,99 @@ export function hardStopFor(estimateUsd: number): number {
   return Math.ceil(estimateUsd * HARD_STOP_FACTOR * 100 - 1e-9) / 100;
 }
 
-/** What a start must quote: change the branch, the plan or the price and the
- * key moves. */
+/** What a start must quote: change the branch, the plan, the price or the
+ * models the run is on and the key moves. */
 export function reviewKey(parts: {
   headSha: string;
   baseSha: string;
   lenses: readonly string[];
   lines: number;
   cap_usd: number;
+  /** The model specs the run will use (`runModels`): the main session's and
+   * each planned lens's, level included. Their order and repeats say nothing,
+   * so the key reads them sorted and distinct. */
+  models: readonly string[];
   /** A delta review: the head it reviews from. */
   since?: string;
 }): string {
-  return planKey({ ...parts, cap: Math.round(parts.cap_usd * 100) });
+  return planKey({
+    ...parts,
+    models: [...new Set(parts.models)].sort(),
+    cap: Math.round(parts.cap_usd * 100),
+  });
+}
+
+// ---- the models a run is on ----------------------------------------------------------
+
+/** What a spec is resolved against: the run's route (null: none resolved) and
+ * the providers pi has a usable credential for. */
+export interface RunRoute {
+  route: ModelRoute | null;
+  inventory: readonly ProviderInventory[];
+  /** The remembered provider: it breaks a tie between unrelated candidates
+   * when a spec moves off a provider with no credential. */
+  prefer?: string;
+}
+
+/**
+ * A model spec as it will run. One that names no model runs on the route, at
+ * its own level, else at `level`. One whose provider has no credential here
+ * runs on the provider the route's own rule moves it to
+ * (modelroute.ts `moveToCredentialed`), and stays as written where that rule
+ * has no answer: the run refuses it then. With nothing to resolve against
+ * (`on` null, or no route for a spec that names no model) the spec stays as
+ * written, so what is not known is never filled in.
+ */
+export function specAsRun(spec: string, on: RunRoute | null, level?: string | null): string {
+  const { model, thinking } = splitModelSpec(spec);
+  if (model === "") {
+    const at = thinking ?? level ?? null;
+    return `${on?.route?.spec ?? ""}${at ? `:${at}` : ""}`;
+  }
+  if (on === null) return spec;
+  const named = splitProvider(model);
+  if (named === null || on.inventory.some((e) => e.provider === named.provider)) return spec;
+  const move = moveToCredentialed(
+    { provider: named.provider, id: named.rest },
+    on.inventory,
+    on.prefer,
+  );
+  if (move === null || !("provider" in move)) return spec;
+  return `${move.provider}/${named.rest}${thinking ? `:${thinking}` : ""}`;
+}
+
+/** The tier a built agent's name ends in (`pass-x--deep`), in either spelling. */
+function tierOfAgent(agent: string): PassTier | undefined {
+  const at = agent.lastIndexOf("--");
+  return at < 0 ? undefined : foldTier(agent.slice(at + 2));
+}
+
+/**
+ * The models one run is on: the main session's spec, each tier's, and every
+ * spec the run will use (the main session's and each planned lens's), all as
+ * they will run (`specAsRun`). A lens's spec is the one its built agent
+ * carries (`roundAgentModels`, else its tier's).
+ */
+export function runModels(
+  cfg: {
+    models: Pick<ModelsConfig, "model" | "tiers" | "effort_max" | "pass_tiers" | "pass_models">;
+    lenses?: LensTuningMap | undefined;
+    review: { sweep_light_tier?: "" | PassTier };
+  },
+  lenses: readonly string[],
+  on: RunRoute | null,
+): { main: string; tiers: Record<PassTier, string>; all: string[] } {
+  const main = specAsRun(cfg.models.model, on, on?.route?.thinking);
+  const tiers = Object.fromEntries(
+    PASS_TIER_ORDER.map((tier) => [tier, specAsRun(cfg.models.tiers[tier], on, TIER_LEVELS[tier])]),
+  ) as Record<PassTier, string>;
+  const variants = roundAgentModels(cfg);
+  const ofLens = (agent: string): string => {
+    const tier = tierOfAgent(agent);
+    const spec = variants[agent] ?? (tier !== undefined ? cfg.models.tiers[tier] : "");
+    return specAsRun(spec, on, tier !== undefined ? TIER_LEVELS[tier] : null);
+  };
+  return { main, tiers, all: [...new Set([main, ...lenses.map(ofLens)])].sort() };
 }
 
 // ---- the findings in a terminal ------------------------------------------------------

@@ -9,10 +9,17 @@
 // a unified diff, or a PR fetched into a scratch repository), settle where the
 // result goes, read what an earlier review of the target left (an unchanged
 // head is free, a push is a delta review over the production follow-up plan,
-// packages/pi-plugin/src/reviewdelta.ts), plan and price the round, ask above the limit, isolate
-// the run (the host's `prepareHost`), run the one-shot round, skip what the
-// bot already posted, record the round, render, and post through the one gate
-// when asked.
+// packages/pi-plugin/src/reviewdelta.ts), plan the round, learn the model it runs on (the
+// host's `route`), price it, ask above the limit, isolate the run (the host's
+// `prepareHost`), run the one-shot round, skip what the bot already posted,
+// record the round, render, and post through the one gate when asked.
+//
+// The model is the host's to resolve, since the host knows where pi's
+// credentials are: `opts.route` answers with the route (or why there is
+// none) once the plan exists, so a target that needs no review asks nothing.
+// The preview names the model and the reason in one line, carries it as
+// `model`, `alternatives` and `tiers`, and puts every spec the run will use
+// into the key; a start with no route is refused in the route's own words.
 //
 // Nothing here reads the caller's cwd, home or config file: every path, the
 // config and the runtime are options, and every word for a person goes
@@ -46,8 +53,21 @@ import {
   resolveDiff,
   resolveUncommitted,
   reviewKey,
+  runModels,
   type BranchTarget,
+  type RunRoute,
 } from "./localreview.js";
+import {
+  refusalText,
+  RouteRefused,
+  routeNoticeLines,
+  type ModelRoute,
+  type ProviderCredential,
+  type ProviderInventory,
+  type RefusalFacts,
+  type RouteResult,
+  type RouteSurface,
+} from "./modelroute.js";
 import { MEMORY_NOT_SET_UP, type ReviewMemoryPort, type RoundMemory } from "./memoryport.js";
 import type { ProfilePlace } from "./profilelookup.js";
 import type { ProfileLookup } from "./profiles.js";
@@ -71,7 +91,7 @@ import {
 import { runOneShot, type OneShotResult } from "./oneshot.js";
 import type { RoundSpec } from "./engine/round.js";
 import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
-import { AuthExpiring } from "./engine/auth.js";
+import { AuthError, AuthExpiring } from "./engine/auth.js";
 import type { Runtime } from "./engine/port.js";
 import type { SecurityRequest } from "./types.js";
 import { computeSecurityFacts, SECURITY_TRIGGER_CHECKS, type SecurityFact } from "./secfacts.js";
@@ -157,6 +177,26 @@ export interface ReviewLimits {
   timeoutMs: number;
 }
 
+/** The model a run is on, as its host resolved it
+ * (packages/pi-plugin/src/modelroute.ts `resolveRoute`). */
+export interface ReviewRouted {
+  /** The route, or why there is none. */
+  result: RouteResult;
+  /** The providers pi has a usable credential for on this host: a spec the
+   * config pins to a provider outside them runs on the one the route's rule
+   * moves it to. */
+  inventory: readonly ProviderInventory[];
+  /** The remembered provider: it breaks a tie when such a spec moves. */
+  prefer?: string;
+  /** Whose words the model line and a refusal are said in. */
+  surface: RouteSurface;
+  /** What a refusal's words need beyond the refusal. */
+  facts?: RefusalFacts;
+  /** More lines for the preview, said under the model line (what `--model`
+   * replaced, for one). */
+  notes?: readonly string[];
+}
+
 /** A runtime for one run. `dispose`, when it has one, is called when the run
  * ends (packages/pi-plugin/src/engine/reviewsdk.ts disposes the hosts it built). */
 export type ReviewRuntime = Runtime & { dispose?: () => Promise<void> | void };
@@ -199,6 +239,13 @@ export interface ReviewOptions {
    * ends. A runtime carries the run's lens board and lens runner, so it hosts
    * one run at a time: a runtime still hosting another run is refused. */
   runtime: (run: ReviewRuntimeRequest) => ReviewRuntime;
+  /** Resolves the model the run is on. Called at most once per run, after the
+   * plan exists and before the price is shown (a refused target and an
+   * unchanged head never ask); it may ask the person which provider to use.
+   * A run whose route does not resolve previews with no model and is refused
+   * at a start. Absent: the review says nothing of its model, and its
+   * sessions run on whatever the config pins and the runtime resolves. */
+  route?: () => Promise<ReviewRouted>;
   /** Isolates the run from the operator's pi home and every checkout.
    * Absent: core's isolation (packages/pi-plugin/src/reviewhost.ts) with the engine's words for
    * a refused login. */
@@ -309,6 +356,59 @@ const credentialLabel = (s: CredentialSource): string =>
         : s.slice("env:".length);
 
 const usd = (n: number): string => `$${n.toFixed(2)}`;
+
+/** A credential as the preview carries it: what kind it is and where pi found
+ * it. Never a value, and never the label of an environment source. */
+const credentialData = (c: ProviderCredential): Record<string, unknown> => ({
+  kind: c.kind,
+  origin: c.origin,
+  subscription: c.subscription,
+});
+
+/** The route as the preview's `model` object. */
+function modelData(route: ModelRoute): Record<string, unknown> {
+  return {
+    spec: route.spec,
+    provider: route.provider,
+    id: route.modelId,
+    provider_name: route.providerName,
+    source: route.source,
+    pick: route.pick,
+    pi_default: route.piDefaultId,
+    custom: route.custom,
+    moved_from: route.movedFrom,
+    priced: route.priced,
+    ask: route.ask,
+    credential: credentialData(route.credential),
+  };
+}
+
+/** The other usable providers as the preview's `alternatives`. */
+function alternativesData(route: ModelRoute): Record<string, unknown>[] {
+  return route.alternatives.map((a) => ({
+    spec: a.spec,
+    provider: a.provider,
+    provider_name: a.providerName,
+    priced: a.priced,
+    credential: credentialData(a.credential),
+  }));
+}
+
+/** The preview's lines about the model: the route's one line (which model,
+ * why, and how to change it) with the route's own notices under it, or that
+ * there is none and why; then the host's notes. */
+function modelLines(routed: ReviewRouted): string[] {
+  const head = routed.result.ok
+    ? routeNoticeLines(routed.result.route, routed.surface)
+    : [
+        `model: none (${
+          routed.result.refusal.code === "no-credential"
+            ? `no model credential: ${routed.surface === "plugin" ? "/login" : "qcr login"}`
+            : new RouteRefused(routed.result.refusal).message
+        })`,
+      ];
+  return [...head, ...(routed.notes ?? [])].map((l) => `  ${l}`);
+}
 
 /** An unfinished review's raw record, less the findings the bot already posted. */
 function rawWithout(record: unknown, posted: readonly PostedFinding[]): unknown {
@@ -885,6 +985,39 @@ async function runPipeline(
   const lenses = planned.prompts.plannedLenses;
   const scope = planned.scope;
   fallback = planned.fallback;
+  // The model the run is on: the host's to resolve, now that there is a plan
+  // to run. A preview with no route still shows the plan; a start is refused
+  // in the route's own words, before anything is priced or asked.
+  let routed: ReviewRouted | null = null;
+  if (opts.route !== undefined) {
+    const resolveRoute = opts.route;
+    let got: ReviewRouted | typeof STOP;
+    try {
+      got = await unlessStopped(io.signal, () => resolveRoute());
+    } catch (err) {
+      return refuse(1, [
+        err instanceof AuthError
+          ? err.message
+          : `the review's model could not be resolved: ${String(err).slice(0, 300)}`,
+      ]);
+    }
+    if (got === STOP || io.signal?.aborted) return stopped();
+    routed = got;
+    if (!routed.result.ok && !isPreview)
+      return refuse(1, [refusalText(routed.result.refusal, routed.surface, routed.facts)]);
+  }
+  const route = routed !== null && routed.result.ok ? routed.result.route : null;
+  const on: RunRoute | null =
+    routed === null
+      ? null
+      : {
+          route,
+          inventory: routed.inventory,
+          ...(routed.prefer !== undefined ? { prefer: routed.prefer } : {}),
+        };
+  // Every spec the run will use, as it will run: with no route given they
+  // are the config's own, so a changed pin still moves the key.
+  const models = runModels(cfg, lenses, on);
   const since = scope === "delta" && prev !== null ? lastRound(prev).head_sha : undefined;
   const priceLines = scope === "delta" && delta !== null ? delta.lines : t.lines;
   const price = priceReview(lenses.length, priceLines, settings);
@@ -896,6 +1029,7 @@ async function runPipeline(
     lenses,
     lines: priceLines,
     cap_usd: cap ?? 0,
+    models: models.all,
     ...(since !== undefined ? { since } : {}),
   });
   const auto = action || price <= limit!;
@@ -914,6 +1048,14 @@ async function runPipeline(
     ...(since !== undefined ? { since, prior_open: priorCount } : {}),
     ...(fallback !== null ? { fallback_reason: fallback.reason } : {}),
     lenses,
+    // The model, when the host resolved one: null says no route resolves.
+    ...(routed !== null
+      ? {
+          model: route !== null ? modelData(route) : null,
+          alternatives: route !== null ? alternativesData(route) : [],
+          tiers: models.tiers,
+        }
+      : {}),
     estimate_usd: price,
     cap_usd: cap,
     limit_usd: limit,
@@ -928,6 +1070,8 @@ async function runPipeline(
       : `  ${t.files.length} file${t.files.length === 1 ? "" : "s"}, ${t.lines} changed line${t.lines === 1 ? "" : "s"}` +
         (fallback !== null ? ` — full review, not a delta: ${fallbackWords(fallback.reason)}` : ""),
     `  lenses: ${lenses.join(", ")}`,
+    // The run's notice about its model: said here, once.
+    ...(routed !== null ? modelLines(routed) : []),
     action
       ? `  price: ${usd(price)} (estimate) — ${cap === null ? "no cap" : `the run stops hard at ${usd(cap)}`}`
       : `  price: ${usd(price)} (estimate) — the run stops hard at ${usd(cap!)} (limit without asking: ${usd(limit!)})`,

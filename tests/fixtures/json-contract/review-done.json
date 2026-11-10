@@ -20,6 +20,30 @@
       "pass-tests--light",
       "pass-validate--deep"
     ],
+    "model": {
+      "spec": "local/r",
+      "provider": "local",
+      "id": "r",
+      "provider_name": "local",
+      "source": "only-credential",
+      "pick": "newest",
+      "pi_default": null,
+      "custom": false,
+      "moved_from": null,
+      "priced": true,
+      "ask": false,
+      "credential": {
+        "kind": "api_key",
+        "origin": "models-json",
+        "subscription": false
+      }
+    },
+    "alternatives": [],
+    "tiers": {
+      "light": "local/r:medium",
+      "standard": "local/r:medium",
+      "deep": "local/r:high"
+    },
     "estimate_usd": 0.61,
     "cap_usd": 1.22,
     "limit_usd": 1000,

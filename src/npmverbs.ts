@@ -7,7 +7,10 @@
 //                         qcr types /login for the person and steps aside.
 //                         When auto-review's refresher holds that login, it
 //                         is paused first and released after, as the home's
-//                         re-login does (src/loginrefresh/handover.ts).
+//                         re-login does (src/loginrefresh/handover.ts). Any
+//                         provider pi offers works, and after a login the
+//                         verb says which model reviews now run on, in the
+//                         line `qcr model` and a review's preview use.
 //   qcr pi [args]         the pinned pi with the qcr plugin preloaded
 //                         (`-e <the plugin package's dir>`) and the app's
 //                         own /selfimprove beside it (`-e` its shim,
@@ -19,12 +22,12 @@
 // Everything effectful is injected, so tests drive each verb with fakes;
 // `npmVerbDeps()` is the real assembly.
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { pluginPackageDir } from "./coreext.js";
 import { detectInstall, type Installer } from "./installkind.js";
 import type { RefresherHold } from "./loginrefresh/handover.js";
-import { readLogins } from "./loginhint.js";
 import { piAgentDir } from "./piagentdir.js";
 import { piCliPath } from "./picli.js";
 
@@ -57,7 +60,11 @@ export { piAgentDir };
 /** The providers pi holds a credential for in `agentDir`, from its auth.json;
  * empty when there is none or it cannot be read. Never a token. */
 export function loggedInProviders(agentDir: string): string[] {
-  return Object.keys(readLogins(agentDir));
+  try {
+    return Object.keys(loginSummary(readFileSync(join(agentDir, "auth.json"), "utf8")));
+  } catch {
+    return [];
+  }
 }
 
 /** Is `cmd` an executable on `path`? */
@@ -92,6 +99,10 @@ export interface NpmVerbDeps {
   /** Pause auto-review's login refresher of `agentDir` for a login, when one
    * runs (src/loginrefresh/handover.ts `holdRefresher`). */
   holdLogin: (agentDir: string) => Promise<RefresherHold>;
+  /** The model reviews run on here, in the lines a person reads once
+   * (`model: ...`, then the route's notices), or that there is none and why.
+   * Said after a login. Absent: nothing is said. */
+  routeLines?: () => Promise<string[]>;
 }
 
 export function npmVerbDeps(pkgRoot: string): NpmVerbDeps {
@@ -112,6 +123,21 @@ export function npmVerbDeps(pkgRoot: string): NpmVerbDeps {
     holdLogin: async (agentDir) => {
       const { holdRefresher } = await import("./loginrefresh/handover.js");
       return holdRefresher(agentDir);
+    },
+    // What `qcr model` resolves, said in the route's one line: the same
+    // borrow, the same model environment and the same rule.
+    routeLines: async () => {
+      const [{ runModelCli }, { routeNoticeLines }] = await Promise.all([
+        import("./modelcli.js"),
+        import("@quickchatai/pi-quickreview/src/modelroute.js"),
+      ]);
+      const printed: string[] = [];
+      await runModelCli([], true, process.env, { out: (l) => printed.push(l), err: () => {} });
+      const state = JSON.parse(printed[0] ?? "null") as import("./modelcli.js").ModelCliJson | null;
+      if (state === null) return [];
+      return state.route !== null
+        ? routeNoticeLines(state.route, "app")
+        : ["model: none", ...(state.refusal ? [state.refusal.text] : [])];
     },
   };
 }
@@ -159,12 +185,13 @@ export async function cmdLogin(args: readonly string[], deps: NpmVerbDeps): Prom
       [
         LOGIN_USAGE,
         "",
-        "Opens pi's own /login in the pi qcr runs on, so the review sessions can use it.",
-        "The login is kept in pi's agent dir ($PI_CODING_AGENT_DIR, default ~/.pi/agent).",
-        'Any OpenAI login serves the default review models: "OpenAI Codex (legacy)" or "OpenAI"',
-        '(Sign in with ChatGPT) under "Sign in with an account", or an OpenAI API key (at /login, or',
-        "OPENAI_API_KEY in the environment). A key for another provider does not stand in for it:",
-        "log in, or set the review's models in your qcr config.",
+        "qcr login [provider]   log in with pi's own /login",
+        "  Any provider pi offers works: the review runs on the login you have.",
+        "  With several, `qcr model` shows which one runs and `qcr model use <provider>` changes it.",
+        "",
+        "pi's own /login opens in the pi qcr runs on, and the login is kept in pi's agent dir",
+        "($PI_CODING_AGENT_DIR, default ~/.pi/agent), where every review reads it. A provider's",
+        "API key in the environment counts as well, with no login at all.",
       ].join("\n"),
     );
     return 0;
@@ -254,6 +281,13 @@ async function runLogin(
       ? `qcr login: logged in to ${added.join(", ")} (pi's agent dir ${agentDir}).`
       : `qcr login: pi holds logins for ${after.join(", ")} (pi's agent dir ${agentDir}).`,
   );
+  // Which model reviews run on now. The login is made whatever this says, so
+  // a route that cannot be read costs the verb nothing: `qcr model` says it.
+  try {
+    for (const line of (await deps.routeLines?.()) ?? []) deps.out(line);
+  } catch {
+    // nothing to add
+  }
   return status === 0 || status === null ? 0 : status;
 }
 
