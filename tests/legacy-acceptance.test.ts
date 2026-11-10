@@ -56,9 +56,13 @@ import {
   validateCommand,
   type CommandDeps,
 } from "../src/commands.js";
-import { parseConfig } from "../src/config.js";
+import { whyJson } from "../src/cli.js";
+import { parseConfig, TUI_DEFAULTS } from "../src/config.js";
 import { OriginStore, parseOriginRecord } from "../src/slack/origin.js";
-import { foldSlackTier, StateStore } from "../src/state.js";
+import { buildStatusSnapshot, foldSlackTier, StateStore } from "../src/state.js";
+import { App } from "../src/tui/app.js";
+import { detailLines } from "../src/tui/board.js";
+import { stripAnsi } from "../src/tui/paint.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createQuickReview } from "@quickchatai/pi-quickreview/extensions/quickreview.js";
@@ -83,7 +87,12 @@ import {
   type LedgerEntry,
 } from "@quickchatai/pi-quickreview/src/scan/ledger.js";
 import { sdkCaseRunner } from "@quickchatai/pi-quickreview/src/scan/scanleaves.js";
-import { planStage2, type Stage2PlanInput } from "@quickchatai/pi-quickreview/src/scan/stage2.js";
+import {
+  planStage2,
+  priceStage2Row,
+  type Stage2PlanInput,
+} from "@quickchatai/pi-quickreview/src/scan/stage2.js";
+import { STAGE2_FILE } from "@quickchatai/pi-quickreview/src/scan/stage2request.js";
 import {
   foldAgentName,
   foldTier,
@@ -92,6 +101,7 @@ import {
   type PassPlanEntry,
   type SessionHooks,
 } from "@quickchatai/pi-quickreview/src/types.js";
+import { fakeStreams, installScanRig, okSsh } from "./helpers/tui-rig.js";
 
 // ---- fold 1: the tier string --------------------------------------------
 
@@ -601,6 +611,99 @@ describe("pass tiers: the older names are read forever", () => {
     });
   });
 
+  describe("a stored round's validator tier, on every surface that shows it", () => {
+    // A row keeps the name it was written with (nothing migrates it), so each
+    // reader folds on its own: three readers, three folds, a case for each.
+    let store: StateStore;
+    beforeEach(() => {
+      store = new StateStore(":memory:");
+      store.upsertPr({
+        number: 311,
+        state: "reviewing",
+        head_sha: "abc123",
+        title: "PR 311",
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+    });
+    afterEach(() => store.close());
+    /** A running round whose row holds `stored` as its validator's tier. */
+    const running = (stored: string): number =>
+      store.startRound(311, "first", ["pass-baseline", "pass-validate"], 75, {
+        validate_tier: stored,
+      });
+    const snapshotRow = () => buildStatusSnapshot(store, true).prs[0]!;
+
+    // MUTATION: return `stored` unfolded from shownTier (src/state.ts) — this
+    // fails.
+    it("status.json: the running round names its rung, whichever spelling was stored", () => {
+      SPELLINGS.forEach((names, i) => {
+        for (const name of names) {
+          const id = running(name);
+          expect(snapshotRow().current_round?.validate_tier, name).toBe(PASS_TIER_ORDER[i]);
+          store.finishRound(id, "APPROVE", null);
+        }
+      });
+      // A name that is no tier is shown as stored, and no tier stays none.
+      const custom = running("custom");
+      expect(snapshotRow().current_round?.validate_tier).toBe("custom");
+      store.finishRound(custom, "APPROVE", null);
+      store.startRound(311, "first", ["pass-baseline"], 75);
+      expect(snapshotRow().current_round?.validate_tier).toBeNull();
+    });
+
+    // MUTATION: in whyJson (src/cli.ts) emit `validate_tier: r.validate_tier ??
+    // null` — this fails.
+    it("qcr why --json: every round names its rung, whichever spelling was stored", () => {
+      const expected: Array<string | null> = [];
+      SPELLINGS.forEach((names, i) => {
+        for (const name of names) {
+          store.finishRound(running(name), "APPROVE", null);
+          expected.push(PASS_TIER_ORDER[i]!);
+        }
+      });
+      store.finishRound(running("custom"), "APPROVE", null);
+      store.finishRound(store.startRound(311, "first", ["pass-baseline"], 75), "APPROVE", null);
+      expect(
+        whyJson(store, 311, "/nonexistent-archive").rounds.map((r) => r.validate_tier),
+      ).toEqual([...expected, "custom", null]);
+    });
+
+    // The board reads status.json and `why --json` from a daemon that may be
+    // older than it is, so a row can still reach it under the other name.
+    // MUTATION: in currentProgressLines (src/tui/board.ts) render
+    // `round.validate_tier` unfolded — this fails.
+    it("the board's validator row names the rung, whichever spelling the row it was handed holds", () => {
+      running(PASS_TIER_ORDER[0]);
+      const row = snapshotRow();
+      const why = whyJson(store, 311, "/nonexistent-archive");
+      const validatorRow = (pr: typeof row, detail = why): string | undefined =>
+        detailLines(detail, pr, 100, new Date("2026-08-13T12:00:00Z"))
+          .map(stripAnsi)
+          .find((line) => line.includes("pass-validate"));
+      SPELLINGS.forEach((names, i) => {
+        for (const name of names) {
+          // From status.json's row…
+          expect(
+            validatorRow({ ...row, current_round: { ...row.current_round!, validate_tier: name } }),
+            name,
+          ).toBe(`  ? pass-validate · unknown · ${PASS_TIER_ORDER[i]}`);
+          // …and, with no current round there, from the cached `why` payload.
+          const { current_round: _none, ...bare } = row;
+          expect(
+            validatorRow(bare, {
+              ...why,
+              rounds: why.rounds.map((r) => ({ ...r, validate_tier: name })),
+            }),
+            name,
+          ).toBe(`  ? pass-validate · unknown · ${PASS_TIER_ORDER[i]}`);
+        }
+      });
+    });
+  });
+
   it("lensForAgent strips the tier suffix in either spelling", () => {
     for (const name of [...OLDER, ...NEWER])
       expect(lensForAgent(`pass-x--${name}`), name).toBe("pass-x");
@@ -687,6 +790,65 @@ describe("pass tiers: the older names are read forever", () => {
     // A name that is no tier is only itself.
     expect(sameTier("custom", "custom")).toBe(true);
     expect(sameTier("custom", bothAt(1)[0]!)).toBe(false);
+  });
+
+  // MUTATION: in priceFrom's borrowed-rate filter (packages/pi-plugin/src/scan/
+  // stage2.ts, `deepAt`) compare `e.tier === tier` — this fails.
+  it("a deep lens's measured rate, stored under either name, is still borrowed at its rung", () => {
+    const row = (tier: string): LedgerEntry => ({
+      path: "src/a.ts",
+      blob: "b1",
+      lens: "pass-security",
+      tier,
+      effort: "tier",
+      validator: true,
+      sha: "1".repeat(40),
+      lines: 1000,
+      cost_usd: 3,
+      run: "r1",
+      case: "u",
+      at: "2026-08-13T12:00:00Z",
+    });
+    const cfg = { tier: ADD, effort: "low", validator: true, unmeasured_rate_factor: 4 };
+    // pass-concurrency has no reading of its own: it borrows pass-security's.
+    const price = (stored: string, asked: string) =>
+      priceStage2Row([row(stored)], cfg, "pass-concurrency", asked, "tier");
+    for (const stored of ["sol-high", ...bothAt(2)])
+      for (const asked of bothAt(2))
+        expect(price(stored, asked), `${stored}/${asked}`).toMatchObject({
+          basis: "borrowed",
+          from: "pass-security",
+          rate: { usd_per_kline: 3 },
+        });
+    // Another rung borrows nothing from that row, under either name.
+    for (const asked of bothAt(1)) expect(price("sol-high", asked), asked).toBeNull();
+  });
+
+  // MUTATION: in planRows (src/tui/scantab.ts) render `r.tier` unfolded — this
+  // fails.
+  it("the scan tab's plan pane names a stored row's rung, whichever spelling the proposal holds", () => {
+    const streams = fakeStreams(150, 40);
+    const app = new App(TUI_DEFAULTS, okSsh, streams.out, streams.input);
+    const rig = installScanRig(app, { running: false });
+    rig.state.pane = "plan";
+    const file = join(rig.home, STAGE2_FILE);
+    const stored = JSON.parse(readFileSync(file, "utf8")) as {
+      proposal: { rows: Array<{ id: string; tier: string }> };
+    };
+    const planPane = (tier: string): string => {
+      for (const r of stored.proposal.rows) r.tier = tier;
+      writeFileSync(file, JSON.stringify(stored));
+      rig.store.reload();
+      return app.hooks.tabs.scan!.screen(app, 150, 40).lines.map(stripAnsi).join("\n");
+    };
+    SPELLINGS.forEach((names, i) => {
+      for (const name of names)
+        expect(planPane(name), name).toContain(
+          `[✓] row-1 security  ${PASS_TIER_ORDER[i]}  billing (1 files)`,
+        );
+    });
+    // A name that is no tier is shown as stored.
+    expect(planPane("custom")).toContain("[✓] row-1 security  custom  billing (1 files)");
   });
 
   it("a stage-2 request row may name its tier in either spelling", () => {
