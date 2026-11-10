@@ -55,6 +55,7 @@ import {
 import { auditExecViolationDetails } from "../src/usage.js";
 import { profileSearchDirs, type InstallEnv } from "../src/install.js";
 import { sessionGitConfigPins } from "../src/sessions.js";
+import { MODEL_CHOICE_FILE } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import { EXEC_CORPUS as CORPUS } from "./helpers/exec-corpus.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -602,6 +603,64 @@ describe("the post-hoc audit is not blind to the corpus", () => {
     ]) {
       expect(auditExecViolationDetails([bashLine(cmd)]), `false line on: ${cmd}`).toEqual([]);
     }
+  });
+});
+
+// The remembered model choice (`<pi agent dir>/qcr-model.json`) decides which
+// provider's credential and money every later review spends. It is written by
+// our own code only. A pi home is wherever PI_CODING_AGENT_DIR says, so the
+// `.pi/` rule does not cover it: the name does, with its atomic-write sibling.
+// MUTATION: remove "qcr-model.json" from DYNAMIC_POLICY_FILES — this fails.
+describe("the model choice is not a session's to write", () => {
+  const line = (name: string, args: Record<string, string>): string =>
+    JSON.stringify({
+      type: "message",
+      timestamp: "2026-08-31T10:00:00Z",
+      message: { role: "assistant", content: [{ type: "toolCall", name, arguments: args }] },
+    });
+  const rows = CORPUS.filter((c) => /qcr-mode/.test(c.chain));
+
+  it("the corpus holds a write to it by path and by name, through a file tool and through bash", () => {
+    const writes = rows.filter((c) => c.via === "write").map((c) => c.chain);
+    // by path, under no `.pi/`, and by the bare name
+    expect(writes.some((p) => p.startsWith("/") && !p.includes(".pi/"))).toBe(true);
+    expect(writes).toContain(MODEL_CHOICE_FILE);
+    expect(writes.some((p) => p.endsWith(`${MODEL_CHOICE_FILE}.tmp`))).toBe(true);
+    expect(rows.filter((c) => c.via === "bash").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("the guard refuses each as its own policy surface, and the audit names it", () => {
+    for (const c of rows) {
+      const res = c.via === "bash" ? checkBashCommand(c.chain) : checkWritePath(c.chain);
+      expect(res.allowed, c.chain).toBe(false);
+      expect(res.reason, c.chain).toContain("policy surface");
+      const said = auditExecViolationDetails([
+        c.via === "bash"
+          ? line("bash", { command: c.chain })
+          : line("write", { path: c.chain, content: "{}" }),
+      ]);
+      expect(
+        said.map((v) => v.kind),
+        c.chain,
+      ).toEqual(["policy_surface_write"]);
+    }
+    for (const path of [`/srv/pi/${MODEL_CHOICE_FILE}`, `/srv/pi/${MODEL_CHOICE_FILE}.tmp`])
+      expect(isPolicySurface(path), path).toBe(true);
+  });
+
+  it("reading it, and a name that only resembles it, are nobody's concern", () => {
+    for (const cmd of [`cat pihome/agent/${MODEL_CHOICE_FILE}`, "rg -n qcr-model src/"]) {
+      expect(checkBashCommand(cmd).allowed, cmd).toBe(true);
+      expect(auditExecViolationDetails([line("bash", { command: cmd })]), cmd).toEqual([]);
+    }
+    expect(checkWritePath(`pihome/agent/${MODEL_CHOICE_FILE}.bak`).allowed).toBe(true);
+    expect(isPolicySurface("pihome/agent/model.json")).toBe(false);
+  });
+
+  // Layer 4 hashes what it watches at each round boundary; a file a person may
+  // change while a round runs would read as an attack on the round.
+  it("is not in the round-boundary watch set", () => {
+    for (const w of policySurfaceWatchPaths("/sb/")) expect(w).not.toContain(MODEL_CHOICE_FILE);
   });
 });
 

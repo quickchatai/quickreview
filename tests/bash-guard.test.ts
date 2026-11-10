@@ -15,6 +15,7 @@ import {
   redirectTargets,
   type SecretPathContext,
 } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
+import { MODEL_CHOICE_FILE } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import activate from "../extensions/cli/bash-guard.js";
 import {
   bashGuardConfigFromEnv,
@@ -1807,6 +1808,46 @@ describe("the dynamic profile recovery journal is protected policy", () => {
   );
   it("protects expansion onto the journal", () =>
     block("printf forged > state/setup/qcr-profile-write.js?n"));
+});
+
+// The remembered model choice decides which provider's credential and money
+// every later review spends. Our own code writes it (`qcr model use`, the ask);
+// a session never does. A pi home is wherever PI_CODING_AGENT_DIR says, so the
+// paths here sit under no `.pi/`: the name alone has to be refused.
+// MUTATION: remove "qcr-model.json" from DYNAMIC_POLICY_FILES — this fails.
+describe("the remembered model choice is not a session's to write", () => {
+  const dir = "pihome/agent";
+
+  it.each([MODEL_CHOICE_FILE, `${MODEL_CHOICE_FILE}.tmp`])(
+    "refuses file tools and shell writes to %s, by path and by name",
+    (name) => {
+      for (const path of [name, `${dir}/${name}`, `/opt/quickreview/${dir}/${name}`]) {
+        const res = checkWritePath(path);
+        expect(res.allowed, path).toBe(false);
+        expect(res.reason).toContain("policy surface");
+        block(`printf forged > ${path}`, "policy surface");
+        block(`printf forged >> ${path}`);
+        // Reading it is the job of whoever wants to know the route.
+        allow(`cat ${path}`);
+      }
+    },
+  );
+
+  it("protects every spelling bash opens the choice through", () => {
+    block(`printf forged > ${dir}/qcr-mode?.json`);
+    block(`printf forged > ${dir}/qcr-model.js*`);
+    block(`printf forged > ${dir}/qcr-model.json.tm[p]`);
+    block(`printf forged > ${dir}/qcr-"model".json`);
+    block(`printf forged &> ${dir}/qcr-model.json`);
+    block(`printf forged >| ${dir}/qcr-model.json`);
+    block(`sed -i s/a/b/ ${dir}/qcr-model.json`);
+  });
+
+  it("leaves a file that only resembles it alone", () => {
+    expect(checkWritePath(`${dir}/qcr-model.json.bak`).allowed).toBe(true);
+    expect(checkWritePath(`${dir}/my-qcr-model.json`).allowed).toBe(true);
+    expect(checkWritePath("notes/qcr-model.md").allowed).toBe(true);
+  });
 });
 
 // A review session's parent holds credentials in memory and argv, and `cat` is

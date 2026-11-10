@@ -454,6 +454,8 @@ const POLICY_SURFACE_FILES = [
   "config.toml",
   "qcr-profile-write.json",
   ".qcr-profile-write.json.tmp",
+  "qcr-model.json",
+  "qcr-model.json.tmp",
   "AGENTS.override.md",
   "AGENTS.MD",
   "AGENTS.md",

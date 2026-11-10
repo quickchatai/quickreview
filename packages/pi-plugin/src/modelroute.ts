@@ -26,11 +26,15 @@
 // or the only candidate. Several unrelated candidates are a refusal that
 // names them. The rule names no provider and no model.
 //
+// The words are here too, so every surface says the same thing: the one line
+// that names the route and why (`routeNotice`), and the five refusals
+// (`refusalText`), each worded for the app's CLI or for the plugin inside pi.
+//
 // The last part of the file (the two-provider twin and the login-file
 // reader) is what the routes that have not moved to `resolveRoute` still
 // call. It goes when its last caller does.
 
-import { compareModels, listPrice, pickModel, type ModelPick } from "./modelpick.js";
+import { compareModels, CONTEXT_FLOOR, listPrice, pickModel, type ModelPick } from "./modelpick.js";
 import type { CoreConfig } from "./reviewconfig.js";
 
 // ---- what the rule reads -------------------------------------------------------
@@ -283,11 +287,13 @@ function alternativesOf(usable: readonly Usable[], provider: string): RouteAlter
     }));
 }
 
+/** What a route says of a login it left out. */
+export function skippedNotice(login: SkippedLogin): string {
+  return `skipped ${login.name}: its login expires at ${expiryClock(login.expiresAt)} and nothing here renews it`;
+}
+
 function skippedNotices(skipped: readonly SkippedLogin[]): string[] {
-  return skipped.map(
-    (l) =>
-      `skipped ${l.name}: its login expires at ${expiryClock(l.expiresAt)} and nothing here renews it`,
-  );
+  return skipped.map(skippedNotice);
 }
 
 /** The route on a provider's rule-picked model. */
@@ -562,6 +568,280 @@ export function moveToCredentialed(
     return { provider: prefer };
   if (candidates.length === 1) return { provider: candidates[0]!.provider };
   return { ambiguous: candidates.map((e) => e.provider).sort() };
+}
+
+// ---- the words -----------------------------------------------------------------
+
+/** Who is speaking: the app's CLI (`qcr`), or the plugin inside a running pi. */
+export type RouteSurface = "app" | "plugin";
+
+/** How a person changes the route, on each surface. */
+const CHANGE_IT: Readonly<Record<RouteSurface, string>> = {
+  app: "qcr model use <provider[/model]>",
+  plugin: "/qcr-setup model",
+};
+
+/** How a person names one model (`provider/id`), on each surface. */
+const nameIt = (surface: RouteSurface, spec: string): string =>
+  surface === "app" ? `qcr model use ${spec}` : `--model ${spec}`;
+
+/** What lists the usable models, on each surface. */
+const LIST_IT: Readonly<Record<RouteSurface, string>> = {
+  app: "qcr model",
+  plugin: "/qcr-setup model",
+};
+
+/** The stretch at the end of a login's life in which pi renews it when it is
+ * opened (pi's own five minutes). */
+const PI_RENEWS_INSIDE_MS = 5 * 60_000;
+
+/** A credential in a few words: where pi found it. A value is never part of
+ * it; an environment source is named by pi's own label. */
+export function credentialWords(credential: ProviderCredential): string {
+  switch (credential.origin) {
+    case "stored":
+      return credential.kind === "oauth"
+        ? `signed in with pi${credential.subscription ? " (subscription)" : ""}`
+        : "an API key stored in pi";
+    case "runtime":
+      return "a key handed to pi for this run";
+    case "models-json":
+      return "a key in pi's models.json";
+    case "env-key":
+      return credential.label ?? "an environment key";
+    case "ambient":
+      return credential.label ?? "an ambient credential";
+  }
+}
+
+/** How many providers the route was picked among. */
+const providerCount = (route: ModelRoute): number => 1 + route.alternatives.length;
+
+/** Why the order put this provider first among several. */
+function orderReason(route: ModelRoute, surface: RouteSurface): string {
+  if (route.source === "pi-provider")
+    return surface === "plugin"
+      ? `this pi session is on ${route.providerName}`
+      : `pi itself starts on ${route.providerName}`;
+  const own = credentialClass(route.credential.origin);
+  // The same class as another provider's: the picked models decided.
+  if (route.alternatives.some((a) => credentialClass(a.credential.origin) <= own))
+    return "it has the newest model";
+  if (own === 1) return "an environment key comes first";
+  return route.credential.kind === "oauth"
+    ? "a stored login comes first"
+    : "a key pi holds comes first";
+}
+
+/**
+ * Why the route is what it is, in a phrase: the `why:` of `qcr model` and of
+ * the plugin's setup step. `configPath` is where the config that pins it is.
+ */
+export function routeWhy(
+  route: ModelRoute,
+  surface: RouteSurface,
+  facts: { configPath?: string | null } = {},
+): string {
+  const moved =
+    route.movedFrom !== null
+      ? `; it runs on ${route.providerName}, since pi has no credential for ${route.movedFrom}`
+      : "";
+  switch (route.source) {
+    case "flag":
+      return `--model on this run${moved}`;
+    case "config":
+      return `pinned by [models] model${facts.configPath ? ` in ${facts.configPath}` : ""}${moved}`;
+    case "choice":
+      return `you chose it (${surface === "app" ? "qcr model use" : "/qcr-setup model"})`;
+    case "remembered":
+      return "you picked it when asked";
+    case "only-credential":
+      return "the one provider pi has a usable credential for";
+    case "pi-provider":
+      return `pi has credentials for ${providerCount(route)} providers; ${orderReason(route, surface)}`;
+    case "credential-order": {
+      const reason = orderReason(route, surface);
+      return reason === "it has the newest model"
+        ? `the newest model among ${providerCount(route)} providers`
+        : reason;
+    }
+  }
+}
+
+/** How the model was picked on its provider, or null for a model a pin or a
+ * choice named. */
+export function routePicked(route: ModelRoute): string | null {
+  if (route.pick === "pinned") return null;
+  if (route.pick === "pi-default") return `pi's default on ${route.providerName}`;
+  return (
+    `the newest version on ${route.providerName}` +
+    (route.piDefaultId !== null ? ` (pi's own default there: ${route.piDefaultId})` : "")
+  );
+}
+
+/**
+ * The route in lines a person reads once: the first names the model and why
+ * it is the one (and how to change it, on this surface); each further line
+ * is one of the route's own notices (a login left out, pi's default standing
+ * in for the newest version, a default that could not be read).
+ */
+export function routeNoticeLines(route: ModelRoute, surface: RouteSurface): string[] {
+  const how = CHANGE_IT[surface];
+  let head: string;
+  if (route.movedFrom !== null)
+    head =
+      `model: ${route.modelId} runs on ${route.providerName}: ${route.movedFrom}, which ` +
+      `${route.source === "flag" ? "--model" : "the config"} names, has no credential here`;
+  else
+    switch (route.source) {
+      case "flag":
+        head = `model: ${route.spec} (pinned by --model)`;
+        break;
+      case "config":
+        head = `model: ${route.spec} (pinned by [models] model)`;
+        break;
+      case "choice":
+        head = `model: ${route.spec} (your choice; ${how} changes it)`;
+        break;
+      case "remembered":
+        head = `model: ${route.spec} (you picked ${route.providerName} when asked; ${how} changes it)`;
+        break;
+      case "only-credential":
+        head = `model: ${route.spec} (the provider pi has a credential for)`;
+        break;
+      case "pi-provider":
+      case "credential-order":
+        head =
+          `model: ${route.spec} (picked among ${providerCount(route)} providers pi has credentials for: ` +
+          `${orderReason(route, surface)}). Change it: ${how}, or --model for one run`;
+        break;
+    }
+  const more: string[] = [];
+  if (route.piDefaultId !== null)
+    more.push(
+      `pi's own default there is ${route.piDefaultId}: ` +
+        nameIt(surface, specOf(route.provider, route.piDefaultId)),
+    );
+  if (route.custom) more.push(`not in pi's catalog for ${route.providerName}: sent as written`);
+  // A cloud identity the shell happens to carry is named before anything is spent on it.
+  if (route.credential.origin === "ambient" && route.credential.label !== undefined)
+    more.push(`credential: ${route.credential.label}`);
+  return [[head, ...more].join(". "), ...route.notices];
+}
+
+/** `routeNoticeLines` as one text, a line each. */
+export function routeNotice(route: ModelRoute, surface: RouteSurface): string {
+  return routeNoticeLines(route, surface).join("\n");
+}
+
+/** What a refusal's words may need beyond the refusal itself. */
+export interface RefusalFacts {
+  /** The pi agent dir the credentials were looked for in. */
+  agentDir?: string;
+  /** How long the run may last: the budget a login had to outlive. */
+  needMs?: number;
+  /** Where the config that holds the pin is. */
+  configPath?: string | null;
+  /** pi's display name for a provider id; omitted, the id is the name. */
+  nameOf?: (provider: string) => string;
+  now?: () => number;
+}
+
+/** "a", "a and b", "a, b and c". */
+function listed(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/**
+ * Why there is no route and what to do about it, for a person: one text per
+ * refusal code, worded for the surface it is said on. The app's texts name
+ * `qcr login` and the plugin's `/login`, which the host skills key on.
+ */
+export function refusalText(
+  refusal: RouteRefusal,
+  surface: RouteSurface,
+  facts: RefusalFacts = {},
+): string {
+  const nameOf = facts.nameOf ?? ((provider: string): string => provider);
+  switch (refusal.code) {
+    case "no-credential":
+      return surface === "plugin"
+        ? "pi has no model credential. Run /login in pi, then /qcr-review again."
+        : `pi has no model credential${facts.agentDir ? ` (agent dir ${facts.agentDir})` : ""}. ` +
+            "Run `qcr login` and sign in to any provider, or set a provider's API key in the environment, then run this again.";
+    case "login-too-short": {
+      const now = (facts.now ?? Date.now)();
+      const each = refusal.logins.map(
+        (l) =>
+          `your ${l.name} login ${l.expiresAt <= now ? "expired" : "expires"} at ${expiryClock(l.expiresAt)}`,
+      );
+      const ahead = refusal.logins.some((l) => l.expiresAt > now);
+      const budget =
+        facts.needMs !== undefined
+          ? `this review's ${Math.round(facts.needMs / 60_000)}-minute budget`
+          : "this review's budget";
+      const fact = `${listed(each)}${ahead ? `, inside ${budget},` : ""} and `;
+      if (surface === "plugin")
+        return (
+          `${fact}pi did not renew it. ` +
+          "Sign in again with /login, or use another credential: a provider key in the environment."
+        );
+      // pi renews a login only inside its last minutes, and only when it is opened.
+      const renewable = refusal.logins.some(
+        (l) => l.expiresAt > now && l.expiresAt - now < PI_RENEWS_INSIDE_MS,
+      );
+      return (
+        `${fact}nothing here renews it. ` +
+        "Run the review inside pi (/qcr-review), where pi renews it, or use another credential: `qcr login`, or a provider key in the environment." +
+        (renewable ? " Open pi once and it renews the login." : "")
+      );
+    }
+    case "no-model": {
+      const names = refusal.providers.map(nameOf);
+      return (
+        `pi has a credential for ${listed(names)}, but none of ${names.length === 1 ? "its" : "their"} models ` +
+        `passes the review's filter (a model that reasons, ${Math.round(CONTEXT_FLOOR / 1000)}k context). Name one: ` +
+        (surface === "plugin"
+          ? "--model <provider>/<id>, or [models] model"
+          : "qcr model use <provider>/<id>")
+      );
+    }
+    case "pin-no-credential": {
+      const by =
+        refusal.from === "flag"
+          ? "--model"
+          : refusal.from === "config"
+            ? `[models] model${facts.configPath ? ` in ${facts.configPath}` : ""}`
+            : surface === "plugin"
+              ? "/qcr-setup model"
+              : "qcr model use";
+      const drop =
+        refusal.from === "flag"
+          ? "omit --model"
+          : refusal.from === "config"
+            ? "remove model from [models]"
+            : surface === "plugin"
+              ? "/qcr-setup model"
+              : "qcr model reset";
+      const signIn = surface === "plugin" ? "/login in pi" : `\`qcr login ${refusal.provider}\``;
+      const id = refusal.pin.startsWith(`${refusal.provider}/`)
+        ? refusal.pin.slice(refusal.provider.length + 1)
+        : refusal.pin;
+      return (
+        `this review is pinned to ${refusal.pin} (${by}), and pi has no credential for ${refusal.provider}. ` +
+        `Sign in with ${signIn}, or drop the pin (${drop}).` +
+        (refusal.candidates.length > 0
+          ? ` ${id} is also served by ${refusal.candidates.join(", ")}: name one.`
+          : "")
+      );
+    }
+    case "pin-unknown":
+      return (
+        `pi knows no model ${JSON.stringify(refusal.pin)} (${refusal.detail.replace(/[.!?]+$/, "")}). ` +
+        `${LIST_IT[surface]} lists what is usable.`
+      );
+  }
 }
 
 // ---- the specs a config pins ---------------------------------------------------

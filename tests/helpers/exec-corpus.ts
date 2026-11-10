@@ -679,4 +679,42 @@ export const EXEC_CORPUS = [
     outcome: null,
     note: "shell expansion must not reach the profile intent",
   },
+  // Round 17. The remembered model choice decides which provider's credential
+  // and money every later review spends. It sits in pi's agent dir, which is
+  // not always under a `.pi/`: a pi home is wherever PI_CODING_AGENT_DIR says.
+  {
+    round: 17,
+    via: "write",
+    chain: "/opt/quickreview/pihome/agent/qcr-model.json",
+    outcome: null,
+    note: "by path: a forged choice moves every later review to another provider",
+  },
+  {
+    round: 17,
+    via: "write",
+    chain: "qcr-model.json",
+    outcome: null,
+    note: "by name: a cwd inside the agent dir drops every directory of the spelling",
+  },
+  {
+    round: 17,
+    via: "write",
+    chain: "pihome/agent/qcr-model.json.tmp",
+    outcome: null,
+    note: "the choice writer's atomic sibling is renamed onto the choice",
+  },
+  {
+    round: 17,
+    via: "bash",
+    chain: "printf forged > pihome/agent/qcr-model.json",
+    outcome: null,
+    note: "a redirection writes the choice as well as a file tool does",
+  },
+  {
+    round: 17,
+    via: "bash",
+    chain: "printf forged > pihome/agent/qcr-mode?.json",
+    outcome: null,
+    note: "shell expansion must not reach the model choice",
+  },
 ] as const;

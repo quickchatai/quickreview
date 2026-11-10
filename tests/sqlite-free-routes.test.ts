@@ -142,6 +142,8 @@ describe("the bin's front door where the SQLite driver cannot load", () => {
     "QCR_NO_UPDATE_NOTICE",
     "PATH",
     "XDG_DATA_HOME",
+    "PI_CODING_AGENT_DIR",
+    "QCR_SECRETS_MOUNT",
   ];
   let out: string[];
   let err: string[];
@@ -238,6 +240,29 @@ describe("the bin's front door where the SQLite driver cannot load", () => {
     expect(payload.ok).toBe(true);
     expect(payload.hosts.length).toBeGreaterThan(0);
     expect(payload.hosts.map((h) => h.outcome)).toEqual(payload.hosts.map(() => "skipped"));
+  });
+
+  // The model verb asks pi which model a review would run on: the config's
+  // review sections, pi's agent dir and a route host, never the store. The
+  // answer itself depends on what the environment holds a key for, so only
+  // its shape is read here (tests/model-cli.test.ts has the answers).
+  // MUTATION: route `model` to the app's main — the main loads the store, the
+  // driver throws, and the hint replaces the answer.
+  it("qcr model answers", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+    // an empty pi home of the test's own: never the person's
+    process.env.PI_CODING_AGENT_DIR = join(dir, "pi-agent");
+    await runBin(["model", "--json"]);
+    expect(err.join("\n")).not.toMatch(/state database|better-sqlite3/);
+    const answer = JSON.parse(out.join("\n")) as Record<string, unknown>;
+    expect(typeof answer["ok"]).toBe("boolean");
+    expect(answer).toHaveProperty("route");
+    expect(answer).toHaveProperty("config_pin");
+    expect(process.exitCode ?? 0).toBe(answer["ok"] === true ? 0 : 1);
+    out.length = 0;
+    // its own usage error, exit 2
+    await runBin(["model", "nonsense"]);
+    expect(process.exitCode).toBe(2);
+    expect(err.join("\n")).toMatch(/usage: qcr model/);
   });
 
   it("qcr login refuses a bad provider by itself", { timeout: HEAVY_TIMEOUT_MS }, async () => {

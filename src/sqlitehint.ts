@@ -13,6 +13,7 @@ export const SQLITE_FREE_VERBS = [
   "review",
   "scan",
   "login",
+  "model",
   "pi",
   "version",
   "update",

@@ -2115,9 +2115,17 @@ export const POLICY_SURFACE_FILES = [
   "CLAUDE.md",
   "CLAUDE.MD",
 ] as const;
-/** Companion-owned policy intents change normally during a round, so they
- * have the write veto without a round hash, like built state/agents bodies. */
-const DYNAMIC_POLICY_FILES = ["qcr-profile-write.json", ".qcr-profile-write.json.tmp"] as const;
+/** Policy files that change normally during a round, so they have the write
+ * veto without a round hash, like built state/agents bodies: the companion's
+ * profile recovery journal, and the remembered model choice in pi's agent dir
+ * (packages/pi-plugin/src/modelchoice.ts), which a person may change while a
+ * round runs. Each with the sibling its atomic write goes through. */
+const DYNAMIC_POLICY_FILES = [
+  "qcr-profile-write.json",
+  ".qcr-profile-write.json.tmp",
+  "qcr-model.json",
+  "qcr-model.json.tmp",
+] as const;
 export const POLICY_SURFACE_DIRS = [
   "scripts",
   "dist",
