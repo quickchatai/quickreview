@@ -97,9 +97,9 @@ a low one.
    conversation = "openai/<model>"
 
    [models.tiers]
-   "terra-med" = "openai/<small-model>:medium"
-   "sol-med"   = "openai/<model>:medium"
-   "sol-high"  = "openai/<model>:high"
+   "light"    = "openai/<small-model>:medium"
+   "standard" = "openai/<model>:medium"
+   "deep"     = "openai/<model>:high"
    ```
 
    The `:suffix` is the reasoning-effort tier; `[models] small_diff_lines`
@@ -117,7 +117,7 @@ a busy repo with sticky per-PR conversations, rechecks and ping-pong can run
 into millions of tokens per day. (For calibration: the laptop-loop predecessor
 this system replaced measured single failure classes in the multi-million-
 output-token range per audit window.) Budget accordingly, prefer a cheaper
-model for the `terra-med` tier, and fill in `[models.pricing]`
+model for the `light` tier, and fill in `[models.pricing]`
 (`input_per_mtok` / `output_per_mtok` per bare model id) so `qcr spend`
 reports real dollars instead of raw token counts.
 

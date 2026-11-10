@@ -182,8 +182,8 @@ const modelOf = (bytes: string | undefined): string | undefined =>
 describe("the priority → settings table", () => {
   it("is the one table: critical blocks at full strength, ignore switches off, normal is the shipped behaviour", () => {
     expect(PRIORITY_SETTINGS).toEqual({
-      critical: { enabled: true, min_tier: "sol-high", effort: "high", max_severity: "P0" },
-      important: { enabled: true, min_tier: "sol-med", effort: "medium" },
+      critical: { enabled: true, min_tier: "deep", effort: "high", max_severity: "P0" },
+      important: { enabled: true, min_tier: "standard", effort: "medium" },
       normal: {},
       ignore: { enabled: false },
     });
@@ -237,7 +237,7 @@ describe("the priority → settings table", () => {
 describe("a profile the interview wrote, resolved the way the daemon resolves it", () => {
   beforeEach(() => liveConfig("acme"));
 
-  it("security critical: the security lens at sol-high, at the model's ceiling, able to block; nothing else moves", () => {
+  it("security critical: the security lens at deep, at the model's ceiling, able to block; nothing else moves", () => {
     applied(
       engine().profileApply({
         priorities: answers({ security: "critical" }),
@@ -248,14 +248,14 @@ describe("a profile the interview wrote, resolved the way the daemon resolves it
     const cfg = tuned("acme");
     expect(cfg.lenses?.["pass-security"]).toEqual({
       enabled: true,
-      min_tier: "sol-high",
+      min_tier: "deep",
       effort: "high",
       max_severity: "P0",
     });
-    expect(row(cfg, AUTH, "pass-security")).toMatchObject({ tier: "sol-high" });
+    expect(row(cfg, AUTH, "pass-security")).toMatchObject({ tier: "deep" });
     const before = agents(tuned(""));
     const after = agents(cfg);
-    const sec = "pass-security--sol-high";
+    const sec = "pass-security--deep";
     expect(modelOf(after.get(sec))).toContain(fixture.models.effort_max);
     expect(after.get(sec)).toContain("Severity ceiling for `pass-security`: `P0`");
     // only the security concern's lenses changed their bytes
@@ -294,12 +294,8 @@ describe("a profile the interview wrote, resolved the way the daemon resolves it
       }),
     );
     const built = agents(tuned("acme"));
-    expect(built.get("pass-data-safety--sol-high")).toContain(
-      "Tenant data never crosses accounts.",
-    );
-    expect(built.get("pass-security--sol-high")).not.toContain(
-      "Tenant data never crosses accounts.",
-    );
+    expect(built.get("pass-data-safety--deep")).toContain("Tenant data never crosses accounts.");
+    expect(built.get("pass-security--deep")).not.toContain("Tenant data never crosses accounts.");
   });
 
   it("a drafted style guide lands in the profile and the style lens is pointed at it", () => {
@@ -318,7 +314,7 @@ describe("a profile the interview wrote, resolved the way the daemon resolves it
     expect(cfg.lenses?.["pass-style"]?.guide?.file).toBe("style-guide.md");
     expect(cfg.lenses?.["pass-style"]).toMatchObject({
       enabled: true,
-      min_tier: "sol-med",
+      min_tier: "standard",
       effort: "medium",
     });
     applied(engine().profileApply({ drop_style_guide: true, write: true }));
@@ -356,7 +352,7 @@ describe("profile write tools: validate, diff, commit", () => {
     expect(r.created).toBe(true);
     expect(r.unanswered.length).toBe(CONCERN_NAMES.length - 1);
     expect(r.diff[0]?.lines).toContain("+ [lenses.pass-security]");
-    expect(r.diff[0]?.lines).toContain('+ min_tier = "sol-high"');
+    expect(r.diff[0]?.lines).toContain('+ min_tier = "deep"');
     expect(existsSync(profileDir("acme"))).toBe(false);
     expect(existsSync(join(dir, "state", INTERVIEW_FILE))).toBe(false);
   });
@@ -383,8 +379,8 @@ describe("profile write tools: validate, diff, commit", () => {
     );
     const r = applied(engine().profileApply({ priorities: { tests: "important" }, write: true }));
     expect(r.unanswered).toEqual([]);
-    expect(tuned("acme").lenses?.["pass-security"]?.min_tier).toBe("sol-high");
-    expect(tuned("acme").lenses?.["pass-tests"]?.min_tier).toBe("sol-med");
+    expect(tuned("acme").lenses?.["pass-security"]?.min_tier).toBe("deep");
+    expect(tuned("acme").lenses?.["pass-tests"]?.min_tier).toBe("standard");
     const rec = JSON.parse(readFileSync(join(dir, "state", INTERVIEW_FILE), "utf8"));
     expect(rec).toMatchObject({
       profile: "acme",

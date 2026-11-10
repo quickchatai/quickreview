@@ -41,7 +41,7 @@ export function withProfile<C extends CoreConfig>(cfg: C, profile: string): C {
  * only in the knobs named on the command line (recorded in the fingerprint).
  * A key must already exist in the config (a typo fails loudly instead of
  * measuring nothing) — except inside an OPEN map (`OPEN_MAP_KEYS`, e.g.
- * `models.pass_tiers.pass-sweep=sol-high`), whose keys are data. `true`/`false`
+ * `models.pass_tiers.pass-sweep=deep`), whose keys are data. `true`/`false`
  * and numbers are coerced to the type the key already holds; an array-valued
  * key takes `|`-separated items (`,` separates pairs), empty = `[]`.
  * `models.effort` is re-applied to every model spec, and the per-lens knobs

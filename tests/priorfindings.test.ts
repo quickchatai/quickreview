@@ -89,8 +89,8 @@ describe("collectPriorFindings — what is still open", () => {
       [
         {
           lens: "pass-baseline",
-          agent: "pass-baseline--sol-med",
-          tier: "sol-med",
+          agent: "pass-baseline--standard",
+          tier: "standard",
           raisable_to: [],
         },
       ],
@@ -109,8 +109,8 @@ describe("collectPriorFindings — what is still open", () => {
       [
         {
           lens: "pass-baseline",
-          agent: "pass-baseline--sol-med",
-          tier: "sol-med",
+          agent: "pass-baseline--standard",
+          tier: "standard",
           raisable_to: [],
         },
       ],

@@ -45,7 +45,7 @@ describe("patch-toml.mjs", () => {
       const f = join(dir, "c.toml");
       writeFileSync(
         f,
-        'dry_run = false # the flag\n\n[github]\nrepo = ""  # fill\nbase_branch = "main"\n\n[models.tiers]\n"sol-high" = "x/y:high"\n\n[pi]\nversion = "1.4.0"\n',
+        'dry_run = false # the flag\n\n[github]\nrepo = ""  # fill\nbase_branch = "main"\n\n[models.tiers]\n"deep" = "x/y:high"\n\n[pi]\nversion = "1.4.0"\n',
       );
       execFileSync("node", [
         join(RH, "patch-toml.mjs"),
@@ -53,7 +53,7 @@ describe("patch-toml.mjs", () => {
         "dry_run=true",
         'github.repo="o/r"',
         'github.clone_dir="base-clone"',
-        'models.tiers."sol-high"="local/m"',
+        'models.tiers."deep"="local/m"',
         'tui.target="local"',
       ]);
       const out = readFileSync(f, "utf8");
@@ -62,7 +62,7 @@ describe("patch-toml.mjs", () => {
       expect(out).toMatch(
         /\[github\]\nrepo = "o\/r"\nbase_branch = "main"\nclone_dir = "base-clone"\n/,
       );
-      expect(out).toContain('"sol-high" = "local/m"');
+      expect(out).toContain('"deep" = "local/m"');
       expect(out).toContain('[pi]\nversion = "1.4.0"');
       expect(out).toMatch(/\[tui\]\ntarget = "local"/);
     } finally {
@@ -219,7 +219,7 @@ describe.skipIf(!hasOpenssl)("the scripted stub", () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  const ORDER = `# Review round — first review\n**ROUND: first** — PR #7 ("t")\nplan: pass-baseline--sol-high pass-tests--terra-med pass-validate--sol-high\n<!-- qcr-round: pr-7 round-3 -->`;
+  const ORDER = `# Review round — first review\n**ROUND: first** — PR #7 ("t")\nplan: pass-baseline--deep pass-tests--light pass-validate--deep\n<!-- qcr-round: pr-7 round-3 -->`;
 
   it("plays a round: lens_wave, the validator, the verdict and review files, the commit, the post, then done", async () => {
     await post("/admin/mode", { mode: "round" });
@@ -227,7 +227,7 @@ describe.skipIf(!hasOpenssl)("the scripted stub", () => {
     expect(a.tool).toBe("lens_wave");
     const b = await next(ORDER, 1);
     expect(b.tool).toBe("lens");
-    expect(b.args.agent).toBe("pass-validate--sol-high");
+    expect(b.args.agent).toBe("pass-validate--deep");
     const review = await next(ORDER, 2);
     expect(review.tool).toBe("write");
     expect(review.args.path).toBe("state/pr-7-round-3-review.md");
@@ -263,12 +263,12 @@ describe.skipIf(!hasOpenssl)("the scripted stub", () => {
       "",
       "| lens | lens to call | tier | may raise to | focus / why |",
       "| --- | --- | --- | --- | --- |",
-      "| pass-baseline | `pass-baseline--sol-high` | sol-high | — (pinned) | every round |",
-      "| pass-tests | `pass-tests--terra-med` | terra-med | `pass-tests--sol-med`, `pass-tests--sol-high` | code |",
-      "| pass-validate | `pass-validate--sol-high` | sol-high | — (pinned) |  |",
+      "| pass-baseline | `pass-baseline--deep` | deep | — (pinned) | every round |",
+      "| pass-tests | `pass-tests--light` | light | `pass-tests--standard`, `pass-tests--deep` | code |",
+      "| pass-validate | `pass-validate--deep` | deep | — (pinned) |  |",
       "",
       "The sweep's own plan:",
-      "| pass-sweep | `pass-sweep--sol-high` | sol-high | — (pinned) | files |",
+      "| pass-sweep | `pass-sweep--deep` | deep | — (pinned) | files |",
       "<!-- qcr-round: pr-7 round-4 -->",
     ].join("\n");
     const verdict = await next(order, 3);
@@ -279,9 +279,9 @@ describe.skipIf(!hasOpenssl)("the scripted stub", () => {
         p.tier,
       ]),
     ).toEqual([
-      ["pass-baseline", "sol-high"],
-      ["pass-tests", "terra-med"],
-      ["pass-validate", "sol-high"],
+      ["pass-baseline", "deep"],
+      ["pass-tests", "light"],
+      ["pass-validate", "deep"],
     ]);
   });
 
@@ -328,7 +328,7 @@ describe.skipIf(!hasOpenssl)("the scripted stub", () => {
 
   it("answers a lens leaf with NONE and fails every request when told to", async () => {
     await post("/admin/mode", { mode: "round" });
-    expect((await next("Task: Task file: /x/tasks/01-pass-baseline--sol-high.md.", 0)).text).toBe(
+    expect((await next("Task: Task file: /x/tasks/01-pass-baseline--deep.md.", 0)).text).toBe(
       "NONE",
     );
     await post("/admin/mode", { mode: "fail" });

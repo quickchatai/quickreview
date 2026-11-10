@@ -80,8 +80,8 @@ describe("resolvePassDeadlineMs", () => {
   });
 
   it("names the pass and the deadline in the failure text", () => {
-    expect(passTimeoutMessage("pass-security--sol-high", 480_000)).toBe(
-      "pass pass-security--sol-high timed out after 8 min (retried once)",
+    expect(passTimeoutMessage("pass-security--deep", 480_000)).toBe(
+      "pass pass-security--deep timed out after 8 min (retried once)",
     );
   });
 });
@@ -91,9 +91,9 @@ describe("a timeout while pi retries the provider", () => {
   // deadline ended mid-outage reads as a bare timeout, and the required-pass
   // gap holds the PR for an operator instead of the automatic retry; this fails.
   it("names the provider error it was retrying, and reads as transient", () => {
-    const text = passTimeoutMessage("pass-baseline--sol-high", 480_000, "429  Too Many\nRequests");
+    const text = passTimeoutMessage("pass-baseline--deep", 480_000, "429  Too Many\nRequests");
     expect(text).toBe(
-      "pass pass-baseline--sol-high timed out after 8 min (retried once) while the provider was failing: 429 Too Many Requests",
+      "pass pass-baseline--deep timed out after 8 min (retried once) while the provider was failing: 429 Too Many Requests",
     );
     expect(isProviderTransientPassError(text)).toBe(true);
     expect(isProviderTransientPassError(passTimeoutMessage("pass-baseline", 480_000))).toBe(false);

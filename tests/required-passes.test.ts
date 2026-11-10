@@ -75,8 +75,8 @@ function file(filename: string, additions: number): PrFileEntry {
 
 const row = (lens: string, required = false): PassPlanEntry => ({
   lens,
-  agent: `${lens}--sol-high`,
-  tier: "sol-high",
+  agent: `${lens}--deep`,
+  tier: "deep",
   raisable_to: [],
   ...(required ? { required: true as const } : {}),
 });
@@ -97,7 +97,7 @@ function agent(
   seq++;
   return {
     execution_id: `call:${name}#${seq}`,
-    agent: `${name}--sol-high`,
+    agent: `${name}--deep`,
     status,
     duration_ms: 1,
     tool_count: 0,
@@ -132,7 +132,7 @@ function snapshot(
   };
 }
 
-const TIMEOUT = "pass pass-security--sol-high timed out after 8 min (retried once)";
+const TIMEOUT = "pass pass-security--deep timed out after 8 min (retried once)";
 
 const HEAD = "68b8040c0ffee1234567890abcdef0123456789a";
 
@@ -313,7 +313,7 @@ const CHAIN_PLAN: PassPlanEntry[] = [
   chainRow("forward"),
   chainRow("backward"),
 ];
-const CHAIN_TIMEOUT = "pass pass-sec-exploit-chain--sol-high timed out after 8 min (retried once)";
+const CHAIN_TIMEOUT = "pass pass-sec-exploit-chain--deep timed out after 8 min (retried once)";
 
 CASES.push(
   // MUTATION: ignore strategy in requiredPassGap (drop the `a.strategy ===
@@ -867,7 +867,7 @@ describe("the verdict path requeues instead of applying", () => {
         verdict: "REQUEST_CHANGES",
         head_sha: "abc123",
         finished_at: clock.toISOString(),
-        passes: [{ name: "pass-baseline", tier: "sol-high", findings: 1 }],
+        passes: [{ name: "pass-baseline", tier: "deep", findings: 1 }],
       }),
     );
     return id;
@@ -901,7 +901,7 @@ describe("the verdict path requeues instead of applying", () => {
     expect(store.reviewedHead(700)).toBeUndefined();
     expect(events("round_required_pass_missing")[0].missing).toContain(TIMEOUT);
     expect(events("round_pass_failures")[0].failed).toEqual([
-      { agent: "pass-security--sol-high", error: TIMEOUT },
+      { agent: "pass-security--deep", error: TIMEOUT },
     ]);
     expect(events("round_self_requeued")[0]).toMatchObject({ mode: "required_pass_missing" });
     expect(adapter.calls.some((c) => c.startsWith("addLabel:700"))).toBe(false);

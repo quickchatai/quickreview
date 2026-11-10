@@ -208,7 +208,7 @@ memory seam). It governs four things:
   collisions itself (which un-muzzles pass-data-safety's withdrawn collision
   class for that round) and the overseer gets an anomaly.
 - **the tier-forcing migration gate** — a `django` round touching
-  `migrations/` starts its raisable passes at sol-med;
+  `migrations/` starts its raisable passes at `standard`;
 - **the round prompt's migration-gate prose** — the MIGRATION GATE paragraph
   and the GATE NOTES render from the ecosystem (`tests/ecosystem.test.ts`
   holds the `django` text to the bytes);
@@ -244,7 +244,7 @@ One table per lens in `profile.toml`, seven optional keys (and `guide`, for
 ```toml
 # <config home>/profiles/<name>/profile.toml
 [lenses.pass-security]
-min_tier = "sol-high"   # terra-med | sol-med | sol-high — a floor, never a pin
+min_tier = "deep"       # light | standard | deep — a floor, never a pin
 effort = "high"         # low | medium | high (high = [models] effort_max)
 max_severity = "P0"     # P0 | P1 | P2 | P3 | nit — the lens's ceiling
 emphasis = "Auth is the product here: treat every token path as hostile input."
@@ -268,11 +268,16 @@ overlaid on the parsed config at assembly (`applyProfileTuning` in
 consumer reads that one `cfg.lenses`. What each key moves
 (`packages/pi-plugin/src/lenstuning.ts`):
 
+The tiers are `light`, `standard` and `deep`, ascending. The names they had
+before (`terra-med`, `sol-med`, `sol-high`) are still read wherever a profile
+or a config writes a tier, so a `profile.toml` committed with them keeps
+working; nothing writes them back.
+
 - **`min_tier`** — plan time (`buildPassPlan`): a floor under the tier the
   plan would pick, so the lens's row, its `raisable_to`, the sweep's rows
   (`[lenses.pass-sweep]`) and the add rule's variant all move with it; the
   prompt names a floored addable lens with its variant. It never lowers — a
-  risk pass stays at `sol-high`, the validator at or above `validate_tier`.
+  risk pass stays at `deep`, the validator at or above `validate_tier`.
   A floored lens never raises the validator (below); only
   `[lenses.pass-validate] min_tier` moves it.
 - **`effort`** — build time, through the per-variant model hook: only that
@@ -304,7 +309,7 @@ consumer reads that one `cfg.lenses`. What each key moves
   default, is the plan as above. The row's reason says the profile planned
   it.
 - **`risk = true`** — overlay time: the lens joins `[models] risk_passes`,
-  so it runs at `sol-high`, one variant, not raisable, launched slowest
+  so it runs at `deep`, one variant, not raisable, launched slowest
   first. It never takes a lens out of `risk_passes`, a `[models.pass_tiers]`
   pin or `pass_models` move on a risk lens is refused, and the validator
   takes no `risk` (its tier is `validate_tier`, floored by its `min_tier`).
@@ -385,7 +390,7 @@ about THIS repo:
 # <config home>/profiles/<name>/profile.toml
 [scan]
 effort = "medium"          # stage 1's pass-scan reasoning: low | medium | high
-tier = "sol-med"           # whose model pass-scan runs on
+tier = "standard"          # whose model pass-scan runs on
 validator = false          # the skeptic (ON by default) — false switches it off
 exclude = ["generated/"]   # repo-relative globs never scanned
 depth = "deep"             # standard (the default) | deep — see "The deep scan" below
@@ -915,7 +920,7 @@ carries no coverage step (pinned). On the stored round-1 data it would fire on
 ### The lenses that read every changed line run at high effort
 
 `pass-baseline`, `pass-sweep` and `pass-behaviour-delta` run at the
-`sol-high` tier — gpt-6.1-sol at high effort — on every PR, by default
+`deep` tier — gpt-6.1-sol at high effort — on every PR, by default
 (`DEFAULT_PASS_TIERS` in `src/config.ts`, the code default of
 `[models.pass_tiers]`; every other lens keeps its planned tier and its raise
 ladder). The reason is measured: the same 30 PRs at
@@ -928,10 +933,10 @@ comments rose with it (68 → 92), the accepted price (runs `dv1-*` vs
 Because the default is a `[models.pass_tiers]` pin, it reaches every install
 whatever its profile (a profile that does not extend `default` included) and
 the bench without any `--config`. The three lenses are therefore pinned: their
-plan rows name `sol-high` and are not raisable. To lower it:
+plan rows name `deep` and are not raisable. To lower it:
 
 - **per install** — a `[models.pass_tiers]` entry in `config.toml` replaces
-  that lens's default pin (`"pass-baseline" = "sol-med"`);
+  that lens's default pin (`"pass-baseline" = "standard"`);
 - **per repo profile** — `[lenses.<pass>] effort = "medium"` keeps the pin's
   tier name but gives that lens's variants the lower thinking level (every
   tier runs the same model, so effort is the lever that matters).
@@ -977,7 +982,7 @@ command = true          # config.toml only; "@<bot> security"
   control or sink the change touches; a profile `heuristics.toml` probe for
   a family lens; a security fact the daemon read (below); a request; and
   `[lenses.<pass>] plan = "always"`. `off` leaves the requests and `always`.
-- **Every family row runs at the risk tier** (`sol-high`, one variant,
+- **Every family row runs at the risk tier** (`deep`, one variant,
   slowest first) on every profile: `risk_passes` is the configured list
   joined with the family, and a tier pin on a family lens is refused.
 - **A family row is not required**, so a failed one never holds the round
@@ -1009,8 +1014,8 @@ command = true          # config.toml only; "@<bot> security"
   outcome is computed from its hop labels (`packages/pi-plugin/src/secevidence.ts`)
   and a mismatch with what the session recorded is counted
   (`security_outcome_mismatch` in `findings_conformance`). When a family row
-  is planned and the validator runs below `sol-high`, the security
-  candidates are validated in a group of their own at `pass-validate--sol-high`.
+  is planned and the validator runs below `deep`, the security
+  candidates are validated in a group of their own at `pass-validate--deep`.
 - **`fold = true`**: a security candidate the validator could not verify
   posts as a question naming the proof gap (`security-demoted`) instead of
   being doubted; the findings record counts any it still doubted

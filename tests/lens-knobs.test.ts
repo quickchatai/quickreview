@@ -49,9 +49,9 @@ const file = (filename: string, lines: number): PrFileEntry => ({
   status: "modified",
   patch: ["@@ -1,1 +1,2 @@", ...Array.from({ length: lines }, (_, i) => `+x${i}();`)].join("\n"),
 });
-/** A small diff (terra-med), with enough code for the quality lenses and a sweep. */
+/** A small diff (light), with enough code for the quality lenses and a sweep. */
 const SMALL = [file("src/a.ts", 40), file("src/b.ts", 30)];
-/** A large diff (sol-med). */
+/** A large diff (standard). */
 const LARGE = [file("src/a.ts", 200), file("src/b.ts", 100)];
 
 const tomlWith = (section: string, lines: string): string =>
@@ -62,14 +62,14 @@ const tomlWith = (section: string, lines: string): string =>
 describe("defaults reproduce today's review", () => {
   it("every config parses to no skips, the shipped pins, no consequence rule", () => {
     // The shipped pins (src/config.ts DEFAULT_PASS_TIERS):
-    // baseline, sweep and behaviour-delta at sol-high; nothing else pinned.
+    // baseline, sweep and behaviour-delta at deep; nothing else pinned.
     for (const cfg of [baseCfg, example]) {
       expect(cfg.review.skip_lenses).toEqual([]);
       expect(cfg.review.validate_consequence_rule).toBe(false);
       expect(cfg.models.pass_tiers).toEqual({
-        "pass-baseline": "sol-high",
-        "pass-sweep": "sol-high",
-        "pass-behaviour-delta": "sol-high",
+        "pass-baseline": "deep",
+        "pass-sweep": "deep",
+        "pass-behaviour-delta": "deep",
       });
     }
     expect(REVIEW_DEFAULTS.skip_lenses).toEqual([]);
@@ -100,12 +100,12 @@ describe("defaults reproduce today's review", () => {
       "dedup-group-validate",
       "validate-compact-output",
     ]);
-    // the shipped pins' variants carry the sol-high spec; no other lens is touched
+    // the shipped pins' variants carry the deep spec; no other lens is touched
     const pinned = passTierModels(baseCfg.models.pass_tiers, baseCfg.models.tiers);
     const expected: Record<string, string> = {};
     for (const lens of Object.keys(DEFAULT_PASS_TIERS))
-      for (const t of ["terra-med", "sol-med", "sol-high"] as const)
-        expected[`${lens}--${t}`] = baseCfg.models.tiers["sol-high"];
+      for (const t of ["light", "standard", "deep"] as const)
+        expected[`${lens}--${t}`] = baseCfg.models.tiers["deep"];
     expect(pinned).toEqual(expected);
   });
 
@@ -118,24 +118,24 @@ describe("defaults reproduce today's review", () => {
       lensModelOverrides(cfg.models, cfg.lenses),
     );
     // the pinned tier's spec with the profile's thinking level, on every variant
-    for (const t of ["terra-med", "sol-med", "sol-high"] as const)
+    for (const t of ["light", "standard", "deep"] as const)
       expect(models[`pass-baseline--${t}`]?.endsWith(":medium")).toBe(true);
-    // the other shipped pins keep sol-high's spec
-    expect(models["pass-sweep--terra-med"]).toBe(cfg.models.tiers["sol-high"]);
-    expect(models["pass-behaviour-delta--terra-med"]).toBe(cfg.models.tiers["sol-high"]);
+    // the other shipped pins keep deep's spec
+    expect(models["pass-sweep--light"]).toBe(cfg.models.tiers["deep"]);
+    expect(models["pass-behaviour-delta--light"]).toBe(cfg.models.tiers["deep"]);
     // an unpinned lens gets no variant override at all
-    expect(models["pass-tests--sol-med"]).toBeUndefined();
+    expect(models["pass-tests--standard"]).toBeUndefined();
   });
 
   it("a config with no [models.pass_tiers] table still gets the shipped pins; an entry replaces one", () => {
     expect(parseConfig(fixture).models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS });
-    const lowered = parseConfig(fixture + `\n[models.pass_tiers]\n"pass-baseline" = "sol-med"\n`);
+    const lowered = parseConfig(fixture + `\n[models.pass_tiers]\n"pass-baseline" = "standard"\n`);
     expect(lowered.models.pass_tiers).toEqual({
       ...DEFAULT_PASS_TIERS,
-      "pass-baseline": "sol-med",
+      "pass-baseline": "standard",
     });
     const row = buildPassPlan(lowered, LARGE).pass_plan.find((p) => p.lens === "pass-baseline")!;
-    expect(row.tier).toBe("sol-med");
+    expect(row.tier).toBe("standard");
   });
 });
 
@@ -198,55 +198,55 @@ describe("[review] skip_lenses", () => {
 describe("[models.pass_tiers]", () => {
   it("pins a lens's planned tier regardless of diff size, not raisable", () => {
     for (const files of [SMALL, LARGE]) {
-      const { pass_plan } = buildPassPlan(withPins({ "pass-baseline": "sol-high" }), files);
+      const { pass_plan } = buildPassPlan(withPins({ "pass-baseline": "deep" }), files);
       const baseline = pass_plan.find((p) => p.lens === "pass-baseline")!;
       expect(baseline).toMatchObject({
-        agent: "pass-baseline--sol-high",
-        tier: "sol-high",
+        agent: "pass-baseline--deep",
+        tier: "deep",
         raisable_to: [],
       });
     }
-    // a pin may lower too: a large diff's lens held at terra-med
-    const low = buildPassPlan(withPins({ "pass-baseline": "terra-med" }), LARGE).pass_plan;
-    expect(low.find((p) => p.lens === "pass-baseline")!.agent).toBe("pass-baseline--terra-med");
+    // a pin may lower too: a large diff's lens held at light
+    const low = buildPassPlan(withPins({ "pass-baseline": "light" }), LARGE).pass_plan;
+    expect(low.find((p) => p.lens === "pass-baseline")!.agent).toBe("pass-baseline--light");
     // unpinned lenses keep the diff-size tier
-    expect(low.find((p) => p.lens === "pass-tests")!.tier).toBe("sol-med");
+    expect(low.find((p) => p.lens === "pass-tests")!.tier).toBe("standard");
   });
 
   it("pins every sweep row; the validator never follows it", () => {
-    const cfg = withPins({ [SWEEP_PASS]: "sol-high" });
-    cfg.models.validate_tier = "terra-med";
+    const cfg = withPins({ [SWEEP_PASS]: "deep" });
+    cfg.models.validate_tier = "light";
     const { pass_plan } = buildPassPlan(cfg, SMALL);
     const sweeps = pass_plan.filter((p) => p.lens === SWEEP_PASS);
     expect(sweeps.length).toBeGreaterThan(0);
     for (const s of sweeps)
       expect(s).toMatchObject({
-        agent: `${SWEEP_PASS}--sol-high`,
-        tier: "sol-high",
+        agent: `${SWEEP_PASS}--deep`,
+        tier: "deep",
         raisable_to: [],
       });
-    expect(pass_plan.find((p) => p.lens === VALIDATE_PASS)!.tier).toBe("terra-med");
+    expect(pass_plan.find((p) => p.lens === VALIDATE_PASS)!.tier).toBe("light");
   });
 
   it("the validator runs at its own tier whatever a lens is pinned to", () => {
-    for (const pin of ["sol-high", "terra-med"]) {
+    for (const pin of ["deep", "light"]) {
       const cfg = withPins({ "pass-baseline": pin });
-      cfg.models.validate_tier = "sol-med";
+      cfg.models.validate_tier = "standard";
       cfg.models.risk_passes = [];
       const { pass_plan } = buildPassPlan(cfg, LARGE);
-      expect(pass_plan.find((p) => p.lens === VALIDATE_PASS)!.tier).toBe("sol-med");
+      expect(pass_plan.find((p) => p.lens === VALIDATE_PASS)!.tier).toBe("standard");
     }
   });
 
   it("a profile min_tier still floors a pin; a pin is never a way past the floor", () => {
-    const cfg = withPins({ "pass-baseline": "terra-med" });
-    cfg.lenses = { "pass-baseline": { min_tier: "sol-med" } };
+    const cfg = withPins({ "pass-baseline": "light" });
+    cfg.lenses = { "pass-baseline": { min_tier: "standard" } };
     const row = buildPassPlan(cfg, SMALL).pass_plan.find((p) => p.lens === "pass-baseline")!;
-    expect(row).toMatchObject({ tier: "sol-med", raisable_to: [] });
+    expect(row).toMatchObject({ tier: "standard", raisable_to: [] });
   });
 
   it("a profile-switched-off validator stays off; skip/pin knobs never bring it back", () => {
-    const cfg = withPins({ "pass-baseline": "sol-high" });
+    const cfg = withPins({ "pass-baseline": "deep" });
     cfg.review.skip_lenses = ["pass-abstraction"];
     cfg.lenses = { [VALIDATE_PASS]: { enabled: false } };
     const { pass_plan, addable_lenses } = buildPassPlan(cfg, SMALL);
@@ -256,65 +256,65 @@ describe("[models.pass_tiers]", () => {
 
   it("a pinned lens keeps the profile's effort, at its pinned tier", () => {
     const tiers = {
-      "terra-med": "prov/m:low",
-      "sol-med": "prov/m:medium",
-      "sol-high": "prov/m:high",
+      light: "prov/m:low",
+      standard: "prov/m:medium",
+      deep: "prov/m:high",
     } as const;
     const overrides = {
-      "pass-baseline--terra-med": "prov/m:minimal",
-      "pass-baseline--sol-med": "prov/m:minimal-med",
-      "pass-baseline--sol-high": "prov/m:minimal-high",
-      "pass-ui--sol-med": "prov/m:x",
+      "pass-baseline--light": "prov/m:minimal",
+      "pass-baseline--standard": "prov/m:minimal-med",
+      "pass-baseline--deep": "prov/m:minimal-high",
+      "pass-ui--standard": "prov/m:x",
     };
-    const models = passTierModels({ "pass-baseline": "sol-high" }, tiers, overrides);
-    for (const t of ["terra-med", "sol-med", "sol-high"])
+    const models = passTierModels({ "pass-baseline": "deep" }, tiers, overrides);
+    for (const t of ["light", "standard", "deep"])
       expect(models[`pass-baseline--${t}`]).toBe("prov/m:minimal-high");
-    expect(models["pass-ui--sol-med"]).toBe("prov/m:x");
+    expect(models["pass-ui--standard"]).toBe("prov/m:x");
     expect(passTierModels({}, tiers, overrides)).toEqual(overrides);
   });
 
   it("a profile min_tier floors a pin in the build as the plan floors it", () => {
-    const cfg = withPins({ "pass-baseline": "terra-med" });
-    cfg.lenses = { "pass-baseline": { min_tier: "sol-high" } };
+    const cfg = withPins({ "pass-baseline": "light" });
+    cfg.lenses = { "pass-baseline": { min_tier: "deep" } };
     const files = Array.from({ length: 3 }, (_, i) => file(`src/m${i}.py`, 40));
     const row = buildPassPlan(cfg, files).pass_plan.find((p) => p.lens === "pass-baseline")!;
-    expect(row.agent).toBe("pass-baseline--sol-high");
+    expect(row.agent).toBe("pass-baseline--deep");
     const models = passTierModels(cfg.models.pass_tiers, cfg.models.tiers, {}, {}, [], cfg.lenses);
     // the variant the plan names runs at the tier the plan records
-    expect(models[row.agent]).toBe(cfg.models.tiers["sol-high"]);
-    for (const t of ["terra-med", "sol-med", "sol-high"])
-      expect(models[`pass-baseline--${t}`]).toBe(cfg.models.tiers["sol-high"]);
+    expect(models[row.agent]).toBe(cfg.models.tiers["deep"]);
+    for (const t of ["light", "standard", "deep"])
+      expect(models[`pass-baseline--${t}`]).toBe(cfg.models.tiers["deep"]);
     // a floor below the pin changes nothing
     const low = passTierModels(cfg.models.pass_tiers, cfg.models.tiers, {}, {}, [], {
-      "pass-baseline": { min_tier: "terra-med" },
+      "pass-baseline": { min_tier: "light" },
     });
-    expect(low["pass-baseline--sol-high"]).toBe(cfg.models.tiers["terra-med"]);
+    expect(low["pass-baseline--deep"]).toBe(cfg.models.tiers["light"]);
   });
 
   it("parses from config, and refuses unknown passes, unknown tiers, the validator and risk passes", () => {
     const ok = parseConfig(
-      fixture + `\n[models.pass_tiers]\n"pass-sweep" = "sol-high"\n"pass-baseline" = "sol-high"\n`,
+      fixture + `\n[models.pass_tiers]\n"pass-sweep" = "deep"\n"pass-baseline" = "deep"\n`,
     );
     expect(ok.models.pass_tiers).toEqual({
       ...DEFAULT_PASS_TIERS,
-      "pass-sweep": "sol-high",
-      "pass-baseline": "sol-high",
+      "pass-sweep": "deep",
+      "pass-baseline": "deep",
     });
     const bad = (body: string) => () => parseConfig(fixture + `\n[models.pass_tiers]\n${body}\n`);
-    expect(bad(`"pass-swep" = "sol-high"`)).toThrow(/unknown pass "pass-swep"/);
+    expect(bad(`"pass-swep" = "deep"`)).toThrow(/unknown pass "pass-swep"/);
     expect(bad(`"pass-sweep" = "sol-max"`)).toThrow(/unknown tier/);
-    expect(bad(`"pass-validate" = "sol-high"`)).toThrow(/validate_tier/);
-    expect(bad(`"pass-security" = "terra-med"`)).toThrow(/risk pass/);
+    expect(bad(`"pass-validate" = "deep"`)).toThrow(/validate_tier/);
+    expect(bad(`"pass-security" = "light"`)).toThrow(/risk pass/);
   });
 
   it("an explicit preset/effort still sets the pinned tier's spec (pins name tiers, not specs)", () => {
-    const text = fixture + `\n[models.pass_tiers]\n"pass-sweep" = "sol-high"\n`;
+    const text = fixture + `\n[models.pass_tiers]\n"pass-sweep" = "deep"\n`;
     const low = applyConfigOverrides(parseConfig(text), "review.preset=low", text);
-    expect(low.models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS, "pass-sweep": "sol-high" });
-    expect(passTierModels(low.models.pass_tiers, low.models.tiers)["pass-sweep--terra-med"]).toBe(
-      low.models.tiers["sol-high"],
+    expect(low.models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS, "pass-sweep": "deep" });
+    expect(passTierModels(low.models.pass_tiers, low.models.tiers)["pass-sweep--light"]).toBe(
+      low.models.tiers["deep"],
     );
-    expect(low.models.tiers["sol-high"].endsWith(":low")).toBe(true);
+    expect(low.models.tiers["deep"].endsWith(":low")).toBe(true);
   });
 
   describe("in the built agents", () => {
@@ -326,11 +326,11 @@ describe("[models.pass_tiers]", () => {
 
     it("every variant of a pinned pass carries the pinned tier's spec; others are untouched", () => {
       const tiers = {
-        "terra-med": "prov/m:low",
-        "sol-med": "prov/m:medium",
-        "sol-high": "prov/m:high",
+        light: "prov/m:low",
+        standard: "prov/m:medium",
+        deep: "prov/m:high",
       } as const;
-      const models = passTierModels({ "pass-sweep": "sol-high" }, tiers);
+      const models = passTierModels({ "pass-sweep": "deep" }, tiers);
       const built = buildAgents(join(ROOT, "agents"), out, {
         root: ROOT,
         tiers: { ...tiers },
@@ -340,7 +340,7 @@ describe("[models.pass_tiers]", () => {
         expect(b.thinking).toBe("high");
         expect(readFileSync(b.output, "utf8")).toMatch(/^model: prov\/m:high$/m);
       }
-      const baseline = built.find((x) => x.name === "pass-baseline--terra-med")!;
+      const baseline = built.find((x) => x.name === "pass-baseline--light")!;
       expect(baseline.thinking).toBe("low");
       // the variant set itself is unchanged
       const plain = buildAgents(join(ROOT, "agents"), out, { root: ROOT, tiers: { ...tiers } });
@@ -437,18 +437,18 @@ describe("bench --config: arrays, open maps, typos", () => {
   it("an open map takes new keys; the values are validated", () => {
     const cfg = applyConfigOverrides(
       baseCfg,
-      "models.pass_tiers.pass-sweep=sol-high,models.pass_tiers.pass-baseline=sol-high",
+      "models.pass_tiers.pass-sweep=deep,models.pass_tiers.pass-baseline=deep",
     );
     expect(cfg.models.pass_tiers).toEqual({
       ...DEFAULT_PASS_TIERS,
-      "pass-sweep": "sol-high",
-      "pass-baseline": "sol-high",
+      "pass-sweep": "deep",
+      "pass-baseline": "deep",
     });
     expect(baseCfg.models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS });
     expect(() => applyConfigOverrides(baseCfg, "models.pass_tiers.pass-sweep=sol-max")).toThrow(
       /unknown tier/,
     );
-    expect(() => applyConfigOverrides(baseCfg, "models.pass_tiers.pass-swep=sol-high")).toThrow(
+    expect(() => applyConfigOverrides(baseCfg, "models.pass_tiers.pass-swep=deep")).toThrow(
       /unknown pass/,
     );
     expect(() => applyConfigOverrides(baseCfg, "models.pass_tiers=x")).toThrow(/is a table/);
@@ -469,7 +469,7 @@ describe("bench --config: arrays, open maps, typos", () => {
     const arm = runFingerprint(
       applyConfigOverrides(
         baseCfg,
-        "review.skip_lenses=pass-abstraction,review.validate_consequence_rule=true,models.pass_tiers.pass-sweep=sol-high",
+        "review.skip_lenses=pass-abstraction,review.validate_consequence_rule=true,models.pass_tiers.pass-sweep=deep",
       ),
       "p",
     );
@@ -477,7 +477,7 @@ describe("bench --config: arrays, open maps, typos", () => {
       skip_lenses: ["pass-abstraction"],
       validate_consequence_rule: true,
     });
-    expect(arm.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS, "pass-sweep": "sol-high" });
+    expect(arm.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS, "pass-sweep": "deep" });
   });
 
   // MUTATION: drop the `security` spread from runFingerprint (src/bench/runner.ts)

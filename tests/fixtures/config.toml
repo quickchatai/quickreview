@@ -109,23 +109,23 @@ issues_per_day = 3
 # in pi's auth.json (direct `openai/` needs an API key we don't ship).
 default = "openai-codex/gpt-5.6-sol"
 conversation = "openai-codex/gpt-5.6-sol"
-# Passes always run at sol-high — single variant, not raisable (already top).
+# Passes always run at deep — single variant, not raisable (already top).
 risk_passes = ["pass-security", "pass-prod-risk", "pass-data-safety"]
 # pass-validate's FLOOR tier — raised per round to the highest-tier lens that
-# ran (src/dispatch.ts validatorTier), never lowered. Pinned at sol-high since
+# ran (src/dispatch.ts validatorTier), never lowered. Pinned at deep since
 # the validator is the single adversarial gate over every finding, so
-# a cheaper model must never decide whether a sol-high finding is real. One
+# a cheaper model must never decide whether a deep finding is real. One
 # validator call per round — not a hot-path multiplier.
-validate_tier = "sol-high"
-# Diffs under this many changed lines (additions+deletions) start at terra-med.
+validate_tier = "deep"
+# Diffs under this many changed lines (additions+deletions) start at light.
 small_diff_lines = 150
 
 [models.tiers]
 # PassTier → model spec; buildAgents splits the `:thinking` suffix into the
 # built agent's whole `model:` field incl. the `:thinking` suffix.
-"terra-med" = "openai-codex/gpt-5.6-terra:medium"
-"sol-med" = "openai-codex/gpt-5.6-sol:medium"
-"sol-high" = "openai-codex/gpt-5.6-sol:high"
+"light" = "openai-codex/gpt-5.6-terra:medium"
+"standard" = "openai-codex/gpt-5.6-sol:medium"
+"deep" = "openai-codex/gpt-5.6-sol:high"
 
 [models.pricing]
 # Spend rates keyed by bare model id, USD per million tokens. Consumed by

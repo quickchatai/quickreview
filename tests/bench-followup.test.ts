@@ -652,15 +652,15 @@ describe("a follow-up case's outcome report", () => {
       {
         sweep: "ran",
         passes: [
-          { name: "pass-baseline", tier: "sol-med", phase: "delta" },
-          { name: "pass-security", tier: "sol-high", phase: "sweep" },
+          { name: "pass-baseline", tier: "standard", phase: "delta" },
+          { name: "pass-security", tier: "deep", phase: "sweep" },
         ],
       },
       "APPROVE",
     );
     expect(ran.executed_phases).toEqual([
-      { agent: "pass-baseline--sol-med", phase: "delta" },
-      { agent: "pass-security--sol-high", phase: "sweep" },
+      { agent: "pass-baseline--standard", phase: "delta" },
+      { agent: "pass-security--deep", phase: "sweep" },
     ]);
     expect(ran.sweep).toMatchObject({
       claim: "ran",
@@ -675,7 +675,7 @@ describe("a follow-up case's outcome report", () => {
       fu,
       {
         sweep: "not_reached",
-        passes: [{ name: "pass-baseline", tier: "sol-med", phase: "delta" }],
+        passes: [{ name: "pass-baseline", tier: "standard", phase: "delta" }],
       },
       "APPROVE",
     );
@@ -692,15 +692,15 @@ describe("a follow-up case's outcome report", () => {
       {
         sweep: "RAN",
         passes: [
-          { name: "pass-baseline", tier: "sol-med", phase: "Delta" },
-          { name: "pass-security", tier: "sol-high", phase: "pre-approval-sweep" },
+          { name: "pass-baseline", tier: "standard", phase: "Delta" },
+          { name: "pass-security", tier: "deep", phase: "pre-approval-sweep" },
         ],
       },
       "APPROVE",
     );
     expect(ran.executed_phases).toEqual([
-      { agent: "pass-baseline--sol-med", phase: "delta" },
-      { agent: "pass-security--sol-high", phase: "sweep" },
+      { agent: "pass-baseline--standard", phase: "delta" },
+      { agent: "pass-security--deep", phase: "sweep" },
     ]);
     expect(ran.sweep).toMatchObject({ claim: "ran", status: "ran", skipped: false });
   });

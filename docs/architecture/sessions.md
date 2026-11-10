@@ -560,11 +560,16 @@ may ratify a reseed.
 
 ### Tiers
 
-`PassTier` (`packages/pi-plugin/src/types.ts`) is `terra-med` | `sol-med` | `sol-high`, ascending,
+`PassTier` (`packages/pi-plugin/src/types.ts`) is `light` | `standard` | `deep`, ascending,
 with `PASS_TIER_ORDER` as the single place the order is written down.
+The names the tiers had before (`terra-med`, `sol-med`, `sol-high`, kept in
+`LEGACY_TIER_NAMES`) are read on every input and written nowhere: `foldTier`
+reads a tier in either spelling, `foldAgentName` resolves a session's call for
+`pass-x--sol-high` to the built `pass-x--deep`, and no agent file is built
+under an old name.
 `tiersForPass(pass, riskPasses, validateTier)` decides the fan-out:
 
-- a pass listed in `[models] risk_passes` builds **only** the `sol-high`
+- a pass listed in `[models] risk_passes` builds **only** the `deep`
   variant — every `pass-sec-*` lens among them, since the parsed list always
   carries the security family;
 - `pass-validate` builds every tier at or above `[models] validate_tier`,

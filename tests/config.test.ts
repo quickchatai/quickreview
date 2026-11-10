@@ -406,9 +406,9 @@ describe("[models] tiered pass scheme", () => {
 
   it("reads the shipped tier map, risk passes, validate tier, and diff knob", () => {
     expect(cfg.models.tiers).toEqual({
-      "terra-med": "openai-codex/gpt-5.6-terra:medium",
-      "sol-med": "openai-codex/gpt-5.6-sol:medium",
-      "sol-high": "openai-codex/gpt-5.6-sol:high",
+      light: "openai-codex/gpt-5.6-terra:medium",
+      standard: "openai-codex/gpt-5.6-sol:medium",
+      deep: "openai-codex/gpt-5.6-sol:high",
     });
     // The configured list, then the security family: a family lens always
     // runs at the risk tier, whatever the list says.
@@ -419,7 +419,7 @@ describe("[models] tiered pass scheme", () => {
       ...SECURITY_FAMILY,
     ]);
     // The fixture runs the validator at the top tier.
-    expect(cfg.models.validate_tier).toBe("sol-high");
+    expect(cfg.models.validate_tier).toBe("deep");
     expect(cfg.models.small_diff_lines).toBe(150);
   });
 
@@ -431,7 +431,7 @@ describe("[models] tiered pass scheme", () => {
     const cfg2 = parseConfig(minimal);
     expect(cfg2.models.tiers).toEqual(MODELS_TIER_DEFAULTS.tiers);
     expect(cfg2.models.risk_passes).toEqual(withSecurityFamily(MODELS_TIER_DEFAULTS.risk_passes));
-    expect(cfg2.models.validate_tier).toBe("sol-high");
+    expect(cfg2.models.validate_tier).toBe("deep");
     expect(cfg2.models.small_diff_lines).toBe(150);
     expect(cfg2.models.pricing).toEqual({});
   });
@@ -458,8 +458,8 @@ describe("[models] tiered pass scheme", () => {
   });
 
   it("tierModel resolves the full spec for a tier", () => {
-    expect(tierModel(cfg, "terra-med")).toBe("openai-codex/gpt-5.6-terra:medium");
-    expect(tierModel(cfg, "sol-high")).toBe("openai-codex/gpt-5.6-sol:high");
+    expect(tierModel(cfg, "light")).toBe("openai-codex/gpt-5.6-terra:medium");
+    expect(tierModel(cfg, "deep")).toBe("openai-codex/gpt-5.6-sol:high");
   });
 });
 

@@ -316,7 +316,7 @@ describe("first-scan calibration, then previews from the ledger", () => {
     expect(
       rows.every(
         (e) =>
-          e.lens === "pass-scan" && e.sha === SHA1 && e.tier === "sol-med" && e.effort === "low",
+          e.lens === "pass-scan" && e.sha === SHA1 && e.tier === "standard" && e.effort === "low",
       ),
     ).toBe(true);
 
@@ -665,7 +665,7 @@ describe("the validator — the skeptic; a profile may switch it off", () => {
   it("off: only pass-scan runs", async () => {
     const r = runner();
     await runToEnd(new ScanRunner(ports(r)));
-    expect(new Set(r.specs.map((x) => x.agent))).toEqual(new Set(["pass-scan--sol-med"]));
+    expect(new Set(r.specs.map((x) => x.agent))).toEqual(new Set(["pass-scan--standard"]));
   });
 
   it("on: it runs at the LENS's tier; a DOUBTED finding is kept as 'may not be valid', and so is a KILLED one", async () => {
@@ -683,9 +683,9 @@ describe("the validator — the skeptic; a profile may switch it off", () => {
     };
     const r = runner({ answer });
     await runToEnd(new ScanRunner(ports(r, { validator: true })));
-    // Never raised: pass-scan runs at sol-med, so its skeptic does too.
-    expect(r.specs.filter((x) => x.agent === "pass-validate--sol-med")).toHaveLength(3);
-    expect(r.specs.some((x) => x.agent === "pass-validate--sol-high")).toBe(false);
+    // Never raised: pass-scan runs at standard, so its skeptic does too.
+    expect(r.specs.filter((x) => x.agent === "pass-validate--standard")).toHaveLength(3);
+    expect(r.specs.some((x) => x.agent === "pass-validate--deep")).toBe(false);
     const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
     const byUnit = new Map(findings.map((f) => [f.unit, f]));
     expect(byUnit.get("app")).toMatchObject({

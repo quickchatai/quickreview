@@ -597,7 +597,7 @@ regardless).
 all `"openai-codex/gpt-6.1-sol"` in the example), `risk_passes` (string array,
 `["pass-security", "pass-prod-risk", "pass-data-safety"]`; the parsed list
 always gains the fourteen `pass-sec-*` lenses, `withSecurityFamily`), `validate_tier`
-(`PassTier`, `"sol-high"` — the validator's own tier, floored only by the
+(`PassTier`, `"deep"` — the validator's own tier, floored only by the
 profile's `min_tier` for it and never raised to match a lens; `validatorTier`
 in `src/dispatch.ts`), `small_diff_lines` (number, `150`).
 `[models.tiers]` maps each `PassTier` to a model spec; `[models.pricing]` maps

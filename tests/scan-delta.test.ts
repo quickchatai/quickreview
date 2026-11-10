@@ -693,7 +693,7 @@ function row(path: string, blobHash: string, run: string, at: string): LedgerEnt
     path,
     blob: blobHash,
     lens: "pass-scan",
-    tier: "sol-med",
+    tier: "standard",
     effort: "low",
     validator: false,
     sha: run,

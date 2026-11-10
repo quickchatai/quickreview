@@ -517,7 +517,7 @@ describe("daemon wiring", () => {
               ? [
                   {
                     execution_id: `fanout-${roundNo}:${discovery}`,
-                    agent: `${discovery}--sol-med`,
+                    agent: `${discovery}--standard`,
                     status: "running",
                     duration_ms: 0,
                     tool_count: 0,

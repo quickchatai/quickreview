@@ -92,7 +92,7 @@ export function stampRoundPrompt(renderedPrompt: string, pr: number, roundNo: nu
 
 /** The tier ladder, ascending by capability/cost. The one place the tiers
  * and their order are written down. */
-export const PASS_TIER_ORDER = ["terra-med", "sol-med", "sol-high"] as const;
+export const PASS_TIER_ORDER = ["light", "standard", "deep"] as const;
 
 /** Pass model tiers. */
 export type PassTier = (typeof PASS_TIER_ORDER)[number];
@@ -104,14 +104,15 @@ export const BASE_TIER = PASS_TIER_ORDER[0];
 export const ADD_TIER = PASS_TIER_ORDER[1];
 export const RISK_TIER = PASS_TIER_ORDER[2];
 
-/** The second spelling of each tier, read on every input and never written:
+/** The older spelling of each tier, read on every input and never written:
  * a config, a profile, a `--config` lever, a verdict file, a stored row and
- * a session's `lens` call may each name a tier either way. The ladder above
- * is what is emitted; this map holds the other names. */
+ * a session's `lens` call may each name a tier either way, for good (a
+ * sticky session's transcript keeps the names it started with). The ladder
+ * above is what is emitted; this map holds the other names. */
 export const LEGACY_TIER_NAMES: Readonly<Record<string, PassTier>> = {
-  light: "terra-med",
-  standard: "sol-med",
-  deep: "sol-high",
+  "terra-med": "light",
+  "sol-med": "standard",
+  "sol-high": "deep",
 };
 
 /** A tier name in either spelling, or undefined. */
@@ -120,11 +121,11 @@ export function foldTier(name: string): PassTier | undefined {
   return Object.hasOwn(LEGACY_TIER_NAMES, name) ? LEGACY_TIER_NAMES[name] : undefined;
 }
 
-/** `--<second spelling>` at the end of a built agent's name. */
+/** `--<older spelling>` at the end of a built agent's name. */
 const LEGACY_AGENT_SUFFIX = new RegExp(`--(${Object.keys(LEGACY_TIER_NAMES).join("|")})$`);
 
 /** A built agent's name with its tier suffix in the ladder's spelling
- * (`<pass>--<tier>`); anything else unchanged. */
+ * (`pass-x--sol-high` is `pass-x--deep`); anything else unchanged. */
 export function foldAgentName(name: string): string {
   return name.replace(
     LEGACY_AGENT_SUFFIX,
@@ -251,7 +252,7 @@ export interface RoundOrder {
   /** Lenses NOT selected for this round that the session may add. */
   addable_lenses: string[];
   /** The addable lenses whose add variant is NOT the templates' own
-   * rule (`sol-med`, or `sol-high` for a risk pass) — the ones a profile
+   * rule (`standard`, or `deep` for a risk pass) — the ones a profile
    * `min_tier` floors higher, lens → tier. Absent ⇒ the rule holds for all. */
   addable_tiers?: Record<string, PassTier>;
   /** Changed files past the sweep's per-round cap — named in the plan so a
@@ -528,7 +529,7 @@ export interface VerdictPassEntry {
   /** Lens name as planned/launched, e.g. "pass-baseline", "pass-validate". */
   name: string;
   /** Tier/model variant the pass actually ran at (raises included),
-   * e.g. "sol-med". Null when the session did not report one. */
+   * e.g. "standard". Null when the session did not report one. */
   tier?: string | null;
   /** Required for a pass launched through this round's add protocol; absent
    * on deterministic planned passes and legacy verdicts. */

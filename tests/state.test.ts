@@ -94,13 +94,13 @@ describe("rounds", () => {
 
   // Which tier held the veto, so a later audit can attribute kills.
   it("records the validator's tier at start, and lets a late stamp fill it in", () => {
-    const id = store.startRound(7, "initial", ["pass-baseline"], 45, { validate_tier: "sol-high" });
-    expect(store.roundsFor(7)[0]!.validate_tier).toBe("sol-high");
+    const id = store.startRound(7, "initial", ["pass-baseline"], 45, { validate_tier: "deep" });
+    expect(store.roundsFor(7)[0]!.validate_tier).toBe("deep");
 
     const bare = store.startRound(8, "initial", [], 45);
     expect(store.roundsFor(8)[0]!.validate_tier).toBeNull();
-    store.setRoundMeta(bare, { validate_tier: "sol-med" });
-    expect(store.roundsFor(8)[0]!.validate_tier).toBe("sol-med");
+    store.setRoundMeta(bare, { validate_tier: "standard" });
+    expect(store.roundsFor(8)[0]!.validate_tier).toBe("standard");
     expect(id).not.toBe(bare);
   });
 
@@ -244,9 +244,9 @@ describe("rounds", () => {
     const id = store.startRound(7, "initial", ["pass-baseline", "pass-validate"], 45);
     expect(store.executedPasses(id)).toBeNull(); // unknown until the verdict reports
 
-    store.recordExecutedPasses(id, [{ name: "pass-baseline", tier: "sol-med", findings: 2 }]);
+    store.recordExecutedPasses(id, [{ name: "pass-baseline", tier: "standard", findings: 2 }]);
     expect(store.executedPasses(id)).toEqual([
-      { name: "pass-baseline", tier: "sol-med", findings: 2 },
+      { name: "pass-baseline", tier: "standard", findings: 2 },
     ]);
     expect(store.roundsFor(7)[0]!.lenses).toBe("pass-baseline,pass-validate"); // the plan is untouched
 

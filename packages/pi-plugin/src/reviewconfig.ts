@@ -731,7 +731,7 @@ export interface ModelsConfig {
   conversation: string;
   /** PassTier → full model spec ("provider/model:thinking"). */
   tiers: Record<PassTier, string>;
-  /** Passes always run at sol-high, single variant, not raisable. Resolved
+  /** Passes always run at deep, single variant, not raisable. Resolved
    * once: config.toml's list (or the default) with the whole security family
    * joined at parse (`withSecurityFamily`), and a profile's
    * `[lenses.<pass>] risk = true` lenses joined by its overlay
@@ -743,7 +743,7 @@ export interface ModelsConfig {
    * Only the profile's `min_tier` for the validator moves it, and only
    * upward. */
   validate_tier: PassTier;
-  /** Diffs under this many changed lines start at terra-med (heuristics). */
+  /** Diffs under this many changed lines start at light (heuristics). */
   small_diff_lines: number;
   /** Spend rates keyed by bare model id; consumed by spend accounting. */
   pricing: Record<string, ModelPricing>;
@@ -764,10 +764,10 @@ export interface ModelsConfig {
    * A pinned lens runs at that tier on every PR whatever the diff size — the
    * plan names that tier, the lens is not raisable, and every built variant
    * of it carries that tier's spec. The default is `DEFAULT_PASS_TIERS`
-   * (baseline, sweep, behaviour-delta at sol-high); a config entry replaces
+   * (baseline, sweep, behaviour-delta at deep); a config entry replaces
    * a lens's default pin. Not
    * for pass-validate (its knob is `validate_tier`) nor for a risk pass
-   * (always sol-high). A profile `min_tier` still floors a pin, and the
+   * (always deep). A profile `min_tier` still floors a pin, and the
    * validator never follows a pinned lens's tier. */
   pass_tiers: Record<string, PassTier>;
   /** Per-lens MODEL overrides (`[models.pass_models]`): pass name →
@@ -855,9 +855,9 @@ function parseEffortMax(raw: unknown): ThinkingLevel {
  * The shipped per-lens tier pins (measured: high effort on these lenses found
  * more defects with no high-severity loss, for ~18% more cost per PR). The
  * three lenses that read the whole diff line by line run at
- * the `sol-high` tier — gpt-6.1-sol at high effort — on every PR; every other
+ * the `deep` tier — gpt-6.1-sol at high effort — on every PR; every other
  * lens keeps its planned tier. A config's own `[models.pass_tiers]` entry for
- * one of them replaces its pin (e.g. `"pass-baseline" = "sol-med"`), and a
+ * one of them replaces its pin (e.g. `"pass-baseline" = "standard"`), and a
  * profile lowers its thinking with `[lenses.<pass>] effort = "medium"`.
  */
 export const DEFAULT_PASS_TIERS: Readonly<Record<string, PassTier>> = Object.freeze({

@@ -254,7 +254,7 @@ describe("the concurrency-planned addendum", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-conc-planned-"));
     try {
       buildAgents(resolve(process.cwd(), "agents"), dir, { root: process.cwd() });
-      const body = rf(join(dir, `${CONC}--sol-med.md`), "utf8");
+      const body = rf(join(dir, `${CONC}--standard.md`), "utf8");
       expect(body).toContain("When the plan PLANNED you");
       expect(body).toContain("NOT the missing anchor");
       expect(body).toContain("four parts");

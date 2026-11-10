@@ -19,7 +19,7 @@ afterEach(() => {
 describe("the posting boundary tier vocabulary", () => {
   const names = [...PASS_TIER_ORDER, ...Object.keys(LEGACY_TIER_NAMES)];
 
-  // MUTATION: replace sol-high by sol-low in the Python suffix — this fails.
+  // MUTATION: replace deep by sol-low in the Python suffix — this fails.
   it("keeps the Python suffix mirror equal to the authoritative tier registry, both spellings", () => {
     const source = readFileSync(
       join(import.meta.dirname, "..", "scripts", "required-passes.py"),

@@ -68,11 +68,11 @@ const order: RoundOrder = {
   pass_plan: [
     {
       lens: "pass-baseline",
-      agent: "pass-baseline--sol-med",
-      tier: "sol-med",
-      raisable_to: ["pass-baseline--sol-high"],
+      agent: "pass-baseline--standard",
+      tier: "standard",
+      raisable_to: ["pass-baseline--deep"],
     },
-    { lens: "pass-validate", agent: "pass-validate--sol-high", tier: "sol-high", raisable_to: [] },
+    { lens: "pass-validate", agent: "pass-validate--deep", tier: "deep", raisable_to: [] },
   ],
   addable_lenses: ["pass-ui"],
   migration_gate: true,
@@ -290,14 +290,14 @@ describe("the tier-forcing gate through the plan", () => {
     { filename: "app/migrations/0007_x.py", additions: 5, deletions: 0, status: "added" },
   ];
 
-  it("django forces sol-med on a small migrations diff; none leaves terra-med", () => {
+  it("django forces standard on a small migrations diff; none leaves light", () => {
     // The gate is a tier heuristic: run it UNPINNED (the shipped DEFAULT_PASS_TIERS
-    // pin baseline at sol-high, which would mask it).
+    // pin baseline at deep, which would mask it).
     const cfg0: Config = { ...cfg, models: { ...cfg.models, pass_tiers: {} } };
     const django = buildPassPlan(cfg0, migrationDiff, undefined, DJANGO_ECOSYSTEM);
     const none = buildPassPlan(cfg0, migrationDiff, undefined, NONE_ECOSYSTEM);
-    expect(django.pass_plan.find((p) => p.lens === "pass-baseline")?.tier).toBe("sol-med");
-    expect(none.pass_plan.find((p) => p.lens === "pass-baseline")?.tier).toBe("terra-med");
+    expect(django.pass_plan.find((p) => p.lens === "pass-baseline")?.tier).toBe("standard");
+    expect(none.pass_plan.find((p) => p.lens === "pass-baseline")?.tier).toBe("light");
   });
 
   it("the default is django (the pre-seam behavior every historical caller means)", () => {

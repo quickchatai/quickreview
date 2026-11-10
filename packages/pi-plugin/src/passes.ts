@@ -125,7 +125,7 @@ export type ChainStrategy = (typeof CHAIN_STRATEGIES)[number];
 
 /** The lens one part of a recorded lens field names: its first word, with a
  * `:strategy`, `#n` or `@ site` after it dropped, and the built agent's
- * `--<tier>` suffix (`pass-sec-access--sol-high`, round-progress.ts
+ * `--<tier>` suffix (`pass-sec-access--deep`, round-progress.ts
  * `lensForAgent`) dropped too — a session may write the agent it launched
  * rather than the lens. No lens name contains `--`. */
 export function lensToken(part: string): string {

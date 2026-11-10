@@ -29,7 +29,7 @@ import { parseRoundProgress } from "@quickchatai/pi-quickreview/src/round-progre
 import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
 import { failedSecurityRows, requiredPassGap } from "../src/requiredpasses.js";
 
-const CHAIN = "pass-sec-exploit-chain--sol-high";
+const CHAIN = "pass-sec-exploit-chain--deep";
 
 let root: string;
 let passes: string;
@@ -46,8 +46,8 @@ beforeEach(() => {
   passes = join(root, "state", "pr-77-round-1-passes");
   tasks = join(passes, "tasks");
   post = join(passes, "tasks-post");
-  write(tasks, "01-pass-baseline--sol-high.md");
-  write(tasks, "02-pass-sec-access--sol-high.md");
+  write(tasks, "01-pass-baseline--deep.md");
+  write(tasks, "02-pass-sec-access--deep.md");
   write(tasks, `03-${CHAIN}@delta.md`);
   write(tasks, `04-${CHAIN}@forward.md`);
   write(post, `01-${CHAIN}@compose.md`);
@@ -65,8 +65,8 @@ describe("a strategy row's task file", () => {
     expect(p.ok).toBe(true);
     if (!p.ok) return;
     expect(p.units.map((u) => [u.row, u.agent, u.strategy])).toEqual([
-      [1, "pass-baseline--sol-high", undefined],
-      [2, "pass-sec-access--sol-high", undefined],
+      [1, "pass-baseline--deep", undefined],
+      [2, "pass-sec-access--deep", undefined],
       [3, CHAIN, "delta"],
       [4, CHAIN, "forward"],
     ]);
@@ -193,12 +193,12 @@ describe("the strategy and the post phase reach the round-progress snapshot", ()
         args: {
           tasks: [
             { agent: CHAIN, task: taskPointer(join(tasks, `03-${CHAIN}@delta.md`)) },
-            { agent: "pass-sec-access--sol-high", task: taskPointer(join(tasks, "02-x.md")) },
+            { agent: "pass-sec-access--deep", task: taskPointer(join(tasks, "02-x.md")) },
           ],
         },
         results: [
           [CHAIN, 1],
-          ["pass-sec-access--sol-high", 0],
+          ["pass-sec-access--deep", 0],
         ],
       },
       {
@@ -213,7 +213,7 @@ describe("the strategy and the post phase reach the round-progress snapshot", ()
     expect(snapshot).toBeDefined();
     expect(snapshot!.agents.map((a) => [a.agent, a.phase, a.strategy, a.status])).toEqual([
       [CHAIN, "plan", "delta", "failed"],
-      ["pass-sec-access--sol-high", "plan", undefined, "completed"],
+      ["pass-sec-access--deep", "plan", undefined, "completed"],
       [CHAIN, "post", "compose", "completed"],
     ]);
   });
@@ -225,8 +225,8 @@ describe("the strategy and the post phase reach the round-progress snapshot", ()
         tool: "lens_wave",
         args: { dirs: [tasks] },
         results: [
-          ["pass-baseline--sol-high", 0],
-          ["pass-sec-access--sol-high", 0],
+          ["pass-baseline--deep", 0],
+          ["pass-sec-access--deep", 0],
           [CHAIN, 0],
           [CHAIN, 1],
         ],
@@ -269,8 +269,8 @@ describe("an engine-started wave collected with no arguments", () => {
   afterAll(() => rmSync(logs, { recursive: true, force: true }));
   const sha = "b".repeat(64);
   const PLAN: PassPlanEntry[] = [
-    { lens: "pass-baseline", agent: "pass-baseline--sol-high", required: true },
-    { lens: "pass-sec-access", agent: "pass-sec-access--sol-high" },
+    { lens: "pass-baseline", agent: "pass-baseline--deep", required: true },
+    { lens: "pass-sec-access", agent: "pass-sec-access--deep" },
     { lens: "pass-sec-exploit-chain", agent: CHAIN, strategy: "delta", required: true },
     { lens: "pass-sec-exploit-chain", agent: CHAIN, strategy: "forward" },
   ] as PassPlanEntry[];
@@ -330,8 +330,8 @@ describe("an engine-started wave collected with no arguments", () => {
     );
     const snapshot = parseRoundProgress(projection!.snapshotJson!);
     expect(snapshot!.agents.map((a) => [a.agent, a.phase, a.strategy ?? null, a.status])).toEqual([
-      ["pass-baseline--sol-high", "plan", null, "completed"],
-      ["pass-sec-access--sol-high", "plan", null, "completed"],
+      ["pass-baseline--deep", "plan", null, "completed"],
+      ["pass-sec-access--deep", "plan", null, "completed"],
       [CHAIN, "plan", "delta", "failed"],
       [CHAIN, "plan", "forward", "completed"],
     ]);

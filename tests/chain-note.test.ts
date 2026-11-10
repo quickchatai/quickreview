@@ -58,8 +58,8 @@ const chainRow = (
   extra: Partial<PassPlanEntry> = {},
 ): PassPlanEntry => ({
   lens: CHAIN_PASS,
-  agent: `${CHAIN_PASS}--sol-high`,
-  tier: "sol-high",
+  agent: `${CHAIN_PASS}--deep`,
+  tier: "deep",
   raisable_to: [],
   why: `${strategy}: a guard was removed`,
   strategy,
@@ -67,22 +67,22 @@ const chainRow = (
 });
 const ACCESS: PassPlanEntry = {
   lens: "pass-sec-access",
-  agent: "pass-sec-access--sol-high",
-  tier: "sol-high",
+  agent: "pass-sec-access--deep",
+  tier: "deep",
   raisable_to: [],
   why: "an object is fetched by an id from the request",
 };
 const BASELINE: PassPlanEntry = {
   lens: "pass-baseline",
-  agent: "pass-baseline--sol-med",
-  tier: "sol-med",
+  agent: "pass-baseline--standard",
+  tier: "standard",
   raisable_to: [],
   required: true,
 };
 const VALIDATE: PassPlanEntry = {
   lens: "pass-validate",
-  agent: "pass-validate--sol-med",
-  tier: "sol-med",
+  agent: "pass-validate--standard",
+  tier: "standard",
   raisable_to: [],
 };
 
@@ -208,7 +208,7 @@ describe("renderChainNote", () => {
         {
           row: 0,
           agent: post[0]!.agent,
-          path: "/s/passes/tasks-post/01-pass-sec-exploit-chain--sol-high@compose.md",
+          path: "/s/passes/tasks-post/01-pass-sec-exploit-chain--deep@compose.md",
         },
       ],
     });
@@ -216,7 +216,7 @@ describe("renderChainNote", () => {
     expect(note).toContain("`CHAIN LEADS`");
     expect(note).toContain("`L1 <path:line> — <claim>`");
     expect(note).toContain(
-      "`Task file: /s/passes/tasks-post/01-pass-sec-exploit-chain--sol-high@compose.md. Read it first; it is your complete task.`",
+      "`Task file: /s/passes/tasks-post/01-pass-sec-exploit-chain--deep@compose.md. Read it first; it is your complete task.`",
     );
     expect(note).toContain("ONE `subagent` call");
     expect(note).toContain("`CHAIN-SKIPPED no leads`");
@@ -239,9 +239,9 @@ describe("renderChainNote", () => {
     const note = renderChainNote({
       chain_compose: true,
       post_plan: [chainRow("compose", { stage: "post-discovery" })],
-      security_validator_agent: "pass-validate--sol-high",
+      security_validator_agent: "pass-validate--deep",
     });
-    expect(note).toContain("the security group, at `pass-validate--sol-high`");
+    expect(note).toContain("the security group, at `pass-validate--deep`");
   });
 
   it("in a security-only review kills a non-security candidate out-of-scope", () => {
@@ -288,17 +288,17 @@ describe("the validator note's security group", () => {
 
   it("validates the security candidates as their own group, in the same call", () => {
     const note = renderValidatorShardNote(
-      order({ security_validator_agent: "pass-validate--sol-high" }),
+      order({ security_validator_agent: "pass-validate--deep" }),
     );
     expect(note.startsWith("\n**Security candidates are validated at the risk tier.**")).toBe(true);
-    expect(note).toContain("`pass-validate--sol-high`");
+    expect(note).toContain("`pass-validate--deep`");
     expect(note).toContain("SAME `subagent` call");
     expect(note).toContain("every exploit chain with\nevery lead it cites");
   });
 
   it("follows the shard note as its own paragraph when both apply", () => {
     const note = renderValidatorShardNote(
-      order({ validator_shards: 2, security_validator_agent: "pass-validate--sol-high" }),
+      order({ validator_shards: 2, security_validator_agent: "pass-validate--deep" }),
     );
     expect(note).toContain(
       "summed counts.\n\n**Security candidates are validated at the risk tier.**",
@@ -309,7 +309,7 @@ describe("the validator note's security group", () => {
   it("is absent with no validator row", () => {
     const noValidator = order({
       pass_plan: [BASELINE, ACCESS],
-      security_validator_agent: "pass-validate--sol-high",
+      security_validator_agent: "pass-validate--deep",
     });
     expect(renderValidatorShardNote(noValidator)).toBe("");
   });
@@ -321,12 +321,12 @@ describe("a security row's task", () => {
   it("names a chain row's strategy in its file name; every other row keeps its name", () => {
     const files = renderPassTasks(order(), "").map((t) => t.file);
     expect(files).toEqual([
-      "01-pass-baseline--sol-med.md",
-      "02-pass-sec-access--sol-high.md",
-      "03-pass-sec-exploit-chain--sol-high@delta.md",
-      "04-pass-sec-exploit-chain--sol-high@forward.md",
+      "01-pass-baseline--standard.md",
+      "02-pass-sec-access--deep.md",
+      "03-pass-sec-exploit-chain--deep@delta.md",
+      "04-pass-sec-exploit-chain--deep@forward.md",
     ]);
-    expect(passTaskFileName(9, { agent: "pass-x--sol-med" })).toBe("10-pass-x--sol-med.md");
+    expect(passTaskFileName(9, { agent: "pass-x--standard" })).toBe("10-pass-x--standard.md");
   });
 
   it("carries the threat model and the facts on a family row, and nothing new on any other", () => {
@@ -381,12 +381,10 @@ describe("a security row's task", () => {
   it("never renders a post-discovery row beside discovery rows; its own order renders it alone", () => {
     const compose = chainRow("compose", { stage: "post-discovery" });
     const stray = order({ pass_plan: [ACCESS, compose, VALIDATE] });
-    expect(renderPassTasks(stray, "").map((t) => t.file)).toEqual([
-      "01-pass-sec-access--sol-high.md",
-    ]);
+    expect(renderPassTasks(stray, "").map((t) => t.file)).toEqual(["01-pass-sec-access--deep.md"]);
     const post = order({ pass_plan: [compose] });
     expect(renderPassTasks(post, "").map((t) => t.file)).toEqual([
-      "01-pass-sec-exploit-chain--sol-high@compose.md",
+      "01-pass-sec-exploit-chain--deep@compose.md",
     ]);
   });
 });
@@ -394,7 +392,7 @@ describe("a security row's task", () => {
 describe("the task-file note", () => {
   it("keeps tasks-post out of the wave only when the order has post-discovery rows", () => {
     const files = [
-      { row: 0, agent: BASELINE.agent, path: "/s/tasks/01-pass-baseline--sol-med.md" },
+      { row: 0, agent: BASELINE.agent, path: "/s/tasks/01-pass-baseline--standard.md" },
     ];
     const plain = renderPassTaskNote(order({ pass_task_files: files }));
     expect(plain).not.toContain("tasks-post");
@@ -467,7 +465,7 @@ describe("a planned round", () => {
       dirs.push(dir);
       writePassTasks(join(dir, "tasks"), o, renderGateNotes(o, DJANGO_ECOSYSTEM));
       const tasks = readdirSync(join(dir, "tasks"));
-      expect(tasks.some((f) => f.endsWith(`${CHAIN_PASS}--sol-high@delta.md`))).toBe(true);
+      expect(tasks.some((f) => f.endsWith(`${CHAIN_PASS}--deep@delta.md`))).toBe(true);
       expect(tasks.some((f) => f.includes("@compose"))).toBe(false);
       const postOrder = postOrderOf(o, o.post_plan!);
       writePassTasks(
@@ -475,9 +473,7 @@ describe("a planned round", () => {
         postOrder,
         renderGateNotes(postOrder, DJANGO_ECOSYSTEM),
       );
-      expect(readdirSync(join(dir, "tasks-post"))).toEqual([
-        `01-${CHAIN_PASS}--sol-high@compose.md`,
-      ]);
+      expect(readdirSync(join(dir, "tasks-post"))).toEqual([`01-${CHAIN_PASS}--deep@compose.md`]);
     },
   );
 

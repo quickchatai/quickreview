@@ -796,17 +796,17 @@ describe("recording at round start", () => {
       const round = store.roundsFor(23)[0]!;
       const planned = orders[0]!.order.pass_plan.find((p) => p.lens === "pass-validate")!;
       expect(round.validate_tier).toBe(planned.tier);
-      expect(round.validate_tier).toBe("sol-high");
+      expect(round.validate_tier).toBe("deep");
       expect(JSON.parse(round.pass_plan!)).toEqual(orders[0]!.order.pass_plan);
       const addable = JSON.parse(round.addable_passes!) as Array<{ lens: string; tier: string }>;
-      expect(addable).toContainEqual({ lens: "pass-concurrency", tier: "sol-med" });
+      expect(addable).toContainEqual({ lens: "pass-concurrency", tier: "standard" });
       expect(
         addable
           .filter((p) => baseCfg.models.risk_passes.includes(p.lens as never))
-          .every((p) => p.tier === "sol-high"),
+          .every((p) => p.tier === "deep"),
       ).toBe(true);
       const dispatched = store.recentEvents(50).find((e) => e.kind === "round_dispatched")!;
-      expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBe("sol-high");
+      expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBe("deep");
     },
   );
 
@@ -898,8 +898,8 @@ describe("buildPassPlan", () => {
       plan
         .filter((p) => p.raisable_to.length > 0 && !["pass-sweep", "pass-intent"].includes(p.lens))
         .map((p) => p.tier);
-    expect(new Set(def(alone.pass_plan))).toEqual(new Set(["terra-med"]));
-    expect(new Set(def(tiered.pass_plan))).toEqual(new Set(["sol-med"]));
+    expect(new Set(def(alone.pass_plan))).toEqual(new Set(["light"]));
+    expect(new Set(def(tiered.pass_plan))).toEqual(new Set(["standard"]));
     // No tierFiles ⇒ exactly the plan built from the selection's files alone.
     expect(buildPassPlan(baseCfg, small, undefined, undefined, undefined, [], [], {})).toEqual(
       alone,
@@ -912,7 +912,7 @@ describe("buildPassPlan", () => {
     models: {
       ...baseCfg.models,
       risk_passes: ["pass-security", "pass-prod-risk", "pass-data-safety"],
-      validate_tier: "terra-med",
+      validate_tier: "light",
       small_diff_lines: 150,
       // The shipped pins (DEFAULT_PASS_TIERS) are cleared: this block exercises
       // the UNPINNED tier heuristics; the pins are pinned in lens-knobs.test.ts.
@@ -939,7 +939,7 @@ describe("buildPassPlan", () => {
     expect(withExt).toContain("pass-backcompat");
   });
 
-  it("pins risk passes to sol-high with no raise ladder", () => {
+  it("pins risk passes to deep with no raise ladder", () => {
     const { pass_plan } = buildPassPlan(planCfg, [
       file("infra/main.tf", 120, 5),
       file("auth/permissions.py", 10, 2),
@@ -949,27 +949,27 @@ describe("buildPassPlan", () => {
       const entry = pass_plan.find((p) => p.lens === lens)!;
       expect(entry).toMatchObject({
         lens,
-        agent: `${lens}--sol-high`,
-        tier: "sol-high",
+        agent: `${lens}--deep`,
+        tier: "deep",
         raisable_to: [],
       });
     }
   });
 
   it("runs pass-validate at cfg.models.validate_tier when nothing outranks it, never raisable", () => {
-    // A tiny quiet diff: every lens is terra-med, so the floor stands.
+    // A tiny quiet diff: every lens is light, so the floor stands.
     const { pass_plan } = buildPassPlan(planCfg, [file("README.md", 3, 1)]);
     expect(pass_plan[pass_plan.length - 1]).toEqual({
       lens: "pass-validate",
-      agent: "pass-validate--terra-med",
-      tier: "terra-med",
+      agent: "pass-validate--light",
+      tier: "light",
       raisable_to: [],
     });
     const solValidate = buildPassPlan(
-      { ...planCfg, models: { ...planCfg.models, validate_tier: "sol-high" } },
+      { ...planCfg, models: { ...planCfg.models, validate_tier: "deep" } },
       [file("README.md", 3, 1)],
     ).pass_plan;
-    expect(solValidate[solValidate.length - 1]!.agent).toBe("pass-validate--sol-high");
+    expect(solValidate[solValidate.length - 1]!.agent).toBe("pass-validate--deep");
     expect(solValidate[solValidate.length - 1]!.raisable_to).toEqual([]);
   });
 
@@ -977,18 +977,18 @@ describe("buildPassPlan", () => {
   // deleted), so the validator is never raised to the hottest lens: it runs
   // at its own configured tier.
   it("runs pass-validate at its own tier, never raised to a lens's", () => {
-    // A risk lens (sol-high) alongside a terra-med validator.
+    // A risk lens (deep) alongside a light validator.
     const risky = buildPassPlan(planCfg, [file("auth/permissions.py", 10, 2)]).pass_plan;
-    expect(risky.find((p) => p.lens === "pass-security")!.tier).toBe("sol-high");
+    expect(risky.find((p) => p.lens === "pass-security")!.tier).toBe("deep");
     expect(risky.find((p) => p.lens === "pass-validate")).toEqual({
       lens: "pass-validate",
-      agent: "pass-validate--terra-med",
-      tier: "terra-med",
+      agent: "pass-validate--light",
+      tier: "light",
       raisable_to: [],
     });
-    // A big non-risk diff lands the lenses on sol-med — the validator stays.
+    // A big non-risk diff lands the lenses on standard — the validator stays.
     const medium = buildPassPlan(planCfg, [file("app/service.py", 200, 0)]).pass_plan;
-    expect(medium.find((p) => p.lens === "pass-validate")!.tier).toBe("terra-med");
+    expect(medium.find((p) => p.lens === "pass-validate")!.tier).toBe("light");
   });
 
   it("the validator's tier is independent of the plan, whatever the plan", () => {
@@ -1007,42 +1007,42 @@ describe("buildPassPlan", () => {
   });
 
   it("the shipped config pins the validator at the top tier", () => {
-    expect(baseCfg.models.validate_tier).toBe("sol-high");
-    expect(PASS_TIER_ORDER.at(-1)).toBe("sol-high");
+    expect(baseCfg.models.validate_tier).toBe("deep");
+    expect(PASS_TIER_ORDER.at(-1)).toBe("deep");
   });
 
   it("validatorTier is the configured tier under the profile's min_tier, never lowered", () => {
     expect(validatorTier(planCfg)).toBe(planCfg.models.validate_tier);
-    const floored = { ...planCfg, lenses: { "pass-validate": { min_tier: "sol-med" as const } } };
-    expect(validatorTier(floored)).toBe("sol-med");
+    const floored = { ...planCfg, lenses: { "pass-validate": { min_tier: "standard" as const } } };
+    expect(validatorTier(floored)).toBe("standard");
     const high = {
       ...planCfg,
-      models: { ...planCfg.models, validate_tier: "sol-high" as const },
-      lenses: { "pass-validate": { min_tier: "terra-med" as const } },
+      models: { ...planCfg.models, validate_tier: "deep" as const },
+      lenses: { "pass-validate": { min_tier: "light" as const } },
     };
-    expect(validatorTier(high)).toBe("sol-high");
+    expect(validatorTier(high)).toBe("deep");
   });
 
   it("gives non-risk lenses the heuristic tier with an ascending raise ladder", () => {
-    // Small quiet diff → terra-med, raisable through sol-med to sol-high.
+    // Small quiet diff → light, raisable through standard to deep.
     const small = buildPassPlan(planCfg, [file("README.md", 3, 1)]);
     expect(small.pass_plan[0]).toMatchObject({
       lens: "pass-baseline",
-      agent: "pass-baseline--terra-med",
-      tier: "terra-med",
-      raisable_to: ["pass-baseline--sol-med", "pass-baseline--sol-high"],
+      agent: "pass-baseline--light",
+      tier: "light",
+      raisable_to: ["pass-baseline--standard", "pass-baseline--deep"],
     });
-    // Diff at/over small_diff_lines → sol-med, only sol-high above it.
+    // Diff at/over small_diff_lines → standard, only deep above it.
     const big = buildPassPlan(planCfg, [file("app/service.py", 200, 0)]);
     expect(big.pass_plan[0]).toMatchObject({
       lens: "pass-baseline",
-      agent: "pass-baseline--sol-med",
-      tier: "sol-med",
-      raisable_to: ["pass-baseline--sol-high"],
+      agent: "pass-baseline--standard",
+      tier: "standard",
+      raisable_to: ["pass-baseline--deep"],
     });
-    // Migration gate forces sol-med even on a tiny diff (for non-risk lenses).
+    // Migration gate forces standard even on a tiny diff (for non-risk lenses).
     const gated = buildPassPlan(planCfg, [file("app/migrations/0001_init.py", 5, 0)]);
-    expect(gated.pass_plan[0]!.tier).toBe("sol-med");
+    expect(gated.pass_plan[0]!.tier).toBe("standard");
   });
 
   it("addable_lenses = every known pass not already planned, the security family aside", () => {
@@ -1166,15 +1166,15 @@ describe("buildPassPlan", () => {
       "budget comes from settings, and a burst allowance keeps short spikes " +
       "from being rejected while a sustained flood is throttled.";
 
-    it("starts at terra-med even when the round's default tier is sol-med", () => {
-      // 200 changed lines ⇒ defaultTier sol-med; intent stays terra-med.
+    it("starts at light even when the round's default tier is standard", () => {
+      // 200 changed lines ⇒ defaultTier standard; intent stays light.
       const { pass_plan } = buildPassPlan(planCfg, [file("app/service.py", 200, 0)], { body });
       const intent = pass_plan.find((p) => p.lens === "pass-intent")!;
       expect(intent).toMatchObject({
         lens: "pass-intent",
-        agent: "pass-intent--terra-med",
-        tier: "terra-med",
-        raisable_to: ["pass-intent--sol-med", "pass-intent--sol-high"],
+        agent: "pass-intent--light",
+        tier: "light",
+        raisable_to: ["pass-intent--standard", "pass-intent--deep"],
       });
       // The validator runs at its own tier, whatever the lenses run at.
       const validate = pass_plan.find((p) => p.lens === "pass-validate")!;
@@ -1199,32 +1199,32 @@ describe("buildPassPlan", () => {
   // future tier change cannot ship silently.
   describe("judgment lenses", () => {
     it("plans simplicity + backcompat at the round's default tier, raisable", () => {
-      // 200 changed serializer lines ⇒ default sol-med; selects contracts,
+      // 200 changed serializer lines ⇒ default standard; selects contracts,
       // backcompat (wire surface) and simplicity (size).
       const { pass_plan } = buildPassPlan(planCfg, [file("app/serializers/user.py", 200, 0)]);
       expect(pass_plan.find((p) => p.lens === "pass-backcompat")).toMatchObject({
         lens: "pass-backcompat",
-        agent: "pass-backcompat--sol-med",
-        tier: "sol-med",
-        raisable_to: ["pass-backcompat--sol-high"],
+        agent: "pass-backcompat--standard",
+        tier: "standard",
+        raisable_to: ["pass-backcompat--deep"],
       });
       expect(pass_plan.find((p) => p.lens === "pass-simplicity")).toMatchObject({
         lens: "pass-simplicity",
-        agent: "pass-simplicity--sol-med",
-        tier: "sol-med",
-        raisable_to: ["pass-simplicity--sol-high"],
+        agent: "pass-simplicity--standard",
+        tier: "standard",
+        raisable_to: ["pass-simplicity--deep"],
       });
     });
 
-    it("plans placement at terra-med on a small new-file diff", () => {
+    it("plans placement at light on a small new-file diff", () => {
       // 40 lines: over the default preset's 30-line new-file floor.
       const added = { ...file("src/tools/new_helper.py", 40, 0), status: "added" };
       const { pass_plan } = buildPassPlan(planCfg, [added]);
       expect(pass_plan.find((p) => p.lens === "pass-placement")).toMatchObject({
         lens: "pass-placement",
-        agent: "pass-placement--terra-med",
-        tier: "terra-med",
-        raisable_to: ["pass-placement--sol-med", "pass-placement--sol-high"],
+        agent: "pass-placement--light",
+        tier: "light",
+        raisable_to: ["pass-placement--standard", "pass-placement--deep"],
       });
       // A tiny added helper does not buy the size-keyed lenses.
       expect(pass_plan.map((p) => p.lens)).not.toContain("pass-simplicity");
@@ -1478,12 +1478,12 @@ describe("dispatchOnce", () => {
     const [order] = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
     expect(order!.migration_gate).toBe(false);
     expect(order!.lenses).toEqual(["pass-baseline", "pass-validate"]);
-    // Shipped default (DEFAULT_PASS_TIERS): baseline is pinned at sol-high on
+    // Shipped default (DEFAULT_PASS_TIERS): baseline is pinned at deep on
     // every PR, so it is not raisable.
     expect(order!.pass_plan[0]).toMatchObject({
       lens: "pass-baseline",
-      agent: "pass-baseline--sol-high",
-      tier: "sol-high",
+      agent: "pass-baseline--deep",
+      tier: "deep",
       raisable_to: [],
     });
   });

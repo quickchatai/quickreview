@@ -72,7 +72,7 @@ describe("isProviderTransientPassError", () => {
   });
 
   it("is never a timeout, a spent usage window, another error or nothing", () => {
-    expect(isProviderTransientPassError("pass pass-security--sol-high timed out after 8 min")).toBe(
+    expect(isProviderTransientPassError("pass pass-security--deep timed out after 8 min")).toBe(
       false,
     );
     expect(isProviderTransientPassError("You have hit your usage limit has been reached")).toBe(

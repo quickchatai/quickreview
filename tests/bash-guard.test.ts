@@ -1445,7 +1445,7 @@ describe("checkSecretPaths — the App's secret files and dir", () => {
   // put `[{"name":"pass-a"}]` in a quoted printf argument; the word's `[name:pass-a]`
   // became a regex class with a reversed range and the guard THREW instead of answering.
   it("a glob class JavaScript cannot compile is judged, never thrown, and widened, never narrowed", () => {
-    const verdict = `printf '%s' '{"pr":7,"passes":[{"name":"pass-a","tier":"sol-high"}]}' > verdict/pr-7-round-2.json.tmp`;
+    const verdict = `printf '%s' '{"pr":7,"passes":[{"name":"pass-a","tier":"deep"}]}' > verdict/pr-7-round-2.json.tmp`;
     passes(verdict);
     expect(checkProcSecrets(verdict, "/opt/quickreview/sandbox").allowed).toBe(true);
     expect(checkBashCommand(verdict).allowed).toBe(true);

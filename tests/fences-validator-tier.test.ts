@@ -68,10 +68,10 @@ describe("[#22] the validator tier", () => {
   /**
    * MUTATION: fold the lens tiers into the validator's
    * (`lensTiers.reduce(higherTier, floor)`) — the risk and big-diff plans below
-   * start running the validator at sol-high/sol-med and this fails.
+   * start running the validator at deep/standard and this fails.
    */
   it("plan time: the validator runs at its own tier, never raised by a hotter lens", () => {
-    const low: Config = { ...cfg, models: { ...cfg.models, validate_tier: "terra-med" } };
+    const low: Config = { ...cfg, models: { ...cfg.models, validate_tier: "light" } };
     for (const files of [
       [file("README.md", 3)],
       [file("app/service.py", 400)],
@@ -80,18 +80,18 @@ describe("[#22] the validator tier", () => {
       const { pass_plan } = buildPassPlan(low, files);
       const validate = pass_plan.at(-1)!;
       expect(validate.lens).toBe("pass-validate");
-      expect(validate.tier).toBe("terra-med");
+      expect(validate.tier).toBe("light");
       expect(validate.tier).toBe(validatorTier(low));
       expect(validate.raisable_to).toEqual([]);
     }
     const risky = buildPassPlan(low, [file("auth/permissions.py", 10)]).pass_plan;
-    expect(risky.some((p) => tierIndex(p.tier) > tierIndex("terra-med"))).toBe(true);
+    expect(risky.some((p) => tierIndex(p.tier) > tierIndex("light"))).toBe(true);
   });
 
   /**
    * A security-family row under a validator below the risk tier: the
    * round's security candidates are validated as their own group at
-   * sol-high (`security_validator_agent`), and the validator ROW stays at
+   * deep (`security_validator_agent`), and the validator ROW stays at
    * `validate_tier` — the raise is the security group's alone, never the
    * round's validator.
    *
@@ -99,10 +99,10 @@ describe("[#22] the validator tier", () => {
    * buildRoundOrder (planner.ts `securityOrderFields`) — this fails.
    */
   it(
-    "plan time: security candidates validate at sol-high, the validator row at its own tier",
+    "plan time: security candidates validate at deep, the validator row at its own tier",
     { timeout: HEAVY_TIMEOUT_MS },
     () => {
-      const low: Config = { ...cfg, models: { ...cfg.models, validate_tier: "sol-med" } };
+      const low: Config = { ...cfg, models: { ...cfg.models, validate_tier: "standard" } };
       const sql: PrFileEntry = {
         filename: "app/repo.py",
         additions: 1,
@@ -124,38 +124,36 @@ describe("[#22] the validator tier", () => {
       expect(order.pass_plan.some((p) => SECURITY_FAMILY.includes(p.lens))).toBe(true);
       const validate = order.pass_plan.at(-1)!;
       expect(validate.lens).toBe("pass-validate");
-      expect(validate.tier).toBe("sol-med");
+      expect(validate.tier).toBe("standard");
       expect(validate.tier).toBe(validatorTier(low));
-      expect(order.security_validator_agent).toBe("pass-validate--sol-high");
+      expect(order.security_validator_agent).toBe("pass-validate--deep");
     },
   );
 
   it("the property itself is sound — it catches a validator run below the floor", () => {
     const executed: VerdictPassEntry[] = [
-      { name: "pass-baseline", tier: "sol-high" },
-      { name: "pass-validate", tier: "terra-med" },
+      { name: "pass-baseline", tier: "deep" },
+      { name: "pass-validate", tier: "light" },
     ];
-    expect(validatorBelowFloor("sol-med", executed).map((p) => p.name)).toEqual(["pass-validate"]);
-    expect(validatorBelowFloor("terra-med", executed)).toEqual([]);
+    expect(validatorBelowFloor("standard", executed).map((p) => p.name)).toEqual(["pass-validate"]);
+    expect(validatorBelowFloor("light", executed)).toEqual([]);
   });
 
   it("a lens hotter than the validator is NOT a breach any more", () => {
     expect(
-      validatorBelowFloor("terra-med", [
-        { name: "pass-security", tier: "sol-high" },
-        { name: "pass-validate", tier: "terra-med" },
+      validatorBelowFloor("light", [
+        { name: "pass-security", tier: "deep" },
+        { name: "pass-validate", tier: "light" },
       ]),
     ).toEqual([]);
   });
 
   it("unknowns and a round with no validator are never breaches", () => {
-    expect(validatorBelowFloor(null, [{ name: "pass-validate", tier: "terra-med" }])).toEqual([]);
-    expect(validatorBelowFloor("sol-high", null)).toEqual([]);
-    expect(validatorBelowFloor("sol-high", [{ name: "pass-validate", tier: null }])).toEqual([]);
-    expect(validatorBelowFloor("sol-high", [{ name: "pass-validate", tier: "nonsense" }])).toEqual(
-      [],
-    );
-    expect(validatorBelowFloor(null, [{ name: "pass-baseline", tier: "sol-high" }])).toEqual([]);
+    expect(validatorBelowFloor(null, [{ name: "pass-validate", tier: "light" }])).toEqual([]);
+    expect(validatorBelowFloor("deep", null)).toEqual([]);
+    expect(validatorBelowFloor("deep", [{ name: "pass-validate", tier: null }])).toEqual([]);
+    expect(validatorBelowFloor("deep", [{ name: "pass-validate", tier: "nonsense" }])).toEqual([]);
+    expect(validatorBelowFloor(null, [{ name: "pass-baseline", tier: "deep" }])).toEqual([]);
   });
 
   /**
@@ -184,14 +182,14 @@ describe("[#22] the validator tier", () => {
       return id;
     };
 
-    const ok = round("sol-med", [
-      { name: "pass-baseline", tier: "sol-high" },
-      { name: "pass-validate", tier: "sol-med" },
+    const ok = round("standard", [
+      { name: "pass-baseline", tier: "deep" },
+      { name: "pass-validate", tier: "standard" },
     ]);
-    const off = round(null, [{ name: "pass-baseline", tier: "sol-med" }]);
-    const bad = round("sol-high", [
-      { name: "pass-baseline", tier: "sol-med" },
-      { name: "pass-validate", tier: "sol-med" },
+    const off = round(null, [{ name: "pass-baseline", tier: "standard" }]);
+    const bad = round("deep", [
+      { name: "pass-baseline", tier: "standard" },
+      { name: "pass-validate", tier: "standard" },
     ]);
 
     const check = (id: number) => {

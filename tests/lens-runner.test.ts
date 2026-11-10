@@ -588,7 +588,7 @@ describe("[runLens] a built lens names only tools its leaf holds", () => {
         root,
         tiers,
         riskPasses: [],
-        validateTier: "terra-med",
+        validateTier: "light",
       });
       // One session per distinct tools line: the line is what is under test.
       const byLine = new Map<string, string>();

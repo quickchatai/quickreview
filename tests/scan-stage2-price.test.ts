@@ -25,7 +25,7 @@ function row(
     path: `f${n}.py`,
     blob: `b${n}`,
     lens,
-    tier: lens === "pass-scan" ? SCAN_DEFAULTS.tier : "sol-med",
+    tier: lens === "pass-scan" ? SCAN_DEFAULTS.tier : "standard",
     effort: lens === "pass-scan" ? SCAN_DEFAULTS.effort : "tier",
     validator,
     sha: "1".repeat(40),
@@ -43,7 +43,7 @@ const price = (
   entries: LedgerEntry[],
   validator = true,
   lens = "pass-security",
-  tier: "sol-med" | "sol-high" = "sol-med",
+  tier: "standard" | "deep" = "standard",
   effort = "tier",
 ): RowPrice => priceStage2Row(entries, cfg(validator), lens, tier, effort)!;
 
@@ -113,7 +113,7 @@ describe("a stage-2 row's price", () => {
   });
 
   it("never learns from pass-scan, another tier or another effort — those fall back to the extrapolation", () => {
-    const high = row("pass-security", false, 0.4, 1000, { tier: "sol-high" });
+    const high = row("pass-security", false, 0.4, 1000, { tier: "deep" });
     const low = row("pass-security", false, 0.1, 1000, { effort: "low" });
     for (const entries of [
       [S1_OFF, S1_ON, high],
@@ -124,8 +124,8 @@ describe("a stage-2 row's price", () => {
       expect(p).toMatchObject({ basis: "extrapolated", from: "pass-scan" });
       expect(p.rate.usd_per_kline).toBeCloseTo(0.075 * SCAN_DEFAULTS.unmeasured_rate_factor, 9);
     }
-    // …while the sol-high row itself learns from the sol-high measurement.
-    expect(price([S1_OFF, S1_ON, high], true, "pass-security", "sol-high")).toMatchObject({
+    // …while the deep row itself learns from the deep measurement.
+    expect(price([S1_OFF, S1_ON, high], true, "pass-security", "deep")).toMatchObject({
       basis: "learned",
     });
   });
@@ -139,10 +139,10 @@ describe("a stage-2 row's price", () => {
   it("reads the skeptic's share from stage 1 at ONE tier and effort — never a ratio across tiers", () => {
     // Stage 1 on at [scan]'s tier, off only at another tier: the ratio would
     // be the tier's price, not the skeptic's, so nothing is learned.
-    const offElsewhere = row("pass-scan", false, 0.01, 1000, { tier: "sol-high" });
+    const offElsewhere = row("pass-scan", false, 0.01, 1000, { tier: "deep" });
     expect(price([S1_ON, offElsewhere, S2_OFF])).toMatchObject({ basis: "extrapolated" });
     // A pair measured both ways at another tier still carries the share.
-    const onElsewhere = row("pass-scan", true, 0.02, 1000, { tier: "sol-high" });
+    const onElsewhere = row("pass-scan", true, 0.02, 1000, { tier: "deep" });
     const p = price([S1_ON, offElsewhere, onElsewhere, S2_OFF]);
     expect(p.basis).toBe("learned");
     expect(p.rate.usd_per_kline).toBeCloseTo(0.14 * 2, 9);
@@ -164,7 +164,7 @@ describe("a stage-2 row's price", () => {
     expect(
       price([S1_OFF, S1_ON, row("pass-security", false, 0, 1000, { cost_usd: null })]),
     ).toMatchObject({ basis: "extrapolated" });
-    expect(priceStage2Row([S2_OFF], cfg(true), "pass-security", "sol-med", "tier")).toBeNull();
+    expect(priceStage2Row([S2_OFF], cfg(true), "pass-security", "standard", "tier")).toBeNull();
   });
 
   it("says in its label whether it is a measurement or an estimate, and how the estimate was made", () => {

@@ -255,8 +255,8 @@ describe("a replay is not a posting path", () => {
         plan: [
           {
             lens: "pass-baseline",
-            agent: "pass-baseline--sol-high",
-            tier: "sol-high",
+            agent: "pass-baseline--deep",
+            tier: "deep",
             raisable_to: [],
           },
         ],

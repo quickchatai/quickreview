@@ -515,7 +515,7 @@ describe("the borrowed login", () => {
     models: {
       conversation: "openai-codex/gpt-6.1-sol",
       default: "openai-codex/gpt-6.1-sol",
-      tiers: { "sol-high": "openai-codex/gpt-6.1-sol:high", "terra-med": "anthropic/x:medium" },
+      tiers: { deep: "openai-codex/gpt-6.1-sol:high", light: "anthropic/x:medium" },
       pass_models: { "pass-x": "google/g" },
     },
   } as unknown as Parameters<typeof reviewProviders>[0];

@@ -464,7 +464,7 @@ describe("the post-scan re-tune", () => {
     const e = engine();
     setUp(e);
     expect(tuned("acme").lenses?.["pass-security"]).toMatchObject({
-      min_tier: "sol-med",
+      min_tier: "standard",
       effort: "medium",
     });
     finishedScan();
@@ -485,21 +485,21 @@ describe("the post-scan re-tune", () => {
     // what the daemon now resolves
     const cfg = tuned("acme");
     expect(cfg.lenses?.["pass-security"]).toMatchObject({
-      min_tier: "sol-high",
+      min_tier: "deep",
       effort: "high",
       max_severity: "P0",
     });
-    expect(row(cfg, "pass-security")).toMatchObject({ tier: "sol-high" });
+    expect(row(cfg, "pass-security")).toMatchObject({ tier: "deep" });
 
     // the report: each change, its reason, and what it moved — computed, not asserted
     const sec = r.changes.find((c) => c.input === "priority security")!;
     expect(sec.why).toBe(REASON);
     expect(sec.effects).toEqual(
       expect.arrayContaining([
-        "pass-security: min_tier sol-med → sol-high",
+        "pass-security: min_tier standard → deep",
         "pass-security: effort medium → high",
         "pass-security: max_severity (unset) → P0",
-        "pass-bounds: min_tier sol-med → sol-high",
+        "pass-bounds: min_tier standard → deep",
       ]),
     );
     const emph = r.changes.find((c) => c.input === "emphasis pass-security")!;

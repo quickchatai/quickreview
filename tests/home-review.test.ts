@@ -47,10 +47,10 @@ const quote = (pr: number, over: Partial<ReviewQuote> = {}): ReviewQuote => ({
   capUsd: 2.66,
   key: `key-${pr}`,
   lenses: [
-    "pass-security--sol-high",
-    "pass-tests--sol-high",
-    "pass-data-safety--terra-med",
-    "pass-validate--sol-high",
+    "pass-security--deep",
+    "pass-tests--deep",
+    "pass-data-safety--light",
+    "pass-validate--deep",
   ],
   files: 4,
   headSha: `sha${pr}`,
@@ -84,16 +84,16 @@ const FINDINGS = {
       path: "src/deep/auth/token.ts",
       line: 12,
       title: "the token is logged",
-      lens: "pass-security--sol-high",
+      lens: "pass-security--deep",
     },
     {
       severity: "P2",
       path: "src/db.ts",
       line: 40,
       title: "a migration drops a column",
-      lens: "pass-data-safety--terra-med",
+      lens: "pass-data-safety--light",
     },
-    { severity: "nit", path: null, line: null, title: "naming", lens: "pass-tests--sol-high" },
+    { severity: "nit", path: null, line: null, title: "naming", lens: "pass-tests--deep" },
   ],
   costUsd: 1.11,
   postFile: "/state/review/detached/runs/r1/work/x/out/post.json",
@@ -401,21 +401,21 @@ describe("the review button", () => {
     const h = await reviewing();
     h.rv.statuses.set("r1", [
       running("r1", 3, [
-        lens("pass-security--sol-high", "running", {
+        lens("pass-security--deep", "running", {
           toolCount: 3,
           durationMs: 5_000,
           currentTool: "read",
           currentTarget: "src/x.ts",
           line: "security · read src/x.ts · 3 tools · 0:05",
         }),
-        lens("pass-tests--sol-high", "completed", { toolCount: 7 }),
-        lens("pass-data-safety--terra-med", "failed", { toolCount: 1 }),
+        lens("pass-tests--deep", "completed", { toolCount: 7 }),
+        lens("pass-data-safety--light", "failed", { toolCount: 1 }),
       ]),
       running("r1", 3, [
-        lens("pass-security--sol-high", "completed", { toolCount: 9 }),
-        lens("pass-tests--sol-high", "completed", { toolCount: 7 }),
-        lens("pass-data-safety--terra-med", "failed", { toolCount: 1 }),
-        lens("pass-validate--sol-high", "running"),
+        lens("pass-security--deep", "completed", { toolCount: 9 }),
+        lens("pass-tests--deep", "completed", { toolCount: 7 }),
+        lens("pass-data-safety--light", "failed", { toolCount: 1 }),
+        lens("pass-validate--deep", "running"),
       ]),
     ]);
     let d = details(h.lines());
@@ -533,7 +533,7 @@ describe("runs survive the home", () => {
     rv.registry = [done("r0", 2), running("r1", 3)];
     rv.statuses.set("r1", [
       running("r1", 3, [
-        lens("pass-tests--sol-high", "running", { line: "tests · grep · 1 tool · 0:02" }),
+        lens("pass-tests--deep", "running", { line: "tests · grep · 1 tool · 0:02" }),
       ]),
     ]);
     const asked: string[] = [];

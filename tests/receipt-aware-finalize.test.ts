@@ -215,7 +215,7 @@ function progress(): RoundProgressSnapshot {
     agents: [
       {
         execution_id: "lens-1:pass-baseline",
-        agent: "pass-baseline--sol-med",
+        agent: "pass-baseline--standard",
         status: "completed",
         duration_ms: 1,
         tool_count: 1,
@@ -224,7 +224,7 @@ function progress(): RoundProgressSnapshot {
       },
       {
         execution_id: "lens-2:pass-validate",
-        agent: "pass-validate--sol-high",
+        agent: "pass-validate--deep",
         status: "completed",
         duration_ms: 1,
         tool_count: 1,
@@ -385,7 +385,7 @@ describe("a posted round 5 replayed", () => {
         verdict: "REQUEST_CHANGES",
         head_sha: HEAD,
         summary: "One blocker remains.",
-        passes: [{ name: "pass-baseline", tier: "sol-med", findings: 2 }],
+        passes: [{ name: "pass-baseline", tier: "standard", findings: 2 }],
         finished_at: "2026-01-15T08:56:29Z",
       }),
     );
@@ -465,7 +465,7 @@ describe("a posted round 5 replayed", () => {
         verdict: "REQUEST_CHANGES",
         head_sha: HEAD,
         summary: "One blocker remains.",
-        passes: [{ name: "pass-baseline", tier: "sol-med", findings: 2 }],
+        passes: [{ name: "pass-baseline", tier: "standard", findings: 2 }],
         finished_at: "2026-01-15T08:56:29Z",
       }),
     );
@@ -561,7 +561,7 @@ describe("a deferred posting", () => {
         verdict,
         head_sha: HEAD,
         summary: "done",
-        passes: [{ name: "pass-baseline", tier: "sol-med", findings: 0 }],
+        passes: [{ name: "pass-baseline", tier: "standard", findings: 0 }],
         finished_at: "2026-01-15T08:53:30Z",
       }),
     );
@@ -993,7 +993,7 @@ describe("an ordinary delivery of an approval withheld for CI", () => {
         verdict: "APPROVE",
         head_sha: HEAD,
         summary: "done",
-        passes: [{ name: "pass-baseline", tier: "sol-med", findings: 0 }],
+        passes: [{ name: "pass-baseline", tier: "standard", findings: 0 }],
         finished_at: "2026-01-15T08:53:30Z",
       }),
     );

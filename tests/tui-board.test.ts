@@ -285,7 +285,7 @@ describe("detailLines", () => {
           finished_at: null,
           spend_usd: null,
           lenses: "pass-baseline,pass-security,pass-validate",
-          validate_tier: "sol-high",
+          validate_tier: "deep",
         },
       ],
     };
@@ -300,7 +300,7 @@ describe("detailLines", () => {
           started_at: "2026-08-27T09:34:54Z",
           deadline_at: "2026-08-27T10:49:54Z",
           lenses: "pass-baseline,pass-security,pass-validate",
-          validate_tier: "sol-high",
+          validate_tier: "deep",
           command_id: "cmd-14",
           command_sha256: "a".repeat(64),
           head_sha: "head-5012",
@@ -369,9 +369,9 @@ describe("detailLines", () => {
       "  parent ACTIVE · fanout-started · signal 1s ago · subagent: pass-security",
     );
     expect(lines).toContain("  ✓ pass-baseline · done in 2m · 7 tools");
-    expect(lines).toContain("  ⟳ pass-validate · running 30s · grep: bearer · sol-high");
+    expect(lines).toContain("  ⟳ pass-validate · running 30s · grep: bearer · deep");
     expect(lines).toContain("  ○ pass-security · pending");
-    expect(lines).toContain("  ✗ pass-validate · failed after 30s · timeout · sol-high");
+    expect(lines).toContain("  ✗ pass-validate · failed after 30s · timeout · deep");
     expect(lines).toContain("  ✓ pass-architecture · done in 1m · 5 tools · added");
     expect(lines).toContain("  ○ final verdict · pending");
     expect(lines).toContain("  last activity 4s ago · pass-security · grep: bearer");
@@ -1323,7 +1323,7 @@ describe("the transcript viewer in the board's pane", () => {
     agents: [
       {
         execution_id: "a",
-        agent: "pass-baseline--sol-high",
+        agent: "pass-baseline--deep",
         status: "completed" as const,
         duration_ms: 1000,
         tool_count: 1,
@@ -1331,7 +1331,7 @@ describe("the transcript viewer in the board's pane", () => {
       },
       {
         execution_id: "b",
-        agent: "pass-security--sol-high",
+        agent: "pass-security--deep",
         status: "running" as const,
         duration_ms: 1000,
         tool_count: 1,
@@ -1339,7 +1339,7 @@ describe("the transcript viewer in the board's pane", () => {
       },
       {
         execution_id: "c",
-        agent: "pass-security--sol-high",
+        agent: "pass-security--deep",
         status: "running" as const,
         duration_ms: 1000,
         tool_count: 1,
@@ -1347,7 +1347,7 @@ describe("the transcript viewer in the board's pane", () => {
       },
       {
         execution_id: "d",
-        agent: "pass-extra--sol-high",
+        agent: "pass-extra--deep",
         status: "completed" as const,
         duration_ms: 1000,
         tool_count: 1,

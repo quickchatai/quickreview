@@ -23,7 +23,7 @@ export interface RetuneChange {
   to: string;
   /** The companion's reason, from what the scan found. */
   why: string;
-  /** The resolved lens settings it moved: `pass-security: min_tier sol-med → sol-high`.
+  /** The resolved lens settings it moved: `pass-security: min_tier standard → deep`.
    * Empty when the change moved none (a lens a higher-priority concern holds). */
   effects: string[];
 }

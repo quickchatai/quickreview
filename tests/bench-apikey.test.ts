@@ -259,7 +259,7 @@ describe("dry config check: a fresh clone's config on the key route", () => {
     // The published route is untouched: the example's own provider.
     expect(specs(login).every((s) => s.startsWith("openai-codex/"))).toBe(true);
     expect(specs(keyed).every((s) => s.startsWith("openai/"))).toBe(true);
-    expect(keyed.models.tiers["sol-med"]).toBe("openai/gpt-6-sol:medium");
+    expect(keyed.models.tiers["standard"]).toBe("openai/gpt-6-sol:medium");
     // Same model ids and levels — only the provider moved.
     const plain = withEnv({ QCR_BENCH_AUTH: "api-key" }, () => contextFor(ROOT, "").cfg);
     expect(specs(plain).map((s) => s.replace(/^openai\//, ""))).toEqual(
@@ -325,7 +325,7 @@ describe("dry config check: a fresh clone's config on the key route", () => {
       });
       const files = readdirSync(out).filter((f) => f.endsWith(".md"));
       expect(files.length).toBeGreaterThan(10);
-      expect(files).toContain("pass-validate--sol-high.md");
+      expect(files).toContain("pass-validate--deep.md");
       for (const file of files) {
         const spec = /^model:\s*(\S+)/m.exec(readFileSync(join(out, file), "utf8"))?.[1];
         expect(spec, file).toMatch(/^digitalocean\/glm-5\.3-flash:(medium|high)$/);

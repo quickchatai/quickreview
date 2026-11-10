@@ -23,7 +23,7 @@
 //     from stage 1 as well, may be named outright.
 //   * ONLY A DEEP LENS, ONLY A TIER IT IS BUILT AT. A lens that needs a diff
 //     or a PR body (`DIFF_ONLY_LENSES`), a lens the repo's profile switched
-//     off, and a tier below the lens's `min_tier` (or other than `sol-high`
+//     off, and a tier below the lens's `min_tier` (or other than `deep`
 //     for a risk pass) are refused.
 //   * PRICED FROM THE LEDGER (`priceStage2Row`). A row's price is its lines
 //     at a $/kline: this lens measured at these settings when the ledger has
@@ -138,7 +138,7 @@ export type ScanChainStrategy = (typeof SCAN_CHAIN_STRATEGIES)[number];
 export interface Stage2RowRequest {
   lens: string;
   files: string[];
-  /** Default: the lens's floor over `[scan] tier` (`sol-high` for a risk pass). */
+  /** Default: the lens's floor over `[scan] tier` (`deep` for a risk pass). */
   tier?: string;
   reason: string;
   /** The exploit-chain lens only, and required there: where its search
@@ -442,7 +442,7 @@ export function lensEffort(lenses: LensTuningMap | undefined, lens: string): str
   return lenses?.[lens]?.effort ?? "tier";
 }
 
-/** A risk pass runs at `sol-high` alone; any other lens, null. */
+/** A risk pass runs at `deep` alone; any other lens, null. */
 function riskTier(riskPasses: readonly string[], lens: string): PassTier | null {
   return riskPasses.includes(lens) ? RISK_TIER : null;
 }
@@ -623,7 +623,7 @@ const cleanPath = (p: string): string =>
     .replace(/^\.?\/+/, "");
 
 /** A row's tier when none is named: the lens's floor over `[scan] tier`
- * (`sol-high` for a risk pass). */
+ * (`deep` for a risk pass). */
 function defaultRowTier(input: Stage2PlanInput, lens: string): PassTier {
   return riskTier(input.riskPasses, lens) ?? flooredTier(input.lenses, lens, input.defaultTier);
 }

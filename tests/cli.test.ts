@@ -245,14 +245,14 @@ describe("usage-aware spend reporting", () => {
     const store = new StateStore(":memory:");
     try {
       const id = store.startRound(5408, "re-review", ["pass-baseline", "pass-validate"], 75, {
-        validate_tier: "sol-high",
+        validate_tier: "deep",
       });
       store.db
         .prepare("UPDATE rounds SET executed_passes = ? WHERE id = ?")
         .run(JSON.stringify([{ name: "pass-baseline", status: "completed" }]), id);
       const round = whyJson(store, 5408, "/nonexistent-archive").rounds[0]!;
       expect(round.deadline_at).toMatch(/Z$/);
-      expect(round.validate_tier).toBe("sol-high");
+      expect(round.validate_tier).toBe("deep");
       expect(round.executed_passes).toEqual([{ name: "pass-baseline", status: "completed" }]);
     } finally {
       store.close();

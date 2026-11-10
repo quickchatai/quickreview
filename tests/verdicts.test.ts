@@ -144,20 +144,20 @@ function policyRound(pr: number): number {
       pass_plan: [
         {
           lens: "pass-baseline",
-          agent: "pass-baseline--sol-med",
-          tier: "sol-med",
-          raisable_to: ["pass-baseline--sol-high"],
+          agent: "pass-baseline--standard",
+          tier: "standard",
+          raisable_to: ["pass-baseline--deep"],
         },
         {
           lens: "pass-validate",
-          agent: "pass-validate--sol-high",
-          tier: "sol-high",
+          agent: "pass-validate--deep",
+          tier: "deep",
           raisable_to: [],
         },
       ],
       addable_passes: [
-        { lens: "pass-concurrency", tier: "sol-med" },
-        { lens: "pass-security", tier: "sol-high" },
+        { lens: "pass-concurrency", tier: "standard" },
+        { lens: "pass-security", tier: "deep" },
       ],
     },
   );
@@ -392,7 +392,7 @@ describe("valid verdicts", () => {
           pr: 102,
           verdict: "NEEDS_HUMAN",
           ai_approved: true,
-          passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }],
+          passes: [{ name: "pass-baseline", tier: "standard", findings: 1 }],
         }),
       ),
     );
@@ -421,7 +421,7 @@ describe("valid verdicts", () => {
         verdictFile({
           pr: 105,
           verdict: "ESCALATE",
-          passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }],
+          passes: [{ name: "pass-baseline", tier: "standard", findings: 1 }],
         }),
       ),
     );
@@ -446,7 +446,7 @@ describe("valid verdicts", () => {
       verdictFile({
         pr: 104,
         verdict: "NEEDS_HUMAN",
-        passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }],
+        passes: [{ name: "pass-baseline", tier: "standard", findings: 1 }],
       }),
     );
     writeFileSync(join(dir, "notes.txt"), "ignore me");
@@ -2855,16 +2855,16 @@ describe("executed-pass telemetry", () => {
     const parsed = validateVerdict(
       verdictFile({
         passes: [
-          { name: "pass-baseline", tier: "sol-med", findings: "3" },
+          { name: "pass-baseline", tier: "standard", findings: "3" },
           {
             lens: "pass-validate",
-            tier: " sol-high ",
+            tier: " deep ",
             candidates: 5,
             survived: "2",
             killed: 1,
             downgraded: 0,
           },
-          { tier: "sol-med" }, // nameless — dropped, never fatal
+          { tier: "standard" }, // nameless — dropped, never fatal
           "garbage",
         ] as never,
       }),
@@ -2874,7 +2874,7 @@ describe("executed-pass telemetry", () => {
     expect(parsed.verdict?.passes).toEqual([
       {
         name: "pass-baseline",
-        tier: "sol-med",
+        tier: "standard",
         findings: 3,
         survived: null,
         killed: null,
@@ -2884,7 +2884,7 @@ describe("executed-pass telemetry", () => {
       },
       {
         name: "pass-validate",
-        tier: "sol-high",
+        tier: "deep",
         findings: 5,
         survived: 2,
         killed: 1,
@@ -2903,7 +2903,7 @@ describe("executed-pass telemetry", () => {
         passes: [
           {
             name: "pass-validate",
-            tier: "sol-med",
+            tier: "standard",
             findings: 0,
             survived: "2",
             killed: 1,
@@ -2918,7 +2918,7 @@ describe("executed-pass telemetry", () => {
     expect(parsed.verdict?.passes).toEqual([
       {
         name: "pass-validate",
-        tier: "sol-med",
+        tier: "standard",
         findings: 0,
         survived: 2,
         killed: 1,
@@ -2951,10 +2951,10 @@ describe("executed-pass telemetry", () => {
     const { hooks, overseer } = recordingHooks();
     const roundId = reviewingRound(200);
     const passes = [
-      { name: "pass-baseline", tier: "sol-med", findings: 2 },
+      { name: "pass-baseline", tier: "standard", findings: 2 },
       {
         name: "pass-validate",
-        tier: "sol-med",
+        tier: "standard",
         findings: 0,
         survived: 1,
         killed: 1,
@@ -2985,8 +2985,8 @@ describe("executed-pass telemetry", () => {
           pr: 201,
           verdict: "APPROVE",
           passes: [
-            { name: "pass-baseline", tier: "sol-med", findings: 1 },
-            { name: "pass-extra", tier: "sol-med", findings: 0 },
+            { name: "pass-baseline", tier: "standard", findings: 1 },
+            { name: "pass-extra", tier: "standard", findings: 0 },
           ],
         }),
       ),
@@ -3026,14 +3026,14 @@ describe("executed-pass telemetry", () => {
         verdictFile({
           pr: 204,
           passes: [
-            { name: "pass-baseline", tier: "sol-high", findings: 0 },
+            { name: "pass-baseline", tier: "deep", findings: 0 },
             {
               name: "pass-concurrency",
-              tier: "sol-med",
+              tier: "standard",
               reason: "added: read-then-write claim race",
               findings: 1,
             },
-            { name: "pass-validate", tier: "sol-high", findings: 1 },
+            { name: "pass-validate", tier: "deep", findings: 1 },
           ],
         }),
       ),
@@ -3045,7 +3045,7 @@ describe("executed-pass telemetry", () => {
       .prepare("SELECT payload FROM events WHERE kind = 'pass_plan_conformant_addition'")
       .get() as { payload: string };
     expect(JSON.parse(event.payload).additions).toEqual([
-      { name: "pass-concurrency", tier: "sol-med", reason: "added: read-then-write claim race" },
+      { name: "pass-concurrency", tier: "standard", reason: "added: read-then-write claim race" },
     ]);
     expect(overseer).toEqual([]);
   });
@@ -3060,10 +3060,10 @@ describe("executed-pass telemetry", () => {
         verdictFile({
           pr: 205,
           passes: [
-            { name: "pass-baseline", tier: "sol-med", findings: 0 },
-            { name: "pass-concurrency", tier: "sol-high", findings: 0 },
-            { name: "pass-mystery", tier: "sol-med", reason: "because", findings: 0 },
-            { name: "pass-validate", tier: "sol-high", findings: 0 },
+            { name: "pass-baseline", tier: "standard", findings: 0 },
+            { name: "pass-concurrency", tier: "deep", findings: 0 },
+            { name: "pass-mystery", tier: "standard", reason: "because", findings: 0 },
+            { name: "pass-validate", tier: "deep", findings: 0 },
           ],
         }),
       ),
@@ -3186,7 +3186,7 @@ describe("mid-round head advance chains a system re-trigger", () => {
           pr: 402,
           verdict: "NEEDS_HUMAN",
           head_sha: "abc123",
-          passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }],
+          passes: [{ name: "pass-baseline", tier: "standard", findings: 1 }],
         }),
       ),
     );
@@ -4491,22 +4491,22 @@ describe("integration review", () => {
 // became of the sweep — `ran` only on a claim WITH sweep-phase telemetry.
 describe("follow-up rounds: sweep telemetry", () => {
   const DELTA_PLAN: PassPlanEntry[] = [
-    { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
-    { lens: "pass-validate", agent: "pass-validate--sol-high", tier: "sol-high", raisable_to: [] },
+    { lens: "pass-baseline", agent: "pass-baseline--standard", tier: "standard", raisable_to: [] },
+    { lens: "pass-validate", agent: "pass-validate--deep", tier: "deep", raisable_to: [] },
   ];
   const SWEEP_PLAN: PassPlanEntry[] = [
-    { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
-    { lens: "pass-security", agent: "pass-security--sol-high", tier: "sol-high", raisable_to: [] },
-    { lens: "pass-validate", agent: "pass-validate--sol-high", tier: "sol-high", raisable_to: [] },
+    { lens: "pass-baseline", agent: "pass-baseline--standard", tier: "standard", raisable_to: [] },
+    { lens: "pass-security", agent: "pass-security--deep", tier: "deep", raisable_to: [] },
+    { lens: "pass-validate", agent: "pass-validate--deep", tier: "deep", raisable_to: [] },
   ];
   const DELTA_PASSES = [
-    { name: "pass-baseline", tier: "sol-med", phase: "delta", findings: 1 },
-    { name: "pass-validate", tier: "sol-high", phase: "delta", findings: 0 },
+    { name: "pass-baseline", tier: "standard", phase: "delta", findings: 1 },
+    { name: "pass-validate", tier: "deep", phase: "delta", findings: 0 },
   ];
   const SWEEP_PASSES = [
-    { name: "pass-baseline", tier: "sol-med", phase: "sweep", findings: 0 },
-    { name: "pass-security", tier: "sol-high", phase: "sweep", findings: 0 },
-    { name: "pass-validate", tier: "sol-high", phase: "sweep", findings: 0 },
+    { name: "pass-baseline", tier: "standard", phase: "sweep", findings: 0 },
+    { name: "pass-security", tier: "deep", phase: "sweep", findings: 0 },
+    { name: "pass-validate", tier: "deep", phase: "sweep", findings: 0 },
   ];
 
   function followUpRound(pr: number, opts: { sweepOwed: boolean }): number {
@@ -4528,8 +4528,8 @@ describe("follow-up rounds: sweep telemetry", () => {
       {
         pass_plan: DELTA_PLAN,
         addable_passes: [
-          { lens: "pass-concurrency", tier: "sol-med" },
-          { lens: "pass-security", tier: "sol-high" },
+          { lens: "pass-concurrency", tier: "standard" },
+          { lens: "pass-security", tier: "deep" },
         ],
         head_sha: "abc123",
         scope: "delta",
@@ -4568,9 +4568,9 @@ describe("follow-up rounds: sweep telemetry", () => {
       verdictFile({
         sweep: " Not-Reached ",
         passes: [
-          { name: "pass-baseline", tier: "sol-med", phase: "Sweep" },
-          { name: "pass-validate", tier: "sol-med", phase: "later" },
-          { name: "pass-security", tier: "sol-med" },
+          { name: "pass-baseline", tier: "standard", phase: "Sweep" },
+          { name: "pass-validate", tier: "standard", phase: "later" },
+          { name: "pass-security", tier: "standard" },
         ] as never,
       }),
     );
@@ -4686,7 +4686,7 @@ describe("follow-up rounds: sweep telemetry", () => {
         verdictFile({
           pr: 704,
           verdict: "APPROVE",
-          passes: [{ name: "pass-baseline", tier: "sol-med", phase: "delta", findings: 0 }],
+          passes: [{ name: "pass-baseline", tier: "standard", phase: "delta", findings: 0 }],
         }),
       ),
     );
@@ -4735,7 +4735,7 @@ describe("follow-up rounds: sweep telemetry", () => {
           verdictFile({
             pr,
             verdict: "APPROVE",
-            passes: [{ name: "pass-baseline", tier: "sol-med", phase: "delta", findings }],
+            passes: [{ name: "pass-baseline", tier: "standard", phase: "delta", findings }],
           }),
         ),
       );
@@ -4839,18 +4839,18 @@ describe("follow-up rounds: sweep telemetry", () => {
   // row (no reason owed) reads as a missing-reason addition.
   it("an offered optional row the session ran is conformant without a reason; at a tier it may not use, it is not", async () => {
     for (const [pr, tier, mismatches] of [
-      [208, "terra-med", 0],
+      [208, "light", 0],
       [209, "sol-xhigh", 1],
     ] as const) {
       const id = policyRound(pr);
       store.setRoundMeta(id, {
         addable_passes: [
-          { lens: "pass-concurrency", tier: "sol-med" },
+          { lens: "pass-concurrency", tier: "standard" },
           {
             lens: "pass-maintainability",
-            tier: "terra-med",
+            tier: "light",
             optional: true,
-            raisable_to: ["pass-maintainability--sol-med"],
+            raisable_to: ["pass-maintainability--standard"],
           } as { lens: string; tier: string },
         ],
       });
@@ -4861,9 +4861,9 @@ describe("follow-up rounds: sweep telemetry", () => {
           verdictFile({
             pr,
             passes: [
-              { name: "pass-baseline", tier: "sol-med", findings: 0 },
+              { name: "pass-baseline", tier: "standard", findings: 0 },
               { name: "pass-maintainability", tier, findings: 0 },
-              { name: "pass-validate", tier: "sol-high", findings: 0 },
+              { name: "pass-validate", tier: "deep", findings: 0 },
             ],
           }),
         ),
@@ -4890,27 +4890,27 @@ describe("follow-up rounds: sweep telemetry", () => {
   it("a post-discovery compose row is optional: run under either spelling it conforms, at a foreign tier or unplanned it does not", async () => {
     const compose = {
       lens: "pass-sec-exploit-chain",
-      agent: "pass-sec-exploit-chain--sol-high",
-      tier: "sol-high",
+      agent: "pass-sec-exploit-chain--deep",
+      tier: "deep",
       raisable_to: [],
       strategy: "compose",
       stage: "post-discovery",
     };
     for (const [pr, name, tier, planned, mismatch] of [
-      [221, "pass-sec-exploit-chain:compose", "sol-high", true, null],
-      [222, "pass-sec-exploit-chain", "sol-high", true, null],
+      [221, "pass-sec-exploit-chain:compose", "deep", true, null],
+      [222, "pass-sec-exploit-chain", "deep", true, null],
       [223, null, null, true, null],
       [
         224,
         "pass-sec-exploit-chain:compose",
-        "terra-med",
+        "light",
         true,
         { wrong_tier: ["pass-sec-exploit-chain"] },
       ],
       [
         225,
         "pass-sec-exploit-chain:compose",
-        "sol-high",
+        "deep",
         false,
         { unknown_additions: ["pass-sec-exploit-chain"] },
       ],
@@ -4924,9 +4924,9 @@ describe("follow-up rounds: sweep telemetry", () => {
           verdictFile({
             pr,
             passes: [
-              { name: "pass-baseline", tier: "sol-med", findings: 1 },
+              { name: "pass-baseline", tier: "standard", findings: 1 },
               ...(name ? [{ name, tier: tier!, findings: 0 }] : []),
-              { name: "pass-validate", tier: "sol-high", findings: 0 },
+              { name: "pass-validate", tier: "deep", findings: 0 },
             ],
           }),
         ),
@@ -4961,8 +4961,8 @@ describe("follow-up rounds: sweep telemetry", () => {
           verdict: "APPROVE",
           sweep: "ran",
           passes: [
-            { name: "pass-baseline", tier: "sol-med", phase: "sweep", findings: 0 },
-            { name: "pass-validate", tier: "sol-high", findings: 0 },
+            { name: "pass-baseline", tier: "standard", phase: "sweep", findings: 0 },
+            { name: "pass-validate", tier: "deep", findings: 0 },
           ],
         }),
       ),
@@ -5354,32 +5354,23 @@ describe("grouped plan telemetry retains every row policy", () => {
     );
   }
   it("does not let the final low-tier row license every production sweep", async () => {
-    await run(
-      [row("sol-high"), row("sol-high"), row("terra-med")],
-      ["terra-med", "terra-med", "terra-med"],
-    );
+    await run([row("deep"), row("deep"), row("light")], ["light", "light", "light"]);
     expect(mismatch()?.wrong_tier).toHaveLength(2);
   });
   it("accepts each row's actual tier regardless of row or execution order", async () => {
-    await run(
-      [row("sol-high"), row("sol-high"), row("terra-med")],
-      ["terra-med", "sol-high", "sol-high"],
-    );
+    await run([row("deep"), row("deep"), row("light")], ["light", "deep", "deep"]);
     expect(mismatch()).toBeUndefined();
   });
   it("assigns a raise without consuming the only row a lower tier can satisfy", async () => {
-    await run(
-      [row("terra-med", ["pass-sweep--sol-high"]), row("sol-high")],
-      ["sol-high", "terra-med"],
-    );
+    await run([row("light", ["pass-sweep--deep"]), row("deep")], ["deep", "light"]);
     expect(mismatch()).toBeUndefined();
   });
   it("counts missing executions for repeated rows of the same lens", async () => {
-    await run([row("terra-med"), row("terra-med")], ["terra-med"]);
+    await run([row("light"), row("light")], ["light"]);
     expect(mismatch()?.missing).toEqual(["pass-sweep"]);
   });
   it("retains all offered optional tiers", async () => {
-    await run([row("sol-high"), row("terra-med")], ["sol-high"], true);
+    await run([row("deep"), row("light")], ["deep"], true);
     expect(mismatch()).toBeUndefined();
   });
 });

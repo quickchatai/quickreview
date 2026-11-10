@@ -17,7 +17,7 @@
 //
 // Tier fan-out: each seeded pass builds into per-tier variant files
 // `<pass>--<tier>.md`. Risk passes (config models.risk_passes) build only the
-// sol-high variant; pass-validate builds every tier at or above its floor
+// deep variant; pass-validate builds every tier at or above its floor
 // (models.validate_tier); every other pass builds all three tiers. The tier's
 // model spec ("provider/model:thinking") goes into `model:` WHOLE (the native
 // extension reads only that field, and pi's --model accepts the :thinking
@@ -2040,7 +2040,7 @@ export interface BuildAgentsOptions {
   root?: string;
   /** config.models.tiers — PassTier → model spec ("provider/model:thinking"). */
   tiers?: Record<PassTier, string>;
-  /** config.models.risk_passes — build only the sol-high variant. Absent,
+  /** config.models.risk_passes — build only the deep variant. Absent,
    * the shipped default joined with the security family, the same set a
    * parsed config resolves to. */
   riskPasses?: string[];

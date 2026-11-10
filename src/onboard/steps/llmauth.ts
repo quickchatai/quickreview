@@ -51,6 +51,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
+import { LEGACY_TIER_NAMES, foldTier } from "@quickchatai/pi-quickreview/src/types.js";
 import { COMPANION_DEFAULTS, TUI_DEFAULTS } from "../../config.js";
 import { locateSecrets } from "../../install.js";
 import { CHOICE_KEYS, AUTH_ROUTES, authRouteOf, type AuthRoute } from "../choices.js";
@@ -97,15 +98,24 @@ export const OPENAI_KEY_FILE = "openai_api_key";
 export const MODEL_LOCATIONS: ReadonlyArray<{ section: string; key: string }> = [
   { section: "models", key: "default" },
   { section: "models", key: "conversation" },
-  { section: "models.tiers", key: "terra-med" },
-  { section: "models.tiers", key: "sol-med" },
-  { section: "models.tiers", key: "sol-high" },
+  { section: "models.tiers", key: "light" },
+  { section: "models.tiers", key: "standard" },
+  { section: "models.tiers", key: "deep" },
 ];
 
-/** "models.default", "models.tiers.sol-high", … — the stable labels the checks
+/** "models.default", "models.tiers.deep", … — the stable labels the checks
  * and the checklist record use. */
 export function modelLabels(): string[] {
   return MODEL_LOCATIONS.map((l) => `${l.section}.${l.key}`);
+}
+
+const TIERS_SECTION = "models.tiers";
+
+/** A key in the file as the location it names. Under `[models.tiers]` either
+ * spelling of a tier is that tier's location, so a config written with the
+ * older names is audited and rewritten in place, never reported missing. */
+function locationLabel(section: string, key: string): string {
+  return `${section}.${section === TIERS_SECTION ? (foldTier(key) ?? key) : key}`;
 }
 
 // ---- paths ------------------------------------------------------------------
@@ -270,11 +280,23 @@ export function managedModel(value: string): { route: AuthRoute; rest: string } 
   return null;
 }
 
+/** One location's value: the key as named, or, for a tier, its older name. */
+function readLocation(text: string, section: string, key: string): string | null {
+  const value = readTomlString(text, section, key);
+  if (value !== null || section !== TIERS_SECTION) return value;
+  for (const [older, tier] of Object.entries(LEGACY_TIER_NAMES)) {
+    if (tier !== key) continue;
+    const written = readTomlString(text, section, older);
+    if (written !== null) return written;
+  }
+  return null;
+}
+
 /** What the five locations currently say. Read-only; the basis of verify(). */
 export function auditModelStrings(text: string): ModelAudit[] {
   return MODEL_LOCATIONS.map(({ section, key }) => {
     const label = `${section}.${key}`;
-    const value = readTomlString(text, section, key);
+    const value = readLocation(text, section, key);
     if (value === null) return { label, value: "", kind: "missing" as const };
     return { label, value, kind: managedModel(value)?.route ?? ("custom" as const) };
   });
@@ -322,7 +344,7 @@ export function rewriteModelPrefixes(text: string, route: AuthRoute): RewriteRes
     if (isComment(line)) continue;
     const kv = STRING_KV_RE.exec(line);
     if (!kv) continue;
-    const label = `${current}.${kv[3]!}`;
+    const label = locationLabel(current, kv[3]!);
     if (!wanted.has(label) || seen.has(label)) continue;
     seen.add(label);
     const value = kvValue(kv);

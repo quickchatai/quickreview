@@ -10,7 +10,7 @@
 // no tool call yet says "starting", and a duration nobody measured is absent.
 import { lensForAgent, type LiveAgentProgress } from "../round-progress.js";
 
-/** The lens's short name: `pass-security--sol-high` is `security`. */
+/** The lens's short name: `pass-security--deep` is `security`. */
 export function lensShortName(agent: string): string {
   const lens = lensForAgent(agent);
   return lens.startsWith("pass-") && lens.length > 5 ? lens.slice(5) : lens;

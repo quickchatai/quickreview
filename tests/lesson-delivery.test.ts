@@ -1179,7 +1179,7 @@ describe("repo facts for the touched paths — the recheck nudge and the ping-po
 
 describe("selection: one shared find for every addable lens, filtered per lens", () => {
   it("the addable lenses filter the round's ONE lesson find and select per lens over the PR's files", () => {
-    const rows = [{ row: 0, lens: "pass-baseline", agent: "pass-baseline--sol-med" }];
+    const rows = [{ row: 0, lens: "pass-baseline", agent: "pass-baseline--standard" }];
     const plan = planFinds({
       title: "T",
       rows,

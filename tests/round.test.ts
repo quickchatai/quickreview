@@ -416,7 +416,7 @@ describe("prepareRound", () => {
   // — the compose row joins the wave (or the plan is refused) and this fails.
   it("starts the engine wave from tasks/ alone and sanctions tasks-post for the session", () => {
     const outDir = join(tmp, "out-post");
-    const chain = "pass-sec-exploit-chain--sol-high";
+    const chain = "pass-sec-exploit-chain--deep";
     const task = (dir: string, file: string) => ({
       path: join(outDir, dir, file),
       text: `# ${file}\n`,
@@ -441,7 +441,7 @@ describe("prepareRound", () => {
           plannedLenses: ["pass-baseline", "pass-sec-exploit-chain"],
           passPlan: [],
           taskFiles: [
-            task("tasks", "01-pass-baseline--sol-high.md"),
+            task("tasks", "01-pass-baseline--deep.md"),
             task("tasks", `02-${chain}@delta.md`),
           ],
           extraFiles: [task("tasks-post", `01-${chain}@compose.md`)],
@@ -451,7 +451,7 @@ describe("prepareRound", () => {
     );
     expect(prep.startWarnings).toEqual([]);
     expect(prep.waveUnits.map((u) => [u.phase, u.agent, u.strategy ?? null])).toEqual([
-      ["plan", "pass-baseline--sol-high", null],
+      ["plan", "pass-baseline--deep", null],
       ["plan", chain, "delta"],
     ]);
     expect(prep.env.QCR_LAUNCH_PLAN_DIRS!.split(delimiter)).toContain(join(outDir, "tasks-post"));

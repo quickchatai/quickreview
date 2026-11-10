@@ -236,42 +236,42 @@ improvement_pr_deny_prefixes = ["migrations/", "infra/", "ansible/", ".github/wo
 # an OpenAI API key), the same model runs on `openai` (docs/llm-setup.md).
 default = "openai-codex/gpt-6.1-sol"
 conversation = "openai-codex/gpt-6.1-sol"
-# Passes always run at sol-high — single variant, not raisable (already top).
+# Passes always run at deep — single variant, not raisable (already top).
 # The fourteen security-family lenses (pass-sec-*) always join this list,
 # whatever it says, and a profile's [lenses.<pass>] risk = true adds its lens.
 risk_passes = ["pass-security", "pass-prod-risk", "pass-data-safety"]
 # pass-validate's tier — its own configured tier (floored by a repo profile's
 # min_tier for it), never raised to match a lens (src/dispatch.ts
-# validatorTier). Shipped at sol-high: the validator is the adversarial gate
+# validatorTier). Shipped at deep: the validator is the adversarial gate
 # over every finding. One validator call per round — not a hot-path multiplier.
-validate_tier = "sol-high"
-# Diffs under this many changed lines (additions+deletions) start at terra-med.
+validate_tier = "deep"
+# Diffs under this many changed lines (additions+deletions) start at light.
 small_diff_lines = 150
 # [models.pass_tiers] — per-lens tier pins: pass name → tier
 # name (a key of [models.tiers]). SHIPPED DEFAULT (src/config.ts
 # DEFAULT_PASS_TIERS): pass-baseline, pass-sweep and
-# pass-behaviour-delta at "sol-high" (gpt-6.1-sol at high effort) — measured
+# pass-behaviour-delta at "deep" (gpt-6.1-sol at high effort) — measured
 # +6 defects on 18 AACR PRs for +18% cost per PR. An entry here replaces that
-# lens's default pin (e.g. "pass-baseline" = "sol-med"); a repo profile lowers
+# lens's default pin (e.g. "pass-baseline" = "standard"); a repo profile lowers
 # one lens's thinking with [lenses.<pass>] effort = "medium". A pinned lens
 # runs at that tier on every PR whatever the diff size — the plan names it, it
 # is not raisable, and every built variant of it carries that tier's spec. The
 # validator never follows a pinned lens (it runs at validate_tier).
 # Not for pass-validate (use validate_tier) nor for a risk pass (always
-# sol-high), a security-family lens among them. A profile min_tier still
+# deep), a security-family lens among them. A profile min_tier still
 # floors a pin. Unknown passes or tiers
 # are refused at load. e.g.
 #   [models.pass_tiers]
-#   "pass-sweep" = "sol-high"
-#   "pass-baseline" = "sol-high"
+#   "pass-sweep" = "deep"
+#   "pass-baseline" = "deep"
 
 [models.tiers]
 # PassTier → model spec; the whole spec (incl. the `:thinking` suffix) rides
 # the built agent's `model:` field — pi's --model accepts the suffix, and the
 # native subagent extension reads only that field.
-"terra-med" = "openai-codex/gpt-6.1-sol:medium"
-"sol-med" = "openai-codex/gpt-6.1-sol:medium"
-"sol-high" = "openai-codex/gpt-6.1-sol:high"
+"light" = "openai-codex/gpt-6.1-sol:medium"
+"standard" = "openai-codex/gpt-6.1-sol:medium"
+"deep" = "openai-codex/gpt-6.1-sol:high"
 
 [models.pricing]
 # Spend rates keyed by bare model id, USD per million tokens. Consumed by
@@ -1055,7 +1055,7 @@ margin_min = 90          # refresh once the token has less than pi's 5 min + thi
 # wins); the rest is the install's. All optional — these are the defaults.
 [scan]
 effort = "low"                 # stage 1's reasoning level: low | medium | high (= [models] effort_max)
-tier = "sol-med"               # whose model pass-scan runs on ([models.tiers])
+tier = "standard"              # whose model pass-scan runs on ([models.tiers])
 validator = true               # the skeptic: judges each finding at its lens's tier — confirmed / likely / doubtful, never dropped (its cost is in the price)
 exclude = []                   # repo-relative globs never scanned, e.g. ["generated/", "*.pb.go"]
 calibration_units = 3          # units the first-scan calibration run reads

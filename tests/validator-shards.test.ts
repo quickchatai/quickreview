@@ -15,14 +15,14 @@ import { tmpdir } from "node:os";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const VALIDATE: PassPlanEntry = {
   lens: "pass-validate",
-  agent: "pass-validate--sol-high",
-  tier: "sol-high",
+  agent: "pass-validate--deep",
+  tier: "deep",
   raisable_to: [],
 };
 const BASE: PassPlanEntry = {
   lens: "pass-baseline",
-  agent: "pass-baseline--sol-med",
-  tier: "sol-med",
+  agent: "pass-baseline--standard",
+  tier: "standard",
   raisable_to: [],
 };
 

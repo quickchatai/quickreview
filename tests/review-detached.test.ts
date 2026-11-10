@@ -291,8 +291,8 @@ describe("status: live lens activity", () => {
     });
     const args = {
       tasks: [
-        { agent: "pass-security--sol-high", task: "a" },
-        { agent: "pass-tests--sol-high", task: "b" },
+        { agent: "pass-security--deep", task: "a" },
+        { agent: "pass-tests--deep", task: "b" },
       ],
     };
     const call = { toolCallId: "c1", toolName: "lens", args };
@@ -326,7 +326,7 @@ describe("status: live lens activity", () => {
     });
     expect(await lenses()).toEqual([
       {
-        agent: "pass-security--sol-high",
+        agent: "pass-security--deep",
         status: "running",
         duration_ms: 5_000,
         tool_count: 3,
@@ -335,7 +335,7 @@ describe("status: live lens activity", () => {
         line: "security · read src/x.ts · 3 tools · 0:05",
       },
       {
-        agent: "pass-tests--sol-high",
+        agent: "pass-tests--deep",
         status: "running",
         duration_ms: 0,
         tool_count: 0,
@@ -384,14 +384,14 @@ describe("status: live lens activity", () => {
 
     // One lens finishes, the other fails: their final counts and outcomes stay.
     security.finish(
-      ran("r-sec", "pass-security--sol-high", 0, {
+      ran("r-sec", "pass-security--deep", 0, {
         durationMs: 9_000,
         toolCount: 5,
         toolRunning: false,
       }),
     );
     tests.finish(
-      ran("r-tst", "pass-tests--sol-high", 1, {
+      ran("r-tst", "pass-tests--deep", 1, {
         durationMs: 8_000,
         toolCount: 2,
         toolRunning: false,

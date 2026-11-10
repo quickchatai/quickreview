@@ -82,7 +82,7 @@ const RECORD = {
       path: "src/api/orders.py",
       line: 212,
       lens: "pass-security",
-      tier: "sol-high",
+      tier: "deep",
       severity: "P1",
       confidence: 0.9,
       reachability: "routine",
@@ -561,8 +561,8 @@ describe("VerdictWatcher round-end findings check", () => {
         head_sha: HEAD,
         finished_at: "2026-08-25T12:00:00Z",
         passes: [
-          { name: "pass-security", tier: "sol-high", findings: 1 },
-          { name: "pass-simplicity", tier: "sol-med", findings: 1 },
+          { name: "pass-security", tier: "deep", findings: 1 },
+          { name: "pass-simplicity", tier: "standard", findings: 1 },
         ],
       }),
     );

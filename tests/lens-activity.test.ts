@@ -104,8 +104,8 @@ describe("lensProgressRecord", () => {
 
 describe("lensActivityLine", () => {
   const entry = (over: Partial<LiveAgentProgress>): LiveAgentProgress => ({
-    execution_id: "c1:pass-security--sol-high",
-    agent: "pass-security--sol-high",
+    execution_id: "c1:pass-security--deep",
+    agent: "pass-security--deep",
     status: "running",
     duration_ms: 0,
     tool_count: 0,
@@ -175,7 +175,7 @@ describe("lensActivityLine", () => {
   });
 
   it("short names and clocks", () => {
-    expect(lensShortName("pass-data-safety--sol-high")).toBe("data-safety");
+    expect(lensShortName("pass-data-safety--deep")).toBe("data-safety");
     expect(lensShortName("pass-validate")).toBe("validate");
     expect(lensShortName("reviewer")).toBe("reviewer");
     expect(clockOf(59_999)).toBe("0:59");

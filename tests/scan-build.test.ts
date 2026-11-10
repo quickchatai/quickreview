@@ -105,20 +105,20 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
     expect([...agents.keys()].filter((n) => n.startsWith("pass-scan--")).sort()).toEqual([
       `pass-scan--${fixture.scan.tier}`,
     ]);
-    expect(agents.has("pass-validate--sol-high")).toBe(true);
+    expect(agents.has("pass-validate--deep")).toBe(true);
   });
 
   it("builds pass-scan at the [scan] tier alone; the deep lenses keep every tier for stage 2", () => {
     const cfg = scanConfig(
       sandbox,
-      `${fixtureToml}\n[scan]\ntier = "terra-med"\n`,
+      `${fixtureToml}\n[scan]\ntier = "light"\n`,
       homeProfileLookup(env),
     );
     const agents = scanBuild(cfg);
     expect([...agents.keys()].filter((n) => n.startsWith("pass-scan--"))).toEqual([
-      "pass-scan--terra-med",
+      "pass-scan--light",
     ]);
-    for (const t of ["terra-med", "sol-med", "sol-high"])
+    for (const t of ["light", "standard", "deep"])
       expect(agents.has(`pass-baseline--${t}`), t).toBe(true);
   });
 
@@ -142,19 +142,19 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
     }
     // …while a PR build keeps its own: bash behind the guard, and no memory
     // tool (no lens leaf loads the memory extension).
-    expect(/^tools: (.*)$/m.exec(prBuild().get("pass-baseline--sol-med")!)?.[1]).toBe(
+    expect(/^tools: (.*)$/m.exec(prBuild().get("pass-baseline--standard")!)?.[1]).toBe(
       "read, bash, grep",
     );
   });
 
   it("runs pass-scan at the [scan] effort on each tier's model, other lenses untouched", () => {
     const agents = scanBuild();
-    expect(fixture.scan.tier).toBe("sol-med");
-    expect(/^model: (.*)$/m.exec(agents.get("pass-scan--sol-med")!)?.[1]).toBe(
-      fixture.models.tiers["sol-med"].replace(/:[a-z]+$/, "") + ":low",
+    expect(fixture.scan.tier).toBe("standard");
+    expect(/^model: (.*)$/m.exec(agents.get("pass-scan--standard")!)?.[1]).toBe(
+      fixture.models.tiers["standard"].replace(/:[a-z]+$/, "") + ":low",
     );
-    expect(/^model: (.*)$/m.exec(agents.get("pass-baseline--sol-med")!)?.[1]).toBe(
-      fixture.models.tiers["sol-med"],
+    expect(/^model: (.*)$/m.exec(agents.get("pass-baseline--standard")!)?.[1]).toBe(
+      fixture.models.tiers["standard"],
     );
   });
 
@@ -246,7 +246,7 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
   it("the profile's effort reaches the built pass-scan", () => {
     profile("repo", `[scan]\neffort = "medium"\n`);
     const agents = scanBuild(scanConfig(sandbox, configWith("repo"), homeProfileLookup(env)));
-    expect(/^model: (.*)$/m.exec(agents.get("pass-scan--sol-med")!)?.[1]).toMatch(/:medium$/);
+    expect(/^model: (.*)$/m.exec(agents.get("pass-scan--standard")!)?.[1]).toMatch(/:medium$/);
   });
 });
 

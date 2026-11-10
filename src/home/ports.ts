@@ -140,7 +140,7 @@ export interface ReviewQuote {
 
 /** One lens of a running review, from its live log. */
 export interface LiveLens {
-  /** The lens agent (`pass-security--sol-high`). */
+  /** The lens agent (`pass-security--deep`). */
   agent: string;
   /** running, completed, failed, or another word the log uses. */
   status: string;

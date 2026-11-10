@@ -130,9 +130,7 @@ const RESULT = {
   schema_version: 1,
   ok: true,
   findings: {
-    P1: [
-      { path: "src/a.ts", line: 2, severity: "P1", title: "b is wrong", lens: "pass-x--sol-high" },
-    ],
+    P1: [{ path: "src/a.ts", line: 2, severity: "P1", title: "b is wrong", lens: "pass-x--deep" }],
     nit: [{ path: null, line: null, severity: "nit", title: "naming", lens: null }],
   },
   cost_usd: 1.11,
@@ -151,7 +149,7 @@ describe("preview", () => {
             estimate_usd: 1.33,
             cap_usd: 2.66,
             key: "k-123",
-            lenses: ["pass-security--sol-high", "pass-validate--sol-high"],
+            lenses: ["pass-security--deep", "pass-validate--deep"],
             files: 9,
             head_sha: "abc",
           },
@@ -165,7 +163,7 @@ describe("preview", () => {
         estimateUsd: 1.33,
         capUsd: 2.66,
         key: "k-123",
-        lenses: ["pass-security--sol-high", "pass-validate--sol-high"],
+        lenses: ["pass-security--deep", "pass-validate--deep"],
         files: 9,
         headSha: "abc",
       },
@@ -268,7 +266,7 @@ describe("start, status and stop over the registry", () => {
             path: "src/a.ts",
             line: 2,
             title: "b is wrong",
-            lens: "pass-x--sol-high",
+            lens: "pass-x--deep",
           },
           { severity: "nit", path: null, line: null, title: "naming", lens: null },
         ],
@@ -325,7 +323,7 @@ describe("status's live lens activity", () => {
         target: "PR acme/widgets#3",
         started_at: NOW,
         progress: {
-          lenses_started: ["pass-security--sol-high"],
+          lenses_started: ["pass-security--deep"],
           live: {
             round: 1,
             parent_status: "active",
@@ -333,7 +331,7 @@ describe("status's live lens activity", () => {
             updated_at: "x",
             agents: [
               {
-                agent: "pass-security--sol-high",
+                agent: "pass-security--deep",
                 status: "running",
                 duration_ms: 41_000,
                 tool_count: 7,
@@ -351,7 +349,7 @@ describe("status's live lens activity", () => {
       lastActivity: "lens wave running",
       lenses: [
         {
-          agent: "pass-security--sol-high",
+          agent: "pass-security--deep",
           status: "running",
           toolCount: 7,
           durationMs: 41_000,

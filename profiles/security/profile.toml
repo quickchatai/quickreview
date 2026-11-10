@@ -7,10 +7,10 @@
 #     the sweep, tests and the quality lenses included — through the same
 #     `enabled = false` a profile writes by hand. A lens added to the code
 #     later is switched off too, with no edit here.
-#   * Every family lens runs at the risk tier (sol-high, one variant), as on
+#   * Every family lens runs at the risk tier (deep, one variant), as on
 #     every profile; four of them are planned on every PR that changes code
 #     or config, so a security-only review never plans nothing.
-#   * The validator runs at sol-high whatever the preset says, and an
+#   * The validator runs at deep whatever the preset says, and an
 #     unverified security finding survives as a question (`fold`).
 #   * Security findings post in their own budget; nothing else posts, a
 #     [blocker] included (the validator kills every non-security candidate
@@ -43,7 +43,7 @@ plan = "always"
 
 # The adversary every security finding passes runs at the risk tier.
 [lenses.pass-validate]
-min_tier = "sol-high"
+min_tier = "deep"
 
 [posting]
 # Security findings' own slots, counted apart from any comment cap.

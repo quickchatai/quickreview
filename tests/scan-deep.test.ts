@@ -188,7 +188,7 @@ function scanBuild(out: string, depth: "standard" | "deep", addenda?: readonly P
     extraSrcDirs: [join(sandbox, "agents/scan")],
     tiers: fixture.models.tiers,
     riskPasses: fixture.models.risk_passes,
-    validateTier: "terra-med",
+    validateTier: "light",
     ...(addenda ? { addenda } : {}),
   });
   return built(join(dir, out));
@@ -320,7 +320,7 @@ describe("the deep addenda compose into a deep scan build alone", () => {
     );
     const agents = built(out);
     expect(agents.get(`pass-scan--${fixture.scan.tier}`)).toContain(SCAN_DEEP_SUGGEST_ADDENDUM);
-    expect(agents.get("pass-consistency--sol-med")).toContain(SCAN_DEEP_DIG_ADDENDUM);
+    expect(agents.get("pass-consistency--standard")).toContain(SCAN_DEEP_DIG_ADDENDUM);
   });
 
   it("the rules say what the spec asks them to", () => {
@@ -373,7 +373,7 @@ const row = (over: Partial<LedgerEntry>): LedgerEntry => ({
   path: "a.py",
   blob: "A",
   lens: "pass-consistency",
-  tier: "sol-med",
+  tier: "standard",
   effort: "tier",
   validator: false,
   sha: "s",
@@ -440,7 +440,7 @@ describe("the coverage ledger honours depth", () => {
 
   it("a rate is measured at one depth when asked, at any otherwise", () => {
     const rows = [row({ cost_usd: 0.1 }), row({ path: "b.py", cost_usd: 0.3, depth: "deep" })];
-    const key = { lens: "pass-consistency", tier: "sol-med", effort: "tier", validator: false };
+    const key = { lens: "pass-consistency", tier: "standard", effort: "tier", validator: false };
     expect(measuredRate(rows, key)!.usd_per_kline).toBeCloseTo(2, 9);
     expect(measuredRate(rows, { ...key, depth: "standard" })!.usd_per_kline).toBeCloseTo(1, 9);
     expect(measuredRate(rows, { ...key, depth: "deep" })!.usd_per_kline).toBeCloseTo(3, 9);
@@ -455,7 +455,7 @@ describe("the coverage ledger honours depth", () => {
   });
 
   it("a stage-2 price stands on its own depth's readings when they price it as well; else it is marked across depth", () => {
-    const cfg = { tier: "sol-med", effort: "low", validator: false, unmeasured_rate_factor: 4 };
+    const cfg = { tier: "standard", effort: "low", validator: false, unmeasured_rate_factor: 4 };
     const stage1 = row({ lens: SCAN_PASS, effort: "low", path: "s.py", cost_usd: 0.05 });
     const std = row({ cost_usd: 0.2 });
     // Only standard readings of the lens: a deep row borrows them, and says so.
@@ -463,7 +463,7 @@ describe("the coverage ledger honours depth", () => {
       [stage1, std],
       cfg,
       "pass-consistency",
-      "sol-med",
+      "standard",
       "tier",
       "deep",
     )!;
@@ -475,11 +475,13 @@ describe("the coverage ledger honours depth", () => {
       [stage1, std],
       cfg,
       "pass-consistency",
-      "sol-med",
+      "standard",
       "tier",
       "standard",
     )!;
-    expect(same).toEqual(priceStage2Row([stage1, std], cfg, "pass-consistency", "sol-med", "tier"));
+    expect(same).toEqual(
+      priceStage2Row([stage1, std], cfg, "pass-consistency", "standard", "tier"),
+    );
     expect(same.across_depth).toBeUndefined();
     // A deep measurement of the lens wins for a deep row.
     const deep = row({ path: "d.py", cost_usd: 0.6, depth: "deep" });
@@ -487,7 +489,7 @@ describe("the coverage ledger honours depth", () => {
       [stage1, std, deep],
       cfg,
       "pass-consistency",
-      "sol-med",
+      "standard",
       "tier",
       "deep",
     )!;
@@ -549,7 +551,7 @@ function floorInput(over: Partial<Stage2PlanInput> = {}): Stage2PlanInput {
     exclude: ["gen/"],
     budget: { maxFiles: 30, maxLines: 3000 },
     riskPasses: ["pass-data-safety"],
-    defaultTier: "sol-med",
+    defaultTier: "standard",
     covered: () => new Set(),
     price: () => PRICE,
     budgetUsd: null,
@@ -585,7 +587,7 @@ describe("the deep floor", () => {
     expect(r).toMatchObject({
       floor: true,
       reason: "deep floor: pass-consistency over app",
-      tier: "sol-med",
+      tier: "standard",
       tests: [],
       status: "run",
       units: ["app"],
@@ -1023,9 +1025,9 @@ describe("the propose tool", () => {
     expect(text).toMatch(
       /DEEP: your rows 1 to run, ~\$\d+\.\d\d; the floor 16 to run, ~\$\d+\.\d\d\./,
     );
-    expect(text).toMatch(/row-1: pass-consistency at sol-med over app/);
+    expect(text).toMatch(/row-1: pass-consistency at standard over app/);
     expect(text).toMatch(
-      /The deep floor:\n {2}pass-consistency \(floor floor-1…floor-4\) at sol-med: 4 row\(s\)/,
+      /The deep floor:\n {2}pass-consistency \(floor floor-1…floor-4\) at standard: 4 row\(s\)/,
     );
     expect(text).toMatch(/pass-delivery \(floor floor-5…floor-8\)/);
     expect(text).toMatch(

@@ -513,7 +513,7 @@ describe("suggestions and stage 2", () => {
     });
     expect(sugs.json.stage2.lenses).toContainEqual({
       lens: "pass-data-safety",
-      tiers: ["sol-high"],
+      tiers: ["deep"],
     });
     expect((await h.run(["suggestions"])).text).toMatch(/^pass-security \(2\):/);
 

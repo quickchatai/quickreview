@@ -29,14 +29,14 @@ const read = (file: string): string =>
 const PLAN: PassPlanEntry[] = [
   {
     lens: "pass-baseline",
-    agent: "pass-baseline--sol-med",
-    tier: "sol-med",
-    raisable_to: ["pass-baseline--sol-high"],
+    agent: "pass-baseline--standard",
+    tier: "standard",
+    raisable_to: ["pass-baseline--deep"],
   },
   {
     lens: "pass-validate",
-    agent: "pass-validate--sol-med",
-    tier: "sol-med",
+    agent: "pass-validate--standard",
+    tier: "standard",
     raisable_to: [],
   },
 ];
@@ -44,18 +44,18 @@ const PLAN: PassPlanEntry[] = [
 const SWEEP_PLAN: PassPlanEntry[] = [
   {
     lens: "pass-security",
-    agent: "pass-security--sol-high",
-    tier: "sol-high",
+    agent: "pass-security--deep",
+    tier: "deep",
     raisable_to: [],
   },
   {
     lens: "pass-sweep",
-    agent: "pass-sweep--sol-med",
-    tier: "sol-med",
+    agent: "pass-sweep--standard",
+    tier: "standard",
     raisable_to: [],
     focus: ["src/api/orders.py"],
   },
-  { lens: "pass-validate", agent: "pass-validate--sol-med", tier: "sol-med", raisable_to: [] },
+  { lens: "pass-validate", agent: "pass-validate--standard", tier: "standard", raisable_to: [] },
 ];
 
 const base: RoundOrder = {
@@ -157,7 +157,7 @@ describe("round-follow-up.md renders completely", () => {
     expect(out).toContain(PRIOR_NOTE);
     expect(out).toContain("THE CHANGE SINCE THE LAST REVIEW");
     expect(out).toContain("PRE-APPROVAL SWEEP — owed this round.");
-    expect(out).toContain("`pass-security--sol-high`");
+    expect(out).toContain("`pass-security--deep`");
     // The doc header and the fence markers never reach the model.
     expect(out).not.toContain("Sandbox file:");
     expect(out).not.toContain("RATIFIED");
@@ -301,7 +301,7 @@ describe("renderSweepNote", () => {
     const note = renderSweepNote({ sweep_plan: SWEEP_PLAN });
     expect(note).toContain("PRE-APPROVAL SWEEP — owed this round.");
     expect(note).toContain("| lens | subagent to call | tier | may raise to | focus / why |");
-    expect(note).toContain("`pass-sweep--sol-med`");
+    expect(note).toContain("`pass-sweep--standard`");
     expect(note).toContain("files: `src/api/orders.py`");
     expect(note).not.toContain("task file");
   });
@@ -323,15 +323,13 @@ describe("renderSweepNote", () => {
   it("names the sweep's task files when the daemon wrote them", () => {
     const note = renderSweepNote({
       sweep_plan: SWEEP_PLAN,
-      sweep_task_files: [
-        { row: 0, agent: "pass-security--sol-high", path: "/s/tasks/sweep/00-a.md" },
-      ],
+      sweep_task_files: [{ row: 0, agent: "pass-security--deep", path: "/s/tasks/sweep/00-a.md" }],
     });
-    expect(note).toContain("| 1 | `pass-security--sol-high` | `/s/tasks/sweep/00-a.md` |");
+    expect(note).toContain("| 1 | `pass-security--deep` | `/s/tasks/sweep/00-a.md` |");
   });
 
   it("launches the sweep through launch_plan, as its own call", () => {
-    const files = [{ row: 0, agent: "pass-security--sol-high", path: "/s/p/tasks-sweep/01-a.md" }];
+    const files = [{ row: 0, agent: "pass-security--deep", path: "/s/p/tasks-sweep/01-a.md" }];
     const note = renderSweepNote({ sweep_plan: SWEEP_PLAN, sweep_task_files: files });
     expect(note).toContain("in `/s/p/tasks-sweep`");
     expect(note).toContain("`extra` keyed `sweep:*`");

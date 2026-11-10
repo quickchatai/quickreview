@@ -362,8 +362,7 @@ function playRound(s) {
                 args: {
                   tasks: Array.from({ length: Number(state.hold.burst) }, (_, i) => ({
                     agent:
-                      agents.find((a) => a.startsWith("pass-baseline")) ??
-                      "pass-baseline--sol-high",
+                      agents.find((a) => a.startsWith("pass-baseline")) ?? "pass-baseline--deep",
                     task: `Burst ${i + 1}: reply NONE.`,
                   })),
                 },

@@ -182,25 +182,25 @@ describe("the shipped security profile", () => {
     }
     // Every family row the plan carries runs at the risk tier.
     for (const row of p.pass_plan.filter((r) => SECURITY_FAMILY.includes(r.lens)))
-      expect(row.tier, row.lens).toBe("sol-high");
+      expect(row.tier, row.lens).toBe("deep");
   });
 
   /**
-   * An install whose `[models] validate_tier` is below sol-high (a low
-   * preset) still validates security findings at sol-high under this profile.
+   * An install whose `[models] validate_tier` is below deep (a low
+   * preset) still validates security findings at deep under this profile.
    *
    * MUTATION: delete `[lenses.pass-validate] min_tier` from
    * profiles/security/profile.toml — this fails.
    */
-  it("runs the validator at sol-high whatever the install's validate_tier", () => {
-    const low: Config = { ...fixture, models: { ...fixture.models, validate_tier: "sol-med" } };
+  it("runs the validator at deep whatever the install's validate_tier", () => {
+    const low: Config = { ...fixture, models: { ...fixture.models, validate_tier: "standard" } };
     expect(
       plan("default", BROAD, low).pass_plan.find((r) => r.lens === VALIDATE_PASS)?.tier,
       "control",
-    ).toBe("sol-med");
+    ).toBe("standard");
     const row = plan(PROFILE, BROAD, low).pass_plan.find((r) => r.lens === VALIDATE_PASS);
-    expect(row?.tier).toBe("sol-high");
-    expect(row?.agent).toBe(`${VALIDATE_PASS}--sol-high`);
+    expect(row?.tier).toBe("deep");
+    expect(row?.agent).toBe(`${VALIDATE_PASS}--deep`);
   });
 
   /**

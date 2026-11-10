@@ -127,7 +127,7 @@ node "$HERE/patch-toml.mjs" "$CFG" \
   'owner.name="Rehearsal"' 'owner.github_login="alice"' \
   'openviking.endpoint="remote"' 'openviking.host="quickreview-memory"' 'openviking.port=1933' \
   'models.default="local/m"' 'models.conversation="local/m"' 'models.overseer="local/m"' \
-  'models.tiers."terra-med"="local/m"' 'models.tiers."sol-med"="local/m"' 'models.tiers."sol-high"="local/m"' \
+  'models.tiers."light"="local/m"' 'models.tiers."standard"="local/m"' 'models.tiers."deep"="local/m"' \
   'daemon.poll_interval_s=30' 'daemon.lens_permits=20' \
   'login_refresh.enabled=true'
 echo "host dir laid out at $H (head $HEAD_SHA, base $BASE_SHA)" >&2

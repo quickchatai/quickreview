@@ -99,8 +99,8 @@ describe("a family row in the default profile", () => {
     const [row, ...more] = rows(p, "pass-sec-injection");
     expect(more).toEqual([]);
     expect(row).toMatchObject({
-      agent: "pass-sec-injection--sol-high",
-      tier: "sol-high",
+      agent: "pass-sec-injection--deep",
+      tier: "deep",
       raisable_to: [],
     });
     expect(row!.why).toMatch(/app\/repo\.py/);
@@ -203,7 +203,7 @@ describe("the exploit chain: one row per strategy", () => {
     const chain = rows(p, CHAIN_PASS);
     expect(chain.map((r) => r.strategy)).toEqual(["delta", "forward", "backward"]);
     for (const r of chain) {
-      expect(r.agent).toBe(`${CHAIN_PASS}--sol-high`);
+      expect(r.agent).toBe(`${CHAIN_PASS}--deep`);
       expect(r.stage).toBeUndefined();
       expect(r.why).toMatch(new RegExp(`^${r.strategy}: `));
     }
@@ -212,7 +212,7 @@ describe("the exploit chain: one row per strategy", () => {
     expect(p.post_plan).toEqual([
       expect.objectContaining({
         lens: CHAIN_PASS,
-        agent: `${CHAIN_PASS}--sol-high`,
+        agent: `${CHAIN_PASS}--deep`,
         strategy: "compose",
         stage: "post-discovery",
       }),
@@ -566,8 +566,8 @@ describe("a prior finding's owner without a baseline row", () => {
   });
   const row = (lens: string, strategy?: PassPlanEntry["strategy"]): PassPlanEntry => ({
     lens,
-    agent: `${lens}--sol-high`,
-    tier: "sol-high",
+    agent: `${lens}--deep`,
+    tier: "deep",
     raisable_to: [],
     ...(strategy ? { strategy } : {}),
   });
@@ -634,7 +634,7 @@ const SECURITY_ORDER_FIELDS = [
 
 const lowValidator: Config = {
   ...fixture,
-  models: { ...fixture.models, validate_tier: "sol-med" },
+  models: { ...fixture.models, validate_tier: "standard" },
 };
 
 describe("the round order's security fields", () => {
@@ -649,8 +649,8 @@ describe("the round order's security fields", () => {
    */
   it("raise the security validator beside a family row", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const o = order(lowValidator, [SQL]);
-    expect(o.security_validator_agent).toBe(`${VALIDATE_PASS}--sol-high`);
-    expect(o.pass_plan.find((r) => r.lens === VALIDATE_PASS)?.tier).toBe("sol-med");
+    expect(o.security_validator_agent).toBe(`${VALIDATE_PASS}--deep`);
+    expect(o.pass_plan.find((r) => r.lens === VALIDATE_PASS)?.tier).toBe("standard");
     expect(order(lowValidator, [PLAIN]).security_validator_agent).toBeUndefined();
     // Already at the risk tier: nothing to raise.
     expect(order(fixture, [SQL]).security_validator_agent).toBeUndefined();
@@ -735,13 +735,13 @@ describe("the round order's security fields", () => {
           sweepPlan,
         },
       });
-      expect(o.security_validator_agent).toBe(`${VALIDATE_PASS}--sol-high`);
+      expect(o.security_validator_agent).toBe(`${VALIDATE_PASS}--deep`);
       expect(o.threat_model).toEqual({ source: "repo", hash: threatModel.hash });
       expect(o.security_facts).toEqual([fact]);
       expect(inventoryReads).toBe(1);
       expect(o.prior_partial_chains).toHaveLength(1);
       const sweep = sweepOrderOf(o, sweepPlan);
-      expect(sweep.security_validator_agent).toBe(`${VALIDATE_PASS}--sol-high`);
+      expect(sweep.security_validator_agent).toBe(`${VALIDATE_PASS}--deep`);
       expect(sweep.threat_model_excerpt).toContain("Threat model");
       expect(sweep.security_facts).toEqual([fact]);
     },

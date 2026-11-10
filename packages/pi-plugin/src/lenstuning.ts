@@ -4,7 +4,7 @@
 // (and an eighth for the style lens alone):
 //
 //   [lenses.pass-security]
-//   min_tier = "sol-high"      # the lowest tier the plan may run it at
+//   min_tier = "deep"      # the lowest tier the plan may run it at
 //   effort = "high"            # low | medium | high — that lens's thinking only
 //   max_severity = "P0"        # the lens's severity ceiling (raise or lower)
 //   emphasis = "Auth is the product here; …"   # words for that lens
@@ -28,7 +28,7 @@
 //   * `min_tier` — plan time (src/dispatch.ts `buildPassPlan`): a FLOOR under
 //     whatever tier the plan would otherwise choose, so plan rows, `raisable_to`,
 //     the sweep rows and the add rule's variant all move with it. A floor never
-//     lowers: a risk pass stays at `sol-high`, the validator stays at or above
+//     lowers: a risk pass stays at `deep`, the validator stays at or above
 //     its configured tier. A lens's floor never moves the validator (it is
 //     not raised to match any lens).
 //   * `effort` — build time, through the per-variant model hook
@@ -51,7 +51,7 @@
 //     It never overrides `enabled = false` nor `[review] skip_lenses`.
 //   * `risk` — overlay time: `true` joins the lens to `[models] risk_passes`
 //     once (packages/pi-plugin/src/profiles.ts `applyProfileSecurity`), so it
-//     runs at sol-high, single variant, not raisable, like every risk pass; a
+//     runs at deep, single variant, not raisable, like every risk pass; a
 //     `[models.pass_tiers]` pin on it is refused. `false` adds nothing: it
 //     never takes a lens out of `risk_passes`.
 //   * `emphasis` and `max_severity` — compiled into addenda

@@ -44,7 +44,7 @@ import type { PrStateRow } from "../src/state.js";
 const fixture = readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8");
 const baseCfg: Config = parseConfig(fixture);
 // The shipped pins (DEFAULT_PASS_TIERS: baseline, sweep and behaviour-delta at
-// sol-high) are cleared here: these tests exercise the
+// deep) are cleared here: these tests exercise the
 // unpinned tier heuristics; the pins themselves are pinned in lens-knobs.test.ts.
 baseCfg.models.pass_tiers = {};
 
@@ -103,7 +103,7 @@ describe("[models] effort — one reasoning level for every model", () => {
     const cfg = parseConfig(
       fixture.replace("[models]\n", `[models]\neffort = "high"\neffort_max = "xhigh"\n`),
     );
-    expect(cfg.models.tiers["sol-high"].endsWith(":xhigh")).toBe(true);
+    expect(cfg.models.tiers["deep"].endsWith(":xhigh")).toBe(true);
   });
 
   it("refuses an unknown effort or ceiling rather than measuring nothing", () => {
@@ -165,7 +165,7 @@ describe("[review] preset — default / low / max", () => {
         .replace(/\[review\]\n/, `[review]\npreset = "max"\n`)
         .replace("[models]\n", `[models]\neffort = "medium"\n`),
     );
-    expect(mixed.models.tiers["sol-high"].endsWith(":medium")).toBe(true);
+    expect(mixed.models.tiers["deep"].endsWith(":medium")).toBe(true);
   });
 
   it("refuses an unknown preset", () => {
@@ -192,7 +192,7 @@ describe("bench --config: one run's levers on the shipped config", () => {
     const max = applyConfigOverrides(baseCfg, "review.preset=max", fixture);
     expect(max.review.preset).toBe("max");
     expect(max.models.conversation.endsWith(":max")).toBe(true);
-    expect(max.models.tiers["terra-med"].endsWith(":max")).toBe(true);
+    expect(max.models.tiers["light"].endsWith(":max")).toBe(true);
     expect(max.review).toMatchObject(REVIEW_PRESETS.max.levers);
     // exactly what production parses from the same text with that preset
     expect(max).toEqual(parseConfig(withPresetInToml(fixture, "max")));
@@ -204,7 +204,7 @@ describe("bench --config: one run's levers on the shipped config", () => {
     expect(maxNoSweep.review.sweep).toBe(false);
     expect(maxNoSweep.review.intent_min_words).toBe(20);
     const low = applyConfigOverrides(baseCfg, "review.preset=low", fixture);
-    expect(low.models.tiers["sol-high"].endsWith(":low")).toBe(true);
+    expect(low.models.tiers["deep"].endsWith(":low")).toBe(true);
     expect(() => applyConfigOverrides(baseCfg, "review.preset=turbo", fixture)).toThrow(/preset/);
   });
 
@@ -224,7 +224,7 @@ describe("bench --config: one run's levers on the shipped config", () => {
 
   it("spaced, repeated or text-less preset pairs never relabel a run without applying it", () => {
     const spaced = applyConfigOverrides(baseCfg, "review.preset = max", fixture);
-    expect(spaced.models.tiers["sol-high"].endsWith(":max")).toBe(true);
+    expect(spaced.models.tiers["deep"].endsWith(":max")).toBe(true);
     expect(() =>
       applyConfigOverrides(baseCfg, "review.preset=max,review.preset=low", fixture),
     ).toThrow(/more than once/);
@@ -455,9 +455,9 @@ describe("buildPassPlan with the levers", () => {
     expect(sweeps).toMatchObject([
       {
         lens: SWEEP_PASS,
-        agent: "pass-sweep--terra-med",
-        tier: "terra-med",
-        raisable_to: ["pass-sweep--sol-med", "pass-sweep--sol-high"],
+        agent: "pass-sweep--light",
+        tier: "light",
+        raisable_to: ["pass-sweep--standard", "pass-sweep--deep"],
         focus: ["src/joystick.c", "src/hid.c"],
       },
     ]);
@@ -543,13 +543,18 @@ describe("selection tuning — the [review] cost knobs", () => {
 describe("renderPassPlan", () => {
   it("without focus or reasons the table is exactly the four-column one", () => {
     const text = renderPassPlan([
-      { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
+      {
+        lens: "pass-baseline",
+        agent: "pass-baseline--standard",
+        tier: "standard",
+        raisable_to: [],
+      },
     ]);
     expect(text).toBe(
       [
         "| lens | subagent to call | tier | may raise to |",
         "| --- | --- | --- | --- |",
-        "| pass-baseline | `pass-baseline--sol-med` | sol-med | — (pinned) |",
+        "| pass-baseline | `pass-baseline--standard` | standard | — (pinned) |",
       ].join("\n"),
     );
   });
@@ -559,8 +564,8 @@ describe("renderPassPlan", () => {
       [
         {
           lens: SWEEP_PASS,
-          agent: "pass-sweep--terra-med",
-          tier: "terra-med",
+          agent: "pass-sweep--light",
+          tier: "light",
           raisable_to: [],
           focus: ["a.ts"],
         },

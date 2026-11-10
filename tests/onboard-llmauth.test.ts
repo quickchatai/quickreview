@@ -82,12 +82,12 @@ secrets_dir = "SECRETS_DIR"
 default = "openai-codex/gpt-5.6-sol"
 conversation = "openai-codex/gpt-5.6-sol"   # sticky per-PR session
 risk_passes = ["pass-security"]
-validate_tier = "sol-high"
+validate_tier = "deep"
 
 [models.tiers]
-"terra-med" = "openai-codex/gpt-5.6-terra:medium"
-"sol-med" = "openai-codex/gpt-5.6-sol:medium"
-"sol-high" = "openai-codex/gpt-5.6-sol:high"
+"light" = "openai-codex/gpt-5.6-terra:medium"
+"standard" = "openai-codex/gpt-5.6-sol:medium"
+"deep" = "openai-codex/gpt-5.6-sol:high"
 
 [tui]
 container = "quickreview-sandbox"
@@ -289,9 +289,9 @@ describe("model-string rewrite", () => {
     expect(modelLabels()).toEqual([
       "models.default",
       "models.conversation",
-      "models.tiers.terra-med",
-      "models.tiers.sol-med",
-      "models.tiers.sol-high",
+      "models.tiers.light",
+      "models.tiers.standard",
+      "models.tiers.deep",
     ]);
     expect(MODEL_LOCATIONS).toHaveLength(5);
   });
@@ -304,7 +304,7 @@ describe("model-string rewrite", () => {
     expect(missing).toEqual([]);
     for (const a of auditModelStrings(text)) expect(a.kind).toBe("api");
     expect(text).toContain('default = "openai/gpt-5.6-sol"');
-    expect(text).toContain('"sol-high" = "openai/gpt-5.6-sol:high"');
+    expect(text).toContain('"deep" = "openai/gpt-5.6-sol:high"');
     // Comments, trailing comments, unrelated keys and the commented-out
     // [companion] model line all survive byte-for-byte.
     expect(text).toContain(
@@ -343,9 +343,28 @@ describe("model-string rewrite", () => {
   });
 
   it("reports a location that is missing from the file rather than inventing it", () => {
-    const trimmed = EXAMPLE_CONFIG.replace('"sol-med" = "openai-codex/gpt-5.6-sol:medium"\n', "");
+    const trimmed = EXAMPLE_CONFIG.replace('"standard" = "openai-codex/gpt-5.6-sol:medium"\n', "");
     const out = rewriteModelPrefixes(trimmed, "api");
-    expect(out.missing).toEqual(["models.tiers.sol-med"]);
+    expect(out.missing).toEqual(["models.tiers.standard"]);
+  });
+
+  // MUTATION: make locationLabel return `${section}.${key}` unfolded in
+  // src/onboard/steps/llmauth.ts — the three tier lines are left on the old
+  // prefix and reported missing, and this fails.
+  it("a config written with the older tier names is audited and rewritten in place, keys untouched", () => {
+    const older = EXAMPLE_CONFIG.replace('"light" =', '"terra-med" =')
+      .replace('"standard" =', '"sol-med" =')
+      .replace('"deep" =', "sol-high =");
+    expect(auditModelStrings(older).map((a) => [a.label, a.kind])).toEqual(
+      modelLabels().map((label) => [label, "oauth"]),
+    );
+    const out = rewriteModelPrefixes(older, "api");
+    expect(out.rewritten).toEqual(modelLabels());
+    expect(out.missing).toEqual([]);
+    expect(out.text).toContain('"terra-med" = "openai/gpt-5.6-terra:medium"');
+    expect(out.text).toContain('"sol-med" = "openai/gpt-5.6-sol:medium"');
+    expect(out.text).toContain('sol-high = "openai/gpt-5.6-sol:high"');
+    for (const a of auditModelStrings(out.text)) expect(a.kind).toBe("api");
   });
 
   it("never rewrites a same-named key in another section", () => {

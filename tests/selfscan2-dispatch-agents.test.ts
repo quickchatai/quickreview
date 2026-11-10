@@ -304,8 +304,8 @@ describe("author-controlled strings render as bounded data", () => {
     const table = renderPassPlan([
       {
         lens: "pass-sweep",
-        agent: "pass-sweep--sol-med",
-        tier: "sol-med",
+        agent: "pass-sweep--standard",
+        tier: "standard",
         raisable_to: [],
         focus: [evil, "ok.ts"],
       },
@@ -327,8 +327,8 @@ describe("author-controlled strings render as bounded data", () => {
     const table = renderPassPlan([
       {
         lens: "pass-edge",
-        agent: "pass-edge--sol-med",
-        tier: "sol-med",
+        agent: "pass-edge--standard",
+        tier: "standard",
         raisable_to: [],
         why: `a predicate changes in ${evil}`,
       } as never,

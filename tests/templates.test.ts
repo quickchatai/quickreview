@@ -23,7 +23,14 @@ import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "@quickchatai/pi-quickreview/sr
 import { RECHECK_FILE_RE, recheckDecisionFile, type RecheckOrder } from "../src/recheck.js";
 import { VERDICT_FILE_RE } from "../src/verdicts.js";
 import { checkBashCommand } from "../extensions/cli/bash-guard-ambient.js";
-import type { RoundOrder, RoundType } from "@quickchatai/pi-quickreview/src/types.js";
+import {
+  ADD_TIER,
+  LEGACY_TIER_NAMES,
+  PASS_TIER_ORDER,
+  RISK_TIER,
+  type RoundOrder,
+  type RoundType,
+} from "@quickchatai/pi-quickreview/src/types.js";
 
 const order: RoundOrder = {
   pr: 412,
@@ -33,17 +40,17 @@ const order: RoundOrder = {
   round_type: "re-review",
   lenses: ["pass-security", "pass-delivery", "pass-validate"],
   pass_plan: [
-    { lens: "pass-security", agent: "pass-security--sol-high", tier: "sol-high", raisable_to: [] },
+    { lens: "pass-security", agent: "pass-security--deep", tier: "deep", raisable_to: [] },
     {
       lens: "pass-delivery",
-      agent: "pass-delivery--sol-med",
-      tier: "sol-med",
-      raisable_to: ["pass-delivery--sol-high"],
+      agent: "pass-delivery--standard",
+      tier: "standard",
+      raisable_to: ["pass-delivery--deep"],
     },
     {
       lens: "pass-validate",
-      agent: "pass-validate--terra-med",
-      tier: "terra-med",
+      agent: "pass-validate--light",
+      tier: "light",
       raisable_to: [],
     },
   ],
@@ -92,11 +99,9 @@ describe("roundVars", () => {
     expect(v.base_sha).toBe("basetip");
     expect(v.merge_base).toBe("forkpoint");
     expect(v.pass_plan).toContain("| lens | subagent to call | tier | may raise to |");
+    expect(v.pass_plan).toContain("| pass-security | `pass-security--deep` | deep | — (pinned) |");
     expect(v.pass_plan).toContain(
-      "| pass-security | `pass-security--sol-high` | sol-high | — (pinned) |",
-    );
-    expect(v.pass_plan).toContain(
-      "| pass-delivery | `pass-delivery--sol-med` | sol-med | `pass-delivery--sol-high` |",
+      "| pass-delivery | `pass-delivery--standard` | standard | `pass-delivery--deep` |",
     );
     expect(v.addable_lenses).toBe("pass-ui, pass-contracts");
     expect(v.migration_gate_note).toMatch(/MIGRATION GATE/);
@@ -233,16 +238,16 @@ describe("renderPassPlan / renderAddableLenses", () => {
     const table = renderPassPlan(order.pass_plan);
     const lines = table.split("\n");
     expect(lines).toHaveLength(2 + order.pass_plan.length);
-    expect(lines[2]).toBe("| pass-security | `pass-security--sol-high` | sol-high | — (pinned) |");
+    expect(lines[2]).toBe("| pass-security | `pass-security--deep` | deep | — (pinned) |");
     const terra = renderPassPlan([
       {
         lens: "pass-baseline",
-        agent: "pass-baseline--terra-med",
-        tier: "terra-med",
-        raisable_to: ["pass-baseline--sol-med", "pass-baseline--sol-high"],
+        agent: "pass-baseline--light",
+        tier: "light",
+        raisable_to: ["pass-baseline--standard", "pass-baseline--deep"],
       },
     ]);
-    expect(terra).toContain("`pass-baseline--sol-med`, `pass-baseline--sol-high`");
+    expect(terra).toContain("`pass-baseline--standard`, `pass-baseline--deep`");
   });
 
   it("joins addable lenses and placeholders the empty case", () => {
@@ -414,8 +419,29 @@ describe("shipped round templates", () => {
       expect(out).not.toContain("{{");
       // The plan table and the addable list land in the prompt.
       expect(out).toContain("| lens | subagent to call | tier | may raise to |");
-      expect(out).toContain("`pass-delivery--sol-med`");
+      expect(out).toContain("`pass-delivery--standard`");
       expect(out).toContain("pass-ui, pass-contracts");
+    });
+
+    // The add rule tells the session which variant to call for a lens it
+    // adds. Those two names are the planner's, so the words in the template
+    // and the constants the plan is built from must be the same two names.
+    // MUTATION: write `<lens>--sol-med` in the add rule of a round template
+    // (or make ADD_TIER PASS_TIER_ORDER[0]) — this fails.
+    it(`${tplFile} add rule names the add tier and the risk tier, as the planner does`, () => {
+      const rule =
+        /call the\s+`<lens>--([a-z-]+)` variant, unless it is a risk pass \(risk passes exist only as\s+`<lens>--([a-z-]+)`\)/.exec(
+          text,
+        );
+      expect(rule, "the add rule's sentence").not.toBeNull();
+      expect(rule![1]).toBe(ADD_TIER);
+      expect(rule![2]).toBe(RISK_TIER);
+      // Every tier the template spells out is a rung of the ladder: the
+      // example verdict's `"tier"` values, and no older name anywhere.
+      const spelled = [...text.matchAll(/"tier": "([^"]+)"/g)].map((m) => m[1]!);
+      expect(spelled.length).toBeGreaterThan(3);
+      for (const tier of spelled) expect(PASS_TIER_ORDER as readonly string[]).toContain(tier);
+      expect(text).not.toMatch(new RegExp(Object.keys(LEGACY_TIER_NAMES).join("|")));
     });
 
     // The kill log that feeds the EOD critic is stated whatever tier the
@@ -1003,9 +1029,9 @@ describe("shipped recheck template", () => {
 describe("renderIntentNote", () => {
   const intentEntry = {
     lens: "pass-intent",
-    agent: "pass-intent--terra-med",
-    tier: "terra-med" as const,
-    raisable_to: ["pass-intent--sol-med", "pass-intent--sol-high"],
+    agent: "pass-intent--light",
+    tier: "light" as const,
+    raisable_to: ["pass-intent--standard", "pass-intent--deep"],
   };
   const intentOrder: RoundOrder = {
     ...order,

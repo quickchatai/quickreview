@@ -353,7 +353,7 @@ export interface ScanSettings {
   /** The profile's per-lens tuning — which deep lenses stage 2 may run, at
    * which tiers and effort. */
   lenses?: LensTuningMap;
-  /** `[models] risk_passes` — built at `sol-high` only. */
+  /** `[models] risk_passes` — built at `deep` only. */
   riskPasses?: readonly string[];
   /** `[security] fold` after the profile: a security candidate the skeptic
    * could not settle is stored `needs-review`. Absent = off. */

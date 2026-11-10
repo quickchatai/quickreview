@@ -303,7 +303,7 @@ describe("the interview's profile tools", () => {
       expect(out).toContain(point);
     expect(out).toMatch(/security — .*\[pass-security, pass-bounds\]/);
     expect(out).toMatch(
-      /critical: enabled = true, min_tier = "sol-high", effort = "high", max_severity = "P0"/,
+      /critical: enabled = true, min_tier = "deep", effort = "high", max_severity = "P0"/,
     );
     expect(out).toMatch(/normal: \(nothing — the shipped behaviour\)/);
   });

@@ -147,25 +147,25 @@ describe("a profile can switch the validator off", () => {
 
 describe("the validator runs at its own tier, never raised", () => {
   const lowFloor = structuredClone(fixture);
-  lowFloor.models.validate_tier = "terra-med";
+  lowFloor.models.validate_tier = "light";
 
-  it("a sol-high risk lens does not raise it", () => {
+  it("a deep risk lens does not raise it", () => {
     const p = plan(lowFloor, AUTH).pass_plan;
-    expect(p.find((r) => r.lens === "pass-security")?.tier).toBe("sol-high");
+    expect(p.find((r) => r.lens === "pass-security")?.tier).toBe("deep");
     expect(validateRow(lowFloor, AUTH)).toEqual({
       lens: "pass-validate",
-      agent: "pass-validate--terra-med",
-      tier: "terra-med",
+      agent: "pass-validate--light",
+      tier: "light",
       raisable_to: [],
     });
   });
 
   it("a lens floored by the profile does not raise it; its own min_tier still does", () => {
-    profile("lfloor", '[lenses.pass-baseline]\nmin_tier = "sol-high"\n');
-    expect(validateRow(tuned("lfloor", lowFloor), SMALL)?.tier).toBe("terra-med");
-    profile("vfloor", '[lenses.pass-validate]\nmin_tier = "sol-med"\n');
-    expect(validateRow(tuned("vfloor", lowFloor), SMALL)?.tier).toBe("sol-med");
-    expect(validatorTier(tuned("vfloor", lowFloor))).toBe("sol-med");
+    profile("lfloor", '[lenses.pass-baseline]\nmin_tier = "deep"\n');
+    expect(validateRow(tuned("lfloor", lowFloor), SMALL)?.tier).toBe("light");
+    profile("vfloor", '[lenses.pass-validate]\nmin_tier = "standard"\n');
+    expect(validateRow(tuned("vfloor", lowFloor), SMALL)?.tier).toBe("standard");
+    expect(validatorTier(tuned("vfloor", lowFloor))).toBe("standard");
   });
 
   it("a lens's effort never reaches the validator's built model", () => {
@@ -176,8 +176,8 @@ describe("the validator runs at its own tier, never raised", () => {
   });
 
   it("untuned installs are unchanged: the shipped tier is the top one", () => {
-    expect(fixture.models.validate_tier).toBe("sol-high");
-    for (const files of [SMALL, AUTH]) expect(validateRow(fixture, files)?.tier).toBe("sol-high");
+    expect(fixture.models.validate_tier).toBe("deep");
+    for (const files of [SMALL, AUTH]) expect(validateRow(fixture, files)?.tier).toBe("deep");
   });
 });
 
@@ -274,11 +274,11 @@ describe("the validator is told its validity veto is a doubt", () => {
       });
       const bytes = (name: string) =>
         readFileSync(built.find((b) => b.name === name)!.output, "utf8");
-      const validator = bytes("pass-validate--sol-high");
+      const validator = bytes("pass-validate--deep");
       expect(validator).toContain("A validity veto is a DOUBT, not a kill");
       expect(validator).toContain("DOUBTED\n- <lens> <path:line>");
       for (const w of DOUBT_WORDS) expect(validator).toContain(`\`${w}\``);
-      expect(bytes("pass-baseline--sol-med")).not.toContain("A validity veto is a DOUBT");
+      expect(bytes("pass-baseline--standard")).not.toContain("A validity veto is a DOUBT");
     } finally {
       rmSync(out, { recursive: true, force: true });
     }

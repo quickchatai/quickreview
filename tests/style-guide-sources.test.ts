@@ -288,7 +288,7 @@ describe("a profile may point pass-style at a guide in the config home", () => {
     profile("drafted", GUIDED, { "style-guide.md": GUIDE });
     const cfg = tuned("drafted");
     const built = agents(cfg);
-    const style = built.get("pass-style--sol-med")!;
+    const style = built.get("pass-style--standard")!;
     expect(style).toContain("Name booleans is_/has_.");
     expect(style).toContain(
       "a guide the repo itself writes, the repo's guide is the only standard",
@@ -296,9 +296,9 @@ describe("a profile may point pass-style at a guide in the config home", () => {
     expect(built.get(`pass-validate--${cfg.models.validate_tier}`)).toContain(
       "No abbreviations in public names.",
     );
-    expect(built.get("pass-baseline--sol-med")).not.toContain("House style");
+    expect(built.get("pass-baseline--standard")).not.toContain("House style");
     // An untuned build is untouched by the feature.
-    expect(agents(tuned("")).get("pass-style--sol-med")).not.toContain("profile style guide");
+    expect(agents(tuned("")).get("pass-style--standard")).not.toContain("profile style guide");
   });
 
   it("a scan build states when the guide applies outright — it has no plan row to name it", () => {

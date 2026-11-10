@@ -32,8 +32,8 @@ const order: RoundOrder = {
   round_type: "re-review",
   lenses: ["pass-baseline", "pass-validate"],
   pass_plan: [
-    { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
-    { lens: "pass-validate", agent: "pass-validate--sol-high", tier: "sol-high", raisable_to: [] },
+    { lens: "pass-baseline", agent: "pass-baseline--standard", tier: "standard", raisable_to: [] },
+    { lens: "pass-validate", agent: "pass-validate--deep", tier: "deep", raisable_to: [] },
   ],
   addable_lenses: [],
   migration_gate: false,

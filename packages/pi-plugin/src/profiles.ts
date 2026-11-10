@@ -723,7 +723,7 @@ export function securityOnlyLenses(
  *     `cfg.lenses` (`securityOnlyLenses`; `passes` is `ALL_PASSES`);
  *   * each `[lenses.<pass>] risk = true` lens joins `models.risk_passes`. A
  *     `[models.pass_tiers]` pin or a `[models.pass_models]` override on such a
- *     lens is refused: a risk pass always runs at sol-high on its tier's
+ *     lens is refused: a risk pass always runs at deep on its tier's
  *     model, and a profile that asked for both asked for something this
  *     cannot honour.
  * Run after the lens tuning is overlaid (it reads `cfg.lenses`). `explicit`
