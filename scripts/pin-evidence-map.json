@@ -337,6 +337,19 @@
       }
     },
     {
+      "id": "pi-borrow-modify",
+      "assumes": "pi 1.4.0 calls its credential store's modify for a stored OAuth login only when the token is inside pi's five minutes of validity (never for a stored key or a status read), runs the request on the credential modify resolves with whether or not the store ran the updater pi handed it, keeps no copy of that credential, and reports a store that refuses as `Credential store modify failed for <provider>` followed by the store's own words; a borrowed login takes the owner's newer token there instead of refreshing.",
+      "files": {
+        "packages/pi-plugin/src/engine/auth.ts": 1,
+        "tests/pi-canary/canary-14-borrow-modify.test.ts": 1
+      },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a round that outlived the access token it started on, on a route with an owner, whose later calls ran on the owner's newer token; no extract field names the token a call ran on or a re-borrow yet"
+      }
+    },
+    {
       "id": "pi-offline-refresh",
       "assumes": "pi 1.4.0's ModelRuntime.refresh({ allowNetwork: false }) makes no request whatever PI_OFFLINE says, restores the catalog overlay stored in the agent dir's models-store.json, fills the availability snapshot the registry facade reads, and leaves the auth context swapped onto the runtime in place.",
       "files": { "tests/pi-canary/canary-15-offline-refresh.test.ts": 1 },

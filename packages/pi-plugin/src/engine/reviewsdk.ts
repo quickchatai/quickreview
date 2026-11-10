@@ -9,8 +9,9 @@
 //
 //   login        read from the dir's auth.json by engineCredentials: an
 //                in-memory, read-only copy, refused up front when the token would
-//                expire inside the turn. An API key in the spec's env (the key
-//                route) is given to the runtime in memory.
+//                expire inside the turn. A provider key is looked up by pi, by
+//                pi's own names and in pi's own order (a stored credential owns
+//                its provider), in the spec's env over this process's.
 //   settings     the dir's settings.json supplies what the process route's pi
 //                reads from it: the durable retry and the HTTP idle timeout.
 //   dispatcher   pi's HTTP dispatcher is installed when the route owns its
@@ -38,7 +39,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { lensRunConfigFromEnv } from "../../extensions/lens.js";
 import { CONTEXT_PACK_FILE } from "../contextpack.js";
 import { agentDirSettings } from "./agentdir.js";
-import { applyEnvApiKeys, engineCredentials, type EngineAuth } from "./auth.js";
+import { engineCredentials, type EngineAuth } from "./auth.js";
 import { engineLensTools, type EngineLensTools } from "./lens/engine-tools.js";
 import type { LensRunConfig } from "./lens/runlens.js";
 import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./lens/wave.js";
@@ -58,7 +59,8 @@ export interface ReviewSdkOptions {
   /** The round's lens tool, given the spec it serves and the host its passes
    * run on. Omitted: the `engine` option's (or `extras`'). */
   lens?: (spec: SessionSpec, host: PiHost) => RoundLensTools;
-  /** The process env the tool uid split is read from. Omitted: `process.env`. */
+  /** This process's env: the tool uid split is read from it, and pi looks for
+   * a provider key in it under the spec's own. Omitted: `process.env`. */
   processEnv?: NodeJS.ProcessEnv;
   /** Replaces the round's extras (the extension factories, tool allowlist and
    * context stub of a main session) for a session that is not a round's, such
@@ -184,9 +186,11 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
           ],
           credentials: auth.credentials,
           settings: agentDirSettings(agentDir),
-          configureModels: async (runtime) => {
-            await applyEnvApiKeys(runtime, spec.env);
-          },
+          // Where pi looks for a provider key: the round's env, which names
+          // what the run was given, over this process's, which holds whatever
+          // else the person has. No key is handed to the runtime, so a stored
+          // login keeps its provider, as in pi itself.
+          authEnv: { ...procEnv, ...spec.env },
         };
         const host = await (options.makeHost ?? PiHost.create)(hostOptions);
         const tools = engine

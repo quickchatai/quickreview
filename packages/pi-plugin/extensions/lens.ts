@@ -34,7 +34,7 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { agentDirSettings } from "../src/engine/agentdir.js";
-import { applyEnvApiKeys, engineCredentials } from "../src/engine/auth.js";
+import { engineCredentials } from "../src/engine/auth.js";
 import { LENS_LEDGER_FILE, LENS_SESSIONS_DIR } from "../src/engine/openable.js";
 import { resolvePassDeadlineMs } from "../src/engine/lens/deadline.js";
 import { loadBuiltAgents, type AgentRegistry } from "../src/engine/lens/registry.js";
@@ -141,7 +141,8 @@ function lazyRunner(
 }
 
 /** A PiHost over the interactive pi's own agent dir: a read-only copy of its
- * login, pi's dispatcher left alone. */
+ * login, pi's dispatcher left alone. pi looks for a provider key in `env`, by
+ * its own names and in its own order (a stored credential owns its provider). */
 async function interactiveHost(
   agentDir: string,
   env: Readonly<Record<string, string | undefined>>,
@@ -154,9 +155,7 @@ async function interactiveHost(
     ...(homeDir !== undefined ? { homeDir } : {}),
     credentials: auth.credentials,
     settings: agentDirSettings(agentDir),
-    configureModels: async (runtime) => {
-      await applyEnvApiKeys(runtime, env);
-    },
+    authEnv: env,
   });
 }
 

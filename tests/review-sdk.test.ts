@@ -150,18 +150,47 @@ describe("reviewSdkRuntime", () => {
     );
   });
 
-  it("gives an API key in the spec's env to the runtime, in memory (the key route)", async () => {
+  /** The credential the host's inventory names for `provider`. */
+  const credentialOf = async (provider: string) =>
+    (await hosts.at(-1)!.inventory()).find((e) => e.provider === provider)?.credential;
+
+  // MUTATION: drop `authEnv` from the host options in reviewSdkRuntime — pi
+  // looks in the test process's env, finds neither key, and this fails.
+  it("pi finds a provider key by its own lookup, in the spec's env over the process's (the key route)", async () => {
     writeFileSync(join(agentDir, "auth.json"), "{}\n");
-    let keyed: Array<[string, string]> = [];
     const seen: PiHostOptions[] = [];
-    const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens });
+    const rt = reviewSdkRuntime({
+      makeHost: fauxHost(seen),
+      lens: noLens,
+      processEnv: { GROQ_API_KEY: "not-a-key" },
+    });
     const s = await rt.create(spec({}, { OPENAI_API_KEY: "sk-test" }));
+    expect(await credentialOf("openai")).toEqual({
+      kind: "api_key",
+      origin: "env-key",
+      label: "OPENAI_API_KEY",
+      subscription: false,
+    });
+    expect(await credentialOf("groq")).toMatchObject({ origin: "env-key", label: "GROQ_API_KEY" });
+    // No key is handed to the runtime: nothing outranks what pi has stored.
+    expect(seen[0]!.configureModels).toBeUndefined();
     await s.dispose();
-    await seen[0]!.configureModels!({
-      setRuntimeApiKey: async (p: string, k: string) => void keyed.push([p, k]),
-    } as never);
-    expect(keyed).toEqual([["openai", "sk-test"]]);
-    keyed = [];
+  });
+
+  // MUTATION: hand the env key to the runtime again (setRuntimeApiKey in a
+  // configureModels) — the env key wins and this fails.
+  it("a stored credential owns its provider: a key in the env for it does not outrank it", async () => {
+    writeFileSync(
+      join(agentDir, "auth.json"),
+      JSON.stringify({ openai: { type: "api_key", key: "stored-key" } }),
+    );
+    const rt = reviewSdkRuntime({ makeHost: fauxHost([]), lens: noLens, processEnv: {} });
+    const s = await rt.create(spec({}, { OPENAI_API_KEY: "sk-test" }));
+    expect(await credentialOf("openai")).toMatchObject({ origin: "stored" });
+    expect(await hosts.at(-1)!.modelRuntime.getAuth("openai")).toMatchObject({
+      auth: { apiKey: "stored-key" },
+    });
+    await s.dispose();
   });
 
   describe("the tool uid", () => {

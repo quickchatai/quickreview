@@ -15,9 +15,9 @@
 // picked up at the next case, a token the case would not outlive is refused
 // before it starts, and nothing is ever refreshed or written here. On the host
 // (no container mount), a pi home with no login runs on a provider API key in
-// the environment, as `qcr review` and /qcr-scan do: an empty in-memory store
-// and the env keys handed to the runtime (`applyEnvApiKeys`). With neither, the
-// run stops naming `qcr login`.
+// the environment, as `qcr review` and /qcr-scan do: an empty in-memory store,
+// and pi finds the key in the driver's env by its own lookup (`authEnv`). With
+// neither, the run stops naming `qcr login`.
 import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -26,10 +26,8 @@ import {
   RUNTIME_KEY_ENVS,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
-  applyEnvApiKeys,
   engineCredentials,
   keyOnlyCredentials,
-  type RuntimeKeyTarget,
   scanAuthExpiring,
   scanAuthMissing,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
@@ -78,8 +76,8 @@ export interface ScanSdkCasesOptions {
   makeHost?: (o: {
     agentDir: string;
     credentials: ReturnType<typeof engineCredentials>["credentials"];
-    /** Hands the runtime the environment's API keys, on the key-only route. */
-    configureModels?: (runtime: RuntimeKeyTarget) => Promise<void>;
+    /** Where pi looks for a provider key: the driver's env. */
+    authEnv: NodeJS.ProcessEnv;
   }) => Promise<PiHost>;
 }
 
@@ -151,23 +149,14 @@ export function scanSdkCases(o: ScanSdkCasesOptions): CaseRunner {
       const hostModels = join(o.agentDir, "models.json");
       if (existsSync(models)) copyFileSync(models, hostModels);
       else rmSync(hostModels, { force: true });
-      const configureModels = keyOnly
-        ? async (runtime: RuntimeKeyTarget): Promise<void> => {
-            await applyEnvApiKeys(runtime, o.env);
-          }
-        : undefined;
       const host = await (o.makeHost
-        ? o.makeHost({
-            agentDir: o.agentDir,
-            credentials: auth.credentials,
-            ...(configureModels ? { configureModels } : {}),
-          })
+        ? o.makeHost({ agentDir: o.agentDir, credentials: auth.credentials, authEnv: o.env })
         : PiHost.create({
             agentDir: o.agentDir,
             ownsProcess: true,
             homeDir: homedir(),
             credentials: auth.credentials,
-            ...(configureModels ? { configureModels } : {}),
+            authEnv: o.env,
           }));
       // The case driver owns its process: a turn its abort and dispose did not
       // end exits it (packages/pi-plugin/src/engine/budget.ts).

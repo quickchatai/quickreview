@@ -20,10 +20,17 @@
 // above.
 //
 // Three ways in, one module:
-//   - `engineCredentials` / `loadAuth`: the in-process route. The copy lives in
-//     memory as a CredentialStore for PiHost (packages/pi-plugin/src/engine/pisdk.ts); no file is
-//     written, and its `modify` is never reached (a refresh is the only caller
-//     on this route, and the copy cannot make one succeed).
+//   - `borrowedCredentials`: the in-process route. The copy lives in memory as
+//     a CredentialStore for PiHost (packages/pi-plugin/src/engine/pisdk.ts); no
+//     file is written. It is a filter, not a refusal: a login that cannot last
+//     the run on this surface is left out and named (`skipped`), so pi sees its
+//     provider as it would be without that login, and an API key in the
+//     environment for it takes over by pi's own rule. Where something renews
+//     the owner's login while the run is going (`owner`), a token shorter than
+//     the run is kept, and the store's `modify` (pi calls it only to refresh)
+//     takes the newer token from the owner's file instead of refreshing.
+//     `engineCredentials` is the older shape of the same route, which refuses
+//     the whole run instead: its `modify` always refuses.
 //   - `copyPiAuth`: the process route. The same copy, written 0600 into a
 //     sandbox's own agent dir for a pi child (bench, scan).
 //   - `setRuntimeApiKey` / `applyEnvApiKeys`: the headless key route (bench,
@@ -42,7 +49,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { PI_AUTH_ERROR_RE } from "../authwatch.js";
 import { CASE_STOP_GRACE_MS } from "../casebudget.js";
-import { routeProvider } from "../modelroute.js";
+import { routeProvider, type SkippedLogin } from "../modelroute.js";
 
 /** What a copied OAuth credential carries instead of the real refresh token. */
 export const DISABLED_REFRESH = "bench-refresh-disabled";
@@ -54,15 +61,15 @@ export const PI_REFRESH_MARGIN_MS = 5 * 60_000;
 
 // ---- typed errors ---------------------------------------------------------------
 
-export type AuthErrorCode = "missing" | "expiring" | "refresh-refused" | "rejected";
+export type AuthErrorCode = "missing" | "expiring" | "unreadable" | "refresh-refused" | "rejected";
 
 /** Base of every auth failure the engine raises: `code` is what a caller
  * branches on (authwatch's raise, a route's exit status), the message is for a
  * person. */
 export class AuthError extends Error {
   readonly code: AuthErrorCode;
-  constructor(code: AuthErrorCode, message: string) {
-    super(message);
+  constructor(code: AuthErrorCode, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = new.target.name;
     this.code = code;
   }
@@ -88,13 +95,27 @@ export class AuthExpiring extends AuthError {
 }
 
 /** Something asked the borrowed login to change. It never may: only the
- * owner's pi `/login` refreshes. */
+ * owner's pi `/login` refreshes. `cause` is what kept a borrower from taking a
+ * newer token from the owner (a renewal that failed, a file it could not read). */
 export class AuthRefreshRefused extends AuthError {
-  constructor(operation: string, providerId: string) {
+  constructor(operation: string, providerId: string, options?: ErrorOptions) {
     super(
       "refresh-refused",
       `refusing to ${operation} the ${providerId} login: this host holds a read-only copy, and only the owner's pi /login refreshes`,
+      options,
     );
+  }
+}
+
+/** pi's credentials are there and could not be read: the file is not readable,
+ * or is not the JSON object pi writes. Never treated as "no login": a store
+ * nobody could read is unknown, not empty. */
+export class AuthUnreadable extends AuthError {
+  readonly path: string;
+  constructor(path: string, cause: unknown) {
+    const why = cause instanceof Error ? cause.message : String(cause);
+    super("unreadable", `could not read pi's credentials at ${path}: ${why}`, { cause });
+    this.path = path;
   }
 }
 
@@ -201,7 +222,10 @@ export function authCopyFrom(
 export type LoginSummary = Record<string, { type: string; expires: number | null }>;
 
 export function loginSummary(raw: string): LoginSummary {
-  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  return summaryOf(JSON.parse(raw) as Record<string, unknown>);
+}
+
+function summaryOf(parsed: Record<string, unknown>): LoginSummary {
   const out: LoginSummary = {};
   for (const [name, v] of Object.entries(parsed)) {
     if (typeof v !== "object" || v === null) continue;
@@ -212,6 +236,15 @@ export function loginSummary(raw: string): LoginSummary {
     };
   }
   return out;
+}
+
+/** An expiry as text: the ISO time, or `never` for one that is no date. pi
+ * writes the largest safe integer for a login that does not expire, and a
+ * Date made from it is invalid (`toISOString` throws). */
+export function expiryText(expiresAt: number | null): string {
+  if (expiresAt === null) return "never";
+  const date = new Date(expiresAt);
+  return Number.isNaN(date.getTime()) ? "never" : date.toISOString();
 }
 
 /** The words a refusal is made of — each borrower names its own fix. */
@@ -226,7 +259,7 @@ export interface AuthCopyWords {
 export const ENGINE_AUTH_WORDS: AuthCopyWords = {
   missing: (src) => `no pi login at ${src} — run pi's /login as the owner, then start again`,
   expiring: ({ provider, expiresAt, needMs }) =>
-    `the ${provider ?? "pi"} access token expires at ${new Date(expiresAt).toISOString()}, inside this run's ${Math.round(needMs / 60_000)}-minute window. ` +
+    `the ${provider ?? "pi"} access token expires at ${expiryText(expiresAt)}, inside this run's ${Math.round(needMs / 60_000)}-minute window. ` +
     "An engine host never refreshes it (a second refresher would invalidate the owner's grant) — run pi's /login as the owner, then start again.",
 };
 
@@ -235,7 +268,7 @@ export const BENCH_AUTH_WORDS: AuthCopyWords = {
   missing: (src) =>
     `no pi login at ${src} — log pi in on the auth volume first (/login), or use your own API key: QCR_BENCH_AUTH=api-key (bench/aacr/README.md "Reproduce")`,
   expiring: ({ expiresAt, needMs }) =>
-    `the shared Codex access token expires at ${new Date(expiresAt).toISOString()}, inside this case's ${Math.round(needMs / 60_000)}-minute budget. ` +
+    `the shared Codex access token expires at ${expiryText(expiresAt)}, inside this case's ${Math.round(needMs / 60_000)}-minute budget. ` +
     "The benchmark never refreshes it (that would invalidate the login's own grant). Use pi on that login volume once so it refreshes its own login, then re-run with --resume — or run on your own API key (QCR_BENCH_AUTH=api-key).",
 };
 
@@ -265,18 +298,35 @@ export function checkAuth(
 
 // ---- the in-process route -------------------------------------------------------
 
-/** A CredentialStore that serves a frozen copy and refuses every change. pi
- * writes to a store only to refresh, log in or log out (pi-ai auth/resolve.js,
- * models.js), and none of those is this host's to do: a call is a bug, so it
- * throws, loudly and typed, instead of persisting anything. */
+/** Where a borrowed store takes a newer token from: the owner's file, after
+ * asking the owner to renew when the host can. */
+interface OwnerSource {
+  /** The owner's `auth.json`. */
+  src: string;
+  renew?: (provider: string) => Promise<void>;
+  retry?: ReadRetry;
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** A CredentialStore that serves a copy and never refreshes. pi writes to a
+ * store only to refresh, log in or log out (pi-ai auth/resolve.js, models.js).
+ * Logging in or out is never this host's to do, so `delete` throws, loudly and
+ * typed, instead of persisting anything. A refresh is `modify`: with no owner
+ * to borrow from again it throws the same way; with one it re-borrows. */
 class ReadOnlyCredentials implements CredentialStore {
-  private readonly data: ReadonlyMap<string, Credential>;
-  constructor(data: AuthData) {
+  private readonly data: Map<string, Credential>;
+  private readonly owner: OwnerSource | undefined;
+  /** One re-borrow per provider at a time: sessions that ask together share it. */
+  private readonly reborrowing = new Map<string, Promise<Credential>>();
+  constructor(data: AuthData, owner?: OwnerSource) {
     this.data = new Map(
       Object.entries(data)
         .filter(([, v]) => typeof v === "object" && v !== null)
         .map(([name, v]) => [name, v as Credential]),
     );
+    this.owner = owner;
   }
   async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
     options?.signal?.throwIfAborted();
@@ -287,11 +337,64 @@ class ReadOnlyCredentials implements CredentialStore {
     options?.signal?.throwIfAborted();
     return [...this.data].map(([providerId, c]) => ({ providerId, type: c.type }));
   }
-  async modify(providerId: string): Promise<Credential | undefined> {
-    throw new AuthRefreshRefused("modify", providerId);
+  /**
+   * pi asks for a refresh (the token is inside pi's five minutes). A borrower
+   * still never makes one: pi's updater, which would spend the owner's refresh
+   * token, is not called. The owner is asked to renew when the host can ask,
+   * the owner's file is read again, and a token there that expires later than
+   * the one held is adopted, refresh blanked, and returned.
+   * VERIFY-ON-PIN (pi 1.4.0, canary 14): pi calls `modify` only on its refresh
+   * path, and the credential it resolves with is the one the request runs on.
+   */
+  async modify(
+    providerId: string,
+    _update?: unknown,
+    options?: AuthOperationOptions,
+  ): Promise<Credential | undefined> {
+    options?.signal?.throwIfAborted();
+    const owner = this.owner;
+    if (owner === undefined) throw new AuthRefreshRefused("modify", providerId);
+    let pending = this.reborrowing.get(providerId);
+    if (pending === undefined) {
+      pending = this.reborrow(providerId, owner).finally(() => this.reborrowing.delete(providerId));
+      this.reborrowing.set(providerId, pending);
+    }
+    return structuredClone(await pending);
   }
   async delete(providerId: string): Promise<void> {
     throw new AuthRefreshRefused("delete", providerId);
+  }
+
+  private async reborrow(providerId: string, owner: OwnerSource): Promise<Credential> {
+    const held = this.data.get(providerId);
+    // A login the borrow left out stays out: the route was chosen without it.
+    if (held?.type !== "oauth") throw new AuthRefreshRefused("modify", providerId);
+    let cause: unknown;
+    try {
+      await owner.renew?.(providerId);
+    } catch (err) {
+      // The owner's file may hold a newer token all the same: read it.
+      cause = err;
+    }
+    let fresh: unknown;
+    try {
+      const parsed: unknown = JSON.parse(readOwnerAuth(owner.src, owner.retry));
+      fresh = isRecord(parsed) ? parsed[providerId] : undefined;
+    } catch (err) {
+      cause ??= err;
+    }
+    const heldExpires = typeof held.expires === "number" ? held.expires : -Infinity;
+    if (
+      isRecord(fresh) &&
+      fresh["type"] === "oauth" &&
+      typeof fresh["expires"] === "number" &&
+      fresh["expires"] > heldExpires
+    ) {
+      const adopted = { ...fresh, refresh: DISABLED_REFRESH } as Credential;
+      this.data.set(providerId, adopted);
+      return adopted;
+    }
+    throw new AuthRefreshRefused("modify", providerId, cause !== undefined ? { cause } : undefined);
   }
 }
 
@@ -300,6 +403,96 @@ class ReadOnlyCredentials implements CredentialStore {
  * dir). Keys arrive through `setRuntimeApiKey`, into the runtime's memory. */
 export function keyOnlyCredentials(): CredentialStore {
   return new ReadOnlyCredentials({});
+}
+
+/** What a run borrowed of the owner's login. */
+export interface BorrowedAuth {
+  /** The credential store for `PiHostOptions.credentials`: every stored key
+   * and every login that can last the run, refresh blanked. */
+  credentials: CredentialStore;
+  /** The logins left out because they cannot last this run on this surface.
+   * `name` is the provider id: a host that knows pi's display name puts it in. */
+  skipped: SkippedLogin[];
+  /** Every entry of the owner's file, kept or skipped: type and expiry, never
+   * a token. */
+  summary: LoginSummary;
+}
+
+/**
+ * Borrow the owner's login from the agent dir `srcDir` (read only: nothing is
+ * written there or anywhere), before a route is chosen, so that a login this
+ * surface cannot use is never picked.
+ *
+ * It filters, entry by entry:
+ *
+ *   an API key                                          kept
+ *   a login that lasts `needMs` plus the margin         kept
+ *   a login shorter than that, outside the margin now   kept with an `owner`
+ *                                                       (the store re-borrows),
+ *                                                       else skipped
+ *   a login inside the margin now                       skipped
+ *
+ * A login that never expires lasts any run. No `auth.json` is an empty store
+ * (a key in the environment is then the route). One that is there and cannot
+ * be read, or is not the object pi writes, throws `AuthUnreadable`: an unknown
+ * store is never taken for an empty one.
+ */
+export function borrowedCredentials(o: {
+  srcDir: string;
+  /** How long the run may last. */
+  needMs: number;
+  /** The stretch at the end of a login's life in which pi would refresh it;
+   * default pi's own. */
+  marginMs?: number;
+  now?: () => number;
+  /** Something renews this login while the run is going: the pi the run is
+   * inside, or the bot's refresher while it is healthy. */
+  owner: boolean;
+  /** Ask the owner to renew one provider's login now. */
+  renew?: (provider: string) => Promise<void>;
+  /** How a file that does not parse is waited out (a login being rewritten). */
+  retry?: ReadRetry;
+}): BorrowedAuth {
+  const src = join(o.srcDir, "auth.json");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readOwnerAuth(src, o.retry));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT")
+      return { credentials: new ReadOnlyCredentials({}), skipped: [], summary: {} };
+    throw new AuthUnreadable(src, err);
+  }
+  if (!isRecord(parsed)) throw new AuthUnreadable(src, new Error("it is not a JSON object"));
+  const now = (o.now ?? Date.now)();
+  const margin = o.marginMs ?? PI_REFRESH_MARGIN_MS;
+  const kept: AuthData = {};
+  const skipped: SkippedLogin[] = [];
+  for (const [provider, entry] of Object.entries(parsed)) {
+    if (!isRecord(entry)) continue;
+    if (entry["type"] !== "oauth") {
+      kept[provider] = entry;
+      continue;
+    }
+    const expires = entry["expires"];
+    if (typeof expires === "number") {
+      const lasts = expires >= now + o.needMs + margin;
+      const renewed = o.owner && expires >= now + margin;
+      if (!lasts && !renewed) {
+        skipped.push({ provider, name: provider, expiresAt: expires });
+        continue;
+      }
+    }
+    kept[provider] = { ...entry, refresh: DISABLED_REFRESH };
+  }
+  return {
+    credentials: new ReadOnlyCredentials(kept, {
+      src,
+      ...(o.renew ? { renew: o.renew } : {}),
+      ...(o.retry ? { retry: o.retry } : {}),
+    }),
+    skipped,
+    summary: summaryOf(parsed),
+  };
 }
 
 /** The owner's login, read once from `srcDir/auth.json`, blanked and checked. */
@@ -467,7 +660,7 @@ export function scanAuthExpiring(o: {
   needMs: number;
 }): string {
   return (
-    `the companion's ${o.provider ?? "pi"} access token expires at ${new Date(o.expiresAt).toISOString()}, inside a scan case's ${Math.round(o.needMs / 60_000)}-minute budget. ` +
+    `the companion's ${o.provider ?? "pi"} access token expires at ${expiryText(o.expiresAt)}, inside a scan case's ${Math.round(o.needMs / 60_000)}-minute budget. ` +
     "A scan never refreshes it (a second refresher would invalidate the companion's own grant) — " +
     `${SCAN_AUTH_FIX}.`
   );

@@ -6,7 +6,9 @@
 //
 // A run gets
 //  - a private agent dir (`<run>/agent`, replacing ~/.pi/agent): a
-//    refresh-disabled copy of the operator's login (packages/pi-plugin/src/engine/auth.ts), a
+//    refresh-disabled copy of the operator's login (packages/pi-plugin/src/engine/auth.ts),
+//    or no login file at all when the host hands its sessions the borrowed
+//    login in memory (`auth: "injected"`), a
 //    settings.json in the bench's style without an `extensions` entry (the SDK
 //    host discovers none; every lens session gets bash-guard as a factory,
 //    packages/pi-plugin/src/engine/lens/runlens.ts) that carries the project settings the clone
@@ -146,9 +148,9 @@ function checkoutOf(dir: string): string {
 
 /**
  * Prepare one run's private agent dir and cwd. Throws `AuthExpiring`
- * (packages/pi-plugin/src/engine/auth.ts) when the operator's login would expire inside `needMs`,
- * and a plain Error when the cwd would sit inside a checkout. `srcAgentDir` is
- * only read.
+ * (packages/pi-plugin/src/engine/auth.ts) when the operator's login is copied and would expire
+ * inside `needMs`, and a plain Error when the cwd would sit inside a checkout.
+ * `srcAgentDir` is only read.
  */
 export function prepareReviewHost(o: {
   root: string;
@@ -173,6 +175,12 @@ export function prepareReviewHost(o: {
    * review's providers here, so an unrelated short-lived login neither rides
    * along nor refuses the run. Omitted: the whole login. */
   authProviders?: readonly string[];
+  /** How the run's sessions get the login. `copy` (the default): the
+   * refresh-disabled copy is written into the private agent dir, and checked
+   * against `needMs`. `injected`: the host borrowed the login itself
+   * (`borrowedCredentials`) and hands it to its pi host in memory, so no
+   * `auth.json` is written and nothing of the login is read or checked here. */
+  auth?: "copy" | "injected";
   now?: () => number;
 }): HostRun {
   const cwd = resolve(o.cwd);
@@ -182,19 +190,22 @@ export function prepareReviewHost(o: {
   rmSync(o.agentDir, { recursive: true, force: true });
   mkdirSync(o.agentDir, { recursive: true, mode: 0o700 });
   const auth = join(o.srcAgentDir, "auth.json");
-  if (existsSync(auth)) {
-    copyPiAuth({
-      srcDir: o.srcAgentDir,
-      dstDir: o.agentDir,
-      needMs: o.needMs,
-      ...(o.now ? { now: o.now } : {}),
-      words: o.authWords ?? ENGINE_AUTH_WORDS,
-      ...(o.authProviders ? { providers: o.authProviders } : {}),
-    });
-  } else {
-    // No login: an API key in the environment is the route (as the bench's).
-    writeFileSync(join(o.agentDir, "auth.json"), "{}\n", { mode: 0o600 });
-    chmodSync(join(o.agentDir, "auth.json"), 0o600);
+  // `injected`: the login lives in the host's memory, and the agent dir holds none.
+  if (o.auth !== "injected") {
+    if (existsSync(auth)) {
+      copyPiAuth({
+        srcDir: o.srcAgentDir,
+        dstDir: o.agentDir,
+        needMs: o.needMs,
+        ...(o.now ? { now: o.now } : {}),
+        words: o.authWords ?? ENGINE_AUTH_WORDS,
+        ...(o.authProviders ? { providers: o.authProviders } : {}),
+      });
+    } else {
+      // No login: an API key in the environment is the route (as the bench's).
+      writeFileSync(join(o.agentDir, "auth.json"), "{}\n", { mode: 0o600 });
+      chmodSync(join(o.agentDir, "auth.json"), 0o600);
+    }
   }
   // Custom providers the operator configured stay usable, and the host knows
   // the models the operator's pi knows; nothing else of the operator's pi home

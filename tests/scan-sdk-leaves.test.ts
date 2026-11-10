@@ -362,7 +362,8 @@ describe("the driver's host: a login per case, refused and read-only", () => {
     const faux = pricedFaux(() => 0.01, { provider: "faux", models: [{ id: "m" }] });
     faux.appendResponses(Array.from({ length: 4 }, () => fauxAssistantMessage("NONE")));
     const made: Array<{ agentDir: string; credentials: unknown }> = [];
-    const keyed: Array<[string, string]> = [];
+    /** The providers the host found a key for in the env, each with the variable. */
+    const keyed: Array<[string, string | undefined]> = [];
     const cases = scanSdkCases({
       agentsDir,
       cwd: work,
@@ -374,20 +375,17 @@ describe("the driver's host: a login per case, refused and read-only", () => {
         const host = await PiHost.create({
           agentDir: o.agentDir,
           credentials: o.credentials as never,
+          authEnv: o.authEnv,
           configureModels: async (r) => {
             r.registerNativeProvider(faux.provider);
-            if (o.configureModels === undefined) return;
             // The key-only route: the faux model's key stands in for the
             // provider key the env hands a real model.
-            await r.setRuntimeApiKey("faux", "faux-key");
-            await o.configureModels({
-              setRuntimeApiKey: async (p, k) => {
-                keyed.push([p, k]);
-                await r.setRuntimeApiKey(p, k);
-              },
-            });
+            if ((await o.credentials.read("faux")) === undefined)
+              await r.setRuntimeApiKey("faux", "faux-key");
           },
         });
+        for (const e of await host.inventory())
+          if (e.credential.origin === "env-key") keyed.push([e.provider, e.credential.label]);
         hosts.push(host);
         return host;
       },
@@ -446,6 +444,8 @@ describe("the driver's host: a login per case, refused and read-only", () => {
 
   // MUTATION: drop the key-only branch in scanSdkCases (engineCredentials
   // always) — the first case is refused with "no pi login" and this fails.
+  // MUTATION: drop `authEnv` from the host scanSdkCases builds — pi looks in
+  // the test process's env, finds no key, and this fails.
   it("on the host, no login but a provider key in the env runs on that key, nothing written", async () => {
     const expired: string[] = [];
     const none = join(dir, "no-pi");
@@ -458,7 +458,7 @@ describe("the driver's host: a login per case, refused and read-only", () => {
     expect(expired).toEqual([]);
     expect(made).toHaveLength(1);
     expect(await (made[0]!.credentials as { list(): Promise<unknown[]> }).list()).toEqual([]);
-    expect(keyed).toEqual([["openai", "sk-test"]]);
+    expect(keyed).toEqual([["openai", "OPENAI_API_KEY"]]);
     expect(existsSync(join(none, "auth.json"))).toBe(false);
     expect(existsSync(join(dir, "sdk-agent", "auth.json"))).toBe(false);
   });
