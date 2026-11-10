@@ -113,6 +113,8 @@ import {
   resumeFindingsRecordedHooks,
 } from "./findingscheck.js";
 import {
+  foldAgentName,
+  foldTier,
   normalizeVerdict,
   type RecordedAddablePass,
   type RoundRecoveryDisposition,
@@ -537,12 +539,23 @@ interface PlanComparison {
 
 type PlanRow = { lens: string; tier: string; raisable_to?: string[] };
 
+/** A tier name as the plan check compares it: either spelling of a tier is
+ * that tier, so a session that goes on writing the name its transcript
+ * started with, and a plan recorded under the other one, still agree. A name
+ * that is no tier is only itself. */
+function tierKey(tier: string): string {
+  return foldTier(tier) ?? tier;
+}
+
 function allowsTier(policy: PlanRow, tier: string | null | undefined): boolean {
   return (
     !!tier &&
-    [policy.tier, ...(policy.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!)].includes(
-      tier,
-    )
+    [
+      policy.tier,
+      ...(policy.raisable_to ?? []).map((agent) => foldAgentName(agent).split("--").at(-1)!),
+    ]
+      .map(tierKey)
+      .includes(tierKey(tier))
   );
 }
 
@@ -632,9 +645,10 @@ function comparePlan(
         continue;
       }
       const policy = policies[0]!;
-      if (!pass.tier || pass.tier !== policy.tier) out.wrongTier.push(pass.name);
+      const atPolicyTier = !!pass.tier && tierKey(pass.tier) === tierKey(policy.tier);
+      if (!atPolicyTier) out.wrongTier.push(pass.name);
       if (!pass.reason) out.missingReason.push(pass.name);
-      if (pass.tier === policy.tier && pass.reason) {
+      if (pass.tier && atPolicyTier && pass.reason) {
         out.allowedAdditions.push({ name: pass.name, tier: pass.tier, reason: pass.reason });
       }
     }
@@ -709,7 +723,8 @@ export function normalizePasses(raw: unknown): { passes?: VerdictPassEntry[]; no
     }
     passes.push({
       name,
-      tier: typeof e.tier === "string" && e.tier.trim() ? e.tier.trim() : null,
+      // In the ladder's spelling, so what is recorded names a tier one way.
+      tier: typeof e.tier === "string" && e.tier.trim() ? tierKey(e.tier.trim()) : null,
       ...(typeof e.reason === "string" && e.reason.trim() ? { reason: e.reason.trim() } : {}),
       findings: count(e.findings) ?? count(e.candidates) ?? count(e.candidate_findings),
       survived: count(e.survived),

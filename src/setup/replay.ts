@@ -25,7 +25,12 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import type { PrFileEntry } from "../github.js";
 import { splitFrontmatter } from "@quickchatai/pi-quickreview/src/include.js";
-import type { PassTier } from "@quickchatai/pi-quickreview/src/types.js";
+import {
+  ADD_TIER,
+  BASE_TIER,
+  RISK_TIER,
+  type PassTier,
+} from "@quickchatai/pi-quickreview/src/types.js";
 import { candidateItem, SEVERITIES, type ScanCandidate } from "./scan.js";
 
 export const REPLAY_FILE = "setup/replay.json";
@@ -89,9 +94,9 @@ export interface ReplayRate {
  * scale with their models). The first replay measures each model it ran and
  * replaces the reference for it. */
 export const REFERENCE_RATES: Readonly<Record<PassTier, number>> = {
-  "terra-med": 0.06,
-  "sol-med": 0.15,
-  "sol-high": 0.4,
+  [BASE_TIER]: 0.06,
+  [ADD_TIER]: 0.15,
+  [RISK_TIER]: 0.4,
 };
 
 export const REFERENCE_BASIS =

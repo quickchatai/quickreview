@@ -21,7 +21,15 @@ import {
 import type { LensTuningMap } from "./lenstuning.js";
 import type { PostingPolicy } from "./postingpolicy.js";
 import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES, SCAN_DEEP_LENSES, SECURITY_FAMILY } from "./passes.js";
-import { PASS_TIER_ORDER, type PassTier } from "./types.js";
+import {
+  ADD_TIER,
+  BASE_TIER,
+  foldTier,
+  LEGACY_TIER_NAMES,
+  PASS_TIER_ORDER,
+  RISK_TIER,
+  type PassTier,
+} from "./types.js";
 
 /** `[github] auth`: whose credential the daemon runs on. `app` (the default)
  * is a GitHub App's installation token; `user` is the person's own GitHub
@@ -853,9 +861,9 @@ function parseEffortMax(raw: unknown): ThinkingLevel {
  * profile lowers its thinking with `[lenses.<pass>] effort = "medium"`.
  */
 export const DEFAULT_PASS_TIERS: Readonly<Record<string, PassTier>> = Object.freeze({
-  "pass-baseline": "sol-high",
-  "pass-sweep": "sol-high",
-  "pass-behaviour-delta": "sol-high",
+  "pass-baseline": RISK_TIER,
+  "pass-sweep": RISK_TIER,
+  "pass-behaviour-delta": RISK_TIER,
 });
 
 /** `[engine] lens_pass_deadline_min` when the file does not set it: a
@@ -1008,12 +1016,12 @@ export const MODELS_TIER_DEFAULTS: Pick<
   effort: "",
   effort_max: "max",
   tiers: {
-    "terra-med": "openai-codex/gpt-6.1-sol:medium",
-    "sol-med": "openai-codex/gpt-6.1-sol:medium",
-    "sol-high": "openai-codex/gpt-6.1-sol:high",
+    [BASE_TIER]: "openai-codex/gpt-6.1-sol:medium",
+    [ADD_TIER]: "openai-codex/gpt-6.1-sol:medium",
+    [RISK_TIER]: "openai-codex/gpt-6.1-sol:high",
   },
   risk_passes: ["pass-security", "pass-prod-risk", "pass-data-safety"],
-  validate_tier: "sol-high",
+  validate_tier: RISK_TIER,
   small_diff_lines: 150,
   pricing: {},
 };
@@ -1099,7 +1107,7 @@ const KIND_RE = /^[a-z0-9][a-z0-9_-]*(?::[a-z0-9][a-z0-9_-]*)*$/;
 
 export const SCAN_DEFAULTS: ScanConfig = {
   effort: "low",
-  tier: "sol-med",
+  tier: ADD_TIER,
   validator: true,
   exclude: [],
   calibration_units: 3,
@@ -1158,11 +1166,12 @@ export function parseScanTable(
         else fail(key, 'must be "low", "medium" or "high"', v);
         break;
       }
-      case "tier":
-        if (typeof v === "string" && (PASS_TIER_ORDER as readonly string[]).includes(v))
-          out.tier = v as PassTier;
+      case "tier": {
+        const tier = typeof v === "string" ? foldTier(v) : undefined;
+        if (tier !== undefined) out.tier = tier;
         else fail(key, `must be one of ${PASS_TIER_ORDER.join(", ")}`, v);
         break;
+      }
       case "validator":
         if (typeof v === "boolean") out.validator = v;
         else fail(key, "must be true or false", v);
@@ -1372,10 +1381,20 @@ export function req(obj: Record<string, unknown>, key: string): unknown {
   return v;
 }
 
-/** The overseer session is gone: its two knobs are still ACCEPTED so a
- * live config does not break, read by nothing, and named here once at parse. */
+/** What a config.toml's parse says once without refusing the file. The
+ * overseer session is gone: its two knobs are still ACCEPTED so a live
+ * config does not break, read by nothing, and named here. A `[models.tiers]`
+ * key that is no tier is named too: it is left out, never an error, so a
+ * config with a stray key still loads. */
 export function configDeprecations(raw: Record<string, any>): string[] {
   const out: string[] = [];
+  const tiers: unknown = raw.models?.tiers;
+  if (typeof tiers === "object" && tiers !== null)
+    for (const key of Object.keys(tiers))
+      if (foldTier(key) === undefined)
+        out.push(
+          `config.toml [models.tiers]: ${JSON.stringify(key)} is not a tier (tiers: ${PASS_TIER_ORDER.join(", ")}; the older names ${Object.keys(LEGACY_TIER_NAMES).join(", ")} are still read)`,
+        );
   if (raw.models?.overseer !== undefined)
     out.push(
       "config.toml [models] overseer is deprecated and ignored: the overseer session was deleted. Remove the key.",
@@ -1404,6 +1423,46 @@ export function withSecurityFamily(passes: readonly string[]): string[] {
   return [...new Set([...passes, ...SECURITY_FAMILY])];
 }
 
+/** A tier value as written, in the ladder's spelling: either spelling of a
+ * tier is that tier. Anything else stays as written, for the check that
+ * names the ladder to refuse. */
+function tierValue<T>(value: T): T | PassTier {
+  return typeof value === "string" ? (foldTier(value) ?? value) : value;
+}
+
+/** `[models.tiers]` as written, keyed by the ladder's names: a key in a
+ * tier's other spelling is that tier's. Both spellings of one tier with
+ * different models is an error (which one runs cannot be told); a key that
+ * is no tier is left out (`configDeprecations` names it). */
+function parseTierSpecs(raw: unknown): Partial<Record<PassTier, string>> {
+  const out: Partial<Record<PassTier, string>> = {};
+  if (typeof raw !== "object" || raw === null) return out;
+  /** Tier → the key that set it. */
+  const setBy = new Map<PassTier, string>();
+  for (const [key, spec] of Object.entries(raw as Record<string, string>)) {
+    const tier = foldTier(key);
+    if (tier === undefined) continue;
+    const earlier = setBy.get(tier);
+    if (earlier !== undefined && out[tier] !== spec)
+      throw new Error(
+        `config.toml [models.tiers] sets ${tier} and its older name ${key === tier ? earlier : key} to different models`,
+      );
+    setBy.set(tier, key);
+    out[tier] = spec;
+  }
+  return out;
+}
+
+/** `[models.pass_tiers]` as written, each tier in the ladder's spelling. A
+ * value that is no table is passed on for `validateLensKnobs` to refuse. */
+function parsePassTiers(raw: unknown): Record<string, PassTier> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    return (raw ?? {}) as Record<string, PassTier>;
+  return Object.fromEntries(
+    Object.entries(raw).map(([pass, tier]) => [pass, tierValue(tier)]),
+  ) as Record<string, PassTier>;
+}
+
 export function parseModels(
   raw: Record<string, any>,
   presetEffort: ReviewEffort = "",
@@ -1414,15 +1473,12 @@ export function parseModels(
     effort_max: parseEffortMax(raw.effort_max),
     default: String(req(raw, "default")),
     conversation: String(req(raw, "conversation")),
-    tiers: {
-      ...MODELS_TIER_DEFAULTS.tiers,
-      ...((raw.tiers ?? {}) as Partial<Record<PassTier, string>>),
-    },
+    tiers: { ...MODELS_TIER_DEFAULTS.tiers, ...parseTierSpecs(raw.tiers) },
     risk_passes: withSecurityFamily(parseRiskPasses(raw.risk_passes)),
-    validate_tier: (raw.validate_tier ?? MODELS_TIER_DEFAULTS.validate_tier) as PassTier,
+    validate_tier: tierValue(raw.validate_tier ?? MODELS_TIER_DEFAULTS.validate_tier) as PassTier,
     small_diff_lines: Number(raw.small_diff_lines ?? MODELS_TIER_DEFAULTS.small_diff_lines),
     pricing: (raw.pricing ?? {}) as Record<string, ModelPricing>,
-    pass_tiers: { ...DEFAULT_PASS_TIERS, ...((raw.pass_tiers ?? {}) as Record<string, PassTier>) },
+    pass_tiers: { ...DEFAULT_PASS_TIERS, ...parsePassTiers(raw.pass_tiers) },
     pass_models: { ...((raw.pass_models ?? {}) as Record<string, string>) },
   });
 }
@@ -1476,11 +1532,11 @@ export function validateLensKnobs(cfg: Pick<CoreConfig, "review" | "models">): v
       );
     if (SECURITY_FAMILY.includes(pass))
       throw new Error(
-        `config.toml [models.pass_tiers]: ${pass} is a security-family lens — the family always runs at the risk tier (sol-high), so it takes no pin`,
+        `config.toml [models.pass_tiers]: ${pass} is a security-family lens — the family always runs at the risk tier (${RISK_TIER}), so it takes no pin`,
       );
     if (risk.has(pass))
       throw new Error(
-        `config.toml [models.pass_tiers]: ${pass} is a risk pass (always sol-high) — remove it from [models] risk_passes first`,
+        `config.toml [models.pass_tiers]: ${pass} is a risk pass (always ${RISK_TIER}) — remove it from [models] risk_passes first`,
       );
     if (!(PASS_TIER_ORDER as readonly unknown[]).includes(tier))
       throw new Error(
@@ -1499,7 +1555,7 @@ export function validateLensKnobs(cfg: Pick<CoreConfig, "review" | "models">): v
       );
     if (risk.has(pass) || SECURITY_FAMILY.includes(pass))
       throw new Error(
-        `config.toml [models.pass_models]: ${pass} is a risk pass — it always runs on the sol-high tier's model`,
+        `config.toml [models.pass_models]: ${pass} is a risk pass — it always runs on the ${RISK_TIER} tier's model`,
       );
     if (typeof model !== "string" || !/^[\w.-]+\/[\w.:-]+$/.test(model))
       throw new Error(
@@ -1635,10 +1691,16 @@ export function parseOwnerSection(raw: Record<string, any>): OwnerConfig {
  * preset fills every lever the file does not set itself; an explicit key
  * always wins, so `preset = "max"` + `sweep = false` means exactly that. */
 export function parseReviewSection(raw: Record<string, any>, preset: ReviewPreset): ReviewConfig {
+  const written = (raw.review ?? {}) as Partial<ReviewConfig>;
   return {
     ...REVIEW_DEFAULTS,
     ...REVIEW_PRESETS[preset].levers,
-    ...((raw.review ?? {}) as Partial<ReviewConfig>),
+    ...written,
+    // Either spelling of a tier is that tier; "" (off) and a value that is
+    // no tier stay as written, for `validateReviewSection`.
+    ...(written.sweep_light_tier !== undefined
+      ? { sweep_light_tier: tierValue(written.sweep_light_tier) }
+      : {}),
     preset,
     directives: {
       ...REVIEW_DIRECTIVES_DEFAULTS,

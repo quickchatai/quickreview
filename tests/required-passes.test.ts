@@ -48,7 +48,11 @@ import {
   type ChainStrategy,
 } from "@quickchatai/pi-quickreview/src/passes.js";
 import type { PassPlanEntry, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
-import { PASS_TIER_ORDER, roundPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
+import {
+  LEGACY_TIER_NAMES,
+  PASS_TIER_ORDER,
+  roundPromptMarker,
+} from "@quickchatai/pi-quickreview/src/types.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import type { AnomalyAnnouncement, VerdictAnnouncer } from "../src/slack/announce.js";
@@ -735,20 +739,25 @@ describe("scripts/required-passes.py answers as the TypeScript rule does", () =>
 });
 
 describe("scripts/required-passes.py strips the tier suffixes the TypeScript ladder names", () => {
-  // The shell copy cannot import PASS_TIER_ORDER, so its TIER_SUFFIX is a
-  // hand-kept list; this pins it against the ladder both ways, by running the
-  // script's own lens_for_agent over every tier (and a name that is no tier).
-  // MUTATION: add a tier to PASS_TIER_ORDER (or drop "sol-high" from the
-  // script's TIER_SUFFIX) — this fails.
+  // The shell copy cannot import PASS_TIER_ORDER or LEGACY_TIER_NAMES, so its
+  // TIER_SUFFIX is a hand-kept list; this pins it against the two both ways,
+  // by running the script's own lens_for_agent over every tier in either
+  // spelling (and a name that is no tier). A session whose transcript keeps
+  // a tier's other name reports its agents under it, so a suffix the script
+  // does not strip reads as "required pass missing" and blocks the posting.
+  // MUTATION: drop sol-med from the alternation in scripts/required-passes.py
+  // (or add a tier to PASS_TIER_ORDER, or a name to LEGACY_TIER_NAMES) — this
+  // fails.
   const script = join(root, "scripts", "required-passes.py");
+  const names = [...PASS_TIER_ORDER, ...Object.keys(LEGACY_TIER_NAMES)];
   const agents = [
-    ...PASS_TIER_ORDER.flatMap((t) => [`pass-sec-access--${t}`, `pass-baseline--${t}`]),
+    ...names.flatMap((t) => [`pass-sec-access--${t}`, `pass-baseline--${t}`]),
     "pass-baseline--sol-max",
     "pass-baseline",
-    "pass-sec-exploit-chain--sol-high--sol-med",
+    `pass-sec-exploit-chain--${names[0]}--${names.at(-1)}`,
   ];
 
-  it("lens_for_agent answers as lensForAgent on every tier of the ladder", () => {
+  it("lens_for_agent answers as lensForAgent on every tier of the ladder, in either spelling", () => {
     const out = execFileSync(
       "python3",
       [
@@ -767,11 +776,12 @@ describe("scripts/required-passes.py strips the tier suffixes the TypeScript lad
     expect(JSON.parse(out)).toEqual(agents.map(lensForAgent));
   });
 
-  it("names exactly the ladder's tiers, no more", () => {
+  it("names exactly the ladder's tiers and their other spellings, no more", () => {
     const src = readFileSync(script, "utf8");
     const alt = /TIER_SUFFIX = re\.compile\(r"--\(\?:([^)]*)\)\$"\)/.exec(src)?.[1];
     expect(alt, "TIER_SUFFIX not found in the script").toBeDefined();
-    expect(alt!.split("|").sort()).toEqual([...PASS_TIER_ORDER].sort());
+    expect(names).toHaveLength(2 * PASS_TIER_ORDER.length);
+    expect(alt!.split("|").sort()).toEqual([...names].sort());
   });
 });
 

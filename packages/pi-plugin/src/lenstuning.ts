@@ -80,7 +80,7 @@ import {
   type PassAddendum,
 } from "./include.js";
 import { SEVERITIES, type Severity } from "./severity.js";
-import { flooredToMin, PASS_TIER_ORDER, type PassTier } from "./types.js";
+import { flooredToMin, foldTier, PASS_TIER_ORDER, type PassTier } from "./types.js";
 
 /** A style guide a profile points `pass-style` at. */
 export interface ProfileStyleGuide {
@@ -209,11 +209,15 @@ export function parseLensTable(
     const t: LensTuning = {};
     for (const [key, value] of Object.entries(body)) {
       switch (key) {
-        case "min_tier":
-          if (!(PASS_TIER_ORDER as readonly unknown[]).includes(value))
+        case "min_tier": {
+          // Either spelling of a tier: a profile committed in someone
+          // else's repository keeps the name it was written with.
+          const tier = typeof value === "string" ? foldTier(value) : undefined;
+          if (tier === undefined)
             throw new Error(`${at} min_tier must be one of ${PASS_TIER_ORDER.join(", ")}`);
-          t.min_tier = value as PassTier;
+          t.min_tier = tier;
           break;
+        }
         case "effort": {
           const effort = normalizeEffort(value);
           if (effort === null) throw new Error(`${at} effort must be "low", "medium" or "high"`);

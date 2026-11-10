@@ -39,6 +39,7 @@ import {
   type AgentFile,
 } from "./caseread.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./scanports.js";
+import { foldAgentName } from "../types.js";
 import { LENS_SESSIONS_DIR } from "../engine/openable.js";
 import type { Runtime, SessionSpec, TurnResult } from "../engine/port.js";
 import type { SessionExtras } from "../engine/sdkruntime.js";
@@ -148,14 +149,23 @@ export function sdkCaseRunner(opts: SdkCaseRunnerOptions): CaseRunner {
           reason: `not an agent name: ${JSON.stringify(spec.agent)}`,
           cost_usd: 0,
         };
-      let agent: AgentFile | null;
-      try {
-        agent = parseAgentFile(readFileSync(join(opts.agentsDir, `${spec.agent}.md`), "utf8"));
-      } catch {
-        return { ok: false, reason: `no agent ${spec.agent} in ${opts.agentsDir}`, cost_usd: 0 };
+      // The agent as named, else the one its name folds to: a plan written
+      // under a tier's other spelling still finds the built variant.
+      let agent: AgentFile | null = null;
+      let built: string | null = null;
+      for (const name of new Set([spec.agent, foldAgentName(spec.agent)])) {
+        try {
+          agent = parseAgentFile(readFileSync(join(opts.agentsDir, `${name}.md`), "utf8"));
+        } catch {
+          continue;
+        }
+        built = name;
+        break;
       }
-      if (agent === null || agent.name !== spec.agent)
-        return { ok: false, reason: `${spec.agent}.md is not an agent file`, cost_usd: 0 };
+      if (built === null)
+        return { ok: false, reason: `no agent ${spec.agent} in ${opts.agentsDir}`, cost_usd: 0 };
+      if (agent === null || agent.name !== built)
+        return { ok: false, reason: `${built}.md is not an agent file`, cost_usd: 0 };
       const modelSpec = agent.model ?? opts.defaultModel;
       if (!modelSpec)
         return { ok: false, reason: `${spec.agent} names no model and none is set`, cost_usd: 0 };

@@ -23,6 +23,7 @@
 //
 // Pure — no port, no clock, no disk.
 import type { LensTuning } from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { ADD_TIER, RISK_TIER } from "@quickchatai/pi-quickreview/src/types.js";
 
 /** The four points every setup interview covers. */
 export const FIXED_POINTS = [
@@ -59,11 +60,11 @@ export type TableSettings = Pick<LensTuning, (typeof TABLE_KEYS)[number]>;
 export const PRIORITY_SETTINGS: Readonly<Record<Priority, Readonly<TableSettings>>> = {
   critical: {
     enabled: true,
-    min_tier: "sol-high",
+    min_tier: RISK_TIER,
     effort: "high",
     max_severity: "P0",
   },
-  important: { enabled: true, min_tier: "sol-med", effort: "medium" },
+  important: { enabled: true, min_tier: ADD_TIER, effort: "medium" },
   normal: {},
   ignore: { enabled: false },
 };

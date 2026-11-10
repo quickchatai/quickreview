@@ -5,6 +5,7 @@
 import type { PrFileEntry } from "./githubcore.js";
 import { packByBudget } from "./packing.js";
 import { SECURITY_FAMILY } from "./passes.js";
+import { ADD_TIER, BASE_TIER } from "./types.js";
 
 export interface PrFile {
   filename: string;
@@ -69,10 +70,10 @@ export function migrationGate(files: PrFile[]): boolean {
 export function passTier(
   files: PrFileEntry[],
   opts: { migrationGate: boolean; smallDiffLines: number },
-): "terra-med" | "sol-med" {
+): typeof BASE_TIER | typeof ADD_TIER {
   const total = files.reduce((n, f) => n + f.additions + f.deletions, 0);
-  if (total < opts.smallDiffLines && !opts.migrationGate) return "terra-med";
-  return "sol-med";
+  if (total < opts.smallDiffLines && !opts.migrationGate) return BASE_TIER;
+  return ADD_TIER;
 }
 
 // ---- pass-intent -----------------------------------------------------------

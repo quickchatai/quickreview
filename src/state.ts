@@ -45,6 +45,7 @@ import {
   type LeverKind,
 } from "./levers.js";
 import {
+  foldTier,
   parseRecheckPromptMarker,
   type PassPlanEntry,
   type SessionCommandObservation,
@@ -8865,6 +8866,13 @@ function pipelineFrom(
 export const ROUND_STATS_SQL =
   "SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds WHERE status != 'expired' GROUP BY pr";
 
+/** A stored tier as a surface shows it: in the ladder's spelling. A row
+ * keeps the name it was written with (nothing migrates it), so the reader
+ * folds; an absent tier and a name that is no tier pass through. */
+function shownTier(stored: string | null): string | null {
+  return stored === null ? null : (foldTier(stored) ?? stored);
+}
+
 export function buildStatusSnapshot(
   store: StateStore,
   dryRun: boolean,
@@ -8914,7 +8922,7 @@ export function buildStatusSnapshot(
               started_at: runningByPr.get(p.number)!.started_at,
               deadline_at: runningByPr.get(p.number)!.deadline_at,
               lenses: runningByPr.get(p.number)!.lenses,
-              validate_tier: runningByPr.get(p.number)!.validate_tier,
+              validate_tier: shownTier(runningByPr.get(p.number)!.validate_tier),
               ...(() => {
                 const round = runningByPr.get(p.number)!;
                 const command = store.sessionCommandForRound(p.number, round.round_no);

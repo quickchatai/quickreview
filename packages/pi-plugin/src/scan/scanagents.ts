@@ -51,7 +51,7 @@ import {
 } from "../lenstuning.js";
 import { ALL_PASSES } from "../passes.js";
 import type { CoreConfig } from "../reviewconfig.js";
-import { PASS_TIER_ORDER } from "../types.js";
+import { BASE_TIER } from "../types.js";
 import {
   applyProfileScan,
   applyProfileSecurity,
@@ -142,7 +142,7 @@ export function buildScanAgents(
     // The skeptic runs at the tier of the lens it judges — stage 1's
     // `[scan] tier`, a stage-2 row's own — so every tier keeps a variant
     // (never `validate_tier`, never floored upward).
-    validateTier: PASS_TIER_ORDER[0],
+    validateTier: BASE_TIER,
     vars: identityVars(cfg),
     ecosystem: loadProfileEcosystem(root, cfg.review.profile, lookup),
     models: { ...lensModelOverrides(cfg.models, cfg.lenses), ...scanPassModels(cfg) },

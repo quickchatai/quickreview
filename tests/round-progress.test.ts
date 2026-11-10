@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   appendProgressLog,
+  lensForAgent,
   parseRoundProgress,
   progressLogPath,
   roundExecutionStage,
 } from "@quickchatai/pi-quickreview/src/round-progress.js";
-import { PASS_TIER_ORDER } from "@quickchatai/pi-quickreview/src/types.js";
+import { LEGACY_TIER_NAMES, PASS_TIER_ORDER } from "@quickchatai/pi-quickreview/src/types.js";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -16,14 +17,28 @@ afterEach(() => {
 });
 
 describe("the posting boundary tier vocabulary", () => {
+  const names = [...PASS_TIER_ORDER, ...Object.keys(LEGACY_TIER_NAMES)];
+
   // MUTATION: replace sol-high by sol-low in the Python suffix — this fails.
-  it("keeps the Python suffix mirror equal to the authoritative tier registry", () => {
+  it("keeps the Python suffix mirror equal to the authoritative tier registry, both spellings", () => {
     const source = readFileSync(
       join(import.meta.dirname, "..", "scripts", "required-passes.py"),
       "utf8",
     );
     const suffix = source.match(/TIER_SUFFIX = re\.compile\(r"--\(\?:([^)]*)\)\$"\)/)?.[1];
-    expect(suffix?.split("|")).toEqual([...PASS_TIER_ORDER]);
+    expect(suffix?.split("|").sort()).toEqual([...names].sort());
+  });
+
+  // A plan row stores the lens; the progress sidecar reports the agent the
+  // session launched, under whichever spelling its transcript carries.
+  // MUTATION: build TIER_SUFFIX in round-progress.ts from PASS_TIER_ORDER
+  // alone — the other spelling keeps its suffix and this fails.
+  it("lensForAgent strips a tier suffix in either spelling, and nothing else", () => {
+    for (const tier of names) expect(lensForAgent(`pass-baseline--${tier}`)).toBe("pass-baseline");
+    expect(lensForAgent("pass-baseline")).toBe("pass-baseline");
+    expect(lensForAgent("pass-baseline--sol-max")).toBe("pass-baseline--sol-max");
+    // Only the last suffix is the tier's.
+    expect(lensForAgent(`pass-x--${names[0]}--${names.at(-1)}`)).toBe(`pass-x--${names[0]}`);
   });
 });
 

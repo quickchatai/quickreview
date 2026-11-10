@@ -91,7 +91,7 @@ import type { ThreatModel } from "../threatmodel.js";
 import { globMatcher } from "../glob.js";
 import { isSweepSkipped, isTestFile } from "../heuristics.js";
 import { lensEnabled, flooredTier, type LensTuningMap } from "../lenstuning.js";
-import { PASS_TIER_ORDER, tiersAtOrAbove, type PassTier } from "../types.js";
+import { BASE_TIER, foldTier, RISK_TIER, tiersAtOrAbove, type PassTier } from "../types.js";
 import {
   caseEstimate,
   coverKey,
@@ -115,7 +115,7 @@ import {
   type UnreadableReason,
   underPath,
 } from "./scan.js";
-import { depthOf, measuredRate, rateWhere, type LedgerEntry } from "./ledger.js";
+import { depthOf, measuredRate, rateWhere, sameTier, type LedgerEntry } from "./ledger.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
 
 /** At most this many rows the companion asks for in one proposal (the deep
@@ -267,7 +267,7 @@ function priceFrom(
     (v: boolean, same: boolean) =>
     (e: LedgerEntry): boolean =>
       (same ? e.lens === lens : e.lens !== lens && e.lens !== SCAN_PASS) &&
-      e.tier === tier &&
+      sameTier(e.tier, tier) &&
       e.effort === effort &&
       e.validator === v;
   const lensesOf = (keep: (e: LedgerEntry) => boolean): string =>
@@ -444,7 +444,7 @@ export function lensEffort(lenses: LensTuningMap | undefined, lens: string): str
 
 /** A risk pass runs at `sol-high` alone; any other lens, null. */
 function riskTier(riskPasses: readonly string[], lens: string): PassTier | null {
-  return riskPasses.includes(lens) ? "sol-high" : null;
+  return riskPasses.includes(lens) ? RISK_TIER : null;
 }
 
 /** The tiers `lens` may run at in a scan: the ones its build variants exist
@@ -456,7 +456,7 @@ export function lensTiers(
 ): PassTier[] {
   const risk = riskTier(riskPasses, lens);
   if (risk !== null) return [risk];
-  const floor = flooredTier(lenses, lens, PASS_TIER_ORDER[0]);
+  const floor = flooredTier(lenses, lens, BASE_TIER);
   return tiersAtOrAbove(floor);
 }
 
@@ -793,10 +793,12 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       return bad(`the reason is ${reason.length} characters — one line, at most ${ROW_REASON_MAX}`);
     const tiers = lensTiers(input.lenses, lens, input.riskPasses);
     let tier: PassTier;
+    // A request may name a tier in either spelling.
+    const asked = typeof req.tier === "string" ? foldTier(req.tier) : undefined;
     if (req.tier === undefined || req.tier === null || req.tier === "") {
       tier = defaultRowTier(input, lens);
-    } else if ((tiers as readonly string[]).includes(req.tier)) {
-      tier = req.tier as PassTier;
+    } else if (asked !== undefined && tiers.includes(asked)) {
+      tier = asked;
     } else {
       return bad(
         `${lens} cannot run at ${JSON.stringify(req.tier)} here — one of: ${tiers.join(", ")}`,

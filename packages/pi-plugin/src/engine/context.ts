@@ -17,6 +17,7 @@ import {
   type CoreConfig,
   type ReviewPreset,
 } from "../reviewconfig.js";
+import { foldTier } from "../types.js";
 import { benchAuthMode, modelForAuth, type BenchAuthMode } from "./keyroute.js";
 
 /** A loaded config.toml: the parsed config and the text it was parsed from
@@ -67,6 +68,25 @@ export function withPresetInToml(toml: string, preset: ReviewPreset): string {
     }
   lines.splice(head + 1, 0, `preset = "${preset}"`);
   return lines.join("\n");
+}
+
+/** `--config` keys whose value is a tier name; a key ending in `.` is a
+ * table whose every value is one. */
+const TIER_VALUED_KEYS: readonly string[] = [
+  "models.validate_tier",
+  "models.pass_tiers.",
+  "review.sweep_light_tier",
+  "scan.tier",
+];
+
+/** A lever's key as the path it sets. `models.tiers.<name>` names a tier,
+ * in either spelling: the path is the ladder's name, the key the config
+ * holds. */
+function leverPath(key: string): string[] {
+  const path = key.split(".");
+  if (path.length === 3 && path[0] === "models" && path[1] === "tiers")
+    path[2] = foldTier(path[2] as string) ?? (path[2] as string);
+  return path;
 }
 
 /** `--config` keys that went with the overseer session. */
@@ -121,8 +141,13 @@ export function applyConfigOverrides<C extends CoreConfig>(
       );
       continue;
     }
-    const path = pair.slice(0, eq).trim().split(".");
-    const raw = pair.slice(eq + 1).trim();
+    const path = leverPath(pair.slice(0, eq).trim());
+    const key = path.join(".");
+    const written = pair.slice(eq + 1).trim();
+    // A lever that names a tier names it in either spelling, as the file may.
+    const raw = TIER_VALUED_KEYS.some((k) => (k.endsWith(".") ? key.startsWith(k) : key === k))
+      ? (foldTier(written) ?? written)
+      : written;
     let node = out;
     for (const k of path.slice(0, -1)) {
       const next = node[k];

@@ -97,6 +97,41 @@ export const PASS_TIER_ORDER = ["terra-med", "sol-med", "sol-high"] as const;
 /** Pass model tiers. */
 export type PassTier = (typeof PASS_TIER_ORDER)[number];
 
+/** The ladder's rungs by position, so no rule names a tier by its spelling:
+ * where a small quiet diff starts, where a lens the session adds runs, and
+ * where a risk pass always runs. */
+export const BASE_TIER = PASS_TIER_ORDER[0];
+export const ADD_TIER = PASS_TIER_ORDER[1];
+export const RISK_TIER = PASS_TIER_ORDER[2];
+
+/** The second spelling of each tier, read on every input and never written:
+ * a config, a profile, a `--config` lever, a verdict file, a stored row and
+ * a session's `lens` call may each name a tier either way. The ladder above
+ * is what is emitted; this map holds the other names. */
+export const LEGACY_TIER_NAMES: Readonly<Record<string, PassTier>> = {
+  light: "terra-med",
+  standard: "sol-med",
+  deep: "sol-high",
+};
+
+/** A tier name in either spelling, or undefined. */
+export function foldTier(name: string): PassTier | undefined {
+  if ((PASS_TIER_ORDER as readonly string[]).includes(name)) return name as PassTier;
+  return Object.hasOwn(LEGACY_TIER_NAMES, name) ? LEGACY_TIER_NAMES[name] : undefined;
+}
+
+/** `--<second spelling>` at the end of a built agent's name. */
+const LEGACY_AGENT_SUFFIX = new RegExp(`--(${Object.keys(LEGACY_TIER_NAMES).join("|")})$`);
+
+/** A built agent's name with its tier suffix in the ladder's spelling
+ * (`<pass>--<tier>`); anything else unchanged. */
+export function foldAgentName(name: string): string {
+  return name.replace(
+    LEGACY_AGENT_SUFFIX,
+    (_all, tier: string) => `--${LEGACY_TIER_NAMES[tier] as PassTier}`,
+  );
+}
+
 /** The higher of two tiers (equal tiers return that tier). */
 export function higherTier(a: PassTier, b: PassTier): PassTier {
   return PASS_TIER_ORDER.indexOf(b) > PASS_TIER_ORDER.indexOf(a) ? b : a;

@@ -47,6 +47,7 @@ import {
   type LiveAgentProgress,
   type RoundProgressSnapshot,
 } from "@quickchatai/pi-quickreview/src/round-progress.js";
+import { foldTier } from "@quickchatai/pi-quickreview/src/types.js";
 import { isLocalDiagnosis, type ConnectionDiagnosis } from "./sshtriage.js";
 import { setupLine, type SetupState } from "./setupstate.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
@@ -753,8 +754,11 @@ function currentProgressLines(
     .map((x) => x.trim())
     .filter(Boolean);
   // The validator runs at its own tier, shown beside its row.
+  // In the ladder's spelling, whichever one the row was written with.
   const tierOf = (name: string): string =>
-    name === "pass-validate" && round.validate_tier ? ` · ${round.validate_tier}` : "";
+    name === "pass-validate" && round.validate_tier
+      ? ` · ${foldTier(round.validate_tier) ?? round.validate_tier}`
+      : "";
 
   if (!current) {
     lines.push(truncate(`  ${FG.dim}? parent · live progress unavailable${RESET}`, width));

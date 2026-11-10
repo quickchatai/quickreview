@@ -20,6 +20,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { splitModelSpec } from "../../reviewconfig.js";
 import { splitFrontmatter } from "../../include.js";
+import { foldAgentName } from "../../types.js";
 
 /** One source directory of agent `.md` files. */
 export interface AgentLayer {
@@ -62,6 +63,9 @@ export interface AgentRegistry {
   readonly agents: ReadonlyMap<string, LensAgent>;
   /** Files the registry did not load, and why. */
   readonly skipped: readonly SkippedAgent[];
+  /** The agent of that name. A name whose tier suffix is in the tier's
+   * other spelling finds the built agent (`foldAgentName`): a session's
+   * transcript keeps the names it started with. */
   get(name: string): LensAgent | undefined;
   names(): string[];
   /** Agents whose body came from a profile layer, in name order. */
@@ -174,7 +178,7 @@ export function loadAgentRegistry(layers: readonly AgentLayer[]): AgentRegistry 
   return {
     agents,
     skipped,
-    get: (name) => agents.get(name),
+    get: (name) => agents.get(name) ?? agents.get(foldAgentName(name)),
     names: () => [...agents.keys()].sort(),
     customised: () =>
       [...agents.values()]

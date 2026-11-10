@@ -40,7 +40,7 @@ import {
   type MemoryDelivery,
 } from "./reviewconfig.js";
 import { SCAN_DEEP_LENSES, SECURITY_FAMILY } from "./passes.js";
-import { flooredToMin, PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
+import { flooredToMin, PASS_TIER_ORDER, RISK_TIER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";
 import type { EcosystemName } from "./ecosystem.js";
 import type { LensTuningMap } from "./lenstuning.js";
@@ -2197,7 +2197,7 @@ export function tiersForPass(
   riskPasses: string[],
   validateTier: PassTier,
 ): PassTier[] {
-  if (riskPasses.includes(pass)) return ["sol-high"];
+  if (riskPasses.includes(pass)) return [RISK_TIER];
   if (pass === VALIDATE_PASS) return tiersAtOrAbove(validateTier);
   return [...PASS_TIERS];
 }

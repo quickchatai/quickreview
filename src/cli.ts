@@ -69,6 +69,7 @@ import { sanitizeText } from "./tui/paint.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
 import { shellQuote, transportOf } from "./tui/remote.js";
 import { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
+import { foldTier } from "@quickchatai/pi-quickreview/src/types.js";
 import { botAccountLogin, isPersonMode } from "@quickchatai/pi-quickreview/src/identity.js";
 import type { GitHubAdapter } from "./github.js";
 import type { OutcomeCapture } from "./outcomes.js";
@@ -778,7 +779,9 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
       tokens_in: r.tokens_in ?? null,
       tokens_out: r.tokens_out ?? null,
       lenses: r.lenses,
-      validate_tier: r.validate_tier ?? null,
+      // In the ladder's spelling, whichever one the row was written with.
+      validate_tier:
+        typeof r.validate_tier === "string" ? (foldTier(r.validate_tier) ?? r.validate_tier) : null,
       executed_passes: parseExecutedPasses(r.executed_passes),
       summary: r.summary ?? null,
       // Why a cancelled round was cancelled — null on every other

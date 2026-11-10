@@ -56,7 +56,7 @@ import {
   triggeredServerLines,
 } from "./securitytriggers.js";
 import { renderThreatModelExcerpt, type ThreatModel } from "./threatmodel.js";
-import { PASS_TIER_ORDER } from "./types.js";
+import { ADD_TIER, BASE_TIER, PASS_TIER_ORDER, RISK_TIER } from "./types.js";
 import type {
   LedgerCarry,
   PassPlanEntry,
@@ -112,8 +112,8 @@ export function validatorTier(cfg: Pick<CoreConfig, "lenses" | "models">): PassT
  */
 export function addTierOf(cfg: CoreConfig, lens: string): PassTier {
   return cfg.models.risk_passes.includes(lens)
-    ? "sol-high"
-    : flooredTier(cfg.lenses, lens, "sol-med");
+    ? RISK_TIER
+    : flooredTier(cfg.lenses, lens, ADD_TIER);
 }
 
 /** The facts a prepared worktree hands the round — the tree's own, less
@@ -386,9 +386,7 @@ export function buildPassPlan(
     flooredTier(
       cfg.lenses,
       lens,
-      risk.has(lens)
-        ? "sol-high"
-        : (pins[lens] ?? (lens === INTENT_PASS ? "terra-med" : defaultTier)),
+      risk.has(lens) ? RISK_TIER : (pins[lens] ?? (lens === INTENT_PASS ? BASE_TIER : defaultTier)),
     );
   // The sweep and behaviour-delta are planned as grouped rows of their own,
   // so `plan = "always"` reaches them here, as their lever would: on a change
@@ -402,7 +400,7 @@ export function buildPassPlan(
   // The sweep's rows run at the cheapest tier unless pinned (`[models.pass_tiers]`)
   // or floored by the profile.
   const sweepOn = groupedOn(SWEEP_PASS, cfg.review.sweep);
-  const sweepTier = flooredTier(cfg.lenses, SWEEP_PASS, pins[SWEEP_PASS] ?? "terra-med");
+  const sweepTier = flooredTier(cfg.lenses, SWEEP_PASS, pins[SWEEP_PASS] ?? BASE_TIER);
   // The validator runs at its own tier — never raised to match a lens,
   // pinned or not.
   const validate = validatorTier(cfg);
@@ -1252,7 +1250,7 @@ function securityOrderFields(
 
 /** The tier a round's security candidates are validated at: the risk tier
  * the family's lenses run at. */
-export const SECURITY_VALIDATOR_TIER: PassTier = "sol-high";
+export const SECURITY_VALIDATOR_TIER: PassTier = RISK_TIER;
 
 /** Build the round order for one PR — pure once the files list is in hand. */
 export function buildRoundOrder(args: {
@@ -1363,7 +1361,7 @@ export function buildRoundOrder(args: {
     addable_lenses
       .filter((l) => !args.cfg.models.risk_passes.includes(l))
       .map((l) => [l, addTierOf(args.cfg, l)] as const)
-      .filter(([, t]) => t !== "sol-med"),
+      .filter(([, t]) => t !== ADD_TIER),
   );
   return {
     pr: args.row.number,
