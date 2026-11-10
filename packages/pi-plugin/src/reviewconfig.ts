@@ -1459,7 +1459,7 @@ function parsePassTiers(raw: unknown): Record<string, PassTier> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw))
     return (raw ?? {}) as Record<string, PassTier>;
   return Object.fromEntries(
-    Object.entries(raw).map(([pass, tier]) => [pass, tierValue(tier)]),
+    Object.entries(raw as Record<string, unknown>).map(([pass, tier]) => [pass, tierValue(tier)]),
   ) as Record<string, PassTier>;
 }
 
