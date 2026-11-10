@@ -61,6 +61,10 @@ Shipped profiles:
   `heuristics.toml`.
 - `snappy/` — a handful of comments per PR, bugs first: extends `default`,
   sets `[posting]` (below) and switches the non-bug lenses off.
+- `security/` — a security-only review: extends `default`, plans the
+  fourteen `pass-sec-*` lenses and the validator and nothing else, and posts
+  security findings only. An APPROVE from it means "no security finding".
+  See "Security review" below and `profiles/security/README.md`.
 - `minimal/` — empty; a self-contained skeleton (it extends nothing). No
   `heuristics.toml`: absent is legal and means "the generic selection core
   alone". A new profile is better written as a child of `default/` — only
@@ -234,7 +238,7 @@ owning them.
 
 ## Per-lens tuning — `[lenses.<pass>]`
 
-One table per lens in `profile.toml`, five optional keys (and `guide`, for
+One table per lens in `profile.toml`, seven optional keys (and `guide`, for
 `pass-style` alone):
 
 ```toml
@@ -247,6 +251,10 @@ emphasis = "Auth is the product here: treat every token path as hostile input."
 
 [lenses.pass-ui]
 enabled = false         # this repo does not want the lens at all
+
+[lenses.pass-sec-access]
+plan = "always"         # triggered (default) | always — plan it on every PR that changes code
+risk = true             # run it at the risk tier, like [models] risk_passes
 
 [lenses.pass-style]
 guide = "style-guide.md"  # a guide in THIS profile's directory
@@ -285,6 +293,22 @@ consumer reads that one `cfg.lenses`. What each key moves
 - **`emphasis`** — compiled into a `lens-emphasis-<pass>` addendum scoped to
   that lens, composed after the profile's own pack, so the addendum registry
   stays the only route into a pass body (AGENTS.md invariant 4). ≤ 2000 characters.
+- **`plan = "always"`** — plan time: the lens is planned on every PR that
+  changes code or configuration, whatever its triggers say; a docs-only
+  change (every file prose, plain text, a raster image or a licence file,
+  judged by the file's own name: code or configuration under a `docs/`
+  directory is not docs) drops such a row, and a lens
+  something else planned keeps its row either way. It never overrides
+  `enabled = false` or `[review] skip_lenses`, and the validator takes no
+  `plan` (it is planned on every review already). `triggered`, the
+  default, is the plan as above. The row's reason says the profile planned
+  it.
+- **`risk = true`** — overlay time: the lens joins `[models] risk_passes`,
+  so it runs at `sol-high`, one variant, not raisable, launched slowest
+  first. It never takes a lens out of `risk_passes`, a `[models.pass_tiers]`
+  pin or `pass_models` move on a risk lens is refused, and the validator
+  takes no `risk` (its tier is `validate_tier`, floored by its `min_tier`).
+  The security family is a risk lens on every profile without saying so.
 - **`max_severity`** — compiled into a `lens-ceiling-<pass>` addendum scoped
   to the lens and the validator. It REPLACES every other cap on that lens,
   higher or lower: `pass-placement` at `P1` lifts its built-in `P2` cap,
@@ -330,7 +354,7 @@ demotions) bind nothing: that is the price of switching it off.
 On, it runs at its own tier — `[models] validate_tier` under the profile's
 `min_tier` for it — and is **not** raised to match any lens's tier or effort.
 No raise is needed because a validity veto (`refuted`, `unverifiable`,
-`bad-anchor`) does not delete a finding, so a cheaper validator cannot make a
+`bad-anchor`, and an exploit chain's `partial-chain`) does not delete a finding, so a cheaper validator cannot make a
 stronger lens's finding vanish. The validator lists it under DOUBTED
 (`validate-doubt-not-kill` addendum), the session records it with disposition
 `doubted` (`packages/pi-plugin/src/findingsrecord.ts` also folds a `killed` entry carrying one of
@@ -340,10 +364,21 @@ detail pane lists it under DOUBTED — "may not be valid". Every other kill (a
 repeat, scope, the bar, shape) stays a kill. Pinned by
 `tests/optional-validator.test.ts`.
 
+The findings record carries `posted_as` on a `downgraded` entry that went
+out as well as on a `posted` one; a downgraded entry without it counts as
+never posted. A security candidate's entry may carry `security_outcome`
+(`confirmed`, `question`, `partial-chain`, `refuted`) and, on a chain,
+`hop_labels`. Three counts join the `findings_conformance` event, each a
+measurement and never a gate: `downgraded_untagged` (a downgraded entry with
+no `posted_as`), `security_doubted` (a security candidate doubted as
+unverifiable while `[security] fold` is on) and `security_outcome_mismatch`
+(an outcome its hop labels do not compute, or a partial chain marked
+posted). Pinned by `tests/security-fold.test.ts`.
+
 ## The whole-repo scan — `[scan]`
 
 The companion's scan reads `config.toml [scan]` (every key; see
-`config.example.toml`) and lets a profile override the six keys that are
+`config.example.toml`) and lets a profile override the nine keys that are
 about THIS repo:
 
 ```toml
@@ -355,7 +390,36 @@ validator = false          # the skeptic (ON by default) — false switches it o
 exclude = ["generated/"]   # repo-relative globs never scanned
 depth = "deep"             # standard (the default) | deep — see "The deep scan" below
 deep_lenses = ["pass-consistency", "pass-delivery"]  # the deep floor's lenses, in priority order
+lenses = ["pass-sec-access", "pass-sec-injection"]  # the lenses stage 2 may run; [] = every deep lens
+kinds = ["security"]       # the finding kinds a scan keeps; [] = every kind
+threat_model = "auto"      # off (the default) | auto | always — stage 0's threat-model draft
 ```
+
+`lenses` bounds what stage 1 may suggest and what stage 2 may run, the deep
+floor included; a floor lens outside it gets no rows. `kinds` drops, after
+parsing, a candidate whose kind is not listed (`security` keeps every
+`security:<class>`), counted on its case as `off_kind`. Under a security kind
+a security-family lens's findings are security findings whatever kind it
+wrote (`sqli`, or none), so they are kept. A stage 1 that `kinds` filters
+keeps its coverage apart in the ledger (`pass-scan:kinds=…`): a security
+scan and a general scan never mark each other's files read, and a filtered
+reading settles as fixed only the findings of a kind it keeps. `threat_model` says
+whether the scan drafts a threat model first (stage 0) and reads that draft
+when neither the scanned tree's `.qcr/threat-model.md` nor the profile has
+one. Stage 0 (`agents/scan/pass-sec-threat-model.md`) is one case over the
+route inventory, stopped hard at `calibration_max_usd` (or what the last one
+cost), and writes its DRAFT to the state home only
+(`scan/threat-model.draft.md`), never to the repository. It is part of the
+scan whenever it is due: under `auto`, when no model and no draft exist yet;
+under `always`, once per scanned sha (revising the existing model). A due
+stage 0 rides the stage-1 or delta preview (`threat_model_stage`, and
+`preview --json`'s `start` is its key), a stage-1 start is refused until it
+has run, and `start` with its key runs it; the next preview is the scan
+itself, over the draft. The guided `/qcr-scan` asks for it first, then for
+the scan. `off`, the default, never drafts and never reads a draft, so a
+scan outside the security profile (which sets `auto`) costs what it did;
+`qcr scan threat-model propose` (the companion's
+`scan_threat_model_propose`) drafts again on request when it is not off.
 
 **The profile wins**, per key, along the `extends` chain (nearest profile
 that sets it); `exclude` is replaced whole, never appended. The install's
@@ -465,7 +529,11 @@ checklist names — one list, `SCAN_FALSE_POSITIVE_CLASSES`).
 
 Every stored scan finding it judged carries a **validity tier**:
 `confirmed` (a traced scenario, kept on the finding), `likely` (a real
-mechanism, reachability not fully traced) or `doubtful` (refuted,
+mechanism, reachability not fully traced), `needs-review` (only with
+`[security] fold` on: a security candidate the skeptic could not settle by
+reading — marked `unverifiable`, classed same-principal or
+contrived-concurrency without a cited `path:line`, or never mentioned —
+stored with its doubt kept as the proof gap) or `doubtful` (refuted,
 class-matched, or anything it would have killed — below the bar, a
 duplicate, a restatement, a confidence under 0.5 — with its word, reason and
 class). **Nothing is killed**: the engine stores a KILLED line and a
@@ -473,7 +541,8 @@ candidate the answer never mentions as doubtful too, so no kill path of the
 frozen validator can make a finding vanish. A finding no skeptic judged (the
 validator off or failed, or stored before the tiers) reads as `unknown`,
 never a guessed tier. The TUI's `[8] scan` tab groups by tier with confirmed
-first (`t` steps the tier filter), and promotion — from the tab or the
+first (`t` steps the tier filter: all, confirmed, likely, needs-review,
+doubtful, unknown), and promotion — from the tab or the
 companion — defaults to confirmed findings; the rest need an explicit word.
 Pinned by `tests/scan-skeptic.test.ts`.
 
@@ -488,16 +557,18 @@ line (`ok: false` with `errors` on a refusal). Exit codes: 0 done, 1 refused,
 2 usage, 3 `status --wait` timed out.
 
 ```sh
-qcr scan preview [--sha REF] [--delta]           # cases and price; prints the start key
-qcr scan start --key K [--sha REF] [--delta]     # starts EXACTLY that preview
+qcr scan preview [--sha REF] [--delta] [--path DIR]   # cases and price; prints the start key
+qcr scan start --key K [--sha REF] [--delta] [--path DIR]   # starts EXACTLY that preview
 qcr scan status [--wait [--timeout S]]           # --wait blocks until the run ends
 qcr scan stop
 qcr scan findings [--state S] [--lens L] [--unit U] [--severity P] [--validity V] [--doubted|--not-doubted] [--limit N]
 qcr scan matches                                 # the pending match question
 qcr scan match --key K OLD=NEW…                  # its whole answer; unpaired old ones become fixed
 qcr scan suggestions
-qcr scan stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF]
+qcr scan stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] [--path DIR]
 qcr scan stage2 start --key K [--rows row-1,row-3]
+qcr scan threat-model propose [--sha REF]        # stage 0: what drafting the threat model reads and costs
+qcr scan threat-model start --key K [--sha REF]  # runs it; the draft goes to the state home only
 qcr scan dismiss FP… --reason TEXT               # the triage dismissal: sticky, with its memory note
 qcr scan units show                              # the saved unit cut and the draft (setup_unit_cut)
 qcr scan units propose [--file F|-]              # store a draft: {units, ignored} from F, or the default proposal
@@ -511,7 +582,13 @@ qcr scan rebuild                                 # build [scan] image, stamped �
 The approval rules are the tools': `start` takes only the key a `preview`
 printed (`preview --json` gives it as `start`, the arguments to pass on), and
 anything that moved since — the plan, the sha, the price, a setting — is
-refused; the run stops hard at the estimate it showed. `stage2 start` takes
+refused; the run stops hard at the estimate it showed. `--path DIR` scopes a
+preview, its start and a stage 2 proposal to one folder, relative to the repo
+root: stage 1's cases are the cut's units narrowed to the files under it (a
+unit only partly inside keeps its name), the ledger, exclusions and `--delta`
+apply inside it, and a proposal's rows and deep floor name only files under
+it. The path is part of the key, and one that is absolute, leaves the repo or
+names no folder of the tree at the sha is a usage error (exit 2). `stage2 start` takes
 only the key of the stored proposal, and `--rows` narrows it to runnable rows,
 the hard stop their total. `stage2 propose` reads the companion's rows (the
 `scan_stage2_propose` shape: `[{lens, files, tier?, reason}]`) from a JSON
@@ -520,7 +597,7 @@ belt's unit-cut tools over the same engine and rendering (`propose` takes the
 `setup_unit_cut_propose` shape, `adjust` its ops); a scan reads by unit, so a
 repo needs a saved cut before its first preview.
 
-`start` and `stage2 start` launch a detached `qcr scan … --foreground`
+`start`, `stage2 start` and `threat-model start` launch a detached `qcr scan … --foreground`
 driver — in the scan sandbox by default (below), or as a host process with
 `[scan] sandbox = "host"` — return once it has recorded the run, and leave its
 output in
@@ -539,8 +616,9 @@ a minute its run reads as interrupted, and the ledger resumes it. A driver
 that finds its lease lost (suspended past its life while another took over)
 stops its run and writes the run record no more. The lease does not
 serialise `scan/findings.json`: a `match` or `dismiss` written while a driver
-reconciles can lose one of the two writes. On the host the CLI reads the
-`[companion] reviewed_repo_dir` checkout (or `QCR_REVIEWED_REPO`); with
+reconciles can lose one of the two writes. On the host the CLI reads
+`QCR_REVIEWED_REPO`, else the checkout it runs in, else (outside any
+checkout) the `[companion] reviewed_repo_dir` checkout; with
 `sandbox = "host"` the case runner's `pi` is the one on the PATH.
 
 #### The scan sandbox
@@ -645,11 +723,11 @@ Exit 0 when every check passes, else 1. Pinned by
 
 ```json
 {"ok": true, "total": 2,
- "validity": {"confirmed": 0, "likely": 0, "doubtful": 0, "unknown": 2},
+ "validity": {"confirmed": 0, "likely": 0, "needs-review": 0, "doubtful": 0, "unknown": 2},
  "findings": [{"fingerprint": "<64 hex>", "file": "app/a.py",
    "range": {"start": 1, "end": 2}, "lens": "pass-scan", "lenses": ["pass-scan"],
    "unit": "app", "kind": "bug", "severity": "P2",
-   "validity": "confirmed|likely|doubtful|unknown",
+   "validity": "confirmed|likely|needs-review|doubtful|unknown",
    "state": "new|promoted|dismissed|fixed", "claim": "…",
    "doubted": false, "doubt": null,
    "looks_like_dismissed": null, "dismissal_reason": null, "ticket": null,
@@ -681,6 +759,8 @@ questions = "blocking"    # post (default) | blocking (only P0–P2 questions) |
 repeat_sites = false      # true (default): a finding may post at each of its sites
 body = "verdict"          # full (default) | verdict (the verdict line + one sentence)
 comment_style = "concise" # full (default) | concise (one claim, ≤3 sentences)
+security_max = 8          # 0 (default) = no separate channel; else security findings' own budget
+scope = "security"        # all (default) | security (post security findings only)
 ```
 
 Inherited through `extends` like every scalar: per key, the nearest profile
@@ -696,7 +776,7 @@ Three places carry a non-default policy (`packages/pi-plugin/src/postingpolicy.t
    (`{{posting_policy_note}}`), telling the session what posts and that every
    survivor it does not post is recorded `"disposition": "withheld"` with its
    word (`over-budget`, `nits-off`, `questions-off`, `question-not-blocking`,
-   `repeat-site`).
+   `repeat-site`, `security-scope`).
 2. **The validator** — a generated addendum (`posting-policy-validate`,
    composed after the profile's pack and its lens-ceiling addenda; the id is
    reserved) that, after the ordinary audit, SELECTS what posts by what a
@@ -722,6 +802,28 @@ Three places carry a non-default policy (`packages/pi-plugin/src/postingpolicy.t
    MERGED before counting — one comment at the clearest site naming the
    others, counted once — and that, within one severity, a defect on a
    changed line rank above a consequence in code the PR did not touch.
+
+The two security keys (`packages/pi-plugin/src/postingpolicy.ts`;
+a security finding is one from a `pass-sec-*` lens or `pass-security`, or
+of a `security`, `exploit-chain` or `partial-chain` kind,
+`packages/pi-plugin/src/severity.ts isSecurityFinding`):
+
+- **`security_max > 0`** gives security findings their own channel: up to
+  that many post, budgeted apart from `max_comments` and exempt from
+  `questions = "off"` and `"blocking"`, so a security question never loses
+  its slot to a cap meant for the rest.
+- **`scope = "security"`** withholds every non-security finding with the
+  word `security-scope`, a blocker included: out of scope is not over
+  budget, and a security-only review posts nothing else. A security defect
+  whose lens says nothing of security is recorded with a `security` kind so
+  it posts. `[security] only = true` sets
+  it unless the profile chain sets a scope.
+
+Under any policy or none, **a partial exploit chain never posts**: a chain
+the validator left with two or more unproven hops is recorded doubted with
+the word `partial-chain` and handed to the next round's chain `delta` row.
+At their defaults the security keys render nothing, so a default or a
+non-security policy is byte-identical to before them.
 
 Two invariants no value moves: **a `[blocker]` is never withheld** — a budget
 is filled around the blockers, so a round with more blockers than
@@ -760,7 +862,7 @@ cannot ship without documenting its planning:
 | Priority | Meaning |
 |---|---|
 | `core` | every round (baseline, sweep, validator) |
-| `risk` | planned on its signal; never skipped or tiered down once planned (data-safety, security, prod-risk) |
+| `risk` | planned on its signal; never skipped or tiered down once planned (data-safety, security, prod-risk, every `pass-sec-*` lens) |
 | `signal` | planned when the diff or the PR text shows its concern (most lenses) |
 | `breadth` | planned on size or novelty (placement, simplicity, the quality lenses) — the design and maintainability questions defect lenses skip, at more cost per unique real finding |
 | `on-demand` | addable only (ask-human) |
@@ -837,6 +939,168 @@ plan rows name `sol-high` and are not raisable. To lower it:
 The validator is unaffected: it runs at its own `validate_tier` and never
 follows a pinned lens.
 
+## Security review — the `pass-sec-*` family and `[security]`
+
+Fourteen lenses read a change for one class of security defect each
+(`packages/pi-plugin/src/passes.ts SECURITY_FAMILY`; the table of what each
+looks for is in `profiles/security/README.md`). Every one includes the shared
+contract `prompts/pass-sec-common.md`: an evidence block (source, boundary,
+sink, path, controls hunted), one owner per class, and the
+impact × exposure matrix the code pins as `securitySeverity`. The general
+`pass-security` and `pass-bounds` are not in the family. `pass-bounds` is
+unchanged. The `pass-security` lens body is unchanged in PR builds; in scan
+builds it gains the `scan-sec-precision` narrowing of the same-principal and
+contrived-concurrency classes. Its candidates are security candidates
+(`packages/pi-plugin/src/include.ts SECURITY_CANDIDATE`): the validator's
+security rules judge them in every build (PR text is never counterevidence,
+a refutation cites the line that contradicts it, evidence is labelled line
+by line, and in PR rounds a sink the PR newly reaches is in scope), and
+they count as security findings when posted (`severity.ts
+isSecurityFinding`: the `security_max` channel and `scope = "security"`).
+
+```toml
+# config.toml (a profile's [security] wins for triggers, only and fold)
+[security]
+triggers = "strong"     # off | strong (default) | all
+only = false            # a security-only review
+fold = false            # an unverifiable security candidate posts as a question
+label = "qcr:security"  # config.toml only; "" = no label requests
+command = true          # config.toml only; "@<bot> security"
+```
+
+- **What plans a family lens** (`packages/pi-plugin/src/securitytriggers.ts`):
+  a strong content trigger (a guard removed and not put back, SQL built by
+  interpolation, a shell or evaluator on a non-literal, a disabled
+  signature check, a credential literal, a wildcard grant, …); a weak one
+  (a new route, an outbound request on a variable, a lockfile change, an
+  LLM call, …) only under `triggers = "all"`; a threat-model entry point,
+  control or sink the change touches; a profile `heuristics.toml` probe for
+  a family lens; a security fact the daemon read (below); a request; and
+  `[lenses.<pass>] plan = "always"`. `off` leaves the requests and `always`.
+- **Every family row runs at the risk tier** (`sol-high`, one variant,
+  slowest first) on every profile: `risk_passes` is the configured list
+  joined with the family, and a tier pin on a family lens is refused.
+- **A family row is not required**, so a failed one never holds the round
+  back; a row that did not complete — failed, still running at posting time,
+  or never launched (a `compose` row only once launched, since a round with
+  no leads skips it) — is named in the review body as a security pass that
+  did not complete (`securityPassIncompleteLine`, the
+  `security_pass_incomplete` event), never read as clean. When the round's
+  progress record cannot be read, the body says completion is unknown
+  (`SECURITY_PASSES_UNKNOWN_LINE`, the `security_pass_unknown` event). The
+  one-shot route (`qcr review --security`, `/qcr-review --security`) writes
+  the same lines from the planned family rows with no entry among the
+  outcome's returned `passes` (`securityRowsNotReturned`). The one required
+  family row is the chain's `delta`.
+- **The exploit chain** (`pass-sec-exploit-chain`) is planned as one row per
+  strategy, each naming its rule: `delta` (from the hop this change adds),
+  `forward` and `backward` (from the threat model's entry points and crown
+  jewels), and `compose`, which runs after the discovery wave over the
+  round's security candidates. `compose` sits in `post_plan` and its task
+  file in `tasks-post/`, a directory the engine's wave never lists: the
+  session launches it once every other row has returned
+  (`docs/single-shepherd-invariant.md`). A chain the validator leaves with
+  two or more unproven hops is recorded doubted as `partial-chain`, never
+  posted, and handed to the next round's `delta` row.
+- **The validator** judges a security candidate by its evidence lines
+  (`validate-sec-evidence`, `validate-sec-refuted-cites`): each line valid,
+  plausible or contradicted; a refutation cites the line that contradicts,
+  and a control the repository does not contain refutes nothing. A chain's
+  outcome is computed from its hop labels (`packages/pi-plugin/src/secevidence.ts`)
+  and a mismatch with what the session recorded is counted
+  (`security_outcome_mismatch` in `findings_conformance`). When a family row
+  is planned and the validator runs below `sol-high`, the security
+  candidates are validated in a group of their own at `pass-validate--sol-high`.
+- **`fold = true`**: a security candidate the validator could not verify
+  posts as a question naming the proof gap (`security-demoted`) instead of
+  being doubted; the findings record counts any it still doubted
+  (`security_doubted`).
+- **`only = true`**: every lens outside the family and `pass-validate` is
+  switched off through the same `enabled = false` a profile writes by hand
+  (`pass-baseline`, `pass-bounds`, `pass-security`, the sweep, tests and the
+  quality lenses included; a lens added later too), and posting is scoped to
+  security findings. Only the named profile chain can switch one of those
+  lenses back on or widen the scope: a repository's `.qcr/profile.toml`
+  `[lenses.<pass>] enabled = true` or `[posting] scope` does not. A follow-up delta anchors on a family row
+  (`anchor-unplanned` answers a full review without one; a docs-only push
+  instead carries one class row of the full plan, the `always` lens first),
+  and two planned
+  family rows plan the chain's `delta`.
+
+### The threat model and the security facts
+
+A family row's task file carries an excerpt of the threat model, fenced as
+data (`packages/pi-plugin/src/threatmodel.ts`): the reviewed repository's
+`.qcr/threat-model.md`, read from the **base** commit so a pull request
+cannot write its own, else `threat-model.md` in the nearest profile of the
+chain. No threat model means no section, never an empty one. The format is
+`profiles/security/threat-model.example.md`.
+
+Beside it, the **security facts** (`packages/pi-plugin/src/secfacts.ts`):
+seven checks the daemon runs deterministically over the repository's files
+through read-only git (`ls-tree`, `cat-file` in the base clone): a removed
+guard, a shifted role list, a uniqueness check without a unique index, a
+security group nothing attaches, a published port that bypasses ufw, a
+NetworkPolicy selecting nothing, and the route inventory — each `found`,
+`clear` or `unknown`. A fact the line parser cannot
+settle is `unknown`, never `clear`. Computing them is bounded (15 s); past
+it, or on an error, the round uses the diff alone and logs
+`security_facts_degraded`. The route inventory plans nothing, so it is read
+only for a round whose plan has a security-family row, within what is left
+of the same budget: a pull request with no security signal reads nothing
+for it. The one-shot routes (`/qcr-review`, `qcr review`) compute the same
+facts in the local checkout, from a source that depends on the target
+(`packages/pi-plugin/src/reviewapi.ts`, `secfactsgit.ts`): a committed
+target reads the head and base commits through read-only git; an
+uncommitted target (or a branch with its uncommitted edits on top) reads
+its head from the working tree — tracked and untracked files, never ignored
+ones, never through a symlink — and its base through git; a diff target has
+no files to read, so only the two diff-only checks (removed guard, shifted
+role list) run and every other check is `unknown`. A committed or
+uncommitted target reads the repository's `.qcr/threat-model.md` at the
+base before the profile's copy; a diff names no base commit, so only the
+profile's copy is read.
+The facts read the whole pull request; a
+follow-up round plans only from those about a file its push touched, so a
+fact found once does not re-plan its lens on every later push.
+
+### Asking for a security review
+
+A request plans the whole family on the PR's next round, on top of the
+profile's plan, but never a lens the profile switched off or skipped
+(`src/securityrequest.ts`):
+
+- the **label** `[security] label` (`qcr:security`), set by anyone who can
+  label the PR — an auto-labeler counts too. The reconcile poll reads it as
+  well, so a polling install, or a missed `labeled` webhook, still records
+  the request (its asker unknown); taking the label off and putting it back
+  asks again;
+- **`@<bot> security`** (or `@<bot> security review`) as the first line of a
+  comment by an OWNER, MEMBER or COLLABORATOR, while `[security] command`
+  is on. Anyone else is ignored with a log line and no reply. A fresh
+  comment request is acknowledged once through the gate
+  (`create_issue_comment`, suppressed in dry-run, marked
+  `<!-- qcr-security-request -->`);
+- **`qcr review-now <pr> --security`** from the operator;
+- **`/qcr-review --security`** in pi, or **`qcr review --security`** in the
+  terminal (the one-shot review, which plans it for that run alone).
+
+A request is a row of `pr_review_requests` (one per PR and kind) and is
+served once: it notes new evidence at the reviewed head, so a PR already
+reviewed at its head is reviewed again. While it stands, every round of the
+PR plans the family; the label coming off withdraws a label request, and
+closing the PR drops any. A comment or operator request made while a label
+request stands takes the row over (a comment is acknowledged), so the label
+coming off no longer withdraws it.
+
+The reconcile poll applies a comment its webhook missed, records a label
+request no webhook brought, and serves a request that waited for a running
+round. A command it captures for the first time is not taken as new when
+the reviewer already acknowledged a request after it, or when it was made
+more than a day before this daemon began tracking the PR (a fresh state
+database sweeps the PR's whole history); it is logged as ignored
+(`stale-comment`).
+
 ## Lens-selection heuristics — `heuristics.toml`
 
 Lens selection (`packages/pi-plugin/src/heuristics.ts selectLenses`) is split in two:
@@ -852,7 +1116,7 @@ Lens selection (`packages/pi-plugin/src/heuristics.ts selectLenses`) is split in
   vocabulary (DRF's `serializers.py`/`views.py`/`urls.py`), and
   framework-specific flag-library names (`waffle`).
 
-The file is one table per lens, with up to two keys:
+The file is one table per lens, with up to four keys:
 
 ```toml
 [pass-security]
@@ -860,6 +1124,10 @@ paths = ['(^|/)settings[^/]*\.py$']      # RegExp sources over changed filenames
 
 [pass-delivery]
 added_lines = ['@background_task']  # probes over ADDED diff lines
+
+[pass-sec-authn-coverage]
+removed_lines = ['@login_required']  # probes over REMOVED diff lines
+config_lines = ['AuthType:\s*NONE']  # probes over ADDED lines of config files
 ```
 
 - **`paths`** — compiled verbatim, case-sensitive, matched against every
@@ -868,9 +1136,17 @@ added_lines = ['@background_task']  # probes over ADDED diff lines
 - **`added_lines`** — each probe is wrapped as `^\+.*(?:…)` with the `im`
   flags: it matches an ADDED unified-diff line containing the pattern,
   case-insensitively, and only when the file's patch is available.
+- **`removed_lines`** — wrapped as `^-(?!--).*(?:…)`: a REMOVED line (never
+  the `--- a/<file>` header). **`config_lines`** — as `added_lines`, tested
+  against configuration files only. Both are read by the security family's
+  triggers alone, so they are accepted for a `pass-sec-*` lens and refused
+  for any other. A probe for a `pass-sec-*` lens is a
+  strong security trigger: it plans that lens under `[security] triggers =
+  "strong"` too.
 - **Extendable lenses only**: `pass-ui`, `pass-contracts`,
   `pass-data-safety`, `pass-security`, `pass-statelessness`,
-  `pass-prod-risk`, `pass-delivery`, `pass-backcompat`. Not extendable:
+  `pass-prod-risk`, `pass-delivery`, `pass-backcompat`, and the fourteen
+  `pass-sec-*` lenses. Not extendable:
   `pass-intent` (body-keyed, never file-shaped),
   `pass-placement`/`pass-simplicity` (computed from code-file status/size,
   not path membership), and `pass-concurrency`/`pass-ask-human`

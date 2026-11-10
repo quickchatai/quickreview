@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { isEntryModule } from "../src/cli.js";
+import { isEntryModule } from "../src/entrymodule.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const BUILT = existsSync(join(ROOT, "dist", "src", "cli.js"));

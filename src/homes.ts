@@ -10,6 +10,9 @@
 //   state home   $XDG_STATE_HOME/qcr/<install>/   scan ledger, findings, portrait
 //                                                  facts, one-shot review runs
 //
+// and one data home per user, $XDG_DATA_HOME/qcr/, for what the App hands the
+// user's other tools: the host plugins `qcr plugin` renders (src/plugincli.ts).
+//
 // `<install>` is `$QCR_INSTALL`, default `default`. `$QCR_CONFIG` overrides
 // the config FILE outright (not the home). Every locator takes the env as a
 // parameter (default `process.env`), so tests drive it with temp XDG homes.
@@ -86,6 +89,22 @@ export function configHome(env: InstallEnv = process.env): string {
 
 export function stateHome(env: InstallEnv = process.env): string {
   return core.stateHome(withHome(env));
+}
+
+/** One repo's own scan state home under the state home (core `repoScanHome`). */
+export function repoScanHome(env: InstallEnv, repo: string): string {
+  return core.repoScanHome(withHome(env), repo);
+}
+
+/**
+ * `$XDG_DATA_HOME/qcr` (default `~/.local/share/qcr`): the files the App
+ * renders for the coding-agent CLIs on this machine, which load them in place
+ * long after the run that wrote them. One per user, never per install, because
+ * each of those CLIs knows one QuickReview; and never inside the package,
+ * which an update replaces and an `npx` cache drops.
+ */
+export function dataHome(env: InstallEnv & { XDG_DATA_HOME?: string } = process.env): string {
+  return join(core.xdgBase(env.XDG_DATA_HOME, withHome(env), join(".local", "share")), "qcr");
 }
 
 /**
@@ -183,6 +202,12 @@ export function isLegacySecretsSpelling(value: string, env: InstallEnv = process
 
 export function locateSecrets(opts: EnvOpt<LocateSecretsOptions> = {}): LocatedSecrets {
   return core.locateSecrets(optEnv(opts));
+}
+
+export function oneShotConfigFile(
+  opts: EnvOpt<Parameters<typeof core.oneShotConfigFile>[0]>,
+): ReturnType<typeof core.oneShotConfigFile> {
+  return core.oneShotConfigFile(optEnv(opts));
 }
 
 export function loadOneShotConfig(

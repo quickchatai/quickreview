@@ -59,6 +59,7 @@ export const IPC_ERROR_CODES = [
   "cancelled", // a permit wait ended by a release or by the command ending
   "blocked", // the gate or a guard refused the mutation: nothing was posted
   "post_failed", // GitHub answered the post with a refusal
+  "post_rejected", // GitHub rejected the post as invalid (a 4xx): nothing landed, the corrected post may be sent
   "rate_limited", // too many reads in flight or in the last minute for this PR (github.read)
   "internal",
   "closed", // client side: the connection ended

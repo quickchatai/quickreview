@@ -33,6 +33,8 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
+import { PostingJournal } from "../src/posting-journal.js";
+import { PostingOutbox, withApprovalCiPrecheck, type PostingJob } from "../src/posting-outbox.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { RoundProgressSnapshot } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
@@ -60,6 +62,24 @@ class FakeAdapter implements VerdictAdapter {
   async removeLabel(n: number, label: string): Promise<GateResult> {
     this.calls.push(`removeLabel:${n}:${label}`);
     return { executed: false, dryRunFile: "d" };
+  }
+}
+
+/** A GitHub whose reviews the posting proof can read for the marker, each
+ * read counted: what tells a proof that read GitHub from one that did not. */
+class ReadingAdapter extends FakeAdapter {
+  reads = 0;
+  reviews: Array<{
+    id: number;
+    user: string;
+    state: string;
+    body: string;
+    commit_id: string;
+    submitted_at: string | null;
+  }> = [];
+  async listReviewsFull(_pr: number) {
+    this.reads++;
+    return this.reviews;
   }
 }
 
@@ -215,7 +235,10 @@ function progress(): RoundProgressSnapshot {
   };
 }
 
-function wire(live = false): { watcher: VerdictWatcher; supervisor: SessionCommandSupervisor } {
+function wire(
+  live = false,
+  adapter: VerdictAdapter = new FakeAdapter(),
+): { watcher: VerdictWatcher; supervisor: SessionCommandSupervisor } {
   const hooks: SessionHooks = {
     async dispatchRound() {},
     async inject() {},
@@ -230,7 +253,7 @@ function wire(live = false): { watcher: VerdictWatcher; supervisor: SessionComma
   const watcher = new VerdictWatcher({
     cfg: live ? { ...cfg, dry_run: false } : cfg,
     store,
-    adapter: new FakeAdapter(),
+    adapter,
     hooks,
     verdictDir,
     root,
@@ -594,6 +617,175 @@ describe("a deferred posting", () => {
     expect(postings()).toBe(0);
   });
 
+  function exhausted(): void {
+    writeDeferred("REQUEST_CHANGES", "failed");
+    store.adoptPostingRetry({
+      posting_key: key,
+      pr: PR,
+      round_no: 5,
+      head_sha: HEAD,
+      first_failed_at: "2026-01-15T08:52:58.000Z",
+      now: "2026-01-15T08:52:58.000Z",
+    });
+    store.settlePostingRetry(key, "exhausted", "GitHub 502 ×3", "2026-01-15T09:29:00.000Z");
+  }
+  const readingAdapter = (reviews: unknown[]): VerdictAdapter => {
+    const a = new FakeAdapter() as FakeAdapter & {
+      listReviewsFull: VerdictAdapter["listReviewsFull"];
+    };
+    a.listReviewsFull = async () => reviews as never;
+    return a;
+  };
+
+  it("an exhausted retry whose marker GitHub read and does not hold waits on the automatic retry", async () => {
+    exhausted();
+    const { supervisor } = wire(true, readingAdapter([]));
+    set("2026-01-15T09:30:00.000Z");
+    await supervisor.scan();
+    expect(round5()).toMatchObject({ status: "cancelled" });
+    expect(store.openReviewFailure(PR)).toMatchObject({ next_action: "retry_wait" });
+  });
+
+  // MUTATION: set `reconciled = true` before the reviews are inspected in
+  // postingProof (and drop its reset in the catch) — a search that threw
+  // part-way reads as proven absence and the exhausted delivery retries
+  // itself; this fails.
+  it("an exhausted retry whose marker search threw part-way stays the operator's", async () => {
+    exhausted();
+    const malformed = {
+      id: 1,
+      user: cfg.github.bot_login,
+      user_type: "Bot",
+      state: "COMMENTED",
+      body: null,
+      commit_id: HEAD,
+      submitted_at: "2026-01-15T09:00:00Z",
+    };
+    const { supervisor } = wire(true, readingAdapter([malformed]));
+    set("2026-01-15T09:30:00.000Z");
+    await supervisor.scan();
+    expect(round5()).toMatchObject({ status: "cancelled" });
+    expect(store.openReviewFailure(PR)).toMatchObject({
+      next_action: "operator_unwedge",
+      next_retry_at: null,
+    });
+  });
+
+  // The production incident: the approval's CI pre-check could not read the
+  // checks, so the session's post deferred it before any attempt
+  // (`deferUnattempted`). The verdict APPROVE the session then commits must
+  // read `waiting` — never `unconfirmed`, which would fail the round loud.
+  // MUTATION: write the deferral as a `prepared` receipt in deferUnattempted — this fails.
+  it("a verdict APPROVE over an approval deferred before any attempt (CI unreadable) waits", async () => {
+    const journal = new PostingJournal({ dir: dir(), repo: cfg.github.repo });
+    const payload = {
+      commit_id: HEAD,
+      event: "APPROVE" as const,
+      body: `LGTM\n\n${postingMarker(key)}`,
+    };
+    const ident = { key, pr: PR, round: 5, head: HEAD };
+    journal.enqueue({ ...ident, event: "APPROVE", mode: "live", payload });
+    journal.deferUnattempted({
+      ...ident,
+      intended: "APPROVE",
+      payload,
+      reason: "ci-unreadable: GitHub answered 502",
+    });
+    // The deferral itself: a `deferred` receipt that claims no attempt, never
+    // a `prepared` ("may have landed") one.
+    expect(JSON.parse(readFileSync(join(dir(), `pr-${PR}-round-5.json`), "utf8"))).toMatchObject({
+      status: "deferred",
+      unattempted: true,
+      defer_reason: "ci-unreadable: GitHub answered 502",
+    });
+    // A GitHub the proof could read: the deferred receipt answers `waiting`
+    // BEFORE any marker read (the retry owns that read), where a generic
+    // pending delivery behind a `prepared` receipt would read GitHub first.
+    const github = new ReadingAdapter();
+    const { watcher, supervisor } = wire(true, github);
+    verdictFile("APPROVE");
+    set("2026-01-15T08:54:00.000Z");
+    expect(await watcher.sweep()).toEqual([]); // waiting on the posting
+    store.finishSessionCommand(CMD, "bridge-1", "acked");
+    for (const at of ["2026-01-15T08:58:43.000Z", "2026-01-15T09:40:00.000Z"]) {
+      set(at);
+      await supervisor.scan();
+      await watcher.checkDeadlines();
+      expect(await watcher.sweep()).toEqual([]);
+    }
+    expect(round5().status).toBe("running");
+    expect(killed).toEqual([]);
+    expect(store.openReviewFailure(PR)).toBeUndefined();
+    expect(count("round_infrastructure_failure")).toBe(0);
+    expect(github.reads).toBe(0);
+  });
+
+  // The daemon's CI pre-check read red: the delivery carries that state to the
+  // gate with the APPROVE, guard 4 withholds on it (no second CI read relied
+  // on), and the apply records the withheld approval as for any guard 4
+  // softening.
+  // MUTATION: post the APPROVE without the carried state when withApprovalCiPrecheck reads red — this fails.
+  it("an APPROVE whose retry's CI pre-check read red lands, through the real outbox, as a withheld approval", async () => {
+    writeDeferred("APPROVE");
+    const asked: Array<[PostingJob["payload"]["event"], string | undefined]> = [];
+    const outbox = new PostingOutbox({
+      dir: dir(),
+      repo: cfg.github.repo,
+      dryRun: false,
+      botLogins: [cfg.github.bot_login],
+      now: () => clock,
+      adapter: {
+        createReview: async () => {
+          throw new Error("never the ordinary route");
+        },
+        listReviewsFull: async () => [],
+      },
+      current: () => true,
+      log: () => {},
+      deferred: {
+        ledger: store,
+        offsetsMs: [4, 12, 36].map((m) => m * 60_000),
+        windowMs: 60 * 60_000,
+        deliver: (pr, payload) =>
+          withApprovalCiPrecheck(
+            {
+              listChecks: async () => [
+                { name: "ci", source: "check_run", status: "completed", conclusion: "failure" },
+              ],
+              enabled: true,
+            },
+            pr,
+            payload,
+            // The gate withholds on a carried state, as guard 4 does.
+            async (p, ci) => {
+              asked.push([p.event, ci]);
+              return {
+                executed: true,
+                response: {
+                  id: REVIEW_ID,
+                  commit_id: HEAD,
+                  state: p.event === "APPROVE" && ci === undefined ? "APPROVED" : "COMMENTED",
+                },
+              };
+            },
+          ),
+        owed: () => true,
+        onExhausted: () => {},
+      },
+    });
+    const { watcher } = wire(true);
+    verdictFile("APPROVE");
+    set("2026-01-15T08:57:00.000Z");
+    await outbox.tick();
+    expect(asked).toEqual([["APPROVE", "red"]]);
+    expect(await watcher.sweep()).toEqual([`pr-${PR}-round-5.json`]);
+    expect(round5()).toMatchObject({ status: "done", verdict: "APPROVE", posted_event: "COMMENT" });
+    expect(store.approvalWithheld(PR)?.head_sha).toBe(HEAD);
+    expect(count("posting_retry_approval_withheld")).toBe(1);
+    expect(count("approval_withheld_red_ci")).toBe(1);
+    expect(store.getPr(PR)?.state).toBe("tracked");
+  });
+
   it("an APPROVE the gate softened at retry time (red CI) lands as a withheld approval", async () => {
     writeDeferred("APPROVE");
     const { watcher } = wire(true);
@@ -605,5 +797,223 @@ describe("a deferred posting", () => {
     expect(store.approvalWithheld(PR)?.head_sha).toBe(HEAD);
     expect(count("posting_retry_approval_withheld")).toBe(1);
     expect(store.getPr(PR)?.state).toBe("tracked");
+  });
+});
+
+describe("an ordinary delivery whose window ran out", () => {
+  const key = roundPostingKey(PR, 5, HEAD);
+  const dir = () => join(root, "state", "posting-receipts");
+  const payload = {
+    commit_id: HEAD,
+    event: "REQUEST_CHANGES",
+    body: `Review\n\n${postingMarker(key)}`,
+  };
+  const sha = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+
+  /** The outbox's failed job, its window spent, after `attempts` POSTs. */
+  function exhaustedJob(attempts: number): void {
+    mkdirSync(dir(), { recursive: true });
+    writeFileSync(
+      join(dir(), `pr-${PR}-round-5.outbox.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        repo: cfg.github.repo,
+        mode: "live",
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: "REQUEST_CHANGES",
+        payload,
+        payload_sha256: sha,
+        status: "failed",
+        attempts,
+        created_at: "2026-01-15T08:52:57.000Z",
+        next_attempt_at: "2026-01-15T09:50:00.000Z",
+        ...(attempts > 0 ? { attempted_at: "2026-01-15T09:40:00.000Z" } : {}),
+        exhausted_at: "2026-01-15T09:52:57.000Z",
+        last_error:
+          "posting retry exhausted: not delivered within 60 min of being queued; last: GitHub 502",
+      }),
+    );
+  }
+
+  // The outbox's ordinary replay tried, never confirmed, and its window
+  // passed: the job is failed with `exhausted_at`, the `prepared` receipt of
+  // its last POST kept. GitHub reads, and shows no marker.
+  // MUTATION: drop the `exhausted_at` check from postingProof — this fails (requeued).
+  it("fails the round loud (FAILED_LOUD hold), never a requeue, the uncertain POST said", async () => {
+    exhaustedJob(2);
+    writeFileSync(
+      join(dir(), `pr-${PR}-round-5.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        marker: postingMarker(key),
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: "REQUEST_CHANGES",
+        actual_event: "REQUEST_CHANGES",
+        status: "prepared",
+        payload_sha256: sha,
+        prepared_at: "2026-01-15T09:40:00.000Z",
+      }),
+    );
+    const github = new ReadingAdapter();
+    const { supervisor } = wire(true, github);
+    set("2026-01-15T09:55:00.000Z");
+    await supervisor.scan();
+    expect(github.reads).toBeGreaterThan(0); // the proof read GitHub: no marker
+    expect(round5()).toMatchObject({ status: "cancelled" });
+    expect(count("round_self_requeued")).toBe(0);
+    const failure = store.openReviewFailure(PR);
+    expect(failure).toBeDefined();
+    expect(failure!.detail).toContain("was not delivered");
+    expect(failure!.detail).toContain("a POST was attempted");
+    // The `prepared` receipt says a POST may have landed: one negative read
+    // never makes it unposted, so the incident is the operator's, not the
+    // automatic retry ladder's.
+    // MUTATION: set the ordinary exhausted proof's `unposted` to `reconciled` — this fails.
+    expect(failure!.next_action).not.toBe("retry_wait");
+    expect(postings()).toBe(0);
+  });
+
+  // The window ran out before any POST (every attempt waited on GitHub), and
+  // no receipt of any status was written: nothing was posted, so the loud
+  // incident waits on the automatic retry ladder.
+  // MUTATION: set the ordinary exhausted proof's `unposted` to `false` — this fails.
+  it("with no POST sent and no receipt, fails loud onto the automatic retry ladder", async () => {
+    exhaustedJob(0);
+    const github = new ReadingAdapter();
+    const { supervisor } = wire(true, github);
+    set("2026-01-15T09:55:00.000Z");
+    await supervisor.scan();
+    expect(round5()).toMatchObject({ status: "cancelled" });
+    expect(count("round_self_requeued")).toBe(0);
+    const failure = store.openReviewFailure(PR);
+    expect(failure!.detail).toContain("no POST was sent");
+    expect(failure!.next_action).toBe("retry_wait");
+    expect(postings()).toBe(0);
+  });
+
+  // Every attempt was held before any POST (the approval's CI could not be
+  // read): the job counts them as attempts, and none as a POST.
+  // MUTATION: count every job attempt as a POST attempt in postingProof — this fails.
+  it("an exhausted job whose attempts all sent no POST says no POST was sent", async () => {
+    mkdirSync(dir(), { recursive: true });
+    const payload = { commit_id: HEAD, event: "APPROVE", body: `Ok\n\n${postingMarker(key)}` };
+    writeFileSync(
+      join(dir(), `pr-${PR}-round-5.outbox.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        repo: cfg.github.repo,
+        mode: "live",
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: "APPROVE",
+        payload,
+        payload_sha256: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
+        status: "failed",
+        attempts: 3,
+        unposted_attempts: 3,
+        created_at: "2026-01-15T08:52:57.000Z",
+        next_attempt_at: "2026-01-15T09:50:00.000Z",
+        exhausted_at: "2026-01-15T09:52:57.000Z",
+        last_error: "posting retry exhausted: not delivered within 60 min; last: pr-unreadable",
+      }),
+    );
+    const github = new ReadingAdapter();
+    const { supervisor } = wire(true, github);
+    set("2026-01-15T09:55:00.000Z");
+    await supervisor.scan();
+    expect(github.reads).toBeGreaterThan(0);
+    const failure = store.openReviewFailure(PR);
+    expect(failure!.detail).toContain("no POST was sent");
+    expect(failure!.detail).not.toContain("a POST was attempted");
+  });
+});
+
+describe("an ordinary delivery of an approval withheld for CI", () => {
+  const key = roundPostingKey(PR, 5, HEAD);
+  const dir = () => join(root, "state", "posting-receipts");
+
+  // The outbox's ordinary delivery sent the APPROVE; guard 4 withheld it (CI
+  // not green) and GitHub holds the COMMENT, but the answer was lost: the
+  // receipt is still the `prepared` one recording APPROVE. The watcher finds
+  // the marker first and reads it as the outbox's confirmation would.
+  // MUTATION: drop the withheldApprovalPosted clause from the watcher's synthetic receipt — this fails (contradicted).
+  it("the marker found before the outbox confirms lands as a withheld approval, not a contradiction", async () => {
+    mkdirSync(dir(), { recursive: true });
+    const payload = { commit_id: HEAD, event: "APPROVE", body: `Ok\n\n${postingMarker(key)}` };
+    const sha = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    writeFileSync(
+      join(dir(), `pr-${PR}-round-5.outbox.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        repo: cfg.github.repo,
+        mode: "live",
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: "APPROVE",
+        payload,
+        payload_sha256: sha,
+        status: "pending",
+        attempts: 1,
+        created_at: "2026-01-15T08:52:57.000Z",
+        next_attempt_at: "2026-01-15T08:56:00.000Z",
+        attempted_at: "2026-01-15T08:53:00.000Z",
+      }),
+    );
+    writeFileSync(
+      join(dir(), `pr-${PR}-round-5.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        marker: postingMarker(key),
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: "APPROVE",
+        actual_event: "APPROVE",
+        status: "prepared",
+        payload_sha256: sha,
+        prepared_at: "2026-01-15T08:53:00.000Z",
+      }),
+    );
+    writeFileSync(
+      join(verdictDir, `pr-${PR}-round-5.json`),
+      JSON.stringify({
+        pr: PR,
+        round_no: 5,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        summary: "done",
+        passes: [{ name: "pass-baseline", tier: "sol-med", findings: 0 }],
+        finished_at: "2026-01-15T08:53:30Z",
+      }),
+    );
+    const github = new ReadingAdapter();
+    github.reviews = [
+      {
+        id: REVIEW_ID,
+        user: cfg.github.bot_login,
+        state: "COMMENTED",
+        body: `Ok\n\n${postingMarker(key)}`,
+        commit_id: HEAD,
+        submitted_at: "2026-01-15T08:53:01.000Z",
+      },
+    ];
+    const { watcher } = wire(true, github);
+    set("2026-01-15T08:54:00.000Z");
+    expect(await watcher.sweep()).toEqual([`pr-${PR}-round-5.json`]);
+    expect(round5()).toMatchObject({ status: "done", verdict: "APPROVE", posted_event: "COMMENT" });
+    expect(store.approvalWithheld(PR)?.head_sha).toBe(HEAD);
+    expect(store.openReviewFailure(PR)).toBeUndefined();
+    expect(count("posting_receipt_reconciled")).toBe(1);
   });
 });

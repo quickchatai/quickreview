@@ -146,9 +146,19 @@ function parallelResult(
 }
 
 function resultsOf(entries: readonly Entry[]) {
-  return entries.map((e) =>
-    e.run ? slot(e.run, e.task) : placeholder(e.agent, e.task, e.activity),
-  );
+  return entries.map((e) => ({
+    ...(e.run ? slot(e.run, e.task) : placeholder(e.agent, e.task, e.activity)),
+    ...(e.unit ? rowOf(e.unit) : {}),
+  }));
+}
+
+/** A wave slot's row, as the live log carries it (`LiveResult.phase`,
+ * `strategy`). */
+function rowOf(unit: Pick<LaunchUnit, "phase" | "strategy">): Record<string, unknown> {
+  return {
+    phase: unit.phase,
+    ...(unit.strategy !== undefined ? { strategy: unit.strategy } : {}),
+  };
 }
 
 function progressUpdate(
@@ -172,6 +182,10 @@ interface Entry {
   run: LensRun | undefined;
   /** What the pass is doing while it runs. */
   activity?: LensActivity;
+  /** The task-directory row a `lens_wave` slot runs: its phase and strategy
+   * ride the slot, so a row the engine started (which no call's start line
+   * names) still reaches the progress snapshot as the row it is. */
+  unit?: Pick<LaunchUnit, "phase" | "strategy">;
 }
 
 /** Tells `onUpdate` where the entries stand: `now` at once (a pass landed),
@@ -405,6 +419,7 @@ export function lensWaveExecute(deps: LensToolDeps): Execute {
       agent: r.unit.agent,
       task: r.task,
       run: r.result,
+      unit: r.unit,
       ...(r.activity ? { activity: r.activity } : {}),
     }));
     const tell = updater(entries, update, details, deps.activityUpdateMs);

@@ -14,7 +14,7 @@
 //     behind the bash guard.
 import { join } from "node:path";
 import type { CoreConfig } from "../reviewconfig.js";
-import type { ProfileLookup } from "../profiles.js";
+import { loadProfileThreatModel, type ProfileLookup } from "../profiles.js";
 import { FindingsStore } from "./findings.js";
 import { stateHomeFs } from "./scanfs.js";
 import type { CaseRunner, Refusal } from "./scanports.js";
@@ -74,9 +74,22 @@ export function assembleScan(p: ScanHostPorts): AssembledScan {
   const clock = p.clock ?? (() => new Date());
   const state = stateHomeFs(home);
   const agentsDir = join(home, SCAN_AGENTS_DIR);
+  // The settings with the install profile's threat model read from the
+  // profile chain — or why it cannot be read (a file that exists and does
+  // not read is a refusal, never "no model").
+  const settingsFor = (cfg: CoreConfig): { ok: true; settings: ScanSettings } | Refusal => {
+    try {
+      const model = loadProfileThreatModel(root, cfg.review.profile, p.profiles);
+      return { ok: true, settings: scanSettings(cfg, model) };
+    } catch (err) {
+      return { ok: false, errors: [err instanceof Error ? err.message : String(err)] };
+    }
+  };
   const settingsOf = (): ScanSettings | null => {
     const loaded = p.config();
-    return loaded.ok ? scanSettings(loaded.cfg) : null;
+    if (!loaded.ok) return null;
+    const s = settingsFor(loaded.cfg);
+    return s.ok ? s.settings : null;
   };
   const findings = new FindingsStore(state);
   const transcriptDir = join(home, SCAN_TRANSCRIPTS_DIR);
@@ -103,7 +116,7 @@ export function assembleScan(p: ScanHostPorts): AssembledScan {
     },
     settings: () => {
       const loaded = p.config();
-      return loaded.ok ? { ok: true, settings: scanSettings(loaded.cfg) } : loaded;
+      return loaded.ok ? settingsFor(loaded.cfg) : loaded;
     },
     // At the depth the runner planned at — a stage-2 proposal's own, which
     // its `deep` may have set apart from `[scan] depth`.

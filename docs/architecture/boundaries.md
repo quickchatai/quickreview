@@ -88,6 +88,22 @@ described as a `MutationIntent` and passed to `MutationGate.execute()`. Reads
 are not gated and go direct through the adapter (`src/github.ts`); a read
 changes nothing.
 
+**The read edge.** Because a read changes nothing, the adapter retries it in
+place: a REST GET or a GraphQL query (`graphqlRead`) that fails transiently or
+is rate-limited is tried three times in all, about 1 s then 3 s apart with
+jitter, honouring GitHub's `retry-after` up to 20 s. A longer requested wait
+throws at once with `retryAfterMs` set, so the durable layers above (the
+posting outbox, the reply schedules) defer instead of holding a round. A
+write is never retried here: the mutation executor sends REST and GraphQL
+mutations exactly once. `x-ratelimit-reset` counts as a wait only when
+`x-ratelimit-remaining` is `0`, since GitHub sends it on every answer. One
+classifier, `classifyGitHubFailure` (`packages/pi-plugin/src/githubcore.ts`),
+sorts every thrown GitHub call into `transient`, `rate_limited`, `rejected`
+or `unknown`, from GitHub's answer and never from the request line (a path
+may say anything); the retry here, the posting outbox and every caller's
+schedule read that one answer. The App's token minting (`TokenMinter`) retries the same way and
+throws the same `GitHubRequestError`.
+
 ### The closed set of kinds
 
 `MutationKind` is a union, and `MUTATION_KINDS` is the same set as a runtime
@@ -267,6 +283,13 @@ code passed anything.
 `no_checks_is_red` is set, which is off by default so a repo with no CI is
 never permanently wedged.
 
+**Reading the checks.** `listChecks` reads every page of check-runs and
+statuses and checks them against GitHub's advertised `total_count`. CI
+creates runs while the list is read, so a count that moves between pages, or
+is never reached, is read again from page 1, up to two more times, 2-3 s
+apart. A snapshot still inconsistent after that throws `IncompleteReadError`,
+which classifies as transient; partial rows are never returned as complete.
+
 **The latest-run rule** (`latestRunPerName`) exists because GitHub auto-cancels
 superseded workflow runs and leaves permanent `cancelled` husks. It is keyed on
 `CheckSummary.source`, which the adapter (`src/github.ts` `listChecks`) is the
@@ -293,7 +316,12 @@ were found and that approval waits on green CI alone — and
 and CI now classifies green, the PR is re-queued through the ordinary
 dispatch → round → verdict path. **No review is posted from there and no
 verdict is invented** — the session decides again, and this time the approval
-is available.
+is available. When it approves at the same head with nothing new since (no
+author reply) and nothing inline, over CI guard 4 saw green, the posting guard
+gives that approval as one line in place of the session's body
+(`givenApproval`): the withheld COMMENT above already carries the review, so
+the approval does not repeat it. The footer and the posting marker stay.
+Person mode never takes this step: its COMMENTs withheld nothing.
 
 ### Guarantees
 

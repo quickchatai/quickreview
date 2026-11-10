@@ -22,15 +22,22 @@ knows the command and can tell you the line to type.
     `--uncommitted` reviews the uncommitted changes alone.
   - The preset, first when given: `quick` (lower reasoning, about half the
     cost), `full` (the whole target again at the highest reasoning) or
-    `security` (only the security and data-safety lenses the change
-    triggers).
+    `security` (the whole `pass-sec-*` security family, planned as a
+    request whatever the change's signals say, and the validator; every
+    other lens is skipped).
+  - `--security` asks for a security review on top of the plan: all
+    fourteen `pass-sec-*` lenses are planned, at the risk tier, except any
+    your profile switched off. The `security` preset already asks for it.
+    The profile that reviews only security on every review is `security`
+    (`--profile security`).
   - `--preview` shows the plan and the price without running anything;
     `--stop` stops the review that is running. One review runs per session
     at a time, and ending the session stops it.
   - After a PR review, your posting rule decides whether it goes to the PR
     as a comment-only review (see Settings).
-- `/qcr-scan [--delta] [--sha REF] [--preview]` scans the whole repo for
-  defects, priced first and started only on your yes. It runs in the
+- `/qcr-scan [--delta] [--sha REF] [--path DIR] [--preview]` scans the whole
+  repo, or with `--path` one folder of it, for defects, priced first and
+  started only on your yes. It runs in the
   background in this pi, like a review: a status line while it runs, the new
   findings as a message when it ends, `/qcr-scan stop` to stop it. Its cases
   are SDK sessions of this pi behind the same read-only bash guard as the
@@ -119,7 +126,9 @@ exactly instead; `qcr pi` starts that pinned pi with this plugin preloaded.
 ## What ships in the package
 
 The compiled review core and the plugin (`dist/`), one skill per command
-(`skills/`), and under `assets/` the
+(`skills/`, rendered at pack time from the same skill source as QuickReview's
+plugins for other coding-agent CLIs, and checked against it), and under
+`assets/` the
 data the core reads: the agents, prompts and seeds, the schemas, the
 profiles and the shipped config defaults. `assets/` is copied from the
 repository at pack time and checked file by file against its source, so the

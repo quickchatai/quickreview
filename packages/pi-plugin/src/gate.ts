@@ -8,6 +8,7 @@
 // and the gate, not the call site, decides whether it runs.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { CiState } from "./cigate.js";
 import { postingMarker } from "./postingkey.js";
 
 export type MutationKind =
@@ -148,6 +149,14 @@ export interface MutationIntent {
    * carries this key's marker and whose `commit_id` is this key's head
    * (`postingRetryCheck`). It never enters the GitHub body. */
   readonly postingRetry?: string;
+  /** A CI state that is not green, read at the review's head by the caller
+   * itself: the daemon delivery's CI pre-check. Guard 4 withholds the
+   * approval on it as on its own read, and does not read again, so a second
+   * read that fails open cannot turn CI the caller saw red into an APPROVE.
+   * It can only withhold, never admit: every other guard binds and guard 2
+   * reads the APPROVE as asked. Admission confines it to a substantive
+   * `create_review` (`approvalCiCheck`). It never enters the GitHub body. */
+  readonly approvalCiWithheld?: Exclude<CiState, "green">;
   /** Execute even in dry-run. Only `supersede_own_review` may set this: the
    * session-side posting leakage is accepted, so the cleanup of that leakage
    * must be real too. Noise-reducing only. */
@@ -341,6 +350,23 @@ function postingRetryCheck(intent: MutationIntent): void {
   }
 }
 
+/** See MutationIntent.approvalCiWithheld: a substantive create_review
+ * carrying a CI state that is not green, or it is refused. The event is not
+ * checked: guard 4's COMMENT carries the field on, and the post-guard copy is
+ * admitted again. */
+function approvalCiCheck(intent: MutationIntent): void {
+  if (intent.approvalCiWithheld === undefined) return;
+  if (
+    intent.kind !== "create_review" ||
+    intent.reviewPurpose !== undefined ||
+    !(["red", "pending", "none"] as unknown[]).includes(intent.approvalCiWithheld)
+  ) {
+    throw new Error(
+      `gate: approvalCiWithheld is only allowed on a substantive create_review with a CI state that is not green (${intent.kind})`,
+    );
+  }
+}
+
 /**
  * Admission: what the gate demands of ANY intent before it may execute or be
  * recorded. It runs on the entry `snapshot` of the caller's intent — never on
@@ -388,6 +414,7 @@ function admit(intent: MutationIntent, perform: GitPerformer | undefined): void 
   // exemptions are safe for.
   reviewPurposeCheck(intent);
   postingRetryCheck(intent);
+  approvalCiCheck(intent);
 }
 
 let seq = 0;

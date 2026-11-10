@@ -573,6 +573,27 @@ describe("the other verbs", () => {
     expect(argv!.slice(argv!.indexOf(IMAGE))).toEqual([IMAGE, "cli", "version", "--json"]);
   });
 
+  it("--schema N version is the version call, the flag handed on; another verb is a plain call", () => {
+    const r = rig();
+    r.run(["--schema", "1", "version"], { env: { GITHUB_TOKEN: TOKEN } });
+    r.run(["--schema=1", "login"], { env: { GITHUB_TOKEN: TOKEN } });
+    r.run(["--schema", "1", "update"]);
+    const [version, login, update] = r.calls();
+    expect(version!.slice(version!.indexOf(IMAGE))).toEqual([
+      IMAGE,
+      "cli",
+      "--schema=1",
+      "version",
+    ]);
+    // the image refuses these: no terminal, no login volume read-write, no repin
+    expect(login!.slice(login!.indexOf(IMAGE))).toEqual([IMAGE, "cli", "--schema=1", "login"]);
+    expect(update!.slice(update!.indexOf(IMAGE))).toEqual([IMAGE, "cli", "--schema=1", "update"]);
+    for (const [i, argv] of [version!, login!, update!].entries()) {
+      expect(argv.join(" ")).not.toContain("--cap-add");
+      expect(r.token(i)).toBeNull();
+    }
+  });
+
   it("a verb that shares a mode's name cannot select that mode: the wrapper always says cli", () => {
     const r = rig();
     for (const verb of ["daemon", "worker", "mint", "companion"]) r.run([verb]);
@@ -708,6 +729,39 @@ describe("the other verbs", () => {
     expect(envs(status!)).toContain(`${IN_SANDBOX_ENV}=1`);
     r.run(["review"]);
     expect(envs(r.calls()[4]!).join(" ")).not.toContain(IN_SANDBOX_ENV);
+  });
+
+  // MUTATION: drop `| threat-model` from the wrapper's foreground case — this
+  // fails: stage 0's driver would detach inside a `--rm` container and die
+  // with it, so a host scan under threat_model = "auto" never gets past it.
+  it("a stage-0 threat-model start runs in the foreground too, behind a host plugin's --schema", () => {
+    const r = rig();
+    r.run(["--schema", "1", "scan", "threat-model", "start", "--key", "K", "--sandbox", "host"]);
+    r.run(["scan", "threat-model", "start", "--key", "K"]);
+    r.run(["--schema", "1", "scan", "threat-model", "propose", "--sandbox", "host"]);
+    const [hosted, plain, propose] = r.calls();
+    const tail = (a: string[]): string[] => a.slice(a.indexOf("cli") + 1);
+    expect(tail(hosted!)).toEqual([
+      "--schema=1",
+      "scan",
+      "threat-model",
+      "start",
+      "--key",
+      "K",
+      "--sandbox",
+      "host",
+      "--foreground",
+    ]);
+    expect(tail(plain!)).toEqual(["scan", "threat-model", "start", "--key", "K", "--foreground"]);
+    // a proposal starts nothing, so it stays as it was asked
+    expect(tail(propose!)).toEqual([
+      "--schema=1",
+      "scan",
+      "threat-model",
+      "propose",
+      "--sandbox",
+      "host",
+    ]);
   });
 });
 
@@ -1048,6 +1102,14 @@ describe("the update notice", () => {
     expect(manifestCalls(r)).toBe(0);
   });
 
+  // MUTATION: drop `[ -n "$schema" ] ||` before the last maybe_notice — this fails.
+  it("is not shown on a host plugin's --schema call, and docker is not asked", () => {
+    const r = rig();
+    const out = r.run(["--schema", "1", "review"], { env: NEWER });
+    expect(out.stderr).not.toContain("newer qcr image");
+    expect(manifestCalls(r)).toBe(0);
+  });
+
   it("is not shown to a caller with no terminal on stderr (a plugin, a script)", () => {
     const r = rig();
     const out = r.run(["review"], { env: { FAKE_MINE: "old", FAKE_LATEST: "new" } });
@@ -1149,6 +1211,25 @@ describe("qcr review start | status | stop: the run is a detached container", ()
     }
     // nobody else hears of the driver's container id
     expect(out.stdout).toBe("");
+  });
+
+  // A host plugin's call: the verb past the flag decides, the claim answers in
+  // the contract, and the driver runs what the claim wrote.
+  // MUTATION: drop the `--schema` case before the verb in qcr-host.sh — the
+  // start is one foreground call and this fails.
+  it("--schema N review start is the same two calls, the flag handed to the claim", () => {
+    const r = rig();
+    const out = r.run(["--schema", "1", "review", "start", "--uncommitted"], {
+      env: { GITHUB_TOKEN: TOKEN },
+    });
+    expect(out.status, out.stderr).toBe(0);
+    const [claim, driver] = runs(r);
+    expect(runs(r)).toHaveLength(2);
+    expect(tail(claim!)).toEqual([IMAGE, "cli", "--schema=1", "review", "start", "--uncommitted"]);
+    const id = envs(claim!)
+      .find((e) => e.startsWith("QCR_RUN_ID="))!
+      .slice("QCR_RUN_ID=".length);
+    expect(tail(driver!)).toEqual([IMAGE, "cli", "review", "--container-run", id]);
   });
 
   it("a refused claim is the call's answer, and no driver starts", () => {

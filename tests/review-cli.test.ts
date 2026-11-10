@@ -30,6 +30,7 @@ const { runReviewCli, parseReviewArgs, REVIEW_USAGE, reviewHelp } =
   await import("../src/reviewcli.js");
 const { contextFor } = await import("../src/bench/runner.js");
 const { reviewMemoryPort } = await import("../src/reviewmemory.js");
+const { SECURITY_FAMILY } = await import("@quickchatai/pi-quickreview/src/passes.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "review-cli-"));
@@ -230,6 +231,35 @@ describe("qcr review: the preview and the price", () => {
     expect(await runReviewCli([], false, h.deps)).toBe(1);
     expect(h.text()).toMatch(/not a git repository/i);
   });
+});
+
+describe("qcr review --security", () => {
+  // The terminal's `--security` reaches the plan as /qcr-review --security
+  // does: the whole security family is planned, and a review without it plans
+  // none of the family. MUTATION: drop the securityRequest spread from
+  // runReviewCli's ReviewOptions (src/reviewcli.ts) — this fails.
+  it("parses as a security request, and only when given", () => {
+    expect(parseReviewArgs(["--security"])).toMatchObject({ help: false, securityRequest: true });
+    expect(parseReviewArgs([])).not.toHaveProperty("securityRequest");
+  });
+
+  it(
+    "plans every lens of the security family into the preview; without it, none",
+    { timeout: 30_000 },
+    async () => {
+      const lensesOf = async (rest: string[]): Promise<string[]> => {
+        const h = harness({ repo: mkRepo(`sec-${rest.length}`), piBin: "false" });
+        expect(await runReviewCli(["--preview", ...rest], true, h.deps)).toBe(0);
+        const o = JSON.parse(h.lines[0]!) as { preview: { lenses: string[] } };
+        // the plan's agents, `<lens>--<tier>`
+        return o.preview.lenses.map((a) => a.replace(/--[^-].*$/, ""));
+      };
+      const asked = await lensesOf(["--security"]);
+      for (const lens of SECURITY_FAMILY) expect(asked, lens).toContain(lens);
+      const plain = await lensesOf([]);
+      expect(plain.filter((l) => SECURITY_FAMILY.includes(l))).toEqual([]);
+    },
+  );
 });
 
 describe("qcr review: under and over the limit", () => {

@@ -15,8 +15,14 @@
 // never cached, so a revoked or replaced capability is never used twice.
 //
 // Exit code 0: the daemon posted, recorded the post in dry-run, found it
-// already confirmed, or took the delivery over (deferred). Anything else
-// prints the daemon's typed refusal and exits 1.
+// already confirmed, took the delivery over (deferred), or another attempt in
+// the daemon owns the round's posting right now (in flight). A keyed round's
+// review or approval this client stopped waiting for is in flight too: the
+// daemon goes on and records its outcome under the round's receipt, so the
+// session is told not to post again. An UNKEYED post (no round: an answer
+// worker's) has no receipt and nothing in the daemon that follows it up, so a
+// timeout there is an unknown outcome, exit 1. Anything else prints the
+// daemon's typed refusal and exits 1.
 import { resolve } from "node:path";
 import { connectFromEnv, type IpcEnv } from "./client.js";
 import { IpcError } from "./protocol.js";
@@ -58,8 +64,21 @@ const processIo: ShimIo = {
   stderr: (t) => void process.stderr.write(t),
 };
 
-/** A posting call can include GitHub's own 60 s deadline and a marker read. */
-const POST_TIMEOUT_MS = 150_000;
+/**
+ * How long the client waits for the daemon's answer. It stays below the
+ * command timeout a session gives the posting script (two minutes is what
+ * sessions pass), so the session always reads an answer instead of its tool
+ * killing the script mid-wait. Nearly every post answers well inside this.
+ * The slow worst case (the guards' reads on the gate, each with the adapter's
+ * bounded retry, then the POST) can outlast it; the post then keeps running
+ * in the daemon, which records its outcome, and the client answers
+ * "in flight — do NOT post again", never "failed".
+ */
+export const POST_TIMEOUT_MS = 100_000;
+
+/** What a review or an approval answers when this client stopped waiting. */
+const IN_FLIGHT =
+  "a posting for this round is in flight in the daemon; do NOT post again — finish the round normally (verdict file as decided)";
 
 /** The round identity a keyed round's host carries in env. */
 function roundClaims(env: IpcEnv): Record<string, unknown> {
@@ -136,6 +155,7 @@ export async function runPostShim(
   args: readonly string[],
   env: IpcEnv = process.env,
   io: ShimIo = processIo,
+  opts: { timeoutMs?: number } = {},
 ): Promise<number> {
   if (!Object.hasOwn(KINDS, kind)) {
     io.stderr(`postshim: unknown kind ${kind} (review, approval or reply)\n`);
@@ -145,10 +165,34 @@ export async function runPostShim(
   let client;
   try {
     const { pr, body } = postRequest(kind as PostShimKind, args, env);
-    client = await connectFromEnv("shim", env, { timeoutMs: POST_TIMEOUT_MS });
-    const out = await client.request<Outcome>(k.op, body, { pr });
-    for (const line of Array.isArray(out?.lines) ? out.lines : []) io.stdout(`${String(line)}\n`);
-    return 0;
+    client = await connectFromEnv("shim", env, { timeoutMs: opts.timeoutMs ?? POST_TIMEOUT_MS });
+    try {
+      const out = await client.request<Outcome>(k.op, body, { pr });
+      for (const line of Array.isArray(out?.lines) ? out.lines : []) io.stdout(`${String(line)}\n`);
+      return 0;
+    } catch (e) {
+      // The request reached the daemon and no answer came in time: the post
+      // goes on there. A keyed round's review or approval is the round's
+      // posting, which the daemon records and owns; an unkeyed one is not
+      // followed by anything. A reply is found by its marker on the next run.
+      if (e instanceof IpcError && e.code === "timeout") {
+        if (kind === "reply") {
+          io.stderr(
+            `${k.prefix}: timeout: the daemon did not answer in time and the reply may still be posted. Run the same script again in a few minutes: it checks for this reply first and never posts a second copy\n`,
+          );
+          return 1;
+        }
+        if (body.posting_key === undefined && body.round_no === undefined) {
+          io.stderr(
+            `${k.prefix}: timeout: the daemon did not answer in time; whether this review was posted is unknown, and with no round nothing in the daemon records or retries it. Do NOT post it again: check the PR's reviews first\n`,
+          );
+          return 1;
+        }
+        io.stdout(`${IN_FLIGHT}\n`);
+        return 0;
+      }
+      throw e;
+    }
   } catch (e) {
     const err = e instanceof IpcError ? e : new IpcError("internal", String(e));
     io.stderr(`${k.prefix}: ${err.code}: ${err.message}\n`);

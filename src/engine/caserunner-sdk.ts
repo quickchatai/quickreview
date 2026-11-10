@@ -13,15 +13,23 @@
 // AUTH. Each case builds its own host on a fresh read-only copy of the owner's
 // login (engineCredentials): a token the companion refreshed mid-scan is
 // picked up at the next case, a token the case would not outlive is refused
-// before it starts, and nothing is ever refreshed or written here.
+// before it starts, and nothing is ever refreshed or written here. On the host
+// (no container mount), a pi home with no login runs on a provider API key in
+// the environment, as `qcr review` and /qcr-scan do: an empty in-memory store
+// and the env keys handed to the runtime (`applyEnvApiKeys`). With neither, the
+// run stops naming `qcr login`.
 import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
   AuthExpiring,
+  RUNTIME_KEY_ENVS,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
+  applyEnvApiKeys,
   engineCredentials,
+  keyOnlyCredentials,
+  type RuntimeKeyTarget,
   scanAuthExpiring,
   scanAuthMissing,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
@@ -70,7 +78,22 @@ export interface ScanSdkCasesOptions {
   makeHost?: (o: {
     agentDir: string;
     credentials: ReturnType<typeof engineCredentials>["credentials"];
+    /** Hands the runtime the environment's API keys, on the key-only route. */
+    configureModels?: (runtime: RuntimeKeyTarget) => Promise<void>;
   }) => Promise<PiHost>;
+}
+
+/** The provider key variables set in `env` (RUNTIME_KEY_ENVS). */
+function envKeyNames(env: NodeJS.ProcessEnv): string[] {
+  return Object.values(RUNTIME_KEY_ENVS).filter((name) => (env[name] ?? "").trim() !== "");
+}
+
+/** Why a host scan cannot start with neither a pi login nor an env key. */
+export function hostScanAuthMissing(src: string): string {
+  return (
+    `no pi login at ${src} and no provider API key in the environment ` +
+    `(${Object.values(RUNTIME_KEY_ENVS).join(", ")}) — run \`qcr login\`, or set the key`
+  );
 }
 
 /** Where the borrowed login is read from: the scan container's read-only mount
@@ -100,18 +123,24 @@ export function scanSdkCases(o: ScanSdkCasesOptions): CaseRunner {
     env: o.env,
     runtime: async (extras) => {
       const src = scanAuthSource(o.env);
-      let auth: ReturnType<typeof engineCredentials>;
+      const onHost = !o.env[SCAN_AUTH_SRC_ENV]?.trim();
+      const keyOnly = onHost && !existsSync(join(src, "auth.json"));
+      let auth: Pick<ReturnType<typeof engineCredentials>, "credentials">;
       try {
-        auth = engineCredentials({
-          srcDir: src,
-          // In the scan container the driver's login wrapper ends a case at the case
-          // budget; on the host nothing does, so the login must cover the turn's
-          // whole wall clock.
-          needMs: o.env[SCAN_AUTH_SRC_ENV]?.trim()
-            ? SCAN_CASE_AUTH_BUDGET_MS
-            : LEAF_TURN_TIMEOUT_MS,
-          words: { missing: scanAuthMissing, expiring: scanAuthExpiring },
-        });
+        if (keyOnly && envKeyNames(o.env).length === 0)
+          throw new AuthExpiring(hostScanAuthMissing(join(src, "auth.json")), { code: "missing" });
+        auth = keyOnly
+          ? { credentials: keyOnlyCredentials() }
+          : engineCredentials({
+              srcDir: src,
+              // In the scan container the driver's login wrapper ends a case at the case
+              // budget; on the host nothing does, so the login must cover the turn's
+              // whole wall clock.
+              needMs: o.env[SCAN_AUTH_SRC_ENV]?.trim()
+                ? SCAN_CASE_AUTH_BUDGET_MS
+                : LEAF_TURN_TIMEOUT_MS,
+              words: { missing: scanAuthMissing, expiring: scanAuthExpiring },
+            });
       } catch (err) {
         if (err instanceof AuthExpiring) o.onExpired(err.message);
         throw err;
@@ -122,13 +151,23 @@ export function scanSdkCases(o: ScanSdkCasesOptions): CaseRunner {
       const hostModels = join(o.agentDir, "models.json");
       if (existsSync(models)) copyFileSync(models, hostModels);
       else rmSync(hostModels, { force: true });
+      const configureModels = keyOnly
+        ? async (runtime: RuntimeKeyTarget): Promise<void> => {
+            await applyEnvApiKeys(runtime, o.env);
+          }
+        : undefined;
       const host = await (o.makeHost
-        ? o.makeHost({ agentDir: o.agentDir, credentials: auth.credentials })
+        ? o.makeHost({
+            agentDir: o.agentDir,
+            credentials: auth.credentials,
+            ...(configureModels ? { configureModels } : {}),
+          })
         : PiHost.create({
             agentDir: o.agentDir,
             ownsProcess: true,
             homeDir: homedir(),
             credentials: auth.credentials,
+            ...(configureModels ? { configureModels } : {}),
           }));
       // The case driver owns its process: a turn its abort and dispose did not
       // end exits it (packages/pi-plugin/src/engine/budget.ts).

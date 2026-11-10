@@ -16,6 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import {
   RecheckWatcher,
+  baseAdvanceEligibility,
+  baseRecheckRetryMs,
   classifyDelta,
   ciIsAdverse,
   digitsOnly,
@@ -23,6 +25,7 @@ import {
   isMigrationRenumber,
   planRecheck,
   recheckDecisionFile,
+  retryOwedBaseRechecks,
   runBaseAdvance,
   runRecheck,
   validateRecheckDecision,
@@ -1011,9 +1014,10 @@ describe("runRecheck", () => {
 
   // A base advance nobody could classify is NOT asked: almost every one
   // touches no PR-owned file, and waking the session on it would be the
-  // delta-blind staleness check the recheck exists to avoid. It upholds, with
-  // the anomaly row as its record.
-  it("upholds a base advance whose delta read fails, waking nobody", async () => {
+  // delta-blind staleness check the recheck exists to avoid. It upholds for
+  // now, with the anomaly row as its record, and the question is owed: the
+  // reconcile pass asks it again (`retryOwedBaseRechecks`, below).
+  it("upholds a base advance whose delta read fails, waking nobody, and owes it", async () => {
     const h = harness();
     h.store.recordReviewedHead(PR, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
     h.adapter.compareFiles = async () => {
@@ -1029,6 +1033,12 @@ describe("runRecheck", () => {
     expect(h.store.rechecksFor(PR)).toHaveLength(0);
     expect(h.store.heldWakes(PR)).toHaveLength(0);
     expect(h.store.anomalies().map((a) => a.kind)).toContain("recheck_delta_failed");
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toMatchObject({
+      branch: "master",
+      before_sha: "b0",
+      attempts: 1,
+      last_error: expect.stringContaining("GitHub 502"),
+    });
   });
 
   // A push question the reconcile backstop asks again: a failed read upholds.
@@ -1321,6 +1331,237 @@ describe("runBaseAdvance", () => {
     const out = await runBaseAdvance(h.deps, { branch: "master", before: "b0", after: "b1" });
     expect(out.size).toBe(0);
     expect(h.injected).toHaveLength(0);
+  });
+});
+
+// A transient read failure dropped a base-advance question for good: the
+// delta read upheld it unread, and a getPr failure in the fan-out skipped the
+// PR. The question is owed now, and the reconcile pass asks it again.
+describe("owed base-advance rechecks", () => {
+  const ADVANCE = { branch: "master", before: "b0", after: "b1" };
+  function clocked() {
+    let clock = new Date("2026-08-17T09:00:00.000Z");
+    const store = new StateStore(":memory:", () => clock);
+    const h = harness({ store, now: () => clock });
+    return { ...h, advance: (ms: number) => (clock = new Date(clock.getTime() + ms)) };
+  }
+
+  // MUTATION: drop the oweBaseRecheck call from runBaseAdvance's getPr catch —
+  // the fan-out skips the PR, nothing is owed, and the retry asks nothing.
+  it("a getPr failure in the fan-out owes the question, and the retry asks it", async () => {
+    const h = clocked();
+    h.adapter.delta = [file({ filename: "src/app.ts", patch: "@@\n-x=1\n+x=2" })];
+    const realGetPr = h.adapter.getPr.bind(h.adapter);
+    h.adapter.getPr = async () => {
+      throw new Error("GitHub 502");
+    };
+    const out = await runBaseAdvance(h.deps, ADVANCE);
+    expect(out.size).toBe(0);
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toMatchObject({ attempts: 1 });
+
+    // Not due yet.
+    expect(await retryOwedBaseRechecks(h.deps)).toBe(0);
+    h.adapter.getPr = realGetPr;
+    h.advance(baseRecheckRetryMs(1));
+    expect(await retryOwedBaseRechecks(h.deps)).toBe(1);
+    expect(h.injected).toHaveLength(1);
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toBeUndefined();
+  });
+
+  // MUTATION: settle the row unconditionally after runRecheck — a second
+  // failed read drops the question and the row is gone.
+  it("a read that fails again stays owed on a longer wait, and is never dropped", async () => {
+    const h = clocked();
+    h.adapter.compareFiles = async () => {
+      throw new Error("GitHub 502");
+    };
+    await runRecheck(h.deps, { pr: PR, trigger: "base_advance", base: ADVANCE });
+    h.advance(baseRecheckRetryMs(1));
+    expect(await retryOwedBaseRechecks(h.deps)).toBe(0);
+    const owed = h.store.owedBaseRecheck(PR, "master", "b1")!;
+    expect(owed.attempts).toBe(2);
+    expect(Date.parse(owed.next_attempt_at) - Date.parse("2026-08-17T09:00:00.000Z")).toBe(
+      baseRecheckRetryMs(1) + baseRecheckRetryMs(2),
+    );
+    expect(baseRecheckRetryMs(30)).toBe(60 * 60_000);
+    // The read recovers: a trivial delta is answered and the debt settled.
+    h.adapter.compareFiles = async () => [
+      file({ filename: "unrelated/service.py", patch: "@@\n-x=1\n+x=2" }),
+    ];
+    h.adapter.own = [file({ filename: "src/app.ts" })];
+    h.advance(baseRecheckRetryMs(2));
+    await retryOwedBaseRechecks(h.deps);
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toBeUndefined();
+    expect(h.injected).toHaveLength(0);
+  });
+
+  it("settles without asking when nothing is left to ask, and waits out a drain", async () => {
+    const h = clocked();
+    h.adapter.compareFiles = async () => {
+      throw new Error("GitHub 502");
+    };
+    await runRecheck(h.deps, { pr: PR, trigger: "base_advance", base: ADVANCE });
+    h.advance(baseRecheckRetryMs(1));
+    h.store.engageDrain({ issuer: "operator", expires_at: null });
+    await retryOwedBaseRechecks(h.deps);
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toMatchObject({ attempts: 1 });
+    h.store.liftDrain("operator");
+    h.adapter.base_ref = "release-2";
+    await retryOwedBaseRechecks(h.deps);
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toBeUndefined();
+    expect(h.injected).toHaveLength(0);
+  });
+
+  // The outcome says the question is still owed; the retry no longer infers
+  // it from the row's attempt counter. A missing delta route is a different
+  // `no-delta-source`: nothing could ever answer it, and nothing is owed.
+  it("the outcome says when the question is owed, and only then", async () => {
+    const h = clocked();
+    h.adapter.compareFiles = async () => {
+      throw new Error("GitHub 502");
+    };
+    const unread = await runRecheck(h.deps, { pr: PR, trigger: "base_advance", base: ADVANCE });
+    expect(unread).toMatchObject({ action: "noop", reason: "no-delta-source", owed: true });
+    const routeless = harness({ adapter: { getPr: h.adapter.getPr.bind(h.adapter) } });
+    const none = await runRecheck(routeless.deps, {
+      pr: PR,
+      trigger: "base_advance",
+      base: ADVANCE,
+    });
+    expect(none).toMatchObject({ action: "noop", reason: "no-delta-source" });
+    expect(none.owed).toBeUndefined();
+    expect(routeless.store.owedBaseRecheck(PR, "master", "b1")).toBeUndefined();
+  });
+
+  // A retry the head moved under (a push landed during its reads) ended
+  // `stale-head` without a failed read, and the unconditional settle deleted
+  // the question; the push recheck compares PR heads and never asks it.
+  // MUTATION: return `done(...)` instead of `owe(...)` for the stale-head
+  // check right after planRecheck — the retry settles the row; this fails.
+  it("a retry the head moved under stays owed, and is asked at the new head", async () => {
+    const h = clocked();
+    h.adapter.compareFiles = async () => {
+      throw new Error("GitHub 502");
+    };
+    await runRecheck(h.deps, { pr: PR, trigger: "base_advance", base: ADVANCE });
+    const NEW = "3333333333333333333333333333333333333333";
+    h.adapter.compareFiles = async () => {
+      h.store.upsertPr({
+        number: PR,
+        state: "tracked",
+        head_sha: NEW,
+        title: "Rewrite clampSelection",
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      return significant;
+    };
+    h.advance(baseRecheckRetryMs(1));
+    expect(await retryOwedBaseRechecks(h.deps)).toBe(0);
+    expect(h.injected).toHaveLength(0);
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toMatchObject({ attempts: 2 });
+    // The reads settle at the new head: the question is asked there.
+    h.adapter.compareFiles = async () => significant;
+    h.advance(baseRecheckRetryMs(2));
+    expect(await retryOwedBaseRechecks(h.deps)).toBe(1);
+    expect(h.injected).toHaveLength(1);
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toBeUndefined();
+  });
+
+  // A run that failed before its question had a durable payload (the render
+  // threw) held nothing that could carry a base advance to the session.
+  // MUTATION: return `done(failed)` whatever `claimed` is — nothing is owed
+  // and the question is gone; this fails.
+  it("a question that fails before its durable handoff is owed, not lost", async () => {
+    const h = clocked();
+    let renders = 0;
+    h.deps.renderPrompt = () => {
+      renders++;
+      throw new Error("template unreadable");
+    };
+    const out = await runRecheck(h.deps, { pr: PR, trigger: "base_advance", base: ADVANCE });
+    expect(renders).toBe(1);
+    expect(out).toMatchObject({ action: "noop", reason: "delivery-failed", owed: true });
+    expect(h.store.rechecksFor(PR)).toHaveLength(0);
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toMatchObject({ attempts: 1 });
+    delete h.deps.renderPrompt;
+    h.advance(baseRecheckRetryMs(1));
+    expect(await retryOwedBaseRechecks(h.deps)).toBe(1);
+    expect(h.injected).toHaveLength(1);
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toBeUndefined();
+  });
+
+  // Two branches advanced to one commit while getPr was down: both are owed
+  // before anyone knows which branch the PR targets. Keyed on the commit
+  // alone, the second folded into the first, and the PR's real advance was
+  // settled as `other-base` and never asked.
+  // MUTATION: key owed_base_rechecks on (pr, after_sha) again — the release-2
+  // row is lost to the master one; this fails.
+  it("two branches advanced to one commit are owed independently", async () => {
+    const h = clocked();
+    h.adapter.getPr = async () => {
+      throw new Error("GitHub 502");
+    };
+    await runBaseAdvance(h.deps, ADVANCE);
+    await runBaseAdvance(h.deps, { branch: "release-2", before: "r0", after: "b1" });
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toMatchObject({ before_sha: "b0" });
+    expect(h.store.owedBaseRecheck(PR, "release-2", "b1")).toMatchObject({ before_sha: "r0" });
+    const adapter = new FakeAdapter();
+    adapter.base_ref = "release-2";
+    h.deps.adapter = adapter;
+    h.advance(baseRecheckRetryMs(1));
+    await retryOwedBaseRechecks(h.deps);
+    expect(adapter.calls).toContain("compare:r0..b1");
+    expect(h.injected).toHaveLength(1);
+    expect(h.store.owedBaseRecheck(PR, "master", "b1")).toBeUndefined();
+    expect(h.store.owedBaseRecheck(PR, "release-2", "b1")).toBeUndefined();
+  });
+
+  // The fan-out and the retry share one eligibility decision, so an advance
+  // is never a question on one path and not on the other.
+  it("the fan-out and the retry agree on what an advance asks of a PR", async () => {
+    const cases: Array<[string, (h: ReturnType<typeof clocked>) => void]> = [
+      [
+        "merged",
+        (h) =>
+          (h.adapter.getPr = async () => ({
+            base_ref: "master",
+            head_sha: HEAD,
+            state: "closed",
+            merged: true,
+          })),
+      ],
+      ["other-base", (h) => (h.adapter.base_ref = "release-2")],
+      [
+        "no-standing-approval",
+        (h) =>
+          h.store.recordReviewedHead(PR, {
+            head_sha: OLD,
+            verdict: "REQUEST_CHANGES",
+            round_no: 2,
+          }),
+      ],
+    ];
+    for (const [name, arrange] of cases) {
+      const fan = clocked();
+      arrange(fan);
+      expect((await runBaseAdvance(fan.deps, ADVANCE)).size, name).toBe(0);
+      const retry = clocked();
+      retry.adapter.compareFiles = async () => {
+        throw new Error("GitHub 502");
+      };
+      await runRecheck(retry.deps, { pr: PR, trigger: "base_advance", base: ADVANCE });
+      arrange(retry);
+      retry.advance(baseRecheckRetryMs(1));
+      await retryOwedBaseRechecks(retry.deps);
+      expect(retry.store.owedBaseRecheck(PR, "master", "b1"), name).toBeUndefined();
+      expect(retry.injected, name).toHaveLength(0);
+      expect(await baseAdvanceEligibility(fan.deps, PR, "master"), name).toMatchObject({
+        eligible: false,
+      });
+    }
   });
 });
 

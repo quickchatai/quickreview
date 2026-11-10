@@ -6,6 +6,8 @@ import { parseConfig, type Config } from "../src/config.js";
 import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
 import { StateStore } from "../src/state.js";
+import { anomalySeverity } from "../src/anomalies.js";
+import type { AnomalyAnnouncement } from "../src/slack/announce.js";
 import type {
   RoundRecoveryDisposition,
   SessionCommandObservation,
@@ -243,6 +245,169 @@ it("leaves the bridge its deferred settlement acknowledgement before fencing it"
   expect(kill).not.toHaveBeenCalled();
   expect(store.getSessionCommand(id)?.status).toBe("running");
   expect(Date.parse(store.getSessionCommand(id)!.next_check_at)).toBeGreaterThan(clock.getTime());
+});
+
+describe("a transient provider failure", () => {
+  const PROVIDER_429 = "wake: the provider failed the turn: 429 Too Many Requests";
+
+  function failWith(id: string, failure: string): void {
+    store.db.prepare("UPDATE session_commands SET failure=? WHERE id=?").run(failure, id);
+  }
+
+  // MUTATION: drop the backoff branch at the top of recoverNonRound — the wake
+  // is replayed into the provider that just refused it; this fails.
+  it("replays a failed wake with backoff: not before 2 minutes, then at once", async () => {
+    const { id } = seedWakeCommand({ status: "failed", attempt: 1 });
+    failWith(id, PROVIDER_429);
+    const retry = vi.fn(async () => "retried" as const);
+    const s = supervisor(hooks({ retrySessionCommand: retry })).supervisor;
+
+    await s.scan();
+    expect(retry).not.toHaveBeenCalled();
+    expect(store.getSessionCommand(id)).toMatchObject({
+      status: "failed",
+      recovery_attempts: 0,
+      next_check_at: new Date(clock.getTime() + 2 * 60_000).toISOString(),
+    });
+    expect(store.recentEvents(20).some((e) => e.kind === "session_command_nonround_backoff")).toBe(
+      true,
+    );
+
+    clock = new Date(clock.getTime() + 2 * 60_000);
+    await s.scan();
+    expect(retry).toHaveBeenCalledWith(id, PROVIDER_429);
+  });
+
+  // MUTATION: drop `cause`/`nothing_posted` from recoverNonRound's
+  // openReviewFailure — the PR's next round is held for an operator; this fails.
+  it("exhausted, it waits on the automatic retry ladder, not an operator", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 3 });
+    failWith(id, PROVIDER_429);
+    store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id=?").run(id);
+    const kill = vi.fn(async () => {});
+
+    await supervisor(hooks({ killSession: kill })).supervisor.scan();
+
+    expect(kill).toHaveBeenCalled();
+    expect(store.openReviewFailure(pr)).toMatchObject({
+      command_id: id,
+      stage: "session_command",
+      next_action: "retry_wait",
+      next_retry_at: new Date(clock.getTime() + 15 * 60_000).toISOString(),
+    });
+    expect(
+      store.anomalies().find((a) => a.kind === "session_command_recovery_exhausted")?.detail,
+    ).toContain("replayed again automatically");
+  });
+
+  // MUTATION: drop the `review_failed_loud` anomaly or the announce call from
+  // recoverNonRound's exhaustion — the incident holds the PR's review with no
+  // inbox wake (session_command_recovery_exhausted is not a WAKE kind) and no
+  // Slack message; this fails.
+  it("exhausted, it is loud: the review_failed_loud wake and a Slack FAILED_LOUD message", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 3 });
+    failWith(id, PROVIDER_429);
+    store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id=?").run(id);
+    const anomaly = vi.fn(async (_a: AnomalyAnnouncement) => {});
+    const wakes: string[] = [];
+    store.setAnomalySink((signal) => {
+      if (anomalySeverity(signal.kind) === "wake") wakes.push(signal.kind);
+    });
+
+    await new SessionCommandSupervisor({
+      cfg: baseCfg,
+      store,
+      hooks: hooks({ killSession: vi.fn(async () => {}) }),
+      verdictDir,
+      onRoundFailure: vi.fn<RoundFailureHandler>(async () => "requeued"),
+      announce: { anomaly },
+      now: () => clock,
+    }).scan();
+
+    const failure = store.openReviewFailure(pr)!;
+    expect(wakes).toEqual(["review_failed_loud"]);
+    expect(store.anomalies().find((a) => a.kind === "review_failed_loud")?.detail).toContain(
+      `work remains owed as ${failure.incident_id}; automatic retry scheduled for ${failure.next_retry_at}`,
+    );
+    expect(anomaly).toHaveBeenCalledWith({
+      pr,
+      round_no: null,
+      kind: "failed_loud",
+      deadline_min: baseCfg.daemon.round_deadline_min,
+      incident_id: failure.incident_id,
+    });
+  });
+
+  // MUTATION: compare recoverNonRound's replay against `retryCap` alone (drop
+  // the scheduled retry's allowance) — with no immediate replays configured,
+  // every automatic retry reopens the incident without delivering; this fails.
+  it("with no immediate replays configured, a scheduled retry still delivers once", async () => {
+    const noReplays = {
+      ...baseCfg,
+      daemon: { ...baseCfg.daemon, session_command_max_start_retries: 0 },
+    };
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 1 });
+    failWith(id, PROVIDER_429);
+    const retry = vi.fn(async () => "retried" as const);
+    const h = hooks({ killSession: vi.fn(async () => {}), retrySessionCommand: retry });
+
+    await supervisor(h, undefined, noReplays).supervisor.scan();
+    expect(retry).not.toHaveBeenCalled();
+    const failure = store.openReviewFailure(pr)!;
+    expect(failure).toMatchObject({ command_id: id, next_action: "retry_wait" });
+
+    clock = new Date(Date.parse(failure.next_retry_at!));
+    expect(store.activateDueReviewFailureRetries(clock.toISOString())).toHaveLength(1);
+    await supervisor(h, undefined, noReplays).supervisor.scan();
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(store.openReviewFailure(pr)).toBeUndefined();
+    expect(store.getSessionCommand(id)?.recovery_attempts).toBe(1);
+  });
+
+  // MUTATION: await the announcement in recoverNonRound again — a Slack that
+  // never answers holds the supervisor's scan; this fails (times out).
+  it("a Slack that never answers does not hold the scan", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 3 });
+    failWith(id, PROVIDER_429);
+    store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id=?").run(id);
+    const anomaly = vi.fn((_a: AnomalyAnnouncement) => new Promise<void>(() => {}));
+    await new SessionCommandSupervisor({
+      cfg: baseCfg,
+      store,
+      hooks: hooks({ killSession: vi.fn(async () => {}) }),
+      verdictDir,
+      onRoundFailure: vi.fn<RoundFailureHandler>(async () => "requeued"),
+      announce: { anomaly },
+      now: () => clock,
+    }).scan();
+    expect(anomaly).toHaveBeenCalledTimes(1);
+    expect(store.openReviewFailure(pr)).toBeDefined();
+  });
+
+  it("any other exhausted wake failure still needs the operator", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 3 });
+    store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id=?").run(id);
+    await supervisor(hooks({ killSession: vi.fn(async () => {}) })).supervisor.scan();
+    expect(store.openReviewFailure(pr)).toMatchObject({ next_action: "operator_unwedge" });
+  });
+
+  // MUTATION: drop the provider_unavailable branch in inspect — a provider
+  // outage is reported as a session that exceeded its running bound; this fails.
+  it("a round command failed by the provider is reported as provider_unavailable", async () => {
+    const { id, pr } = seedRoundCommand({ status: "running", started: true });
+    store.failActiveSessionCommand(
+      id,
+      "round: the provider failed the turn: fetch failed; requeued 3 times already",
+    );
+    const { supervisor: s, onRoundFailure } = supervisor(hooks());
+    await s.scan();
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      1,
+      "provider_unavailable",
+      expect.stringContaining("the provider failed the turn"),
+    );
+  });
 });
 
 describe("bounded round-stage supervision", () => {

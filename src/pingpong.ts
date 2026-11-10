@@ -19,7 +19,11 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
-import { GitHubRequestError, type GitHubAdapter } from "./github.js";
+import type { GitHubAdapter } from "./github.js";
+import {
+  classifyGitHubFailure,
+  transientRetryDelayMs,
+} from "@quickchatai/pi-quickreview/src/githubcore.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import type { StateStore } from "./state.js";
 
@@ -128,6 +132,15 @@ export class PingPongLedger {
     } catch {
       /* column already present */
     }
+    // Additive column: transient failures in a row, counted apart from the
+    // three strikes (a GitHub outage is not this decision's fault).
+    try {
+      this.db.exec(
+        "ALTER TABLE pingpong_decision_retries ADD COLUMN transient_attempts INTEGER NOT NULL DEFAULT 0",
+      );
+    } catch {
+      /* column already present */
+    }
   }
 
   private ts(): string {
@@ -231,12 +244,17 @@ export class PingPongLedger {
       : { state: "closed", rate_limit_streak: 0 };
   }
 
-  openBreaker(now: Date, error: string): { open_until: string; streak: number } {
+  /** Open the installation-wide breaker on a rate limit: its own ladder, or
+   * GitHub's `retryAfterMs` when that asks for longer. */
+  openBreaker(
+    now: Date,
+    error: string,
+    retryAfterMs?: number,
+  ): { open_until: string; streak: number } {
     const streak = this.breaker().rate_limit_streak + 1;
     const delays = [60, 120, 240, 480, 900];
-    const openUntil = new Date(
-      now.getTime() + delays[Math.min(streak - 1, delays.length - 1)]! * 1000,
-    ).toISOString();
+    const ladderMs = delays[Math.min(streak - 1, delays.length - 1)]! * 1000;
+    const openUntil = new Date(now.getTime() + Math.max(ladderMs, retryAfterMs ?? 0)).toISOString();
     this.db
       .prepare(
         `INSERT INTO pingpong_decision_breaker (singleton, state, open_until, rate_limit_streak, last_error, updated_at)
@@ -277,19 +295,24 @@ export class PingPongLedger {
       .run(now.toISOString());
   }
 
+  /** A decision's retry state. `attempts` counts strikes (refusals and
+   * unknown failures, three are terminal); `transient_attempts` counts
+   * transient GitHub failures in a row on the long schedule. */
   retry(commentId: number): {
     attempts: number;
+    transient_attempts: number;
     next_attempt_at?: string;
     last_error?: string;
     terminal: boolean;
   } {
     const row = this.db
       .prepare(
-        "SELECT attempts, next_attempt_at, last_error, terminal FROM pingpong_decision_retries WHERE comment_id = ?",
+        "SELECT attempts, transient_attempts, next_attempt_at, last_error, terminal FROM pingpong_decision_retries WHERE comment_id = ?",
       )
       .get(commentId) as
       | {
           attempts: number;
+          transient_attempts: number;
           next_attempt_at: string | null;
           last_error: string | null;
           terminal: number;
@@ -298,11 +321,12 @@ export class PingPongLedger {
     return row
       ? {
           attempts: row.attempts,
+          transient_attempts: row.transient_attempts,
           ...(row.next_attempt_at ? { next_attempt_at: row.next_attempt_at } : {}),
           ...(row.last_error ? { last_error: row.last_error } : {}),
           terminal: row.terminal === 1,
         }
-      : { attempts: 0, terminal: false };
+      : { attempts: 0, transient_attempts: 0, terminal: false };
   }
 
   recordRetry(
@@ -325,6 +349,48 @@ export class PingPongLedger {
       )
       .run(commentId, attempts, next ?? null, error, terminal ? 1 : 0, now.toISOString());
     return { attempts, ...(next ? { next_attempt_at: next } : {}), terminal };
+  }
+
+  /**
+   * A transient GitHub failure (a 5xx, a timeout, an unreadable PR state):
+   * the long bounded schedule (TRANSIENT_RETRY_SCHEDULE_MS, about three
+   * hours), GitHub's `retryAfterMs` honoured, and no strike spent. Terminal
+   * only once the schedule is spent.
+   */
+  recordTransientRetry(
+    commentId: number,
+    now: Date,
+    error: string,
+    retryAfterMs?: number,
+  ): { attempts: number; transient_attempts: number; next_attempt_at?: string; terminal: boolean } {
+    const prior = this.retry(commentId);
+    const transient = prior.transient_attempts + 1;
+    const delay = transientRetryDelayMs(transient, retryAfterMs);
+    const terminal = delay === null;
+    const next = terminal ? undefined : new Date(now.getTime() + delay).toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO pingpong_decision_retries (comment_id, attempts, transient_attempts, next_attempt_at, last_error, terminal, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(comment_id) DO UPDATE SET transient_attempts=excluded.transient_attempts,
+         next_attempt_at=excluded.next_attempt_at, last_error=excluded.last_error,
+         terminal=excluded.terminal, updated_at=excluded.updated_at`,
+      )
+      .run(
+        commentId,
+        prior.attempts,
+        transient,
+        next ?? null,
+        error,
+        terminal ? 1 : 0,
+        now.toISOString(),
+      );
+    return {
+      attempts: prior.attempts,
+      transient_attempts: transient,
+      ...(next ? { next_attempt_at: next } : {}),
+      terminal,
+    };
   }
 
   resetRetry(commentId: number): void {
@@ -655,21 +721,30 @@ export function validateThreadDecision(
   return { ok: true, value: v as unknown as ThreadDecision };
 }
 
-export type ThreadDecisionFailureClass = "rate_limit" | "non_rate";
+/**
+ * How a failed decision is retried:
+ *  - `rate_limit`: the installation-wide breaker opens;
+ *  - `transient`: this decision waits on the long bounded schedule
+ *    (`recordTransientRetry`), no strike spent;
+ *  - `non_rate`: a refusal or an unknown failure, one of three strikes.
+ */
+export type ThreadDecisionFailureClass = "rate_limit" | "transient" | "non_rate";
 
+/** The posting guard refused a reply because the PR's state could not be
+ * read. Nothing was posted, and the next read may well succeed. */
+export class ReplyPrUnreadable extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ReplyPrUnreadable";
+  }
+}
+
+/** One classification (`classifyGitHubFailure`), read for this caller. */
 export function classifyThreadDecisionError(error: unknown): ThreadDecisionFailureClass {
-  // The adapter's own error carries the HTTP status structurally; its message
-  // puts the request path between the method and the status, so the text
-  // heuristics below can miss a REST 429 on a long route.
-  if (error instanceof GitHubRequestError && error.status === 429) return "rate_limit";
-  const text = String(error);
-  if (
-    /(?:graphql|github|http|status)[^\n]{0,24}\b429\b/i.test(text) ||
-    /graphql_rate_limit|\bRATE_LIMIT\b/.test(text)
-  )
-    return "rate_limit";
-  if (/\b403\b/.test(text) && /rate.?limit|secondary.?rate|abuse.?detect/i.test(text))
-    return "rate_limit";
+  if (error instanceof ReplyPrUnreadable) return "transient";
+  const kind = classifyGitHubFailure(error).kind;
+  if (kind === "rate_limited") return "rate_limit";
+  if (kind === "transient") return "transient";
   return "non_rate";
 }
 
@@ -1100,7 +1175,8 @@ export class ThreadDecisionWatcher {
         // A POST started before — a caught failure, or a process that died
         // before it could record the answer — may have landed: look first.
         const landed =
-          d.reply.trim() && (retry.attempts > 0 || progress.reply_attempted)
+          d.reply.trim() &&
+          (retry.attempts > 0 || retry.transient_attempts > 0 || progress.reply_attempted)
             ? await this.findLandedReply(d.pr, d.thread_id, d.comment_id, d.reply.trim())
             : undefined;
         if (landed !== undefined) {
@@ -1130,7 +1206,7 @@ export class ThreadDecisionWatcher {
           // bounded retry schedule below posts the reply later. A merged or
           // closed PR is final — the reply is moot, so the decision proceeds.
           if (out.blocked === "pr-unreadable") {
-            throw new Error(`reply refused by posting guard: ${out.blocked}`);
+            throw new ReplyPrUnreadable(`reply refused by posting guard: ${out.blocked}`);
           }
         }
         if (!this.deps.ledger.decisionProgress(d.comment_id).reply_posted)
@@ -1173,10 +1249,15 @@ export class ThreadDecisionWatcher {
     } catch (err) {
       this.deps.log?.(`pingpong: ${name} failed`, err);
       const classification = classifyThreadDecisionError(err);
+      const retryAfterMs = classifyGitHubFailure(err).retryAfterMs;
       const pr = Number(match[1]);
       const commentId = Number(match[3]);
+      // Every wait runs from when the failure arrived, not from when this
+      // attempt began: a read that spent minutes on its own retries must not
+      // start a cooldown already partly or wholly spent.
+      const failedAt = (this.deps.now ?? (() => new Date()))();
       if (classification === "rate_limit") {
-        const opened = this.deps.ledger.openBreaker(now, String(err));
+        const opened = this.deps.ledger.openBreaker(failedAt, String(err), retryAfterMs);
         this.deps.store.logEvent("pingpong_breaker_opened", pr, {
           file: name,
           streak: opened.streak,
@@ -1197,16 +1278,28 @@ export class ThreadDecisionWatcher {
         // half-open. Close globally and retry only this decision on its bounded
         // schedule.
         if (this.deps.ledger.breaker().state === "half_open") {
-          this.deps.ledger.closeBreaker(now);
+          this.deps.ledger.closeBreaker(failedAt);
           this.deps.store.logEvent("pingpong_breaker_closed", pr, {
             comment_id: commentId,
             reason: "non-rate probe failure",
             error: String(err),
           });
         }
-        const retryState = this.deps.ledger.recordRetry(commentId, now, String(err));
+        // A transient failure waits on the long schedule and spends no
+        // strike; only a refusal or an unknown failure counts toward three.
+        const retryState =
+          classification === "transient"
+            ? this.deps.ledger.recordTransientRetry(commentId, failedAt, String(err), retryAfterMs)
+            : this.deps.ledger.recordRetry(commentId, failedAt, String(err));
         if (retryState.terminal) {
-          this.quarantineTerminal(name, pr, Number(match[2]), commentId, retryState.attempts);
+          this.quarantineTerminal(
+            name,
+            pr,
+            Number(match[2]),
+            commentId,
+            this.deps.ledger.retry(commentId).attempts +
+              this.deps.ledger.retry(commentId).transient_attempts,
+          );
         } else {
           this.deps.store.logEvent("pingpong_decision_retry_scheduled", pr, {
             file: name,

@@ -241,8 +241,8 @@ later, from the home, once a review has completed.
 
 ### 10 — Preflight
 
-Checks Node ≥ 26 (the supported Node, which the image carries; an older one is
-noted, not refused),
+Checks Node ≥ 22.19 (the supported Node; the image carries its own Node 26; an
+older one is noted, not refused),
 `docker --version` and `docker compose version`, asks the registry whether the
 release image can be pulled, and captures your user id. The uid matters: the
 containers run as it, so they can read the 0600 files you own in the secrets
@@ -659,7 +659,10 @@ Those are the shipped defaults. The names come from **your** `config.toml`
 (`[github] trigger_label` and its two siblings, recorded by the interview at
 step 35), so if you renamed any of them the wizard creates the labels your
 installation actually triggers on. A label that already exists is left exactly
-as it is — colour and description included.
+as it is — colour and description included. The security-review label
+(`[security] label`, `qcr:security` by default) is not among them: create it
+yourself if you want label requests for a security review
+([profiles.md](profiles.md#asking-for-a-security-review)).
 
 Two things that trip people up:
 

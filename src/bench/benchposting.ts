@@ -30,7 +30,9 @@ import { commentsEnvelope } from "./artifacts.js";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  DEFAULT_POSTING_POLICY,
   firstSentence,
+  isDefaultPosting,
   selectPosted,
   siteKey,
   verdictLineFor,
@@ -42,12 +44,22 @@ import {
   entriesById,
   rootCauseId,
   markWithheld,
+  partialChainEntry,
   postedClassOf,
   recordPostingKeys,
+  securityEntry,
   withheldReason,
 } from "@quickchatai/pi-quickreview/src/reviewrender.js";
-import { entryDisposition, recordSide } from "@quickchatai/pi-quickreview/src/findingkey.js";
-import { bareTag, stripSanctionedTags } from "@quickchatai/pi-quickreview/src/severity.js";
+import {
+  entryDisposition,
+  recordEntries,
+  recordSide,
+} from "@quickchatai/pi-quickreview/src/findingkey.js";
+import {
+  bareTag,
+  isSecurityFinding,
+  stripSanctionedTags,
+} from "@quickchatai/pi-quickreview/src/severity.js";
 import {
   benchPath,
   CASE_FILES,
@@ -85,9 +97,14 @@ interface Item {
   /** The record entry it states (a body item's always; an inline comment's
    * when the record has one). */
   entry?: Record<string, unknown>;
+  /** inline: the lens its trailer names (`· lens <name>_`), for a comment
+   * the record has no entry for. */
+  lens?: string;
 }
 
 const SEV_TAIL = /_\s*(P[0-3]|nit)\s*·\s*confidence/i;
+/** The trailer's lens: `_P1 · confidence 0.80 · lens pass-x_`. */
+const LENS_TAIL = /·\s*lens\s+([^_\n]+?)\s*_\s*$/m;
 
 function classOf(tag: string): PolicyClass {
   return tag === "blocker" || tag === "question" || tag === "nit" ? tag : "check";
@@ -236,6 +253,7 @@ export function policeBenchOutput(args: {
       side: parsed.side === "LEFT" ? "LEFT" : "RIGHT",
       ...(parsed.marker === "deferred" ? { deferred: true } : {}),
       ...(parsed.start_line !== undefined ? { start_line: parsed.start_line } : {}),
+      ...(LENS_TAIL.test(parsed.body) ? { lens: LENS_TAIL.exec(parsed.body)![1]!.trim() } : {}),
       row,
     });
     bodies.push(parsed.body);
@@ -279,6 +297,10 @@ export function policeBenchOutput(args: {
       cls: it.cls,
       severity: it.severity,
       key: (it.entry && keys.get(it.entry)) ?? siteKey(it.title),
+      // As production reads them: the record entry's kind and lens, else the
+      // comment's own trailer.
+      security: it.entry ? securityEntry(it.entry) : isSecurityFinding(null, it.lens ?? null),
+      partialChain: it.entry ? partialChainEntry(it.entry) : false,
       // The whole anchor, span included, as production ranks it.
       ...(runs
         ? {
@@ -395,6 +417,39 @@ function readJsonOr(path: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+/** Does a findings record mark a partial exploit chain posted
+ * (secevidence.ts `isPartialChain`, read as reviewrender.ts
+ * `partialChainEntry` reads it)? */
+export function recordPostsPartialChain(record: unknown): boolean {
+  if (typeof record !== "object" || record === null || Array.isArray(record)) return false;
+  const entries = recordEntries(record as Record<string, unknown>) ?? [];
+  return entries.some(
+    (e) =>
+      typeof e === "object" &&
+      e !== null &&
+      entryDisposition(e as Record<string, unknown>) === "posted" &&
+      partialChainEntry(e as Record<string, unknown>),
+  );
+}
+
+/**
+ * The policy the bench enforces on a case the session wrote by hand: the
+ * profile's own when it sets one; under the default policy, the default —
+ * whose one cut is a posted partial chain, never posted under any policy or
+ * none — only when the case's findings record marks one posted, so every
+ * other default-policy case is scored exactly as the session wrote it. Null
+ * when there is nothing to enforce.
+ */
+export function benchPolicyToEnforce(
+  caseDir: string,
+  policy: PostingPolicy | undefined,
+): PostingPolicy | null {
+  if (policy !== undefined && !isDefaultPosting(policy)) return policy;
+  return recordPostsPartialChain(readJsonOr(join(caseDir, CASE_FILES.findings)))
+    ? { ...DEFAULT_POSTING_POLICY }
+    : null;
 }
 
 /**

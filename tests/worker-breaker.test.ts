@@ -119,6 +119,63 @@ describe("the breaker over the store", () => {
     expect(b.failure(1, "c3", "the worker exited 1").parked).toBe(true);
   });
 
+  // MUTATION: drop "rate_limited" and "overloaded" from breakerEffect's transient
+  // set in src/workerbreaker.ts — the PR parks and the first 429s drain; this fails.
+  it("a rate limit or an overload behaves like a network drop: never parks, drains only on a repeat", () => {
+    for (const blip of [
+      "the round: the provider failed the turn: 429 Too Many Requests",
+      "the round: the provider failed the turn: 529 Platform overloaded",
+    ]) {
+      const store = new StateStore(":memory:");
+      const b = new WorkerBreaker(store);
+      for (const pr of [1, 2, 3]) expect(b.failure(pr, "c", blip).drained, blip).toBe(false);
+      for (let i = 0; i < 3; i++) expect(b.failure(1, `c${i}`, blip).parked, blip).toBe(false);
+      expect(b.gate(1), blip).toEqual({ ok: true });
+      b.failure(2, "c", blip);
+      // The repeats are the outage being real: the drain is fed.
+      expect(b.failure(3, "c", blip).drained, blip).toBe(true);
+    }
+  });
+
+  // MUTATION: give usage_limit `park: true` in breakerEffect — the PR parks; this fails.
+  it("a spent usage window never parks a PR and feeds the drain from its first occurrence", () => {
+    const store = new StateStore(":memory:");
+    const b = new WorkerBreaker(store);
+    const spent = "the round: the provider failed the turn: The usage limit has been reached";
+    for (let i = 0; i < 3; i++) expect(b.failure(1, `c${i}`, spent).parked).toBe(false);
+    expect(b.gate(1)).toEqual({ ok: true });
+    b.failure(2, "c", spent);
+    expect(b.failure(3, "c", spent).drained).toBe(true);
+  });
+
+  // MUTATION: drop "Connection error" (or "other side closed", "terminated", or the
+  // `output stream failed` prefix) from src/providerfailure.ts — that phrasing parks; this fails.
+  it("reads the transport phrasings pi and the SDKs use, and the output-stream path", () => {
+    for (const blip of [
+      "the round: the provider failed the turn: Connection error.",
+      "the round: the provider failed the turn: other side closed",
+      "the round: the provider failed the turn: terminated",
+      "the round: output stream failed: TypeError: fetch failed",
+    ]) {
+      const store = new StateStore(":memory:");
+      const b = new WorkerBreaker(store);
+      for (let i = 0; i < 3; i++) expect(b.failure(1, `c${i}`, blip).parked, blip).toBe(false);
+    }
+  });
+
+  // MUTATION: classify `last` (the 300-character display cut) in
+  // WorkerBreaker.failure instead of the whole text — the 429 falls past the
+  // cut, reads "other" and parks the PR; this fails.
+  it("classifies the whole failure, not its display cut", () => {
+    const store = new StateStore(":memory:");
+    const b = new WorkerBreaker(store);
+    const blip = `the round: the provider failed the turn: ${"x".repeat(270)} 429 Too Many Requests`;
+    for (let i = 0; i < 3; i++) expect(b.failure(1, `c${i}`, blip).parked).toBe(false);
+    expect(b.gate(1)).toEqual({ ok: true });
+    // The display keeps its cut.
+    expect(store.workerBreaker(1)?.last_error?.length).toBe(300);
+  });
+
   it("a hand-set drain keeps no reason, and the breaker does not take it over", () => {
     const store = new StateStore(":memory:");
     store.engageDrain({ issuer: "operator", expires_at: null });

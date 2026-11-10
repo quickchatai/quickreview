@@ -43,6 +43,8 @@ Run `qcr scan preview --json`. On rounds after the first, add `--delta --sha <ro
 
 On the first round, show the user three things: the price of this scan, an estimate for all N rounds, and the budget set at setup. Get one explicit yes. That yes covers the later rounds as long as each one's preview costs less than the first round's and the running total stays inside the budget. If a later preview is more expensive, or would go over the budget, stop and ask again.
 
+If the preview's JSON carries `threat_model_stage`, the threat model is drafted first (stage 0, `[scan] threat_model`): its `start` arguments start that stage, stopped hard at `threat_model_stage.cap_usd`. Get the user's yes for that cap, run it as in step 3, then preview again for the scan itself.
+
 **Done when:** you have the preview's `start` arguments (`null` means something blocks the start; report the errors), and the user's approval covers them. Record the price in the ledger.
 
 ## 3. Scan

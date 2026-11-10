@@ -44,6 +44,7 @@ import {
   decideFollowUp,
   lensesOf,
   optionalOrderOf,
+  postOrderOf,
   renderDeltaPatch,
   reviewedHeadOf,
   roundDeltaOf,
@@ -94,6 +95,11 @@ import { renderGateNotes } from "@quickchatai/pi-quickreview/src/templates.js";
 import { firstPartyDirectiveFiles } from "@quickchatai/pi-quickreview/src/severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine.js";
+import {
+  clearDispatchFailures,
+  dispatchBackoffHold,
+  noteDispatchFailure,
+} from "./dispatchbackoff.js";
 import type { ApprovalWithheldRow, PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import { roundPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
@@ -110,6 +116,27 @@ import type {
 } from "@quickchatai/pi-quickreview/src/types.js";
 import { preparePriorFindings } from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import { type PrOwnedDelta, prWorktreeRel } from "./worktrees.js";
+import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
+import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  computeSecurityFacts,
+  SECURITY_TRIGGER_CHECKS,
+  type SecFactCheck,
+  type SecurityFact,
+} from "@quickchatai/pi-quickreview/src/secfacts.js";
+import { resolveThreatModel } from "@quickchatai/pi-quickreview/src/threatmodel.js";
+import type { PlanSecurityInputs } from "@quickchatai/pi-quickreview/src/planner.js";
+import {
+  deferUncoveredSecurityRequest,
+  partialChainLeads,
+  PRIOR_PARTIAL_CHAINS_MAX,
+  readRepoThreatModel,
+  resolveSecurityRequest,
+  SECURITY_REQUEST_KIND,
+  securityFactsAt,
+  securityRequestCovered,
+  type RepoGitReader,
+} from "./securityrequest.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
  * the adapter, so this module never touches GitHub directly. */
@@ -119,7 +146,7 @@ export interface DispatchAdapter {
   /** Read-only; dispatch needs `base_ref` to keep the base branch fresh, and
    * `body` as pass-intent's artifact + substance-bar input. Absent body ⇒ the
    * intent lens is never selected. */
-  getPr(n: number): Promise<{ base_ref: string; body?: string }>;
+  getPr(n: number): Promise<{ base_ref: string; body?: string; labels?: string[] }>;
   addLabel(n: number, label: string): Promise<GateResult>;
   removeLabel(n: number, label: string): Promise<GateResult>;
   deleteTeamReviewRequest(n: number): Promise<GateResult>;
@@ -205,6 +232,18 @@ export interface DispatchDeps {
    * is skipped and logged, never fatal.
    */
   listBaseMigrations?: (baseSha: string) => Promise<string[]>;
+  /**
+   * Read-only git over the reviewed repository's commits
+   * (src/securityrequest.ts `gitRepoReader` over the base clone): the
+   * repository's threat model at the base commit and the security facts'
+   * reads. Absent (stub-wired core, unit tests without git) ⇒ no repository
+   * threat model, and only the facts' two diff-only checks run.
+   */
+  securityGit?: RepoGitReader;
+  /** The selected profile's threat model text (`loadProfileThreatModel`),
+   * read once at assembly. The repository's own wins over it. Absent or
+   * null ⇒ none. */
+  profileThreatModel?: string | null;
   /**
    * The most recent human author of `paths` in the history reachable from
    * `sha` (WorktreeManager.lastHumanAuthor). Read-only git in the
@@ -998,6 +1037,103 @@ export {
   type PrOwnedDeltaReader,
 } from "@quickchatai/pi-quickreview/src/planner.js";
 
+/** The most a round waits on the security facts' repository reads; past it
+ * the facts are the diff-only checks, the rest `unknown`. The reads sit in
+ * the one serialized dispatch pump, so they are bounded like the integrity
+ * baseline. */
+export const SECURITY_FACTS_BUDGET_MS = 15_000;
+
+/**
+ * A round's security inputs (src/securityrequest.ts). The request is the
+ * PR's recorded one or its label, as `resolveSecurityRequest` reads them.
+ * When no security-family lens can run at all (every one switched off),
+ * nothing is read from the repository. Otherwise: the repository's threat
+ * model at the base commit, else the profile's, else none; the facts that
+ * can plan a lens (`SECURITY_TRIGGER_CHECKS`), bounded by
+ * `SECURITY_FACTS_BUDGET_MS`; and earlier rounds' partial chains. The route
+ * inventory plans nothing and only a family row's task reads it, so it is
+ * not read here: `inventory` reads it for a round whose plan has a family
+ * row, within what is left of the same budget. Total — a failed read is no
+ * threat model and `unknown` facts, never a failed round.
+ */
+async function securityInputsFor(
+  deps: DispatchDeps,
+  pr: number,
+  files: PrFileEntry[],
+  tree: PreparedTree | undefined,
+  labels: string[] | null,
+): Promise<{
+  securityRequest?: PlanSecurityInputs["securityRequest"];
+  threatModel: NonNullable<PlanSecurityInputs["threatModel"]> | null;
+  securityFacts: SecurityFact[];
+  priorPartialChains: string[];
+  inventory: () => Promise<SecurityFact[]>;
+}> {
+  const { cfg, store } = deps;
+  const log = deps.log ?? (() => {});
+  const security = cfg.security ?? SECURITY_DEFAULTS;
+  const securityRequest = resolveSecurityRequest({
+    row: store.reviewRequest(pr, SECURITY_REQUEST_KIND),
+    labels,
+    label: security.label,
+  });
+  const request = securityRequest ? { securityRequest } : {};
+  if (!SECURITY_FAMILY.some((lens) => lensEnabled(cfg.lenses, lens)))
+    return {
+      ...request,
+      threatModel: null,
+      securityFacts: [],
+      priorPartialChains: [],
+      inventory: async () => [],
+    };
+  let repoThreatModel: string | null = null;
+  try {
+    repoThreatModel = await readRepoThreatModel(deps.securityGit, tree?.base_sha ?? "");
+  } catch (err) {
+    log(`dispatch: #${pr} repository threat model unreadable`, err);
+  }
+  const threatModel = resolveThreatModel({
+    readRepo: () => repoThreatModel,
+    readProfile: () => deps.profileThreatModel ?? null,
+  });
+  const shas = { head: tree?.head_sha ?? "", base: tree?.base_sha ?? "" };
+  // One budget for every read the facts make; past it no read is issued, so
+  // nothing keeps reading behind a round that stopped waiting.
+  const deadline = Date.now() + SECURITY_FACTS_BUDGET_MS;
+  const bounded = async (
+    checks: readonly SecFactCheck[],
+    what: string,
+  ): Promise<SecurityFact[]> => {
+    try {
+      const done = await withinBudget(
+        securityFactsAt(files, deps.securityGit, shas, { checks, deadline }),
+        deadline - Date.now(),
+      );
+      if (done.kind === "done") return done.value;
+      log(`dispatch: #${pr} ${what} past ${SECURITY_FACTS_BUDGET_MS} ms — diff-only`);
+      store.logEvent("security_facts_degraded", pr, {
+        reason: "budget",
+        budget_ms: SECURITY_FACTS_BUDGET_MS,
+        ...(what === "route inventory" ? { checks: [...checks] } : {}),
+      });
+    } catch (err) {
+      log(`dispatch: #${pr} ${what} failed — diff-only`, err);
+    }
+    return computeSecurityFacts(files, null, checks);
+  };
+  const securityFacts = await bounded(SECURITY_TRIGGER_CHECKS, "security facts");
+  const priorPartialChains = partialChainLeads(
+    store.partialChainFindings(pr, PRIOR_PARTIAL_CHAINS_MAX),
+  );
+  return {
+    ...request,
+    threatModel,
+    securityFacts,
+    priorPartialChains,
+    inventory: () => bounded(["route-inventory"], "route inventory"),
+  };
+}
+
 /** What the round row records of a plan — the same projection on the
  * normal path and on the patch-write fallback, so the stored round and the
  * order always describe one plan. A follow-up round's optional rows ride
@@ -1091,6 +1227,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           : "operator u required";
       return `held FAILED_LOUD (${failure.incident_id}); ${action}`;
     }
+    // A self-requeued round's replacement waits out its backoff (verdicts.ts
+    // SELF_REQUEUE_BACKOFF_MIN); a newer trigger on the row lifts it.
+    const notBefore = store.selfRequeueNotBefore(row.number, row);
+    if (notBefore !== undefined && notBefore > now().toISOString())
+      return `held — self-requeue backoff until ${notBefore}`;
     const active = store.blockingSessionCommand(`pr-${row.number}`);
     if (active) return `skipped — session command ${active.id} is ${active.status}`;
     // The operator holds the session (src/takeover.ts): the round waits for the release.
@@ -1101,6 +1242,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       return `skipped — under a ${lease.kind} lease (${lease.holder})`;
     if (store.hasHeldWakes(row.number))
       return "skipped — held conversational wakes must drain first";
+    // A PR whose last dispatches failed waits out its backoff
+    // (src/dispatchbackoff.ts) instead of repeating the attempt every tick.
+    const backoff = dispatchBackoffHold(store, row.number, now().getTime());
+    if (backoff) return backoff;
     return null;
   };
   const eligible = queuedInOrder(store).filter((row) => {
@@ -1157,7 +1302,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // standing REQUEST_CHANGES. Guard 2 keys on head + author reply and
       // nothing else, so THAT is the test here — provenance (a label, a team
       // re-request, a reconcile re-derivation) is a scheduling signal and
-      // never widens the posting boundary. If the standing verdict cannot be
+      // never widens the posting boundary. The one request that is evidence
+      // is an explicit maintainer's or operator's request for a security
+      // review (src/securityrequest.ts): serving it stamps the mark's reply
+      // stamp once (`noteNewEvidence`), so the round it queues runs at an
+      // already-reviewed head, and guard 2 reads the same stamp. If the standing verdict cannot be
       // read off the mark (a COMMENT-only row), no round runs either — guard
       // 2 would still refuse it — but nothing is guessed: the PR lands in
       // `tracked` with a precise anomaly instead of an invented verdict.
@@ -1255,6 +1404,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         log(
           `dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}; standing ${standing ?? "review (verdict unknown)"} stands, PR ${restored}`,
         );
+        clearDispatchFailures(store, row.number);
         continue;
       }
 
@@ -1335,26 +1485,38 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               reason: `dispatch-short-circuit:${sc.reason}`,
             },
           );
+          clearDispatchFailures(store, row.number);
           continue;
         }
       }
 
+      // The branch this PR targets (base freshness) and its body
+      // (pass-intent's artifact + substance bar) come off one getPr read,
+      // taken BEFORE the triggers are consumed. A failed read defers the
+      // dispatch through the per-PR backoff (the outer catch): a round run
+      // without it would silently lose its base fetch and its intent lens,
+      // and nothing has been written to GitHub yet, so the PR is simply
+      // still queued.
+      // The request row this round's inputs may count as seen, read BEFORE
+      // the labels: a request recorded after this line (a label added while
+      // the tree is prepared) is never "seen", so a plan the stale labels
+      // left it out of puts it back (deferUncoveredSecurityRequest).
+      const requestSeen = store.reviewRequest(row.number, SECURITY_REQUEST_KIND)?.requested_at;
+      let ref: Awaited<ReturnType<DispatchAdapter["getPr"]>>;
+      try {
+        ref = await deps.adapter.getPr(row.number);
+      } catch (err) {
+        log(`dispatch: base ref lookup failed on #${row.number} — dispatch deferred`, err);
+        throw err;
+      }
+      const baseRef = ref.base_ref;
+      const prBody: string | undefined = ref.body;
+      // The PR's labels as GitHub has them this round (a label request for a
+      // security review stands while its label does); null when unread.
+      const labels: string[] | null = Array.isArray(ref.labels) ? ref.labels : null;
+
       markedInProgress = true;
       const consumed = await consumeTriggers(deps, row.number);
-
-      // The branch this PR targets (base freshness) and its body
-      // (pass-intent's artifact + substance bar) come off one getPr read. A
-      // failed read degrades to "no base facts, no intent lens", never a
-      // failed round.
-      let baseRef = "";
-      let prBody: string | undefined;
-      try {
-        const ref = await deps.adapter.getPr(row.number);
-        baseRef = ref.base_ref;
-        prBody = ref.body;
-      } catch (err) {
-        log(`dispatch: base ref lookup failed on #${row.number}`, err);
-      }
 
       // Prepare the tree BEFORE building the order, so the prompt cites the sha
       // the passes will actually read. `row.head_sha` is a webhook/reconcile
@@ -1390,9 +1552,20 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       const ciLinters = lensEnabled(cfg.lenses, LINT_CONFORMANCE_PASS, cfg.review.lint_conformance)
         ? findCiLinters(resolve(sandboxRoot(), worktreeFor(row.number)))
         : [];
+      // What the security family reads beyond the files: a maintainer's or
+      // the operator's request, the threat model, the deterministic facts and
+      // earlier rounds' partial chains. Read once, before the plan, and
+      // handed to the plan, the follow-up decision and the order alike.
+      const sec = await securityInputsFor(deps, row.number, files, tree, labels);
+      const planSecurity: PlanSecurityInputs = {
+        ...(sec.securityRequest ? { securityRequest: sec.securityRequest } : {}),
+        threatModel: sec.threatModel,
+        securityFacts: sec.securityFacts,
+      };
       // The plan is pure and deterministic in `files` + the PR body + the
-      // style guide + the linters: built ONCE here and handed to
-      // buildRoundOrder, so the round row and the order never disagree.
+      // style guide + the linters + the security inputs: built ONCE here and
+      // handed to buildRoundOrder, so the round row and the order never
+      // disagree.
       const fullPlan = buildPassPlan(
         cfg,
         files,
@@ -1401,6 +1574,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         deps.heuristics,
         styleGuide,
         ciLinters,
+        planSecurity,
       );
       // Follow-up rounds (docs/follow-up-rounds.md): every round after the
       // first reviews the PR-owned change since the last reviewed head — or,
@@ -1409,8 +1583,20 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // directive escalation, the diffstat, dependency sources, memory and
       // lessons); only the plan and the coverage check read the delta.
       let followUp: FollowUpDecision | null = null;
-      let fullRound: { reason: FollowUpFullReason; detail?: Record<string, unknown> } | null = null;
-      if (roundType === "re-review") {
+      let fullRound: {
+        reason: FollowUpFullReason | "security-requested";
+        detail?: Record<string, unknown>;
+      } | null = null;
+      if (
+        roundType === "re-review" &&
+        planSecurity.securityRequest &&
+        !securityRequestCovered(store, row.number)
+      ) {
+        // A security review asked for since the last whole look: the family
+        // reviews the PR's own change, never only the change since a review
+        // that did not run it (at the same head that delta is empty).
+        fullRound = { reason: "security-requested" };
+      } else if (roundType === "re-review") {
         const decided = await decideFollowUp(
           {
             cfg: deps.cfg,
@@ -1431,6 +1617,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             ecosystem: eco,
             styleGuide,
             ciLinters,
+            ...planSecurity,
           },
         );
         if (decided.kind === "delta") followUp = decided.decision;
@@ -1469,6 +1656,14 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         }
         continue;
       }
+      // A request served while this round was prepared, after its inputs were
+      // read, is not in its plan: it waits for this round to settle instead,
+      // as one landing during the round does (src/securityrequest.ts).
+      if (
+        !planSecurity.securityRequest &&
+        deferUncoveredSecurityRequest(store, row.number, requestSeen)
+      )
+        log(`dispatch: #${row.number} security request arrived during preparation — next round`);
       // Diffstat comes free off the files list dispatch already fetched — no
       // extra GitHub call in the hot path. trigger_ts is copied off pr_state
       // here because the `dispatched` transition clears it moments later.
@@ -1486,6 +1681,12 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           validate_tier: validateTier,
           pass_plan: plannedPasses,
           addable_passes: addablePasses,
+          // The post-discovery rows (the chain's `compose`): recorded beside
+          // the plan, so the posting route names a failed one as it names a
+          // failed plan row (postops.ts withSecurityGaps).
+          ...(passPolicy.post_plan && passPolicy.post_plan.length > 0
+            ? { post_plan: passPolicy.post_plan }
+            : {}),
           head_sha: preparedHead,
           ...(tree?.merge_base ? { merge_base: tree.merge_base } : {}),
           ...(roundType === "re-review"
@@ -1543,6 +1744,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           });
           store.setRoundMeta(roundId, {
             scope: "full",
+            post_plan:
+              fullPlan.post_plan && fullPlan.post_plan.length > 0 ? fullPlan.post_plan : null,
             delta_base_sha: null,
             delta_lines: null,
             delta_files: null,
@@ -1758,6 +1961,16 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           log(`dispatch: #${row.number} dependency sources unavailable`, err);
         }
       }
+      // The route inventory: read only for a round whose plan has a
+      // security-family row — in any phase, the owed sweep's included — the
+      // one reader of it (securityOrderFields).
+      const inventory = [
+        ...passPolicy.pass_plan,
+        ...(passPolicy.post_plan ?? []),
+        ...(followUp && roundDelta ? (followUp.sweepPlan ?? []) : []),
+      ].some((p) => SECURITY_FAMILY.includes(p.lens))
+        ? await sec.inventory()
+        : [];
       const built = buildRoundOrder({
         tree,
         plan: passPolicy,
@@ -1809,6 +2022,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         // The host's lens tools, so the prompt and the task files name the ones its
         // sessions have (rule 9: `lens` / `lens_wave` on workers).
         ...(deps.hooks.lensRuntime ? { lensRuntime: deps.hooks.lensRuntime } : {}),
+        ...planSecurity,
+        ...(inventory.length > 0 ? { securityInventory: () => inventory } : {}),
+        ...(sec.priorPartialChains.length > 0
+          ? { priorPartialChains: sec.priorPartialChains }
+          : {}),
       });
       store.stampPostingKey(roundId, built.posting_key!);
       // The round row already holds the order's plan: the style guide and the
@@ -1998,6 +2216,31 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             log(`dispatch: #${row.number} optional task files unavailable`, err);
           }
         }
+        // The post-discovery rows' task files (`post_plan`, the chain's
+        // `compose`) — their own directory and row index (`row` indexes
+        // `post_plan`), which the discovery wave never lists: the session
+        // launches them once the wave has returned (the chain note). Total,
+        // as above, and an earlier attempt's dir is removed when none is
+        // planned, so nothing stale can be launched from it.
+        const postDir = join(passesDir, "tasks-post");
+        if (!built.post_plan || built.post_plan.length === 0) {
+          try {
+            rmSync(postDir, { recursive: true, force: true });
+          } catch (err) {
+            log(`dispatch: #${row.number} stale post task dir not removed`, err);
+          }
+        } else {
+          try {
+            const postOrder = postOrderOf(packed, built.post_plan);
+            const postTasks = writePassTasks(postDir, postOrder, renderGateNotes(postOrder, eco));
+            order = {
+              ...order,
+              post_task_files: postTasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
+            };
+          } catch (err) {
+            log(`dispatch: #${row.number} post task files unavailable`, err);
+          }
+        }
         if (built.sweep_plan && built.sweep_plan.length > 0) {
           try {
             const sweepOrder = sweepOrderOf(packed, built.sweep_plan);
@@ -2154,6 +2397,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       provisionalRoundId = undefined;
       dispatched.push(order);
       started++;
+      clearDispatchFailures(store, row.number);
     } catch (err) {
       // One bad PR must never stall the pump. Before the session handoff, the
       // provisional round is disposable. AFTER dispatchRound persisted a
@@ -2240,6 +2484,16 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         });
       } catch (eventError) {
         log(`dispatch: #${row.number} failure event write failed`, eventError);
+      }
+      // A retained round owns the review and is supervised; any other failure
+      // holds the PR back on its backoff before the next attempt.
+      if (retainedCommand) clearDispatchFailures(store, row.number);
+      else {
+        try {
+          noteDispatchFailure(store, row.number, err, now().getTime());
+        } catch (backoffError) {
+          log(`dispatch: #${row.number} backoff not recorded`, backoffError);
+        }
       }
     } finally {
       // A round that failed after its seed never leaves the case

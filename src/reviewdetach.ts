@@ -66,7 +66,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/contract.js";
 
 export const DETACHED_USAGE =
-  "usage: qcr review start [branch | --uncommitted | --diff FILE | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--full] [--to DEST] [--out FILE] --json\n" +
+  "usage: qcr review start [branch | --uncommitted | --diff FILE | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--full] [--security] [--to DEST] [--out FILE] --json\n" +
   "       qcr review status [RUN_ID] [--wait [--timeout SECONDS]] --json\n" +
   "       qcr review stop [RUN_ID]";
 
@@ -779,11 +779,13 @@ export async function runWatchdog(
   }
 }
 
-/** The CLI entry the detached driver re-runs: `cli` beside this module. Read
- * from where this module is, not from `process.argv[1]`, which is whatever the
- * person launched (a bin symlink, a wrapper, a test runner). */
+/** The CLI entry the detached driver re-runs: the bin's front door, `qcrbin`
+ * beside this module, which reaches `qcr review` without loading the state
+ * store (src/qcrbin.ts), so a run starts where the SQLite driver cannot load.
+ * Read from where this module is, not from `process.argv[1]`, which is
+ * whatever the person launched (a bin symlink, a wrapper, a test runner). */
 export function detachedEntry(metaUrl: string = import.meta.url): string {
-  return fileURLToPath(new URL(`./cli${extname(fileURLToPath(metaUrl))}`, metaUrl));
+  return fileURLToPath(new URL(`./qcrbin${extname(fileURLToPath(metaUrl))}`, metaUrl));
 }
 
 /** The process `qcr review start` detaches: this node, this entry, the run's

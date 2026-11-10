@@ -31,6 +31,7 @@ import {
   parsePiSection,
   parseReviewSection,
   parseScan,
+  parseSecurity,
   presetOf,
   req,
   requireGithubKeys,
@@ -426,6 +427,16 @@ export interface OpenVikingConfig {
   restart_backoff_ms: number[];
   /** A child that stayed up this long resets the backoff ladder. */
   restart_reset_after_s: number;
+  /** The liveness restart: this many consecutive failed `/health` probes
+   * (one per `health_interval_s`) of a running server stop it for a restart
+   * on the backoff ladder. 0 switches the liveness restart off. */
+  liveness_failures: number;
+  /** …and they must span at least this long, so a short stall is never a
+   * restart. */
+  liveness_span_s: number;
+  /** A server that has never answered `/health` since it started is still
+   * starting: it is judged only once it has answered, or after this long. */
+  liveness_startup_grace_s: number;
   /** Which embedder memory runs. `local` is the shipped
    * default: the LOCAL ENGLISH EMBEDDER (`LOCAL_EMBEDDING`) — a loopback
    * service inside the container, so no memory text leaves the machine.
@@ -771,6 +782,9 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   health_timeout_ms: 6000,
   restart_backoff_ms: [1000, 2000, 5000, 15000, 30000, 60000],
   restart_reset_after_s: 120,
+  liveness_failures: 3,
+  liveness_span_s: 90,
+  liveness_startup_grace_s: 300,
   embedding_provider: "local",
   embedding_model: LOCAL_EMBEDDING.model,
   embedding_dimension: LOCAL_EMBEDDING.dimension,
@@ -809,6 +823,14 @@ export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig 
     HEALTH_TIMEOUT_BOUNDS_MS,
     OPENVIKING_DEFAULTS.health_timeout_ms,
   );
+  // The liveness restart's thresholds: whole, non-negative numbers, else the
+  // default — never a NaN that would restart on every probe or never.
+  for (const key of ["liveness_failures", "liveness_span_s", "liveness_startup_grace_s"] as const) {
+    const v = merged[key];
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0)
+      merged[key] = OPENVIKING_DEFAULTS[key];
+    else merged[key] = Math.floor(v);
+  }
   // The defaults are the LOCAL embedder: a hosted opt-in that omits the model
   // runs HOSTED_EMBEDDING, never the local model (which no hosted API serves).
   // A named hosted model with no dimension has no default to fall back on.
@@ -1853,6 +1875,7 @@ export function parseConfig(toml: string): Config {
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: parseOwnerSection(raw),
     scan: parseScan(raw.scan),
+    security: parseSecurity(raw.security),
     scan_sandbox: parseScanSandbox(raw.scan, companion),
     archive: parseArchive((raw.archive ?? {}) as Record<string, unknown>),
     login_refresh: parseLoginRefresh(

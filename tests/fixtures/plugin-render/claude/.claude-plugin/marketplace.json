@@ -1,0 +1,14 @@
+{
+  "name": "quickreview-local",
+  "owner": {
+    "name": "QuickReview"
+  },
+  "plugins": [
+    {
+      "name": "qcr",
+      "source": "./qcr",
+      "description": "QuickReview's multi-lens AI code review, whole-repo scan and setup, run through its qcr command-line tool.",
+      "version": "0.0.0-golden"
+    }
+  ]
+}

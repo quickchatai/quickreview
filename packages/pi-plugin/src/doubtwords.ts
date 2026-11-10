@@ -8,5 +8,13 @@
  * `validate-doubt-not-kill` addendum in packages/pi-plugin/src/include.ts); a `killed` entry
  * carrying one is folded onto `doubted` at parse time anyway, so a session
  * still on an older prompt cannot make a doubted finding vanish as a kill.
+ * `partial-chain` is the exploit chain's doubt: a chain with two or more
+ * unproven hops (the `validate-sec-evidence` addendum; secevidence.ts) is
+ * kept for the next round's `delta`, never posted and never killed.
  */
-export const DOUBT_WORDS: readonly string[] = ["refuted", "unverifiable", "bad-anchor"];
+export const DOUBT_WORDS: readonly string[] = [
+  "refuted",
+  "unverifiable",
+  "bad-anchor",
+  "partial-chain",
+];

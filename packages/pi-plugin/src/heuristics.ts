@@ -4,6 +4,7 @@
 
 import type { PrFileEntry } from "./githubcore.js";
 import { packByBudget } from "./packing.js";
+import { SECURITY_FAMILY } from "./passes.js";
 
 export interface PrFile {
   filename: string;
@@ -184,7 +185,7 @@ const SIMPLICITY_DEEP_INDENT_RE = /^\+(?: {20,}|\t{5,})\S/m;
 const SIMPLICITY_BRANCH_RE = /^\+[ \t]*[)\]}]*[ \t]*(if|elif|else[ \t]+if|case|when)\b/gm;
 
 // Dependency-manifest / lockfile shapes — a security surface (supply chain).
-const DEPS_MANIFEST_RE =
+export const DEPS_MANIFEST_RE =
   /(^|\/)(package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|poetry\.lock|uv\.lock|pyproject\.toml|Pipfile(\.lock)?|composer\.(json|lock)|go\.(mod|sum)|Gemfile(\.lock)?|Cargo\.(toml|lock))$/;
 
 // ---- profile heuristics extension -----------------------------------------
@@ -207,12 +208,23 @@ export interface HeuristicsExtension {
    * one is present. The loader compiles each probe to match ADDED lines
    * (`^\+.*(?:…)`, case-insensitive multiline). */
   addedLines: Partial<Record<string, RegExp[]>>;
+  /** lens → removed-line probes, tested the same way: the loader compiles
+   * each to match a REMOVED line and never the `--- a/<file>` header
+   * (`^-(?!--).*(?:…)`, case-insensitive multiline). A guard taken away is
+   * a signal no added line carries. Absent = none. */
+  removedLines?: Partial<Record<string, RegExp[]>>;
+  /** lens → added-line probes over configuration files only (the security
+   * triggers' `CONFIG_FILE_RE`: YAML, Terraform, Dockerfiles, workflows, SQL,
+   * …), compiled like `addedLines`. Absent = none. */
+  configLines?: Partial<Record<string, RegExp[]>>;
 }
 
 export const EMPTY_HEURISTICS: HeuristicsExtension = { paths: {}, addedLines: {} };
 
-/** The lenses a profile may extend: exactly the shape-selected conditionals.
- * Deliberately NOT extendable: `pass-baseline`/`pass-validate` (always in the
+/** The lenses a profile may extend: exactly the shape-selected conditionals,
+ * plus the security family, whose lenses are planned by content triggers
+ * (`securitytriggers.ts`), which read a profile's probes for them the same
+ * ADD-only way. Deliberately NOT extendable: `pass-baseline`/`pass-validate` (always in the
  * plan already), `pass-intent` (keyed on the PR body, never the file shape),
  * `pass-placement`/`pass-simplicity` (computed from code-file status/size
  * signals, not path membership), and `pass-concurrency`/`pass-ask-human`
@@ -227,6 +239,7 @@ export const PROFILE_EXTENDABLE_LENSES: readonly string[] = [
   "pass-prod-risk",
   "pass-delivery",
   "pass-backcompat",
+  ...SECURITY_FAMILY,
 ];
 
 // Deterministic lens selection: baseline always; conditional lenses
@@ -498,20 +511,58 @@ function isPatchedSourceCode(f: PrFile): boolean {
   return f.patch !== undefined && CODE_FILE_RE.test(f.filename) && !isTestFile(f.filename);
 }
 
+/** One side of a unified patch: its added (`+`) or removed (`-`) lines, each
+ * still carrying its sign, joined by newlines. The `+++ b/<file>` and
+ * `--- a/<file>` headers are never lines of either side. */
+export function diffSide(patch: string, sign: "+" | "-"): string {
+  const header = sign === "+" ? "+++" : "---";
+  return patch
+    .split("\n")
+    .filter((l) => l.startsWith(sign) && !l.startsWith(header))
+    .join("\n");
+}
+
 /** Added lines of CODE files only (a README that says "encoding" is not a
  * round trip). */
-function addedCode(files: PrFile[]): { file: PrFile; added: string }[] {
+export function addedCode(files: PrFile[]): { file: PrFile; added: string }[] {
   return files.filter(isPatchedSourceCode).map((f) => ({
     file: f,
-    added: (f.patch as string)
-      .split("\n")
-      .filter((l) => l.startsWith("+") && !l.startsWith("+++"))
-      .join("\n"),
+    added: diffSide(f.patch as string, "+"),
+  }));
+}
+
+/** Removed lines of CODE files only: what a change takes away — a guard, a
+ * lock, a check — which no added line shows. */
+export function removedCode(files: PrFile[]): { file: PrFile; removed: string }[] {
+  return files.filter(isPatchedSourceCode).map((f) => ({
+    file: f,
+    removed: diffSide(f.patch as string, "-"),
+  }));
+}
+
+/** Configuration files: what a deployment, a pipeline or a database reads —
+ * YAML (compose files, Kubernetes manifests, CI workflows), Terraform and
+ * HCL, Dockerfiles, proxy and service configs, sudoers, firewall rules, SQL,
+ * and policy or trust documents written as JSON. Content probes over CODE
+ * files never see these, and a security defect often lives only here. */
+export const CONFIG_FILE_RE =
+  /(\.(ya?ml|tf|tfvars|hcl|conf|cfg|ini|properties|toml|rules|service|sql)$|\.(tf|template)\.json$|(^|\/)(Dockerfile|Containerfile)[^/]*$|(^|\/)Caddyfile$|(^|\/)sudoers(\.d\/[^/]+)?$|(^|\/)[^/]*(policy|trust)[^/]*\.json$)/i;
+
+/** A non-test configuration file whose patch the config probes can read. */
+function isPatchedConfig(f: PrFile): boolean {
+  return f.patch !== undefined && CONFIG_FILE_RE.test(f.filename) && !isTestFile(f.filename);
+}
+
+/** Added lines of configuration files (`CONFIG_FILE_RE`), tests excluded. */
+export function addedConfig(files: PrFile[]): { file: PrFile; added: string }[] {
+  return files.filter(isPatchedConfig).map((f) => ({
+    file: f,
+    added: diffSide(f.patch as string, "+"),
   }));
 }
 
 /** Changed (added or removed) lines of code files. */
-function changedCode(files: PrFile[]): { file: PrFile; changed: string }[] {
+export function changedCode(files: PrFile[]): { file: PrFile; changed: string }[] {
   return files.filter(isPatchedSourceCode).map((f) => ({
     file: f,
     changed: (f.patch as string)

@@ -22,6 +22,9 @@ import {
   type PostedRenderConfig,
   type RenderedComment,
 } from "./reviewrender.js";
+import { lensToken, SECURITY_FAMILY } from "./passes.js";
+import { missingSecurityIncompleteLines, SECURITY_PASSES_UNKNOWN_LINE } from "./templates.js";
+import type { PassPlanEntry } from "./types.js";
 
 /** The line every posted comment (and the review body) shows to a reader. */
 export const QCR_VISIBLE_MARKER = "_Posted by qcr (local review)._";
@@ -48,9 +51,72 @@ function mark(body: string, visible: string): string {
   return `${body.slice(0, hidden.index).trimEnd()}\n\n${visible}\n\n${hidden[1]}`;
 }
 
+/** What a one-shot run's evidence says of its security-family rows: `known`
+ * with the rows that did not complete (empty when every one did, or the plan
+ * has none), or `unknown` when there are family rows and no record of the
+ * passes that returned — never an empty `known`. */
+export type SecurityRowEvidence =
+  { state: "known"; failed: Array<{ lens: string; strategy?: string }> } | { state: "unknown" };
+
+/**
+ * The one-shot route's security rows that did not complete, from the facts
+ * the run already has: the planned family rows (`pass_plan`) against the
+ * outcome's `passes` — one entry per pass that was launched AND returned
+ * (the round template's rule), so a row with no entry failed, was cut short
+ * or never ran. A returned entry answers for the row of its strategy when it
+ * names one (`strategy`, or `<lens>:<strategy>` as its name); one that names
+ * none answers for any row of its lens. When the rows a lens is short of
+ * cannot be told apart, the lens is named once, with no strategy. The
+ * post-discovery rows (`post_plan`, the chain's `compose`) are not counted:
+ * the round skips `compose` when it has no security leads, and nothing here
+ * tells a skip from a failure. No outcome, or no `passes` array, is unknown.
+ */
+export function securityRowsNotReturned(
+  plan: readonly PassPlanEntry[],
+  outcome: Record<string, unknown> | undefined,
+): SecurityRowEvidence {
+  const rows = plan.filter((row) => SECURITY_FAMILY.includes(row.lens));
+  if (rows.length === 0) return { state: "known", failed: [] };
+  const passes = outcome?.["passes"];
+  if (!Array.isArray(passes)) return { state: "unknown" };
+  const returned = passes.flatMap((p) => {
+    if (typeof p !== "object" || p === null) return [];
+    const name = (p as Record<string, unknown>)["name"];
+    if (typeof name !== "string") return [];
+    const own = (p as Record<string, unknown>)["strategy"];
+    const at = name.indexOf(":");
+    const strategy =
+      typeof own === "string" && own.trim() !== ""
+        ? own.trim()
+        : at >= 0
+          ? name.slice(at + 1).trim() || undefined
+          : undefined;
+    return [{ lens: lensToken(name.toLowerCase()), strategy }];
+  });
+  const failed: Array<{ lens: string; strategy?: string }> = [];
+  for (const lens of [...new Set(rows.map((row) => row.lens))]) {
+    const ofLens = returned.filter((r) => r.lens === lens);
+    const named = new Set(ofLens.flatMap((r) => (r.strategy !== undefined ? [r.strategy] : [])));
+    const open = rows.filter(
+      (row) => row.lens === lens && (row.strategy === undefined || !named.has(row.strategy)),
+    );
+    const short = open.length - ofLens.filter((r) => r.strategy === undefined).length;
+    if (short <= 0) continue;
+    if (short < open.length) failed.push({ lens });
+    else
+      for (const row of open)
+        failed.push({ lens, ...(row.strategy !== undefined ? { strategy: row.strategy } : {}) });
+  }
+  return { state: "known", failed };
+}
+
 /** The review to post from a findings record: rendered by the production
  * renderer, hidden markers on, every comment marked as qcr's. The verdict in
- * the record never reaches the event. */
+ * the record never reaches the event. With `security` (the run's
+ * `securityRowsNotReturned`), the body carries the fail-closed line for each
+ * security row that did not complete, or the one line saying completion is
+ * unknown — as the daemon's route does (src/postops.ts) — never repeating a
+ * line the session already wrote. */
 export function assemblePostReview(
   record: unknown,
   o: {
@@ -61,6 +127,7 @@ export function assemblePostReview(
     summary?: string | null;
     /** A profile replaced a shipped file for this run: say so in the marker. */
     customised?: boolean;
+    security?: SecurityRowEvidence;
   },
 ): PostReview {
   const { rendered } = renderPostedReview(record, {
@@ -72,9 +139,18 @@ export function assemblePostReview(
     findingMarkers: { roundNo: o.roundNo },
   });
   const visible = o.customised ? QCR_CUSTOMISED_MARKER : QCR_VISIBLE_MARKER;
+  const securityLines =
+    o.security === undefined
+      ? []
+      : o.security.state === "unknown"
+        ? rendered.body.includes(SECURITY_PASSES_UNKNOWN_LINE)
+          ? []
+          : [SECURITY_PASSES_UNKNOWN_LINE]
+        : missingSecurityIncompleteLines(rendered.body, o.security.failed);
+  const body = securityLines.length ? mark(rendered.body, securityLines.join("\n")) : rendered.body;
   return {
     event: POST_EVENT,
-    body: mark(rendered.body, visible),
+    body: mark(body, visible),
     comments: rendered.comments.map((c) => ({ ...c, body: mark(c.body, visible) })),
     bodyFindings: rendered.in_body,
   };

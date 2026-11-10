@@ -64,6 +64,10 @@ export interface StoredStage2Proposal {
   depth?: ScanDepth;
   /** A deep proposal's floor: its lenses, and what it left out. */
   floor?: Stage2Floor | null;
+  /** A folder proposal's folder (scan.ts `scanPath`): its rows and floor name
+   * only files under it, and a start re-plans inside it. Absent = the whole
+   * repo. */
+  path?: string;
 }
 
 /** The depth a stored proposal was made at. */

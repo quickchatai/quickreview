@@ -31,7 +31,7 @@
 // Persistence: `<state home>/setup/replay.json` — the last preview (its key
 // and request), the current run, and the rates measured from finished cases
 // (what later previews price with).
-import { buildPassPlan } from "../dispatch.js";
+import { buildPassPlan } from "@quickchatai/pi-quickreview/src/planner.js";
 import { DOUBT_WORDS } from "@quickchatai/pi-quickreview/src/doubtwords.js";
 import { VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
 import { findStyleGuide } from "@quickchatai/pi-quickreview/src/styleguide.js";

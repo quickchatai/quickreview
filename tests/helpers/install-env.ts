@@ -38,6 +38,8 @@ process.env.QCR_TEST_TEMP_ROOT = temp.root;
 process.env.JITI_RESPECT_TMPDIR_ENV = "1";
 process.env.XDG_CONFIG_HOME = join(temp.root, "config");
 process.env.XDG_STATE_HOME = join(temp.root, "state");
+// the data home too: `qcr plugin` renders the host plugins there (src/homes.ts dataHome)
+process.env.XDG_DATA_HOME = join(temp.root, "data");
 delete process.env.QCR_CONFIG;
 delete process.env.QCR_INSTALL;
 delete process.env.QCR_CONFIG_HOME;

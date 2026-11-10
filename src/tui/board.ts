@@ -1132,7 +1132,7 @@ export const HELP_LINES = [
   "[8] scan — the whole-repo scan: units left, the unit's findings by validity tier (confirmed first; style grouped per rule) over the detail, the run on top:",
   "[ / ] · j/k    previous / next unit · select a finding",
   "p / d          promote (the companion files one ticket each; unconfirmed ones need an explicit yes) · dismiss with a reason (it becomes reviewer memory)",
-  "f / F · t      filter by state, lens, severity, tier, doubted · clear it · step the tier filter (confirmed → likely → doubtful → unknown)",
+  "f / F · t      filter by state, lens, severity, tier, doubted · clear it · step the tier filter (confirmed → likely → needs-review → doubtful → unknown)",
   "P              the stage 2 plan: space toggles a row, ⏎ approves (hard stop = the kept total), Esc back",
   "x / D          stop the running scan (the ledger resumes it) · ask the companion for a delta re-scan (it shows the price first)",
   "Ctrl-q         release a focused pi pane or the companion column back to the board",

@@ -35,7 +35,9 @@ import {
   plannedFanoutAgents,
   type RoundProgressSnapshot,
 } from "@quickchatai/pi-quickreview/src/round-progress.js";
+import { isProviderTransient, providerBackoffMs } from "./providerfailure.js";
 import type { RoundRow, SessionCommandRow, StateStore, SupervisorLeaseRow } from "./state.js";
+import type { VerdictAnnouncer } from "./slack/announce.js";
 import type {
   RoundRecoveryDisposition,
   SessionHooks,
@@ -63,7 +65,10 @@ export type RoundInfrastructureStage =
   | "passes_incomplete"
   | "parent_finalize"
   | "settled_without_verdict"
-  | "running_hard_bound";
+  | "running_hard_bound"
+  /** The command's worker failed its turn on a transient provider failure
+   * (src/providerfailure.ts) and its requeues were spent. */
+  | "provider_unavailable";
 
 export interface SessionCommandSupervisorDeps {
   cfg: Config;
@@ -87,6 +92,10 @@ export interface SessionCommandSupervisorDeps {
     stage: RoundInfrastructureStage,
     detail: string,
   ) => Promise<RoundRecoveryDisposition>;
+  /** Slack, for a failed wake's FAILED_LOUD incident (a round's is the
+   * verdict watcher's). Optional: absent ⇒ no Slack. Never allowed to throw
+   * into the supervisor. */
+  announce?: Pick<VerdictAnnouncer, "anomaly">;
   now?: () => Date;
 }
 
@@ -305,9 +314,15 @@ export class SessionCommandSupervisor {
     if (command.status === "failed") {
       const detail = command.failure ?? `command ${command.id} failed without detail`;
       if (command.kind === "round") {
+        // A provider outage is named for what it is, never as a session that
+        // "exceeded its fixed running bound".
         await this.failRound(
           command,
-          command.started_at === null ? "command_start" : "running_hard_bound",
+          isProviderTransient(detail)
+            ? "provider_unavailable"
+            : command.started_at === null
+              ? "command_start"
+              : "running_hard_bound",
           detail,
         );
       } else {
@@ -899,13 +914,47 @@ export class SessionCommandSupervisor {
 
   /** Ordinary wakes own conversation work rather than a merits round. Replay
    * the same row/bytes after the production hook fences the old Pi; never
-   * convert the payload back into the capped held-wake queue. */
+   * convert the payload back into the capped held-wake queue.
+   *
+   * A wake that failed on a transient provider failure is replayed with
+   * backoff (`providerBackoffMs`: 2, then 8, then 30 minutes from its
+   * failure), not at once: the provider that just refused it is unlikely to
+   * answer a second later. Its exhaustion is transient too: the debt waits on
+   * the automatic retry ladder, which hands the same command back here, so
+   * the wake obligation stays durable and the PR's next round is not held
+   * until an operator presses u. */
   private async recoverNonRound(command: SessionCommandRow, reason: string): Promise<void> {
     const retryCap =
       this.deps.cfg.daemon.session_command_max_start_retries ??
       DEFAULT_SESSION_COMMAND_MAX_START_RETRIES;
     const effectiveReason = command.failure?.trim() || reason;
-    if (command.recovery_attempts < retryCap) {
+    const providerTransient = command.status === "failed" && isProviderTransient(effectiveReason);
+    // A retry the ladder scheduled (its activation reset the count to zero)
+    // makes one delivery attempt even when no immediate replay is allowed.
+    const allowance = Math.max(
+      retryCap,
+      command.recovery_attempts === 0 && this.deps.store.commandRetryActivated(command.id) ? 1 : 0,
+    );
+    if (providerTransient && command.recovery_attempts < allowance) {
+      const failedMs = Date.parse(command.failed_at ?? command.updated_at);
+      const dueMs = failedMs + providerBackoffMs(command.recovery_attempts);
+      if (Number.isFinite(dueMs) && this.now().getTime() < dueMs) {
+        const next = new Date(dueMs).toISOString();
+        if (command.next_check_at !== next) {
+          this.deps.store.scheduleSessionCommandCheck(command.id, next);
+          this.deps.store.logEvent("session_command_nonround_backoff", command.pr, {
+            command_id: command.id,
+            kind: command.kind,
+            recovery_attempt: command.recovery_attempts + 1,
+            retry_cap: retryCap,
+            next_check_at: next,
+            reason: effectiveReason,
+          });
+        }
+        return;
+      }
+    }
+    if (command.recovery_attempts < allowance) {
       const retry = this.admitRecovery(command, retryCap, "command");
       const recoveryAttempt = command.recovery_attempts + 1;
       const result = await retry(command.id, effectiveReason);
@@ -971,7 +1020,11 @@ export class SessionCommandSupervisor {
     const failed = this.deps.store.getSessionCommand(command.id);
     if (!failed || failed.status !== "failed") return;
     const row = this.deps.store.getPr(command.pr);
-    this.deps.store.openReviewFailure({
+    // A wake posts no review, and its replay is the same bounded same-bytes
+    // replay this path already made: a transient provider failure leaves
+    // nothing a later replay could duplicate that the immediate ones could not.
+    const transient = isProviderTransient(failed.failure ?? effectiveReason);
+    const failure = this.deps.store.openReviewFailure({
       pr: command.pr,
       command_id: command.id,
       round_id: null,
@@ -981,13 +1034,50 @@ export class SessionCommandSupervisor {
       detail: effectiveReason,
       attempts: failed.recovery_attempts,
       retry_cap: retryCap,
+      ...(transient ? { cause: "provider_transient" as const, nothing_posted: true } : {}),
     });
+    const automatic = failure.next_action === "retry_wait" && failure.next_retry_at;
     this.deps.store.logAnomaly(
       "session_command_recovery_exhausted",
       command.pr,
       null,
-      `${effectiveReason}; automatic process recovery exhausted and operator recovery is required`,
+      automatic
+        ? `${effectiveReason}; automatic process recovery exhausted on a transient provider failure; the command is replayed again automatically at ${failure.next_retry_at} (restart-session replays it now)`
+        : `${effectiveReason}; automatic process recovery exhausted and operator recovery is required`,
     );
+    // Loud like every FAILED_LOUD incident: the `review_failed_loud` wake
+    // reaches the companion inbox, and Slack names the incident. The debt it
+    // opened holds the PR's next review round until it clears.
+    this.deps.store.logAnomaly(
+      "review_failed_loud",
+      command.pr,
+      null,
+      `${command.kind} command ${command.id}: ${effectiveReason}; work remains owed as ${failure.incident_id}; ${
+        automatic
+          ? `automatic retry scheduled for ${failure.next_retry_at} (u retries immediately)`
+          : "press u to recover"
+      }`,
+    );
+    // Slack is a side channel: the inbox wake and the durable debt stand
+    // whatever it answers. Fire-and-forget, as the verdict watcher's
+    // announcements are: a slow Slack never holds the supervisor's scan, and
+    // the announcer orders the PR's announcements by when they were called.
+    const announce = this.deps.announce;
+    if (announce) {
+      try {
+        void announce
+          .anomaly({
+            pr: command.pr,
+            round_no: null,
+            kind: "failed_loud",
+            deadline_min: this.deps.cfg.daemon.round_deadline_min,
+            incident_id: failure.incident_id,
+          })
+          .catch(() => {});
+      } catch {
+        // A throw before the announcement's promise exists: the same side channel.
+      }
+    }
   }
 
   private async failRound(

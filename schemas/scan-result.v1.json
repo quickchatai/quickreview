@@ -19,8 +19,13 @@
         "type": "string"
       }
     },
+    "repo": {
+      "type": "string",
+      "description": "preview, start: the checkout the scan reads, so a price is approved for the repository it is for."
+    },
     "preview": {
-      "$ref": "#/$defs/preview"
+      "description": "preview: the scan it would run. threat-model propose: the stage-0 draft it would run (threatModelPreview).",
+      "anyOf": [{ "$ref": "#/$defs/preview" }, { "$ref": "#/$defs/threatModelPreview" }]
     },
     "start": {
       "type": ["array", "null"],
@@ -114,6 +119,10 @@
         },
         "sha": {
           "type": "string"
+        },
+        "path": {
+          "type": ["string", "null"],
+          "description": "A folder scan's folder (--path), relative to the repo root; null for the whole repo."
         },
         "state": {
           "type": "string"
@@ -214,6 +223,7 @@
         "id": { "type": "string" },
         "mode": { "type": "string" },
         "sha": { "type": "string" },
+        "path": { "type": ["string", "null"] },
         "cases": { "type": "integer" },
         "cap_usd": { "type": "number" }
       }
@@ -365,6 +375,10 @@
         "sha": {
           "type": "string"
         },
+        "path": {
+          "type": ["string", "null"],
+          "description": "A folder scan's folder (--path), relative to the repo root; null for the whole repo."
+        },
         "cases": {
           "type": "array",
           "items": {
@@ -414,6 +428,73 @@
         },
         "delta": {
           "type": ["object", "null"]
+        },
+        "threat_model_stage": {
+          "$ref": "#/$defs/threatModelPreview",
+          "description": "Present when stage 0 must draft the threat model first: start that with --key <its key> before this scan."
+        }
+      }
+    },
+    "threatModelPreview": {
+      "type": "object",
+      "required": [
+        "key",
+        "mode",
+        "sha",
+        "why",
+        "existing",
+        "estimate_usd",
+        "cap_usd",
+        "tier",
+        "inventory",
+        "blockers"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Quote it with threat-model start --key to confirm exactly this draft."
+        },
+        "mode": {
+          "const": "threat-model"
+        },
+        "sha": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string",
+          "description": "Why stage 0 runs, or why not."
+        },
+        "existing": {
+          "description": "The repository's or the profile's model it would revise; null when none exists.",
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["source", "hash"],
+              "properties": {
+                "source": { "type": "string" },
+                "hash": { "type": "string" }
+              }
+            }
+          ]
+        },
+        "estimate_usd": {
+          "type": ["number", "null"]
+        },
+        "cap_usd": {
+          "type": "number"
+        },
+        "tier": {
+          "type": "string"
+        },
+        "inventory": {
+          "type": "string"
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     }

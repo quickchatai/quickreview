@@ -13,8 +13,9 @@
 // `<install>` is `$QCR_INSTALL`, default `default`. `$QCR_CONFIG` overrides
 // the config FILE outright (not the home). `HOME` must be in the env given:
 // the host resolves it.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   assertPathSegment,
   findProfile,
@@ -104,6 +105,21 @@ export function stateHome(env: InstallEnv): string {
   const override = homeOverride(env.QCR_STATE_HOME);
   if (override !== undefined) return override;
   return join(xdgBase(env.XDG_STATE_HOME, env, join(".local", "state")), "qcr", installName(env));
+}
+
+/** One repo's own scan state home, under the state home: the repo's
+ * directory name and a hash of its real path, so two repos never share a
+ * unit cut, a ledger or a findings store. */
+export function repoScanHome(env: InstallEnv, repo: string): string {
+  let real = repo;
+  try {
+    real = realpathSync(repo);
+  } catch {
+    // a path that cannot be resolved keys on its spelling
+  }
+  const name = basename(real).replace(/[^A-Za-z0-9._-]/g, "_") || "repo";
+  const hash = createHash("sha256").update(real).digest("hex").slice(0, 12);
+  return join(stateHome(env), "repos", `${name}-${hash}`);
 }
 
 /**
@@ -341,6 +357,28 @@ export interface OneShotConfig {
 }
 
 /**
+ * Which file a one-shot run (`qcr review`, a host `qcr scan`) reads its
+ * config from: the located config.toml, or, zero-config, the shipped
+ * defaults (`<root>/config.example.toml`) when the install's config home
+ * holds none — `path` is then null. Throws the not-found message when
+ * `$QCR_CONFIG` names a missing file, when a config is stranded in the
+ * checkout (an install that has not migrated: say so rather than run on the
+ * defaults behind its back), or when no shipped defaults exist.
+ */
+export function oneShotConfigFile(opts: { root: string; env: InstallEnv }): {
+  path: string | null;
+  file: string;
+} {
+  const located = locateConfig({ env: opts.env });
+  if (existsSync(located.path)) return { path: located.path, file: located.path };
+  const shipped = join(opts.root, SHIPPED_CONFIG_FILE);
+  const stranded = strandedCheckoutConfig({ root: opts.root, env: opts.env });
+  if (located.source === "override" || stranded !== null || !existsSync(shipped))
+    throw new Error(missingConfigMessage(located, stranded));
+  return { path: null, file: shipped };
+}
+
+/**
  * The config `qcr review` runs on: the located config.toml's review sections
  * (packages/pi-plugin/src/reviewconfig.ts `parseCoreConfig`), with `[github] secrets_dir`
  * located as the daemon locates it. Zero-config: when the install's config
@@ -357,18 +395,8 @@ export function loadOneShotConfig(opts: {
   warn?: (line: string) => void;
 }): OneShotConfig {
   const env = opts.env;
-  const located = locateConfig({ env });
-  const shipped = join(opts.root, SHIPPED_CONFIG_FILE);
-  const own = existsSync(located.path);
-  if (!own) {
-    // A checkout that strands a config is an install that has not migrated:
-    // say so rather than review on the defaults behind its back.
-    const stranded = strandedCheckoutConfig({ root: opts.root, env });
-    if (located.source === "override" || stranded !== null || !existsSync(shipped))
-      throw new Error(missingConfigMessage(located, stranded));
-  }
-  const path = own ? located.path : null;
-  const toml = readFileSync(path ?? shipped, "utf8");
+  const { path, file } = oneShotConfigFile({ root: opts.root, env });
+  const toml = readFileSync(file, "utf8");
   const cfg = parseCoreConfig(toml, opts.warn ? { warn: opts.warn } : {});
   cfg.github.secrets_dir = locateSecrets({ configured: cfg.github.secrets_dir, env }).path;
   return { cfg, toml, path };

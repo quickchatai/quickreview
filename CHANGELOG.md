@@ -1,5 +1,164 @@
 # Release notes
 
+## 1.4.2
+
+Fewer false pass-plan alerts. The check that holds a round's executed passes
+against its plan raised a mismatch for two things the round instructions
+allow: a pre-approval sweep that found nothing and so ran no validator, and
+the exploit chain's `compose` step, which runs after the other passes only
+when they turned up security leads. Both now conform; a validator skipped
+over real candidates, an unplanned pass and a pass at the wrong tier still
+raise the alert.
+
+## 1.4.1
+
+The bot no longer freezes on a diff. One pattern the security checks match
+against a pull request's import lines could take exponential time on a long
+dotted module name: a PR that removed two bracketed Python imports in a row
+held the daemon's loop at full CPU, with no reconcile, no heartbeat and no
+review, and a restart froze again on the same PR. That pattern, and two
+others that read a PR's text in more than linear time (the ufw task key over
+a line of carriage returns or line separators, and a SQL `UNIQUE KEY` over a
+schema file), now read in linear time and match exactly what they matched
+before.
+
+## 1.4.0
+
+QuickReview installs into seven coding-agent CLIs from npm and runs on Node
+22.19 or newer. It gains a security review, and the bot rides out network
+failures that used to need an operator.
+
+### The Claude Code plugin moves off Docker
+
+QuickReview installs into Claude Code, Codex, Copilot CLI, Cursor, opencode,
+Gemini CLI and Antigravity from npm, through one installer:
+`npx @quickchatai/quickreview plugin install --to <host|all>`, then
+`qcr plugin update` and `qcr plugin uninstall --from <host|all>`
+([docs/plugin.md](docs/plugin.md)). It needs no Docker, no image and no
+GitHub package token.
+
+The Docker-based Claude Code plugin is gone: its setup script, the image
+wrapper install it ran, and this repository's own marketplace. If you
+installed it, remove it, then install the new one:
+
+```sh
+claude plugin uninstall qcr@quickreview
+claude plugin marketplace remove quickreview
+npx @quickchatai/quickreview plugin install --to claude
+```
+
+Name the old plugin in full: the new one is `qcr@quickreview-local`, and both
+answer `/qcr:review`. While the old one is installed, `qcr plugin install` and
+`qcr plugin update` say so. `qcr plugin install --project` installs into
+Claude Code for you in this repository only (`.claude/settings.local.json`).
+The release image's own `qcr` wrapper is unchanged.
+
+`qcr scan` on the host scans the checkout it runs in, even when
+`[companion] reviewed_repo_dir` names another repository: that setting is
+read only outside any checkout. From inside the companion's repository, or a
+worktree of it, the scan still uses the companion's checkout and state.
+`QCR_REVIEWED_REPO` still names any checkout. A preview and a start now name
+the checkout they scan (`repo`).
+
+### Security review
+
+Fourteen `pass-sec-*` lenses review security: identity (authentication
+coverage, privilege escalation, IAM, tokens), the classes (access,
+injection, boundaries, secrets and data, supply chain, LLM, variants of a
+known bug) and three deep ones (check-then-use races, infrastructure,
+exploit chains). They share one contract, read a person-written threat
+model (`.qcr/threat-model.md`, or the profile's) and the security facts
+computed from the change, and are planned when the change carries a
+security signal (`[security] triggers`).
+
+- **Ask for one on a PR** with the `qcr:security` label or an
+  `@<bot> security` comment from an owner, member or collaborator
+  (`[security] label`, `command`).
+- **Ask for one locally** with `qcr review --security` or
+  `/qcr-review --security`: the usual plan plus the whole family. The
+  `/qcr-review security` preset runs the family and the validator only.
+- **A security-only bot** is the `security` profile (`[security] only`):
+  every other lens off, only security findings post, and an APPROVE means
+  "no security finding". `[posting] security_max` gives security findings
+  their own budget and `[posting] scope = "security"` posts only them.
+- **A security scan** keeps the kinds you name (`[scan] kinds`, e.g.
+  `["security"]`) and runs the lenses you list (`[scan] lenses`). With
+  `[scan] threat_model` set (the security profile sets `"auto"`) a scan
+  drafts the threat model first, at its own price, into the state home and
+  never the repository: `qcr scan threat-model propose|start`, or as the
+  first step of `/qcr-scan` and of every host's scan skill.
+
+### Runs on more machines
+
+- **Node 22.19 or newer**, down from 26: both packages declare
+  `engines.node ">=22.19"`, and CI tests on Node 22, 24 and 26.
+- **better-sqlite3 is optional.** An install where the native driver cannot
+  build still installs. `qcr` itself and `qcr review`, `scan`, `login`,
+  `pi`, `version`, `update` and `plugin` run without it; a verb that needs
+  the state store says so and how to fix it.
+
+### For scripts and plugins
+
+- `qcr --schema N review|scan|version …` asks for one host-plugin contract
+  (contract 1: review v1, scan v1, version v1). It implies `--json`; a
+  contract this qcr does not print exits 3 with nothing on stdout, and the
+  version payload lists the `contracts` it accepts. The plugin's `qcr-json`
+  wrapper is gone.
+- `qcr scan preview|start --path DIR`, `qcr scan stage2 propose --path DIR`
+  and `/qcr-scan --path DIR` scan one folder of the repo. The folder is part
+  of the plan key, and the scan payload gains `path` (null for the whole
+  repo), still scan v1.
+
+### The bot rides out network failures
+
+- **A transient GitHub read no longer drops a review.** Reads and GraphQL
+  queries are tried up to three times (a `retry-after` of 20 s or less is
+  honoured; mutations are never retried), and a check listing that moves
+  while it is read is read again rather than returned partial. A transient
+  read in the pre-check before an approval defers the post, where it used to
+  withdraw it and leave the PR waiting for an operator. A 4xx rejection
+  clears the post and hands the session GitHub's own message, and a thread
+  reply carries a hidden marker so a retry never posts it twice.
+- **A transient failure with nothing posted retries by itself.** A model
+  provider outage, a dead worker, or a post whose retry window ran out with
+  nothing on GitHub now waits and retries at any stage (15 minutes, doubling
+  to 6 hours) instead of waiting for `u`. It stays visible on the board, in
+  Slack and in `qcr status`, which prints one line per open incident with its
+  next retry or "operator u required". Whatever may already be on GitHub
+  still stays with the operator: for example a post that may have landed, a
+  malformed verdict or a posted round with no verdict. Self-requeues wait 2
+  then 8 minutes, a worker turn the provider ended is requeued after 2, 8
+  and 30 minutes, and a failed conversation reply no longer holds the PR's
+  next round.
+- **Model provider blips are absorbed.** The bot's pi sessions retry the
+  provider for about 13 minutes (10 attempts, from 5 s doubling to 2
+  minutes); an operator's own `retry` in pi's `settings.json` still wins. A
+  rate limit or overload no longer parks a PR on the worker breaker, and a
+  spent usage window drains it rather than parking. Thread replies and PR
+  conversation answers that hit a transient GitHub failure wait on a
+  schedule of about 3 hours instead of spending one of their three strikes.
+- **Nothing on the network hangs the daemon.** Every daemon `git fetch` and
+  `git clone` has a timeout, and a failed clone leaves no half-written
+  repository. A failing dispatch backs off per PR, from 30 s to 30 minutes
+  (anomaly `dispatch_failing`), and so does a failing webhook delivery
+  (`webhook_delivery_failing`). Webhooks that arrive during a breaker drain
+  are kept and handled after it lifts; a deploy drain still drops them. Slack announcements no longer block the verdict and deadline paths,
+  and an incident alert that never reached Slack is sent again. A
+  base-advance recheck that failed to read is retried rather than lost.
+- **A memory server that stops answering is restarted**, after 3 failed
+  health probes over at least 90 s (`[openviking] liveness_failures`,
+  `liveness_span_s`, `liveness_startup_grace_s`).
+- **Escalation rules read unknown facts as unknown.** A transient failure
+  reading a path, label or check list defers the evaluation for 5 minutes,
+  where it used to read as empty and skip the rule; a read GitHub refuses
+  outright counts as a known absence.
+- **One review, not two, when CI was still running.** An approval the bot
+  withheld for running CI, then gave once CI went green, now posts as one
+  line pointing at the review above, not a second copy of the whole review.
+- **The improvement channel's git runs no hooks** from the reviewed
+  repository's clone: it carries the same git pins as every other git the
+  daemon starts.
+
 ## 1.3.2
 
 The pi plugin reviews again in a plain pi. Installed with `pi install

@@ -84,5 +84,7 @@ export interface CaseRunner {
   ): Promise<CaseOutcome>;
 }
 
-/** A refusal: why nothing was done. */
-export type Refusal = { ok: false; errors: string[] };
+/** A refusal: why nothing was done. `usage`: the call's own arguments are
+ * wrong (a `--path` that names no folder of the tree), which a CLI answers
+ * with its usage exit code. */
+export type Refusal = { ok: false; errors: string[]; usage?: true };

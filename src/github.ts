@@ -3,8 +3,13 @@
 // (dry-run writes it to state/dryrun/ instead of executing). There is no
 // review-dismissal function in this adapter, by design — never add one.
 import {
+  GitHubGraphQLError,
   GitHubRequestError,
+  IncompleteReadError,
+  retryAfterFromHeaders,
+  withReadRetry,
   type PrFileEntry,
+  type ReadRetryOptions,
 } from "@quickchatai/pi-quickreview/src/githubcore.js";
 import { ThreadResolutionRefusal } from "./thread-resolution-refusal.js";
 import type { CheckSummary } from "@quickchatai/pi-quickreview/src/cigate.js";
@@ -152,6 +157,11 @@ export interface IssueCommentFull {
   user_type: string;
   body: string;
   created_at: string | null;
+  /** The author's relation to the repository (`OWNER`, `MEMBER`,
+   * `COLLABORATOR`, `CONTRIBUTOR`, `NONE`, …) as GitHub reports it: the
+   * reconcile backstop of the `@<bot> security` command reads it
+   * (src/securityrequest.ts). Absent ⇒ not reported, which no check accepts. */
+  author_association?: string;
 }
 
 /** One past review by the bot identity, as the importer sees it. */
@@ -364,6 +374,17 @@ export async function cappedText(
   return { text: Buffer.concat(chunks).toString("utf8"), truncated };
 }
 
+/** A failed response's body for the error, capped at 300 chars. Its read is
+ * guarded: a body the request deadline aborted mid-stream must not replace
+ * the status-bearing GitHubRequestError with a bare abort. */
+async function failureBody(res: Response): Promise<string> {
+  try {
+    return (await res.text()).slice(0, 300);
+  } catch {
+    return "(body unreadable)";
+  }
+}
+
 /** One files-API entry (pulls/files and compare share the shape). */
 function fileEntry(f: any): PrFileEntry {
   return {
@@ -375,6 +396,21 @@ function fileEntry(f: any): PrFileEntry {
     ...(typeof f.previous_filename === "string" ? { previous_filename: f.previous_filename } : {}),
   };
 }
+
+/** The adapter's clocks: the read retry's sleep and jitter, and the pause
+ * before a checks read starts over on an inconsistent snapshot. All
+ * injectable so tests are instant. */
+export interface GitHubAdapterOptions extends ReadRetryOptions {
+  /** The pause before the second and third full read of a checks list whose
+   * snapshot moved, before jitter. */
+  checkRestartMs?: number;
+}
+
+/** How many times a checks list is read again from page 1 after its
+ * snapshot came back inconsistent (CI creating runs while it is read). */
+export const CHECK_PAGE_RESTARTS = 2;
+/** The pause before each such restart, before jitter (2-3 s). */
+export const CHECK_RESTART_MS = 2000;
 
 export class GitHubAdapter {
   readonly owner: string;
@@ -388,6 +424,7 @@ export class GitHubAdapter {
     readonly gate: MutationGate,
     private readonly fetchFn: FetchFn = fetch,
     private readonly apiBase = "https://api.github.com",
+    private readonly options: GitHubAdapterOptions = {},
   ) {
     const [owner, repo] = cfg.github.repo.split("/");
     if (!owner || !repo) throw new Error(`bad repo: ${cfg.github.repo}`);
@@ -397,11 +434,29 @@ export class GitHubAdapter {
 
   // ---- plumbing ----------------------------------------------------------
 
+  /**
+   * One REST call. A GET is a read and is retried on the bounded schedule
+   * (`withReadRetry`: a transient or rate-limited failure, three attempts in
+   * all); anything else is sent exactly once. The mutation executor passes
+   * `retry: false` whatever the method, so no write is ever sent twice from
+   * here.
+   */
   private async request<T>(
     method: string,
     path: string,
     body?: unknown,
     auth: "installation" | "jwt" = "installation",
+    retry: boolean = method === "GET",
+  ): Promise<T> {
+    const once = (): Promise<T> => this.requestOnce<T>(method, path, body, auth);
+    return retry ? withReadRetry(once, this.options) : once();
+  }
+
+  private async requestOnce<T>(
+    method: string,
+    path: string,
+    body: unknown,
+    auth: "installation" | "jwt",
   ): Promise<T> {
     const send = (token: string): Promise<Response> =>
       this.fetchFn(`${this.apiBase}${path}`, {
@@ -417,24 +472,14 @@ export class GitHubAdapter {
       });
     const res =
       auth === "jwt" ? await send(await this.appJwt(path)) : await this.sendInstallation(send);
-    if (!res.ok) {
-      const retryAfter = res.headers?.get("retry-after");
-      const reset = res.headers?.get("x-ratelimit-reset");
-      const retryAfterMs = retryAfter
-        ? /^\d+$/.test(retryAfter)
-          ? Number(retryAfter) * 1000
-          : Math.max(0, Date.parse(retryAfter) - Date.now())
-        : reset
-          ? Math.max(0, Number(reset) * 1000 - Date.now())
-          : undefined;
+    if (!res.ok)
       throw new GitHubRequestError(
         method,
         path,
         res.status,
-        (await res.text()).slice(0, 300),
-        Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,
+        await failureBody(res),
+        retryAfterFromHeaders(res.headers),
       );
-    }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
@@ -475,22 +520,30 @@ export class GitHubAdapter {
     });
   }
 
-  /** One GraphQL query, with REST's deadline and its one re-mint on a 401. */
+  /** One GraphQL request, with REST's deadline and its one re-mint on a
+   * 401, sent exactly once: the mutation executor's path. A non-2xx answer
+   * throws GitHubRequestError (its status and GitHub's retry-after); a 200
+   * with errors throws GitHubGraphQLError. */
   private async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
     const res = await this.sendInstallation((token) => this.graphqlFetch(token, query, variables));
-    if (!res.ok) {
-      let detail = "";
-      try {
-        detail = (await res.text()).slice(0, 300);
-      } catch {
-        // No readable body: the status alone.
-      }
-      throw new Error(`graphql → ${res.status}${detail ? `: ${detail}` : ""}`);
-    }
+    if (!res.ok)
+      throw new GitHubRequestError(
+        "POST",
+        "/graphql",
+        res.status,
+        await failureBody(res),
+        retryAfterFromHeaders(res.headers),
+      );
     const payload = (await res.json()) as { data?: T; errors?: unknown[] };
-    if (payload.errors?.length)
-      throw new Error(`graphql errors: ${JSON.stringify(payload.errors).slice(0, 300)}`);
+    if (payload.errors?.length) throw new GitHubGraphQLError(payload.errors);
     return payload.data as T;
+  }
+
+  /** One GraphQL query (a read), retried on the bounded read schedule.
+   * Never route a GraphQL mutation through here: those go through the gate
+   * to `graphql`, sent once. */
+  private graphqlRead<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+    return withReadRetry(() => this.graphql<T>(query, variables), this.options);
   }
 
   /**
@@ -572,7 +625,8 @@ export class GitHubAdapter {
     const auth = (APP_SELF_CONFIG_KINDS as readonly string[]).includes(intent.kind)
       ? "jwt"
       : "installation";
-    return this.request(intent.method, intent.path, intent.body, auth);
+    // Sent once, whatever the method: a write is never retried here.
+    return this.request(intent.method, intent.path, intent.body, auth, false);
   };
 
   // ---- triggered-set queries (reads) -------------------------------------
@@ -643,7 +697,9 @@ export class GitHubAdapter {
    * query, then one more per further page of either connection. Returns null
    * when the PR is gone. */
   async prReviewHistory(n: number, author: string): Promise<PrReviewHistory | null> {
-    const data = await this.graphql<{ repository?: { pullRequest?: RawPrHistory | null } | null }>(
+    const data = await this.graphqlRead<{
+      repository?: { pullRequest?: RawPrHistory | null } | null;
+    }>(
       `query ($owner: String!, $repo: String!, $number: Int!, $author: String!) {
         repository(owner: $owner, name: $repo) {
           pullRequest(number: $number) {
@@ -662,7 +718,9 @@ export class GitHubAdapter {
     // follow the cursors, or the importer silently loses the NEWEST ones.
     const vars = { owner: this.owner, repo: this.repo, number: n, author };
     const reviews = await walkConnection(pr.reviews, async (after) => {
-      const d = await this.graphql<{ repository?: { pullRequest?: RawPrHistory | null } | null }>(
+      const d = await this.graphqlRead<{
+        repository?: { pullRequest?: RawPrHistory | null } | null;
+      }>(
         `query ($owner: String!, $repo: String!, $number: Int!, $author: String!, $after: String!) {
           repository(owner: $owner, name: $repo) {
             pullRequest(number: $number) {
@@ -675,7 +733,9 @@ export class GitHubAdapter {
       return d.repository?.pullRequest?.reviews;
     });
     const timeline = await walkConnection(pr.timelineItems, async (after) => {
-      const d = await this.graphql<{ repository?: { pullRequest?: RawPrHistory | null } | null }>(
+      const d = await this.graphqlRead<{
+        repository?: { pullRequest?: RawPrHistory | null } | null;
+      }>(
         `query ($owner: String!, $repo: String!, $number: Int!, $after: String!) {
           repository(owner: $owner, name: $repo) {
             pullRequest(number: $number) {
@@ -745,7 +805,7 @@ export class GitHubAdapter {
       author?: { login?: string } | null;
       reviews?: Connection<RawReview> | null;
     }
-    const data = await this.graphql<{ repository?: { pullRequest?: RawPr | null } | null }>(
+    const data = await this.graphqlRead<{ repository?: { pullRequest?: RawPr | null } | null }>(
       `query ($owner: String!, $repo: String!, $number: Int!) {
         repository(owner: $owner, name: $repo) {
           pullRequest(number: $number) {
@@ -762,7 +822,7 @@ export class GitHubAdapter {
     // Reviews come oldest-first, so a truncated read drops the NEWEST human
     // feedback — follow the cursors, and each long review's comment cursor.
     const rawReviews = await walkConnection(pr.reviews, async (after) => {
-      const d = await this.graphql<{ repository?: { pullRequest?: RawPr | null } | null }>(
+      const d = await this.graphqlRead<{ repository?: { pullRequest?: RawPr | null } | null }>(
         `query ($owner: String!, $repo: String!, $number: Int!, $after: String!) {
           repository(owner: $owner, name: $repo) {
             pullRequest(number: $number) {
@@ -777,7 +837,7 @@ export class GitHubAdapter {
     const commentsOf = (r: RawReview): Promise<RawComment[]> =>
       walkConnection(r.comments, async (after) => {
         if (!r.id) return null;
-        const d = await this.graphql<{
+        const d = await this.graphqlRead<{
           node?: { comments?: Connection<RawComment> | null } | null;
         }>(
           `query ($id: ID!, $after: String!) {
@@ -999,8 +1059,32 @@ export class GitHubAdapter {
     return out;
   }
 
-  /** Complete CI evidence, or an unreadable result that callers classify unknown. */
+  /**
+   * Complete CI evidence, or a throw that callers classify unknown — never
+   * partial rows passed off as complete. CI creates runs while it is read,
+   * so the advertised `total_count` can move between pages or never be
+   * reached; such a snapshot is read again from page 1, up to
+   * CHECK_PAGE_RESTARTS more times, 2-3 s apart. Still inconsistent, it
+   * throws IncompleteReadError (transient: the durable layers above retry).
+   */
   private async completeCheckPages<T>(path: string, field: string): Promise<T[]> {
+    const sleep =
+      this.options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const random = this.options.random ?? Math.random;
+    const base = this.options.checkRestartMs ?? CHECK_RESTART_MS;
+    for (let pass = 0; ; pass++) {
+      try {
+        return await this.checkPagesOnce<T>(path, field);
+      } catch (err) {
+        if (!(err instanceof IncompleteReadError) || pass >= CHECK_PAGE_RESTARTS) throw err;
+        await sleep(Math.round(base * (1 + 0.5 * random())));
+      }
+    }
+  }
+
+  /** One pass over the pages from page 1. A snapshot that contradicts
+   * itself throws IncompleteReadError; a malformed page throws plainly. */
+  private async checkPagesOnce<T>(path: string, field: string): Promise<T[]> {
     const rows: T[] = [];
     let expected: number | undefined;
     for (let page = 1; page <= 10; page++) {
@@ -1013,17 +1097,17 @@ export class GitHubAdapter {
         if (typeof count !== "number" || !Number.isInteger(count) || count < 0)
           throw new Error(`unreadable ${field} total_count`);
         if (expected !== undefined && expected !== count)
-          throw new Error(`incomplete ${field}: count changed while reading`);
+          throw new IncompleteReadError(`incomplete ${field}: count changed while reading`);
         expected = count;
       }
       const batch = result[field];
       if (!Array.isArray(batch)) throw new Error(`unreadable ${field} page`);
       rows.push(...(batch as T[]));
       if (expected !== undefined && rows.length > expected)
-        throw new Error(`incomplete ${field}: rows exceed advertised count`);
+        throw new IncompleteReadError(`incomplete ${field}: rows exceed advertised count`);
       if (batch.length < 100 || (expected !== undefined && rows.length === expected)) {
         if (expected !== undefined && rows.length !== expected)
-          throw new Error(`incomplete ${field}: advertised count not reached`);
+          throw new IncompleteReadError(`incomplete ${field}: advertised count not reached`);
         return rows;
       }
     }
@@ -1079,6 +1163,9 @@ export class GitHubAdapter {
       user_type: c.user?.type ?? "User",
       body: c.body ?? "",
       created_at: c.created_at ?? null,
+      ...(typeof c.author_association === "string"
+        ? { author_association: c.author_association }
+        : {}),
     }));
   }
 
@@ -1137,7 +1224,7 @@ export class GitHubAdapter {
    * `[github] bot_login`. */
   async stalenessScan(): Promise<StalePr[]> {
     const q = `repo:${this.cfg.github.repo} is:pr is:open sort:updated-desc`;
-    const data = await this.graphql<{
+    const data = await this.graphqlRead<{
       search: {
         nodes: Array<{
           number?: number;
@@ -1318,7 +1405,11 @@ export class GitHubAdapter {
       body: string;
       comments?: unknown[];
     },
-    options?: { purpose?: ReviewPurpose; postingRetry?: string },
+    options?: {
+      purpose?: ReviewPurpose;
+      postingRetry?: string;
+      approvalCiWithheld?: MutationIntent["approvalCiWithheld"];
+    },
   ): Promise<GateResult> {
     return this.gate.execute({
       kind: "create_review",
@@ -1329,17 +1420,22 @@ export class GitHubAdapter {
       pr: n,
       reviewPurpose: options?.purpose,
       ...(options?.postingRetry !== undefined ? { postingRetry: options.postingRetry } : {}),
+      ...(options?.approvalCiWithheld !== undefined
+        ? { approvalCiWithheld: options.approvalCiWithheld }
+        : {}),
     });
   }
 
-  /** A claimed PR-level author response; ordinary posting guards and dry-run apply. */
-  async createIssueComment(n: number, body: string): Promise<GateResult> {
+  /** A comment in a PR's conversation — a claimed PR-level author response,
+   * or the acknowledgement of a security request (`note` says which);
+   * ordinary posting guards and dry-run apply. */
+  async createIssueComment(n: number, body: string, note?: string): Promise<GateResult> {
     return this.gate.execute({
       kind: "create_issue_comment",
       method: "POST",
       path: `/repos/${this.owner}/${this.repo}/issues/${n}/comments`,
       body: { body },
-      note: `answer the author in PR #${n}'s conversation`,
+      note: note ?? `answer the author in PR #${n}'s conversation`,
       pr: n,
     });
   }
@@ -1394,7 +1490,7 @@ export class GitHubAdapter {
     let after: string | null = null;
     let found: { id: string; isResolved: boolean; author: string; body: string } | undefined;
     do {
-      const data: ThreadPage = await this.graphql(query, {
+      const data: ThreadPage = await this.graphqlRead(query, {
         owner: this.owner,
         repo: this.repo,
         number: n,

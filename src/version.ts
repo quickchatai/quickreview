@@ -1,12 +1,15 @@
 // `qcr version`: what this install is, for a plugin that has to decide whether
 // it can talk to it — the image's version, the JSON schema versions it prints
-// (packages/pi-plugin/src/contract.ts) and the pi pin it runs.
+// and the host-plugin contracts they make up (packages/pi-plugin/src/contract.ts),
+// and the pi pin it runs. `contracts` was added to version 1, so a version-1
+// reader cannot count on it: a qcr from before `--schema` prints none.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   REVIEW_SCHEMA_VERSION,
   SCAN_SCHEMA_VERSION,
   VERSION_SCHEMA_VERSION,
+  supportedContracts,
 } from "@quickchatai/pi-quickreview/src/contract.js";
 import { piPinFromPackageJson } from "./onboard/pipin.js";
 
@@ -19,6 +22,8 @@ export interface VersionInfo {
     build_sha: string | null;
   };
   schemas: { review: number; scan: number };
+  /** The host-plugin contract numbers `qcr --schema N` accepts, ascending. */
+  contracts: number[];
   pi: { package: string; version: string } | null;
 }
 
@@ -48,6 +53,7 @@ export function versionInfo(
     schema_version: VERSION_SCHEMA_VERSION,
     image: { version, build_sha: buildSha },
     schemas: { review: REVIEW_SCHEMA_VERSION, scan: SCAN_SCHEMA_VERSION },
+    contracts: supportedContracts(),
     pi: pin ?? piPinFromPackageJson(root),
   };
 }
@@ -55,7 +61,7 @@ export function versionInfo(
 export function renderVersion(v: VersionInfo): string {
   return [
     `qcr ${v.image.version}${v.image.build_sha ? ` (build ${v.image.build_sha})` : ""}`,
-    `JSON schemas: review v${v.schemas.review}, scan v${v.schemas.scan}`,
+    `JSON schemas: review v${v.schemas.review}, scan v${v.schemas.scan}; host-plugin contracts: ${v.contracts.join(", ")}`,
     v.pi ? `pi: ${v.pi.package}@${v.pi.version}` : "pi: no pin found",
   ].join("\n");
 }

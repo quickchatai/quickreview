@@ -31,13 +31,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import type { Config } from "../config.js";
 import { opsDay } from "../eod.js";
-import {
-  snapshotHeartbeat,
-  type SlackCooldownRow,
-  type SlackReopeningRow,
-  type SlackPostKind,
-  type StateStore,
-} from "../state.js";
+import { snapshotHeartbeat } from "../heartbeat.js";
+import type { SlackCooldownRow, SlackReopeningRow, SlackPostKind, StateStore } from "../state.js";
 import type { RoundType } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   causeMessage,
@@ -227,6 +222,18 @@ export function scanNotPickedUp(
   }));
 }
 
+/**
+ * The announcement an open incident's alert was made with, from the stage the
+ * incident records: the round deadline and a malformed verdict open incidents
+ * of their own (verdicts.ts records them as `round_deadline` and
+ * `malformed_verdict`); every other stage is an exhausted recovery.
+ */
+export function incidentAnnouncementKind(stage: string): AnomalyAnnouncement["kind"] {
+  if (stage === "round_deadline") return "overdue";
+  if (stage === "malformed_verdict") return "malformed";
+  return "failed_loud";
+}
+
 export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   private heartbeatTimer: unknown = null;
   private lastConnections = 1;
@@ -240,8 +247,12 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * is a previous run's, interrupted mid-post. */
   /** Idem keys whose post request is awaiting Slack's answer in this process. */
   private readonly inFlight = new Set<string>();
+  /** Incidents whose ambiguous alert claim this process has already logged. */
+  private readonly ambiguousIncidents = new Set<string>();
   /** Tail of each posting lane (one per PR, else one per idem key). */
   private readonly lanes = new Map<string, Promise<unknown>>();
+  /** Tail of each PR's announcement lane (`inPrOrder`). */
+  private readonly announcements = new Map<number, Promise<unknown>>();
   /** Corrections to one incident execute in order, including recovery edits. */
   private readonly incidentEdits = new Map<string, Promise<unknown>>();
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
@@ -366,6 +377,26 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     return result.ts;
   }
 
+  /**
+   * The order a PR's lifecycle announcements are made in — a round's pickup,
+   * its verdict, an anomaly, a supersede — is the order they were CALLED in,
+   * whoever calls: dispatch and the verdict watcher both fire and forget, and
+   * the lane is reserved synchronously on the call, so neither waits on
+   * Slack and a later round's pickup can never overtake the verdict or
+   * alert called before it. The whole announcement runs in the lane, an
+   * incident's edit included, not just its post.
+   */
+  private inPrOrder(pr: number, fn: () => Promise<void>): Promise<void> {
+    const prev = this.announcements.get(pr) ?? Promise.resolve();
+    const run = prev.then(fn);
+    const tail = run.catch(() => undefined);
+    this.announcements.set(pr, tail);
+    void tail.then(() => {
+      if (this.announcements.get(pr) === tail) this.announcements.delete(pr);
+    });
+    return run;
+  }
+
   /** Lifecycle gate: the cause's own switch, nothing more (see header). */
   private lifecycleEnabled(cause: string): boolean {
     if (!this.enabled) return false;
@@ -434,7 +465,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * never be a re-round — that guard keeps a replayed first round silent
    * instead of inventing a 🔄 line for it.
    */
-  async roundStarted(a: RoundAnnouncement): Promise<void> {
+  roundStarted(a: RoundAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.roundStartedNow(a));
+  }
+
+  private async roundStartedNow(a: RoundAnnouncement): Promise<void> {
     if (!this.enabled) return;
     const { store, cfg } = this.deps;
     // A previously FAILED pickup (ok = 0) is retried by `post`, so it does not
@@ -473,7 +508,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
   /** The verdict, in-thread. Never `reply_broadcast`, whatever
    * `broadcast_verdicts` says — the seam has no broadcast parameter at all. */
-  async verdict(a: VerdictAnnouncement): Promise<void> {
+  verdict(a: VerdictAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.verdictNow(a));
+  }
+
+  private async verdictNow(a: VerdictAnnouncement): Promise<void> {
     if (!this.lifecycleEnabled(LIFECYCLE_CAUSES.verdict)) return;
     const author = a.author ?? this.deps.store.getPr(a.pr)?.author ?? "";
     await this.post({
@@ -493,7 +532,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   }
 
   /** A round outlived by a newer one. Wording per AGENTS.md invariant 2. */
-  async superseded(a: SupersededAnnouncement): Promise<void> {
+  superseded(a: SupersededAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.supersededNow(a));
+  }
+
+  private async supersededNow(a: SupersededAnnouncement): Promise<void> {
     if (!this.lifecycleEnabled(LIFECYCLE_CAUSES.superseded)) return;
     await this.post({
       idemKey: `superseded:${a.pr}:${a.old_round_no}`,
@@ -506,11 +549,18 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   // ---- unprompted causes -------------------------------------------------
 
   /** Overdue / malformed: both return the PR to its standing-verdict state
-   * (never a park) and neither implies an approval. A
-   * round-less anomaly has nothing to say and stays silent. */
-  async anomaly(a: AnomalyAnnouncement): Promise<void> {
-    if (a.round_no === null || !this.enabled) return;
-    const { cause, text } = this.anomalyMessage({ ...a, round_no: a.round_no });
+   * (never a park) and neither implies an approval. A round-less anomaly has
+   * nothing to say and stays silent — except a FAILED_LOUD incident of
+   * conversation work (a failed wake, no round), which holds the PR's review
+   * as any incident does and is announced by its incident id. */
+  anomaly(a: AnomalyAnnouncement): Promise<void> {
+    return this.inPrOrder(a.pr, () => this.anomalyNow(a));
+  }
+
+  private async anomalyNow(a: AnomalyAnnouncement): Promise<void> {
+    if (!this.enabled) return;
+    if (a.round_no === null && !(a.kind === "failed_loud" && a.incident_id)) return;
+    const { cause, text } = this.anomalyMessage(a);
     if (!causePolicy(this.deps.cfg, cause).enabled) return;
     // An incident already announced is announced again when it reopens (or
     // fails again before it recovered): its one message — which a recovery
@@ -573,11 +623,13 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   }
 
   /** An anomaly's policy cause and its message, chosen once by its kind. */
-  private anomalyMessage(a: AnomalyAnnouncement & { round_no: number }): {
+  private anomalyMessage(a: AnomalyAnnouncement): {
     cause: string;
     text: string;
   } {
     const { cfg } = this.deps;
+    // Only a failed wake's incident reaches here without a round.
+    const roundNo = a.round_no ?? 0;
     switch (a.kind) {
       case "overdue":
         return {
@@ -585,22 +637,37 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
           text: causeMessage(cfg, {
             cause: "round.overdue",
             pr: a.pr,
-            round_no: a.round_no,
+            round_no: roundNo,
             deadline_min: a.deadline_min,
           }),
         };
-      case "failed_loud":
+      case "failed_loud": {
+        // A transient failure with nothing posted waits on its automatic
+        // retry: the message says when, and that u need not wait for it.
+        const failure = this.deps.store.openReviewFailure(a.pr);
+        const retryAt =
+          failure &&
+          (a.incident_id === undefined || failure.incident_id === a.incident_id) &&
+          failure.next_action === "retry_wait" &&
+          failure.next_retry_at
+            ? failure.next_retry_at
+            : null;
+        const what =
+          a.round_no === null ? "conversation work (a failed wake)" : `round ${a.round_no}`;
         return {
           cause: "review.failed_loud",
-          text: `⛔ #${a.pr} round ${a.round_no} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`,
+          text: retryAt
+            ? `⛔ #${a.pr} ${what} exhausted its immediate recovery — review work is still owed. Automatic retry at ${retryAt.slice(11, 16)}Z; u on the board retries now.`
+            : `⛔ #${a.pr} ${what} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`,
         };
+      }
       case "malformed":
         return {
           cause: "round.malformed_verdict",
           text: causeMessage(cfg, {
             cause: "round.malformed_verdict",
             pr: a.pr,
-            round_no: a.round_no,
+            round_no: roundNo,
           }),
         };
     }
@@ -764,6 +831,62 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     }
   }
 
+  // ---- owed incident alerts ----------------------------------------------
+
+  /**
+   * Every open FAILED_LOUD incident is owed its alert, and the first one can
+   * be lost: a definite refusal settles the claim `ok = 0` and nothing posts
+   * it again, and an announcement queued behind a slow Slack dies with the
+   * process. Each heartbeat re-announces an open incident whose post is
+   * missing or refused, under its own idem key (`incident_id`), through
+   * `anomaly` — the cause switch and the cooldown still apply, and the
+   * ledger still refuses a second delivery.
+   *
+   * An AMBIGUOUS claim (claimed, no ts, not in flight here) is never
+   * re-posted: Slack may have accepted it, and the no-duplicate rule is the
+   * ledger's whole point. It is logged once per process instead.
+   *
+   * The re-post says what the original would have said: the incident's
+   * recorded stage names its cause (`incidentAnnouncementKind`).
+   */
+  private owedIncidentAlerts(): AnomalyAnnouncement[] {
+    const { store, cfg } = this.deps;
+    let open;
+    try {
+      open = store.openReviewFailures();
+    } catch (err) {
+      this.log("slack: open incidents unreadable — owed alerts not checked", err);
+      return [];
+    }
+    const owed: AnomalyAnnouncement[] = [];
+    for (const failure of open) {
+      const kind = incidentAnnouncementKind(failure.stage);
+      // A round-less incident (a failed wake's) is announced as FAILED_LOUD
+      // and owed like any other; a round-less one of another kind stays
+      // silent, as `anomaly` keeps it.
+      if (failure.round_no === null && kind !== "failed_loud") continue;
+      const id = failure.incident_id;
+      const post = store.slackPost(id);
+      if (post?.ok === 1) {
+        if (!post.ts && !this.inFlight.has(id) && !this.ambiguousIncidents.has(id)) {
+          this.ambiguousIncidents.add(id);
+          this.log(
+            `slack: the alert for ${id} (#${failure.pr}) may or may not have posted — not re-posted (${post.error ?? "no answer"})`,
+          );
+        }
+        continue;
+      }
+      owed.push({
+        pr: failure.pr,
+        round_no: failure.round_no,
+        kind,
+        deadline_min: cfg.daemon.round_deadline_min,
+        incident_id: id,
+      });
+    }
+    return owed;
+  }
+
   // ---- pinned heartbeat --------------------------------------------------
 
   /**
@@ -775,6 +898,14 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     if (!this.enabled) return undefined;
     const { store, cfg, slack } = this.deps;
     for (const owed of store.owedSlackReopenings()) await this.retryReopening(owed);
+    // Collected synchronously: a heartbeat with nothing owed adds no await.
+    for (const owed of this.owedIncidentAlerts()) {
+      try {
+        await this.anomaly(owed);
+      } catch (err) {
+        this.log(`slack: owed alert for ${owed.incident_id} failed`, err);
+      }
+    }
     const refreshedAt = this.now();
     // The banner names only a JUST-recovered incident; the incident message's
     // correction is owed until Slack accepts it, whatever the tick cadence —

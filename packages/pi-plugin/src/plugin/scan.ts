@@ -12,7 +12,8 @@
 // when it ends. One scan runs per session; `/qcr-scan stop` (or the session
 // ending) stops it, and the ledger keeps what finished. A repo scanned for the
 // first time gets a unit cut proposed from its layout and saved, once the
-// person agrees. `--preview` prices the run and starts nothing.
+// person agrees. `--preview` prices the run and starts nothing. `--path DIR`
+// scans one folder of the repo (scan/scan.ts `scanPath`).
 //
 // `/qcr-scan <subcommand> …` is the scan's verb of that name, the same one
 // `qcr scan <subcommand>` runs (scan/scanverbs.ts), answered here. A start
@@ -23,17 +24,17 @@
 // The guided run, waited for, is also the app's /selfimprove's first half
 // (the app's src/selfimprove.ts): the scan, then the findings to the
 // person's agent.
-import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
-import { basename, join } from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { assetRoot } from "../assetroot.js";
-import { homeProfileLookup, loadOneShotConfig, stateHome } from "../homes.js";
+import { homeProfileLookup, loadOneShotConfig, repoScanHome, stateHome } from "../homes.js";
 import type { CoreConfig } from "../reviewconfig.js";
 import { scanConfigOf } from "../scan/scanagents.js";
 import { assembleScan, type AssembledScan } from "../scan/scanassemble.js";
 import { checkoutReader, stateHomeFs } from "../scan/scanfs.js";
 import type { CaseRunner, Refusal } from "../scan/scanports.js";
-import { listFindings, type ScanVerbs } from "../scan/scanrender.js";
+import { listFindings, renderStatus, type ScanVerbs } from "../scan/scanrender.js";
+import { scanPath, underPath } from "../scan/scan.js";
 import type { ScanRun, ScanStatus } from "../scan/scanrun.js";
 import {
   findingJson,
@@ -65,6 +66,7 @@ export const SCAN_SUBCOMMANDS = [
   "match",
   "suggestions",
   "stage2",
+  "threat-model",
   "dismiss",
   "units",
   "login",
@@ -77,12 +79,12 @@ export const SCAN_SUBCOMMANDS = [
 export const APP_SUBCOMMANDS: readonly string[] = ["login", "doctor", "rebuild", "dismiss"];
 
 export const SCAN_COMMAND_USAGE =
-  "usage: /qcr-scan [--delta] [--sha REF] [--preview] | /qcr-scan <scan subcommand> …";
+  "usage: /qcr-scan [--delta] [--sha REF] [--path DIR] [--preview] | /qcr-scan <scan subcommand> …";
 
 /** How the scan's answers name the next step here. */
 export const PLUGIN_SCAN_VERBS: ScanVerbs = {
   start: (p) =>
-    `/qcr-scan start --key ${p.key} --sha ${p.sha}${p.mode === "delta" ? " --delta" : ""}`,
+    `/qcr-scan start --key ${p.key} --sha ${p.sha}${p.mode === "delta" ? " --delta" : ""}${slashPathFlag(p.path)}`,
   matches: "/qcr-scan matches",
   match: (key) => `/qcr-scan match --key ${key} OLD=NEW… — the pairs`,
   stage2Start: (key) =>
@@ -90,7 +92,28 @@ export const PLUGIN_SCAN_VERBS: ScanVerbs = {
     "To run only some rows: add --rows with their ids (e.g. --rows row-1,row-3) — only runnable rows, and the run stops hard at their total.",
   status: "/qcr-scan status",
   stop: "/qcr-scan stop",
+  threatModelStart: (p) => `/qcr-scan threat-model start --key ${p.key} --sha ${p.sha}`,
 };
+
+/** The guided `/qcr-scan` line for `o`: what a preview offers as the run
+ * after it keeps the scope the person priced (folder, delta, commit). */
+export function guidedScanLine(o: ScanOptions): string {
+  return `/qcr-scan${o.delta ? " --delta" : ""}${o.sha ? ` --sha ${o.sha}` : ""}${slashPathFlag(o.path)}`;
+}
+
+/**
+ * ` --path P` for a `/qcr-scan` line, or nothing for the whole repo. pi's
+ * words are `splitArgs`'s: double quotes group and nothing else is special,
+ * so a folder is bare, or double-quoted when it holds a space, never
+ * escaped. A folder no such word spells (a space and a `"`, or a leading
+ * `"`) is named as one this line cannot carry, never as a broken word.
+ */
+export function slashPathFlag(path: string | null | undefined): string {
+  if (path === null || path === undefined) return "";
+  if (!path.includes('"')) return ` --path ${/\s/.test(path) ? `"${path}"` : path}`;
+  if (/^[^"\s]\S*$/.test(path)) return ` --path ${path}`;
+  return ` --path ${JSON.stringify(path)} (a folder name a /qcr-scan line cannot quote: run qcr scan for it)`;
+}
 
 /** A scan finding as the scan's `--json` lists it. */
 export type ScanFinding = FindingJson;
@@ -99,6 +122,8 @@ export type ScanFinding = FindingJson;
 export interface ScanOptions {
   delta: boolean;
   sha?: string;
+  /** One folder of the repo, normalised (scan/scan.ts `scanPath`). */
+  path?: string;
   /** Price it, start nothing. */
   preview?: boolean;
 }
@@ -119,6 +144,13 @@ export function parseScanCommand(
     else if (w === "--sha" && next !== undefined && !next.startsWith("--")) {
       o.sha = next;
       i++;
+    } else if (w === "--path" && next !== undefined && !next.startsWith("--")) {
+      const p = scanPath(next);
+      if (!p.ok) return { error: `${p.why}\n${SCAN_COMMAND_USAGE}` };
+      // The last --path wins, as `qcr scan`'s does: a later `.` is the whole repo.
+      if (p.path === null) delete o.path;
+      else o.path = p.path;
+      i++;
     } else if (w === "--sandbox")
       return {
         error: `the scan sandbox is the app's (qcr scan, [scan] sandbox): here the scan runs in this pi, its cases behind the bash guard\n${SCAN_COMMAND_USAGE}`,
@@ -128,20 +160,9 @@ export function parseScanCommand(
   return { kind: "guided", o };
 }
 
-/** This repo's own scan state home, under the person's qcr state home: the
- * repo's directory name and a hash of its real path, so two repos never share
- * a unit cut, a ledger or a findings store. */
-export function repoScanHome(env: NodeJS.ProcessEnv, cwd: string): string {
-  let real = cwd;
-  try {
-    real = realpathSync(cwd);
-  } catch {
-    // a cwd that cannot be resolved keys on its spelling
-  }
-  const name = basename(real).replace(/[^A-Za-z0-9._-]/g, "_") || "repo";
-  const hash = createHash("sha256").update(real).digest("hex").slice(0, 12);
-  return join(stateHome(env), "repos", `${name}-${hash}`);
-}
+/** This repo's own scan state home, under the person's qcr state home
+ * (homes.ts, which `qcr scan` on a host keys the same way). */
+export { repoScanHome };
 
 /** Where this repo's scan keeps its state: `QCR_STATE_HOME` when the person
  * set one, else the repo's own home under the qcr state home. */
@@ -331,7 +352,11 @@ async function priceAndStart(
   const { scan } = engine;
   ui.status("QuickReview: pricing the scan…");
   try {
-    const previewArgs = { ...(o.sha ? { sha: o.sha } : {}), delta: o.delta };
+    const previewArgs = {
+      ...(o.sha ? { sha: o.sha } : {}),
+      delta: o.delta,
+      ...(o.path ? { path: o.path } : {}),
+    };
     let pv = await scan.preview(previewArgs);
     if (!pv.ok && pv.errors.some((e) => NO_CUT.test(e))) {
       // First scan of this repo: a scan reads by unit, and the cut is
@@ -357,38 +382,106 @@ async function priceAndStart(
       pv = await scan.preview(previewArgs);
     }
     if (!pv.ok) return { ok: false, error: pv.errors.join("; ") };
-    const p = pv.preview;
+    let p = pv.preview;
     if (p.blockers.length > 0)
       return { ok: false, error: `the scan cannot start: ${p.blockers.join("; ")}` };
+    // The login before anything is paid for: pi's /login is the fix. Asked
+    // once, before whichever start comes first.
+    let borrowed = false;
+    const borrow = async (): Promise<string | null> => {
+      if (borrowed) return null;
+      borrowed = true;
+      const cfg = engine.config();
+      if (!cfg.ok) return null;
+      const b = await borrowLogin({
+        providers: reviewProviders(cfg.cfg),
+        host: host.auth,
+        needMs: PLUGIN_CASE_MS,
+        marginMs: PI_REFRESH_MARGIN_MS,
+      });
+      return b.ok ? null : b.error.replaceAll("/qcr-review", "/qcr-scan");
+    };
+    // Stage 0 is part of the scan ([scan] threat_model): when it is due, the
+    // threat model is drafted first, at the price shown, and the scan is
+    // priced again over its draft.
+    const stage0 = p.threat_model_stage;
+    if (stage0 !== undefined) {
+      const first =
+        `Before scanning ${host.cwd}, QuickReview drafts its threat model (stage 0 — ${stage0.why}): one case, ` +
+        `${stage0.estimate_usd === null ? "no price measured yet" : `about ${usd(stage0.estimate_usd)}`}, stopped hard at ${usd(stage0.cap_usd)}. ` +
+        "The draft goes to the state home only, never to the repository.";
+      if (o.preview)
+        return {
+          ok: true,
+          preview: `${first}\n\nStart it with \`${PLUGIN_SCAN_VERBS.threatModelStart!(stage0)}\`, or \`${guidedScanLine(o)}\`; the scan itself is priced once the draft is written.`,
+        };
+      if (!ui.interactive)
+        return {
+          ok: false,
+          error: `${first} A scan spends money, and nobody here can confirm it: run /qcr-scan in an interactive pi.`,
+        };
+      const login = await borrow();
+      if (login !== null) return { ok: false, error: login };
+      if (!(await ui.confirm("QuickReview scan", `${first} Start it?`, host.shutdown)))
+        return {
+          ok: false,
+          error:
+            stage0.existing === null
+              ? 'the scan was not started: [scan] threat_model drafts a threat model first (set it to "off" to skip drafting and scan with no threat model)'
+              : 'the scan was not started: [scan] threat_model drafts a revised threat model first (set it to "off" to skip drafting; the scan still reads the existing model)',
+        };
+      const s0 = await scan.start({ key: stage0.key, sha: stage0.sha });
+      if (!s0.ok) return { ok: false, error: s0.errors.join("; ") };
+      // Stage 0 is paid for like any stage: Esc, the session ending and a
+      // stop asked for from outside this pi stop it, as they stop the scan.
+      const stop = new AbortController();
+      const offEscape = ui.onEscape(() => stop.abort());
+      let ended: ScanStatus["run"];
+      try {
+        ended = (await watchRun(host, ui, engine, stop.signal)).run;
+      } finally {
+        offEscape();
+      }
+      if (stop.signal.aborted || host.shutdown.aborted)
+        return { ok: false, error: "the threat-model stage was stopped — nothing was scanned" };
+      if (ended === null || ended.mode !== "threat-model" || ended.display !== "complete")
+        return {
+          ok: false,
+          error: `the threat-model stage ended ${ended?.display ?? "unknown"}${ended?.cases[0]?.error ? `: ${ended.cases[0].error}` : ""} — nothing was scanned`,
+        };
+      ui.status("QuickReview: pricing the scan…");
+      const again = await scan.preview(previewArgs);
+      if (!again.ok) return { ok: false, error: again.errors.join("; ") };
+      p = again.preview;
+      if (p.blockers.length > 0)
+        return { ok: false, error: `the scan cannot start: ${p.blockers.join("; ")}` };
+      if (p.threat_model_stage !== undefined)
+        return { ok: false, error: "the threat-model stage wrote no draft the scan can read" };
+    }
     const what =
-      `Scan ${p.files} files of ${host.cwd}` +
+      `Scan ${p.files} files of ${p.path !== null ? `${p.path}/ in ` : ""}${host.cwd}` +
       `${p.mode === "delta" ? " (the files changed since the last scan)" : ""} for about ` +
       `${p.estimate_usd === null ? "the price of a calibration run" : usd(p.estimate_usd)}; it stops hard at ${usd(p.cap_usd)}.`;
     if (o.preview)
       return {
         ok: true,
-        preview: `${what}\n\nStart it with \`${PLUGIN_SCAN_VERBS.start(p)}\`, or \`/qcr-scan\`.`,
+        preview: `${what}\n\nStart it with \`${PLUGIN_SCAN_VERBS.start(p)}\`, or \`${guidedScanLine(o)}\`.`,
       };
     if (!ui.interactive)
       return {
         ok: false,
         error: `${what} A scan spends money, and nobody here can confirm it: run /qcr-scan in an interactive pi.`,
       };
-    // The login before anything is paid for: pi's /login is the fix.
-    const cfg = engine.config();
-    if (cfg.ok) {
-      const borrowed = await borrowLogin({
-        providers: reviewProviders(cfg.cfg),
-        host: host.auth,
-        needMs: PLUGIN_CASE_MS,
-        marginMs: PI_REFRESH_MARGIN_MS,
-      });
-      if (!borrowed.ok)
-        return { ok: false, error: borrowed.error.replaceAll("/qcr-review", "/qcr-scan") };
-    }
+    const login = await borrow();
+    if (login !== null) return { ok: false, error: login };
     if (!(await ui.confirm("QuickReview scan", `${what} Start it?`, host.shutdown)))
       return { ok: false, error: "the scan was not started" };
-    const started = await scan.start({ key: p.key, sha: p.sha, delta: p.mode === "delta" });
+    const started = await scan.start({
+      key: p.key,
+      sha: p.sha,
+      delta: p.mode === "delta",
+      ...(p.path !== null ? { path: p.path } : {}),
+    });
     if (!started.ok) return { ok: false, error: started.errors.join("; ") };
     return { ok: true, run: started.run };
   } finally {
@@ -396,14 +489,15 @@ async function priceAndStart(
   }
 }
 
-/** Wait for the run in flight to end, the status line ticking; `stop` (or the
- * session ending) stops it. The new findings, or why there are none. */
-async function followRun(
+/** Wait for the run in flight to end, the status line ticking: `stop`, the
+ * session ending, and a stop asked for from outside this pi (`qcr scan
+ * stop`, the TUI's tab) stop it. Its status at the end. */
+async function watchRun(
   host: PluginHost,
   ui: SessionUi,
   engine: RepoScan,
   stop?: AbortSignal,
-): Promise<GuidedScan> {
+): Promise<ScanStatus> {
   const { scan } = engine;
   const startedAt = Date.now();
   const halt = (): void => void scan.stop();
@@ -423,15 +517,25 @@ async function followRun(
   tick();
   const ticker = setInterval(tick, 1000);
   ticker.unref?.();
-  let s: ScanStatus;
   try {
     await scan.idle();
-    s = scan.status();
+    return scan.status();
   } finally {
     clearInterval(ticker);
     for (const sig of [stop, host.shutdown]) sig?.removeEventListener("abort", halt);
     ui.status(undefined);
   }
+}
+
+/** Wait for the run in flight to end (`watchRun`). The new findings, or why
+ * there are none. */
+async function followRun(
+  host: PluginHost,
+  ui: SessionUi,
+  engine: RepoScan,
+  stop?: AbortSignal,
+): Promise<GuidedScan> {
+  const s = await watchRun(host, ui, engine, stop);
   if (stop?.aborted || host.shutdown.aborted)
     return { ok: false, error: "the scan was stopped: what finished is in the ledger" };
   const run = s.run;
@@ -442,11 +546,14 @@ async function followRun(
     );
   const listed = listFindings(engine.findings, { state: "new" });
   if (!listed.ok) return { ok: false, error: listed.error };
+  // The ledger is the whole repo's: a folder run answers with the new
+  // findings inside its folder only, never one an earlier run left outside.
+  const inScope = listed.findings.filter((f) => underPath(f.path, run?.path));
   return {
     ok: true,
     sha: run?.sha ?? null,
-    findings: listed.findings.map(findingJson),
-    total: listed.findings.length,
+    findings: inScope.map(findingJson),
+    total: inScope.length,
   };
 }
 
@@ -503,6 +610,9 @@ function inBackground(
   const done = followRun(host, ui, engine).then(
     (r) => {
       if (!r.ok) return fail(ui, r.error);
+      // Stage 0 reads no findings: what it leaves is its draft.
+      const s = engine.scan.status();
+      if (s.run?.mode === "threat-model") return say(ui, renderStatus(s, PLUGIN_SCAN_VERBS));
       say(ui, renderScanFindings(r.findings, r.total));
     },
     (err: unknown) => fail(ui, err instanceof Error ? err.message : String(err)),
@@ -565,7 +675,8 @@ async function passThrough(
     );
   const json = argv.includes("--json");
   const rest = argv.filter((a) => a !== "--json");
-  const starts = verb === "start" || (verb === "stage2" && argv[1] === "start");
+  const starts =
+    verb === "start" || ((verb === "stage2" || verb === "threat-model") && argv[1] === "start");
   if (starts && sessions.running !== null)
     return fail(ui, `QuickReview is already scanning ${sessions.running}: /qcr-scan stop stops it`);
   // Esc, or the session ending, ends a wait (`status --wait`) and stops a
@@ -585,6 +696,7 @@ async function passThrough(
       triage: null,
       afterMatch: null,
       home: engine.home,
+      repo: host.cwd,
       driverLog: join(engine.home, "scan", "plugin.log"),
       out: (l) => out.push(l),
       // A start runs here, in the background, like the guided one.
@@ -603,13 +715,19 @@ async function passThrough(
                 key: parsed.key,
                 ...(parsed.sha ? { sha: parsed.sha } : {}),
                 delta: parsed.delta,
+                ...(parsed.path ? { path: parsed.path } : {}),
               })
             : parsed.verb === "stage2-start"
               ? await engine.scan.startStage2({
                   key: parsed.key,
                   ...(parsed.rows ? { rows: parsed.rows } : {}),
                 })
-              : ({ ok: false, errors: [`not a start: ${args.join(" ")}`] } as Refusal);
+              : parsed.verb === "threat-model-start"
+                ? await engine.scan.startThreatModel({
+                    key: parsed.key,
+                    ...(parsed.sha ? { sha: parsed.sha } : {}),
+                  })
+                : ({ ok: false, errors: [`not a start: ${args.join(" ")}`] } as Refusal);
         if (!r.ok) return r;
         inBackground(host, ui, engine, sessions);
         return { ok: true, run: r.run, log: join(engine.home, "scan", "plugin.log") };

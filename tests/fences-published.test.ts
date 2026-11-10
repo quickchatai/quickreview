@@ -32,7 +32,11 @@ function arrayMembers(relPath: string, name: string): string[] {
   const m = new RegExp(`export const ${name}\\b[^=]*=\\s*\\[([\\s\\S]*?)\\]`).exec(text);
   if (!m?.[1])
     throw new Error(`array ${name} not found in ${relPath} — the fence over it is now vacuous`);
-  const members = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]!);
+  // A `...OTHER` spread of another array in the same file counts its members
+  // too (ALL_PASSES places the security family by spreading SECURITY_FAMILY).
+  const members = [...m[1].matchAll(/"([^"]+)"|\.\.\.([A-Z_][A-Z0-9_]*)/g)].flatMap((x) =>
+    x[1] !== undefined ? [x[1]] : arrayMembers(relPath, x[2]!),
+  );
   if (members.length === 0) throw new Error(`array ${name} in ${relPath} parsed to zero members`);
   return members;
 }

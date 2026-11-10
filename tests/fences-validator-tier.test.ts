@@ -20,11 +20,14 @@ import { parseConfig, type Config } from "../src/config.js";
 import { buildPassPlan, validatorTier } from "../src/dispatch.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
+import { buildRoundOrder } from "@quickchatai/pi-quickreview/src/planner.js";
+import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 import {
   PASS_TIER_ORDER,
   type PassTier,
   type VerdictPassEntry,
 } from "@quickchatai/pi-quickreview/src/types.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const tierIndex = (t: string | null | undefined): number => PASS_TIER_ORDER.indexOf(t as PassTier);
 
@@ -84,6 +87,48 @@ describe("[#22] the validator tier", () => {
     const risky = buildPassPlan(low, [file("auth/permissions.py", 10)]).pass_plan;
     expect(risky.some((p) => tierIndex(p.tier) > tierIndex("terra-med"))).toBe(true);
   });
+
+  /**
+   * A security-family row under a validator below the risk tier: the
+   * round's security candidates are validated as their own group at
+   * sol-high (`security_validator_agent`), and the validator ROW stays at
+   * `validate_tier` — the raise is the security group's alone, never the
+   * round's validator.
+   *
+   * MUTATION: drop the `security_validator_agent` assignment in
+   * buildRoundOrder (planner.ts `securityOrderFields`) — this fails.
+   */
+  it(
+    "plan time: security candidates validate at sol-high, the validator row at its own tier",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const low: Config = { ...cfg, models: { ...cfg.models, validate_tier: "sol-med" } };
+      const sql: PrFileEntry = {
+        filename: "app/repo.py",
+        additions: 1,
+        deletions: 0,
+        status: "modified",
+        patch: `@@ -1 +1,2 @@\n context\n+cur.execute(f"SELECT * FROM t WHERE a = '{a}'")`,
+      };
+      const order = buildRoundOrder({
+        cfg: low,
+        row: { number: 9, head_sha: "d".repeat(40), title: "t" },
+        files: [sql],
+        roundId: 1,
+        roundNo: 1,
+        roundType: "first",
+        worktree: "/wt",
+        settledDigest: "",
+        issuedAt: "2026-11-01T00:00:00Z",
+      });
+      expect(order.pass_plan.some((p) => SECURITY_FAMILY.includes(p.lens))).toBe(true);
+      const validate = order.pass_plan.at(-1)!;
+      expect(validate.lens).toBe("pass-validate");
+      expect(validate.tier).toBe("sol-med");
+      expect(validate.tier).toBe(validatorTier(low));
+      expect(order.security_validator_agent).toBe("pass-validate--sol-high");
+    },
+  );
 
   it("the property itself is sound — it catches a validator run below the floor", () => {
     const executed: VerdictPassEntry[] = [

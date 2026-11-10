@@ -48,7 +48,9 @@
 //   * EVERY JUDGED FINDING HAS A VALIDITY TIER (the scan validator is the
 //     skeptic). `confirmed` — the skeptic traced a concrete
 //     scenario (kept in `scenario`); `likely` — a real mechanism whose
-//     reachability it could not trace all the way; `doubtful` — refuted,
+//     reachability it could not trace all the way; `needs-review` — a
+//     security candidate it could not settle, under `[security] fold`, kept
+//     for a person with its doubt as the proof gap; `doubtful` — refuted,
 //     class-matched, or anything it would have killed, carried in `doubt`
 //     (word, reason, and the false-positive class when one matched). A
 //     finding no skeptic judged — the validator off or failed, or stored
@@ -93,7 +95,13 @@
 import { createHash } from "node:crypto";
 import type { StateFs } from "./scanports.js";
 import { readings, type LedgerEntry, type Reading } from "./ledger.js";
-import { SEVERITIES, type ScanSeverity } from "./scan.js";
+import {
+  parseReadingKey,
+  readingCovers,
+  SEVERITIES,
+  underPath,
+  type ScanSeverity,
+} from "./scan.js";
 import type { Reachability } from "../severity.js";
 import {
   FINDING_STATES,
@@ -104,6 +112,7 @@ import {
   goneDismissal,
   lookalikeRank,
   parseFindingsFile,
+  isDoubted,
   validityOf,
   type Validity,
   type ValidityView,
@@ -369,10 +378,11 @@ function combinedValidity(a: Judgement, b: Judgement): Pick<ScanFinding, "validi
 }
 
 /** The doubt and tier of two sightings, told as ONE story: when either was
- * tiered, the tier decides and the doubt follows it (a doubtful tier keeps
- * its doubt, a confirmed/likely one clears it) — so a finding never reads
- * doubtful with no reason, nor confirmed while flagged "may not be valid".
- * With no tier on either side, the pre-tier doubt rule stands. */
+ * tiered, the tier decides and the doubt follows it (a doubtful or
+ * needs-review tier keeps its doubt — a needs-review one's is the proof gap a
+ * person checks — and a confirmed/likely one clears it) — so a finding never
+ * reads doubtful with no reason, nor confirmed while flagged "may not be
+ * valid". With no tier on either side, the pre-tier doubt rule stands. */
 function combinedJudgement(
   a: Judgement,
   b: Judgement,
@@ -380,9 +390,10 @@ function combinedJudgement(
   const tiered = combinedValidity(a, b);
   if (tiered.validity === null || tiered.validity === undefined)
     return { doubt: combinedDoubt(a, b), ...tiered };
-  if (tiered.validity !== "doubtful") return { doubt: null, ...tiered };
-  // Neither side ranks above doubtful here, so at least one IS doubtful.
-  const src = validityOf(b) === "doubtful" ? b : a;
+  if (tiered.validity === "confirmed" || tiered.validity === "likely")
+    return { doubt: null, ...tiered };
+  // The side that carries the chosen tier carries its doubt.
+  const src = validityOf(b) === tiered.validity ? b : a;
   return { doubt: src.doubt ?? a.doubt ?? b.doubt, ...tiered };
 }
 
@@ -746,7 +757,8 @@ function silentReread(
   for (const s of sightingsByLens(f)) {
     let best: LedgerEntry | null = null;
     for (const r of rows) {
-      if (r.lens !== s.lens || r.path !== f.path || r.blob !== f.blob) continue;
+      if (!readingCovers(r.lens, s.lens, f.kind) || r.path !== f.path || r.blob !== f.blob)
+        continue;
       if (r.run === f.last_seen.run || r.at < f.last_seen.at) continue;
       if (r.range && (r.range.start > s.start || r.range.end < s.end)) continue;
       if (best === null || r.at > best.at) best = r;
@@ -755,6 +767,18 @@ function silentReread(
     if (latest === null || best.at > latest.at) latest = best;
   }
   return latest;
+}
+
+/** The chain strategies (null: none) of the covering `keys` that read a
+ * finding's file in the run that last saw it (`readIn`) — the readings that
+ * may have raised it, each of which must read it again before its silence
+ * settles it. Empty when none did. */
+function strategiesOf(
+  keys: readonly string[],
+  readIn: ReadonlySet<string> | undefined,
+): Array<string | null> {
+  if (readIn === undefined) return [];
+  return [...new Set(keys.filter((k) => readIn.has(k)).map((k) => parseReadingKey(k).strategy))];
 }
 
 export class FindingsStore {
@@ -912,7 +936,9 @@ export class FindingsStore {
    * After a run: find the stored findings a re-scan no longer reports and
    * settle what an exact rule can. A finding is UNREPORTED when its file is
    * gone from the run's tree, or when the ledger's newest row for its lens
-   * and file is a later run's reading of other content — so a run the
+   * and file (under any `[scan] kinds` scope that keeps its kind — scan.ts
+   * `readingCovers` — and, for a chain finding, for each strategy that read
+   * the file when it was last seen) is a later run's reading of other content — so a run the
    * companion never finished is still counted by the next one. Unreported
    * findings with no possible fresh counterpart are fixed now; the rest join
    * the one pending match question, with the fresh findings (first seen by
@@ -926,6 +952,11 @@ export class FindingsStore {
      * says nothing about a tree that has since gone back. */
     blobs?: ReadonlyMap<string, string>;
     run: Sighting;
+    /** A folder run's folder (scan.ts `scanPath`): a finding whose file is
+     * gone from the tree outside it is left open, never settled — the run
+     * read nothing there, so a file moved within that part of the repo
+     * waits for a run whose scope covers it. Absent = the whole repo. */
+    scope?: string | null;
   }): ReconcileResult {
     const { file, error } = this.loadFile();
     if (error !== null) throw new Error(error);
@@ -934,10 +965,41 @@ export class FindingsStore {
     // in line ranges whose ranges are not all back yet has not been re-read,
     // and the findings in its unread ranges must not read as fixed.
     const newest = new Map<string, Reading>();
-    for (const lens of new Set(args.rows.map((r) => r.lens))) {
+    const rowLenses = [...new Set(args.rows.map((r) => r.lens))];
+    for (const lens of rowLenses) {
       for (const [path, r] of readings(args.rows, lens))
         if (r.complete) newest.set(`${lens}\0${path}`, r);
     }
+    // The ledger keys that read each file in each run.
+    const readIn = new Map<string, Set<string>>();
+    for (const r of args.rows) {
+      const at = `${r.run}\0${r.path}`;
+      const keys = readIn.get(at);
+      if (keys) keys.add(r.lens);
+      else readIn.set(at, new Set([r.lens]));
+    }
+    // The newest complete readings of `f`'s file that would have reported
+    // it again (scan.ts `readingCovers`): its lens's own, under any `[scan]
+    // kinds` scope that keeps its kind — never one that dropped its kind,
+    // whose silence says nothing about it. One per chain strategy that read
+    // the file in the run that last saw it (`strategiesOf`): a finding is
+    // filed under the bare chain lens, and a forward reading's silence says
+    // nothing about what the backward search found. Absent such a row,
+    // the newest of any covering reading.
+    const readingsFor = (f: ScanFinding, lens: string): Array<Reading | undefined> => {
+      const keys = rowLenses.filter((rl) => readingCovers(rl, lens, f.kind));
+      const newestOf = (ks: readonly string[]): Reading | undefined => {
+        let best: Reading | undefined;
+        for (const rl of ks) {
+          const r = newest.get(`${rl}\0${f.path}`);
+          if (r && (best === undefined || r.newest.at > best.newest.at)) best = r;
+        }
+        return best;
+      };
+      const raised = strategiesOf(keys, readIn.get(`${f.last_seen.run}\0${f.path}`));
+      if (raised.length === 0) return [newestOf(keys)];
+      return raised.map((s) => newestOf(keys.filter((k) => parseReadingKey(k).strategy === s)));
+    };
     const prior = file.question ?? null;
     collapseRun(
       byFp,
@@ -957,13 +1019,18 @@ export class FindingsStore {
     for (const f of [...byFp.values()]) {
       if (settled(f) || pending.has(f.fingerprint)) continue;
       if (!args.tree.has(f.path)) {
+        if (!underPath(f.path, args.scope)) continue;
         unreported.push(f.fingerprint);
         // Wherever it moved may have been read by a run the companion never
         // finished: every run of its lenses since its last sighting is one
         // whose fresh findings might be it.
         const lenses = lensesOf(f);
         for (const r of args.rows) {
-          if (r.run !== f.last_seen.run && r.at >= f.last_seen.at && lenses.includes(r.lens))
+          if (
+            r.run !== f.last_seen.run &&
+            r.at >= f.last_seen.at &&
+            lenses.some((l) => readingCovers(r.lens, l, f.kind))
+          )
             rereadBy.add(r.run);
         }
         continue;
@@ -972,7 +1039,7 @@ export class FindingsStore {
       // A collapsed finding is unreported only when EVERY lens that raised
       // it has re-read other content since — one lens's silence is not the
       // other's, and a single-lens run must not settle what it never read.
-      const readingsOf = lensesOf(f).map((l) => newest.get(`${l}\0${f.path}`));
+      const readingsOf = lensesOf(f).flatMap((l) => readingsFor(f, l));
       const reread = readingsOf.every((reading) => {
         const row = reading?.newest;
         return (
@@ -1191,7 +1258,7 @@ export class FindingsStore {
             (f.lenses ?? []).includes(filter.lens)) &&
           (filter.unit === undefined || f.unit === filter.unit) &&
           (filter.severity === undefined || f.severity === filter.severity) &&
-          (filter.doubted === undefined || (f.doubt !== null) === filter.doubted) &&
+          (filter.doubted === undefined || isDoubted(f) === filter.doubted) &&
           (filter.validity === undefined || validityOf(f) === filter.validity),
       )
       .sort(

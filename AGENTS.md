@@ -76,8 +76,8 @@ All three must be green before you commit. Notes that will bite otherwise:
 ## Conventions
 
 - **TypeScript strict**, plus `noUncheckedIndexedAccess` and
-  `noImplicitOverride` (`tsconfig.json`). Node **≥ 26** (`package.json`
-  `engines`).
+  `noImplicitOverride` (`tsconfig.json`). Node **≥ 22.19** (both packages'
+  `engines`; CI's test job runs 22, 24 and 26, and the images carry 26).
 - **ESM, `module: NodeNext`** — local imports carry the **`.js` suffix** even
   from `.ts` files.
 - **Two layers, fenced.** The review core is its own package, the npm
@@ -109,9 +109,13 @@ All three must be green before you commit. Notes that will bite otherwise:
   the repo root in a checkout or the image. The seeds sit under `assets/`,
   not at the package root, because pi turns a package's `prompts/` into slash
   commands.
-- **Minimal dependencies.** Runtime: `better-sqlite3`, `smol-toml`. Dev: `typescript`, `vitest`, `@types/*`,
-  `eslint` + `@eslint/js` + `typescript-eslint`, `prettier`. Adding
-  one is a decision, not a convenience.
+- **Minimal dependencies.** Runtime: `smol-toml`, and `better-sqlite3` as an
+  optional dependency: it is the state store's native driver, so an install
+  where it cannot build still installs, and the verbs that never open the store
+  (`SQLITE_FREE_VERBS` in `src/sqlitehint.ts`, and the home) still run; their
+  routes are fenced by `tests/sqlite-free-routes.test.ts`. Dev: `typescript`,
+  `vitest`, `@types/*`, `eslint` + `@eslint/js` + `typescript-eslint`,
+  `prettier`. Adding one is a decision, not a convenience.
 - **Tests mock all I/O**: fake fetch and adapters, `StateStore(":memory:")`,
   temp directories. The suite must stay green **offline, with no secrets, on a
   fresh clone** — a stranger's first command is the suite. A handful of suites
@@ -232,6 +236,7 @@ the fence.
 | Sessions | `src/sessions.ts`, `src/tmux.ts`, `src/worktrees.ts`, `src/wakes.ts`, `extensions/inject-bridge.ts` |
 | Verdict + posting | `src/verdicts.ts`, `packages/pi-plugin/src/gate.ts`, `packages/pi-plugin/src/guards.ts`, `packages/pi-plugin/src/cigate.ts`, `packages/pi-plugin/src/standing-review.ts`, `src/posting.ts`, `packages/pi-plugin/src/anchors.ts`, `src/postops.ts`, the session shims `scripts/post-review.sh`, `approve-pr.sh`, `reply-thread.sh` |
 | Review judgment | `packages/pi-plugin/src/severity.ts` (severity × confidence × reachability → tag), `src/recheck.ts`, `src/pingpong.ts`, `src/escalation.ts` |
+| Security review | `packages/pi-plugin/src/passes.ts` (`SECURITY_FAMILY`, the fourteen `pass-sec-*` lenses), `packages/pi-plugin/src/securitytriggers.ts` (what plans a family lens), `packages/pi-plugin/src/threatmodel.ts` (the threat model, read from the base), `packages/pi-plugin/src/secfacts.ts` (deterministic facts through read-only git), `packages/pi-plugin/src/secevidence.ts` (a chain's outcome from its hop labels), `src/securityrequest.ts` (the label, `@<bot> security`, `--security`), `profiles/security/` |
 | Learning | `src/feedback.ts`, `src/eod.ts`, `src/digest.ts`, `packages/pi-plugin/src/findingsrecord.ts`, `src/improvements.ts` |
 | Memory | `src/memory/` (the seam), `src/openviking/` (the engine, supervised on loopback) |
 | Operator surfaces | `src/tui/` (board, tabs, companion column), `src/cli.ts` (`qcr`), `src/slack/`, `src/commands.ts` + `src/levers.ts` |
@@ -239,7 +244,8 @@ the fence.
 | Onboarding | `src/onboard/`, `extensions/onboarding.ts`, [`docs/onboarding.md`](docs/onboarding.md) |
 | The home (a bare `qcr`) | `src/home/launch.ts` (the pinned pi, quiet, on the person's own pi home), `extensions/home.ts` (`createHome` over the ports; every action a key and a `home_*` tool), `src/home/model.ts` (state and actions, the review button), `src/home/panel.ts` (the overlay), `src/home/review.ts` (a review's progress model), `src/home/ports.ts` + `src/home/adapters.ts` + `src/home/reviews.ts` (the reviews port: preview, the detached registry's start/status/stop, the review state, the daemon's rounds, the post of a kept review) |
 | The pi plugin | `packages/pi-plugin/src/plugin/` (the entry `index.ts`, the commands, `versiongate.ts` for the `^1.4.0` pi range, `login.ts` for the borrowed host login), `packages/pi-plugin/src/reviewapi.ts`, [`packages/pi-plugin/README.md`](packages/pi-plugin/README.md) |
-| The npm CLI | `bin/qcr.js` → `src/qcrbin.ts` (the bin's front door: bare `qcr`, `review`, `login`, `pi`, `update`, `version`), `src/npmverbs.ts`, `src/updatenotice.ts`; every other verb goes to `src/cli.ts` |
+| Host plugins | `plugins/qcr/templates/` (the one skill source), `plugins/qcr/render.mjs` (its renderer, for every host and the Plugin's gitignored `skills/`), `src/plugincli.ts` (`qcr plugin`: a host's render in the data home, `src/homes.ts` `dataHome`, pointed at through the host's own verbs, or copied, with a record of each file written, where Cursor and opencode have none), [`docs/plugin.md`](docs/plugin.md) |
+| The npm CLI | `bin/qcr.js` → `src/qcrbin.ts` (the bin's front door: bare `qcr`, `review`, `scan`, `login`, `pi`, `update`, `version`, `plugin`), `src/schemaflag.ts` (`qcr --schema N`, a host plugin's contract, `CONTRACTS` in `packages/pi-plugin/src/contract.ts`), `src/npmverbs.ts`, `src/updatenotice.ts`; every other verb goes to `src/cli.ts` |
 
 `agents/`, `prompts/`, `skills/companion/` and `extensions/` are shipped bot
 content (what the reviewer and companion sessions load); `.claude/` is

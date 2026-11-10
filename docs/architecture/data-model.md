@@ -47,8 +47,10 @@ Timestamps are ISO-8601 strings in `TEXT` columns throughout. Booleans are
 | `reviewed_heads` | one row per PR: the head last actually reviewed, and what was decided there | `pr` (PK), `head_sha`, `verdict`, `posted_event`, `round_no`, `last_author_reply_at` | `recordReviewedHead`, `reviewedHead`, `noteAuthorReply` |
 | `approval_withheld` | one row per PR whose approval was withheld for red or missing CI | `pr` (PK), `head_sha`, `ci_state`, `reason` | `recordApprovalWithheld`, `approvalWithheld`, `clearApprovalWithheld` |
 | `rechecks` | post-approval delta rechecks actually nudged; the unique key is the runaway guard | `(pr, fingerprint)` (PK), `head_sha`, `trigger` | `claimRecheck`, `hasRecheck`, `releaseRecheck`, `recheckClaimsBefore` |
+| `owed_base_rechecks` | base-advance recheck questions a run could not answer (a failed read, a head that moved under the reads, a failure before the durable handoff), owed until the reconcile pass asks them (`retryOwedBaseRechecks`) | `(pr, branch, after_sha)` (PK), `before_sha`, `attempts`, `next_attempt_at`, `last_error` | `oweBaseRecheck`, `owedBaseRecheck`, `dueBaseRechecks`, `settleBaseRecheck` |
 | `trigger_levels` | the previous reconcile observation of each trigger level, so a level already present cannot look like a fresh request | `(pr, kind)` (PK), `present`, `observed_at` | `triggerLevel`, `observeTriggerLevel` |
 | `successor_obligations` | a newer head seen while an older round owned the PR — durable work owed | `pr` (PK), `predecessor_round_id`, `head_sha`, `provenance` | `recordSuccessor`, `successorFor`, `settleSuccessor`, `clearSuccessor` |
+| `pr_review_requests` | a standing request for an extra review of one kind (today only `security`: the label, `@<bot> security`, `qcr review-now --security`); served once as new evidence, withdrawn when the label comes off, dropped when the PR closes (`src/securityrequest.ts`) | `(pr, kind)` (PK), `source`, `requested_by` (`''` when the asker is unknown), `comment_id`, `requested_at`, `served_at` | `recordReviewRequest`, `reviewRequest`, `unservedReviewRequests`, `reviewRequestPrs`, `markReviewRequestServed`, `clearReviewRequests` |
 
 `reviewed_heads` is deliberately **not** part of `pr_state`: the mark outlives
 lifecycle churn. Every lifecycle consumer reads it through the single
@@ -74,6 +76,7 @@ a database property rather than a convention.
 | Table | Purpose | Key columns | Principal methods |
 | --- | --- | --- | --- |
 | `deliveries` | webhook delivery dedupe | `guid` (PK), `event`, `action` | `recordDelivery` |
+| `webhook_inbox` | accepted webhook payloads owed fulfilment, replayable after a crash or a failed callback; a failure is retried on a capped backoff (30 s doubling to 30 min) and the fifth raises one `webhook_delivery_failing` anomaly | `guid` (PK), `event`, `action`, `payload`, `interpretation`, `local_result`, `attempted_at`, `next_attempt_at`, `last_error`, `attempts` | `acceptWebhookDelivery`, `readyWebhookInbox`, `deferWebhookDelivery`, `completeWebhookDelivery` |
 | `events` | the append-only daemon event log the CLI, TUI and digest read | `id` (PK), `ts`, `kind`, `pr`, `payload` | `logEvent`, `recentEvents`, `eventsOn`, `anomalies` |
 | `pr_comments` | a local copy of every human comment on a tracked PR (identity is GitHub's own `(source, comment_id)`) | `id` (PK), `pr`, `source`, `comment_id`, `author`, `body`, `tagged`, `captured_via`, `review_state` | `recordPrComment`, `prComments`, `hasPrComment` |
 | `feedback_signals` | the tuning-loop ledger: tagged comments plus behavioural signals, deduped per kind | `id` (PK), `kind`, `pr`, `comment_id`, `review_id`, `scope`, `day` | `recordFeedbackSignal`, `feedbackCommentsForDay` |
@@ -592,7 +595,8 @@ regardless).
 
 **`[models]`** — `default`, `conversation`, `overseer` (model spec strings,
 all `"openai-codex/gpt-6.1-sol"` in the example), `risk_passes` (string array,
-`["pass-security", "pass-prod-risk", "pass-data-safety"]`), `validate_tier`
+`["pass-security", "pass-prod-risk", "pass-data-safety"]`; the parsed list
+always gains the fourteen `pass-sec-*` lenses, `withSecurityFamily`), `validate_tier`
 (`PassTier`, `"sol-high"` — the validator's own tier, floored only by the
 profile's `min_tier` for it and never raised to match a lens; `validatorTier`
 in `src/dispatch.ts`), `small_diff_lines` (number, `150`).
@@ -627,7 +631,9 @@ process `host` (`"127.0.0.1"` — loopback only, the port is never published),
 `queue_concurrency` (`2`); supervision `health_interval_s` (`30`),
 `health_timeout_ms` (`6000`; clamped 100…20000 —
 `/ready` runs an embedding), `restart_backoff_ms` (array,
-`[1000, 2000, 5000, 15000, 30000, 60000]`), `restart_reset_after_s` (`120`);
+`[1000, 2000, 5000, 15000, 30000, 60000]`), `restart_reset_after_s` (`120`),
+the liveness restart's `liveness_failures` (`3`; `0` switches it off),
+`liveness_span_s` (`90`) and `liveness_startup_grace_s` (`300`);
 embeddings `embedding_provider` (`"local"`), `embedding_model`
 (`"bge-small-en-v1.5-f16"` under local), `embedding_dimension` (`384` under
 local), `embedding_key_file`; the local English embedder

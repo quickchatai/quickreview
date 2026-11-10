@@ -88,6 +88,7 @@ import {
   type Customisation,
 } from "@quickchatai/pi-quickreview/src/profileoverrides.js";
 import type { LensTuning } from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { homeProfileLookup } from "../install.js";
 import type { ProfileLookup } from "@quickchatai/pi-quickreview/src/profiles.js";
 import {
@@ -97,7 +98,12 @@ import {
 // The round's lens agents are built by the core (`qcr review` builds them too).
 import { buildBenchAgents } from "@quickchatai/pi-quickreview/src/engine/roundagents.js";
 export { buildBenchAgents };
-import { enforceBenchPosting, POLICED_ORIGINALS, type BenchPostingReport } from "./benchposting.js";
+import {
+  benchPolicyToEnforce,
+  enforceBenchPosting,
+  POLICED_ORIGINALS,
+  type BenchPostingReport,
+} from "./benchposting.js";
 import {} from "@quickchatai/pi-quickreview/src/severity.js";
 import type { PassPlanEntry } from "@quickchatai/pi-quickreview/src/types.js";
 import {} from "@quickchatai/pi-quickreview/src/templates.js";
@@ -271,6 +277,11 @@ export interface RunFingerprint {
   /** The profile's `[posting]` policy. Absent at the default posting, so a run
    * without one keeps its fingerprint. */
   posting?: PostingPolicy;
+  /** The review-shaping keys of `[security]` (the profile's overlay
+   * applied). Absent when all three are at their defaults, so a run without
+   * one keeps its fingerprint; `label` and `command` decide who may ask for
+   * a review, which a bench run never reads. */
+  security?: { triggers: string; only: boolean; fold: boolean };
   /** Present only on an SDK run (`[engine] runtime = "sdk"`, the config default
    * since the engine route), with the lens tool it ran and `wave: true` when the engine
    * started the planned discovery wave (`[pi] engine_wave`, also the default).
@@ -300,6 +311,15 @@ function reviewSettingsDigest(cfg: Config): string {
     },
   };
   return createHash("sha256").update(JSON.stringify(settings)).digest("hex");
+}
+
+/** `[security]` at the shipped review: the keys a bench run reads unmoved. */
+function isDefaultSecurity(s: Config["security"]): boolean {
+  return (
+    s.triggers === SECURITY_DEFAULTS.triggers &&
+    s.only === SECURITY_DEFAULTS.only &&
+    s.fold === SECURITY_DEFAULTS.fold
+  );
 }
 
 type FingerprintLensTuning = Omit<LensTuning, "guide"> & {
@@ -390,6 +410,15 @@ export function runFingerprint(
     },
     ...(Object.keys(cfg.lenses ?? {}).length > 0 ? { lenses: fingerprintLenses(cfg.lenses!) } : {}),
     ...(isDefaultPosting(cfg.posting) ? {} : { posting: { ...cfg.posting! } }),
+    ...(isDefaultSecurity(cfg.security)
+      ? {}
+      : {
+          security: {
+            triggers: cfg.security.triggers,
+            only: cfg.security.only,
+            fold: cfg.security.fold,
+          },
+        }),
     ...(custom?.customised
       ? {
           customised: true as const,
@@ -905,8 +934,11 @@ export async function reviewCase(
       log(
         `review: ${c.instance_id} — posting policy kept ${renderedPosting.kept} of ${renderedPosting.kept + renderedPosting.withheld.length} (${renderedPosting.withheld.map((w) => w.word).join(", ") || "nothing withheld"})`,
       );
-    } else if (!isDefaultPosting(ctx.cfg.posting) && outcome !== undefined) {
-      const policed = enforceBenchPosting(caseDir, ctx.cfg.posting!, headPatches);
+    } else if (outcome !== undefined) {
+      // A hand-written case (no render): the profile's policy, or — under the
+      // default — the partial-chain cut alone, when the record posts one.
+      const enforce = benchPolicyToEnforce(caseDir, ctx.cfg.posting);
+      const policed = enforce ? enforceBenchPosting(caseDir, enforce, headPatches) : null;
       if (policed) {
         summary.posting = policed;
         log(

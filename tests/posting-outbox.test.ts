@@ -3,7 +3,13 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PostingOutbox, pendingPosting, type PostingJob } from "../src/posting-outbox.js";
+import { GitHubRequestError } from "@quickchatai/pi-quickreview/src/githubcore.js";
+import {
+  PostingOutbox,
+  pendingPosting,
+  withApprovalCiPrecheck,
+  type PostingJob,
+} from "../src/posting-outbox.js";
 import {
   roundPostingKey,
   postingMarker,
@@ -81,7 +87,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 describe("durable review delivery", () => {
   it("retains a 503 obligation and posts after recovery without another review round", async () => {
     createReview.mockRejectedValueOnce(
-      Object.assign(new Error("GitHub unavailable"), { status: 503 }),
+      new GitHubRequestError("GET", "/x", 503, "GitHub unavailable"),
     );
     await worker().tick();
     expect(pendingPosting(dir, 12, 1, key)).toBe(true);
@@ -158,7 +164,7 @@ describe("durable review delivery", () => {
   });
   it("honors rate-limit backoff rather than exhausting a retry cap", async () => {
     createReview.mockRejectedValueOnce(
-      Object.assign(new Error("rate limit"), { status: 429, retryAfterMs: 600_000 }),
+      new GitHubRequestError("POST", "/x", 429, "rate limit", 600_000),
     );
     const w = worker();
     await w.tick();
@@ -196,9 +202,42 @@ describe("durable review delivery", () => {
     expect(pendingPosting(dir, 12, 1, key)).toBe(false);
   });
   it("fails loud for permanent rejection, not endless silent retries", async () => {
-    createReview.mockRejectedValueOnce(Object.assign(new Error("invalid review"), { status: 422 }));
+    createReview.mockRejectedValueOnce(new GitHubRequestError("POST", "/x", 422, "invalid review"));
     await worker().tick();
     advance();
+    await worker().tick();
+    expect(createReview).toHaveBeenCalledTimes(1);
+    expect(pendingPosting(dir, 12, 1, key)).toBe(false);
+  });
+  // MUTATION: rethrow every error in postFolding — this fails
+  // (one POST, the job failed loud).
+  it("posts the comments in the body when GitHub cannot place an inline comment's line", async () => {
+    job.payload.comments = [{ path: "a.py", line: 3, side: "RIGHT", body: "[blocker] x" }];
+    save();
+    createReview.mockRejectedValueOnce(
+      new GitHubRequestError(
+        "POST",
+        "/x",
+        422,
+        JSON.stringify({ message: "x", errors: ["Line could not be resolved"] }),
+      ),
+    );
+    await worker().tick();
+    expect(createReview).toHaveBeenCalledTimes(2);
+    const second = createReview.mock.calls[1]![1];
+    expect(second.comments).toEqual([]);
+    expect(second.body).toMatch(/^Review\n\n### Comments given here instead of inline/);
+    expect(second.body).toContain("**`a.py:3`**\n\n[blocker] x");
+    expect(second.body.endsWith(postingMarker(key))).toBe(true);
+    expect(readPostingReceipt(dir, 12, 1)).toMatchObject({ status: "confirmed" });
+    expect(pendingPosting(dir, 12, 1, key)).toBe(false);
+  });
+  it("a 422 about something else on a review with comments still fails loud", async () => {
+    job.payload.comments = [{ path: "a.py", line: 3, side: "RIGHT", body: "[blocker] x" }];
+    save();
+    createReview.mockRejectedValueOnce(
+      new GitHubRequestError("POST", "/x", 422, JSON.stringify({ errors: ["Body is too long"] })),
+    );
     await worker().tick();
     expect(createReview).toHaveBeenCalledTimes(1);
     expect(pendingPosting(dir, 12, 1, key)).toBe(false);
@@ -228,6 +267,90 @@ describe("durable review delivery", () => {
     await worker().tick();
     expect(createReview).not.toHaveBeenCalled();
   });
+  // MUTATION: return false at the top of deliveryExpired — this fails.
+  it("is bounded by the delivery window from created_at, then fails loud, an ambiguous receipt kept", async () => {
+    createReview.mockRejectedValue(new GitHubRequestError("GET", "/x", 503, "GitHub unavailable"));
+    const expired = vi.fn();
+    const bounded = () =>
+      new PostingOutbox({
+        dir,
+        repo: "org/repo",
+        dryRun: false,
+        botLogins: ["review[bot]"],
+        now: () => new Date(clock),
+        adapter: { createReview, listReviewsFull },
+        current: () => true,
+        log: () => {},
+        deliveryWindowMs: 60 * 60_000,
+        onDeliveryExpired: expired,
+      });
+    const created = clock;
+    for (let i = 0; i < 14; i++) {
+      await bounded().tick();
+      if (clock - created < 60 * 60_000) expect(expired).not.toHaveBeenCalled();
+      advance(10 * 60_000);
+    }
+    expect(expired).toHaveBeenCalledTimes(1);
+    expect(expired.mock.calls[0]![1]).toMatch(/not delivered within 60 min of being queued/);
+    expect(pendingPosting(dir, 12, 1, key)).toBe(false);
+    expect(JSON.parse(readFileSync(join(dir, "pr-12-round-1.outbox.json"), "utf8")).status).toBe(
+      "failed",
+    );
+    // A POST that may have landed stays ambiguous for the operator, never "not posted".
+    expect(readPostingReceipt(dir, 12, 1)?.status).toBe("prepared");
+    // The terminal proof the verdict watcher reads as `exhausted`.
+    expect(jobFile().exhausted_at).toBe(new Date(created + 60 * 60_000).toISOString());
+  });
+  const jobFile = (): PostingJob =>
+    JSON.parse(readFileSync(join(dir, "pr-12-round-1.outbox.json"), "utf8")) as PostingJob;
+  const boundedWorker = (expired = vi.fn()) =>
+    new PostingOutbox({
+      dir,
+      repo: "org/repo",
+      dryRun: false,
+      botLogins: ["review[bot]"],
+      now: () => new Date(clock),
+      adapter: { createReview, listReviewsFull },
+      current: () => true,
+      log: () => {},
+      deliveryWindowMs: 60 * 60_000,
+      onDeliveryExpired: expired,
+    });
+  // MUTATION: drop `&& !this.windowPassed(job)` from the tick's due check — this fails.
+  it("expires at the window's end while GitHub's requested wait still holds, calling GitHub no sooner", async () => {
+    const expired = vi.fn();
+    advance(50 * 60_000);
+    createReview.mockRejectedValueOnce(
+      new GitHubRequestError("POST", "/x", 429, "rate limit", 60 * 60_000),
+    );
+    await boundedWorker(expired).tick();
+    expect(createReview).toHaveBeenCalledTimes(1);
+    expect(jobFile().next_attempt_at).toBe(new Date(clock + 60 * 60_000).toISOString());
+    listReviewsFull.mockClear();
+    advance(10 * 60_000); // minute 60: the window's end, the wait not over
+    await boundedWorker(expired).tick();
+    expect(expired).toHaveBeenCalledTimes(1);
+    expect(jobFile()).toMatchObject({ status: "failed" });
+    expect(jobFile().exhausted_at).toBeDefined();
+    expect(listReviewsFull).not.toHaveBeenCalled();
+    expect(createReview).toHaveBeenCalledTimes(1);
+  });
+  // MUTATION: drop the retryAfterMs from the marker-read failure's schedule — this fails.
+  it("a marker read refused with a long Retry-After waits that long before the next read", async () => {
+    listReviewsFull.mockRejectedValueOnce(
+      new GitHubRequestError("GET", "/x", 429, "rate limit", 30 * 60_000),
+    );
+    await worker().tick();
+    expect(jobFile().next_attempt_at).toBe(new Date(clock + 30 * 60_000).toISOString());
+  });
+  it("without a window the ordinary delivery keeps its debt", async () => {
+    listReviewsFull.mockRejectedValue(new Error("offline"));
+    for (let i = 0; i < 5; i++) {
+      await worker().tick();
+      advance();
+    }
+    expect(pendingPosting(dir, 12, 1, key)).toBe(true);
+  });
   it("refuses contradictory marker identities", async () => {
     reviews = [1, 2].map((id) => ({
       id,
@@ -242,5 +365,75 @@ describe("durable review delivery", () => {
     expect(JSON.parse(readFileSync(join(dir, "pr-12-round-1.outbox.json"), "utf8")).status).toBe(
       "failed",
     );
+  });
+});
+
+// The ordinary replay of an APPROVE carries the CI pre-check (wire.ts wires
+// `withApprovalCiPrecheck` around the gated POST, as for the deferred retry).
+describe("an ordinary APPROVE delivery and its CI pre-check", () => {
+  const listChecks = vi.fn();
+  const gatePost = vi.fn();
+  beforeEach(() => {
+    job.intended_event = "APPROVE";
+    job.payload = { ...job.payload, event: "APPROVE" };
+    save();
+    listChecks.mockReset();
+    gatePost.mockReset();
+    // The gate answers as guard 4 does: an approval carrying a CI state that
+    // is not green is withheld, as a COMMENT.
+    gatePost.mockImplementation(async (p: PostingJob["payload"], ci?: string) => ({
+      executed: true,
+      response: {
+        id: 78,
+        commit_id: head,
+        state: p.event === "APPROVE" && ci === undefined ? "APPROVED" : "COMMENTED",
+      },
+    }));
+    createReview.mockImplementation((pr: number, payload: PostingJob["payload"]) =>
+      withApprovalCiPrecheck({ listChecks, enabled: true }, pr, payload, gatePost),
+    );
+  });
+
+  // The approval goes to the gate AS an approval (guard 2's exemption holds)
+  // with the red state carried, so guard 4 withholds it with no read of its own.
+  // MUTATION: post the payload without the carried state when the pre-check reads red — this fails.
+  it("red CI the pre-check saw is carried to the gate, confirmed as a withheld approval", async () => {
+    listChecks.mockResolvedValue([
+      { name: "ci", source: "check_run", status: "completed", conclusion: "failure" },
+    ]);
+    await worker().tick();
+    expect(gatePost).toHaveBeenCalledTimes(1);
+    const [asked, carried] = gatePost.mock.calls[0]! as [PostingJob["payload"], string];
+    expect(asked).toEqual(job.payload);
+    expect(carried).toBe("red");
+    const receipt = readPostingReceipt(dir, 12, 1) as PostingReceipt;
+    expect(receipt).toMatchObject({
+      status: "confirmed",
+      intended_event: "APPROVE",
+      actual_event: "COMMENT",
+      delivered_by: "daemon_retry",
+    });
+    expect(retrySoftenedApproval(receipt)).toBe(true);
+  });
+
+  it("green CI posts the APPROVE as asked", async () => {
+    listChecks.mockResolvedValue([
+      { name: "ci", source: "check_run", status: "completed", conclusion: "success" },
+    ]);
+    await worker().tick();
+    expect(gatePost.mock.calls[0]).toEqual([expect.objectContaining({ event: "APPROVE" })]);
+    expect(readPostingReceipt(dir, 12, 1)).toMatchObject({ actual_event: "APPROVE" });
+  });
+
+  it("unreadable CI posts nothing and waits as long as GitHub asked", async () => {
+    listChecks.mockRejectedValue(new GitHubRequestError("GET", "/x", 429, "rate limit", 900_000));
+    await worker().tick();
+    expect(gatePost).not.toHaveBeenCalled();
+    expect(pendingPosting(dir, 12, 1, key)).toBe(true);
+    const j = JSON.parse(readFileSync(join(dir, "pr-12-round-1.outbox.json"), "utf8"));
+    expect(j.next_attempt_at).toBe(new Date(clock + 900_000).toISOString());
+    // A delivery attempt, and not a POST one.
+    // MUTATION: drop the unposted_attempts count on a held delivery — this fails.
+    expect(j).toMatchObject({ attempts: 1, unposted_attempts: 1 });
   });
 });

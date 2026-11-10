@@ -452,3 +452,54 @@ describe("the repo profile is read from the base commit", () => {
     expect(loadProfileEcosystem(root, "mine", layered.lookup)).toBe("none");
   });
 });
+
+describe("the repository's threat model rides the repo cut", () => {
+  /** A repo whose base carries `.qcr/threat-model.md` (and a `[security]`
+   * table a repo may not set) and whose head and working tree rewrite it. */
+  function repoWithThreatModel(): { repo: string; base: string } {
+    const repo = join(dir, "tm-repo");
+    mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main");
+    put(join(repo, "src.ts"), "x\n");
+    put(join(repo, ".qcr", "threat-model.md"), "## Controls\n- base control\n");
+    put(join(repo, ".qcr", "profile.toml"), '[security]\nonly = false\ntriggers = "off"\n');
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "base");
+    const base = git(repo, "rev-parse", "HEAD");
+    put(join(repo, ".qcr", "threat-model.md"), "## Controls\n- head control\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "head edits the threat model");
+    put(join(repo, ".qcr", "threat-model.md"), "uncommitted\n");
+    return { repo, base };
+  }
+
+  it("is read from the base commit, never the head or the working tree", () => {
+    const { repo, base } = repoWithThreatModel();
+    const set = resolveOverrides({
+      root: fakeRoot(),
+      profile: "",
+      repo: { gitDir: repo, baseRef: base, destDir: join(dir, "r1") },
+    });
+    expect(set.repoThreatModel).toBe("## Controls\n- base control\n");
+  });
+
+  it("a repo cannot set [security]: the table is cut and named", () => {
+    const { repo, base } = repoWithThreatModel();
+    const r = extractRepoProfile({ gitDir: repo, ref: base, destDir: join(dir, "x") });
+    expect(r.ignored.join("\n")).toMatch(/"security" is not a key a repo profile may set/);
+    expect(Object.keys(parseToml(readFileSync(join(dir, "x", "profile.toml"), "utf8")))).toEqual(
+      [],
+    );
+  });
+
+  it("a base with no .qcr/threat-model.md, or no repo at all, has none", () => {
+    const { repo, base } = repoWithProfile();
+    const noModel = resolveOverrides({
+      root: fakeRoot(),
+      profile: "",
+      repo: { gitDir: repo, baseRef: base, destDir: join(dir, "r1") },
+    });
+    expect(noModel.repoThreatModel).toBeNull();
+    expect(resolveOverrides({ root: fakeRoot(), profile: "" }).repoThreatModel).toBeNull();
+  });
+});

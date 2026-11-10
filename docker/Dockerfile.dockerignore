@@ -7,6 +7,9 @@
 !package-lock.json
 !tsconfig.json
 !packages
+!plugins/qcr/render.mjs
+!plugins/qcr/render.d.mts
+!plugins/qcr/templates
 !src
 !extensions
 !agents
@@ -27,9 +30,10 @@
 !deploy/reviewer/AGENTS.override.md
 **/node_modules
 **/.git
-# A package's build output and its packed data are built in the image, never
-# carried in from the checkout.
+# A package's build output, its packed data and the Plugin's rendered skills
+# are built in the image, never carried in from the checkout.
 packages/*/dist
 packages/*/assets
+packages/pi-plugin/skills
 # Agent instruction files, never in an image.
 **/CLAUDE.md

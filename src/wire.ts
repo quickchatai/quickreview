@@ -53,7 +53,6 @@ import { GitHubAdapter } from "./github.js";
 import { priorSidecarPath } from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import { completeRecordedFindings } from "./recordedfindings.js";
 import { makePostingGuard } from "@quickchatai/pi-quickreview/src/guards.js";
-import { classifyCi, ciBlocksApproval } from "@quickchatai/pi-quickreview/src/cigate.js";
 import {
   githubCredential,
   type GitHubCredential,
@@ -81,13 +80,14 @@ import {
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileHeuristics,
+  loadProfileThreatModel,
 } from "@quickchatai/pi-quickreview/src/profiles.js";
 import { postingPolicyAddenda } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 import {
   prepareDependencySources,
   renderDependencyNote,
 } from "@quickchatai/pi-quickreview/src/depsources.js";
-import { fileImprovementPr, fileIssue, gitRunner, type FileOutcome } from "./improvements.js";
+import { daemonGitRun, fileImprovementPr, fileIssue, type FileOutcome } from "./improvements.js";
 import { homeProfileLookup } from "./install.js";
 import { hostFacts, type HostFacts, type RunHostStatus } from "./runhost.js";
 import {
@@ -144,7 +144,7 @@ import { SlackRouter } from "./slack/router.js";
 import { SlackSocketClient } from "./slack/socket.js";
 import type { SlackTransport } from "./slack/types.js";
 import { StateStore, type RoundRow } from "./state.js";
-import { deliverablePosting } from "./posting-outbox.js";
+import { deliverablePosting, withApprovalCiPrecheck } from "./posting-outbox.js";
 import { readPostingReceipt } from "./posting-receipt.js";
 import type { RecheckOrder } from "./recheck.js";
 import {
@@ -154,11 +154,12 @@ import {
   templateFileForOrder,
 } from "@quickchatai/pi-quickreview/src/templates.js";
 import { assertOrderFitsHost } from "@quickchatai/pi-quickreview/src/launchvocab.js";
-import { nodeExec } from "./tmux.js";
 import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { versionInfo } from "./version.js";
 import { WebhookHealer } from "./webhookheal.js";
 import { buildWorkerWorld } from "./workerworld.js";
+import { pinnedGitExec } from "./worktrees.js";
+import { gitRepoReader } from "./securityrequest.js";
 
 export interface ProductionParts {
   cfg: Config;
@@ -278,8 +279,9 @@ export function buildParts(
 
 // Exit-code checked, cwd mandatory: a runner that ignored git's exit or
 // defaulted to the daemon's own cwd (a repo with no remote) would leave the
-// improvement channel unable to push without saying so.
-const gitRun = gitRunner(nodeExec);
+// improvement channel unable to push without saying so. Pinned: it works in
+// the reviewed repo's base clone (`daemonGitRun`).
+const gitRun = daemonGitRun;
 
 /** The status.json a previous run left, or undefined (first boot, unreadable). */
 function readPreviousStatus(path: string): string | undefined {
@@ -927,11 +929,21 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // malformed heuristics.toml fails the assembly loudly (same contract as the
   // addenda pack below) and every dispatch selects with the same predicates.
   const profileHeuristics = loadProfileHeuristics(root, cfg.review.profile, homeProfileLookup());
+  // The profile's threat model, read once here for the same reason: an
+  // unreadable file fails the assembly loudly. The reviewed repository's own
+  // (`.qcr/threat-model.md` at each round's base) wins over it.
+  const profileThreatModel = loadProfileThreatModel(root, cfg.review.profile, homeProfileLookup());
 
   // The gate's loud line (app-self-config executions) goes to the
   // daemon log; the default console fallback covers any unwired gate.
   gate.setLog(log);
 
+  const approvalPrecheck = {
+    listChecks: (head: string) => adapter.listChecks(head),
+    enabled: cfg.guards.block_approve_on_red_ci,
+    noChecksIsRed: cfg.guards.no_checks_is_red,
+    log,
+  };
   const daemon = createDaemon({
     cfg,
     root,
@@ -939,30 +951,28 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     adapter,
     ...(parts.runHost ? { runHost: parts.runHost } : {}),
     postingDelivery: {
-      createReview: async (pr, payload) => {
-        // An approval queued by approve-pr.sh keeps that route's green-CI
-        // precondition. Do not silently turn an old approval verdict into a
-        // COMMENT that its session never marked approval_withheld.
-        if (payload.event === "APPROVE" && cfg.guards.block_approve_on_red_ci) {
-          try {
-            if (
-              ciBlocksApproval(classifyCi(await adapter.listChecks(payload.commit_id)), {
-                noChecksIsRed: cfg.guards.no_checks_is_red,
-              })
-            )
-              return { executed: false, blocked: "ci-not-green" };
-          } catch {
-            return { executed: false, blocked: "pr-unreadable" };
-          }
-        }
-        return adapter.createReview(pr, payload);
-      },
+      // Every daemon delivery of an APPROVE carries the CI pre-check: CI
+      // that cannot be read holds the delivery (`pr-unreadable`, no POST,
+      // retried), so an approval is never posted over unknown CI. CI that
+      // the pre-check reads red is carried forward: the APPROVE goes to the
+      // gate with that state (`approvalCiWithheld`), and guard 4 withholds it
+      // without a second read there that fails open. The receipt says so
+      // (`delivered_by: daemon_retry`) and the verdict apply reads it as
+      // `approval_withheld`, so a red-CI approval never loops on a refusal.
+      createReview: (pr, payload) =>
+        withApprovalCiPrecheck(approvalPrecheck, pr, payload, (asked, ci) =>
+          adapter.createReview(pr, asked, ci ? { approvalCiWithheld: ci } : undefined),
+        ),
       listReviewsFull: (pr) => adapter.listReviewsFull(pr),
-      // The deferred-posting retry: straight through the gate, whose guards
-      // bind as on any review (guard 4 softens a red-CI approval to a
-      // COMMENT there); only guard 5 is exempt, via `postingRetry`.
+      // The deferred-posting retry: through the gate, whose guards bind as
+      // on any review; only guard 5 is exempt, via `postingRetry`.
       createDeferredReview: (pr, payload, postingKey) =>
-        adapter.createReview(pr, payload, { postingRetry: postingKey }),
+        withApprovalCiPrecheck(approvalPrecheck, pr, payload, (asked, ci) =>
+          adapter.createReview(pr, asked, {
+            postingRetry: postingKey,
+            ...(ci ? { approvalCiWithheld: ci } : {}),
+          }),
+        ),
     },
     hooks: botHost,
     writeInbox,
@@ -1057,6 +1067,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // Migration-number pre-check input: the base branch's migrations
     // at the sha the round pinned. Local git in the just-fetched base clone.
     listBaseMigrations: (baseSha) => sessions.worktrees.listMigrationFiles(baseSha),
+    // The security family's repository reads: the threat model at the base
+    // and the security facts — `git ls-tree` / `git cat-file` in the same
+    // base clone, with the daemon's git pins, nothing checked out or run.
+    securityGit: gitRepoReader(pinnedGitExec, sessions.worktrees.basePath),
+    profileThreatModel,
     // Escalation-mention pick: most recent human author of the
     // touched first-party directive files at the round's merge base, read from
     // the base clone; the daemon's own bot identity never qualifies.
@@ -1205,6 +1220,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           maxWaitMs: EMBEDDER_GATE_MAX_WAIT_MS,
           what: "the local embedder",
         },
+        // A running server that stopped answering is restarted; each one is a
+        // durable anomaly row (quiet: memory health carries the loud side).
+        onLivenessRestart: (detail) => {
+          try {
+            d.store.logAnomaly("openviking_liveness_restart", null, null, detail);
+          } catch (err) {
+            log("openviking: liveness restart anomaly not recorded", err);
+          }
+        },
         // The reviewer's memory root does not exist on a fresh server until
         // something creates it. The TUI does this for the companion's sake;
         // the daemon does it here for its own, each time the server comes up,
@@ -1287,7 +1311,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             models: roundAgentModels(cfg),
             addenda: [
               ...PASS_ADDENDA,
-              ...configAddenda(cfg.review),
+              ...configAddenda(cfg.review, cfg.security),
               ...profileAddenda,
               // The profile's `emphasis` / `max_severity`, compiled.
               ...lensTuningAddenda(cfg.lenses),
@@ -1712,7 +1736,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         },
         // The operator's "review this PR now" (the onboarding proof round):
         // the label path's state-machine trigger, with no GitHub write to ask.
-        reviewNow(pr) {
+        reviewNow(pr, _file, opts) {
           return reviewNow(
             {
               store: d.store,
@@ -1723,6 +1747,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               ...(isPersonMode(cfg.github) ? {} : { botLogin: cfg.github.bot_login }),
             },
             pr,
+            // `--security`: the operator's request for a security review.
+            opts?.security ? { security: true } : {},
           );
         },
         resolveTerminalFailure(payload) {

@@ -8,6 +8,7 @@
     "review": 1,
     "scan": 1
   },
+  "contracts": [1],
   "pi": {
     "package": "@earendil-works/pi-coding-agent",
     "version": "1.4.0"

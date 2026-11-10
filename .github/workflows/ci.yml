@@ -98,14 +98,23 @@ jobs:
 
   # The build and the whole suite, or, for a docs-only change, the tests that
   # read docs (DOCS_SUITE in .github/ci/changes.mjs) with no build.
+  # One leg per supported Node: the floor's major (both packages' `engines`,
+  # 22.19), 24, and 26, which the images carry. The legs run to the end even
+  # when one fails, and the gate's `needs.test` is failed when any leg is
+  # (tests/node-floor.test.ts holds the matrix to the floor).
   test:
     needs: changes
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24", "26"]
+    name: test (node ${{ matrix.node }})
     runs-on: ${{ (vars.QCR_RUNNERS == 'github' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || 'blacksmith-16vcpu-ubuntu-2404' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "26"
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       # Build before test. Some suites (e.g. tests/exec-boundary.test.ts,

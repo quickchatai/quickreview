@@ -1,6 +1,6 @@
 {
   "name": "@quickchatai/quickreview",
-  "version": "1.3.2",
+  "version": "1.4.2",
   "private": false,
   "//private": "The root is the published `qcr` CLI: the whole app (TUI, daemon, companion, every verb), installed with npm, pnpm or bun. It depends on the pi plugin (packages/pi-plugin) at its exact version and on pi at the exact pins below. Publishing is a release step of its own, never part of a build.",
   "description": "A 24/7 AI code reviewer for GitHub: a deterministic daemon driving pi review sessions, with an operator TUI and a local qcr review",
@@ -32,7 +32,7 @@
   "bin": {
     "qcr": "bin/qcr.js"
   },
-  "//files": "Exactly what the app reads at runtime from its package root: the build (dist/), the bin, the TypeScript sources pi loads as extensions (extensions/ and the src/ they import), the data the app and the companion read (agents/, prompts/, seeds/, schemas/, generic profiles/, skills/, the seed manifest), the scripts sessions and the bring-up run (scripts/), the deploy and docker files the onboarding, the companion and the memory sidecar use, the shipped config defaults, and the synthetic regression cases `qcr regression` reads by default. Never other tests, the bench (except the three modules the app imports: cost, exec, values), docs, state, secrets, the private profile or the operator-only and dev scripts (each excluded by file name: a `dir/` pattern does not match `dir.sh`); never a rulebook file. tests/cli-install-smoke.test.ts packs it and checks.",
+  "//files": "Exactly what the app reads at runtime from its package root: the build (dist/), the bin, the TypeScript sources pi loads as extensions (extensions/ and the src/ they import), the data the app and the companion read (agents/, prompts/, seeds/, schemas/, generic profiles/, skills/, the seed manifest), the host plugins' skill source and its renderer (plugins/, which `qcr plugin` renders from), the scripts sessions and the bring-up run (scripts/), the deploy and docker files the onboarding, the companion and the memory sidecar use, the shipped config defaults, and the synthetic regression cases `qcr regression` reads by default. Never other tests, the bench (except the three modules the app imports: cost, exec, values), docs, state, secrets, the private profile or the operator-only and dev scripts (each excluded by file name: a `dir/` pattern does not match `dir.sh`); never a rulebook file. tests/cli-install-smoke.test.ts packs it and checks.",
   "files": [
     "bin/",
     "dist/",
@@ -56,6 +56,7 @@
     "profiles/",
     "!profiles/quickchat/",
     "skills/",
+    "plugins/",
     "scripts/",
     "!scripts/cutover.sh",
     "!scripts/cutover-rehearsal.sh",
@@ -87,10 +88,10 @@
     "!**/AGENTS.md"
   ],
   "engines": {
-    "node": ">=26"
+    "node": ">=22.19"
   },
   "scripts": {
-    "build": "tsc -b && node scripts/verify-dist.mjs && node scripts/build-stamp.mjs",
+    "build": "tsc -b && node plugins/qcr/render.mjs pi && node scripts/verify-dist.mjs && node scripts/build-stamp.mjs",
     "prepack": "npm run build",
     "watch": "node scripts/tsc-watch.mjs -b --watch --preserveWatchOutput",
     "dev": "bash scripts/dev-tui.sh",
@@ -100,7 +101,7 @@
     "//canary:pi:range": "The same canaries on each pi version the plugin's peer range (packages/pi-plugin/package.json) should hold, refusing one outside it: no argument runs the installed pi; `-- --install 1.4.x` fetches another first (the registry). Run it by hand before a version joins the peer range; CI runs only the installed pi's canaries. Needs the build.",
     "canary:pi:range": "node scripts/pi-canary-range.mjs",
     "//lint": "Deliberately NOT chained into `test` or `build`: scripts/dev-tui.sh blocks on the build before the TUI paints (ruling 5), and an ESLint pass there is seconds of blank terminal. CI runs it as its own step.",
-    "lint": "node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js .",
+    "lint": "node --max-old-space-size=8192 node_modules/eslint/bin/eslint.js .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,mjs,js,json,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,mjs,js,json,yml,yaml}\"",
@@ -115,10 +116,13 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.4.0",
-    "@quickchatai/pi-quickreview": "1.3.2",
+    "@quickchatai/pi-quickreview": "1.4.2",
     "@earendil-works/pi-coding-agent": "1.4.0",
-    "better-sqlite3": "13.0.3",
     "smol-toml": "1.9.1"
+  },
+  "//optionalDependencies": "better-sqlite3 is the state store's driver (src/state.ts), a native module: optional, so an install where it cannot build still installs, and the verbs that never open the store (src/sqlitehint.ts SQLITE_FREE_VERBS) still run. Every other verb prints the SQLite hint.",
+  "optionalDependencies": {
+    "better-sqlite3": "13.0.3"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
