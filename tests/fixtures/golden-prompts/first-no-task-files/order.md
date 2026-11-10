@@ -132,16 +132,16 @@ be reviewed as if they were.
 
 | lens | subagent to call | tier | may raise to | focus / why |
 | --- | --- | --- | --- | --- |
-| pass-baseline | `pass-baseline--sol-high` | sol-high | — (pinned) | because every round: the PR against its own claims |
-| pass-behaviour-delta | `pass-behaviour-delta--sol-high` | sol-high | — (pinned) | files: `comfy/model.py` |
-| pass-sweep | `pass-sweep--sol-high` | sol-high | — (pinned) | files: `comfy/model.py`, `tests/test_model.py` |
-| pass-claims | `pass-claims--terra-med` | terra-med | `pass-claims--sol-med`, `pass-claims--sol-high` | because the PR text claims "lint rules" |
-| pass-tests | `pass-tests--terra-med` | terra-med | `pass-tests--sol-med`, `pass-tests--sol-high` | because the PR changes code: existing tests are its consumers, and its own tests are claims |
-| pass-maintainability | `pass-maintainability--terra-med` | terra-med | `pass-maintainability--sol-med`, `pass-maintainability--sol-high` | because the change adds 40 lines of non-test code (at least 20) |
-| pass-duplication | `pass-duplication--terra-med` | terra-med | `pass-duplication--sol-med`, `pass-duplication--sol-high` | because the change adds 40 lines of non-test code (at least 20) |
-| pass-abstraction | `pass-abstraction--terra-med` | terra-med | `pass-abstraction--sol-med`, `pass-abstraction--sol-high` | because the change adds 40 lines of non-test code (at least 20) |
-| pass-consistency | `pass-consistency--terra-med` | terra-med | `pass-consistency--sol-med`, `pass-consistency--sol-high` | because the change adds 40 lines of non-test code (at least 20) |
-| pass-validate | `pass-validate--sol-high` | sol-high | — (pinned) |  |
+| pass-baseline | `pass-baseline--deep` | deep | — (pinned) | because every round: the PR against its own claims |
+| pass-behaviour-delta | `pass-behaviour-delta--deep` | deep | — (pinned) | files: `comfy/model.py` |
+| pass-sweep | `pass-sweep--deep` | deep | — (pinned) | files: `comfy/model.py`, `tests/test_model.py` |
+| pass-claims | `pass-claims--light` | light | `pass-claims--standard`, `pass-claims--deep` | because the PR text claims "lint rules" |
+| pass-tests | `pass-tests--light` | light | `pass-tests--standard`, `pass-tests--deep` | because the PR changes code: existing tests are its consumers, and its own tests are claims |
+| pass-maintainability | `pass-maintainability--light` | light | `pass-maintainability--standard`, `pass-maintainability--deep` | because the change adds 40 lines of non-test code (at least 20) |
+| pass-duplication | `pass-duplication--light` | light | `pass-duplication--standard`, `pass-duplication--deep` | because the change adds 40 lines of non-test code (at least 20) |
+| pass-abstraction | `pass-abstraction--light` | light | `pass-abstraction--standard`, `pass-abstraction--deep` | because the change adds 40 lines of non-test code (at least 20) |
+| pass-consistency | `pass-consistency--light` | light | `pass-consistency--standard`, `pass-consistency--deep` | because the change adds 40 lines of non-test code (at least 20) |
+| pass-validate | `pass-validate--deep` | deep | — (pinned) |  |
 
 
 **Rows with a focus or a reason.** When the plan table has a *focus / why*
@@ -210,8 +210,8 @@ it shows a concrete shape an addable lens exists for (a check that now admits
 more values, work moved onto a queue, a loop over another party's data, a
 release that reaches clients and servers at different times), add that lens in
 the same launch turn. Run it at the plan's default tier: call the
-`<lens>--sol-med` variant, unless it is a risk pass (risk passes exist only as
-`<lens>--sol-high`) or the list above names the variant to run (this repo's
+`<lens>--standard` variant, unless it is a risk pass (risk passes exist only as
+`<lens>--deep`) or the list above names the variant to run (this repo's
 profile floors that lens higher). **Never drop a planned lens.**
 
 **Two lenses exist only to be added — no plan ever selects them.**
@@ -722,9 +722,9 @@ The verdict shape:
   "head_sha": "0bb60235132cc72daea81427107a40ba1ccb5ddf",
   "summary": "<3-4 plain sentences for Example Owner>",
   "passes": [
-    { "name": "pass-baseline", "tier": "sol-med", "findings": 3 },
-    { "name": "pass-concurrency", "tier": "sol-med", "reason": "added: read-then-write race in claim ownership", "findings": 1 },
-    { "name": "pass-validate", "tier": "sol-med", "findings": 0,
+    { "name": "pass-baseline", "tier": "standard", "findings": 3 },
+    { "name": "pass-concurrency", "tier": "standard", "reason": "added: read-then-write race in claim ownership", "findings": 1 },
+    { "name": "pass-validate", "tier": "standard", "findings": 0,
       "survived": 2, "killed": 1, "downgraded": 0,
       "merged": 1, "folded": 1 }
   ],
@@ -833,7 +833,7 @@ alone: a bare `below-bar` teaches nobody anything.
       "path": "src/api/orders.py",
       "line": 212,
       "lens": "pass-security",
-      "tier": "sol-high",
+      "tier": "deep",
       "severity": "P1",
       "confidence": 0.9,
       "reachability": "routine",
@@ -848,7 +848,7 @@ alone: a bare `below-bar` teaches nobody anything.
       "path": "src/api/orders.py",
       "line": 88,
       "lens": "pass-simplicity",
-      "tier": "sol-med",
+      "tier": "standard",
       "severity": "P2",
       "confidence": 0.6,
       "reachability": "contrived",
@@ -862,7 +862,7 @@ alone: a bare `below-bar` teaches nobody anything.
       "path": "src/api/invoices.py",
       "line": 57,
       "lens": "pass-sec-access",
-      "tier": "sol-high",
+      "tier": "deep",
       "severity": "P1",
       "confidence": 0.5,
       "reachability": "routine",

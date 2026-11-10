@@ -1,40 +1,40 @@
 {
   "plannedLenses": [
-    "pass-baseline--sol-high",
-    "pass-data-safety--sol-high",
-    "pass-behaviour-delta--sol-high",
-    "pass-sweep--sol-high",
-    "pass-ui--sol-med",
-    "pass-backcompat--sol-med",
-    "pass-claims--sol-med",
-    "pass-tests--sol-med",
-    "pass-maintainability--sol-med",
-    "pass-duplication--sol-med",
-    "pass-abstraction--sol-med",
-    "pass-consistency--sol-med",
-    "pass-validate--sol-high"
+    "pass-baseline--deep",
+    "pass-data-safety--deep",
+    "pass-behaviour-delta--deep",
+    "pass-sweep--deep",
+    "pass-ui--standard",
+    "pass-backcompat--standard",
+    "pass-claims--standard",
+    "pass-tests--standard",
+    "pass-maintainability--standard",
+    "pass-duplication--standard",
+    "pass-abstraction--standard",
+    "pass-consistency--standard",
+    "pass-validate--deep"
   ],
   "passPlan": [
     {
       "lens": "pass-baseline",
-      "agent": "pass-baseline--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-baseline--deep",
+      "tier": "deep",
       "raisable_to": [],
       "why": "every round: the PR against its own claims",
       "required": true
     },
     {
       "lens": "pass-data-safety",
-      "agent": "pass-data-safety--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-data-safety--deep",
+      "tier": "deep",
       "raisable_to": [],
       "why": "the diff touches shop/migrations/0007_add_sku.py",
       "required": true
     },
     {
       "lens": "pass-behaviour-delta",
-      "agent": "pass-behaviour-delta--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-behaviour-delta--deep",
+      "tier": "deep",
       "raisable_to": [],
       "why": "base behaviour is at risk in 2 files: removed or replaced guards, conditions, calls, returns or values, or existing code wrapped in a new branch",
       "focus": [
@@ -44,8 +44,8 @@
     },
     {
       "lens": "pass-sweep",
-      "agent": "pass-sweep--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-sweep--deep",
+      "tier": "deep",
       "raisable_to": [],
       "why": "every changed line of 5 changed files, read one by one",
       "focus": [
@@ -58,80 +58,80 @@
     },
     {
       "lens": "pass-ui",
-      "agent": "pass-ui--sol-med",
-      "tier": "sol-med",
+      "agent": "pass-ui--standard",
+      "tier": "standard",
       "raisable_to": [
-        "pass-ui--sol-high"
+        "pass-ui--deep"
       ],
       "why": "the diff touches shop/templates/shop/detail.html"
     },
     {
       "lens": "pass-backcompat",
-      "agent": "pass-backcompat--sol-med",
-      "tier": "sol-med",
+      "agent": "pass-backcompat--standard",
+      "tier": "standard",
       "raisable_to": [
-        "pass-backcompat--sol-high"
+        "pass-backcompat--deep"
       ],
       "why": "the diff touches shop/migrations/0007_add_sku.py"
     },
     {
       "lens": "pass-claims",
-      "agent": "pass-claims--sol-med",
-      "tier": "sol-med",
+      "agent": "pass-claims--standard",
+      "tier": "standard",
       "raisable_to": [
-        "pass-claims--sol-high"
+        "pass-claims--deep"
       ],
       "why": "the PR text claims \"lint rules\""
     },
     {
       "lens": "pass-tests",
-      "agent": "pass-tests--sol-med",
-      "tier": "sol-med",
+      "agent": "pass-tests--standard",
+      "tier": "standard",
       "raisable_to": [
-        "pass-tests--sol-high"
+        "pass-tests--deep"
       ],
       "why": "the PR changes code: existing tests are its consumers, and its own tests are claims"
     },
     {
       "lens": "pass-maintainability",
-      "agent": "pass-maintainability--sol-med",
-      "tier": "sol-med",
+      "agent": "pass-maintainability--standard",
+      "tier": "standard",
       "raisable_to": [
-        "pass-maintainability--sol-high"
+        "pass-maintainability--deep"
       ],
       "why": "the change adds 70 lines of non-test code (at least 20)"
     },
     {
       "lens": "pass-duplication",
-      "agent": "pass-duplication--sol-med",
-      "tier": "sol-med",
+      "agent": "pass-duplication--standard",
+      "tier": "standard",
       "raisable_to": [
-        "pass-duplication--sol-high"
+        "pass-duplication--deep"
       ],
       "why": "the change adds 70 lines of non-test code (at least 20)"
     },
     {
       "lens": "pass-abstraction",
-      "agent": "pass-abstraction--sol-med",
-      "tier": "sol-med",
+      "agent": "pass-abstraction--standard",
+      "tier": "standard",
       "raisable_to": [
-        "pass-abstraction--sol-high"
+        "pass-abstraction--deep"
       ],
       "why": "the change adds 70 lines of non-test code (at least 20)"
     },
     {
       "lens": "pass-consistency",
-      "agent": "pass-consistency--sol-med",
-      "tier": "sol-med",
+      "agent": "pass-consistency--standard",
+      "tier": "standard",
       "raisable_to": [
-        "pass-consistency--sol-high"
+        "pass-consistency--deep"
       ],
       "why": "the change adds 70 lines of non-test code (at least 20)"
     },
     {
       "lens": "pass-validate",
-      "agent": "pass-validate--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-validate--deep",
+      "tier": "deep",
       "raisable_to": []
     }
   ],

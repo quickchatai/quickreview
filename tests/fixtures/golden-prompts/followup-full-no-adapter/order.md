@@ -163,10 +163,10 @@ running; it may then fill gaps and inspect the delta/whole diff as needed.
 
 | lens | subagent to call | tier | may raise to | focus / why |
 | --- | --- | --- | --- | --- |
-| pass-baseline | `pass-baseline--sol-high` | sol-high | — (pinned) | because every round: the PR against its own claims |
-| pass-sweep | `pass-sweep--sol-high` | sol-high | — (pinned) | files: `b.py` |
-| pass-tests | `pass-tests--terra-med` | terra-med | `pass-tests--sol-med`, `pass-tests--sol-high` | because the PR changes code: existing tests are its consumers, and its own tests are claims |
-| pass-validate | `pass-validate--sol-high` | sol-high | — (pinned) |  |
+| pass-baseline | `pass-baseline--deep` | deep | — (pinned) | because every round: the PR against its own claims |
+| pass-sweep | `pass-sweep--deep` | deep | — (pinned) | files: `b.py` |
+| pass-tests | `pass-tests--light` | light | `pass-tests--standard`, `pass-tests--deep` | because the PR changes code: existing tests are its consumers, and its own tests are claims |
+| pass-validate | `pass-validate--deep` | deep | — (pinned) |  |
 
 **Task files — this round's lens tasks are already written.** The daemon
 wrote each discovery row's complete, self-contained task (worktree, head,
@@ -190,9 +190,9 @@ error, launch every row through `subagent` with its pointer (plus what
 
 | row | subagent | task file |
 | --- | --- | --- |
-| 1 | `pass-baseline--sol-high` | `/bench-out/cases/x/tasks/01-pass-baseline--sol-high.md` |
-| 2 | `pass-sweep--sol-high` | `/bench-out/cases/x/tasks/02-pass-sweep--sol-high.md` |
-| 3 | `pass-tests--terra-med` | `/bench-out/cases/x/tasks/03-pass-tests--terra-med.md` |
+| 1 | `pass-baseline--deep` | `/bench-out/cases/x/tasks/01-pass-baseline--deep.md` |
+| 2 | `pass-sweep--deep` | `/bench-out/cases/x/tasks/02-pass-sweep--deep.md` |
+| 3 | `pass-tests--light` | `/bench-out/cases/x/tasks/03-pass-tests--light.md` |
 
 **Rows with a focus or a reason.** When the plan table has a *focus / why*
 column: a row listing files is ONE launch of that agent with exactly those
@@ -258,8 +258,8 @@ it shows a concrete shape an addable lens exists for (a check that now admits
 more values, work moved onto a queue, a loop over another party's data, a
 release that reaches clients and servers at different times), add that lens in
 the same launch turn. Run it at the plan's default tier: call the
-`<lens>--sol-med` variant, unless it is a risk pass (risk passes exist only as
-`<lens>--sol-high`) or the list above names the variant to run (this repo's
+`<lens>--standard` variant, unless it is a risk pass (risk passes exist only as
+`<lens>--deep`) or the list above names the variant to run (this repo's
 profile floors that lens higher). **Never drop a planned lens.**
 
 **Two lenses exist only to be added — no plan ever selects them.**
@@ -764,9 +764,9 @@ The verdict shape:
   "head_sha": "651e6a00f4a8848e711ff672ca9ced219283e2e8",
   "summary": "<3-4 plain sentences for Example Owner>",
   "passes": [
-    { "name": "pass-baseline", "tier": "sol-med", "findings": 3 },
-    { "name": "pass-concurrency", "tier": "sol-med", "reason": "added: read-then-write race in claim ownership", "findings": 1 },
-    { "name": "pass-validate", "tier": "sol-med", "findings": 0,
+    { "name": "pass-baseline", "tier": "standard", "findings": 3 },
+    { "name": "pass-concurrency", "tier": "standard", "reason": "added: read-then-write race in claim ownership", "findings": 1 },
+    { "name": "pass-validate", "tier": "standard", "findings": 0,
       "survived": 2, "killed": 1, "downgraded": 0,
       "merged": 1, "folded": 1 }
   ],
@@ -876,7 +876,7 @@ alone: a bare `below-bar` teaches nobody anything.
       "path": "src/api/orders.py",
       "line": 212,
       "lens": "pass-security",
-      "tier": "sol-high",
+      "tier": "deep",
       "severity": "P1",
       "confidence": 0.9,
       "reachability": "routine",
@@ -891,7 +891,7 @@ alone: a bare `below-bar` teaches nobody anything.
       "path": "src/api/orders.py",
       "line": 88,
       "lens": "pass-simplicity",
-      "tier": "sol-med",
+      "tier": "standard",
       "severity": "P2",
       "confidence": 0.6,
       "reachability": "contrived",
@@ -905,7 +905,7 @@ alone: a bare `below-bar` teaches nobody anything.
       "path": "src/api/invoices.py",
       "line": 57,
       "lens": "pass-sec-access",
-      "tier": "sol-high",
+      "tier": "deep",
       "severity": "P1",
       "confidence": 0.5,
       "reachability": "routine",

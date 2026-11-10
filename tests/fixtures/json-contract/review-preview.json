@@ -14,10 +14,10 @@
     "lines": 2,
     "scope": "full",
     "lenses": [
-      "pass-baseline--sol-high",
-      "pass-sweep--sol-high",
-      "pass-tests--terra-med",
-      "pass-validate--sol-high"
+      "pass-baseline--deep",
+      "pass-sweep--deep",
+      "pass-tests--light",
+      "pass-validate--deep"
     ],
     "estimate_usd": 0.61,
     "cap_usd": 1.22,
