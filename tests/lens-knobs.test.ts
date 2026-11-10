@@ -529,10 +529,51 @@ describe("validateLensKnobs", () => {
 
     // What `stripPins` leaves of an override when a run names its one model:
     // the level stays, on the model the lens would have run on.
-    it("takes a level with no model", () => {
+    // MUTATION: in passTierModels, write the override's own model part even
+    // when it is empty (`const on = model`) — the lens leaves its tier's
+    // model for `:low` and the pinned cases fail.
+    it("takes a level with no model, and the lens stays on the model it had", () => {
       expect(moved(":low")).not.toThrow();
-      const models = passTierModels({}, baseCfg.models.tiers, {}, { "pass-style": ":low" });
-      expect(models["pass-style--deep"]).toBe(":low");
+      const tiers = { light: "prov/a:medium", standard: "prov/b", deep: ":high" } as const;
+      const level = { "pass-style": ":low" };
+      // Each variant's own tier: its model, pinned or not, at the override's level.
+      expect(passTierModels({}, tiers, {}, level)).toEqual({
+        "pass-style--light": "prov/a:low",
+        "pass-style--standard": "prov/b:low",
+        "pass-style--deep": ":low",
+      });
+      // A pinned lens: the pinned tier's model on every variant.
+      expect(passTierModels({ "pass-style": "light" }, tiers, {}, level)).toEqual({
+        "pass-style--light": "prov/a:low",
+        "pass-style--standard": "prov/a:low",
+        "pass-style--deep": "prov/a:low",
+      });
+      // A profile's effort override: its model, at the level the config names.
+      expect(
+        passTierModels({}, tiers, { "pass-style--deep": "prov/c:xhigh" }, level)[
+          "pass-style--deep"
+        ],
+      ).toBe("prov/c:low");
+      // The shipped tiers pin: the lens keeps the deep tier's model.
+      const deep = baseCfg.models.tiers["deep"];
+      expect(deep).toMatch(/^[^:]+\/[^:]+:/);
+      expect(passTierModels({}, baseCfg.models.tiers, {}, level)["pass-style--deep"]).toBe(
+        deep.replace(/:[^:]+$/, ":low"),
+      );
+    });
+
+    it("an override that names a model moves the lens as before", () => {
+      const tiers = { light: "prov/a:medium", standard: "prov/b", deep: ":high" } as const;
+      expect(passTierModels({}, tiers, {}, { "pass-style": "prov/small" })).toEqual({
+        "pass-style--light": "prov/small:medium",
+        "pass-style--standard": "prov/small",
+        "pass-style--deep": "prov/small:high",
+      });
+      expect(passTierModels({}, tiers, {}, { "pass-style": "prov/small:low" })).toEqual({
+        "pass-style--light": "prov/small:low",
+        "pass-style--standard": "prov/small:low",
+        "pass-style--deep": "prov/small:low",
+      });
     });
 
     it("the same refusal reaches a --config lever", () => {

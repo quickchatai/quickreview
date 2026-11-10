@@ -2153,14 +2153,19 @@ export function passTierModels(
     for (const t of PASS_TIERS)
       if (!unpinned.includes(`${pass}--${t}`)) out[`${pass}--${t}`] = spec;
   }
-  // `[models.pass_models]`: a lens moved onto another model. Every
-  // variant keeps the thinking level it would have run at (its tier, a pin,
-  // the profile's effort) unless the configured spec names its own.
-  for (const [pass, model] of Object.entries(passModels)) {
-    const own = splitModelSpec(model).thinking;
+  // `[models.pass_models]`: a lens moved onto another model, or, by a spec
+  // with no model part, onto another level. Every variant keeps what the
+  // configured spec does not name: the thinking level it would have run at
+  // (its tier, a pin, the profile's effort), and the model it would have run
+  // on (an unpinned one stays unpinned).
+  for (const [pass, spec] of Object.entries(passModels)) {
+    const { model, thinking: own } = splitModelSpec(spec);
     for (const t of PASS_TIERS) {
-      const level = own ?? splitModelSpec(out[`${pass}--${t}`] ?? tiers[t]).thinking;
-      out[`${pass}--${t}`] = level && !own ? `${model}:${level}` : model;
+      const variant = `${pass}--${t}`;
+      const had = splitModelSpec(out[variant] ?? tiers[t]);
+      const on = model === "" ? had.model : model;
+      const level = own ?? had.thinking;
+      out[variant] = level ? `${on}:${level}` : on;
     }
   }
   return out;
