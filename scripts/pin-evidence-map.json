@@ -328,7 +328,7 @@
     },
     {
       "id": "pi-auth-status-origin",
-      "assumes": "pi 1.4.0's ModelRegistry reports a stored credential as source `stored`, an environment key as `environment` with the variable's name as its label and an ambient cloud identity with a phrase or a non-key variable, and isUsingOAuth is true for a stored OAuth login without refreshing it; the route's credential classes are read from those.",
+      "assumes": "pi 1.4.0's ModelRegistry reports a stored credential as source `stored`, an environment key as `environment` with the variable's name as its label and an ambient cloud identity with a phrase or a non-key variable, and isUsingOAuth is true for a stored OAuth login without refreshing it; the route's credential classes are read from those. The status of a models.json key spelled as a variable is read from the process's environment while availability is read from the host's auth context, so the inventory takes availability as the credential test.",
       "files": { "tests/pi-canary/canary-13-auth-status.test.ts": 1 },
       "signal": {
         "source": "none",

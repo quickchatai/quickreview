@@ -11,8 +11,13 @@
 //     identity;
 //   - a stored OAuth login reports `isUsingOAuth` even when its token has
 //     expired, and nothing refreshes it: reading the inventory never spends
-//     the person's refresh token and never reaches out.
-import { mkdtempSync, rmSync } from "node:fs";
+//     the person's refresh token and never reaches out;
+//   - a `models.json` key spelled as a variable is the one credential whose
+//     status and availability look in different places: the status in the
+//     process's environment, availability (and the request) in the host's
+//     auth context. So the inventory takes availability as the credential
+//     test and reads "not configured" of an available provider as that key.
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -33,6 +38,10 @@ const STORED_OAUTH = "anthropic";
 const ENV_KEYED = "groq";
 const ENV_NAME = "GROQ_API_KEY";
 const BARE = "xai";
+/** A custom provider whose models.json key names a variable that only the
+ * host's environment holds. */
+const CUSTOM = "canary-custom";
+const CUSTOM_ENV = "QCR_CANARY_13_KEY";
 
 type Stored =
   | { type: "api_key"; key: string }
@@ -143,6 +152,37 @@ describe("[canary 13] pi's auth status, through the registry facade", () => {
     expect(credentialOrigin({ source: "models_json_key" })).toBe("models-json");
     expect(credentialOrigin({ source: "models_json_command" })).toBe("models-json");
     expect(credentialOrigin({ source: "fallback" })).toBe("ambient");
+  });
+
+  // MUTATION: skip a provider whose status is not `configured` in
+  // registryInventory — the last row fails. When the first row fails instead,
+  // pi's status has started to read the auth context: the inventory's
+  // "not configured means that key" reading has nothing left to cover.
+  it("a models.json key spelled as a variable: the status looks in the process, availability in the host's environment", async () => {
+    const agentDir = join(dir, "agent-envref");
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(
+      join(agentDir, "models.json"),
+      JSON.stringify({
+        providers: {
+          [CUSTOM]: {
+            baseUrl: "http://127.0.0.1:9/v1",
+            api: "openai-completions",
+            apiKey: `\${${CUSTOM_ENV}}`,
+            models: [{ id: "m", name: "m", reasoning: true, input: ["text"] }],
+          },
+        },
+      }),
+    );
+    expect(process.env[CUSTOM_ENV]).toBeUndefined();
+    host = await PiHost.create({ agentDir, authEnv: { [CUSTOM_ENV]: "not-a-key" } });
+    const inventory = await host.inventory();
+    const registry = new ModelRegistry(host.modelRuntime);
+    expect(registry.getProviderAuthStatus(CUSTOM)).toEqual({ configured: false });
+    expect(registry.getAvailable().map((m) => `${m.provider}/${m.id}`)).toEqual([`${CUSTOM}/m`]);
+    expect(inventory.map((e) => [e.provider, e.credential])).toEqual([
+      [CUSTOM, { kind: "api_key", origin: "env-key", subscription: false }],
+    ]);
   });
 
   it("the inventory is those three providers, each in its class, read without a write", async () => {

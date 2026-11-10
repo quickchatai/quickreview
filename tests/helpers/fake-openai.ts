@@ -157,11 +157,13 @@ export const FAKE_ROUTE_MODEL = "local/r";
  * `PiHost` and a `pi` child (PI_CODING_AGENT_DIR) both read this file.
  * `routable` adds `FAKE_ROUTE_MODEL` beside `m`, for a test whose sessions
  * name no model: `m` stays as it is, so what a pinned session sends is
- * unchanged, and a host with `m` alone is the "no model passes" case. */
+ * unchanged, and a host with `m` alone is the "no model passes" case.
+ * `apiKey` is the provider's key as models.json spells it (a literal, or a
+ * `\${VARIABLE}` reference); the default is a literal. */
 export function writeFakeProvider(
   agentDir: string,
   baseUrl: string,
-  options: { routable?: boolean } = {},
+  options: { routable?: boolean; apiKey?: string } = {},
 ): void {
   mkdirSync(agentDir, { recursive: true });
   const cost = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 };
@@ -172,7 +174,7 @@ export function writeFakeProvider(
         local: {
           baseUrl,
           api: "openai-completions",
-          apiKey: "not-a-key",
+          apiKey: options.apiKey ?? "not-a-key",
           models: [
             {
               id: "m",

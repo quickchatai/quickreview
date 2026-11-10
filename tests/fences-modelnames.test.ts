@@ -23,6 +23,10 @@
 // it, held by SET EQUALITY: a file that starts to fail is not on it, and a
 // file that was cleaned is still on it; either fails. It only shrinks.
 //
+// Comments are not code, and what is one is TypeScript's own answer: a `//`
+// that ends a regex (`/^prefix\//`) or sits in a string starts none, so a
+// name written after it on the line is still read.
+//
 // Verified by mutation, in this file: the scan runs on the real tree and on a
 // planted tree that must fail.
 import {
@@ -37,9 +41,9 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { leafOf, versionOf } from "@quickchatai/pi-quickreview/src/modelpick.js";
-import { stripComments } from "./helpers/engine-fences.js";
 import { escapeRe } from "./helpers/source-trees.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -62,6 +66,9 @@ const MODEL_LEAVES: ReadonlySet<string> = new Set(
 
 const PROVIDER_RE = `(?:${PROVIDERS.map(escapeRe).join("|")})`;
 const QUOTE = "[\"'`]";
+
+/** A provider id or a model leaf, anywhere in a text. */
+const MENTIONS = new RegExp(`${PROVIDER_RE}|${[...MODEL_LEAVES].map(escapeRe).join("|")}`, "i");
 
 /** (a) and (b) for TypeScript, as `[what, pattern]`. */
 const TS_PATTERNS: ReadonlyArray<[string, RegExp]> = [
@@ -101,6 +108,35 @@ const SH_PATTERNS: ReadonlyArray<[string, RegExp]> = [
   ],
 ];
 
+/**
+ * TypeScript with its comments blanked, by TypeScript's own parse. A comment
+ * sits in the trivia before a token, so the trivia before every token is read
+ * for them; nothing inside a string, a template or a regex is looked at. Each
+ * comment becomes spaces, so the lines and the columns stay where they were.
+ */
+function stripTsComments(text: string): string {
+  const source = ts.createSourceFile("f.ts", text, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  const comments: ts.CommentRange[] = [];
+  const walk = (node: ts.Node): void => {
+    // A JSDoc node lies inside a comment: its positions are not code.
+    if (node.kind >= ts.SyntaxKind.FirstJSDocNode && node.kind <= ts.SyntaxKind.LastJSDocNode)
+      return;
+    const children = node.getChildren(source);
+    if (children.length === 0) {
+      // TypeScript files the trivia's comments under two readers: those on
+      // the line the trivia starts on, and those on the lines after it.
+      const at = node.getFullStart();
+      comments.push(...(ts.getTrailingCommentRanges(text, at) ?? []));
+      comments.push(...(ts.getLeadingCommentRanges(text, at) ?? []));
+    } else children.forEach(walk);
+  };
+  walk(source);
+  let out = text;
+  for (const { pos, end } of comments)
+    out = out.slice(0, pos) + out.slice(pos, end).replace(/[^\n]/g, " ") + out.slice(end);
+  return out;
+}
+
 /** A shell script with its comment lines removed. */
 function stripShellComments(text: string): string {
   return text
@@ -111,7 +147,10 @@ function stripShellComments(text: string): string {
 
 /** What the fence finds in one file's text: `what: the text that matched`. */
 function modelNameHits(text: string, kind: "ts" | "sh"): string[] {
-  const code = kind === "ts" ? stripComments(text) : stripShellComments(text);
+  // Every hit is a provider id or a model leaf in the code, so a text that
+  // spells none anywhere has none, and is not parsed.
+  if (!MENTIONS.test(text)) return [];
+  const code = kind === "ts" ? stripTsComments(text) : stripShellComments(text);
   const hits = new Set<string>();
   for (const [what, re] of kind === "ts" ? TS_PATTERNS : SH_PATTERNS)
     for (const m of code.matchAll(re)) hits.add(`${what}: ${m[0].trim()}`);
@@ -180,6 +219,8 @@ const ALLOWLIST: Readonly<Record<string, string>> = {
     "the same inline twin, for the bot's own pi. It goes when the entrypoints stop resolving a model.",
   "packages/pi-plugin/src/engine/auth.ts":
     "RUNTIME_KEY_ENVS, a hand table of which variable keys which provider. It goes when pi's own inventory is the only one.",
+  "packages/pi-plugin/src/engine/keyroute.ts":
+    "the bench's key route rewrites one provider's specs to another's. It leaves the walk when the file moves to the bench harness.",
   "packages/pi-plugin/src/modelroute.ts":
     "the two-provider twin, still exported for the routes that have not moved to resolveRoute. It goes with its last caller.",
   "packages/pi-plugin/src/pricing.ts":
@@ -218,11 +259,18 @@ describe("no model or provider name decides anything", () => {
       `const spec = "${provider}/some-model:medium";`,
       `const spec = \`${provider}/\${id}\`;`,
       `const model = "${leaf}";`,
+      // A `//` that ends a regex, or sits in a string, starts no comment.
+      `return spec.replace(/^some-prefix\\//, "${provider}/");`,
+      `const url = "see // here"; const spec = "${provider}/some-model";`,
+      `const n = a /* a comment */ / b; const spec = "${provider}/some-model";`,
     ])
       expect(modelNameHits(yes, "ts"), yes).not.toEqual([]);
     for (const no of [
       `// if (provider === "${provider}") return other;`,
       `/* const spec = "${provider}/some-model"; */`,
+      `/**\n * The default is "${provider}/some-model".\n */\nexport const x = 1;`,
+      `const x = f(1, /* "${provider}/some-model" */ 2); // "${leaf}"`,
+      `const re = /^some-prefix\\//; // then "${provider}/some-model"`,
       `const label = "sign in to ${provider} first";`,
       `const providers = route.provider === other.provider;`,
       `const path = "docs/${provider}.md";`,
@@ -280,7 +328,10 @@ describe("no model or provider name decides anything", () => {
 
   // MUTATION: add `if (provider === "openai-codex") return "openai";` to
   // extensions/login-route.ts — this fails. Remove the last name from a file
-  // that is on the allowlist and leave its entry — this fails too.
+  // that is on the allowlist and leave its entry — this fails too. Strip
+  // comments by pattern again (a line comment at any `//` not after a quote or
+  // a colon) — the key route's literal sits after a regex that ends in `\//`,
+  // the file reads clean and its entry fails.
   it(
     "holds on the tree: exactly the allowlisted files carry a name",
     { timeout: HEAVY_TIMEOUT_MS },

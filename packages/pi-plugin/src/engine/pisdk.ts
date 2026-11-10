@@ -409,7 +409,11 @@ const KEY_WORD = /(^|_)(KEY|TOKEN)(_|$)/;
  * `fallback`, and an `environment` status carries as its label what the
  * provider's own check named: the variable's name for a key or a token, a
  * phrase or a non-key variable for an ambient cloud identity (a profile, a
- * role, default credentials).
+ * role, default credentials). The status of a key that `models.json` spells
+ * as a variable is read from the process's environment, not from the auth
+ * context the availability check and the request use, so it can say
+ * "not configured" of a provider whose models are available: availability is
+ * the credential test, and the status only sorts (`registryInventory`).
  */
 export function credentialOrigin(status: { source?: string; label?: string }): CredentialOrigin {
   switch (status.source) {
@@ -429,11 +433,30 @@ export function credentialOrigin(status: { source?: string; label?: string }): C
   }
 }
 
+/** Models by provider, in the order given. */
+function byProvider(models: readonly Model<Api>[]): Map<string, Model<Api>[]> {
+  const out = new Map<string, Model<Api>[]>();
+  for (const m of models) {
+    const list = out.get(m.provider);
+    if (list) list.push(m);
+    else out.set(m.provider, [m]);
+  }
+  return out;
+}
+
 /**
  * The inventory over pi's registry facade: every provider pi has a credential
  * for and at least one available model, in pi's own provider order. One
  * function for an SDK host and for a running pi, so the two cannot drift.
  * `exclude` names providers this surface cannot use.
+ *
+ * A provider has a credential when pi lists a model of it as available: pi
+ * lists one only after the provider's own check found a credential where the
+ * request will look for it. The auth status sorts that credential into its
+ * class and is not a second test. The one status that says "not configured"
+ * of an available provider is a `models.json` key spelled as a variable that
+ * the host's environment holds and the process's does not (`credentialOrigin`),
+ * which is a key in the environment.
  *
  * The facade reads pi's availability snapshot: the caller sees that it is
  * filled (a host refreshes offline; a running pi keeps it).
@@ -442,24 +465,13 @@ export function registryInventory(
   registry: RouteRegistry,
   o: { exclude?: ReadonlySet<string> } = {},
 ): ProviderInventory[] {
-  const all = new Map<string, Model<Api>[]>();
-  for (const m of registry.getAll()) {
-    const list = all.get(m.provider);
-    if (list) list.push(m);
-    else all.set(m.provider, [m]);
-  }
-  const available = new Map<string, Model<Api>[]>();
-  for (const m of registry.getAvailable()) {
-    const list = available.get(m.provider);
-    if (list) list.push(m);
-    else available.set(m.provider, [m]);
-  }
+  const all = byProvider(registry.getAll());
+  const available = byProvider(registry.getAvailable());
   const out: ProviderInventory[] = [];
   for (const [provider, known] of all) {
     const models = available.get(provider);
     if (models === undefined || models.length === 0 || o.exclude?.has(provider)) continue;
     const status = registry.getProviderAuthStatus(provider);
-    if (!status.configured) continue;
     const oauth = registry.isUsingOAuth(models[0]!);
     const piDefault = piDefaultModelId(provider, known);
     out.push({
@@ -467,7 +479,7 @@ export function registryInventory(
       name: registry.getProviderDisplayName(provider),
       credential: {
         kind: oauth ? "oauth" : "api_key",
-        origin: credentialOrigin(status),
+        origin: status.configured ? credentialOrigin(status) : "env-key",
         ...(status.label !== undefined ? { label: status.label } : {}),
         subscription: oauth && registry.getProvider(provider)?.auth.oauth?.isSubscription === true,
       },
@@ -545,7 +557,8 @@ function firstSentence(text: string): string {
  * pi's `--model` parser over a registry, shaped for `resolveRoute`: an exact
  * `provider/id`, a bare id one credentialed provider serves, a substring, a
  * `:level` suffix, and an id pi does not know on a provider it does (kept as
- * a custom id).
+ * a custom id). A provider is usable to the parser when the inventory would
+ * hold it: when pi lists a model of it as available.
  *
  * VERIFY-ON-PIN (pi 1.4.0, tests/engine-route.test.ts): `resolveCliModel`
  * answers with `model` and `thinkingLevel`, or with an `error` whose first
@@ -553,18 +566,18 @@ function firstSentence(text: string): string {
  * id comes back as a model the catalog does not hold.
  */
 export function textResolver(
-  registry: Pick<RouteRegistry, "getAll" | "getProviderAuthStatus">,
+  registry: Pick<RouteRegistry, "getAll" | "getAvailable">,
 ): RouteInput["resolveText"] {
   return (text) => {
     const unknown = `Model ${JSON.stringify(text)} not found.`;
     let r: ReturnType<typeof resolveCliModel>;
     try {
+      const credentialed = new Set(registry.getAvailable().map((m) => m.provider));
       r = resolveCliModel({
         cliModel: text,
         modelRuntime: {
           getModels: () => registry.getAll(),
-          hasConfiguredAuth: (provider: string) =>
-            registry.getProviderAuthStatus(provider).configured,
+          hasConfiguredAuth: (provider: string) => credentialed.has(provider),
         } as unknown as ModelRuntime,
       });
     } catch (e) {

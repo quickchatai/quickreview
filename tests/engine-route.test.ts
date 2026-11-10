@@ -48,6 +48,9 @@ useOfflineGuard();
 const BUILTIN = "deepseek";
 const BUILTIN_ID = getBuiltinModels(BUILTIN)[0]!.id;
 const BUILTIN_ENV = "DEEPSEEK_API_KEY";
+/** A variable no process environment holds: a models.json key that names it is
+ * found only in the environment a host is given. */
+const HOST_ONLY_ENV = "QCR_ENGINE_ROUTE_TEST_KEY";
 /** Never listened on: no test here sends a request. */
 const NOWHERE = "http://127.0.0.1:9/v1";
 
@@ -147,7 +150,36 @@ describe("registryInventory: what pi has a credential for, in its class", () => 
     expect((await keyed.inventory()).map((e) => e.provider).sort()).toEqual([BUILTIN, "faux"]);
   });
 
-  it("leaves out a provider the surface cannot use, and one whose status is not configured", async () => {
+  // pi's status for a models.json key that names a variable looks in the
+  // process's environment whatever environment the host named, while its
+  // availability check and the request itself look where the host said
+  // (canary 13). Availability is the credential test; the status only sorts.
+  // MUTATION: skip a provider whose status is not `configured` in
+  // registryInventory — the provider is gone from the inventory, the host has
+  // no route and the pinned session is refused.
+  it("holds a models.json provider keyed by a variable only the host's environment has", async () => {
+    const agentDir = join(dir, "agent-envref");
+    writeFakeProvider(agentDir, NOWHERE, { routable: true, apiKey: `\${${HOST_ONLY_ENV}}` });
+    expect(process.env[HOST_ONLY_ENV]).toBeUndefined();
+    const h = await host({ agentDir, authEnv: { [HOST_ONLY_ENV]: "not-a-key" } });
+    expect((await h.inventory()).map((e) => [e.provider, e.credential])).toEqual([
+      ["local", { kind: "api_key", origin: "env-key", subscription: false }],
+    ]);
+    expect(await routeOf(h)).toMatchObject({ provider: "local", modelId: "r" });
+    expect((await session(h, FAKE_ROUTE_MODEL)).model?.id).toBe("r");
+    // Without the variable where the host looks, the provider has no credential.
+    const bare = await host({ agentDir, authEnv: {} });
+    expect(await bare.inventory()).toEqual([]);
+    const refusal = await session(bare, FAKE_ROUTE_MODEL).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect((refusal as RouteRefused).refusal.code).toBe("pin-no-credential");
+  });
+
+  // MUTATION: list a provider with no available model when its status says
+  // `configured` — the last row fails.
+  it("leaves out a provider the surface cannot use, and one with no available model whatever its status says", async () => {
     const faux = routableFaux();
     const h = await host({
       authEnv: { [BUILTIN_ENV]: "not-a-key" },
@@ -159,15 +191,32 @@ describe("registryInventory: what pi has a credential for, in its class", () => 
     expect(
       registryInventory(registry, { exclude: new Set(["faux"]) }).map((e) => e.provider),
     ).toEqual([BUILTIN]);
-    const unconfigured: RouteRegistry = {
+    const facade = (over: Partial<RouteRegistry>): RouteRegistry => ({
       getAll: () => registry.getAll(),
       getAvailable: () => registry.getAvailable(),
-      getProviderAuthStatus: () => ({ configured: false }),
+      getProviderAuthStatus: (p) => registry.getProviderAuthStatus(p),
       getProvider: (p) => registry.getProvider(p),
       getProviderDisplayName: (p) => registry.getProviderDisplayName(p),
       isUsingOAuth: (m) => registry.isUsingOAuth(m),
-    };
-    expect(registryInventory(unconfigured)).toEqual([]);
+      ...over,
+    });
+    // The status sorts a credential; it does not decide there is one.
+    expect(
+      registryInventory(facade({ getProviderAuthStatus: () => ({ configured: false }) })).map(
+        (e) => [e.provider, e.credential.origin],
+      ),
+    ).toEqual([
+      [BUILTIN, "env-key"],
+      ["faux", "env-key"],
+    ]);
+    expect(
+      registryInventory(
+        facade({
+          getAvailable: () => [],
+          getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+        }),
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -406,6 +455,31 @@ describe("textResolver: pi's own parse of a model text", () => {
   it("a bare id one provider serves", async () => {
     const resolve = await resolver();
     expect(resolve("faux-1").model).toMatchObject({ provider: "faux", id: "faux-1" });
+  });
+
+  // MUTATION: answer `hasConfiguredAuth` from getProviderAuthStatus in
+  // textResolver — pi's status does not see the host's environment for a
+  // models.json variable, neither provider is usable and the id is ambiguous.
+  it("a bare id two providers serve goes to the one with a credential where the host looks", async () => {
+    const agentDir = join(dir, "agent-shared");
+    const provider = (key: string) => ({
+      baseUrl: NOWHERE,
+      api: "openai-completions",
+      apiKey: `\${${key}}`,
+      models: [{ id: "shared-model", name: "shared-model", reasoning: true, input: ["text"] }],
+    });
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(
+      join(agentDir, "models.json"),
+      JSON.stringify({
+        providers: { near: provider(HOST_ONLY_ENV), far: provider(`${HOST_ONLY_ENV}_ABSENT`) },
+      }),
+    );
+    const h = await host({ agentDir, authEnv: { [HOST_ONLY_ENV]: "not-a-key" } });
+    await h.inventory();
+    const r = textResolver(new ModelRegistry(h.modelRuntime))("shared-model");
+    expect(r.error).toBeUndefined();
+    expect(r.model).toMatchObject({ provider: "near", id: "shared-model" });
   });
 
   it("an id pi does not know on a provider it does is kept as a custom id", async () => {
