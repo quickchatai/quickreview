@@ -11,10 +11,11 @@
 // the failure this step makes impossible: a config that says "openai" over a
 // boot that renders "local" is a vector-store reset on the next start.
 //
-// The credential is its own file: `openai_api_key` is pi's model credential
-// and is never read for embeddings; the hosted opt-in reads
-// `<secrets>/<embedding_key_file>` (default `openai_embeddings_api_key`).
-// Either can be set without the other. The wizard never accepts the value
+// The credential is its own file: a model credential (pi's login, a key under
+// `model-env/`, the older `openai_api_key` file) is never read for embeddings;
+// the hosted opt-in reads `<secrets>/<embedding_key_file>` (default
+// `openai_embeddings_api_key`), and its shape is the one check of a key's form
+// the wizard makes (`validateEmbeddingsKey`). Either can be set without the other. The wizard never accepts the value
 // through the pi session (it would land in a transcript) — it points at
 // `deploy/collect-secrets.sh`, which reads it hidden and writes it 0600.
 //
@@ -45,7 +46,6 @@ import {
   writeAtomic,
 } from "./compose.js";
 import { assertNoDryRunEdit, patchToml, tomlString, type TomlEdit } from "./configfill.js";
-import { validateOpenAiKey } from "./llmauth.js";
 import { stackTransportFor } from "./transport.js";
 import { vmInventoryStep } from "./inventory.js";
 import { vmDeployStep } from "./vmdeploy.js";
@@ -224,11 +224,25 @@ const HOSTED_SENTENCE =
   "memory embeds through OpenAI's hosted embeddings endpoint: EVERY memory entry's text, and every search query, is sent there. " +
   "You chose this; the shipped default is local";
 
+/**
+ * Does this look like the hosted embedder's key? The hosted embedder is
+ * OpenAI's, whose keys start `sk-`: that prefix, at least one more character,
+ * one unbroken string. The same rule as `v_openai` in
+ * `deploy/collect-secrets.sh`, which collects the key;
+ * `tests/collect-secrets.test.ts` runs the shell function against this one's
+ * table, so the two cannot drift. A model credential is never judged by it: a
+ * review runs on any provider's key, whatever its shape.
+ */
+export function validateEmbeddingsKey(value: string): boolean {
+  const v = value.trim();
+  return v.startsWith("sk-") && v.length > 3 && !/\s/.test(v);
+}
+
 /** The credential check for the hosted opt-in — pi's key never counts. */
 export function keyFileCheck(secretsDir: string, keyFile: string): CheckResult {
   const path = join(secretsDir, keyFile);
   const value = readTextOrNull(path)?.trim() ?? "";
-  if (validateOpenAiKey(value)) {
+  if (validateEmbeddingsKey(value)) {
     return {
       name: "embeddings-key",
       ok: true,

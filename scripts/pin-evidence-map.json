@@ -278,8 +278,8 @@
     },
     {
       "id": "any-openai-login",
-      "assumes": "pi 1.4.0's /login labels the two ChatGPT logins as llmauth names them; getProviderAuthStatus(p).configured covers every credential kind and pi.setModel refuses a provider without one; setEditorComponent wires the default editor's onSubmit synchronously.",
-      "files": { "extensions/login-route.ts": 2, "src/onboard/steps/llmauth.ts": 2 },
+      "assumes": "getProviderAuthStatus(p).configured covers every credential kind and pi.setModel refuses a provider without one; setEditorComponent wires the default editor's onSubmit synchronously.",
+      "files": { "extensions/login-route.ts": 2 },
       "signal": {
         "source": "none",
         "kind": "gap",

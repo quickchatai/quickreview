@@ -1,6 +1,6 @@
-// Switch-on's login step: one OpenAI login per box. The daemon's
-// container reviews on the login the home signed in to, the host pi home's
-// auth.json, instead of a login of its own.
+// Switch-on's login step: one login per box. The daemon's container reviews
+// on the box's model login, the one the home signed in to (the host pi home's
+// auth.json, whichever provider it is for), instead of a login of its own.
 //
 //   .env      QCR_PI_LOGIN_DIR = the home's pi agent dir. docker-compose.yml
 //             mounts it at /opt/qcr/login and names it to the daemon
@@ -178,7 +178,7 @@ export function loginShareStep(o: LoginShareOptions = {}): OnboardingStep {
     id: LOGIN_SHARE_STEP_ID,
     title: "Share your login with auto-review",
     explain:
-      "Auto-review reviews on the OpenAI login this home signed in to: one login per machine, which its refresher keeps fresh while it runs.",
+      "Auto-review reviews on the box's model login, the one this home signed in to: one login per box, which its refresher keeps fresh while it runs.",
     // after the config steps (memory is 60), before the daemon starts (69)
     order: 66,
     enabled: (choices) => topologyOf(choices) === "local",

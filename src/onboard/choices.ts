@@ -16,8 +16,16 @@
 //      record each key, and the test proves each named step really does — so a
 //      key that only ever gets read cannot survive review.
 //
-// A key private to one step — the go-live decision, the vm-deploy record, the model prefix, the memory key-file path — stays a local
+// A key private to one step — the go-live decision, the vm-deploy record, the memory key-file path — stays a local
 // constant in that step. This file is about the handoffs.
+//
+// Two keys an older wizard recorded are retired: `llm_auth_route` (which of two
+// credential routes the operator chose) and `llm_model_prefix` (the provider
+// prefix its config rewrite left). The model step asks no such question and
+// rewrites nothing, so no step writes either key and no step reads one: a
+// checklist that still carries them, under any value, loads and verifies as
+// one that does not. They are named here and nowhere in a step
+// (`tests/onboard-choices.test.ts` holds that).
 //
 // Nothing here imports a step (the steps import this), so there is no cycle and
 // no ordering hazard.
@@ -34,11 +42,6 @@ export type Topology = (typeof TOPOLOGY_CHOICES)[number];
  * names in `INGRESS_OPTIONS` and in docs/onboarding.md. */
 export const INGRESS_CHOICES = ["quick", "ngrok", "named", "polling"] as const;
 export type IngressChoice = (typeof INGRESS_CHOICES)[number];
-
-/** The LLM auth routes. "api" is the API-key route — not "api_key": the value
- * the LLM step writes is the value every reader must test for. */
-export const AUTH_ROUTES = ["oauth", "api"] as const;
-export type AuthRoute = (typeof AUTH_ROUTES)[number];
 
 /** How the daemon authenticates to GitHub (`config.toml [github] auth`):
  * "user" is the person's own account (polling only, no App), "app" a GitHub
@@ -77,8 +80,10 @@ export const CHOICE_KEYS = {
   /** The login user ssh resolves for that alias (VM route). */
   sshUser: "vm_ssh_user",
 
-  /** `AuthRoute`. Written by the LLM step; read by the interview's shape line. */
-  authRoute: "llm_auth_route",
+  /** The model the daemon's pi runs, as `provider/id`, where the model step
+   * found a route. Written by the model step; read by the interview's shape
+   * line. A fact for a person to read: nothing decides on it. */
+  model: "llm_model",
 
   /** `GithubAuth`. Written by the github_account step (the operator's answer,
    * defaulted to "user" where `gh auth token` works); read by everything that
@@ -174,7 +179,7 @@ export const CHOICE_WRITERS: Record<ChoiceName, readonly string[]> = {
   topology: ["topology"],
   sshAlias: ["topology"],
   sshUser: ["ssh_preflight"],
-  authRoute: ["llm_auth"],
+  model: ["llm_auth"],
   repo: ["config_fill"],
   repoDir: ["config_fill"],
   baseBranch: ["config_fill"],
@@ -212,7 +217,6 @@ export const CHOICE_WRITERS: Record<ChoiceName, readonly string[]> = {
  * writer check applies.
  */
 export const PRIVATE_CHOICE_KEYS: Readonly<Record<string, string>> = {
-  llm_model_prefix: "llm_auth",
   openviking_keys_file: "memory",
   go_live_decision: "go_live",
 };
@@ -235,11 +239,6 @@ function raw(choices: Readonly<Record<string, unknown>>, key: ChoiceKey): string
 /** `value` when it is a member of `vocabulary`, else null. */
 export function memberOf<T extends string>(vocabulary: readonly T[], value: string): T | null {
   return (vocabulary as readonly string[]).includes(value) ? (value as T) : null;
-}
-
-/** The recorded auth route, or null when the LLM step has not run. */
-export function authRouteOf(choices: Readonly<Record<string, unknown>>): AuthRoute | null {
-  return memberOf(AUTH_ROUTES, raw(choices, CHOICE_KEYS.authRoute));
 }
 
 /** The recorded GitHub auth route, or null while unanswered. */

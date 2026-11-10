@@ -121,7 +121,6 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/localreview-readonly.test.ts",
   "tests/loginrefresh.test.ts", // flock helper processes and a racing writer process
   "tests/memory-image.test.ts",
-  "tests/onboard-llmauth.test.ts",
   "tests/onboard-streamrunner.test.ts",
   "tests/open-pr.test.ts", // sh -c against a fixture root, a real pi child in a pty
   "tests/openviking-embedder.test.ts",

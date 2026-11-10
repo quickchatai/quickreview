@@ -1322,7 +1322,7 @@ export function configFillStep(opts: { transport?: TransportOptions } = {}): Onb
           `topology ${facts.topology || "(unrecorded — filled for a daemon on this machine, so [tui] ssh_host stays empty)"}, ` +
           `ingress ${facts.ingress || "(unrecorded — filled for an ingress that assigns its own hostname, so [server] hostname stays empty)"}, ` +
           `github ${facts.github_auth === "user" ? "own account (no App questions, no App secrets)" : "App"}` +
-          `${str(ctx.choices, CHOICE_KEYS.authRoute) ? `, auth route ${str(ctx.choices, CHOICE_KEYS.authRoute)}` : ""}`,
+          `${str(ctx.choices, CHOICE_KEYS.model) ? `, model: ${str(ctx.choices, CHOICE_KEYS.model)}` : ""}`,
       });
       // Read after the write, so the dir is the one the written config names.
       checks.push(

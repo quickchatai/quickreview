@@ -9,11 +9,13 @@
 //   * the wizard's existing UX conventions hold: values land 0600, validators
 //     reject junk and re-prompt, existing files are kept.
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { OPENVIKING_DEFAULTS } from "../src/config.js";
+import { validateEmbeddingsKey } from "../src/onboard/steps/embeddings.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = resolve(root, "deploy/collect-secrets.sh");
@@ -91,6 +93,49 @@ describe("the hosted-embeddings key is its OWN file", () => {
     expect(readFileSync(join(dir, "openai_embeddings_api_key"), "utf8")).toBe(
       "sk-embeddings-second-try-0123",
     );
+  });
+
+  // The shell collects the key and the wizard's embeddings step checks the
+  // file: one rule, two languages. The shell's own function is run against
+  // the TypeScript validator's table, so the two AGREE on every value and do
+  // not merely mention the same prefix.
+  //
+  // MUTATION: drop the `!/\s/.test(v)` clause from validateEmbeddingsKey in
+  // src/onboard/steps/embeddings.ts — the keys with whitespace inside pass
+  // there and are refused by the shell, and this fails. Or give the embeddings
+  // prompt another validator than v_openai — this fails.
+  it("the shell's validator and the embeddings step's agree on every value", () => {
+    const shell = readFileSync(script, "utf8");
+    const file = OPENVIKING_DEFAULTS.embedding_key_file;
+    // The validator is the one the embeddings key's prompt uses.
+    expect(shell).toMatch(new RegExp(`^\\s*prompt_hidden ${file} "[^"]*" v_openai$`, "m"));
+    const fn = /^v_openai\(\).*$/m.exec(shell)?.[0];
+    expect(fn).toBeDefined();
+    const shellAccepts = (value: string, locale: string): boolean =>
+      spawnSync("bash", ["-c", `${fn}\nprintf '%s' "$1" | v_openai`, "v", value], {
+        encoding: "utf8",
+        env: { ...process.env, LC_ALL: locale },
+      }).status === 0;
+    // `read -r` hands the shell an already-trimmed value; the TS side trims.
+    for (const value of [
+      "sk-embeddings-table-0123456789",
+      "nope",
+      "",
+      "sk-",
+      "sk- with space",
+      "sk-a\tb",
+      "sk-a b",
+      "sk-a b",
+      "sk-a b",
+      "sk-a﻿b",
+      "sk-x",
+      "SK-upper",
+    ]) {
+      for (const locale of ["C", "C.UTF-8"])
+        expect(shellAccepts(value.trim(), locale), `${locale}:${JSON.stringify(value)}`).toBe(
+          validateEmbeddingsKey(value),
+        );
+    }
   });
 });
 

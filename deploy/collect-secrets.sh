@@ -179,8 +179,8 @@ prompt_hidden() { # file  label  validator-fn
 v_app_id()   { grep -qE '^[0-9]{1,12}$' || { echo "    app_id must be a number (GitHub App settings → App ID)" >&2; return 1; }; }
 v_secret()   { local v; v="$(cat)"; [[ ${#v} -ge 8 ]] || { echo "    suspiciously short (<8 chars)" >&2; return 1; }; }
 v_token()    { local v; v="$(cat)"; [[ ${#v} -ge 60 && "$v" != *" "* ]] || { echo "    tunnel token should be one long unbroken string (connector page → the string after 'cloudflared service install')" >&2; return 1; }; }
-# The same rule as validateOpenAiKey (src/onboard/steps/llmauth.ts): sk- plus at
-# least one more character, one unbroken string. tests/onboard-llmauth.test.ts
+# The same rule as validateEmbeddingsKey (src/onboard/steps/embeddings.ts): sk-
+# plus at least one more character, one unbroken string. tests/collect-secrets.test.ts
 # runs this function against the TypeScript validator's table. The whitespace
 # list is ECMAScript whitespace, matched as exact strings regardless of locale.
 v_openai()   { local v c; v="$(cat)"; for c in $'\t' $'\n' $'\v' $'\f' $'\r' ' ' $'\xc2\xa0' $'\xe1\x9a\x80' $'\xe2\x80\x80' $'\xe2\x80\x81' $'\xe2\x80\x82' $'\xe2\x80\x83' $'\xe2\x80\x84' $'\xe2\x80\x85' $'\xe2\x80\x86' $'\xe2\x80\x87' $'\xe2\x80\x88' $'\xe2\x80\x89' $'\xe2\x80\x8a' $'\xe2\x80\xa8' $'\xe2\x80\xa9' $'\xe2\x80\xaf' $'\xe2\x81\x9f' $'\xe3\x80\x80' $'\xef\xbb\xbf'; do if [[ "$v" == *"$c"* ]]; then v=""; break; fi; done; [[ "$v" == sk-?* ]] || { echo "    OpenAI keys start with sk- and contain no spaces" >&2; return 1; }; }

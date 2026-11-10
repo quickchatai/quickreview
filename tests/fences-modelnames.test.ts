@@ -235,8 +235,6 @@ const ALLOWLIST: Readonly<Record<string, string>> = {
     "OAUTH_LOADERS, a name table of OAuth refreshers. It goes when the refresher takes them from pi's provider registry.",
   "src/onboard/steps/embeddings.ts":
     "the hosted embedder is one vendor's: the name is the embedder's own wire value, not a review model. It stays.",
-  "src/onboard/steps/llmauth.ts":
-    "the wizard's rewrite of model prefixes between two OpenAI providers. It goes when the step is a usable credential, whoever's.",
 };
 
 describe("no model or provider name decides anything", () => {
