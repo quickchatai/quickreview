@@ -305,6 +305,16 @@
         "kind": "gap",
         "needs": "a typescript bump that re-reads a fresh tsbuildinfo and finds the same fields; nothing at runtime logs them, and no extract field names them"
       }
+    },
+    {
+      "id": "catalog-pick-snapshot",
+      "assumes": "Over pi 1.4.0's built-in catalog and its per-provider default table (read by a deep import of pi's model-resolver, which the package does not export), the pick rule gives each provider the model tests/modelpick-catalog.test.ts lists.",
+      "files": { "tests/modelpick-catalog.test.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review started with no model pinned whose start names the picked model, on a provider whose row differs from pi's default; no extract field names the resolved model's route yet"
+      }
     }
   ]
 }
