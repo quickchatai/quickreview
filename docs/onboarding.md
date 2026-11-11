@@ -374,10 +374,15 @@ The wizard does not accept a pasted key through the pi session (the value would
 land in a transcript). It points you at the secrets directory and the exact
 command that writes the file `0600` (`deploy/collect-secrets.sh`, from a clone,
 reads it with hidden input and asks which variable the key goes in). A key in
-`model-env/` reaches the daemon's review workers and nothing else: the
-companion container is never handed it and keeps its own login, and the
-home's own pi reads a provider key only from its own environment. The older
-`openai_api_key` file is still read.
+`model-env/` reaches the processes that ask pi for a credential (the daemon's
+review workers, the preflight, `qcr model`, a `qcr review` or `qcr scan` run
+from a shell, and the operator's takeover and debug panes) and no tool a
+review worker's model runs: the companion container is never
+handed it and keeps its own login, and the home's own pi reads a provider key
+only from its own environment. The older `openai_api_key` file is still read,
+and the image's entrypoint still exports it as `OPENAI_API_KEY`, so the
+daemon, the tmux server and the login refresher hold that one key
+([docs/llm-setup.md](llm-setup.md)).
 
 What an older wizard recorded here (an auth route, a model prefix) is read
 and ignored, whatever its value.

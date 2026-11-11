@@ -541,20 +541,28 @@ compiled `dist/` guard.
   mount the session cannot read, a deploy change.
 - **A model key reaches the engine's process, and no tool.** The values under
   `<secrets dir>/model-env/` (and the older `openai_api_key`) have one loader
-  (`src/modelenv.ts`) and are never exported to a shell. The daemon hands
+  (`src/modelenv.ts`), and the values under `model-env/` are never exported
+  to a shell. The daemon hands
   them to a review worker's own process environment, where pi's provider
   client reads them; the worker's session spec never holds one
   (`WORKER_ENV_DROPPED` is derived from the loader's names), and the model's
   bash runs under an environment built from that spec, so a tool call does
   not see a model key. The daemon's own environment, the tmux server and the
-  login refresher hold none. This matters for one name in particular: pi
+  login refresher hold none of the `model-env/` values. This matters for one
+  name in particular: pi
   reads a Copilot token from `COPILOT_GITHUB_TOKEN`, which is a GitHub token
   under a name the loader's prefix rule lets through, and it must stay out of
-  a tool's reach like the rest. Two limits, stated: the operator's takeover
-  and debug panes are a CLI pi whose own process environment carries the
-  model env, as it always carried the older key; and a credential *file*
-  that an environment variable names (a cloud provider's key file, a web
-  identity token) gets no tool fence of its own. In the image the tool uid
+  a tool's reach like the rest. Three limits, stated: the image's entrypoint
+  still exports the older `openai_api_key` as `OPENAI_API_KEY`, as it always
+  did, so on an install with that file the daemon, the tmux server and the
+  login refresher hold that one key; the operator's takeover and debug panes
+  are a CLI pi whose own process environment carries the model env (the
+  pane's spec file holds the secrets dir's path and never a value; the
+  pane's process reads the loader there), as does a CLI pi session the
+  session manager starts in tmux (`PiSessionManager.buildEnv`); and a
+  credential *file* that an environment variable names (a cloud provider's
+  key file, a web identity token) gets no tool fence of its own. In the
+  image the tool uid
   cannot read the secrets mount; on a laptop the model's bash runs as the
   person and can read what they can.
 - **Layer 4 detects; it does not prevent.** The write lands, the round
