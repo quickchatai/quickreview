@@ -269,6 +269,62 @@ describe("review(): the local review as a call", () => {
   );
 
   it("preview() shows the plan and the price and starts nothing", { timeout: 30_000 }, async () => {
+  // A priced route with one lens on a model pi has no price for: the lens
+  // child's tokens come at a cost of exactly 0, so the round's cost is
+  // unknown. The part pi did price is not the spend, and neither is $0.
+  // MUTATION: fall back to `shot.piRun.spentUsd` when `shot.costUsd` is null
+  // (reviewapi.ts) — the priced part is reported as the spend under a stop,
+  // $0.00 with none, and this fails.
+  for (const [name, limits] of [
+    ["under a stop", { limitUsd: 1000, timeoutMs: 60_000 }],
+    ["with no stop", { timeoutMs: 60_000, route: "action" }],
+  ] as const)
+    it(
+      `a round with one unpriced lens child has no spend, ${name}: unknown, never the priced part`,
+      { timeout: 60_000 },
+      async () => {
+        const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+        const { runtime } = fauxRuntime(faux);
+        const opts: ReviewOptions = {
+          ...options(`mixed-${name.replace(/ /g, "-")}`, runtime),
+          limits,
+        };
+        faux.appendResponses([
+          async () => {
+            const out = outDirOf(opts.runsDir);
+            writeFileSync(join(out, "findings-record.json"), record);
+            writeFileSync(join(out, "outcome.json"), outcome);
+            writeFileSync(
+              join(out, "lens-ledger.jsonl"),
+              JSON.stringify({
+                v: 1,
+                kind: "lens",
+                id: "unpriced-lens",
+                agent: "pass-correctness",
+                model: "local/no-price",
+                usage: { input: 900, output: 90, cacheRead: 0, cost: 0 },
+              }) + "\n",
+            );
+            return fauxAssistantMessage("done");
+          },
+        ]);
+        const started: ReviewStarted[] = [];
+        const r = await review({ kind: "branch" }, opts, { started: (s) => started.push(s) });
+        expect(r.exitCode, r.text).toBe(0);
+        expect(schemaErrors(r.data)).toEqual([]);
+        expect(started[0]!.capUsd === null).toBe(name === "with no stop");
+        expect(r.data["cost_usd"]).toBeNull();
+        expect(r.text).toMatch(/Review done: REQUEST_CHANGES \(spend unknown: /);
+        expect(r.text).not.toMatch(/\$\d+\.\d{2}\)/);
+        // the round the store remembers carries no figure either
+        const stored = readdirSync(opts.storeDir!, { recursive: true })
+          .map((f) => join(opts.storeDir!, String(f)))
+          .filter((f) => f.endsWith(".json"))
+          .map((f) => readFileSync(f, "utf8"));
+        expect(stored.join("\n")).toMatch(/"cost_usd":\s*null/);
+      },
+    );
+
     const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
     const { runtime, created } = fauxRuntime(faux);
     const opts = options("preview", runtime);

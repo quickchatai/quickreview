@@ -1420,12 +1420,16 @@ async function runPipeline(
   if (io.signal?.aborted) return stopped();
 
   // pi stamps a cost of zero on a model it has no price for: what such a run
-  // spent is not known, and a zero is never shown in its place.
-  const spent = noDollarStop ? null : (shot.costUsd ?? shot.piRun.spentUsd ?? null);
+  // spent is not known, and a zero is never shown in its place. The round's
+  // own cost is the only figure: it is null when any call in it had no price
+  // (a lens pinned to such a model on a priced route) or when nothing counted
+  // the round at all, and what the session's budget metered is then only the
+  // part pi priced, never the spend.
+  const spent = noDollarStop ? null : (shot.costUsd ?? null);
   const spentWords = noDollarStop
     ? ` (spend unknown: pi has no price for ${named})`
     : spent === null
-      ? ""
+      ? " (spend unknown: pi has no price for a model this round used, or the round's usage could not be read)"
       : cap !== null
         ? ` (${usd(spent)} of ${usd(cap)})`
         : ` (${usd(spent)})`;

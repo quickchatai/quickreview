@@ -148,6 +148,12 @@ export interface TuiView {
     max_concurrent_rounds?: number;
     today_spend_usd?: number;
     total_spend_usd?: number;
+    /** Beside each sum, how many of its rounds recorded tokens and no price:
+     * the sum counts none of them, so a sum alone would tell the companion a
+     * day of unpriced rounds cost 0. `null` when the snapshot carries no count
+     * (no snapshot, or an older daemon's): unknown, never a zero. */
+    today_unknown_spend_rounds: number | null;
+    total_unknown_spend_rounds: number | null;
     pipeline_healthy?: boolean;
     pipeline_causes?: Array<{ key: string; pr: number | null }>;
     pipeline_recoveries?: Array<{ key: string; pr: number }>;
@@ -322,6 +328,8 @@ export function buildTuiView(src: ViewSource): TuiView {
       max_concurrent_rounds: src.snapshot?.max_concurrent_rounds,
       today_spend_usd: src.snapshot?.today_spend_usd,
       total_spend_usd: src.snapshot?.total_spend_usd,
+      today_unknown_spend_rounds: src.snapshot?.today_unknown_spend_rounds ?? null,
+      total_unknown_spend_rounds: src.snapshot?.total_unknown_spend_rounds ?? null,
       ...(src.snapshot?.pipeline
         ? {
             pipeline_healthy: src.snapshot.pipeline.healthy,

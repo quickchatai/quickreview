@@ -404,6 +404,26 @@ export function archiveLine(value: unknown): string {
   return attention.length > 0 ? `archive NEEDS ATTENTION: ${attention.join(" · ")}\n${line}` : line;
 }
 
+/**
+ * A spend sum beside the count of its rounds that recorded tokens and no
+ * price (a model pi has no price for): the sum counts none of them, so 0 with
+ * any such round is not a spend of nothing. `sum` absent drops the line, as
+ * any absent field. A count that is `null` or absent (no snapshot count, an
+ * older daemon, a TUI build that publishes none) is unknown, and said so: the
+ * sum is then not known to be the whole spend.
+ */
+export function spendLine(label: string, sum: unknown, unknownRounds: unknown): string | undefined {
+  if (sum === null) return fmt(label, null);
+  if (typeof sum !== "number") return undefined;
+  if (typeof unknownRounds !== "number")
+    return `${label}: ${sum} (rounds with no price: UNKNOWN, so this sum may leave rounds out)`;
+  if (!(unknownRounds > 0)) return `${label}: ${sum}`;
+  const rounds = `${unknownRounds} round${unknownRounds === 1 ? "" : "s"}`;
+  return sum > 0
+    ? `${label}: ${sum} + ${rounds} of unknown spend (pi has no price for the model)`
+    : `${label}: UNKNOWN (${rounds}, on a model pi has no price for; not 0)`;
+}
+
 export function boardAnswer(dir: string, now: Date): string {
   const { view, mtimeMs, error } = loadView(dir);
   if (error !== undefined || !view) return error ?? "no view";
@@ -417,7 +437,8 @@ export function boardAnswer(dir: string, now: Date): string {
     fmt("by state", b.by_state),
     fmt("rounds running", b.running_rounds),
     fmt("max concurrent rounds", b.max_concurrent_rounds),
-    fmt("spend today (USD)", b.today_spend_usd),
+    spendLine("spend today (USD)", b.today_spend_usd, b.today_unknown_spend_rounds),
+    spendLine("spend in total (USD)", b.total_spend_usd, b.total_unknown_spend_rounds),
     fmt("snapshot written at", b.snapshot_written_at),
     memoryLine(view.memory),
     daemonLoadLine(view.daemon),
