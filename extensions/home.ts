@@ -323,8 +323,10 @@ export function createHome(o: HomeOptions): ExtensionFactory {
             input: (title, placeholder) => ctx.ui.input(title, placeholder),
           }
         : undefined;
+    // the person's own key (alt+n, ⏎ on the card): a sign-in that waits gets
+    // pi's /login put up again, which a tool's call never does
     const nextStep = (ctx: ExtensionContext | undefined): Promise<string> =>
-      setup.next(dialogs(ctx));
+      setup.next(dialogs(ctx), { again: true });
 
     // The card while setup has a gap, the panel otherwise; a change of phase
     // closes the one and opens the other.
@@ -357,7 +359,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
                 unfocus: () => handle?.unfocus(),
                 frame: () => frame,
                 ask: () => sessionUi,
-                relogin: () => void relogin.start(),
+                relogin: () => void relogin.start({ again: true }),
                 signingAgain: () => relogin.running(),
                 tune: () => void tune.tune(tellAgent),
                 advanced: () => void advanced.open(advancedAsk(session)),
@@ -471,7 +473,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       model.switchMemory(askOf(ctx)),
     );
     key(RELOGIN_KEY, "quickreview home: sign in again with pi's /login (an expired login)", () =>
-      relogin.start(),
+      relogin.start({ again: true }),
     );
     key("alt+t", "quickreview home: tune the review to this repo (Setup)", () =>
       tune.tune(tellAgent),

@@ -595,13 +595,35 @@ describe("Sign in to a model provider: pi's own /login", () => {
     );
   });
 
-  it("a second press while it waits opens no second menu", async () => {
+  it("a tool's second call while it waits opens no second menu", async () => {
     const s = await openSetup();
     expect(await s.pi.tool("home_sign_in")).toBe(
       "Still waiting: pi's /login is open, sign in there.",
     );
-    await s.pi.key("alt+n");
+    expect(await s.pi.tool("home_setup_next")).toBe(
+      "Still waiting: pi's /login is open, sign in there.",
+    );
     expect(s.opens).toEqual([1]);
+  });
+
+  // The home cannot see pi's menu close: after Esc the sign-in still waits.
+  // MUTATION: drop `again: true` from nextStep in createHome, or make
+  // LoginMenu.reopen return null — alt+n opens nothing and this fails.
+  it("the person's key while it waits puts pi's /login up again, with no second hold and no second poll", async () => {
+    const s = await openSetup(
+      fresh({ hold: async () => ({ ok: true, held: true, release: () => {} }) }),
+    );
+    await s.pi.key("alt+n");
+    expect(s.opens).toEqual([1, 2]);
+    expect(s.w.log).toEqual(["hold", "open", "open"]);
+    expect(s.holds).toEqual({ taken: 1, released: 0 });
+    expect(s.timers.filter((t) => t.ms === LOGIN_POLL_MS && !t.cancelled)).toHaveLength(1);
+    expect(row(s, SIGN_IN_TITLE)).toMatch(/waiting for you…/);
+    // the one wait still ends the sign-in, and lifts the one hold
+    s.w.creds = NORTH;
+    await s.tick(LOGIN_POLL_MS);
+    expect(s.w.log).toEqual(["hold", "open", "open", "release"]);
+    expect(row(s, SIGN_IN_TITLE)).toMatch(/✓ {2}Sign in to a model provider/);
   });
 
   it("where pi wires no submit, /login is left on the input line for one Enter", async () => {

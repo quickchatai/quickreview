@@ -25,6 +25,9 @@
 //             the sign-in was for is true (pi has a credential; a stored
 //             login was replaced), the person sends the chat a message (the
 //             menu is gone then), the session ends, or LOGIN_MENU_MAX_MS.
+//             A menu closed with Esc is one the home still takes for open:
+//             the sign-in's own key puts /login up again, under the same
+//             pause and the same wait (LoginMenu.reopen).
 //
 // Nothing here reads or prints a token: the refresher's status file carries
 // expiry times and redacted errors only.
@@ -174,6 +177,8 @@ interface OpenMenu {
   finish: (end: LoginMenuEnd) => void;
   /** Look once more whether it is done, then end it as left. */
   leave: () => void;
+  /** Put pi's menu up again; null until the first open is through. */
+  again: () => "opened" | "prefilled" | null;
 }
 
 /** pi's /login with the refresher held around it: one at a time, for the
@@ -203,7 +208,7 @@ export class LoginMenu {
     if (this.open !== null) return { kind: "busy" };
     const menu = this.o.menu();
     if (menu === undefined) return { kind: "no-menu" };
-    const mine: OpenMenu = { finish: () => {}, leave: () => {} };
+    const mine: OpenMenu = { finish: () => {}, leave: () => {}, again: () => null };
     this.open = mine;
     this.o.onChange?.();
     const drop = (): void => {
@@ -280,9 +285,26 @@ export class LoginMenu {
         });
       });
     };
+    mine.again = () => {
+      if (settled) return null;
+      try {
+        return menu.open();
+      } catch {
+        return null;
+      }
+    };
     w.opened?.(how);
     poll();
     return ended;
+  }
+
+  /** The person pressed the sign-in's key while one is in flight: pi's menu
+   * may have been closed with Esc, which the home cannot see, so /login is
+   * put up again. The pause and the wait are the ones already running: no
+   * second hold, no second poll. null: no sign-in has its menu up yet, or
+   * this pi gave no way. */
+  reopen(): "opened" | "prefilled" | null {
+    return this.open?.again() ?? null;
   }
 
   /** The person sent the chat a message: pi's menu is gone. */
@@ -347,11 +369,22 @@ export class Relogin {
   }
 
   /** Sign in again. The answer comes once pi's menu is open (or the sign-in
-   * could not start): the sign-in itself goes on in the background. */
-  async start(): Promise<string> {
+   * could not start): the sign-in itself goes on in the background. `again`
+   * is the person's own key: pressed while a sign-in is in flight it puts
+   * pi's /login up again (a menu closed with Esc), under the same pause. A
+   * tool's call does not, for the menu may be open in front of the person. */
+  async start(o: { again?: boolean } = {}): Promise<string> {
     const m = this.o.model;
-    if (this.active || this.o.menu.running())
-      return "pi's /login is open already: finish the sign-in in pi's menu.";
+    if (this.active || this.o.menu.running()) {
+      const how = o.again === true ? this.o.menu.reopen() : null;
+      if (how === null) return "pi's /login is open already: finish the sign-in in pi's menu.";
+      const said =
+        how === "opened"
+          ? "Signing in again: pi's /login is open."
+          : "Signing in again: /login is on the input line, press Enter to open pi's menu.";
+      m.say(said);
+      return said;
+    }
     this.active = true;
     this.o.onChange?.();
     const before = await this.stamps();

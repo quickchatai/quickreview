@@ -614,11 +614,12 @@ export class HomeSetup {
     }
   }
 
-  /** Run the next step (alt+n, ⏎ on the card, `home_setup_next`). */
-  async next(ui?: SetupUi): Promise<string> {
+  /** Run the next step (alt+n, ⏎ on the card, `home_setup_next`). `again`
+   * is the person's own key: see signIn. */
+  async next(ui?: SetupUi, o: { again?: boolean } = {}): Promise<string> {
     const id = this.nextId();
     if (id === undefined) return "setup is done: every step is";
-    if (id === HOME_STEPS.login) return this.signIn();
+    if (id === HOME_STEPS.login) return this.signIn(o);
     if (id === HOME_STEPS.github) return this.checkGithub();
     if (id === HOME_STEPS.repo) return this.chooseRepo(undefined, ui);
     if (id === HOME_STEPS.model) return this.chooseModel(ui);
@@ -631,13 +632,23 @@ export class HomeSetup {
 
   /** Sign in with pi's own /login. The answer comes once pi's menu is open
    * (or the sign-in could not start): the sign-in itself goes on in the
-   * background, until pi has a credential or the person leaves the menu. */
-  async signIn(): Promise<string> {
+   * background, until pi has a credential or the person leaves the menu.
+   * `again` is the person's own key: pressed while a sign-in waits it puts
+   * pi's /login up again, under the same pause and the same wait, because a
+   * menu closed with Esc is one the home cannot see close. A tool's call does
+   * not, for the menu may be open in front of the person. */
+  async signIn(o: { again?: boolean } = {}): Promise<string> {
     const s = this.signing;
-    if (s !== null || this.o.menu.running())
-      return s?.how === "prefilled"
+    if (s !== null || this.o.menu.running()) {
+      const again = o.again === true ? this.o.menu.reopen() : null;
+      if (again !== null && s !== null) {
+        s.how = again;
+        this.changed();
+      }
+      return (again ?? s?.how) === "prefilled"
         ? "Still waiting: /login is on the input line, press Enter to open pi's menu."
         : "Still waiting: pi's /login is open, sign in there.";
+    }
     const facts = this.loginFacts();
     // unknown is not "signed out": no sign-in is opened for a state the home cannot read
     if ("unknown" in facts)

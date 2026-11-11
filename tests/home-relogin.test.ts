@@ -256,19 +256,39 @@ describe("signing in again", () => {
     );
   });
 
-  it("home_relogin answers once pi's menu is open; a second press during the sign-in pauses nothing twice", async () => {
+  // The home cannot see pi's menu close: after Esc the sign-in still waits.
+  // MUTATION: drop `again: true` from the alt+l key in createHome, or make
+  // LoginMenu.reopen return null — the key opens nothing and this fails.
+  it("home_relogin answers once pi's menu is open; a second call opens nothing, and the person's key puts /login up again under the one pause", async () => {
     const w = world();
     const h = await home(w);
     expect(await h.pi.tool("home_relogin")).toMatch(/^Signing in again: pi's \/login is open\./);
-    await h.pi.input("l");
     expect(await h.pi.tool("home_relogin")).toBe(
       "pi's /login is open already: finish the sign-in in pi's menu.",
     );
     expect(w.log).toEqual(["hold", "login"]);
+    await h.pi.key("alt+l");
+    await drain();
+    expect(w.log).toEqual(["hold", "login", "login"]);
+    expect(h.text()).toMatch(/North signing in again…/);
+    // the one wait still ends the sign-in, and lifts the one pause
     w.stamps = stamps({ north: "oauth:900", south: "oauth:200" });
+    await h.poll();
+    expect(w.log).toEqual(["hold", "login", "login", "release"]);
+    expect(h.text()).toMatch(/Signed in to North again\./);
+  });
+
+  // The stamps are the real port's shape: type, expiry, a digest of the entry
+  // (tests/home-adapters.test.ts pins that a replaced key changes the digest).
+  it("an API key replaced by another API key ends the sign-in as done", async () => {
+    const w = world({ stamps: stamps({ north: "api_key::0a1b2c3d" }) });
+    const h = await home(w);
+    expect(await h.pi.tool("home_relogin")).toMatch(/^Signing in again: pi's \/login is open\./);
+    w.stamps = stamps({ north: "api_key::9f8e7d6c" });
     await h.poll();
     expect(w.log).toEqual(["hold", "login", "release"]);
     expect(h.text()).toMatch(/Signed in to North again\./);
+    expect(h.text()).not.toMatch(/no stored login changed/);
   });
 
   it("stops before pi is asked when the refresher will not pause", async () => {
