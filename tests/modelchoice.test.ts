@@ -199,7 +199,15 @@ describe("the remembered model choice", () => {
       ),
     });
     expect((result as { error: string }).error).toContain(dir);
-    expect(allowNoEstimate(dir, "alpha/a").ok).toBe(false);
+    // A failed no-estimate answer is worded for what was being stored:
+    // pinning a model is no remedy for an answer about its price.
+    // MUTATION: word allowNoEstimate's failure as the choice's — this fails.
+    const answer = allowNoEstimate(dir, "alpha/a");
+    expect(answer.ok).toBe(false);
+    expect((answer as { error: string }).error).toMatch(
+      /^cannot remember the answer for alpha\/a in .+: .+\. It holds for this run; the next run on this model asks again$/,
+    );
+    expect((answer as { error: string }).error).not.toMatch(/Pin it/);
     expect(readdirSync(dir)).toEqual([]);
   });
 });

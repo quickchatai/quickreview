@@ -66,6 +66,7 @@ import { loginDirOf } from "./loginrefresh/supervisor.js";
 import { modelEnvFrom } from "./modelenv.js";
 import { inspectSessionJsonl } from "./resumecheck.js";
 import { StateStore } from "./state.js";
+import { WORKER_ENV_ALLOW } from "./workersupervisor.js";
 
 /** sockaddr_un's sun_path on Linux holds 108 bytes including the NUL. */
 const SUN_PATH_MAX = 107;
@@ -393,7 +394,8 @@ async function login(opts: PreflightOptions, scratch: string): Promise<Preflight
       srcAgentDir: opts.agentDir,
       tmpDir: join(scratch, "route"),
       credentials: without(borrowed.credentials, new Set(skipped.map((l) => l.provider))),
-      // The model env over the process's own, as a worker's process holds it.
+      // The model env over the environment the check was handed. The entry
+      // hands it only what a worker inherits (workerInheritedEnv).
       authEnv: { ...(opts.env ?? {}), ...modelEnv },
       route: {
         skipped,
@@ -545,6 +547,21 @@ export async function runPreflight(opts: PreflightOptions): Promise<PreflightRep
   return { ok: checks.every((c) => c.ok), checks };
 }
 
+/** The part of an environment a worker's process inherits from the daemon:
+ * the allowlisted names (src/workersupervisor.ts), set and not empty. A
+ * provider key that sits only in the container's environment is not among
+ * them, so it is no credential to a worker and must not be one to the check. */
+export function workerInheritedEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const name of WORKER_ENV_ALLOW) {
+    const value = env[name];
+    if (value !== undefined && value !== "") kept[name] = value;
+  }
+  return kept;
+}
+
 /** The entry: options from the environment the image runs with. Prints the
  * report, resolves the exit code.
  *
@@ -552,12 +569,15 @@ export async function runPreflight(opts: PreflightOptions): Promise<PreflightRep
  * them: the login where `QCR_LOGIN_DIR` hands it one, else pi's agent dir;
  * the secrets dir by the install locator (`QCR_SECRETS_MOUNT` first, which
  * the entrypoint sets for this check as it does for the daemon), read by the
- * loader the daemon gives its workers' processes. */
+ * loader the daemon gives its workers' processes. The whole environment
+ * locates the config, the secrets and the login; the route is resolved over
+ * the part of it a worker inherits, so a key set only in this container's
+ * environment does not pass a check no worker could. */
 export async function preflightMain(
   env: NodeJS.ProcessEnv = process.env,
   out: (s: string) => void = (s) => console.log(s),
+  root: string = sandboxRoot(),
 ): Promise<number> {
-  const root = sandboxRoot();
   const located = locateConfig({ env });
   const stateDir = join(root, "state");
   let sessionsDir: string | undefined;
@@ -583,7 +603,7 @@ export async function preflightMain(
     agentDir,
     loginDir: loginDirOf(env, agentDir),
     secretsDir: locateSecrets({ configured: configuredSecrets, env }).path,
-    env,
+    env: workerInheritedEnv(env),
     ...(model !== undefined ? { model } : {}),
     root,
   });

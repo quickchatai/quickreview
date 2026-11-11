@@ -120,6 +120,8 @@ export function readModelChoice(agentDir: string): ModelChoiceRead {
 function store(
   agentDir: string,
   data: { choice?: ModelChoiceInput; noEstimateOk: readonly string[] },
+  /** What a failed write could not keep, and what to do instead. */
+  failed: (why: string) => string,
 ): ModelChoiceWrite {
   const file = fileOf(agentDir);
   const tmp = `${file}.tmp`;
@@ -146,20 +148,22 @@ function store(
     } catch {
       // the directory refused the write; there is nothing to clean up
     }
-    return {
-      ok: false,
-      error: `cannot remember the choice in ${agentDir}: ${errorText(e)}. Pin it instead: [models] model in config.toml`,
-    };
+    return { ok: false, error: failed(errorText(e)) };
   }
 }
 
 /** Remember `choice`. The no-estimate answers already stored are kept unless
  * the choice brings its own. */
 export function writeModelChoice(agentDir: string, choice: ModelChoiceInput): ModelChoiceWrite {
-  return store(agentDir, {
-    choice,
-    noEstimateOk: choice.no_estimate_ok ?? readModelChoice(agentDir).noEstimateOk,
-  });
+  return store(
+    agentDir,
+    {
+      choice,
+      noEstimateOk: choice.no_estimate_ok ?? readModelChoice(agentDir).noEstimateOk,
+    },
+    (why) =>
+      `cannot remember the choice in ${agentDir}: ${why}. Pin it instead: [models] model in config.toml`,
+  );
 }
 
 /** Forget everything the file holds: the choice and the no-estimate answers. */
@@ -180,8 +184,15 @@ export function clearModelChoice(agentDir: string): ModelChoiceWrite {
 export function allowNoEstimate(agentDir: string, spec: string): ModelChoiceWrite {
   const held = readModelChoice(agentDir);
   if (held.noEstimateOk.includes(spec)) return { ok: true };
-  return store(agentDir, {
-    ...(held.choice ? { choice: held.choice } : {}),
-    noEstimateOk: [...held.noEstimateOk, spec],
-  });
+  return store(
+    agentDir,
+    {
+      ...(held.choice ? { choice: held.choice } : {}),
+      noEstimateOk: [...held.noEstimateOk, spec],
+    },
+    // Pinning a model is no remedy for an answer about its price: the answer
+    // holds for this run, and the next one asks again.
+    (why) =>
+      `cannot remember the answer for ${spec} in ${agentDir}: ${why}. It holds for this run; the next run on this model asks again`,
+  );
 }

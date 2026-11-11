@@ -120,6 +120,11 @@ ZAI_CODING_CN_API_KEY
 '
 # END pi model env names
 
+# Names pi reads when it makes a request, beside a credential of the block:
+# the generator records what a provider's credential check asks for, and
+# these are asked for later. Forwarded as the block's names are, by name only.
+MODEL_ENV_COMPANIONS='AWS_SESSION_TOKEN'
+
 say() { echo "qcr-action: $*" >&2; }
 # An annotation on stdout (what the runner parses) and the same on stderr.
 die() {
@@ -363,12 +368,24 @@ assert_config() { # assert_config <file>
 
 # ---- run -------------------------------------------------------------------------------
 
-# Is this exactly one of pi's model env names (the generated block)?
+# Is this exactly one of pi's model env names (the generated block, or a
+# request-time companion of one)?
 is_model_env_name() { # is_model_env_name <name>
   local n
-  for n in $PI_MODEL_ENV_NAMES; do
+  for n in $PI_MODEL_ENV_NAMES $MODEL_ENV_COMPANIONS; do
     [ "$n" != "$1" ] || return 0
   done
+  return 1
+}
+
+# Does this name point at something on this machine that the container does
+# not have? A profile name (*_PROFILE), a file path (*_FILE), or a value that
+# is the absolute path of a file here: nothing mounts it, and pi would count
+# the provider as credentialed on the name alone and fail at its first call.
+# Such a name is never forwarded.
+host_only() { # host_only <name> <value>
+  case "$1" in *_PROFILE | *_FILE) return 0 ;; esac
+  case "$2" in /*) [ ! -f "$2" ] || return 0 ;; esac
   return 1
 }
 
@@ -532,11 +549,14 @@ run_review() {
   args+=(-e QCR_ROUTE=action)
   # Model credentials by name: docker reads the value from this environment.
   # The names are pi's own (the block at the top), whatever provider they
-  # belong to, plus the names in QCR_MODEL_ENV, QCR_DEBUG and
-  # DIGITALOCEAN_API_KEY (an older spelling; pi does not know the name).
-  for key in $PI_MODEL_ENV_NAMES $MODEL_ENV_EXTRA DIGITALOCEAN_API_KEY QCR_DEBUG; do
+  # belong to, with their request-time companions, plus the names in
+  # QCR_MODEL_ENV, QCR_DEBUG and DIGITALOCEAN_API_KEY (an older spelling; pi
+  # does not know the name). One that points at a profile or a file on the
+  # runner stays there (host_only): the container has neither.
+  for key in $PI_MODEL_ENV_NAMES $MODEL_ENV_COMPANIONS $MODEL_ENV_EXTRA DIGITALOCEAN_API_KEY QCR_DEBUG; do
     val="${!key-}"
-    [ -z "$val" ] || args+=(-e "$key")
+    [ -n "$val" ] || continue
+    host_only "$key" "$val" || args+=(-e "$key")
   done
   val=''
   args+=("$image" cli review "$pr" --repo "$repo" --to pr,terminal)

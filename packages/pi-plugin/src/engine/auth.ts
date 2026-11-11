@@ -557,6 +557,29 @@ export type CaseRefused = { ok: false; reason: string; cost_usd: number };
 /** Set in the scan container: where the companion's agent dir is mounted
  * read-only. Its presence is what makes the driver copy before each case. */
 export const SCAN_AUTH_SRC_ENV = "QCR_SCAN_AUTH_SRC";
+
+/** The env name that carries the providers the probe's copy judges: a JSON
+ * list of provider ids (the route's, `scanProviders`). Unset, every login in
+ * the file is judged, as before the copy knew the route. */
+export const SCAN_AUTH_PROVIDERS_ENV = "QCR_SCAN_AUTH_PROVIDERS";
+
+/** The providers `SCAN_AUTH_PROVIDERS_ENV` names, or undefined when it is
+ * unset or is not a list of strings (the whole login is judged then: an
+ * unreadable list never widens what passes). */
+export function scanAuthProvidersOf(
+  env: Readonly<Record<string, string | undefined>>,
+): string[] | undefined {
+  const raw = env[SCAN_AUTH_PROVIDERS_ENV]?.trim();
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((p): p is string => typeof p === "string"))
+      return parsed;
+  } catch {
+    /* judged whole */
+  }
+  return undefined;
+}
 /** The time a scan case may take, which the access token must outlive. */
 export const SCAN_CASE_AUTH_BUDGET_MS = 30 * 60_000;
 
@@ -584,7 +607,7 @@ const SCAN_AUTH_WORDS: AuthCopyWords = { missing: scanAuthMissing, expiring: sca
 
 /** The provider a model spec names (`provider/model[:level]`), or null when
  * it names none: a spec that pins no model runs on the route's. */
-function specProvider(spec: string): string | null {
+export function specProvider(spec: string): string | null {
   const at = spec.indexOf("/");
   return at > 0 ? spec.slice(0, at) : null;
 }

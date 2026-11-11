@@ -19,7 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import {
   LEAF_TURN_TIMEOUT_MS,
   caseHostRoute,
@@ -558,6 +558,58 @@ describe("the driver's host: a login per case, refused and read-only", () => {
     expect(existsSync(join(none, "auth.json"))).toBe(false);
   });
 
+  // A route on an environment key does not lean on the stored login of the
+  // same provider: that login was left out before the route was chosen, and
+  // what became of it stops no case.
+  // MUTATION: judge the skipped logins of the route's provider whatever the
+  // route's credential is (drop the `origin === "stored"` test from the
+  // `short` filter in scanSdkCases) — the env-key scan is stopped at its
+  // first case as login-too-short, and this fails.
+  it("with a route on an environment key, a too-short stored login of the same provider stops nothing", async () => {
+    const src = join(dir, "src-agent");
+    mkdirSync(src);
+    writeFileSync(
+      join(src, "auth.json"),
+      JSON.stringify({
+        faux: {
+          type: "oauth",
+          access: "tok",
+          refresh: "real-refresh",
+          expires: Date.now() + 60_000,
+        },
+      }),
+    );
+    const env = { PATH: "/bin", HOME: dir, PI_CODING_AGENT_DIR: src };
+    const expired: string[] = [];
+    const keyRoute = driver(
+      env,
+      (r) => expired.push(r),
+      () => ({
+        ...FAUX_ROUTE,
+        credential: { kind: "api_key", origin: "env-key", subscription: false },
+      }),
+    );
+    const out = await keyRoute.cases.run(spec, new AbortController().signal);
+    expect(out, JSON.stringify(out)).toMatchObject({ ok: true, output: "NONE" });
+    expect(expired).toEqual([]);
+    // The same login under a route that IS on it still stops the run.
+    const stopped: string[] = [];
+    const storedRoute = driver(
+      env,
+      (r) => stopped.push(r),
+      () => ({
+        ...FAUX_ROUTE,
+        credential: { kind: "oauth", origin: "stored", subscription: false },
+      }),
+    );
+    expect(await storedRoute.cases.run(spec, new AbortController().signal)).toMatchObject({
+      ok: false,
+      cost_usd: 0,
+    });
+    expect(stopped).toHaveLength(1);
+    expect(storedRoute.made).toHaveLength(0);
+  });
+
   it("host mode admits a login only if it outlives the turn's wall clock; the container's budget is the case budget", async () => {
     const src = join(dir, "src-agent");
     mkdirSync(src);
@@ -914,6 +966,29 @@ describe("the scan's route", () => {
     const again = await resolve({ src, ids: ["alpha", "beta"], choose });
     expect(asked).toHaveLength(1);
     expect(again.result.ok && again.result.route.spec).toBe(FAUX_SPEC("beta"));
+  });
+
+  // Each row says what is known of its price, as the review's question does.
+  // MUTATION: build the rows without the inventory (providerRows(route)) in
+  // scanRoute — the priced row loses its `no estimate` and this fails.
+  it("the provider question says what is known of each row's price", async () => {
+    const src = home();
+    let rows: readonly string[] = [];
+    const cost = { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1 };
+    await resolve({
+      src,
+      configureModels: ((r: { registerNativeProvider(p: unknown): void }): void => {
+        r.registerNativeProvider(
+          fauxProvider({ provider: "alpha", models: [{ ...ROUTABLE_FAUX_MODEL, cost }] }).provider,
+        );
+        r.registerNativeProvider(routableFaux({ provider: "beta" }).provider);
+      }) as never,
+      choose: async (_question, asked) => {
+        rows = asked;
+        return null;
+      },
+    });
+    expect(rows.map((r) => r.split(/ {4}/).at(-1))).toEqual(["no estimate", "no list price"]);
   });
 
   it("with nobody to ask, the order decides and the route says a host may ask", async () => {

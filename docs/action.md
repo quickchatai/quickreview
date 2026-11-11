@@ -66,6 +66,16 @@ command line; docker reads the value from the step's environment.
   separated by commas, in the same `env:`. A name that starts with `GH_`,
   `GITHUB_`, `QCR_`, `PI_`, `OPENVIKING_` or `GIT_` is refused, and so is one
   with `TOKEN`, `SECRET` or `PASSWORD` in it that is not one of pi's own.
+- **Amazon Bedrock on temporary credentials** (what
+  `aws-actions/configure-aws-credentials` exports): `AWS_SESSION_TOKEN` is
+  forwarded beside the key pair, with no setting of yours. The region is not
+  a credential: put `AWS_REGION` in `QCR_MODEL_ENV`.
+- **A name that points at the runner** is never forwarded: a profile name
+  (`*_PROFILE`), a file path (`*_FILE`), or any value that is the absolute
+  path of a file on the runner, such as `GOOGLE_APPLICATION_CREDENTIALS`. The
+  container has neither the profile nor the file, and pi would count the
+  provider as credentialed on the name alone. Use a key, or a login given as
+  `pi-auth`.
 - **The four key inputs** (`openai-api-key`, `anthropic-api-key`,
   `gemini-api-key`, `digitalocean-api-key`) are the same route under older
   names and stay. pi has no built-in provider for `DIGITALOCEAN_API_KEY`: the

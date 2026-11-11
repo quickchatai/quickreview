@@ -399,6 +399,30 @@ describe("the env-name blocks are pi's (fence 10)", () => {
     }
   });
 
+  // The two rules beside the block are one rule, spelled in sh in two
+  // scripts: the request-time companions, and what stays on the host.
+  // MUTATION: add a name to MODEL_ENV_COMPANIONS in scripts/action.sh alone,
+  // or change one script's host_only - this fails.
+  it("both scripts hold the same companions and the same host-only rule, and forward the companions", () => {
+    const companions = (text: string): string[] =>
+      text.split("\n").filter((line) => /^MODEL_ENV_COMPANIONS=/.test(line));
+    const hostOnly = (text: string): string =>
+      /\nhost_only\(\) \{[^\n]*\n(?:[^\n]*\n)*?\}\n/.exec(text)?.[0] ?? "";
+    const [first, second] = BLOCK_FILES.map((rel) => script(rel));
+    expect(companions(first!)).toEqual(["MODEL_ENV_COMPANIONS='AWS_SESSION_TOKEN'"]);
+    expect(companions(second!)).toEqual(companions(first!));
+    expect(hostOnly(first!)).toMatch(/\*_PROFILE \| \*_FILE/);
+    expect(hostOnly(second!)).toBe(hostOnly(first!));
+    for (const rel of BLOCK_FILES) {
+      const loop = script(rel)
+        .split("\n")
+        .filter((line) => /^\s*for (name|key) in \$PI_MODEL_ENV_NAMES\b/.test(line));
+      expect(loop[0], rel).toMatch(/\$MODEL_ENV_COMPANIONS\b/);
+      // a companion is not one of the generated names
+      expect(PI_NAMES, rel).not.toContain("AWS_SESSION_TOKEN");
+    }
+  });
+
   // What QCR_MODEL_ENV may not name is what the secrets dir's model-env may
   // not: one rule, spelled in sh in two scripts.
   // MUTATION: drop `GIT_*` from the refused prefixes in scripts/qcr-host.sh -

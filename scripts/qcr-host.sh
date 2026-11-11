@@ -140,12 +140,28 @@ ZAI_CODING_CN_API_KEY
 '
 # END pi model env names
 
+# Names pi reads when it makes a request, beside a credential of the block:
+# the generator records what a provider's credential check asks for, and
+# these are asked for later. Forwarded as the block's names are, by name only.
+MODEL_ENV_COMPANIONS='AWS_SESSION_TOKEN'
+
 PULL_HINT='check the version exists; a private mirror needs gh auth refresh -s read:packages, then  gh auth token | docker login ghcr.io -u <your github user> --password-stdin'
 
 say() { printf 'qcr: %s\n' "$*" >&2; }
 die() {
   printf 'qcr: %s\n' "$*" >&2
   exit 1
+}
+
+# Does this name point at something on this machine that the container does
+# not have? A profile name (*_PROFILE), a file path (*_FILE), or a value that
+# is the absolute path of a file here: nothing mounts it, and pi would count
+# the provider as credentialed on the name alone and fail at its first call.
+# Such a name is never forwarded.
+host_only() { # host_only <name> <value>
+  case "$1" in *_PROFILE | *_FILE) return 0 ;; esac
+  case "$2" in /*) [ ! -f "$2" ] || return 0 ;; esac
+  return 1
 }
 
 # QCR_MODEL_ENV: more names to forward, separated by commas or spaces. A name
@@ -405,6 +421,9 @@ run_id="${QCR_RUN_ID:-}"
 review_container=''
 rverb=''
 [ "$verb" != review ] || rverb="${2:-}"
+# `qcr model use|reset` write the remembered choice (see the login mount).
+mverb=''
+[ "$verb" != model ] || mverb="${2:-}"
 
 # The wrapper's own path, to call itself for the two inner calls.
 self_path() {
@@ -751,7 +770,12 @@ else
   # With a companion the state home is the host's own dir, which the companion
   # mounts too (the plan names it), not the volume.
   [ "$companion" = 1 ] || set -- "$@" -e QCR_STATE_HOME=/opt/qcr/state/home
-  set -- "$@" --mount "type=volume,src=qcr-login,dst=/qcr-login,readonly"
+  # `qcr model use` and `qcr model reset` write the remembered choice beside
+  # the login (packages/pi-plugin/src/modelchoice.ts): the one cli call that
+  # mounts the volume read-write. It starts no model and runs no tool.
+  login_mode=',readonly'
+  case "$mverb" in use | reset) login_mode='' ;; esac
+  set -- "$@" --mount "type=volume,src=qcr-login,dst=/qcr-login$login_mode"
 
   # The user profile dir, read-only, and ONLY it. Not the install home.
   profiles="${XDG_CONFIG_HOME:-$HOME/.config}/qcr/profiles"
@@ -849,18 +873,22 @@ fi
 # Model credentials for a headless run: the NAME only, docker reads the value
 # from this process's environment, so no key is ever in an argument list. The
 # names are pi's own (the block above), whatever provider they belong to, plus
-# DIGITALOCEAN_API_KEY (an older spelling some installs set; pi does not know
-# the name) and QCR_DEBUG.
-for name in $PI_MODEL_ENV_NAMES DIGITALOCEAN_API_KEY QCR_DEBUG; do
+# with their request-time companions, DIGITALOCEAN_API_KEY (an older spelling
+# some installs set; pi does not know the name) and QCR_DEBUG. One that points
+# at a profile or a file on this machine stays here (host_only): the container
+# has neither.
+for name in $PI_MODEL_ENV_NAMES $MODEL_ENV_COMPANIONS DIGITALOCEAN_API_KEY QCR_DEBUG; do
   eval "val=\${$name-}"
-  [ -z "$val" ] || set -- "$@" -e "$name"
+  [ -n "$val" ] || continue
+  host_only "$name" "$val" || set -- "$@" -e "$name"
 done
 # QCR_MODEL_ENV names more: a provider's extra settings, or the key of a
 # provider you added to pi yourself. The image's own names are not model
 # names and are never forwarded this way.
 for name in $model_env_extra; do
   eval "val=\${$name-}"
-  [ -z "$val" ] || set -- "$@" -e "$name"
+  [ -n "$val" ] || continue
+  host_only "$name" "$val" || set -- "$@" -e "$name"
 done
 val=''
 if [ "$flags" = '-it' ]; then set -- "$@" -e TERM; fi

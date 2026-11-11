@@ -65,7 +65,11 @@ import {
 import { SCAN_MODEL_ENV, loadScanConfig } from "./setup/scanbuild.js";
 import type { DockerRunner } from "./tui/companion.js";
 import type { ScanRouteAnswer } from "./engine/caserunner-sdk.js";
-import { SCAN_AUTH_SRC_ENV, scanProviders } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import {
+  SCAN_AUTH_SRC_ENV,
+  scanProviders,
+  specProvider,
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   credentialWords,
   type ModelRoute,
@@ -389,10 +393,16 @@ export function foregroundMismatch(
   );
 }
 
+/** What the doctor says of a credential it did not read: the route says
+ * nothing of a provider it is not on. */
+export const CREDENTIAL_UNKNOWN = "credential unknown";
+
 /**
  * The route as the scan doctor needs it: the model stage 1 runs on (`tier`'s
  * spec as it will run, else the route's own), and the providers the scan's
- * models are on. An unknown route, or none, is its refusal in the host's
+ * models are on. The provider and credential are the probed model's: the
+ * route's when the model is on the route's provider, else that model's own
+ * provider id with its credential unknown. An unknown route, or none, is its refusal in the host's
  * words: never a model guessed from the config.
  */
 export function doctorRouteOf(
@@ -405,12 +415,18 @@ export function doctorRouteOf(
     return { ok: false, error: routed.refusal ?? "the scan's model could not be read" };
   if (!r.ok) return { ok: false, error: routed.refusal ?? `no model route (${r.refusal.code})` };
   const tiers: Readonly<Record<string, string>> = routed.tiers ?? {};
+  const model = tiers[tier] ?? r.route.spec;
+  // A tier pinned to a model of another provider is not on the route's login:
+  // the provider shown is the probed model's own, and nothing the route knows
+  // (pi's name for its provider, its credential) is said of it.
+  const own = specProvider(model);
+  const onRoute = own === null || own === r.route.provider;
   return {
     ok: true,
-    model: tiers[tier] ?? r.route.spec,
-    provider: r.route.provider,
-    providerName: r.route.providerName,
-    credential: credentialWords(r.route.credential),
+    model,
+    provider: onRoute ? r.route.provider : own,
+    providerName: onRoute ? r.route.providerName : own,
+    credential: onRoute ? credentialWords(r.route.credential) : CREDENTIAL_UNKNOWN,
     providers: scanProviders(r.route, models),
   };
 }
@@ -691,7 +707,7 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
   const routing: ScanRouting = {};
   const ports = inSandbox
     ? { detach: detachDriver(env, home), units: engine, sandbox: null }
-    : await sandboxPorts(env, home, engine, settingsOf, picked.sandbox, routing);
+    : await sandboxPorts(env, home, engine, settingsOf, picked.sandbox, routing, authEnv);
   const { sandbox: routeSandbox, ...sandboxDeps } = ports;
   const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY);
   const routePort = routes.port({
@@ -812,6 +828,9 @@ async function sandboxPorts(
   sandboxOverride?: "host" | "docker",
   /** The scan's route port, once the caller has made it. */
   routing: ScanRouting = {},
+  /** The environment the route is resolved over (`env` with the secrets
+   * dir's model env): what the doctor's host probe runs pi in. */
+  authEnv?: NodeJS.ProcessEnv,
 ): Promise<
   Pick<ScanCliDeps, "detach" | "units" | "doctor" | "login" | "rebuild"> & {
     sandbox: ScanRouteWorld["sandbox"];
@@ -916,6 +935,9 @@ async function sandboxPorts(
         docker,
         stamp: () => appStamp(appRoot),
         reviewedRepo,
+        // A host probe asks pi over the credentials the route was resolved
+        // on: a key held only in the secrets dir's model env is one of them.
+        ...(authEnv !== undefined ? { hostPiEnv: authEnv } : {}),
         cut: () => {
           const st = engine.status();
           return { saved: st.saved !== null, problems: st.cut_file_unreadable ? st.problems : [] };

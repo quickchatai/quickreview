@@ -51,6 +51,7 @@ import {
   dockerDetach,
   buildScanImage,
   effectiveSandbox,
+  hostPiProbe,
   loginProblem,
   renderDoctor,
   scanDoctor,
@@ -65,6 +66,7 @@ import {
 } from "../src/scanbox.js";
 import {
   PI_REFRESH_MARGIN_MS,
+  SCAN_AUTH_PROVIDERS_ENV,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
   scanProviders,
@@ -1735,6 +1737,9 @@ describe("qcr scan doctor", () => {
       `${SCAN_AUTH_SRC_ENV}=/pi-agent-src`,
       "--env",
       "PI_CODING_AGENT_DIR=/home/companion/.pi/agent",
+      // the copy judges the route's logins only, as the check before it does
+      "--env",
+      `${SCAN_AUTH_PROVIDERS_ENV}=["made-up"]`,
       "qcr-companion",
       "sh",
       "-c",
@@ -1939,6 +1944,22 @@ describe("qcr scan doctor", () => {
     expect(r.checks[0]!.detail).toMatch(/made-up\/large-3:medium \(Made Up, signed in with pi\)/);
   });
 
+  // The default host probe runs pi in the environment the route was resolved
+  // over, so a key held only in the secrets dir's model env reaches it; this
+  // process's own environment never holds the value.
+  // MUTATION: drop `env` from hostPiProbe's runCommand call — the child
+  // prints "unset" and this fails.
+  it("the host probe's pi runs in the environment it is handed, which this process never takes on", async () => {
+    const name = "QCR_TEST_PROBE_MODEL_KEY";
+    const print = ["-e", `process.stdout.write(process.env.${name} ?? "unset")`];
+    const probe = hostPiProbe({ PATH: process.env.PATH ?? "", [name]: "held" }, process.execPath);
+    expect((await probe(print, { timeoutMs: 20_000 })).stdout).toBe("held");
+    expect(process.env[name]).toBeUndefined();
+    // with none handed, the child has this process's own
+    const plain = hostPiProbe(undefined, process.execPath);
+    expect((await plain(print, { timeoutMs: 20_000 })).stdout).toBe("unset");
+  });
+
   it("with sandbox = host and no route: the check fails with the reason, and pi is not run", async () => {
     let ran = 0;
     const r = await doctor([], {
@@ -1984,13 +2005,33 @@ describe("qcr scan doctor", () => {
         "standard",
         { tiers: { light: ":low", standard: "other-one/big:medium", deep: ":high" } },
       );
+      // The provider and credential are the probed model's: nothing the
+      // route knows of its own provider is said of another.
+      // MUTATION: return the route's provider, providerName and credential
+      // whatever the tier's spec names — this fails, and the doctor shows one
+      // provider's token life beside another provider's model.
       expect(got).toEqual({
         ok: true,
         model: "other-one/big:medium",
+        provider: "other-one",
+        providerName: "other-one",
+        credential: "credential unknown",
+        providers: ["made-up", "other-one"],
+      });
+      // a tier on the route's own provider keeps the route's words
+      expect(
+        doctorRouteOf(
+          {
+            result: { ok: true, route },
+            surface: "app",
+            tiers: { light: "x", standard: "made-up/large-3:medium", deep: "y" },
+          },
+          "standard",
+        ),
+      ).toMatchObject({
         provider: "made-up",
         providerName: "Made Up",
         credential: "signed in with pi",
-        providers: ["made-up", "other-one"],
       });
     });
 

@@ -496,6 +496,26 @@ describe("a review call", () => {
     expect(envs(argv!)).toContain("PI_CODING_AGENT_DIR=/qcr-login");
   });
 
+  // The remembered choice lives beside the login: the two calls that write
+  // it are the only cli calls that mount the volume read-write.
+  // MUTATION: mount the login read-only for `model use` — the choice cannot
+  // be remembered through the wrapper and this fails.
+  it("mounts the login read-write for `qcr model use` and `qcr model reset`, and for no other cli call", () => {
+    const login = (args: string[]): string[] => {
+      const r = rig();
+      r.run(args);
+      return mounts(r.calls()[0]!).filter((m) => m.includes("src=qcr-login"));
+    };
+    expect(login(["model", "use", "anthropic"])).toEqual([
+      "type=volume,src=qcr-login,dst=/qcr-login",
+    ]);
+    expect(login(["model", "reset"])).toEqual(["type=volume,src=qcr-login,dst=/qcr-login"]);
+    for (const args of [["model"], ["model", "--json"], ["review", "use"], ["scan", "reset"]])
+      expect(login(args), args.join(" ")).toEqual([
+        "type=volume,src=qcr-login,dst=/qcr-login,readonly",
+      ]);
+  });
+
   it("hands the token over as a 0600 file in a 0700 dir under XDG_RUNTIME_DIR, gone after the call", () => {
     const r = rig();
     r.run(["review"], { env: { GITHUB_TOKEN: TOKEN } });
@@ -566,6 +586,61 @@ describe("a review call", () => {
     // The GitHub token still travels as a file, under no name.
     expect(all).not.toContain(TOKEN);
     expect(envs(argv!).filter((e) => /^(GITHUB_TOKEN|GH_TOKEN)/.test(e))).toEqual([]);
+  });
+
+  // MUTATION: drop $MODEL_ENV_COMPANIONS from the wrapper's model loop — the
+  // AWS key pair travels without its session token and this fails.
+  it("forwards the session token of temporary AWS credentials beside the key pair", () => {
+    const r = rig();
+    const done = r.run(["review", "42"], {
+      env: {
+        GITHUB_TOKEN: TOKEN,
+        AWS_ACCESS_KEY_ID: "value-of-id",
+        AWS_SECRET_ACCESS_KEY: "value-of-secret",
+        AWS_SESSION_TOKEN: "value-of-session",
+      },
+    });
+    expect(done.status, done.stderr).toBe(0);
+    const [argv] = r.calls();
+    expect(envs(argv!)).toEqual(
+      expect.arrayContaining(["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]),
+    );
+    expect(argv!.join("\n")).not.toContain("value-of-session");
+  });
+
+  // A name that points at a profile or a file on this machine is set in the
+  // container and names nothing there: pi would count the provider as
+  // credentialed on the name alone, and the no-credential refusal with its
+  // `qcr login` hint would become a failure at the first model call.
+  // MUTATION: drop the host_only test from the wrapper's model loop — the
+  // names below reach the container and this fails.
+  it("never forwards a name that points at a profile or a file on this machine", () => {
+    const r = rig();
+    const file = join(r.dir, "adc.json");
+    writeFileSync(file, "{}");
+    const done = r.run(["review", "42"], {
+      env: {
+        GITHUB_TOKEN: TOKEN,
+        AWS_PROFILE: "work",
+        AWS_WEB_IDENTITY_TOKEN_FILE: "/var/run/token",
+        ANTHROPIC_IDENTITY_TOKEN_FILE: "/var/run/other",
+        GOOGLE_APPLICATION_CREDENTIALS: file,
+        QCR_MODEL_ENV: "MY_CA_BUNDLE",
+        MY_CA_BUNDLE: file,
+        XAI_API_KEY: "value-of-x",
+      },
+    });
+    expect(done.status, done.stderr).toBe(0);
+    const [argv] = r.calls();
+    for (const n of [
+      "AWS_PROFILE",
+      "AWS_WEB_IDENTITY_TOKEN_FILE",
+      "ANTHROPIC_IDENTITY_TOKEN_FILE",
+      "GOOGLE_APPLICATION_CREDENTIALS",
+      "MY_CA_BUNDLE",
+    ])
+      expect(envs(argv!), n).not.toContain(n);
+    expect(envs(argv!)).toContain("XAI_API_KEY");
   });
 
   it("QCR_MODEL_ENV adds names to forward; one of this program's own, or a malformed one, stops the call", () => {

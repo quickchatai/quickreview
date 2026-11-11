@@ -56,15 +56,16 @@ import {
 } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { readModelChoice, writeModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import {
-  credentialWords,
   refusalText,
   skippedNotice,
   type ModelChoice,
   type ModelRoute,
+  type ProviderInventory,
   type RouteInput,
   type RouteResult,
   type SkippedLogin,
 } from "@quickchatai/pi-quickreview/src/modelroute.js";
+import { providerRows } from "@quickchatai/pi-quickreview/src/plugin/login.js";
 import { copyCatalogFiles, routeHost } from "@quickchatai/pi-quickreview/src/reviewhost.js";
 import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { BUDGET_EXIT_CODE } from "@quickchatai/pi-quickreview/src/engine/budget.js";
@@ -193,20 +194,6 @@ export interface ScanRouteOptions {
   now?: () => number;
 }
 
-/** The rows of the provider question: the model each provider would run,
- * whose credential it is, and what is not known about its price. */
-function providerRows(route: ModelRoute): string[] {
-  const options = [route, ...route.alternatives];
-  const width = Math.max(...options.map((x) => x.spec.length));
-  return options.map((x) =>
-    [
-      x.spec.padEnd(width),
-      `${x.providerName}, ${credentialWords(x.credential)}`,
-      ...(x.priced ? [] : ["no list price"]),
-    ].join("    "),
-  );
-}
-
 /**
  * Why a scan has no route and what to do about it. The route's own words
  * (modelroute.ts `refusalText`) speak of a review; a scan says scan, and
@@ -294,7 +281,12 @@ export async function scanRoute(o: ScanRouteOptions): Promise<ScanRouteAnswer> {
   const saved = piSavedProvider(src);
   const resolve = async (
     choice: ModelChoice | undefined,
-  ): Promise<{ result: RouteResult; nameOf: (provider: string) => string }> => {
+  ): Promise<{
+    result: RouteResult;
+    nameOf: (provider: string) => string;
+    /** What pi offers, for what a row of the question says of a price. */
+    inventory: readonly ProviderInventory[];
+  }> => {
     const made = await routeHost({
       srcAgentDir: src,
       tmpDir: o.tmpDir,
@@ -313,7 +305,11 @@ export async function scanRoute(o: ScanRouteOptions): Promise<ScanRouteAnswer> {
     try {
       const result = await made.host.route();
       const names = new Map(made.host.modelRuntime.getProviders().map((p) => [p.id, p.name]));
-      return { result, nameOf: (provider) => names.get(provider) ?? provider };
+      return {
+        result,
+        nameOf: (provider) => names.get(provider) ?? provider,
+        inventory: await made.host.inventory(),
+      };
     } finally {
       made.dispose();
     }
@@ -326,7 +322,7 @@ export async function scanRoute(o: ScanRouteOptions): Promise<ScanRouteAnswer> {
     const options = [got.result.route, ...got.result.route.alternatives];
     const picked = await o.choose(
       "pi can run this scan on more than one provider:",
-      providerRows(got.result.route),
+      providerRows(got.result.route, got.inventory),
     );
     const answer = picked === null ? undefined : options[picked];
     if (answer !== undefined) {
@@ -410,10 +406,16 @@ export function scanSdkCases(o: ScanSdkCasesOptions): CaseRunner {
         if (err instanceof AuthError) o.onExpired(err.message);
         throw err;
       }
-      // The logins this case must outlive: the route's provider's alone; with
-      // no route the case's host may resolve any of them.
+      // The logins this case must outlive: the route's provider's alone, and
+      // only when the route leans on the stored login (a route on an
+      // environment key runs whatever became of the login beside it); with no
+      // route the case's host may resolve any of them.
       const short = borrowed.skipped
-        .filter((l) => route === undefined || l.provider === route.provider)
+        .filter(
+          (l) =>
+            route === undefined ||
+            (route.credential.origin === "stored" && l.provider === route.provider),
+        )
         .map((l) => (route !== undefined ? { ...l, name: route.providerName } : l))
         .sort((a, b) => a.expiresAt - b.expiresAt);
       if (short.length > 0)

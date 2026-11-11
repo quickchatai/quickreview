@@ -76,6 +76,7 @@ import type { LoginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.j
 import {
   PI_REFRESH_MARGIN_MS,
   SCAN_AUTH_FIX,
+  SCAN_AUTH_PROVIDERS_ENV,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
   expiryText,
@@ -992,10 +993,11 @@ export type DoctorRoute =
       ok: true;
       /** The spec stage 1 runs on, as pi's `--model` takes it. */
       model: string;
-      /** The route's provider, and pi's name for it. */
+      /** The provider `model` is on, and pi's name for it (the id, for a
+       * tier pinned to a provider the route is not on). */
       provider: string;
       providerName: string;
-      /** Whose credential the route is on, in words (never a value). */
+      /** Whose credential `model` runs on, in words (never a value). */
       credential: string;
       /** The providers the scan's models are on (`scanProviders`). */
       providers: readonly string[];
@@ -1018,8 +1020,22 @@ export interface DoctorDeps {
   route: () => Promise<DoctorRoute>;
   /** `pi …` on this machine (sandbox = "host"); default the PATH's. */
   hostPi?: (argv: string[], opts: { timeoutMs: number }) => Promise<DockerResult>;
+  /** The environment the default host probe's pi runs in: the one the route
+   * was resolved over (this process's, with the secrets dir's model env), so
+   * the probe finds the credential the route names. Unset: this process's. */
+  hostPiEnv?: NodeJS.ProcessEnv;
   piTimeoutMs?: number;
   now?: () => number;
+}
+
+/** The host probe: `bin argv…` (the PATH's pi) in `env` when one is given.
+ * The model env reaches the probe's child alone, never this process's own
+ * environment. */
+export function hostPiProbe(
+  env?: NodeJS.ProcessEnv,
+  bin = "pi",
+): NonNullable<DoctorDeps["hostPi"]> {
+  return (argv, o) => runCommand(bin, argv, { ...o, ...(env !== undefined ? { env } : {}) });
 }
 
 /** pi's one-shot probe arguments. */
@@ -1062,7 +1078,7 @@ export async function scanDoctor(d: DoctorDeps): Promise<DoctorReport> {
       checks.push(await pihomeCheck(d, problem === null, timeoutMs, LOGIN));
     }
   } else {
-    const pi = d.hostPi ?? ((argv, o) => runCommand("pi", argv, o));
+    const pi = d.hostPi ?? hostPiProbe(d.hostPiEnv);
     const route = await askRoute(d);
     if (!route.ok) {
       // No model to ask: nothing is probed, and nothing is guessed.
@@ -1157,8 +1173,9 @@ async function pihomeCheck(
       fix: login,
     };
   const now = (d.now ?? Date.now)();
-  // The route's own login, when the login file holds one: a route may also be
-  // on a credential pi found elsewhere (a key in the container's environment).
+  // The probed model's own login, when the login file holds one: a model may
+  // also be on a credential pi found elsewhere (a key in the container's
+  // environment), and then the route's words for it are all there is.
   const cred = read.summary[route.provider];
   const life =
     cred === undefined
@@ -1186,6 +1203,11 @@ async function pihomeCheck(
       ...PUBLIC_DNS.flatMap((x) => ["--dns", x]),
       ...loginMounts(vol).flatMap((m) => ["--mount", mountSpec(m)]),
       ...loginEnvArgv(),
+      // The copy judges the logins the narrowed check above judged, and no
+      // other: without this the probe would refuse on a login the scan
+      // never uses.
+      "--env",
+      `${SCAN_AUTH_PROVIDERS_ENV}=${JSON.stringify(route.providers)}`,
       d.sandbox.image,
       "sh",
       "-c",

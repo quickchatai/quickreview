@@ -31,6 +31,7 @@ import { DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js
 import { MODEL_ENV_DIR } from "../src/modelenv.js";
 import {
   DEFAULT_WORK_WINDOW_MIN,
+  preflightMain,
   runPreflight,
   type PreflightOptions,
   type PreflightReport,
@@ -369,6 +370,42 @@ describe("daemon --preflight: a model route resolves", () => {
         if (prior === undefined) delete process.env[BUILTIN_ENV];
         else process.env[BUILTIN_ENV] = prior;
       }
+    },
+  );
+
+  // The entry hands the check a worker's credentials, not the container's: a
+  // worker inherits the allowlisted names only, so a provider key that sits in
+  // the check's own environment is no credential, and the same key under the
+  // secrets dir's model env is one.
+  // MUTATION: hand runPreflight the whole `env` in preflightMain — the first
+  // run passes on a key no worker receives and this fails.
+  it(
+    "the entry counts a key under the secrets dir, never one in its own environment",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      noCredential();
+      const run = async (env: Record<string, string>): Promise<PreflightReport> => {
+        let printed = "";
+        await preflightMain(
+          {
+            QCR_CONFIG: join(opts.configHome, "config.toml"),
+            PI_CODING_AGENT_DIR: opts.agentDir,
+            HOME: dir,
+            QCR_SECRETS_MOUNT: join(dir, "no-secrets"),
+            ...env,
+          },
+          (s) => (printed = s),
+          dir,
+        );
+        return JSON.parse(printed) as PreflightReport;
+      };
+      const ambient = await run({ [BUILTIN_ENV]: "not-a-key" });
+      expect(failed(ambient)).toContain("login");
+      expect(reason(ambient, "login")).toContain("pi has no model credential");
+      const secretsDir = secretsWith({ [BUILTIN_ENV]: "value-from-the-secrets-dir\n" });
+      const kept = await run({ QCR_SECRETS_MOUNT: secretsDir });
+      expect(failed(kept), JSON.stringify(kept)).not.toContain("login");
+      expect(detail(kept, "login")).toContain(`(${BUILTIN_NAME}, ${BUILTIN_ENV})`);
     },
   );
 

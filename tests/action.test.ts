@@ -508,6 +508,67 @@ describe("scripts/action.sh run — the docker run line", () => {
     expect(names.filter((n) => /^(GH|GITHUB)_/.test(n))).toEqual([]);
   });
 
+  // Temporary AWS credentials are three values: pi reads the session token
+  // when it makes a request, so the generated block does not hold the name.
+  // MUTATION: drop $MODEL_ENV_COMPANIONS from run_review's forward loop — the
+  // key pair travels without its session token and this fails.
+  it("forwards the session token of temporary AWS credentials beside the key pair", () => {
+    const r = rig();
+    const res = sh(
+      "run",
+      r.env({
+        AWS_ACCESS_KEY_ID: "value-of-id",
+        AWS_SECRET_ACCESS_KEY: "value-of-secret",
+        AWS_SESSION_TOKEN: "value-of-session",
+      }),
+    );
+    expect(res.status, res.stderr).toBe(0);
+    const run = calls(r.dir).find((c) => c.verb === "run")!;
+    expect(envNamesOf(run.argv)).toEqual(
+      expect.arrayContaining(["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]),
+    );
+    expect(run.argv.join("\n")).not.toContain("value-of-session");
+    // Named in QCR_MODEL_ENV it is no refusal either.
+    const named = rig();
+    expect(
+      sh("run", named.env({ QCR_MODEL_ENV: "AWS_SESSION_TOKEN", AWS_SESSION_TOKEN: "x" })).status,
+    ).toBe(0);
+  });
+
+  // A name that points at a profile or a file on the runner is set in the
+  // container and names nothing there: pi would count the provider as
+  // credentialed on the name alone and fail at its first call.
+  // MUTATION: drop the host_only test from run_review's forward loop — the
+  // names below reach the container and this fails.
+  it("never forwards a name that points at a profile or a file on the runner", () => {
+    const r = rig();
+    const file = join(r.dir, "adc.json");
+    writeFileSync(file, "{}");
+    const res = sh(
+      "run",
+      r.env({
+        AWS_PROFILE: "work",
+        AWS_WEB_IDENTITY_TOKEN_FILE: "/var/run/token",
+        ANTHROPIC_IDENTITY_TOKEN_FILE: "/var/run/other",
+        GOOGLE_APPLICATION_CREDENTIALS: file,
+        QCR_MODEL_ENV: "MY_CA_BUNDLE",
+        MY_CA_BUNDLE: file,
+        XAI_API_KEY: "value-of-x",
+      }),
+    );
+    expect(res.status, res.stderr).toBe(0);
+    const names = envNamesOf(calls(r.dir).find((c) => c.verb === "run")!.argv);
+    for (const n of [
+      "AWS_PROFILE",
+      "AWS_WEB_IDENTITY_TOKEN_FILE",
+      "ANTHROPIC_IDENTITY_TOKEN_FILE",
+      "GOOGLE_APPLICATION_CREDENTIALS",
+      "MY_CA_BUNDLE",
+    ])
+      expect(names, n).not.toContain(n);
+    expect(names).toContain("XAI_API_KEY");
+  });
+
   it("QCR_MODEL_ENV adds names; this program's own, a token-shaped one and a malformed one are refused", () => {
     const r = rig();
     const res = sh(
@@ -667,6 +728,9 @@ describe("scripts/action.sh run — the docker run line", () => {
     expect(probe(["docker", "run", "-e", "HF_TOKEN", "IMG:1"]).status).toBe(0);
     expect(probe(["docker", "run", "-e", "AWS_SECRET_ACCESS_KEY", "IMG:1"]).status).toBe(0);
     expect(probe(["docker", "run", "-e", "HF_TOKEN=abc", "IMG:1"]).status).toBe(1);
+    // the session token of temporary AWS credentials is pi's own too
+    expect(probe(["docker", "run", "-e", "AWS_SESSION_TOKEN", "IMG:1"]).status).toBe(0);
+    expect(probe(["docker", "run", "-e", "AWS_SESSION_TOKEN=abc", "IMG:1"]).status).toBe(1);
     expect(probe(["docker", "run", "-e", "MY_TOKEN", "IMG:1"]).status).toBe(1);
     expect(probe(["docker", "run", "-e", "DB_PASSWORD", "IMG:1"]).status).toBe(1);
     expect(probe(["docker", "run", "--env", "COPILOT_GITHUB_TOKEN", "IMG:1"]).status).toBe(0);

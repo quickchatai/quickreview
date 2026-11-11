@@ -1464,10 +1464,14 @@ export const realDockerRunner: DockerRunner = (argv, opts) => runCommand("docker
 export function runCommand(
   bin: string,
   argv: string[],
-  opts?: { timeoutMs?: number },
+  /** `env`: the child's whole environment, in place of this process's own. */
+  opts?: { timeoutMs?: number; env?: NodeJS.ProcessEnv },
 ): Promise<DockerResult> {
   return new Promise((resolvePromise) => {
-    const child = spawn(bin, argv, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin, argv, {
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(opts?.env !== undefined ? { env: opts.env } : {}),
+    });
     let stdout = "";
     let stderr = "";
     let settled = false;
