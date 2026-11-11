@@ -653,6 +653,18 @@ describe("the contract", () => {
     expect(review).toMatch(/`unmeasured`: `preview\.estimate_usd` is `null`/);
     expect(review).toMatch(/Never show a price you worked out yourself/);
     expect(review).toMatch(/no dollar stop/);
+    // an estimate with no stop (the repo's rates on a model pi has no price
+    // for) is never reported as a hard stop
+    // MUTATION: drop the `preview.cap_usd` is `null` sentence from the
+    // `measured` or `repo` bullet of review.md - this fails.
+    expect(review).toMatch(
+      /`measured` or `repo`:.*When `preview\.cap_usd` is `null`.*no dollar stop/,
+    );
+    // a refused route says itself; signing in is advised for `no-credential` only
+    // MUTATION: send every `unknown` preview to the setup skill in review.md
+    // (drop `preview.refusal`) - this fails.
+    expect(review).toContain("`preview.refusal.text`");
+    expect(review).toMatch(/When `preview\.refusal\.code` is `no-credential`/);
     // the provider question: the answer is kept, never passed as a one-run flag
     expect(review).toContain("`preview.model.ask`");
     expect(review).toContain("`preview.alternatives[].spec`");

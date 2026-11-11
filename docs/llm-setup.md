@@ -96,7 +96,9 @@ qcr model reset                    make the choice automatic again
 `qcr model` prints the route, why it was chosen, how the model was picked, the
 credential, the tiers' levels, the price basis, the other usable providers,
 and the logins that are not usable here with the reason. With no route it
-prints `model: none` and the refusal, and exits 1. `--json` prints the same as
+prints `model: none` and the refusal, and exits 1. (`qcr review --preview`
+exits 0 there and carries the same refusal: its text, and `preview.refusal`
+in `--json`.) `--json` prints the same as
 one object; the wizard, the scan sandbox and the smoke scripts read it.
 
 `qcr model use <provider>` remembers a provider and lets the rule pick the
@@ -236,8 +238,8 @@ one price basis, shown in the preview and as `price_basis` in `--json`:
 
 | Basis | When | What you see, and what holds the run |
 |---|---|---|
-| `measured` | every model the run uses is the measured one, on the API family it was measured on | the estimate; the hard stop is twice the estimate |
-| `repo` | the repo's `.git/qcr-review.json` sets its own rates | the estimate at those rates; the same hard stop |
+| `measured` | every model the run uses is the measured one, on the API it was measured on (`openai-codex-responses`, the ChatGPT sign-in) | the estimate; the hard stop is twice the estimate |
+| `repo` | the repo's `.git/qcr-review.json` sets its own rates | the estimate at those rates; the same hard stop, except on a model pi has no list price for: no dollar stop there, the time and turn limits hold |
 | `unmeasured` | pi has a list price, and the estimate was not fitted on this model | no estimate; your word once per model; a spend limit |
 | `unpriced` | pi has no list price for the model | no dollar stop; spend shows as unknown, never `$0.00`; the time and turn limits hold |
 | `unknown` | no route resolves | no price; a start refuses |
@@ -251,6 +253,14 @@ one price basis, shown in the preview and as `price_basis` in `--json`:
   the stop), and so is a start with the key of a preview a host skill showed
   you. With nobody to ask and none of these, the run refuses and says how to
   start it.
+- **A run names the models that have no estimate.** A measured route with
+  one tier or lens pinned to another model is unmeasured, and the preview,
+  the question and the remembered yes name that other model, not the route's.
+  A different pinned model asks again.
+- **The measured model through another API has no estimate.** The same model
+  on an API key (`openai-responses`), Azure or a gateway is unmeasured: the
+  prompt-cache pack does not apply there, so its token mix was never
+  recorded.
 - **Why no scaled estimate.** The measured token mix depends on the
   prompt-cache pack, which applies to one API family
   ([docs/prompt-caching.md](prompt-caching.md)). Scaling by list-price ratios
@@ -259,6 +269,10 @@ one price basis, shown in the preview and as `price_basis` in `--json`:
   `tiers`, `price_basis` and a nullable `estimate_usd`. Contract 1 is
   unchanged on the measured model and refuses, with a message, where it
   cannot state a price.
+- **The GitHub Action asks nothing and has no spend limit of its own**, on
+  any model. Its only dollar stop is its `limit` input, when that is set; an
+  unmeasured model does not get the $15 limit there
+  ([docs/action.md](action.md)).
 - **The bot has no dollar stop on any model.** A round is held by its
   deadline and its turn budgets. `qcr status` names the model the bot runs
   on, and the daemon raises the `model_route_changed` alert when that changes

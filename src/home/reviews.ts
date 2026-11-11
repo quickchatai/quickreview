@@ -127,18 +127,26 @@ const BASES: readonly ReviewQuote["basis"][] = ["repo", "measured", "unpriced", 
  * quote only when it says why there is none: an unmeasured model, which a
  * spend limit holds, or one pi has no price for. A preview with no model
  * route is no quote: the review could not start, and the reason is the
- * preview's own. */
+ * preview's own refusal, in its words. Signing in is said only where it is
+ * the cure: the refusal's code is `no-credential`, or an older reviewer
+ * named no refusal (its only one then was a missing credential). */
 export function parsePreview(o: Json | undefined): Outcome<{ quote: ReviewQuote }> {
   const p = obj(o?.["preview"]);
   const est = num(p?.["estimate_usd"]);
   const key = str(p?.["key"]);
   const said = str(p?.["price_basis"]);
   const basis = BASES.find((b) => b === said) ?? (est !== undefined ? "measured" : undefined);
-  if (o?.["ok"] === true && p !== undefined && said === "unknown")
+  if (o?.["ok"] === true && p !== undefined && said === "unknown") {
+    const refusal = obj(p["refusal"]);
+    const words = str(refusal?.["text"]);
     return {
       ok: false,
-      why: "no model credential: sign in to a model provider (qcr login), then review again",
+      why:
+        words !== undefined && str(refusal?.["code"]) !== "no-credential"
+          ? words
+          : "no model credential: sign in to a model provider (qcr login), then review again",
     };
+  }
   if (
     o?.["ok"] !== true ||
     p === undefined ||

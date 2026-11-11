@@ -61,22 +61,20 @@ Measured end to end (real pi 1.0.0 parent, the retired native glue): two lenses 
 
 The warm-up and the rewrite build the request of one API family, so they are an optimisation for that family and nothing more. The family is keyed on the model's API as pi names it (a model's `api`), never on a provider or a model name. `PACK_FIRST_APIS` in `packages/pi-plugin/src/engine/lens/leaf-cache.ts` holds it:
 
-- `openai-responses`
 - `openai-codex-responses`
-- `azure-openai-responses`
 
-A cache group is **packed** when the round has a pack and the model the group's sessions run on has one of those as its API. The model is the one the session really gets: the route's for a lens that names none, and the credentialed provider's when a pinned provider has no credential and another serves the same id. A group whose model the runner cannot name before a session exists is not packed.
+A cache group is **packed** when the round has a pack and the model the group's sessions run on has that as its API. The model is the one the session really gets: the route's for a lens that names none, and the credentialed provider's when a pinned provider has no credential and another serves the same id. A group whose model the runner cannot name before a session exists is not packed.
 
-Inside the family the rewrite is fail-open. It expects the system prompt as a string in `instructions` and the conversation in `input`, which is the request pi builds for `openai-codex-responses`. A request of another shape is sent as pi built it, and the runner writes one warning line for that session. At pi 1.4.0 the `openai-responses` and `azure-openai-responses` requests carry the system prompt as the first input message, so they are sent unchanged.
+Inside the family the rewrite is fail-open. It expects the system prompt as a string in `instructions` and the conversation in `input`, which is the request pi builds for `openai-codex-responses`. A request of another shape is sent as pi built it, and the runner writes one warning line for that session. At pi 1.4.0 the `openai-responses` and `azure-openai-responses` requests carry the system prompt as the first input message, so the rewrite has nothing to move there: those two APIs are outside the family, and a group on one runs as any other API's does.
 
-A group on any other API (`anthropic-messages`, `openai-completions`, `google-generative-ai` and the rest):
+A group on any other API (`openai-responses`, `azure-openai-responses`, `anthropic-messages`, `openai-completions`, `google-generative-ai` and the rest):
 - gets no warm-up, no 30 s wait and no rewrite;
 - starts its later sessions after the stagger, as a round without a pack does;
 - sends each lens's request as pi built it. The lens then reads the pack file, which its task names for exactly this case.
 
 The pack file is written for every round with `context_pack = "pack-first"`, whatever the model. Only what the runner does with it differs.
 
-The savings on this page were measured on GPT-6.1 Sol only, through `openai-codex-responses`. Nothing here was measured on another model or another API. The measured cost estimate (`packages/pi-plugin/src/measured.ts`) is shown for the same family and no other, because the pack is what its token mix rests on; a test holds its API list equal to `PACK_FIRST_APIS`.
+The savings on this page were measured on GPT-6.1 Sol only, through `openai-codex-responses`. Nothing here was measured on another model or another API. The measured cost estimate (`packages/pi-plugin/src/measured.ts`) is shown for the same family and no other, because the pack is what its token mix rests on; a test holds its API list equal to `PACK_FIRST_APIS`. So the measured model reached through another API (an API key on `openai-responses`, Azure, a gateway) shows no estimate and runs under the spend limit of an unmeasured model ([docs/llm-setup.md](llm-setup.md)).
 
 ## The measured run
 

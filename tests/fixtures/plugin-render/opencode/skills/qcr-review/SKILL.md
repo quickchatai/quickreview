@@ -42,10 +42,10 @@ Add `--base REF` to name the base and `--repo OWNER/NAME` when the remote is amb
 
 1. Run the target with `--preview`. It starts nothing. `preview.lenses` is the plan, `preview.key` the key, `preview.model` the model the review runs on (`preview.model.spec`) and `preview.price_basis` what its price is known from.
 2. Show the user the model, what will be reviewed and the price, as `preview.price_basis` says it:
-   - `measured` or `repo`: `preview.estimate_usd` is the estimate, and the review stops hard at `preview.cap_usd`.
+   - `measured` or `repo`: `preview.estimate_usd` is the estimate, and the review stops hard at `preview.cap_usd`. When `preview.cap_usd` is `null`, pi has no list price for the model, so there is no dollar stop: show the estimate, and say that only the review's time limit holds. Never name a stop that is not there.
    - `unmeasured`: `preview.estimate_usd` is `null`. There is no estimate for this model. Say so, and show `preview.cap_usd` as the spend at which the review stops. Never show a price you worked out yourself.
    - `unpriced`: `preview.estimate_usd` and `preview.cap_usd` are `null`. There is no price for this model and no dollar stop; only the review's time limit holds. Say exactly that.
-   - `unknown` (`preview.model` is `null`): there is no model login, and a start would be refused. Use the setup skill (/qcr-setup) and stop.
+   - `unknown` (`preview.model` is `null`): no model resolves, and a start would be refused. `preview.refusal` says why. When `preview.refusal.code` is `no-credential`, or there is no `preview.refusal`, there is no model login: use the setup skill (/qcr-setup) and stop. On any other code a credential exists and signing in is not the cure: show the user `preview.refusal.text` as printed (it names what to do) and stop.
 
    If `preview.model.ask` is `true`, several providers could run the review and nothing has decided between them. Show the user `preview.model.spec` (the one that would run) and each `preview.alternatives[].spec` with its `provider_name`, and ask which they want. Run `qcr model use <provider>` with the chosen entry's `provider` (for the first one too: that keeps the answer, so the question is not asked again), then preview again. That one call takes no `--schema`: it prints a line for the user, not versioned JSON. Do not pass `--model` for this: it holds for one run and the question comes back.
 

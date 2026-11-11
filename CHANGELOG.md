@@ -49,6 +49,10 @@ a new name as a required pass that is missing.
 - A model the estimate was not measured on shows no dollar estimate, asks
   once, and stops at $15 (`unmeasured_limit_usd` in `.git/qcr-review.json`)
   or at `--limit`.
+- The estimate holds for the measured model through the API it was measured
+  on (`openai-codex-responses`). The same model through another API (an API
+  key, Azure, a gateway) is unmeasured, and a run names the models that have
+  no estimate.
 - A model pi has no price for has no dollar stop, and its spend shows as
   unknown, never `$0.00`. `qcr spend`, `qcr today`, the digest and the TUI
   print the known sum and the number of rounds whose cost is unknown.

@@ -251,6 +251,33 @@ describe("preview", () => {
       ok: false,
       why: "no model credential: sign in to a model provider (qcr login), then review again",
     });
+    // The preview's own refusal is the reason, with its remedy. Signing in is
+    // said only where it is the cure.
+    // MUTATION: answer the sign-in sentence for every `unknown` basis
+    // (src/home/reviews.ts parsePreview) - a signed-in person whose models do
+    // not pass the filter is told to sign in, and this fails.
+    const none = {
+      ...PLAN,
+      model: null,
+      price_basis: "unknown",
+      estimate_usd: null,
+      cap_usd: null,
+    };
+    expect(
+      await previewOf({
+        ...none,
+        refusal: { code: "no-model", text: "pi has a credential for p. Name one: qcr model use" },
+      }),
+    ).toEqual({ ok: false, why: "pi has a credential for p. Name one: qcr model use" });
+    expect(
+      await previewOf({
+        ...none,
+        refusal: { code: "no-credential", text: "pi has no model credential." },
+      }),
+    ).toEqual({
+      ok: false,
+      why: "no model credential: sign in to a model provider (qcr login), then review again",
+    });
     // a basis that has an estimate, and none given
     expect(
       await previewOf({ ...PLAN, price_basis: "measured", estimate_usd: null, cap_usd: null }),

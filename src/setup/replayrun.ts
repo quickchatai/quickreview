@@ -37,6 +37,7 @@ import { VALIDATE_PASS } from "@quickchatai/pi-quickreview/src/include.js";
 import { findStyleGuide } from "@quickchatai/pi-quickreview/src/styleguide.js";
 import { findCiLinters } from "@quickchatai/pi-quickreview/src/lintconfig.js";
 import type { PassTier } from "@quickchatai/pi-quickreview/src/types.js";
+import { agentModelFlags } from "./caserunner.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import {
   bySeverity,
@@ -82,6 +83,12 @@ export interface ReplayPorts {
   sides: (req: SideRequest) => { ok: true; sides: Record<SideName, ReplaySide> } | Refusal;
   /** The case runner over the agents built into `agentsDir`. */
   cases: (agentsDir: string) => CaseRunner;
+  /** The model a case whose agent names none will run on (the one the case
+   * runner hands its child), asked per plan. A measured rate is keyed by the
+   * spec a case runs on, so without it such a case has no key and its cost
+   * is never learned. Omitted, or answering nothing: nothing is known of the
+   * model, and the reference rate stands. */
+  route?: () => { spec: string } | undefined;
   /** The repo's written style guide references in a tree (the style lens's
    * trigger); `findStyleGuide` by default. */
   styleGuide?: (root: string) => string[];
@@ -294,6 +301,27 @@ export function parseReplayRequest(raw: {
   };
 }
 
+/** The spec a case on `agent` runs on, which is what its rate is keyed by:
+ * the built agent's own `model:` line, else the run's route at the agent's
+ * level (an unpinned tier's agent carries no `model:` line, only its
+ * `thinking:`). It is read off the flags the case runner hands the child pi
+ * (`agentModelFlags`), so the key is the model the cost was paid on. Null
+ * when the agent names no model and there is no route: the child runs on
+ * pi's own choice, and nothing here can name it. */
+export function caseModelSpec(
+  agent: string,
+  text: string,
+  route: { spec: string } | undefined,
+): string | null {
+  const own = modelOf(text);
+  const flags = agentModelFlags(
+    { name: agent, model: own },
+    text,
+    route !== undefined && route.spec !== "" ? route : undefined,
+  );
+  return flags[0] === "--model" ? (flags[1] ?? null) : null;
+}
+
 export class ReplayRunner {
   private active: { id: string; abort: AbortController; done: Promise<void> } | null = null;
   /** A start is planning (it awaits GitHub): a second start must not pass
@@ -384,6 +412,8 @@ export class ReplayRunner {
     const jobs: CaseJob[] = [];
     const byKey = new Map<string, CaseJob>();
     const bases = new Set<string>();
+    // The route a case with no model of its own runs on: its rate's key.
+    const route = this.ports.route?.();
     const prs: ReplayPrState[] = [];
     let n = 0;
     const errors: string[] = [];
@@ -437,7 +467,7 @@ export class ReplayRunner {
           const key = caseKey(text, prompt);
           let job = byKey.get(key);
           if (!job) {
-            const model = modelOf(text);
+            const model = caseModelSpec(row.agent, text, route);
             const rate = rateFor(model, row.tier, rates);
             const lines = linesRead(tree, row.focus ?? allFiles);
             bases.add(rate.basis);
@@ -500,7 +530,7 @@ export class ReplayRunner {
             ? jobs.find((j) => j.state.kind === "validate" && j.state.pr === pr.number)
             : undefined;
         if (!job) {
-          const model = modelOf(v.text);
+          const model = caseModelSpec(v.agent, v.text, route);
           const rate = rateFor(model, v.tier, rates);
           const lines = linesRead(tree, allFiles);
           bases.add(rate.basis);

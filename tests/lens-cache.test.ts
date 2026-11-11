@@ -678,7 +678,10 @@ describe("[pack-first family] the pack is for its API family only", () => {
   // MUTATION: answer undefined in apiOf (runlens.ts) for a pass with no model
   // of its own - the routed family group gets no warm-up and this fails.
   it.each([
-    ["an API of the family: packed", "azure-openai-responses", 1],
+    ["an API of the family: packed", "openai-codex-responses", 1],
+    // A Responses API whose request has no `instructions`: the rewrite would
+    // do nothing there, so the group is not packed and waits for no warm-up.
+    ["a Responses API outside the family: not packed", "azure-openai-responses", 0],
     ["another API: not packed", "anthropic-messages", 0],
   ] as const)(
     "passes on the host's route follow the route's model, %s",
@@ -733,6 +736,21 @@ describe("[pack-first family] the pack is for its API family only", () => {
     );
     expect(PACK_FIRST_APIS.size).toBeGreaterThan(0);
     for (const api of PACK_FIRST_APIS) expect(spoken.has(api), api).toBe(true);
+  });
+
+  // The rewrite reads the system prompt off `instructions`, so an API whose
+  // request pi builds without that field would be packed in name only: a
+  // warm-up, a wait and a request sent unchanged.
+  // MUTATION: add "openai-responses" to PACK_FIRST_FAMILY in leaf-cache.ts
+  // (and to MEASURED.apis, to pass the fence below) - this fails.
+  it("pi builds every API of the family with the system prompt in `instructions`", () => {
+    for (const api of PACK_FIRST_APIS) {
+      const built = readFileSync(
+        join(process.cwd(), "node_modules/@earendil-works/pi-ai/dist/api", `${api}.js`),
+        "utf8",
+      );
+      expect(/\binstructions\s*:/.test(built), api).toBe(true);
+    }
   });
 
   // The measured estimate is fitted to runs the pack shaped, so it is true

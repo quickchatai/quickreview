@@ -30,6 +30,7 @@ import {
   priceBasis,
   priceKnowledge,
   specsMeasured,
+  specsNotMeasured,
 } from "@quickchatai/pi-quickreview/src/measured.js";
 import type {
   CatalogModel,
@@ -130,6 +131,25 @@ describe("the specs of a run, read against pi's inventory", () => {
     // a custom id is sent as written: nothing is known of its rates
     expect(specsMeasured([`alpha/${ID}`, "alpha/a-custom-id"], INVENTORY)).toBe(false);
     expect(specsMeasured([], INVENTORY)).toBe(false);
+  });
+
+  // MUTATION: return every spec's model from specsNotMeasured
+  // (packages/pi-plugin/src/measured.ts: drop the `measuredModel` test) - the
+  // measured model is named as lacking an estimate, and this fails.
+  it("names the models a run has no estimate for: each once, the level dropped, the measured one never", () => {
+    expect(specsNotMeasured([`alpha/${ID}:medium`, `alpha/${ID}:high`], INVENTORY)).toEqual([]);
+    expect(
+      specsNotMeasured(
+        [`alpha/${ID}:medium`, "beta/some-other-model:medium", "beta/some-other-model:high"],
+        INVENTORY,
+      ),
+    ).toEqual(["beta/some-other-model"]);
+    // a custom id, and the measured id on a provider with no credential here
+    expect(
+      specsNotMeasured([`alpha/${ID}`, "alpha/a-custom-id", `zeta/${ID}:low`], INVENTORY),
+    ).toEqual(["alpha/a-custom-id", `zeta/${ID}`]);
+    // a spec that names no model names nothing
+    expect(specsNotMeasured([":medium"], INVENTORY)).toEqual([]);
   });
 
   it("names a credentialed provider's spec for the measured model, the first in pi's order", () => {

@@ -341,7 +341,8 @@ one line, which model runs, why, and how to change it. `qcr model` shows the
 model and what else is usable, `qcr model use <provider[/model]>` changes it,
 `--model` picks for one run, and `[models] model` in `config.toml` pins it.
 The estimate was measured on one model: on any other a review shows no dollar
-estimate and stops at a spend limit instead. All of it is in
+estimate and stops at a spend limit instead (the GitHub Action has only the
+`limit` you set). All of it is in
 [docs/llm-setup.md](docs/llm-setup.md).
 
 ### Where the reviewer lives

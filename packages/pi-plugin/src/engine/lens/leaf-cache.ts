@@ -30,15 +30,16 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 const ADDENDUM_OPEN = "<addendum>";
 const ADDENDUM_CLOSE = "</addendum>";
 
-// VERIFY-ON-PIN (pi 1.4.0): these are pi-ai's own names for its Responses
-// APIs (`KnownApi`, a model's `api`). The annotation holds each name to that
-// union, so a pi that renames or drops one stops the build; a pi that adds a
-// Responses API of the same request shape is added here by hand.
-const PACK_FIRST_FAMILY: readonly KnownApi[] = [
-  "openai-responses",
-  "openai-codex-responses",
-  "azure-openai-responses",
-];
+// VERIFY-ON-PIN (pi 1.4.0): pi-ai's own name (`KnownApi`, a model's `api`) for
+// the one API whose request carries the system prompt as a string in
+// `instructions`, which is what the rewrite moves. The annotation holds the
+// name to that union, so a pi that renames or drops it stops the build. pi's
+// other Responses APIs (`openai-responses`, `azure-openai-responses`) send the
+// system prompt as the first input message: the rewrite would leave their
+// request as it is, so they are not in the family, and a group on one gets no
+// warm-up to wait for. An API is added here by hand, once pi builds its
+// request in the shape the rewrite reads (a test holds that).
+const PACK_FIRST_FAMILY: readonly KnownApi[] = ["openai-codex-responses"];
 
 /**
  * The API family the pack-first rewrite is built for, as pi's API names: what

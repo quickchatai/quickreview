@@ -334,6 +334,8 @@ export function buildReplay(
     source: gitReplaySource({ github, repo, repoRoot: reviewedRepo, stateRoot: home }),
     sides: (req) => replaySides({ root, env, stateRoot: home, state, clock }, req),
     cases: (agentsDir) => piCaseRunner({ agentsDir, cwd: root, ...(route ? { route } : {}) }),
+    // the same route keys each case's measured rate
+    ...(route ? { route } : {}),
     ...(concurrency !== undefined ? { concurrency } : {}),
     log: (line) => console.error(line),
   });

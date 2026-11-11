@@ -992,6 +992,59 @@ describe("replay: cost first, subagents, side by side", () => {
     expect(again.key).not.toBe(p.key);
   });
 
+  // The shipped config pins no tier, so a built agent carries no `model:`
+  // line: its case is keyed by the route it runs on, at the agent's level.
+  // MUTATION: key a case by `modelOf(text)` alone in the planner
+  // (src/setup/replayrun.ts, drop `caseModelSpec`) - an unpinned tier's case
+  // has no key, no rate is ever learned, and this fails.
+  it("on unpinned tiers a case is keyed by the route it runs on, and its measured rate prices the next preview", async () => {
+    write(
+      join(configHome(env), "config.toml"),
+      fixtureToml
+        .replace(/^"light" = .*$/m, '"light" = ":medium"')
+        .replace(/^"standard" = .*$/m, '"standard" = ":medium"')
+        .replace(/^"deep" = .*$/m, '"deep" = ":high"'),
+    );
+    const over = (route?: () => { spec: string } | undefined): ReplayRunner => {
+      const state = stateHomeFs(stateRoot());
+      return new ReplayRunner({
+        state,
+        clock: () => now,
+        source: {
+          pr: async (n) => ({ ok: true, pr: pr(n) }),
+          open: () => ({ ok: true, tree: tree() }),
+        },
+        sides: (req) =>
+          replaySides({ root: sandbox, env, stateRoot: stateRoot(), state, clock: () => now }, req),
+        cases: fakeRunner([], () => 0.5),
+        styleGuide: () => [],
+        concurrency: 2,
+        ...(route ? { route } : {}),
+      });
+    };
+    // With no route nothing names the model: no key, and the reference stands.
+    const bare = over();
+    const unkeyed = await ran(bare, previewOf(await bare.preview({ prs: [7], old: "none" })).key);
+    expect(unkeyed.cases.map((c) => c.model)).toEqual(unkeyed.cases.map(() => null));
+    expect(previewOf(await bare.preview({ prs: [7], old: "none" })).rate_bases).toEqual([
+      REFERENCE_BASIS,
+    ]);
+
+    const rr = over(() => ({ spec: "north/large-3" }));
+    const first = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    expect(first.rate_bases).toEqual([REFERENCE_BASIS]);
+    const run = await ran(rr, first.key);
+    expect(run.cases.length).toBeGreaterThan(0);
+    // the route's spec at the agent's own level: what the child pi is handed
+    for (const c of run.cases) expect(c.model, c.agent).toMatch(/^north\/large-3:[a-z]+$/);
+    const again = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    expect(
+      again.rate_bases.filter((b) =>
+        /^measured on this install's last replay \(\d+ case\(s\) with north\/large-3:/.test(b),
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("refuses more than two PRs, a PR GitHub will not give, and a second start while one runs", async () => {
     const rr = runner([]);
     expect(await rr.preview({ prs: [1, 2, 3] })).toMatchObject({ ok: false });

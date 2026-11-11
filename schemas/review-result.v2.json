@@ -401,6 +401,19 @@
           },
           "description": "Each tier's model spec as it will run (`provider/id:level`); a tier is a bare `:level` when no route resolves."
         },
+        "refusal": {
+          "type": "object",
+          "required": ["code", "text"],
+          "description": "Present when a start would be refused: no model route resolves (model is null), or a pinned tier or lens cannot run here. code says which: no-credential (no model login), login-too-short, no-model, pin-no-credential, pin-unknown. text is the sentence for the person, with what to do about it. Only no-credential is cured by signing in.",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          }
+        },
         "price_basis": {
           "enum": ["unknown", "repo", "measured", "unpriced", "unmeasured"],
           "description": "What the price is known from. measured: every model the run uses is the one the estimate was fitted on. repo: the repo's own rates (.git/qcr-review.json). unmeasured: pi prices the model and no estimate exists, so the run is held by a spend limit (cap_usd). unpriced: pi has no price for the model, so there is no dollar stop. unknown: no model route resolves."

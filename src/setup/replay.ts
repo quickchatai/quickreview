@@ -104,7 +104,9 @@ export const REFERENCE_BASIS =
 
 /** A built agent's model spec — its `model:` line, thinking suffix and all —
  * which is what a measured rate is keyed by (a profile's `effort` changes
- * the spec, and the price with it). */
+ * the spec, and the price with it). Null for an agent that names no model
+ * (an unpinned tier's): its rate is keyed by the run's route at the agent's
+ * level (replayrun.ts `caseModelSpec`). */
 export function modelOf(agentText: string): string | null {
   const fm = splitFrontmatter(agentText.replace(/\r\n/g, "\n"));
   const m = fm.hasFrontmatter ? /^model:[ \t]*(.+?)[ \t]*$/m.exec(fm.frontmatter) : null;

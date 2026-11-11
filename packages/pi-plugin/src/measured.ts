@@ -2,8 +2,10 @@
 //
 // The review's estimate is a fit to recorded reviews, and a fit is true of
 // what it was measured on: one model, at one rate card, through the API
-// family whose prompt cache gave the recorded token mix. That measurement is
-// data, and it is all here (`MEASURED`). A run shows the fitted estimate only
+// family whose prompt cache gave the recorded token mix: the one the pack-first
+// request is built for, since a lens on another API pays for the pack's
+// content through its own file reads. That measurement is data, and it is all
+// here (`MEASURED`). A run shows the fitted estimate only
 // when every model it uses is that model at those rates through that family
 // (`isMeasured`); a repo that sets its own rates gets an estimate at those
 // rates on any model. Everything else has no estimate, and says which of two
@@ -27,7 +29,7 @@ import { splitModelSpec } from "./reviewconfig.js";
  * changed lines, once. */
 export const MEASURED = {
   model_id: "gpt-6.1-sol",
-  apis: ["openai-responses", "openai-codex-responses", "azure-openai-responses"],
+  apis: ["openai-codex-responses"],
   rates: { input: 2, cacheRead: 0.1, output: 10 },
   usd_base: 0.1,
   usd_per_lens: 0.125,
@@ -83,6 +85,25 @@ export function specsMeasured(
     models.push(model);
   }
   return isMeasured(models);
+}
+
+/** The models of `specs` (each as it will run) the fitted estimate does not
+ * hold for, as `provider/id` with the level dropped: each once, in the order
+ * given. What a run with no estimate names, since the model that lacks one
+ * need not be the route's (a measured route with one tier pinned elsewhere).
+ * Empty exactly when `specsMeasured` holds, or no spec names a model. */
+export function specsNotMeasured(
+  specs: readonly string[],
+  inventory: readonly ProviderInventory[],
+): string[] {
+  const out: string[] = [];
+  for (const spec of specs) {
+    const { model } = splitModelSpec(spec);
+    if (model === "" || out.includes(model)) continue;
+    const known = catalogModelOf(spec, inventory);
+    if (known === undefined || !measuredModel(known)) out.push(model);
+  }
+  return out;
 }
 
 /** A credentialed provider's spec for the measured model, when one serves it:

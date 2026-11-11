@@ -84,7 +84,13 @@ import {
   type BranchTarget,
   type RunRoute,
 } from "./localreview.js";
-import { MEASURED, measuredSpec, priceBasis, type PriceBasis } from "./measured.js";
+import {
+  MEASURED,
+  measuredSpec,
+  priceBasis,
+  specsNotMeasured,
+  type PriceBasis,
+} from "./measured.js";
 import { allowNoEstimate, readModelChoice } from "./modelchoice.js";
 import {
   refusalText,
@@ -1090,6 +1096,20 @@ async function runPipeline(
       ? refusalText({ code: "login-too-short", logins: tooShort }, routed.surface, routed.facts)
       : null;
   if (pinRefusal !== null && (!isPreview || needsEstimate)) return refuse(1, [pinRefusal]);
+  // Why a start would be refused, as the preview carries it: the route's own
+  // refusal with the surface's remedy in it, else the pinned tier's. A reader
+  // of the JSON tells "sign in" (`no-credential`) from every other code, where
+  // a credential exists and the remedy is another.
+  const refusal: { code: string; text: string } | null =
+    routed !== null && !routed.result.ok
+      ? {
+          code: routed.result.refusal.code,
+          text: refusalText(routed.result.refusal, routed.surface, routed.facts),
+        }
+      : pinRefusal !== null
+        ? { code: "login-too-short", text: pinRefusal }
+        : null;
+  const noCredential = refusal?.code === "no-credential";
 
   // The price: what it is known from decides the line, the stop and the question.
   const rates = repoRates(settings);
@@ -1103,6 +1123,14 @@ async function runPipeline(
   // config pins for the main session.
   const priceSpec = route?.spec ?? splitModelSpec(models.main).model;
   const named = priceSpec !== "" ? priceSpec : "this model";
+  // The models that have no estimate, which is what an unmeasured run names
+  // and what the person's word is kept for: every model of the run nothing
+  // was fitted to. They need not include the route's own (a measured route
+  // with one tier pinned elsewhere is unmeasured for that tier's model).
+  const lacking =
+    basis === "unmeasured" ? specsNotMeasured(models.all, routed?.inventory ?? []) : [];
+  const noEstimateFor = lacking.length > 0 ? lacking : priceSpec !== "" ? [priceSpec] : [];
+  const unmeasuredNamed = noEstimateFor.length > 0 ? noEstimateFor.join(", ") : "this model";
   // pi counts no cost for a model it has no price for, so no dollar figure
   // can stop a run on one, whatever estimate the repo's own rates give.
   const noDollarStop = basis === "unpriced" || (route !== null && !route.priced);
@@ -1132,18 +1160,24 @@ async function runPipeline(
   } else {
     limit = action ? (given ?? null) : (given ?? settings.unmeasured_limit_usd);
     cap = limit;
-    // The person's word, given once: the stop named on this run, or the model
-    // among those they agreed to run with no estimate.
-    auto =
-      action ||
-      given !== undefined ||
-      (priceSpec !== "" && readModelChoice(opts.agentDir).noEstimateOk.includes(priceSpec));
+    // The person's word, given once: the stop named on this run, or every
+    // model that has no estimate among those they agreed to run with none.
+    const agreed = (): boolean => {
+      const ok = readModelChoice(opts.agentDir).noEstimateOk;
+      return noEstimateFor.length > 0 && noEstimateFor.every((s) => ok.includes(s));
+    };
+    auto = action || given !== undefined || agreed();
   }
   // A limit that can stop nothing is said to be ignored, never silently dropped.
   const limitIgnored = given !== undefined && noDollarStop && (price === null || action);
   // Contract 1 cannot say "no estimate": refused here, before anything runs.
   if (needsEstimate && price === null)
-    return refuse(1, [contractOneNoPrice(priceSpec, measuredSpec(routed?.inventory ?? []))]);
+    return refuse(1, [
+      contractOneNoPrice(
+        lacking.length > 0 ? unmeasuredNamed : priceSpec,
+        measuredSpec(routed?.inventory ?? []),
+      ),
+    ]);
   const key = reviewKey({
     // an uncommitted review is keyed on the edits, so the key moves with them
     headSha: t.uncommitted?.treeSha ?? t.headSha,
@@ -1173,13 +1207,14 @@ async function runPipeline(
     model: route !== null ? modelData(route) : null,
     alternatives: route !== null ? alternativesData(route) : [],
     tiers: models.tiers,
-    // A pinned tier or lens that cannot run here: a start is refused with it.
-    ...(pinRefusal !== null ? { refusal: { code: "login-too-short", text: pinRefusal } } : {}),
+    // No route, or a pinned tier or lens that cannot run here: a start is
+    // refused with it.
+    ...(refusal !== null ? { refusal } : {}),
     price_basis: basis,
     estimate_usd: price,
     cap_usd: cap,
     limit_usd: limit,
-    auto: auto && pinRefusal === null,
+    auto: auto && refusal === null,
     key,
     ...(prInfo ? { pr: prInfo.number, credential: prInfo.source } : {}),
   };
@@ -1188,7 +1223,11 @@ async function runPipeline(
   const estimateWords =
     basis === "repo" ? "estimate, this repo's rates" : `estimate, measured on ${MEASURED.model_id}`;
   let priceLine: string;
-  if (basis === "unknown") priceLine = "price: unknown until a model credential exists";
+  if (basis === "unknown")
+    priceLine =
+      refusal === null || noCredential
+        ? "price: unknown until a model credential exists"
+        : "price: unknown until a model resolves";
   else if (price !== null)
     priceLine =
       `price: ${usd(price)} (${estimateWords}) — ` +
@@ -1202,7 +1241,7 @@ async function runPipeline(
     priceLine = `price: pi has no price for ${named} — no dollar stop; ${stillHolds}`;
   else
     priceLine =
-      `price: no estimate for ${named} (not measured) — ` +
+      `price: no estimate for ${unmeasuredNamed} (not measured) — ` +
       (cap === null ? "no cap" : `the run stops at ${usd(cap)}`);
   const previewText = [
     `Review ${label} (${t.repo})`,
@@ -1213,7 +1252,8 @@ async function runPipeline(
     `  lenses: ${lenses.join(", ")}`,
     // The run's notice about its model: said here, once.
     ...(routed !== null ? modelLines(routed) : []),
-    ...(pinRefusal !== null ? [`  ✗ ${pinRefusal}`] : []),
+    // The refusal with its remedy; a missing credential's is in the model line.
+    ...(refusal !== null && !noCredential ? [`  ✗ ${refusal.text}`] : []),
     `  ${priceLine}`,
     // A subscription is not billed per review: the dollars are list prices.
     ...(route !== null && route.credential.subscription && basis !== "unpriced"
@@ -1234,10 +1274,15 @@ async function runPipeline(
     // No estimate: the question is asked once per model, and a yes (or the
     // key, which a host sends after the person agreed) is remembered.
     const remember = (): void => {
-      if (price !== null || priceSpec === "") return;
-      const kept = allowNoEstimate(opts.agentDir, priceSpec);
-      // An answer that cannot be kept still holds for this run.
-      if (!kept.ok) warn(kept.error);
+      if (price !== null) return;
+      for (const spec of noEstimateFor) {
+        const kept = allowNoEstimate(opts.agentDir, spec);
+        // An answer that cannot be kept still holds for this run.
+        if (!kept.ok) {
+          warn(kept.error);
+          return;
+        }
+      }
     };
     if (asked !== undefined) {
       if (asked !== key)
@@ -1248,7 +1293,7 @@ async function runPipeline(
     } else if (!io.confirm) {
       return refuse(1, [
         price === null
-          ? `no estimate for ${named} and no terminal to ask: qcr review --key ${key}, or name the stop with --limit`
+          ? `no estimate for ${unmeasuredNamed} and no terminal to ask: qcr review --key ${key}, or name the stop with --limit`
           : `the price ${usd(price)} is over the limit ${usd(limit!)} and there is no terminal to ask: ` +
             `qcr review --key ${key}`,
       ]);
@@ -1256,14 +1301,14 @@ async function runPipeline(
       const confirm = io.confirm;
       const question =
         price === null
-          ? `Run on ${named} with no estimate? It stops at ${usd(cap!)}. (Reviews on this model will not ask again.)`
+          ? `Run on ${unmeasuredNamed} with no estimate? It stops at ${usd(cap!)}. (Reviews on ${noEstimateFor.length > 1 ? "these models" : "this model"} will not ask again.)`
           : `Run for ${usd(price)}, over the ${usd(limit!)} limit?`;
       const yes = await unlessStopped(io.signal, (o) => confirm(question, o));
       if (yes === STOP || io.signal?.aborted) return stopped();
       if (!yes)
         return refuse(1, [
           price === null
-            ? `declined: no estimate for ${named}`
+            ? `declined: no estimate for ${unmeasuredNamed}`
             : `declined: ${usd(price)} is over the ${usd(limit!)} limit`,
         ]);
       remember();
