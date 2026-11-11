@@ -106,7 +106,9 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
       const text = readFileSync(resolve(root, file), "utf8");
       const lines = text.match(/^const THINKING_LEVELS = (\[.*\]);$/gm) ?? [];
       expect(lines, file).toHaveLength(1);
-      const listed = JSON.parse(lines[0]!.replace(/^const THINKING_LEVELS = /, "").replace(/;$/, ""));
+      const listed = JSON.parse(
+        lines[0]!.replace(/^const THINKING_LEVELS = /, "").replace(/;$/, ""),
+      );
       expect(listed).toEqual([...THINKING_LEVELS]);
       // no credential logic rides the merge: nothing there moves a default
       // to another provider

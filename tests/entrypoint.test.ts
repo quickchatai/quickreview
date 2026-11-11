@@ -545,7 +545,9 @@ describe("daemon mode", () => {
       .filter((l) => !/^\s*#/.test(l))
       .join("\n");
     expect(code).not.toContain("model-env");
-    expect(code.match(/^[ \t]*export [A-Z_]*API_KEY\b.*$/gm)).toEqual(["    export OPENAI_API_KEY"]);
+    expect(code.match(/^[ \t]*export [A-Z_]*API_KEY\b.*$/gm)).toEqual([
+      "    export OPENAI_API_KEY",
+    ]);
   });
 
   it("starts no OpenViking and builds nothing at boot", () => {

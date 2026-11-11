@@ -187,9 +187,9 @@ describe("priceBasis: the five things a price is known from", () => {
 
 describe("priceKnowledge: the words of one row of choices", () => {
   it("says what is known of each provider's price before a review", () => {
-    expect(
-      priceKnowledge({ provider: "alpha", modelId: ID, priced: true }, INVENTORY),
-    ).toBe("measured estimate");
+    expect(priceKnowledge({ provider: "alpha", modelId: ID, priced: true }, INVENTORY)).toBe(
+      "measured estimate",
+    );
     expect(
       priceKnowledge({ provider: "beta", modelId: "some-other-model", priced: true }, INVENTORY),
     ).toBe("no estimate");

@@ -413,8 +413,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
     registerModelRoute(pi, {
       ...(agentDir !== undefined ? { choice: () => readModelChoice(agentDir).choice } : {}),
       onInput: (input) => {
-        if (input.source === "interactive" && input.text.trim() !== LOGIN_COMMAND)
-          loginMenu.left();
+        if (input.source === "interactive" && input.text.trim() !== LOGIN_COMMAND) loginMenu.left();
       },
     });
     // pi's own word on the login: a reply refused for it, or one that came back

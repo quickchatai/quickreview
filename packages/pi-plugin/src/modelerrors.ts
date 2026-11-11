@@ -108,13 +108,7 @@ export const TRANSPORT_RE =
   /\b(fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|socket hang up|connection error|other side closed|terminated)\b/i;
 
 export type ProviderErrorKind =
-  | "usage_limit"
-  | "rate_limited"
-  | "auth"
-  | "model_refused"
-  | "overloaded"
-  | "transport"
-  | "other";
+  "usage_limit" | "rate_limited" | "auth" | "model_refused" | "overloaded" | "transport" | "other";
 
 /**
  * A provider error message's kind. The order is the rule:

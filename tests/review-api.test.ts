@@ -922,7 +922,11 @@ describe("review(): what the price is known from", () => {
   const unpinned = ctx.cfg;
   const KEY_CREDENTIAL = { kind: "api_key", origin: "env-key", subscription: false } as const;
 
-  const routeTo = (provider: string, modelId: string, over: Partial<ModelRoute> = {}): ModelRoute => ({
+  const routeTo = (
+    provider: string,
+    modelId: string,
+    over: Partial<ModelRoute> = {},
+  ): ModelRoute => ({
     provider,
     modelId,
     providerName: provider.toUpperCase(),
@@ -1040,69 +1044,61 @@ describe("review(): what the price is known from", () => {
     },
   );
 
-  it(
-    "a subscription login is told its dollars are list prices",
-    { timeout: 30_000 },
-    async () => {
-      const r = await preview(
-        { kind: "branch" },
-        priced(
-          "price-subscription",
-          onMeasured({ credential: { kind: "oauth", origin: "stored", subscription: true } }),
-        ),
-      );
-      expect(r.exitCode, r.text).toBe(0);
-      const lines = priceLinesOf(r.text);
-      expect(lines).toHaveLength(2);
-      expect(lines[0]).toMatch(/^ {2}price: \$\d+\.\d{2} \(estimate, measured on /);
-      expect(lines[1]).toBe("  list prices: your ALPHA plan is not billed per review");
-    },
-  );
+  it("a subscription login is told its dollars are list prices", { timeout: 30_000 }, async () => {
+    const r = await preview(
+      { kind: "branch" },
+      priced(
+        "price-subscription",
+        onMeasured({ credential: { kind: "oauth", origin: "stored", subscription: true } }),
+      ),
+    );
+    expect(r.exitCode, r.text).toBe(0);
+    const lines = priceLinesOf(r.text);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^ {2}price: \$\d+\.\d{2} \(estimate, measured on /);
+    expect(lines[1]).toBe("  list prices: your ALPHA plan is not billed per review");
+  });
 
   // MUTATION: test `specsMeasured` before `repoRates` in priceBasis — the
   // repo's rates lose on the measured model, and this fails.
-  it(
-    "repo: the repo's own rates give an estimate on any model",
-    { timeout: 30_000 },
-    async () => {
-      for (const [name, on] of [
-        ["price-repo-other", onUnmeasured()],
-        ["price-repo-measured", onMeasured()],
-      ] as const) {
-        const opts = priced(name, on);
-        writeFileSync(
-          join(opts.repoDir, ".git", "qcr-review.json"),
-          JSON.stringify({ usd_base: 3, usd_per_lens: 0.01 }),
-        );
-        expect(loadReviewSettings(opts.repoDir)).toEqual({
-          auto_limit_usd: 2,
-          unmeasured_limit_usd: 15,
-          usd_base: 3,
-          usd_per_lens: 0.01,
-        });
-        const r = await preview({ kind: "branch" }, opts);
-        expect(r.exitCode, r.text).toBe(0);
-        expect(schemaErrors(r.data)).toEqual([]);
-        const p = previewOf(r);
-        const estimate = priceReview((p["lenses"] as string[]).length, p["lines"] as number, {
-          usd_base: 3,
-          usd_per_lens: 0.01,
-          // a rate the repo leaves out is the measured one
-          usd_per_kline: MEASURED.usd_per_kline,
-        });
-        expect(p, name).toMatchObject({
-          price_basis: "repo",
-          estimate_usd: estimate,
-          cap_usd: hardStopFor(estimate),
-          limit_usd: 2,
-          auto: false,
-        });
-        expect(priceLinesOf(r.text), name).toEqual([
-          `  price: ${money(estimate)} (estimate, this repo's rates) — the run stops hard at ${money(hardStopFor(estimate))} (limit without asking: $2.00)`,
-        ]);
-      }
-    },
-  );
+  it("repo: the repo's own rates give an estimate on any model", { timeout: 30_000 }, async () => {
+    for (const [name, on] of [
+      ["price-repo-other", onUnmeasured()],
+      ["price-repo-measured", onMeasured()],
+    ] as const) {
+      const opts = priced(name, on);
+      writeFileSync(
+        join(opts.repoDir, ".git", "qcr-review.json"),
+        JSON.stringify({ usd_base: 3, usd_per_lens: 0.01 }),
+      );
+      expect(loadReviewSettings(opts.repoDir)).toEqual({
+        auto_limit_usd: 2,
+        unmeasured_limit_usd: 15,
+        usd_base: 3,
+        usd_per_lens: 0.01,
+      });
+      const r = await preview({ kind: "branch" }, opts);
+      expect(r.exitCode, r.text).toBe(0);
+      expect(schemaErrors(r.data)).toEqual([]);
+      const p = previewOf(r);
+      const estimate = priceReview((p["lenses"] as string[]).length, p["lines"] as number, {
+        usd_base: 3,
+        usd_per_lens: 0.01,
+        // a rate the repo leaves out is the measured one
+        usd_per_kline: MEASURED.usd_per_kline,
+      });
+      expect(p, name).toMatchObject({
+        price_basis: "repo",
+        estimate_usd: estimate,
+        cap_usd: hardStopFor(estimate),
+        limit_usd: 2,
+        auto: false,
+      });
+      expect(priceLinesOf(r.text), name).toEqual([
+        `  price: ${money(estimate)} (estimate, this repo's rates) — the run stops hard at ${money(hardStopFor(estimate))} (limit without asking: $2.00)`,
+      ]);
+    }
+  });
 
   // MUTATION: price an unmeasured run with `priceReview(…, MEASURED)`
   // (reviewapi.ts) — a model nothing was fitted to gets a number, and this fails.
@@ -1309,7 +1305,10 @@ describe("review(): what the price is known from", () => {
       ]);
 
       // nothing is asked: the start goes straight to its runtime
-      const started = await review({ kind: "branch" }, priced("price-unpriced-start", onUnpriced()));
+      const started = await review(
+        { kind: "branch" },
+        priced("price-unpriced-start", onUnpriced()),
+      );
       expect(errorsOf(started)[0]).toMatch(RUNTIME_ASKED);
     },
   );
@@ -1405,7 +1404,9 @@ describe("review(): what the price is known from", () => {
         expect(both.data).toEqual({
           schema_version: 1,
           ok: false,
-          errors: [noPrice("beta/other-model", `, or run on a measured model: --model alpha/${ID}`)],
+          errors: [
+            noPrice("beta/other-model", `, or run on a measured model: --model alpha/${ID}`),
+          ],
         });
         expect(validate(resultSchemaV1, both.data)).toEqual([]);
         expect(JSON.stringify(both.data)).not.toMatch(/estimate_usd|cap_usd/);
@@ -1450,31 +1451,24 @@ describe("review(): what the price is known from", () => {
     // MUTATION: drop `|| needsEstimate` from the no-route refusal
     // (reviewapi.ts) — the preview goes on to the price refusal (or prints a
     // null estimate), and this fails.
-    it(
-      "with no route the login refusal wins, on a preview too",
-      { timeout: 30_000 },
-      async () => {
-        const none: ReviewRouted = {
-          result: { ok: false, refusal: { code: "no-credential" } },
-          inventory: [],
-          surface: "app",
-          facts: { agentDir: "/pi/home" },
-        };
-        const r = await preview(
-          { kind: "branch" },
-          { ...priced("c1-no-route", none), contract: 1 },
-        );
-        expect(r.exitCode).toBe(1);
-        expect(r.data).toEqual({
-          schema_version: 1,
-          ok: false,
-          errors: [
-            "pi has no model credential (agent dir /pi/home). Run `qcr login` and sign in to any provider, " +
-              "or set a provider's API key in the environment, then run this again.",
-          ],
-        });
-      },
-    );
+    it("with no route the login refusal wins, on a preview too", { timeout: 30_000 }, async () => {
+      const none: ReviewRouted = {
+        result: { ok: false, refusal: { code: "no-credential" } },
+        inventory: [],
+        surface: "app",
+        facts: { agentDir: "/pi/home" },
+      };
+      const r = await preview({ kind: "branch" }, { ...priced("c1-no-route", none), contract: 1 });
+      expect(r.exitCode).toBe(1);
+      expect(r.data).toEqual({
+        schema_version: 1,
+        ok: false,
+        errors: [
+          "pi has no model credential (agent dir /pi/home). Run `qcr login` and sign in to any provider, " +
+            "or set a provider's API key in the environment, then run this again.",
+        ],
+      });
+    });
   });
 });
 

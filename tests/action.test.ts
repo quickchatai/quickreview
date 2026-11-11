@@ -202,7 +202,7 @@ describe("action.yml", () => {
       "repo",
     ]);
     expect(action.inputs["model"]!.default).toBe("");
-    const run = action.runs.steps.find((s) => s.run?.endsWith("action.sh\" run"))!;
+    const run = action.runs.steps.find((s) => s.run?.endsWith('action.sh" run'))!;
     expect(run.env!["QCR_ACTION_MODEL"]).toBe("${{ inputs.model }}");
   });
 
@@ -211,7 +211,7 @@ describe("action.yml", () => {
   // MUTATION: map `OPENAI_API_KEY: ${{ inputs.openai-api-key }}` in the run
   // step's env — this fails.
   it("hands the key inputs over under names of their own, never the variable pi reads", () => {
-    const run = action.runs.steps.find((s) => s.run?.endsWith("action.sh\" run"))!;
+    const run = action.runs.steps.find((s) => s.run?.endsWith('action.sh" run'))!;
     const keys = Object.keys(run.env!).filter((k) => k.endsWith("_API_KEY"));
     expect(keys.sort()).toEqual([
       "QCR_ACTION_ANTHROPIC_API_KEY",

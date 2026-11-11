@@ -4,10 +4,7 @@
   "title": "qcr review --json, version 2",
   "description": "One JSON object per line from `qcr review` (also `--to json`), `qcr review start`, `status` and `stop`. schema_version leads every payload; ok says whether the call succeeded. Fields beyond those named may appear without a version change; a caller ignores what it does not know and refuses a schema_version it does not know. A failure is {ok:false, errors:[\u2026]}; a review stopped at its cap is {ok:false, partial:true, coverage, \u2026} with the findings written before the stop. Version 2 differs from version 1 in the preview: a review on a model with no measured price has no estimate, so estimate_usd may be null, and the preview names the model it runs on (model, alternatives, tiers) and what its price is known from (price_basis).",
   "type": "object",
-  "required": [
-    "schema_version",
-    "ok"
-  ],
+  "required": ["schema_version", "ok"],
   "properties": {
     "schema_version": {
       "const": 2,
@@ -33,11 +30,7 @@
     },
     "coverage": {
       "type": "object",
-      "required": [
-        "planned",
-        "started",
-        "not_reached"
-      ],
+      "required": ["planned", "started", "not_reached"],
       "properties": {
         "planned": {
           "type": "array",
@@ -99,16 +92,10 @@
       "minimum": 0
     },
     "verdict": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "cost_usd": {
-      "type": [
-        "number",
-        "null"
-      ]
+      "type": ["number", "null"]
     },
     "out_dir": {
       "type": "string",
@@ -126,19 +113,13 @@
     },
     "memory": {
       "type": "object",
-      "required": [
-        "used",
-        "notice"
-      ],
+      "required": ["used", "notice"],
       "properties": {
         "used": {
           "type": "boolean"
         },
         "notice": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         }
       }
     },
@@ -165,12 +146,7 @@
       "description": "A detached run's id (start, status, stop)."
     },
     "state": {
-      "enum": [
-        "running",
-        "done",
-        "failed",
-        "stopped"
-      ],
+      "enum": ["running", "done", "failed", "stopped"],
       "description": "A detached run's state."
     },
     "target": {
@@ -190,16 +166,10 @@
       "minimum": 0
     },
     "exit_code": {
-      "type": [
-        "integer",
-        "null"
-      ]
+      "type": ["integer", "null"]
     },
     "progress": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "description": "While a detached run is running: the lenses started so far.",
       "properties": {
         "lenses_started": {
@@ -217,10 +187,7 @@
               "minimum": 1
             },
             "parent_status": {
-              "enum": [
-                "active",
-                "settled"
-              ]
+              "enum": ["active", "settled"]
             },
             "last_activity": {
               "type": "string"
@@ -235,22 +202,13 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": [
-                  "agent",
-                  "status",
-                  "duration_ms",
-                  "tool_count"
-                ],
+                "required": ["agent", "status", "duration_ms", "tool_count"],
                 "properties": {
                   "agent": {
                     "type": "string"
                   },
                   "status": {
-                    "enum": [
-                      "running",
-                      "completed",
-                      "failed"
-                    ]
+                    "enum": ["running", "completed", "failed"]
                   },
                   "duration_ms": {
                     "type": "number",
@@ -300,24 +258,14 @@
   "$defs": {
     "override": {
       "type": "object",
-      "required": [
-        "path",
-        "origin",
-        "layer",
-        "sha256",
-        "shipped_sha256",
-        "seed"
-      ],
+      "required": ["path", "origin", "layer", "sha256", "shipped_sha256", "seed"],
       "properties": {
         "path": {
           "type": "string",
           "description": "The shipped file, relative to the app root (agents/pass-security.md)."
         },
         "origin": {
-          "enum": [
-            "user",
-            "repo"
-          ]
+          "enum": ["user", "repo"]
         },
         "layer": {
           "type": "string",
@@ -363,17 +311,10 @@
         },
         "target": {
           "type": "object",
-          "required": [
-            "kind"
-          ],
+          "required": ["kind"],
           "properties": {
             "kind": {
-              "enum": [
-                "pr",
-                "branch",
-                "uncommitted",
-                "diff"
-              ],
+              "enum": ["pr", "branch", "uncommitted", "diff"],
               "description": "What is reviewed: a pull request, the current branch against its base, the uncommitted working tree, or a unified diff handed in (`--diff`). Only a pr target can be posted."
             },
             "uncommitted": {
@@ -406,10 +347,7 @@
           "minimum": 0
         },
         "scope": {
-          "enum": [
-            "full",
-            "delta"
-          ]
+          "enum": ["full", "delta"]
         },
         "since": {
           "type": "string",
@@ -449,11 +387,7 @@
         },
         "tiers": {
           "type": "object",
-          "required": [
-            "light",
-            "standard",
-            "deep"
-          ],
+          "required": ["light", "standard", "deep"],
           "properties": {
             "light": {
               "type": "string"
@@ -468,34 +402,19 @@
           "description": "Each tier's model spec as it will run (`provider/id:level`); a tier is a bare `:level` when no route resolves."
         },
         "price_basis": {
-          "enum": [
-            "unknown",
-            "repo",
-            "measured",
-            "unpriced",
-            "unmeasured"
-          ],
+          "enum": ["unknown", "repo", "measured", "unpriced", "unmeasured"],
           "description": "What the price is known from. measured: every model the run uses is the one the estimate was fitted on. repo: the repo's own rates (.git/qcr-review.json). unmeasured: pi prices the model and no estimate exists, so the run is held by a spend limit (cap_usd). unpriced: pi has no price for the model, so there is no dollar stop. unknown: no model route resolves."
         },
         "estimate_usd": {
-          "type": [
-            "number",
-            "null"
-          ],
+          "type": ["number", "null"],
           "description": "The estimated cost; null when price_basis is unmeasured, unpriced or unknown."
         },
         "cap_usd": {
-          "type": [
-            "number",
-            "null"
-          ],
+          "type": ["number", "null"],
           "description": "The hard stop: twice the estimate where there is one, the spend limit on an unmeasured model. Null where there is none: the Action route without --limit, an unpriced model, no model route."
         },
         "limit_usd": {
-          "type": [
-            "number",
-            "null"
-          ],
+          "type": ["number", "null"],
           "description": "With an estimate: the estimate up to which the review runs without asking. On an unmeasured model: the spend limit (equal to cap_usd). Null where neither applies."
         },
         "auto": {
@@ -516,25 +435,13 @@
     },
     "finding": {
       "type": "object",
-      "required": [
-        "path",
-        "line",
-        "severity",
-        "title",
-        "lens"
-      ],
+      "required": ["path", "line", "severity", "title", "lens"],
       "properties": {
         "path": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "line": {
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": ["integer", "null"]
         },
         "severity": {
           "type": "string"
@@ -543,50 +450,28 @@
           "type": "string"
         },
         "lens": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         }
       }
     },
     "still_open": {
       "type": "object",
-      "required": [
-        "path",
-        "line",
-        "severity",
-        "title",
-        "lens",
-        "head_sha"
-      ],
+      "required": ["path", "line", "severity", "title", "lens", "head_sha"],
       "properties": {
         "path": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "line": {
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": ["integer", "null"]
         },
         "severity": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "title": {
           "type": "string"
         },
         "lens": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "head_sha": {
           "type": "string"
@@ -595,9 +480,7 @@
     },
     "post": {
       "type": "object",
-      "required": [
-        "ok"
-      ],
+      "required": ["ok"],
       "properties": {
         "ok": {
           "type": "boolean"
@@ -611,10 +494,7 @@
           "minimum": 0
         },
         "url": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "error": {
           "type": "string"
@@ -634,26 +514,13 @@
     },
     "credential": {
       "type": "object",
-      "required": [
-        "kind",
-        "origin",
-        "subscription"
-      ],
+      "required": ["kind", "origin", "subscription"],
       "properties": {
         "kind": {
-          "enum": [
-            "oauth",
-            "api_key"
-          ]
+          "enum": ["oauth", "api_key"]
         },
         "origin": {
-          "enum": [
-            "stored",
-            "runtime",
-            "models-json",
-            "env-key",
-            "ambient"
-          ],
+          "enum": ["stored", "runtime", "models-json", "env-key", "ambient"],
           "description": "Where pi found it: its own login store, a key handed to it for the run, the person's models.json, an environment key, or a cloud identity the environment carries."
         },
         "subscription": {
@@ -706,17 +573,10 @@
           "description": "What decided the route: --model, the config's pin, a stated or remembered choice, the only credential, the provider pi itself is on, or the credential order."
         },
         "pick": {
-          "enum": [
-            "pinned",
-            "newest",
-            "pi-default"
-          ]
+          "enum": ["pinned", "newest", "pi-default"]
         },
         "pi_default": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "description": "pi's own default on the provider when the pick differs from it."
         },
         "custom": {
@@ -724,10 +584,7 @@
           "description": "The id is not in pi's catalog and is sent as written."
         },
         "moved_from": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "description": "The provider a pin named, when the run moved off it for want of a credential."
         },
         "priced": {
@@ -745,13 +602,7 @@
     },
     "alternative": {
       "type": "object",
-      "required": [
-        "spec",
-        "provider",
-        "provider_name",
-        "priced",
-        "credential"
-      ],
+      "required": ["spec", "provider", "provider_name", "priced", "credential"],
       "properties": {
         "spec": {
           "type": "string"

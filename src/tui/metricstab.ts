@@ -556,8 +556,7 @@ export function metricsCards(
         // Rounds with tokens and no price are in no bar: said beside the
         // chart, so a flat day does not read as a free one.
         const unknown = daily.reduce((n, d) => n + (d.unknown_spend_rounds ?? 0), 0);
-        const left =
-          unknown > 0 ? ` · ${unknown} round${unknown === 1 ? "" : "s"} unknown` : "";
+        const left = unknown > 0 ? ` · ${unknown} round${unknown === 1 ? "" : "s"} unknown` : "";
         const days = daily.map((d) => d.day);
         if (chartH > 0) {
           return [

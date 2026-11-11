@@ -65,10 +65,7 @@ import {
 import { SCAN_MODEL_ENV, loadScanConfig } from "./setup/scanbuild.js";
 import type { DockerRunner } from "./tui/companion.js";
 import type { ScanRouteAnswer } from "./engine/caserunner-sdk.js";
-import {
-  SCAN_AUTH_SRC_ENV,
-  scanProviders,
-} from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { SCAN_AUTH_SRC_ENV, scanProviders } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   credentialWords,
   type ModelRoute,

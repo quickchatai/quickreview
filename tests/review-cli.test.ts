@@ -1313,9 +1313,7 @@ describe("qcr review: what the help and the provider question say of the price",
         provider: "beta",
         name: "Beta",
         credential,
-        models: [
-          { provider: "beta", id: "other-model", api: "x", cost: { input: 4, output: 20 } },
-        ],
+        models: [{ provider: "beta", id: "other-model", api: "x", cost: { input: 4, output: 20 } }],
       },
       {
         provider: "gamma",

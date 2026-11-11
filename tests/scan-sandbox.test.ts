@@ -1290,7 +1290,11 @@ describe("the sandboxed launch", () => {
         scanProviders(
           { provider: "made-up" },
           {
-            tiers: { light: ":low", standard: "made-up/large-3:medium", deep: "other-one/big:high" },
+            tiers: {
+              light: ":low",
+              standard: "made-up/large-3:medium",
+              deep: "other-one/big:high",
+            },
             pass_models: { "pass-x": "third/one", "pass-y": ":high" },
           },
         ).sort(),
@@ -1838,12 +1842,9 @@ describe("qcr scan doctor", () => {
   // MUTATION: restore the `read.summary[provider] === undefined` refusal in
   // pihomeCheck — a route on a key outside the login file fails and this fails.
   it("a route on a credential the login file does not hold is probed, not refused", async () => {
-    const { report, calls } = doctor(
-      [...all.slice(0, 3), loginAnswer({}), ...all.slice(4)],
-      {
-        route: async () => ({ ...ROUTE, credential: "MADE_UP_API_KEY" }) as DoctorRoute,
-      },
-    );
+    const { report, calls } = doctor([...all.slice(0, 3), loginAnswer({}), ...all.slice(4)], {
+      route: async () => ({ ...ROUTE, credential: "MADE_UP_API_KEY" }) as DoctorRoute,
+    });
     const r = await report;
     const pihome = r.checks.find((c) => c.check === "pihome")!;
     expect(pihome.ok).toBe(true);
@@ -1994,7 +1995,9 @@ describe("qcr scan doctor", () => {
     });
 
     it("with no tier specs it is the route's own model", () => {
-      expect(doctorRouteOf({ result: { ok: true, route }, surface: "app" }, "standard")).toMatchObject({
+      expect(
+        doctorRouteOf({ result: { ok: true, route }, surface: "app" }, "standard"),
+      ).toMatchObject({
         ok: true,
         model: "made-up/large-3",
         providers: ["made-up"],

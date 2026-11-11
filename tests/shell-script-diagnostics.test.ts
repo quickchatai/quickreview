@@ -24,7 +24,9 @@ describe("scripts/smoke-companion.sh", () => {
       .filter((line) => !/^\s*#/.test(line))
       .join("\n");
     expect(code).not.toMatch(/test -[fs] [^\n]*auth\.json/);
-    expect(code).toMatch(/docker exec "\$CONTAINER" node \/opt\/qcr\/dist\/src\/cli\.js model --json/);
+    expect(code).toMatch(
+      /docker exec "\$CONTAINER" node \/opt\/qcr\/dist\/src\/cli\.js model --json/,
+    );
     expect(code).toMatch(/grep -q '"ok":true'/);
   });
   it("maps the container layout to its root through the TUI resolver, not a copy", () => {

@@ -403,7 +403,12 @@ describe("a model key reaches a worker's process and nothing else", () => {
     // the tmux route's env carries them all: the drop is what keeps them out
     const tmuxEnv = r.sessions.buildEnv("pr-7", {});
     for (const name of Object.keys(model)) expect(tmuxEnv[name], name).toBe(model[name]);
-    const command = r.world.supervisor.submit({ pr: 7, kind: "wake", round_no: null, payload: "w" });
+    const command = r.world.supervisor.submit({
+      pr: 7,
+      kind: "wake",
+      round_no: null,
+      payload: "w",
+    });
     for (const mode of ["round", "answer"] as const) {
       const spec = r.specOf(command, mode);
       for (const name of Object.keys(model)) expect(spec.env, name).not.toHaveProperty(name);
@@ -463,7 +468,12 @@ describe("a model key reaches a worker's process and nothing else", () => {
     const before = { ...process.env };
     const r = rig();
     const model = seed(r.secrets);
-    const command = r.world.supervisor.submit({ pr: 7, kind: "wake", round_no: null, payload: "w" });
+    const command = r.world.supervisor.submit({
+      pr: 7,
+      kind: "wake",
+      round_no: null,
+      payload: "w",
+    });
     r.specOf(command);
     r.sessions.buildEnv("pr-7", {});
     expect(r.processModelEnv()).toEqual(model);

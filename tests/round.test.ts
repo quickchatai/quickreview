@@ -667,7 +667,11 @@ describe("a scan run on a model pi has no price for", () => {
     expect(scanRanUnpriced({ cap_usd: 15, spent_usd: 0.4, cases: [done(0.4)] })).toBe(false);
     // Nothing finished yet under a real stop: nothing is known, nothing is claimed.
     expect(
-      scanRanUnpriced({ cap_usd: 15, spent_usd: 0, cases: [{ status: "running", cost_usd: null }] }),
+      scanRanUnpriced({
+        cap_usd: 15,
+        spent_usd: 0,
+        cases: [{ status: "running", cost_usd: null }],
+      }),
     ).toBe(false);
     // A case with no price at all (null) is the scan's own "unpriced case", not this.
     expect(scanRanUnpriced({ cap_usd: 15, spent_usd: 0, cases: [done(null)] })).toBe(false);

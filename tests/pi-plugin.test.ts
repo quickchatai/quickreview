@@ -1488,7 +1488,9 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
           provider: "beta",
           name: "Beta",
           credential,
-          models: [{ provider: "beta", id: "other-model", api: "x", cost: { input: 4, output: 20 } }],
+          models: [
+            { provider: "beta", id: "other-model", api: "x", cost: { input: 4, output: 20 } },
+          ],
         },
       ],
     );

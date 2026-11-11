@@ -1120,10 +1120,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
             "The daemon cannot fix it: a login is interactive, and a key is the operator's.",
           ].join("\n"),
         );
-        log(
-          `authwatch: the model credential was refused in ${hits.length} session file(s)`,
-          files,
-        );
+        log(`authwatch: the model credential was refused in ${hits.length} session file(s)`, files);
         writeStatus();
       }
     } catch (err) {

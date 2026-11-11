@@ -581,8 +581,7 @@ export class HomeSetup {
     return this.checklist
       .list()
       .find(
-        (l) =>
-          l.status === "pending" && !(l.id === HOME_STEPS.login && this.unknownWhy.has(l.id)),
+        (l) => l.status === "pending" && !(l.id === HOME_STEPS.login && this.unknownWhy.has(l.id)),
       )?.id;
   }
 
@@ -796,8 +795,7 @@ export class HomeSetup {
     const checks = lines
       .filter((l) => this.checkIds.includes(l.id) && l.status === "pending")
       .map((l) => ({ id: l.id, title: l.title, why: l.note ?? l.explain, next: l.id === next }));
-    const shown =
-      this.asked !== null ? [...HOME_STEP_ORDER, HOME_STEPS.model] : HOME_STEP_ORDER;
+    const shown = this.asked !== null ? [...HOME_STEP_ORDER, HOME_STEPS.model] : HOME_STEP_ORDER;
     const steps = shown.map((id): SetupStepView => {
       const l = lines.find((x) => x.id === id);
       const title = l?.title ?? id;

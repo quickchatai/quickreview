@@ -260,35 +260,39 @@ describe("qcr model: the route, and why", () => {
   // MUTATION: return the "no estimate" line from priceLine whatever the
   // models (src/modelcli.ts) — the measured model is told it has no
   // estimate, and this fails.
-  it("the price line: an estimate on the measured model, a stop on any other, neither with no list price", {
-    timeout: HEAVY_TIMEOUT_MS,
-  }, async () => {
-    withModel({ id: MEASURED.model_id, api: MEASURED.apis[0], cost: { ...MEASURED.rates } });
-    const measured = await run([]);
-    expect(measured.code).toBe(0);
-    expect(priceOf(measured)).toBe(
-      `  price: an estimate before each review (measured on ${MEASURED.model_id}); a review stops at twice it`,
-    );
-    // the same model with one tier pinned elsewhere is not a measured review
-    const mixed = await run([], {
-      models: { model: "", tiers: { ...UNPINNED.tiers, deep: "elsewhere/other-model:high" } },
-    });
-    expect(priceOf(mixed)).toBe(
-      "  price: no estimate for this model; a review stops at $15.00 unless --limit says otherwise",
-    );
-    // the same id through an API outside the measured family
-    withModel({ id: MEASURED.model_id, api: "openai-completions", cost: { ...MEASURED.rates } });
-    expect(priceOf(await run([]))).toMatch(/^ {2}price: no estimate for this model/);
-    // a model pi has no price for
-    withModel({
-      id: "free-model-1",
-      api: "openai-completions",
-      cost: { input: 0, output: 0, cacheRead: 0 },
-    });
-    expect(priceOf(await run([]))).toBe(
-      "  price: pi has no list price for this model: no dollar stop",
-    );
-  });
+  it(
+    "the price line: an estimate on the measured model, a stop on any other, neither with no list price",
+    {
+      timeout: HEAVY_TIMEOUT_MS,
+    },
+    async () => {
+      withModel({ id: MEASURED.model_id, api: MEASURED.apis[0], cost: { ...MEASURED.rates } });
+      const measured = await run([]);
+      expect(measured.code).toBe(0);
+      expect(priceOf(measured)).toBe(
+        `  price: an estimate before each review (measured on ${MEASURED.model_id}); a review stops at twice it`,
+      );
+      // the same model with one tier pinned elsewhere is not a measured review
+      const mixed = await run([], {
+        models: { model: "", tiers: { ...UNPINNED.tiers, deep: "elsewhere/other-model:high" } },
+      });
+      expect(priceOf(mixed)).toBe(
+        "  price: no estimate for this model; a review stops at $15.00 unless --limit says otherwise",
+      );
+      // the same id through an API outside the measured family
+      withModel({ id: MEASURED.model_id, api: "openai-completions", cost: { ...MEASURED.rates } });
+      expect(priceOf(await run([]))).toMatch(/^ {2}price: no estimate for this model/);
+      // a model pi has no price for
+      withModel({
+        id: "free-model-1",
+        api: "openai-completions",
+        cost: { input: 0, output: 0, cacheRead: 0 },
+      });
+      expect(priceOf(await run([]))).toBe(
+        "  price: pi has no list price for this model: no dollar stop",
+      );
+    },
+  );
 
   it("a tier the config pins to a model of its own is shown whole", async () => {
     withLocal();

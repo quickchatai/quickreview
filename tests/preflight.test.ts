@@ -146,55 +146,71 @@ function snapshot(d: string): Record<string, string> {
 }
 
 describe("daemon --preflight", () => {
-  it("passes a clean legacy-shaped copy and changes nothing it was given", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const before = snapshot(dir);
-    const r = await runPreflight(opts);
-    expect(failed(r), JSON.stringify(r)).toEqual([]);
-    expect(r.ok).toBe(true);
-    expect(r.checks.find((c) => c.name === "resume")?.detail).toContain(
-      "1 open PR(s), 1 session file(s)",
-    );
-    expect(snapshot(dir)).toEqual(before);
-    expect(readdirSync(join(dir, "state")).sort()).toEqual(["pi-sessions", "state.db"]);
-  });
-
-  it("passes with the live state read-only, so it cannot have written there", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const state = opts.stateDir;
-    const before = snapshot(dir);
-    const dirs = [state, join(state, "pi-sessions"), join(state, "pi-sessions", "pr-7")];
-    for (const d of dirs) chmodSync(d, 0o500);
-    try {
+  it(
+    "passes a clean legacy-shaped copy and changes nothing it was given",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const before = snapshot(dir);
       const r = await runPreflight(opts);
       expect(failed(r), JSON.stringify(r)).toEqual([]);
-    } finally {
-      for (const d of dirs.reverse()) chmodSync(d, 0o700);
-    }
-    expect(snapshot(dir)).toEqual(before);
-  });
+      expect(r.ok).toBe(true);
+      expect(r.checks.find((c) => c.name === "resume")?.detail).toContain(
+        "1 open PR(s), 1 session file(s)",
+      );
+      expect(snapshot(dir)).toEqual(before);
+      expect(readdirSync(join(dir, "state")).sort()).toEqual(["pi-sessions", "state.db"]);
+    },
+  );
 
-  it("inspects a transcript nested under a cwd-named subdirectory, as runtime discovery does", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const sess = join(opts.stateDir, "pi-sessions", "pr-7");
-    mkdirSync(join(sess, "--cwd--"));
-    writeFileSync(join(sess, "--cwd--", "n.jsonl"), "{not json\n");
-    const r = await runPreflight(opts);
-    expect(failed(r)).toEqual(["resume"]);
-    expect(reason(r, "resume")).toContain("pr-7/--cwd--/n.jsonl");
-  });
+  it(
+    "passes with the live state read-only, so it cannot have written there",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const state = opts.stateDir;
+      const before = snapshot(dir);
+      const dirs = [state, join(state, "pi-sessions"), join(state, "pi-sessions", "pr-7")];
+      for (const d of dirs) chmodSync(d, 0o500);
+      try {
+        const r = await runPreflight(opts);
+        expect(failed(r), JSON.stringify(r)).toEqual([]);
+      } finally {
+        for (const d of dirs.reverse()) chmodSync(d, 0o700);
+      }
+      expect(snapshot(dir)).toEqual(before);
+    },
+  );
 
-  it("a session directory that cannot be listed fails the check; an absent one is no session", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const sess = join(opts.stateDir, "pi-sessions", "pr-7");
-    chmodSync(sess, 0o000);
-    try {
-      if (process.getuid?.() === 0) return; // root lists anything
+  it(
+    "inspects a transcript nested under a cwd-named subdirectory, as runtime discovery does",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const sess = join(opts.stateDir, "pi-sessions", "pr-7");
+      mkdirSync(join(sess, "--cwd--"));
+      writeFileSync(join(sess, "--cwd--", "n.jsonl"), "{not json\n");
       const r = await runPreflight(opts);
       expect(failed(r)).toEqual(["resume"]);
-      expect(reason(r, "resume")).toContain("cannot list the session directory");
-    } finally {
-      chmodSync(sess, 0o700);
-    }
-    rmSync(sess, { recursive: true });
-    expect(failed(await runPreflight(opts))).toEqual([]);
-  });
+      expect(reason(r, "resume")).toContain("pr-7/--cwd--/n.jsonl");
+    },
+  );
+
+  it(
+    "a session directory that cannot be listed fails the check; an absent one is no session",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const sess = join(opts.stateDir, "pi-sessions", "pr-7");
+      chmodSync(sess, 0o000);
+      try {
+        if (process.getuid?.() === 0) return; // root lists anything
+        const r = await runPreflight(opts);
+        expect(failed(r)).toEqual(["resume"]);
+        expect(reason(r, "resume")).toContain("cannot list the session directory");
+      } finally {
+        chmodSync(sess, 0o700);
+      }
+      rmSync(sess, { recursive: true });
+      expect(failed(await runPreflight(opts))).toEqual([]);
+    },
+  );
 
   it("fails a corrupt JSONL by name", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     writeFileSync(join(opts.stateDir, "pi-sessions", "pr-7", "s.jsonl"), "{not json\n");
@@ -219,21 +235,29 @@ describe("daemon --preflight", () => {
     expect(failed(r)).toEqual(["models"]);
   });
 
-  it("fails a socket path that cannot fit a unix socket", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const deep = join(dir, "x".repeat(120), "state");
-    mkdirSync(deep, { recursive: true });
-    const r = await runPreflight({ ...opts, stateDir: deep });
-    expect(reason(r, "socket")).toContain("bytes");
-  });
+  it(
+    "fails a socket path that cannot fit a unix socket",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const deep = join(dir, "x".repeat(120), "state");
+      mkdirSync(deep, { recursive: true });
+      const r = await runPreflight({ ...opts, stateDir: deep });
+      expect(reason(r, "socket")).toContain("bytes");
+    },
+  );
 
-  it("fails when the scratch parent cannot hold a private dir", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const ro = join(dir, "ro");
-    mkdirSync(ro);
-    chmodSync(ro, 0o500);
-    if (process.getuid?.() === 0) return;
-    await expect(runPreflight({ ...opts, scratchParent: ro })).rejects.toThrow();
-    chmodSync(ro, 0o700);
-  });
+  it(
+    "fails when the scratch parent cannot hold a private dir",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const ro = join(dir, "ro");
+      mkdirSync(ro);
+      chmodSync(ro, 0o500);
+      if (process.getuid?.() === 0) return;
+      await expect(runPreflight({ ...opts, scratchParent: ro })).rejects.toThrow();
+      chmodSync(ro, 0o700);
+    },
+  );
 
   it("fails a config the new image would refuse", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     writeFileSync(join(opts.configHome, "config.toml"), "this is = not [valid");
@@ -254,136 +278,180 @@ describe("daemon --preflight: a model route resolves", () => {
   const login = async (over: Partial<PreflightOptions> = {}): Promise<PreflightReport> =>
     runPreflight({ ...opts, ...over });
 
-  it("says which model runs, on which provider and credential", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const r = await login();
-    expect(failed(r), JSON.stringify(r)).toEqual([]);
-    expect(detail(r, "login")).toBe(`runs ${FAKE_ROUTE_MODEL} (local, a key in pi's models.json)`);
-  });
+  it(
+    "says which model runs, on which provider and credential",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const r = await login();
+      expect(failed(r), JSON.stringify(r)).toEqual([]);
+      expect(detail(r, "login")).toBe(
+        `runs ${FAKE_ROUTE_MODEL} (local, a key in pi's models.json)`,
+      );
+    },
+  );
 
   // MUTATION: return ok from the login check when no route resolves — this fails.
-  it("fails with the refusal's own words when pi has no credential at all", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    noCredential();
-    const r = await login();
-    expect(failed(r)).toEqual(["login"]);
-    expect(detail(r, "login")).toBe("no model route");
-    expect(reason(r, "login")).toContain("pi has no model credential");
-    expect(reason(r, "login")).toContain("qcr login");
-  });
+  it(
+    "fails with the refusal's own words when pi has no credential at all",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      noCredential();
+      const r = await login();
+      expect(failed(r)).toEqual(["login"]);
+      expect(detail(r, "login")).toBe("no model route");
+      expect(reason(r, "login")).toContain("pi has no model credential");
+      expect(reason(r, "login")).toContain("qcr login");
+    },
+  );
 
   // A daemon whose credential is a key file has no login to show: the file
   // under <secrets>/model-env is the credential, read by the daemon's loader.
   // MUTATION: leave the secrets dir's model env out of the route host's
   // authEnv in src/preflight.ts — this fails, and so would every release of a
   // key-file install.
-  it("no login file is fine when the credential is a key under the secrets dir's model env", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    noCredential();
-    const secretsDir = secretsWith({ [BUILTIN_ENV]: "value-from-the-secrets-dir\n" });
-    const r = await login({ secretsDir });
-    expect(failed(r), JSON.stringify(r)).toEqual([]);
-    expect(detail(r, "login")).toMatch(
-      new RegExp(`^runs ${BUILTIN}/\\S+ \\(${BUILTIN_NAME}, ${BUILTIN_ENV}\\)$`),
-    );
-    // never a key in the report
-    expect(JSON.stringify(r)).not.toContain("value-from-the-secrets-dir");
-    // and without the secrets dir the same home has nothing
-    expect(failed(await login())).toEqual(["login"]);
-  });
-
-  it("the older openai_api_key file is a credential too", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    noCredential();
-    const secretsDir = secretsWith({});
-    writeFileSync(join(secretsDir, "openai_api_key"), "value-from-the-older-file\n");
-    const r = await login({ secretsDir });
-    expect(failed(r), JSON.stringify(r)).toEqual([]);
-    expect(detail(r, "login")).toContain("OPENAI_API_KEY");
-    expect(JSON.stringify(r)).not.toContain("value-from-the-older-file");
-  });
-
-  it("a key in the environment the check is given counts, and one it is not given does not", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    noCredential();
-    const r = await login({ env: { [BUILTIN_ENV]: "not-a-key" } });
-    expect(failed(r), JSON.stringify(r)).toEqual([]);
-    expect(detail(r, "login")).toContain(`(${BUILTIN_NAME}, ${BUILTIN_ENV})`);
-    // this process's own environment is never read: only what the options name
-    const prior = process.env[BUILTIN_ENV];
-    process.env[BUILTIN_ENV] = "not-a-key";
-    try {
+  it(
+    "no login file is fine when the credential is a key under the secrets dir's model env",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      noCredential();
+      const secretsDir = secretsWith({ [BUILTIN_ENV]: "value-from-the-secrets-dir\n" });
+      const r = await login({ secretsDir });
+      expect(failed(r), JSON.stringify(r)).toEqual([]);
+      expect(detail(r, "login")).toMatch(
+        new RegExp(`^runs ${BUILTIN}/\\S+ \\(${BUILTIN_NAME}, ${BUILTIN_ENV}\\)$`),
+      );
+      // never a key in the report
+      expect(JSON.stringify(r)).not.toContain("value-from-the-secrets-dir");
+      // and without the secrets dir the same home has nothing
       expect(failed(await login())).toEqual(["login"]);
-    } finally {
-      if (prior === undefined) delete process.env[BUILTIN_ENV];
-      else process.env[BUILTIN_ENV] = prior;
-    }
-  });
+    },
+  );
+
+  it(
+    "the older openai_api_key file is a credential too",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      noCredential();
+      const secretsDir = secretsWith({});
+      writeFileSync(join(secretsDir, "openai_api_key"), "value-from-the-older-file\n");
+      const r = await login({ secretsDir });
+      expect(failed(r), JSON.stringify(r)).toEqual([]);
+      expect(detail(r, "login")).toContain("OPENAI_API_KEY");
+      expect(JSON.stringify(r)).not.toContain("value-from-the-older-file");
+    },
+  );
+
+  it(
+    "a key in the environment the check is given counts, and one it is not given does not",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      noCredential();
+      const r = await login({ env: { [BUILTIN_ENV]: "not-a-key" } });
+      expect(failed(r), JSON.stringify(r)).toEqual([]);
+      expect(detail(r, "login")).toContain(`(${BUILTIN_NAME}, ${BUILTIN_ENV})`);
+      // this process's own environment is never read: only what the options name
+      const prior = process.env[BUILTIN_ENV];
+      process.env[BUILTIN_ENV] = "not-a-key";
+      try {
+        expect(failed(await login())).toEqual(["login"]);
+      } finally {
+        if (prior === undefined) delete process.env[BUILTIN_ENV];
+        else process.env[BUILTIN_ENV] = prior;
+      }
+    },
+  );
 
   // The existing rule, narrowed to the providers a route can use: a stored
   // login counts when it has a refresh token (the refresher renews it) or is
   // good for the work window.
   // MUTATION: count every stored login in shortLogins as lasting — the
   // ten-minute login with no refresh token passes and this fails.
-  it("a stored login must be refreshable or good for the work window", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    noCredential();
-    // refreshable, and its access token already ran out: the refresher's to renew
-    storedLogin({ access: "a", refresh: "r", expires: NOW - 3600_000 });
-    const renewable = await login();
-    expect(failed(renewable), JSON.stringify(renewable)).toEqual([]);
-    expect(detail(renewable, "login")).toMatch(
-      new RegExp(`^runs ${BUILTIN}/\\S+ \\(${BUILTIN_NAME}, signed in with pi`),
-    );
-    // no refresh token, and it runs out inside the window
-    storedLogin({ access: "a", refresh: DISABLED_REFRESH, expires: NOW + 600_000 });
-    const short = await login();
-    expect(failed(short)).toEqual(["login"]);
-    expect(reason(short, "login")).toBe(
-      `the ${BUILTIN_NAME} login has no refresh token and expires inside the ${DEFAULT_WORK_WINDOW_MIN}-minute work window`,
-    );
-    // no refresh token, and it outlasts the window
-    storedLogin({ access: "a", refresh: DISABLED_REFRESH, expires: NOW + 24 * 3600_000 });
-    expect(failed(await login())).toEqual([]);
-  });
+  it(
+    "a stored login must be refreshable or good for the work window",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      noCredential();
+      // refreshable, and its access token already ran out: the refresher's to renew
+      storedLogin({ access: "a", refresh: "r", expires: NOW - 3600_000 });
+      const renewable = await login();
+      expect(failed(renewable), JSON.stringify(renewable)).toEqual([]);
+      expect(detail(renewable, "login")).toMatch(
+        new RegExp(`^runs ${BUILTIN}/\\S+ \\(${BUILTIN_NAME}, signed in with pi`),
+      );
+      // no refresh token, and it runs out inside the window
+      storedLogin({ access: "a", refresh: DISABLED_REFRESH, expires: NOW + 600_000 });
+      const short = await login();
+      expect(failed(short)).toEqual(["login"]);
+      expect(reason(short, "login")).toBe(
+        `the ${BUILTIN_NAME} login has no refresh token and expires inside the ${DEFAULT_WORK_WINDOW_MIN}-minute work window`,
+      );
+      // no refresh token, and it outlasts the window
+      storedLogin({ access: "a", refresh: DISABLED_REFRESH, expires: NOW + 24 * 3600_000 });
+      expect(failed(await login())).toEqual([]);
+    },
+  );
 
-  it("a login that cannot last is left out, and another credential still runs the bot", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    storedLogin({ access: "a", refresh: DISABLED_REFRESH, expires: NOW + 600_000 });
-    const r = await login();
-    expect(failed(r), JSON.stringify(r)).toEqual([]);
-    expect(detail(r, "login")).toBe(
-      `runs ${FAKE_ROUTE_MODEL} (local, a key in pi's models.json); left out: the ${BUILTIN_NAME} login (no refresh token)`,
-    );
-  });
+  it(
+    "a login that cannot last is left out, and another credential still runs the bot",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      storedLogin({ access: "a", refresh: DISABLED_REFRESH, expires: NOW + 600_000 });
+      const r = await login();
+      expect(failed(r), JSON.stringify(r)).toEqual([]);
+      expect(detail(r, "login")).toBe(
+        `runs ${FAKE_ROUTE_MODEL} (local, a key in pi's models.json); left out: the ${BUILTIN_NAME} login (no refresh token)`,
+      );
+    },
+  );
 
   // MUTATION: treat a login file that does not parse as no login — the check
   // passes on the models.json key and this fails.
-  it("a login file that cannot be read fails the check: unknown is never ok", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const file = join(opts.agentDir, "auth.json");
-    writeFileSync(file, "{ not json");
-    const broken = await login();
-    expect(failed(broken)).toEqual(["login"]);
-    expect(reason(broken, "login")).toContain("could not read pi's credentials");
-    expect(reason(broken, "login")).toContain(file);
-    writeFileSync(file, "[]");
-    const list = await login();
-    expect(failed(list)).toEqual(["login"]);
-    expect(reason(list, "login")).toContain("is not a JSON object");
-  });
+  it(
+    "a login file that cannot be read fails the check: unknown is never ok",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const file = join(opts.agentDir, "auth.json");
+      writeFileSync(file, "{ not json");
+      const broken = await login();
+      expect(failed(broken)).toEqual(["login"]);
+      expect(reason(broken, "login")).toContain("could not read pi's credentials");
+      expect(reason(broken, "login")).toContain(file);
+      writeFileSync(file, "[]");
+      const list = await login();
+      expect(failed(list)).toEqual(["login"]);
+      expect(reason(list, "login")).toContain("is not a JSON object");
+    },
+  );
 
   // MUTATION: read the login from agentDir whatever loginDir says — the
   // shared login is not seen and this fails.
-  it("reads the login where the daemon was handed one, and the catalog in pi's own agent dir", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    noCredential();
-    const shared = join(dir, "shared-login");
-    mkdirSync(shared);
-    storedLogin({ access: "a", refresh: "r", expires: NOW + 24 * 3600_000 }, shared);
-    expect(failed(await login())).toEqual(["login"]);
-    const r = await login({ loginDir: shared });
-    expect(failed(r), JSON.stringify(r)).toEqual([]);
-    expect(detail(r, "login")).toContain(`runs ${BUILTIN}/`);
-  });
+  it(
+    "reads the login where the daemon was handed one, and the catalog in pi's own agent dir",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      noCredential();
+      const shared = join(dir, "shared-login");
+      mkdirSync(shared);
+      storedLogin({ access: "a", refresh: "r", expires: NOW + 24 * 3600_000 }, shared);
+      expect(failed(await login())).toEqual(["login"]);
+      const r = await login({ loginDir: shared });
+      expect(failed(r), JSON.stringify(r)).toEqual([]);
+      expect(detail(r, "login")).toContain(`runs ${BUILTIN}/`);
+    },
+  );
 
-  it("a level with no model in [models] model is no pin, and a pinned model is the one named", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    expect(detail(await login({ model: ":high" }), "login")).toContain(`runs ${FAKE_ROUTE_MODEL} `);
-    const pinned = await login({ model: "local/m:high" });
-    expect(failed(pinned), JSON.stringify(pinned)).toEqual([]);
-    expect(detail(pinned, "login")).toContain("runs local/m");
-  });
+  it(
+    "a level with no model in [models] model is no pin, and a pinned model is the one named",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      expect(detail(await login({ model: ":high" }), "login")).toContain(
+        `runs ${FAKE_ROUTE_MODEL} `,
+      );
+      const pinned = await login({ model: "local/m:high" });
+      expect(failed(pinned), JSON.stringify(pinned)).toEqual([]);
+      expect(detail(pinned, "login")).toContain("runs local/m");
+    },
+  );
 });
 
 describe("the image carries the preflight", () => {

@@ -552,7 +552,9 @@ describe("Sign in to a model provider: pi's own /login", () => {
     expect(row(s, SIGN_IN_TITLE)).toMatch(/waiting for you…/);
     s.w.creds = { east: { name: "East", how: "key" } };
     await s.tick(LOGIN_POLL_MS);
-    expect(row(s, SIGN_IN_TITLE)).toMatch(/✓ {2}Sign in to a model provider\s+East, an API key in pi/);
+    expect(row(s, SIGN_IN_TITLE)).toMatch(
+      /✓ {2}Sign in to a model provider\s+East, an API key in pi/,
+    );
     expect(s.text()).toMatch(/Signed in to East with pi\./);
     expect(s.text()).toMatch(/1 of 3 done/);
     // nothing is polled after it
@@ -587,7 +589,9 @@ describe("Sign in to a model provider: pi's own /login", () => {
     const s = await openSetup();
     s.w.creds = NORTH;
     await say(s, "review the first PR");
-    expect(row(s, SIGN_IN_TITLE)).toMatch(/✓ {2}Sign in to a model provider\s+North, signed in with pi/);
+    expect(row(s, SIGN_IN_TITLE)).toMatch(
+      /✓ {2}Sign in to a model provider\s+North, signed in with pi/,
+    );
   });
 
   it("a second press while it waits opens no second menu", async () => {

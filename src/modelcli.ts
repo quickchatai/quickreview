@@ -53,10 +53,7 @@ import {
   type RouteResult,
   type SkippedLogin,
 } from "@quickchatai/pi-quickreview/src/modelroute.js";
-import {
-  DEFAULT_REVIEW_SETTINGS,
-  specAsRun,
-} from "@quickchatai/pi-quickreview/src/localreview.js";
+import { DEFAULT_REVIEW_SETTINGS, specAsRun } from "@quickchatai/pi-quickreview/src/localreview.js";
 import {
   MEASURED,
   priceKnowledge,
