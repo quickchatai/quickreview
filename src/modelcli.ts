@@ -24,12 +24,12 @@
 //
 // A login shorter than a review is left out, as `qcr review` leaves it out,
 // unless the bot's refresher is renewing it right now: a worker keeps such a
-// login then (src/workerworld.ts `loginOwnerOf`), so the verb does too, and
+// login then (src/loginrefresh/owner.ts `loginOwnerOf`), so the verb does too, and
 // the answer in the daemon's container is the route its workers run on.
 //
 // Inside a daemon's container (`inDaemonContainer`) the environment pi's
 // credential lookups read is the part of the process's a worker inherits
-// (src/workersupervisor.ts `workerProcessEnv`), with the model env over it: a
+// (src/workerenv.ts `workerProcessEnv`), with the model env over it: a
 // provider key set only in the container's environment reaches no worker, so
 // it is no route here either. Anywhere else the process's whole environment
 // counts, as it does for `qcr review`.
@@ -524,7 +524,7 @@ export async function refresherOwnsLogin(o: {
   }
   if (!enabled) return false;
   // Loaded only where a refresher may run: the daemon's own module.
-  const { LOGIN_STATUS_FILE, loginOwnerOf } = await import("./workerworld.js");
+  const { LOGIN_STATUS_FILE, loginOwnerOf } = await import("./loginrefresh/owner.js");
   let statusText: string | null = null;
   try {
     statusText = readFileSync(join(o.loginDir, LOGIN_STATUS_FILE), "utf8");
@@ -601,7 +601,7 @@ export async function runModelCli(
     // daemon's container the route is resolved over what a worker inherits.
     let routeEnv: Readonly<Record<string, string | undefined>> = env;
     if (inDaemonContainer(env)) {
-      const { workerProcessEnv } = await import("./workersupervisor.js");
+      const { workerProcessEnv } = await import("./workerenv.js");
       routeEnv = workerProcessEnv(env, {}, {});
     }
     deps = {

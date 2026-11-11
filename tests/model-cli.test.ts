@@ -994,7 +994,7 @@ describe("qcr model for a process: which directories its environment names", () 
   });
 
   // A worker's process inherits an allowlist of the daemon's environment and
-  // the secrets dir's model env (src/workersupervisor.ts `workerProcessEnv`):
+  // the secrets dir's model env (src/workerenv.ts `workerProcessEnv`):
   // a provider key given to the container itself (compose `environment:`,
   // `docker run -e`) reaches no worker, so it is no route for the daemon.
   // MUTATION: hand deps the whole `env` in runModelCli whatever
