@@ -35,6 +35,7 @@
 // (`homeStackRoot`): a checkout or the image is its own, an app installed by
 // a package manager gets one in its state home, never inside the package.
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
@@ -108,6 +109,11 @@ const isMissingFile = (err: unknown): boolean =>
   (err as NodeJS.ErrnoException | null)?.code === "ENOENT";
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+/** Eight hex of a sha256 over one stored entry: enough to tell two
+ * credentials apart, far too little to say what either is. */
+const entryDigest = (entry: unknown): string =>
+  createHash("sha256").update(JSON.stringify(entry)).digest("hex").slice(0, 8);
+
 /** The credentials pi stores in `agentDir`'s auth file. No auth file is no
  * stored credential; a file that cannot be read or parsed is unknown. */
 export function piLoginPort(
@@ -115,7 +121,10 @@ export function piLoginPort(
   read: (p: string) => string = (p) => readFileSync(p, "utf8"),
 ): PiLoginPort {
   const path = join(agentDir, "auth.json");
-  /** Each stored credential's type and expiry by provider; never a token. */
+  /** Each stored credential's stamp by provider: its type, its expiry and a
+   * short one-way digest of the stored entry, so a credential replaced by one
+   * of the same type and expiry (an API key by another) reads differently.
+   * Never a token. */
   const stored = (): Known<ReadonlyMap<string, string>> => {
     let raw: string;
     try {
@@ -126,11 +135,12 @@ export function piLoginPort(
         : unknown(`can't read ${path}: ${message(err)}`);
     }
     try {
+      const entries = JSON.parse(raw) as Record<string, unknown>;
       return known(
         new Map(
           Object.entries(loginSummary(raw)).map(([provider, c]): [string, string] => [
             provider,
-            `${c.type}:${c.expires ?? ""}`,
+            `${c.type}:${c.expires ?? ""}:${entryDigest(entries[provider])}`,
           ]),
         ),
       );

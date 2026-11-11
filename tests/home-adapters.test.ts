@@ -18,6 +18,7 @@ import {
   type Runner,
 } from "../src/home/adapters.js";
 import { stateHome } from "../src/homes.js";
+import { replacedLogin } from "../src/home/loginowner.js";
 
 const files =
   (map: Record<string, string | Error>) =>
@@ -58,6 +59,27 @@ describe("the pi login port", () => {
     const r = await port.providers();
     expect(r).toEqual({ kind: "known", value: ["openai-codex", "anthropic"] });
     expect(JSON.stringify(r)).not.toMatch(/SECRET|"K"/);
+  });
+
+  // MUTATION: build the stamp from the type and the expiry alone in
+  // piLoginPort - an API key replaced by another reads the same, so a re-login
+  // that pasted a new key ends as "no stored login changed"; this fails.
+  it("a replaced API key stamps differently, and the stamp holds no key", async () => {
+    const stampsOf = async (key: string): Promise<ReadonlyMap<string, string>> => {
+      const r = await piLoginPort(
+        AGENT,
+        files({ [AUTH]: JSON.stringify({ north: { type: "api_key", key } }) }),
+      ).stamps!();
+      if (r.kind !== "known") throw new Error("unknown stamps");
+      return r.value;
+    };
+    const before = { kind: "known" as const, value: await stampsOf("FIRST-KEY-VALUE") };
+    const same = { kind: "known" as const, value: await stampsOf("FIRST-KEY-VALUE") };
+    const after = { kind: "known" as const, value: await stampsOf("OTHER-KEY-VALUE") };
+    expect(replacedLogin(before, same)).toBeNull();
+    expect(replacedLogin(before, after)).toBe("north");
+    expect(after.value.get("north")).toMatch(/^api_key::[0-9a-f]{8}$/);
+    expect(JSON.stringify([...after.value])).not.toMatch(/KEY-VALUE/);
   });
 
   it("no auth file is no login", async () => {
