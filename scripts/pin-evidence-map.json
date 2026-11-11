@@ -66,8 +66,8 @@
     },
     {
       "id": "usage-and-price",
-      "assumes": "A message's usage.cost.total is a number, and a subagent result's usage is the child's sum; the codex price list matches pi's catalog.",
-      "files": { "packages/pi-plugin/src/pricing.ts": 1 },
+      "assumes": "A message's usage.cost.total is a number, a subagent result's usage is the child's sum, and a call of a model with no rates in pi's catalog is stamped at a cost of exactly 0 (read as unpriced, never as free); the benchmark's hand price list (src/bench/pricetable.ts) matches pi's catalog.",
+      "files": { "packages/pi-plugin/src/pricing.ts": 1, "src/bench/pricetable.ts": 1 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -88,7 +88,7 @@
     },
     {
       "id": "session-cwd-and-cache-id",
-      "assumes": "SessionManager.open defaults its cwd to the spec's; inMemory({id}) sets the id the provider keys its cache on; checkAuth resolves undefined for a provider with no credential.",
+      "assumes": "SessionManager.open defaults its cwd to the spec's; inMemory({id}) sets the id the provider keys its cache on. The file's other tag is the host's offline refresh, held by its own entry and its own offline test: pi-offline-refresh.",
       "files": { "packages/pi-plugin/src/engine/pisdk.ts": 3 },
       "signal": {
         "source": "session-jsonl",
@@ -99,8 +99,8 @@
     },
     {
       "id": "lens-prefix-cache",
-      "assumes": "before_provider_request may return a replacement payload with the pack first and a pinned prompt_cache_key.",
-      "files": { "packages/pi-plugin/src/engine/lens/leaf-cache.ts": 1 },
+      "assumes": "before_provider_request may return a replacement payload with the pack first and a pinned prompt_cache_key. The file's other tag is the API family the rewrite is for: the three names are pi-ai's own for its Responses APIs (KnownApi), held at compile time by the list's annotation and against pi's catalog by tests/lens-cache.test.ts.",
+      "files": { "packages/pi-plugin/src/engine/lens/leaf-cache.ts": 2 },
       "signal": {
         "source": "session-jsonl",
         "kind": "jsonl",
@@ -110,13 +110,13 @@
     },
     {
       "id": "oauth-refresh",
-      "assumes": "pi-ai's OAuth loaders and refresh(credential, signal) exist in the pi-ai package (auth/oauth/load.js); pi refreshes with under five minutes of validity left.",
-      "files": { "src/loginrefresh/pirefresh.ts": 2, "src/loginrefresh/refresher.ts": 1 },
+      "assumes": "pi-ai's public providers/all export gives every built-in provider, and one with an OAuth login carries auth.oauth.refresh(credential, signal); pi refreshes with under five minutes of validity left.",
+      "files": { "src/loginrefresh/pirefresh.ts": 1, "src/loginrefresh/refresher.ts": 1 },
       "signal": {
         "source": "structured-log",
         "kind": "log",
         "pattern": "login refresh: refreshed ",
-        "says": "the refresher obtained a fresh credential through pi-ai's loader"
+        "says": "the refresher obtained a fresh credential through pi-ai's own OAuth flow"
       }
     },
     {
@@ -268,8 +268,8 @@
     },
     {
       "id": "plugin-auth-refresh-window",
-      "assumes": "Inside a running pi, the model registry's facade refreshes an OAuth login for pi's own five minutes of validity only; the longer minimum a review needs comes from pi's model runtime, which refreshes under the host's own lock.",
-      "files": { "packages/pi-plugin/extensions/quickreview.ts": 1 },
+      "assumes": "Inside a running pi, the model registry's facade refreshes an OAuth login for pi's own five minutes of validity only; the longer minimum a review needs comes from pi's model runtime, which refreshes under the host's own lock. The file's other tags are what a run cannot borrow from the running pi: getRegisteredProviderIds() lists the providers an extension registered and no other, and a provider keyed for the process alone has the auth status source `runtime`; and what a review host would not find: a credential pi found in its surroundings has the auth status source `environment`, and a provider's auth.apiKey.resolve takes { ctx, credential, signal } and answers undefined for none.",
+      "files": { "packages/pi-plugin/extensions/quickreview.ts": 3 },
       "signal": {
         "source": "none",
         "kind": "gap",
@@ -277,23 +277,33 @@
       }
     },
     {
-      "id": "any-openai-login",
-      "assumes": "pi 1.4.0's /login labels the two ChatGPT logins as llmauth names them; getProviderAuthStatus(p).configured covers every credential kind and pi.setModel refuses a provider without one; setEditorComponent wires the default editor's onSubmit synchronously.",
-      "files": { "extensions/login-route.ts": 2, "src/onboard/steps/llmauth.ts": 2 },
+      "id": "login-route-session-model",
+      "assumes": "ModelRegistry.getAvailable() lists a provider's models only when the provider has a credential of any kind, and pi.setModel refuses a provider without one; setEditorComponent wires the default editor's onSubmit synchronously.",
+      "files": { "extensions/login-route.ts": 2 },
       "signal": {
         "source": "none",
         "kind": "gap",
-        "needs": "a first onboarding run whose companion transcript shows /login opened by itself and the session's model moved to the login that exists; no extract field names either yet"
+        "needs": "a first onboarding run whose companion transcript shows /login opened by itself, and a session whose model had no credential moved to the route's model; no extract field names either yet"
       }
     },
     {
-      "id": "home-device-login",
-      "assumes": "pi 1.4.0 hands an extension its model runtime behind ctx.modelRegistry.runtime, whose login(provider, \"oauth\", interaction) runs the provider's own flow and stores the credential; openai-codex first asks for the method with a select whose device option id contains \"device\", then notifies a device_code event.",
-      "files": { "src/home/devicelogin.ts": 1 },
+      "id": "route-registry-reads",
+      "assumes": "The model route's three reads of pi's registry facade, shared by an SDK host and an extension inside a running pi: where a provider's credential came from, pi's own default model per provider, and pi's own parse of a model text. Each is held by its own entry and its own offline test: pi-auth-status-origin, pi-default-probe and pi-model-text-parse.",
+      "files": { "packages/pi-plugin/extensions/route-registry.ts": 3 },
       "signal": {
         "source": "none",
         "kind": "gap",
-        "needs": "a first home run on a machine with no openai-codex login whose card showed pi's device code and whose chat then answered on that login; no extract field names it yet"
+        "needs": "a review started with no model pinned whose start names the provider, the credential and the model the route resolved; no extract field names the resolved route yet"
+      }
+    },
+    {
+      "id": "home-login-menu",
+      "assumes": "pi 1.4.0 fires an extension's input event with source \"interactive\" for a message the person sends from the editor, after its login menu has closed, and not while that menu is open; and its model registry lists a provider's models as available as soon as /login has stored that provider's credential, with no restart.",
+      "files": { "extensions/home.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a first home run on a machine with no model credential whose setup card opened pi's /login and turned its first step done once the person signed in, with no restart; no extract field names it yet"
       }
     },
     {
@@ -304,6 +314,69 @@
         "source": "none",
         "kind": "gap",
         "needs": "a typescript bump that re-reads a fresh tsbuildinfo and finds the same fields; nothing at runtime logs them, and no extract field names them"
+      }
+    },
+    {
+      "id": "catalog-pick-snapshot",
+      "assumes": "Over pi 1.4.0's built-in catalog and its per-provider default table (read by a deep import of pi's model-resolver, which the package does not export), the pick rule gives each provider the model tests/modelpick-catalog.test.ts lists.",
+      "files": { "tests/modelpick-catalog.test.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review started with no model pinned whose start names the picked model, on a provider whose row differs from pi's default; no extract field names the resolved model's route yet"
+      }
+    },
+    {
+      "id": "pi-default-probe",
+      "assumes": "pi 1.4.0's root export resolveCliModel, asked for an id a provider does not have, answers with a shallow clone of the provider's default model (or of its first model when pi names no default) and reads only getModels() and hasConfiguredAuth() of the runtime it is given; piDefaultModelId reads pi's per-provider default off that clone.",
+      "files": { "tests/pi-canary/canary-12-default-probe.test.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review started with no model pinned on a provider where the guard decided, whose start names pi's default; no extract field names the resolved route yet"
+      }
+    },
+    {
+      "id": "pi-auth-status-origin",
+      "assumes": "pi 1.4.0's ModelRegistry reports a stored credential as source `stored`, an environment key as `environment` with the variable's name as its label and an ambient cloud identity with a phrase or a non-key variable, and isUsingOAuth is true for a stored OAuth login without refreshing it; the route's credential classes are read from those. The status of a models.json key spelled as a variable is read from the process's environment while availability is read from the host's auth context, so the inventory takes availability as the credential test.",
+      "files": { "tests/pi-canary/canary-13-auth-status.test.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review whose start names the credential it ran on (a stored login, an environment key, an ambient identity); no extract field names the route's credential yet"
+      }
+    },
+    {
+      "id": "pi-borrow-modify",
+      "assumes": "pi 1.4.0 calls its credential store's modify for a stored OAuth login only when the token is inside pi's five minutes of validity (never for a stored key or a status read), runs the request on the credential modify resolves with whether or not the store ran the updater pi handed it, keeps no copy of that credential, and reports a store that refuses as `Credential store modify failed for <provider>` followed by the store's own words; a borrowed login takes the owner's newer token there instead of refreshing.",
+      "files": {
+        "packages/pi-plugin/src/engine/auth.ts": 1,
+        "tests/pi-canary/canary-14-borrow-modify.test.ts": 1
+      },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a round that outlived the access token it started on, on a route with an owner, whose later calls ran on the owner's newer token; no extract field names the token a call ran on or a re-borrow yet"
+      }
+    },
+    {
+      "id": "pi-offline-refresh",
+      "assumes": "pi 1.4.0's ModelRuntime.refresh({ allowNetwork: false }) makes no request whatever PI_OFFLINE says, restores the catalog overlay stored in the agent dir's models-store.json, fills the availability snapshot the registry facade reads, and leaves the auth context swapped onto the runtime in place.",
+      "files": { "tests/pi-canary/canary-15-offline-refresh.test.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review that ran on a model present only in pi's stored catalog overlay; no extract field tells an overlay model from a built-in one"
+      }
+    },
+    {
+      "id": "pi-model-text-parse",
+      "assumes": "pi 1.4.0's resolveCliModel resolves an exact provider/id, a bare id one provider serves and a :level suffix, keeps an unknown id on a known provider as a custom model, and reports a failure as an error whose first sentence states the fact and whose later sentences name pi's own flags.",
+      "files": { "tests/engine-route.test.ts": 1 },
+      "signal": {
+        "source": "none",
+        "kind": "gap",
+        "needs": "a review started with --model or a config pin whose start names the model pi resolved the text to; no extract field names the pin's text beside the resolved model yet"
       }
     }
   ]

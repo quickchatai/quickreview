@@ -3,6 +3,11 @@
 // caller hands in every path, the config and the ports, so the call needs no
 // $HOME, no cwd and no config file, returns the versioned JSON and the
 // rendered markdown, and a stop ends it with a result, never the process.
+//
+// The price (the last block): what a review's price is known from decides
+// the preview's line, the stop and the one question, on routes a case hands
+// in as data; and what a caller on contract 1 is told where version 1 cannot
+// state the price.
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -23,9 +28,25 @@ import {
   preview,
   review,
   type ReviewOptions,
+  type ReviewRouted,
   type ReviewRuntime,
   type ReviewStarted,
 } from "@quickchatai/pi-quickreview/src/reviewapi.js";
+import { AuthUnreadable } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import {
+  refusalText,
+  type CatalogModel,
+  type ModelRoute,
+  type ProviderInventory,
+  type RouteRefusal,
+} from "@quickchatai/pi-quickreview/src/modelroute.js";
+import {
+  hardStopFor,
+  loadReviewSettings,
+  priceReview,
+} from "@quickchatai/pi-quickreview/src/localreview.js";
+import { MEASURED } from "@quickchatai/pi-quickreview/src/measured.js";
+import { allowNoEstimate, readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import { parseCoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { contextFrom } from "@quickchatai/pi-quickreview/src/engine/context.js";
 import { reviewSdkRuntime } from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
@@ -78,7 +99,7 @@ for (const e of readdirSync(ROOT))
 const toml = readFileSync(join(ROOT, "config.example.toml"), "utf8");
 const parsed = parseCoreConfig(toml);
 const ctx = contextFrom(root, { cfg: parsed, toml }, parsed.review.profile, "", {});
-const config = { ...ctx.cfg, models: { ...ctx.cfg.models, conversation: "faux/m" } };
+const config = { ...ctx.cfg, models: { ...ctx.cfg.models, model: "faux/m" } };
 
 const record = JSON.stringify({
   findings: [
@@ -101,9 +122,12 @@ const record = JSON.stringify({
 });
 const outcome = JSON.stringify({ verdict: "REQUEST_CHANGES", passes: [] });
 
-const resultSchema = JSON.parse(
-  readFileSync(join(ROOT, "schemas", "review-result.v1.json"), "utf8"),
-) as Record<string, unknown>;
+const schemaOf = (version: number): Record<string, unknown> =>
+  JSON.parse(
+    readFileSync(join(ROOT, "schemas", `review-result.v${version}.json`), "utf8"),
+  ) as Record<string, unknown>;
+const resultSchema = schemaOf(2);
+const resultSchemaV1 = schemaOf(1);
 /** The result object breaks no rule of the versioned schema. */
 const schemaErrors = (data: unknown): unknown[] => validate(resultSchema, data);
 
@@ -213,7 +237,7 @@ describe("review(): the local review as a call", () => {
       expect(r.exitCode, r.text).toBe(0);
       expect(created()).toBe(1);
       expect(schemaErrors(r.data)).toEqual([]);
-      expect(r.data.schema_version).toBe(1);
+      expect(r.data.schema_version).toBe(2);
       expect(Object.keys(r.data)[0]).toBe("schema_version");
       expect(r.data.ok).toBe(true);
       expect(r.data["verdict"]).toBe("REQUEST_CHANGES");
@@ -232,6 +256,11 @@ describe("review(): the local review as a call", () => {
       expect(dirname(started[0]!.outDir)).toBe(started[0]!.runDir);
       expect(started[0]!.lenses.length).toBeGreaterThan(0);
       expect(started[0]!.estimateUsd).toBeGreaterThan(0);
+      // the result line sets the spend against the stop the run was held by
+      const stop = started[0]!.capUsd!;
+      expect(stop).toBeGreaterThan(0);
+      const usd = (n: number): string => "$" + n.toFixed(2);
+      expect(r.text).toContain(`(${usd(r.data["cost_usd"] as number)} of ${usd(stop)})`);
       // the round was remembered in the store it was given, and nothing went
       // anywhere the caller's process would have named
       expect(readdirSync(opts.storeDir!)).toHaveLength(1);
@@ -239,6 +268,62 @@ describe("review(): the local review as a call", () => {
       expect(existsSync(nowhere)).toBe(false);
     },
   );
+
+  // A priced route with one lens on a model pi has no price for: the lens
+  // child's tokens come at a cost of exactly 0, so the round's cost is
+  // unknown. The part pi did price is not the spend, and neither is $0.
+  // MUTATION: fall back to `shot.piRun.spentUsd` when `shot.costUsd` is null
+  // (reviewapi.ts) — the priced part is reported as the spend under a stop,
+  // $0.00 with none, and this fails.
+  for (const [name, limits] of [
+    ["under a stop", { limitUsd: 1000, timeoutMs: 60_000 }],
+    ["with no stop", { timeoutMs: 60_000, route: "action" }],
+  ] as const)
+    it(
+      `a round with one unpriced lens child has no spend, ${name}: unknown, never the priced part`,
+      { timeout: 60_000 },
+      async () => {
+        const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+        const { runtime } = fauxRuntime(faux);
+        const opts: ReviewOptions = {
+          ...options(`mixed-${name.replace(/ /g, "-")}`, runtime),
+          limits,
+        };
+        faux.appendResponses([
+          async () => {
+            const out = outDirOf(opts.runsDir);
+            writeFileSync(join(out, "findings-record.json"), record);
+            writeFileSync(join(out, "outcome.json"), outcome);
+            writeFileSync(
+              join(out, "lens-ledger.jsonl"),
+              JSON.stringify({
+                v: 1,
+                kind: "lens",
+                id: "unpriced-lens",
+                agent: "pass-correctness",
+                model: "local/no-price",
+                usage: { input: 900, output: 90, cacheRead: 0, cost: 0 },
+              }) + "\n",
+            );
+            return fauxAssistantMessage("done");
+          },
+        ]);
+        const started: ReviewStarted[] = [];
+        const r = await review({ kind: "branch" }, opts, { started: (s) => started.push(s) });
+        expect(r.exitCode, r.text).toBe(0);
+        expect(schemaErrors(r.data)).toEqual([]);
+        expect(started[0]!.capUsd === null).toBe(name === "with no stop");
+        expect(r.data["cost_usd"]).toBeNull();
+        expect(r.text).toMatch(/Review done: REQUEST_CHANGES \(spend unknown: /);
+        expect(r.text).not.toMatch(/\$\d+\.\d{2}\)/);
+        // the round the store remembers carries no figure either
+        const stored = readdirSync(opts.storeDir!, { recursive: true })
+          .map((f) => join(opts.storeDir!, String(f)))
+          .filter((f) => f.endsWith(".json"))
+          .map((f) => readFileSync(f, "utf8"));
+        expect(stored.join("\n")).toMatch(/"cost_usd":\s*null/);
+      },
+    );
 
   it("preview() shows the plan and the price and starts nothing", { timeout: 30_000 }, async () => {
     const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
@@ -630,6 +715,927 @@ describe("review(): the local review as a call", () => {
       expect(states.filter((f) => String(f).includes("state"))).toEqual([]);
     },
   );
+});
+
+describe("review(): the model is the host's to resolve", () => {
+  const ROUTE: ModelRoute = {
+    provider: "faux",
+    modelId: "m",
+    providerName: "Faux",
+    spec: "faux/m",
+    thinking: null,
+    source: "pi-provider",
+    pick: "newest",
+    piDefaultId: null,
+    custom: false,
+    movedFrom: null,
+    credential: { kind: "api_key", origin: "env-key", label: "FAUX_KEY", subscription: false },
+    priced: true,
+    ask: true,
+    alternatives: [
+      {
+        provider: "other",
+        providerName: "Other",
+        modelId: "o",
+        spec: "other/o",
+        credential: { kind: "oauth", origin: "stored", subscription: true },
+        priced: false,
+      },
+    ],
+    notices: ["skipped Short: its login expires at 12:08 and nothing here renews it"],
+  };
+  const routedTo = (over: Partial<ReviewRouted> = {}): ReviewRouted => ({
+    result: { ok: true, route: ROUTE },
+    inventory: [],
+    surface: "app",
+    ...over,
+  });
+  /** A runtime that must never be asked for a session. */
+  const noRuntime = (): ReviewRuntime => {
+    throw new Error("no runtime is built");
+  };
+  const modelLinesOf = (text: string): string[] =>
+    text.split("\n").filter((l) => l.trimStart().startsWith("model:"));
+
+  // MUTATION: write `model: null` into previewData whatever the route
+  // (packages/pi-plugin/src/reviewapi.ts) — the preview carries no model, and this fails.
+  it(
+    "the preview names the model in one line under the lenses and carries model, alternatives and tiers",
+    { timeout: 30_000 },
+    async () => {
+      let asks = 0;
+      const opts: ReviewOptions = {
+        ...optionsOver("route-preview", noRuntime),
+        route: async () => {
+          asks++;
+          return routedTo({
+            notes: ["--model replaces 2 pinned tier and lens models for this run"],
+          });
+        },
+      };
+      const r = await preview({ kind: "branch" }, opts);
+      expect(r.exitCode, r.text).toBe(0);
+      expect(asks).toBe(1);
+      expect(schemaErrors(r.data)).toEqual([]);
+      const p = r.data["preview"] as Record<string, unknown>;
+      expect(p["model"]).toEqual({
+        spec: "faux/m",
+        provider: "faux",
+        id: "m",
+        provider_name: "Faux",
+        source: "pi-provider",
+        pick: "newest",
+        pi_default: null,
+        custom: false,
+        moved_from: null,
+        priced: true,
+        ask: true,
+        // what kind of credential and where pi found it: never its label
+        credential: { kind: "api_key", origin: "env-key", subscription: false },
+      });
+      expect(p["alternatives"]).toEqual([
+        {
+          spec: "other/o",
+          provider: "other",
+          provider_name: "Other",
+          priced: false,
+          credential: { kind: "oauth", origin: "stored", subscription: true },
+        },
+      ]);
+      // the shipped config pins no tier: each runs on the route, at its own level
+      expect(p["tiers"]).toEqual({
+        light: "faux/m:medium",
+        standard: "faux/m:medium",
+        deep: "faux/m:high",
+      });
+      // nothing was fitted to this model, and the run names its own stop
+      expect(p).toMatchObject({
+        price_basis: "unmeasured",
+        estimate_usd: null,
+        cap_usd: 1000,
+        limit_usd: 1000,
+        auto: true,
+      });
+      const lines = r.text.split("\n");
+      const at = lines.findIndex((l) => l.startsWith("  lenses:"));
+      expect(lines.slice(at + 1, at + 4)).toEqual([
+        "  model: faux/m (picked among 2 providers pi has credentials for: pi itself starts on Faux). " +
+          "Change it: qcr model use <provider[/model]>, or --model for one run",
+        "  skipped Short: its login expires at 12:08 and nothing here renews it",
+        "  --model replaces 2 pinned tier and lens models for this run",
+      ]);
+      expect(modelLinesOf(r.text)).toHaveLength(1);
+    },
+  );
+
+  it(
+    "a caller that resolves no route gets a preview that names no model and keeps the fitted estimate",
+    { timeout: 30_000 },
+    async () => {
+      const r = await preview({ kind: "branch" }, optionsOver("route-none", noRuntime));
+      expect(r.exitCode, r.text).toBe(0);
+      expect(schemaErrors(r.data)).toEqual([]);
+      const p = r.data["preview"] as Record<string, unknown>;
+      expect(p["model"]).toBeNull();
+      expect(p["alternatives"]).toEqual([]);
+      // the tiers as the config writes them: there is no route to run them on
+      expect(p["tiers"]).toEqual({ light: ":medium", standard: ":medium", deep: ":high" });
+      expect(p["price_basis"]).toBe("measured");
+      expect(p["estimate_usd"]).toBeGreaterThan(0);
+      expect(modelLinesOf(r.text)).toEqual([]);
+    },
+  );
+
+  // MUTATION: drop the `!routed.result.ok && !isPreview` refusal (reviewapi.ts) —
+  // the review goes on to build its runtime, and this fails.
+  it(
+    "with no route a preview still shows the plan, and a start is refused in the route's words before any runtime",
+    { timeout: 30_000 },
+    async () => {
+      const none = routedTo({
+        result: { ok: false, refusal: { code: "no-credential" } },
+        facts: { agentDir: "/pi/home" },
+      });
+      const pre = await preview(
+        { kind: "branch" },
+        { ...optionsOver("route-refused-preview", noRuntime), route: async () => none },
+      );
+      expect(pre.exitCode, pre.text).toBe(0);
+      const p = pre.data["preview"] as Record<string, unknown>;
+      expect(p["model"]).toBeNull();
+      expect(p["alternatives"]).toEqual([]);
+      expect(p["tiers"]).toEqual({ light: ":medium", standard: ":medium", deep: ":high" });
+      expect((p["lenses"] as string[]).length).toBeGreaterThan(0);
+      expect(modelLinesOf(pre.text)).toEqual(["  model: none (no model credential: qcr login)"]);
+      // nothing is known of a price with no model: never a number, never a stop
+      expect(schemaErrors(pre.data)).toEqual([]);
+      expect(p).toMatchObject({
+        price_basis: "unknown",
+        estimate_usd: null,
+        cap_usd: null,
+        limit_usd: null,
+        auto: false,
+      });
+      expect(pre.text.split("\n")).toContain("  price: unknown until a model credential exists");
+
+      const started = await review(
+        { kind: "branch" },
+        { ...optionsOver("route-refused-start", noRuntime), route: async () => none },
+      );
+      expect(started.exitCode).toBe(1);
+      expect(started.data).toMatchObject({ ok: false });
+      expect((started.data["errors"] as string[])[0]).toBe(
+        "pi has no model credential (agent dir /pi/home). Run `qcr login` and sign in to any provider, " +
+          "or set a provider's API key in the environment, then run this again.",
+      );
+
+      // the plugin's words, inside pi
+      const inPi = await preview(
+        { kind: "branch" },
+        {
+          ...optionsOver("route-refused-plugin", noRuntime),
+          route: async () => ({ ...none, surface: "plugin" }),
+        },
+      );
+      expect(modelLinesOf(inPi.text)).toEqual(["  model: none (no model credential: /login)"]);
+      // any other refusal says itself
+      const pinned = await preview(
+        { kind: "branch" },
+        {
+          ...optionsOver("route-refused-pin", noRuntime),
+          route: async () =>
+            routedTo({ result: { ok: false, refusal: { code: "no-model", providers: ["p"] } } }),
+        },
+      );
+      expect(modelLinesOf(pinned.text)).toEqual([
+        "  model: none (pi has a credential for p, but none of their models passes the review's filter)",
+      ]);
+      // the missing credential is carried as a refusal too, with its remedy
+      expect(p["refusal"]).toEqual({
+        code: "no-credential",
+        text: refusalText({ code: "no-credential" }, "app", { agentDir: "/pi/home" }),
+      });
+    },
+  );
+
+  // A credential exists for every refusal but one, so the preview says which
+  // refusal it is and what cures it; "sign in" is true of `no-credential` only.
+  // MUTATION: write the preview's `refusal` for a pinned tier alone
+  // (reviewapi.ts: drop the route's branch of `refusal`) — a reader of the
+  // JSON sees only `model: null`, and this fails.
+  it.each([
+    [{ code: "no-model", providers: ["p"] }],
+    [{ code: "login-too-short", logins: [{ provider: "s", name: "S", expiresAt: 2_000 }] }],
+    [{ code: "pin-unknown", pin: "p/nope", detail: "no such model" }],
+    [{ code: "pin-no-credential", pin: "q/m", provider: "q", from: "flag", candidates: [] }],
+  ] as [RouteRefusal][])(
+    "a preview whose route is refused carries the refusal with its remedy: %o",
+    { timeout: 30_000 },
+    async (refusal) => {
+      const facts = { now: () => 1_000, needMs: 10 * 60_000 };
+      const pre = await preview(
+        { kind: "branch" },
+        {
+          ...optionsOver(`route-refused-${refusal.code}`, noRuntime),
+          route: async () => routedTo({ result: { ok: false, refusal }, facts }),
+        },
+      );
+      expect(pre.exitCode, pre.text).toBe(0);
+      expect(schemaErrors(pre.data)).toEqual([]);
+      const words = refusalText(refusal, "app", facts);
+      const p = pre.data["preview"] as Record<string, unknown>;
+      expect(p).toMatchObject({
+        model: null,
+        price_basis: "unknown",
+        auto: false,
+        refusal: { code: refusal.code, text: words },
+      });
+      const lines = pre.text.split("\n");
+      expect(lines).toContain(`  ✗ ${words}`);
+      // a credential exists: the price line does not say one is missing
+      expect(lines).toContain("  price: unknown until a model resolves");
+      expect(pre.text).not.toContain("until a model credential exists");
+    },
+  );
+
+  it(
+    "a login that cannot be read is said as it is, and a target with nothing to review never asks",
+    { timeout: 30_000 },
+    async () => {
+      const unreadable = await review(
+        { kind: "branch" },
+        {
+          ...optionsOver("route-unreadable", noRuntime),
+          route: async () => {
+            throw new AuthUnreadable("/pi/home/auth.json", new Error("it is not a JSON object"));
+          },
+        },
+      );
+      expect(unreadable.exitCode).toBe(1);
+      expect((unreadable.data["errors"] as string[])[0]).toBe(
+        "could not read pi's credentials at /pi/home/auth.json: it is not a JSON object",
+      );
+
+      let asks = 0;
+      const opts: ReviewOptions = {
+        ...optionsOver("route-nothing", noRuntime),
+        route: async () => {
+          asks++;
+          return routedTo();
+        },
+      };
+      git(opts.repoDir, "checkout", "-q", "main");
+      const nothing = await review({ kind: "branch" }, opts);
+      expect(nothing.exitCode).toBe(1);
+      expect(asks).toBe(0);
+    },
+  );
+
+  // MUTATION: pass the lenses' specs as written to reviewKey, without the
+  // route (runModels(cfg, lenses, null) in reviewapi.ts) — the key is the
+  // same on either route, and this fails.
+  it("the key moves with the route the run is on", { timeout: 30_000 }, async () => {
+    const keyOn = async (name: string, routed: ReviewRouted | null): Promise<string> => {
+      const base = optionsOver(name, noRuntime);
+      const r = await preview(
+        { kind: "branch" },
+        // one repository, so only the route differs
+        { ...base, repoDir: shared, ...(routed ? { route: async () => routed } : {}) },
+      );
+      expect(r.exitCode, r.text).toBe(0);
+      return (r.data["preview"] as { key: string }).key;
+    };
+    const shared = mkRepo("route-key-shared");
+    const a = await keyOn("route-key-a", routedTo());
+    const again = await keyOn("route-key-a2", routedTo());
+    const b = await keyOn(
+      "route-key-b",
+      routedTo({ result: { ok: true, route: { ...ROUTE, spec: "other/o" } } }),
+    );
+    expect(again).toBe(a);
+    expect(b).not.toBe(a);
+    expect(await keyOn("route-key-none", null)).not.toBe(a);
+  });
+});
+
+describe("review(): what the price is known from", () => {
+  const ID = MEASURED.model_id;
+  /** The shipped config: it pins no model, so the whole run is on the route. */
+  const unpinned = ctx.cfg;
+  const KEY_CREDENTIAL = { kind: "api_key", origin: "env-key", subscription: false } as const;
+
+  const routeTo = (
+    provider: string,
+    modelId: string,
+    over: Partial<ModelRoute> = {},
+  ): ModelRoute => ({
+    provider,
+    modelId,
+    providerName: provider.toUpperCase(),
+    spec: `${provider}/${modelId}`,
+    thinking: null,
+    source: "only-credential",
+    pick: "newest",
+    piDefaultId: null,
+    custom: false,
+    movedFrom: null,
+    credential: KEY_CREDENTIAL,
+    priced: true,
+    ask: false,
+    alternatives: [],
+    notices: [],
+    ...over,
+  });
+  const entry = (provider: string, models: CatalogModel[]): ProviderInventory => ({
+    provider,
+    name: provider.toUpperCase(),
+    credential: KEY_CREDENTIAL,
+    models,
+  });
+  /** The measured model as a provider's catalog lists it. */
+  const MEASURED_ROW: CatalogModel = {
+    provider: "alpha",
+    id: ID,
+    api: MEASURED.apis[0],
+    cost: { ...MEASURED.rates },
+  };
+  /** A model pi prices that no estimate was fitted to. */
+  const OTHER_ROW: CatalogModel = {
+    provider: "beta",
+    id: "other-model",
+    api: "some-other-api",
+    cost: { input: 4, cacheRead: 0.2, output: 20 },
+  };
+  /** A model pi has no price for. */
+  const FREE_ROW: CatalogModel = {
+    provider: "gamma",
+    id: "local-model",
+    api: "some-other-api",
+    cost: { input: 0, cacheRead: 0, output: 0 },
+  };
+  const ALPHA = entry("alpha", [MEASURED_ROW]);
+  const BETA = entry("beta", [OTHER_ROW]);
+  const GAMMA = entry("gamma", [FREE_ROW]);
+
+  const routed = (
+    route: ModelRoute,
+    inventory: ProviderInventory[],
+    over: Partial<ReviewRouted> = {},
+  ): ReviewRouted => ({ result: { ok: true, route }, inventory, surface: "app", ...over });
+  const onMeasured = (over: Partial<ModelRoute> = {}): ReviewRouted =>
+    routed(routeTo("alpha", ID, over), [ALPHA, BETA]);
+  const onUnmeasured = (inventory: ProviderInventory[] = [BETA]): ReviewRouted =>
+    routed(routeTo("beta", "other-model"), inventory);
+  const onUnpriced = (): ReviewRouted =>
+    routed(routeTo("gamma", "local-model", { priced: false }), [GAMMA]);
+
+  /** A runtime that must never be asked for a session: asking for one is
+   * said in the result, so a case that reaches it shows. */
+  const noRuntime = (): ReviewRuntime => {
+    throw new Error("no runtime is built");
+  };
+  const RUNTIME_ASKED = /the review's runtime could not be built/;
+
+  /** Options on the shipped config with no limit of the run's own: ten
+   * minutes of wall clock, and the route the case hands in. */
+  const priced = (
+    name: string,
+    on: ReviewRouted,
+    limits: Partial<ReviewOptions["limits"]> = {},
+  ): ReviewOptions => ({
+    ...optionsOver(name, noRuntime),
+    config: unpinned,
+    route: async () => on,
+    limits: { timeoutMs: 10 * 60_000, ...limits },
+  });
+  const previewOf = (r: { data: Record<string, unknown> }): Record<string, unknown> =>
+    r.data["preview"] as Record<string, unknown>;
+  const priceLinesOf = (text: string): string[] => {
+    const lines = text.split("\n");
+    const at = lines.findIndex((l) => l.startsWith("  price:"));
+    const end = lines.findIndex((l) => l.startsWith("  key:"));
+    return lines.slice(at, end);
+  };
+  const money = (n: number): string => `$${n.toFixed(2)}`;
+  const errorsOf = (r: { data: Record<string, unknown> }): string[] => r.data["errors"] as string[];
+
+  // MUTATION: drop the `specsMeasured` test from priceBasis
+  // (packages/pi-plugin/src/measured.ts) — the measured model has no
+  // estimate, and this fails.
+  it(
+    "measured: the fitted estimate, a hard stop at twice it, and the person's limit",
+    { timeout: 30_000 },
+    async () => {
+      const r = await preview({ kind: "branch" }, priced("price-measured", onMeasured()));
+      expect(r.exitCode, r.text).toBe(0);
+      expect(schemaErrors(r.data)).toEqual([]);
+      const p = previewOf(r);
+      const lenses = p["lenses"] as string[];
+      const estimate = priceReview(lenses.length, p["lines"] as number, MEASURED);
+      expect(p).toMatchObject({
+        price_basis: "measured",
+        estimate_usd: estimate,
+        cap_usd: hardStopFor(estimate),
+        limit_usd: 2,
+        auto: estimate <= 2,
+      });
+      expect((p["model"] as { spec: string }).spec).toBe(`alpha/${ID}`);
+      expect(priceLinesOf(r.text)).toEqual([
+        `  price: ${money(estimate)} (estimate, measured on ${ID}) — the run stops hard at ${money(hardStopFor(estimate))} (limit without asking: $2.00)`,
+      ]);
+    },
+  );
+
+  it("a subscription login is told its dollars are list prices", { timeout: 30_000 }, async () => {
+    const r = await preview(
+      { kind: "branch" },
+      priced(
+        "price-subscription",
+        onMeasured({ credential: { kind: "oauth", origin: "stored", subscription: true } }),
+      ),
+    );
+    expect(r.exitCode, r.text).toBe(0);
+    const lines = priceLinesOf(r.text);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^ {2}price: \$\d+\.\d{2} \(estimate, measured on /);
+    expect(lines[1]).toBe("  list prices: your ALPHA plan is not billed per review");
+  });
+
+  // MUTATION: test `specsMeasured` before `repoRates` in priceBasis — the
+  // repo's rates lose on the measured model, and this fails.
+  it("repo: the repo's own rates give an estimate on any model", { timeout: 30_000 }, async () => {
+    for (const [name, on] of [
+      ["price-repo-other", onUnmeasured()],
+      ["price-repo-measured", onMeasured()],
+    ] as const) {
+      const opts = priced(name, on);
+      writeFileSync(
+        join(opts.repoDir, ".git", "qcr-review.json"),
+        JSON.stringify({ usd_base: 3, usd_per_lens: 0.01 }),
+      );
+      expect(loadReviewSettings(opts.repoDir)).toEqual({
+        auto_limit_usd: 2,
+        unmeasured_limit_usd: 15,
+        usd_base: 3,
+        usd_per_lens: 0.01,
+      });
+      const r = await preview({ kind: "branch" }, opts);
+      expect(r.exitCode, r.text).toBe(0);
+      expect(schemaErrors(r.data)).toEqual([]);
+      const p = previewOf(r);
+      const estimate = priceReview((p["lenses"] as string[]).length, p["lines"] as number, {
+        usd_base: 3,
+        usd_per_lens: 0.01,
+        // a rate the repo leaves out is the measured one
+        usd_per_kline: MEASURED.usd_per_kline,
+      });
+      expect(p, name).toMatchObject({
+        price_basis: "repo",
+        estimate_usd: estimate,
+        cap_usd: hardStopFor(estimate),
+        limit_usd: 2,
+        auto: false,
+      });
+      expect(priceLinesOf(r.text), name).toEqual([
+        `  price: ${money(estimate)} (estimate, this repo's rates) — the run stops hard at ${money(hardStopFor(estimate))} (limit without asking: $2.00)`,
+      ]);
+    }
+  });
+
+  // MUTATION: price an unmeasured run with `priceReview(…, MEASURED)`
+  // (reviewapi.ts) — a model nothing was fitted to gets a number, and this fails.
+  it(
+    "unmeasured: no estimate, and the run stops at the spend limit or at --limit",
+    { timeout: 30_000 },
+    async () => {
+      const plain = await preview({ kind: "branch" }, priced("price-unmeasured", onUnmeasured()));
+      expect(plain.exitCode, plain.text).toBe(0);
+      expect(schemaErrors(plain.data)).toEqual([]);
+      expect(previewOf(plain)).toMatchObject({
+        price_basis: "unmeasured",
+        estimate_usd: null,
+        cap_usd: 15,
+        limit_usd: 15,
+        // nobody has said this model may run with no estimate
+        auto: false,
+      });
+      expect(priceLinesOf(plain.text)).toEqual([
+        "  price: no estimate for beta/other-model (not measured) — the run stops at $15.00",
+      ]);
+      // one tier elsewhere is enough: the measured route with a tier on beta
+      const mixed = await preview(
+        { kind: "branch" },
+        {
+          ...priced("price-mixed", onMeasured()),
+          config: {
+            ...unpinned,
+            models: {
+              ...unpinned.models,
+              tiers: {
+                light: "beta/other-model:medium",
+                standard: "beta/other-model:medium",
+                deep: "beta/other-model:high",
+              },
+            },
+          },
+        },
+      );
+      expect(previewOf(mixed)).toMatchObject({ price_basis: "unmeasured", estimate_usd: null });
+      // the line names the model that has no estimate, never the measured route's
+      expect(priceLinesOf(mixed.text)).toEqual([
+        "  price: no estimate for beta/other-model (not measured) — the run stops at $15.00",
+      ]);
+
+      // --limit names the stop, and naming it is the person's word
+      const limited = await preview(
+        { kind: "branch" },
+        priced("price-unmeasured-limit", onUnmeasured(), { limitUsd: 4 }),
+      );
+      expect(previewOf(limited)).toMatchObject({
+        estimate_usd: null,
+        cap_usd: 4,
+        limit_usd: 4,
+        auto: true,
+      });
+      expect(priceLinesOf(limited.text)).toEqual([
+        "  price: no estimate for beta/other-model (not measured) — the run stops at $4.00",
+      ]);
+
+      // the repo's own spend limit
+      const own = priced("price-unmeasured-repo", onUnmeasured());
+      writeFileSync(
+        join(own.repoDir, ".git", "qcr-review.json"),
+        JSON.stringify({ unmeasured_limit_usd: 7 }),
+      );
+      expect(previewOf(await preview({ kind: "branch" }, own))).toMatchObject({
+        price_basis: "unmeasured",
+        cap_usd: 7,
+        limit_usd: 7,
+      });
+    },
+  );
+
+  // MUTATION: make `auto` true for an unmeasured run with no word
+  // (reviewapi.ts) — the run starts with nobody asked (the runtime is asked
+  // for), and this fails.
+  it(
+    "an unmeasured model needs the person's word: with nobody to ask and no key the start is refused",
+    { timeout: 30_000 },
+    async () => {
+      const opts = priced("price-word-none", onUnmeasured());
+      const key = previewOf(await preview({ kind: "branch" }, opts))["key"] as string;
+      const r = await review({ kind: "branch" }, opts);
+      expect(r.exitCode).toBe(1);
+      expect(errorsOf(r)).toEqual([
+        `no estimate for beta/other-model and no terminal to ask: qcr review --key ${key}, or name the stop with --limit`,
+      ]);
+      expect(readModelChoice(opts.agentDir).noEstimateOk).toEqual([]);
+
+      // a key from another plan is not the person's word
+      const stale = await review(
+        { kind: "branch" },
+        { ...opts, limits: { ...opts.limits, key: "0000000000000000" } },
+      );
+      expect(stale.exitCode).toBe(1);
+      expect(errorsOf(stale)[0]).toMatch(/^--key 0000000000000000 does not match this review/);
+      expect(readModelChoice(opts.agentDir).noEstimateOk).toEqual([]);
+    },
+  );
+
+  // MUTATION: name and key an unmeasured run on `route.spec` (reviewapi.ts:
+  // make `noEstimateFor` the route's spec alone) — a yes given for the
+  // measured route's own spec starts the run with nobody asked, the question
+  // names the measured model, and this fails.
+  it(
+    "a measured route with a tier pinned elsewhere asks for the pinned model, and keeps the word for it",
+    { timeout: 30_000 },
+    async () => {
+      const base = priced("price-word-mixed", onMeasured());
+      const opts: ReviewOptions = {
+        ...base,
+        config: {
+          ...unpinned,
+          models: {
+            ...unpinned.models,
+            tiers: {
+              light: "beta/other-model:medium",
+              standard: "beta/other-model:medium",
+              deep: "beta/other-model:high",
+            },
+          },
+        },
+      };
+      // a word once given for the route's own (measured) model is not this run's
+      expect(allowNoEstimate(opts.agentDir, `alpha/${ID}`)).toEqual({ ok: true });
+      const p = previewOf(await preview({ kind: "branch" }, opts));
+      expect(p).toMatchObject({ price_basis: "unmeasured", auto: false });
+      const none = await review({ kind: "branch" }, opts);
+      expect(none.exitCode).toBe(1);
+      expect(errorsOf(none)).toEqual([
+        `no estimate for beta/other-model and no terminal to ask: qcr review --key ${String(p["key"])}, or name the stop with --limit`,
+      ]);
+      const asked: string[] = [];
+      const yes = await review({ kind: "branch" }, opts, {
+        confirm: async (q) => {
+          asked.push(q);
+          return true;
+        },
+      });
+      expect(asked).toEqual([
+        "Run on beta/other-model with no estimate? It stops at $15.00. (Reviews on this model will not ask again.)",
+      ]);
+      // the run went on to start: the word was taken
+      expect(errorsOf(yes)[0]).toMatch(RUNTIME_ASKED);
+      expect(readModelChoice(opts.agentDir).noEstimateOk).toEqual([
+        `alpha/${ID}`,
+        "beta/other-model",
+      ]);
+      expect(previewOf(await preview({ kind: "branch" }, opts))["auto"]).toBe(true);
+
+      // contract 1 names the model that has no measured price, and the one that has
+      const c1 = await preview({ kind: "branch" }, { ...opts, contract: 1 });
+      expect(c1.exitCode).toBe(1);
+      expect(errorsOf(c1)).toEqual([
+        "this review would run on beta/other-model, which has no measured price, and contract 1 cannot say so. " +
+          `Update the QuickReview skills (qcr plugin install), or run on a measured model: --model alpha/${ID}.`,
+      ]);
+    },
+  );
+
+  // MUTATION: drop the `remember()` call after the terminal's yes
+  // (reviewapi.ts) — the next review on the model asks again, and this fails.
+  it(
+    "a terminal is asked once: a no refuses, a yes is remembered for the model",
+    { timeout: 30_000 },
+    async () => {
+      const opts = priced("price-word-ask", onUnmeasured());
+      const asked: string[] = [];
+      const no = await review({ kind: "branch" }, opts, {
+        confirm: async (q) => {
+          asked.push(q);
+          return false;
+        },
+      });
+      expect(asked).toEqual([
+        "Run on beta/other-model with no estimate? It stops at $15.00. (Reviews on this model will not ask again.)",
+      ]);
+      expect(no.exitCode).toBe(1);
+      expect(errorsOf(no)).toEqual(["declined: no estimate for beta/other-model"]);
+      expect(readModelChoice(opts.agentDir).noEstimateOk).toEqual([]);
+
+      // a yes: the run goes on to its runtime, which this case does not have
+      const yes = await review({ kind: "branch" }, opts, {
+        confirm: async (q) => {
+          asked.push(q);
+          return true;
+        },
+      });
+      expect(asked).toHaveLength(2);
+      expect(errorsOf(yes)[0]).toMatch(RUNTIME_ASKED);
+      expect(readModelChoice(opts.agentDir).noEstimateOk).toEqual(["beta/other-model"]);
+
+      // the next review on the model is not asked, and its preview says so
+      expect(previewOf(await preview({ kind: "branch" }, opts))["auto"]).toBe(true);
+      const again = await review({ kind: "branch" }, opts, {
+        confirm: async (q) => {
+          asked.push(q);
+          return false;
+        },
+      });
+      expect(asked).toHaveLength(2);
+      expect(errorsOf(again)[0]).toMatch(RUNTIME_ASKED);
+      // the answer is for that model alone
+      const other = { ...opts, route: async () => routed(routeTo("beta", "third-model"), [BETA]) };
+      expect(previewOf(await preview({ kind: "branch" }, other))["auto"]).toBe(false);
+    },
+  );
+
+  // MUTATION: drop the `remember()` call after the key matches (reviewapi.ts)
+  // — a host skill's go is asked for again on the next review, and this fails.
+  it(
+    "a start with the preview's key runs, and is remembered the same way",
+    { timeout: 30_000 },
+    async () => {
+      const opts = priced("price-word-key", onUnmeasured());
+      const key = previewOf(await preview({ kind: "branch" }, opts))["key"] as string;
+      const r = await review(
+        { kind: "branch" },
+        { ...opts, limits: { ...opts.limits, key } },
+        // nobody to ask: the key is the word
+      );
+      expect(errorsOf(r)[0]).toMatch(RUNTIME_ASKED);
+      expect(readModelChoice(opts.agentDir).noEstimateOk).toEqual(["beta/other-model"]);
+    },
+  );
+
+  it(
+    "the key moves with the stop: a preview under another --limit does not start this one",
+    { timeout: 30_000 },
+    async () => {
+      const opts = priced("price-key-limit", onUnmeasured());
+      const key = previewOf(await preview({ kind: "branch" }, opts))["key"] as string;
+      const limited = { ...opts, limits: { ...opts.limits, limitUsd: 40 } };
+      expect(previewOf(await preview({ kind: "branch" }, limited))["key"]).not.toBe(key);
+    },
+  );
+
+  // MUTATION: give an unpriced run `cap = settings.unmeasured_limit_usd`
+  // (reviewapi.ts) — a stop is shown that no counted cost can ever reach, and
+  // this fails.
+  it(
+    "unpriced: no estimate and no dollar stop, the time limit is named, and --limit is said to be ignored",
+    { timeout: 30_000 },
+    async () => {
+      const r = await preview({ kind: "branch" }, priced("price-unpriced", onUnpriced()));
+      expect(r.exitCode, r.text).toBe(0);
+      expect(schemaErrors(r.data)).toEqual([]);
+      expect(previewOf(r)).toMatchObject({
+        price_basis: "unpriced",
+        estimate_usd: null,
+        cap_usd: null,
+        limit_usd: null,
+        auto: true,
+      });
+      expect(priceLinesOf(r.text)).toEqual([
+        "  price: pi has no price for gamma/local-model — no dollar stop; the 10-minute limit still holds",
+      ]);
+
+      const limited = await preview(
+        { kind: "branch" },
+        priced("price-unpriced-limit", onUnpriced(), { limitUsd: 5 }),
+      );
+      expect(previewOf(limited)).toMatchObject({ cap_usd: null, limit_usd: null, auto: true });
+      expect(priceLinesOf(limited.text)).toEqual([
+        "  price: pi has no price for gamma/local-model — no dollar stop; the 10-minute limit still holds",
+        "  --limit ignored: pi has no price for gamma/local-model",
+      ]);
+
+      // nothing is asked: the start goes straight to its runtime
+      const started = await review(
+        { kind: "branch" },
+        priced("price-unpriced-start", onUnpriced()),
+      );
+      expect(errorsOf(started)[0]).toMatch(RUNTIME_ASKED);
+    },
+  );
+
+  it(
+    "the repo's rates on an unpriced model give an estimate and no stop",
+    { timeout: 30_000 },
+    async () => {
+      const opts = priced("price-repo-unpriced", onUnpriced());
+      writeFileSync(join(opts.repoDir, ".git", "qcr-review.json"), JSON.stringify({ usd_base: 1 }));
+      const r = await preview({ kind: "branch" }, opts);
+      const p = previewOf(r);
+      expect(p).toMatchObject({ price_basis: "repo", cap_usd: null });
+      expect(p["estimate_usd"]).toBeGreaterThanOrEqual(1);
+      expect(priceLinesOf(r.text)[0]).toMatch(
+        /\(estimate, this repo's rates\) — pi has no price for gamma\/local-model, so no dollar stop; the 10-minute limit still holds/,
+      );
+    },
+  );
+
+  // MUTATION: drop the `tooShort` refusal before the price (reviewapi.ts) —
+  // the review starts and its pinned lenses fail one by one when their
+  // sessions are opened, and this fails.
+  it(
+    "a tier pinned to a provider whose login is too short is refused before anything runs, and the preview says so",
+    { timeout: 30_000 },
+    async () => {
+      const logins = [{ provider: "short", name: "Short", expiresAt: 2_000 }];
+      const facts = { now: () => 1_000, needMs: 10 * 60_000 };
+      const on = routed(routeTo("alpha", ID), [ALPHA], { skipped: logins, facts });
+      const opts: ReviewOptions = {
+        ...priced("price-pin-short", on, { limitUsd: 1000 }),
+        config: {
+          ...unpinned,
+          models: {
+            ...unpinned.models,
+            tiers: { light: "short/x:low", standard: "short/x:medium", deep: "short/x:high" },
+          },
+        },
+      };
+      const words = refusalText({ code: "login-too-short", logins }, "app", facts);
+      const pre = await preview({ kind: "branch" }, opts);
+      expect(pre.exitCode, pre.text).toBe(0);
+      const p = previewOf(pre);
+      expect(p["refusal"]).toEqual({ code: "login-too-short", text: words });
+      expect(p["auto"]).toBe(false);
+      expect(pre.text.split("\n")).toContain(`  ✗ ${words}`);
+
+      const started = await review({ kind: "branch" }, opts);
+      expect(started.exitCode).toBe(1);
+      expect(errorsOf(started)).toEqual([words]);
+    },
+  );
+
+  describe("for a caller on contract 1", () => {
+    it(
+      "the measured model reads as it always did: version 1, with its estimate",
+      { timeout: 30_000 },
+      async () => {
+        const r = await preview(
+          { kind: "branch" },
+          { ...priced("c1-measured", onMeasured()), contract: 1 },
+        );
+        expect(r.exitCode, r.text).toBe(0);
+        expect(r.data.schema_version).toBe(1);
+        expect(validate(resultSchemaV1, r.data)).toEqual([]);
+        expect(previewOf(r)["estimate_usd"]).toBeGreaterThan(0);
+        // contract 2 reads the same review under version 2
+        const two = await preview(
+          { kind: "branch" },
+          { ...priced("c1-measured-two", onMeasured()), contract: 2 },
+        );
+        expect(two.data.schema_version).toBe(2);
+      },
+    );
+
+    // MUTATION: return the v1 projection for an unmeasured preview (drop the
+    // `needsEstimate && price === null` refusal in reviewapi.ts and restamp
+    // the payload in reviewForContract) — this fails.
+    it(
+      "a review with no estimate is refused before anything runs, in contract 1's own shape",
+      { timeout: 30_000 },
+      async () => {
+        const noPrice = (spec: string, tail: string): string =>
+          `this review would run on ${spec}, which has no measured price, and contract 1 cannot say so. ` +
+          `Update the QuickReview skills (qcr plugin install)${tail}.`;
+        // a credentialed provider serves the measured model: the refusal names it
+        const both = await preview(
+          { kind: "branch" },
+          { ...priced("c1-unmeasured", onUnmeasured([BETA, ALPHA])), contract: 1 },
+        );
+        expect(both.exitCode).toBe(1);
+        expect(both.data).toEqual({
+          schema_version: 1,
+          ok: false,
+          errors: [
+            noPrice("beta/other-model", `, or run on a measured model: --model alpha/${ID}`),
+          ],
+        });
+        expect(validate(resultSchemaV1, both.data)).toEqual([]);
+        expect(JSON.stringify(both.data)).not.toMatch(/estimate_usd|cap_usd/);
+
+        // none does: the clause is left out
+        const alone = await preview(
+          { kind: "branch" },
+          { ...priced("c1-unmeasured-alone", onUnmeasured()), contract: 1 },
+        );
+        expect(alone.data).toEqual({
+          schema_version: 1,
+          ok: false,
+          errors: [noPrice("beta/other-model", "")],
+        });
+
+        const unpriced = await preview(
+          { kind: "branch" },
+          { ...priced("c1-unpriced", onUnpriced()), contract: 1 },
+        );
+        expect(unpriced.exitCode).toBe(1);
+        expect(unpriced.data).toEqual({
+          schema_version: 1,
+          ok: false,
+          errors: [noPrice("gamma/local-model", "")],
+        });
+
+        // a start, with the stop named and the key's place taken: still refused,
+        // and no runtime is asked for
+        const started = await review(
+          { kind: "branch" },
+          { ...priced("c1-unmeasured-start", onUnmeasured(), { limitUsd: 50 }), contract: 1 },
+        );
+        expect(started.exitCode).toBe(1);
+        expect(started.data).toEqual({
+          schema_version: 1,
+          ok: false,
+          errors: [noPrice("beta/other-model", "")],
+        });
+      },
+    );
+
+    // MUTATION: drop `|| needsEstimate` from the no-route refusal
+    // (reviewapi.ts) — the preview goes on to the price refusal (or prints a
+    // null estimate), and this fails.
+    it("with no route the login refusal wins, on a preview too", { timeout: 30_000 }, async () => {
+      const none: ReviewRouted = {
+        result: { ok: false, refusal: { code: "no-credential" } },
+        inventory: [],
+        surface: "app",
+        facts: { agentDir: "/pi/home" },
+      };
+      const r = await preview({ kind: "branch" }, { ...priced("c1-no-route", none), contract: 1 });
+      expect(r.exitCode).toBe(1);
+      expect(r.data).toEqual({
+        schema_version: 1,
+        ok: false,
+        errors: [
+          "pi has no model credential (agent dir /pi/home). Run `qcr login` and sign in to any provider, " +
+            "or set a provider's API key in the environment, then run this again.",
+        ],
+      });
+    });
+  });
 });
 
 describe("workTreeFactsIo: an uncommitted head read off the working tree", () => {

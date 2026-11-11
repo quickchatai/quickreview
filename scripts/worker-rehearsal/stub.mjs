@@ -290,7 +290,10 @@ function shape(body) {
 
 const bash = (id, command) => ({ tools: [{ id, name: "bash", args: { command } }] });
 
-const AGENT_RE = /\b(pass-[a-z0-9-]+?)--((?:sol|terra|luna)-(?:high|med|low))\b/g;
+// A built agent's name, `<pass>--<tier>`: the tier ladder's names, and the shape the tiers
+// had before, which an order written by an older build still carries.
+const AGENT_RE =
+  /\b(pass-[a-z0-9-]+?)--(light|standard|deep|(?:sol|terra|luna)-(?:high|med|low))\b/g;
 
 /** The round's planned lenses, as the agents to call: the order's "Pass plan for this round"
  * table, one row per lens (its "lens to call" column), and nothing else the order names (a
@@ -362,8 +365,7 @@ function playRound(s) {
                 args: {
                   tasks: Array.from({ length: Number(state.hold.burst) }, (_, i) => ({
                     agent:
-                      agents.find((a) => a.startsWith("pass-baseline")) ??
-                      "pass-baseline--sol-high",
+                      agents.find((a) => a.startsWith("pass-baseline")) ?? "pass-baseline--deep",
                     task: `Burst ${i + 1}: reply NONE.`,
                   })),
                 },

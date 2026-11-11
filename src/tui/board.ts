@@ -47,6 +47,8 @@ import {
   type LiveAgentProgress,
   type RoundProgressSnapshot,
 } from "@quickchatai/pi-quickreview/src/round-progress.js";
+import { foldTier } from "@quickchatai/pi-quickreview/src/types.js";
+import { spendText } from "@quickchatai/pi-quickreview/src/pricing.js";
 import { isLocalDiagnosis, type ConnectionDiagnosis } from "./sshtriage.js";
 import { setupLine, type SetupState } from "./setupstate.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
@@ -525,7 +527,13 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   const setupSeg = view.setup ? `${WARN}▲ setup not finished${DRESET}` : "";
   const s = view.snapshot;
   const rounds = s ? `rounds ${s.running_rounds}/${s.max_concurrent_rounds ?? "?"}` : "";
-  const spend = s?.today_spend_usd !== undefined ? `today $${s.today_spend_usd.toFixed(2)}` : "";
+  // The day's sum with the rounds it could not count (tokens and no price):
+  // never $0 for those. An older daemon's snapshot has no count, and the sum
+  // is then said as it is.
+  const spend =
+    s?.today_spend_usd !== undefined
+      ? `today ${spendText(s.today_spend_usd, s.today_unknown_spend_rounds)}`
+      : "";
   // Deploy-window drain: while the daemon drains, the bar says so loudly,
   // with how many rounds still have to finish before a deploy is safe and how
   // many webhook deliveries were dropped so far — and by whom, and when it
@@ -753,8 +761,11 @@ function currentProgressLines(
     .map((x) => x.trim())
     .filter(Boolean);
   // The validator runs at its own tier, shown beside its row.
+  // In the ladder's spelling, whichever one the row was written with.
   const tierOf = (name: string): string =>
-    name === "pass-validate" && round.validate_tier ? ` · ${round.validate_tier}` : "";
+    name === "pass-validate" && round.validate_tier
+      ? ` · ${foldTier(round.validate_tier) ?? round.validate_tier}`
+      : "";
 
   if (!current) {
     lines.push(truncate(`  ${FG.dim}? parent · live progress unavailable${RESET}`, width));
@@ -930,7 +941,7 @@ export function detailLines(
   const trig = detail.trigger_ts ? `trig ${fmtAge(detail.trigger_ts, now)} ago` : "trig —";
   lines.push(
     truncate(
-      `spend $${detail.spend_usd.toFixed(2)} · head ${(detail.head_sha ?? "").slice(0, 7)} · ${trig}`,
+      `spend ${spendText(detail.spend_usd, detail.unknown_spend_rounds)} · head ${(detail.head_sha ?? "").slice(0, 7)} · ${trig}`,
       width,
     ),
   );

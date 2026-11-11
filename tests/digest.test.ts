@@ -86,14 +86,43 @@ describe("dailyUsage / usageSummaryLine", () => {
         const usage = dailyUsage(store, today);
         expect(usage).toMatchObject({ rounds: 2, tokens_in: 100_000, tokens_out: 5_000 });
         expect(usage.est_usd).toBeCloseTo(2.25, 6);
+        expect(usage.unknown_spend_rounds).toBe(0);
         expect(usageSummaryLine(usage)).toBe(
-          "usage: 2 rounds — 100000 in / 5000 out tokens — est $2.25",
+          "usage: 2 rounds — 100000 in / 5000 out tokens — $2.25 at list prices",
         );
       } finally {
         store.close();
       }
     },
   );
+
+  // A round with tokens and no price (a model pi has no price for) is never
+  // $0 in the day's sum: the line counts it beside the sum.
+  // MUTATION: drop `unknown_spend_rounds` from dailyUsage (or from the line) -
+  // the day reads "$0.25 at list prices" alone and this fails.
+  it("says the rounds with tokens and no price beside the sum, and unknown when none has one", async () => {
+    const { StateStore } = await import("../src/state.js");
+    const { dailyUsage, usageSummaryLine } = await import("../src/digest.js");
+    const store = new StateStore(":memory:");
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const a = store.startRound(7, "initial", [], 45);
+      store.recordRoundUsage(a, { tokens_in: 9_000, tokens_out: 900, est_usd: null });
+      expect(usageSummaryLine(dailyUsage(store, today))).toBe(
+        "usage: 1 rounds — 9000 in / 900 out tokens — unknown (1 round)",
+      );
+      const b = store.startRound(8, "initial", [], 45);
+      store.recordRoundUsage(b, { tokens_in: 100_000, tokens_out: 5_000, est_usd: 0.25 });
+      const usage = dailyUsage(store, today);
+      expect(usage.est_usd).toBeCloseTo(0.25, 6);
+      expect(usage.unknown_spend_rounds).toBe(1);
+      expect(usageSummaryLine(usage)).toBe(
+        "usage: 2 rounds — 109000 in / 5900 out tokens — $0.25 at list prices + 1 round unknown",
+      );
+    } finally {
+      store.close();
+    }
+  });
 
   it("counts expired rounds' spend (expiry is not a refund)", async () => {
     const { StateStore } = await import("../src/state.js");

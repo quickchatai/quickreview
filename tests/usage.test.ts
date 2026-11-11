@@ -4,7 +4,7 @@
 // unknown) is tests/transcriptindex.test.ts.
 import { describe, expect, it } from "vitest";
 import { TranscriptIndex, type TranscriptMeasureOpts } from "../src/transcriptindex.js";
-import { auditExecViolations, estimateUsd, type RoundUsage } from "../src/usage.js";
+import { auditExecViolations, type RoundUsage } from "../src/usage.js";
 import { MemoryTranscriptFs } from "./helpers/memory-transcript-fs.js";
 
 const T = (iso: string): string => new Date(iso).toISOString();
@@ -231,6 +231,31 @@ describe("lens children's usage, from the parent's tool results", () => {
     });
   });
 
+  // MUTATION: cut every `:suffix` off a child's model again
+  // (`replace(/:[a-z]+$/, "")`) — the id that ends in a routing suffix is
+  // counted under the bare id beside it and this fails.
+  it("cuts only a thinking level off a child's model: an id that holds a colon stays whole", async () => {
+    const fs = fakeFs({
+      "/s/pr-7/a.jsonl": toolResult(START, "subagent", [
+        child("made-up/pro-5:free:high", 100, 10, 0, 0.1),
+        child("made-up/pro-5:nitro", 200, 20, 0, 0.2),
+        child("made-up/pro-5", 400, 40, 0, 0.4),
+        child("made-up/pro-5:medium", 800, 80, 0, 0.8),
+      ]),
+    });
+    const usage = await measureRoundUsage({
+      sessionDir: "/s/pr-7",
+      startedAt: START,
+      finishedAt: END,
+      fs,
+    });
+    expect(usage.models).toEqual({
+      "made-up/pro-5:free": { in: 100, out: 10 },
+      "made-up/pro-5:nitro": { in: 200, out: 20 },
+      "made-up/pro-5": { in: 1200, out: 120 },
+    });
+  });
+
   it("a round with no child results is the main session's alone, as before", async () => {
     const fs = fakeFs({ "/s/pr-7/a.jsonl": costed(START, 100, 10, 0.1) });
     const usage = await measureRoundUsage({
@@ -258,25 +283,83 @@ describe("lens children's usage, from the parent's tool results", () => {
   });
 });
 
-describe("estimateUsd", () => {
-  const pricing = { "gpt-5.6-sol": { input_per_mtok: 2, output_per_mtok: 8 } };
+// pi stamps a cost of exactly 0 on a call of a model it has no price for. A
+// window with such a call has no dollar figure: not $0, and not the sum of the
+// calls that did have a price.
+describe("a call pi stamped at zero for its tokens is unpriced, never free", () => {
+  const costed = (ts: string, input: number, output: number, cost: number): string =>
+    JSON.stringify({
+      type: "message",
+      timestamp: ts,
+      message: { role: "assistant", usage: { input, output, cost: { total: cost } } },
+    });
+  const lensResult = (ts: string, cost: number, input = 500): string =>
+    JSON.stringify({
+      type: "message",
+      timestamp: ts,
+      message: {
+        role: "toolResult",
+        toolName: "subagent",
+        content: [],
+        details: {
+          mode: "parallel",
+          results: [
+            {
+              agent: "pass-x",
+              model: "some-provider/some-model:medium",
+              usage: { input, output: 50, cacheRead: 0, cacheWrite: 0, cost, turns: 2 },
+            },
+          ],
+        },
+      },
+    });
+  const measure = (lines: string[]): Promise<RoundUsage> =>
+    measureRoundUsage({
+      sessionDir: "/s/pr-7",
+      startedAt: START,
+      finishedAt: END,
+      fs: fakeFs({ "/s/pr-7/a.jsonl": lines.join("\n") }),
+    });
 
-  it("prices per-mtok and tolerates a provider prefix on the model key", () => {
-    const est = estimateUsd(
-      { "openai-codex/gpt-5.6-sol": { in: 1_000_000, out: 500_000 } },
-      pricing,
-    );
-    expect(est).toBeCloseTo(2 + 4, 9);
+  // MUTATION: drop the `unpriced_calls` branch from addLineUsage (sum u.cost as
+  // before) - cost_usd is 0 here and this fails.
+  it("a window of zero-cost calls with tokens has no cost: null, and the calls are counted", async () => {
+    const usage = await measure([costed(START, 1000, 100, 0), costed(END, 2000, 200, 0)]);
+    expect(usage.cost_usd).toBeNull();
+    expect(usage.unpriced_calls).toBe(2);
+    // The tokens are still measured: that is what makes the round "unknown".
+    expect(usage.tokens_in).toBe(3000);
+    expect(usage.tokens_out).toBe(300);
   });
 
-  it("returns null when any model in play has no price entry", () => {
-    const models = { "openai-codex/gpt-5.6-sol": { in: 1, out: 1 }, mysterious: { in: 1, out: 1 } };
-    expect(estimateUsd(models, pricing)).toBeNull();
-    expect(estimateUsd({ mysterious: { in: 1, out: 0 } }, {})).toBeNull();
+  it("one unpriced call makes the whole window unknown, whichever side of it the priced calls are", async () => {
+    for (const lines of [
+      [costed(START, 100, 10, 0.4), costed(END, 1000, 100, 0)],
+      [costed(START, 1000, 100, 0), costed(END, 100, 10, 0.4)],
+    ]) {
+      const usage = await measure(lines);
+      expect(usage.cost_usd).toBeNull();
+      expect(usage.unpriced_calls).toBe(1);
+    }
   });
 
-  it("returns 0 for no models in play", () => {
-    expect(estimateUsd({}, {})).toBe(0);
+  it("an unpriced lens child does the same to its parent's window", async () => {
+    const usage = await measure([costed(START, 100, 10, 0.4), lensResult(END, 0)]);
+    expect(usage.cost_usd).toBeNull();
+    expect(usage.unpriced_calls).toBe(1);
+    expect(usage.children_included).toBe(true);
+  });
+
+  it("a zero with no tokens is a call that never reached the model: it cost nothing and hides nothing", async () => {
+    const usage = await measure([costed(START, 100, 10, 0.4), costed(END, 0, 0, 0)]);
+    expect(usage.cost_usd).toBeCloseTo(0.4, 10);
+    expect(usage.unpriced_calls).toBeUndefined();
+  });
+
+  it("a priced window says nothing about unpriced calls", async () => {
+    const usage = await measure([costed(START, 100, 10, 0.4), lensResult(END, 0.2)]);
+    expect(usage.cost_usd).toBeCloseTo(0.6, 10);
+    expect(usage.unpriced_calls).toBeUndefined();
   });
 });
 

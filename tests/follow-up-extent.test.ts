@@ -121,8 +121,8 @@ describe("the plan: a lean core and optional rows", () => {
     const rows: PassPlanEntry[] = [
       {
         lens: SWEEP_PASS,
-        agent: "pass-sweep--sol-high",
-        tier: "sol-high",
+        agent: "pass-sweep--deep",
+        tier: "deep",
         raisable_to: [],
         focus: ["a.py"],
       },
@@ -154,15 +154,15 @@ describe("the session's decision notes", () => {
   const rows: PassPlanEntry[] = [
     {
       lens: SWEEP_PASS,
-      agent: "pass-sweep--sol-high",
-      tier: "sol-high",
+      agent: "pass-sweep--deep",
+      tier: "deep",
       raisable_to: [],
       focus: ["a.py", "b.py"],
     },
     {
       lens: "pass-duplication",
-      agent: "pass-duplication--sol-med",
-      tier: "sol-med",
+      agent: "pass-duplication--standard",
+      tier: "standard",
       raisable_to: [],
       why: "new code",
     },
@@ -174,13 +174,13 @@ describe("the session's decision notes", () => {
     optional_task_files: [
       {
         row: 0,
-        agent: "pass-sweep--sol-high",
-        path: "/s/p/tasks-optional/01-pass-sweep--sol-high.md",
+        agent: "pass-sweep--deep",
+        path: "/s/p/tasks-optional/01-pass-sweep--deep.md",
       },
       {
         row: 1,
-        agent: "pass-duplication--sol-med",
-        path: "/s/p/tasks-optional/02-pass-duplication--sol-med.md",
+        agent: "pass-duplication--standard",
+        path: "/s/p/tasks-optional/02-pass-duplication--standard.md",
       },
     ],
     sweep_plan: rows,
@@ -193,8 +193,8 @@ describe("the session's decision notes", () => {
     expect(note).toContain("**in doubt**, run them");
     expect(note).toContain("`/s/p/tasks-optional`");
     expect(note).toContain("`optional:<row>`");
-    expect(note).toContain("| optional:1 | `pass-sweep--sol-high` | `a.py`, `b.py` |");
-    expect(note).toContain("| optional:2 | `pass-duplication--sol-med` | new code |");
+    expect(note).toContain("| optional:1 | `pass-sweep--deep` | `a.py`, `b.py` |");
+    expect(note).toContain("| optional:2 | `pass-duplication--standard` | new code |");
   });
 
   // Focus paths and reasons are DATA in a table cell: a pipe, a backtick or a
@@ -208,10 +208,8 @@ describe("the session's decision notes", () => {
         { ...rows[1]!, why: "x|y\nz" },
       ],
     });
-    expect(note).toContain(
-      "| optional:1 | `pass-sweep--sol-high` | `src/a\\|b.py`, `` c`d.py `` |",
-    );
-    expect(note).toContain("| optional:2 | `pass-duplication--sol-med` | x\\|y\\u000az |");
+    expect(note).toContain("| optional:1 | `pass-sweep--deep` | `src/a\\|b.py`, `` c`d.py `` |");
+    expect(note).toContain("| optional:2 | `pass-duplication--standard` | x\\|y\\u000az |");
   });
 
   it("step 4b makes the owed sweep the session's call; step 7 names the fields", () => {
@@ -299,9 +297,9 @@ describe("launch_plan launches optional rows from their own directory", () => {
         mkdirSync(join(passes, dir), { recursive: true });
         writeFileSync(join(passes, dir, f), `# ${f}\n`);
       };
-      put("tasks", "01-pass-baseline--sol-high.md");
-      put("tasks-optional", "01-pass-sweep--sol-high.md");
-      put("tasks-optional", "02-pass-duplication--sol-med.md");
+      put("tasks", "01-pass-baseline--deep.md");
+      put("tasks-optional", "01-pass-sweep--deep.md");
+      put("tasks-optional", "02-pass-duplication--standard.md");
       const r = planLaunch(
         {
           dirs: [join(passes, "tasks-optional"), join(passes, "tasks")],
@@ -312,10 +310,10 @@ describe("launch_plan launches optional rows from their own directory", () => {
       expect(r.ok).toBe(true);
       if (r.ok) {
         expect(r.units.map((u) => `${u.phase}:${u.agent}`)).toEqual([
-          "plan:pass-baseline--sol-high",
-          "optional:pass-sweep--sol-high",
+          "plan:pass-baseline--deep",
+          "optional:pass-sweep--deep",
         ]);
-        expect(r.skipped.map((u) => u.agent)).toEqual(["pass-duplication--sol-med"]);
+        expect(r.skipped.map((u) => u.agent)).toEqual(["pass-duplication--standard"]);
       }
       // Another PR's optional dir is refused.
       const other = planLaunch(

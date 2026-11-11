@@ -47,7 +47,7 @@ describe("consistency-identifiers (pass-consistency)", () => {
   });
 
   it("compares new identifiers with the PR's other uses and with the sibling convention", () => {
-    const body = built().get("pass-consistency--sol-med")!;
+    const body = built().get("pass-consistency--standard")!;
     expect(body).toContain("New identifiers must agree with each other and with their siblings");
     for (const phrase of [
       "Metric names, metric tag or label keys",
@@ -89,7 +89,7 @@ describe("validator calibrations (pass-validate)", () => {
 
   it("external semantics: dependency sources first, then a question naming the assumption — never doubted away", () => {
     const body =
-      built().get(`${VALIDATE_PASS}--sol-high`) ?? built().get(`${VALIDATE_PASS}--sol-med`)!;
+      built().get(`${VALIDATE_PASS}--deep`) ?? built().get(`${VALIDATE_PASS}--standard`)!;
     expect(body).toContain("## External and documented semantics (sandbox rule)");
     expect(body).toContain("Read the dependency sources first");
     expect(body).toContain("*Third-party sources* block");
@@ -131,7 +131,7 @@ describe("tests that cannot observe what they claim (pass-tests + pass-validate)
   });
 
   it("names every shape and the P2 severity, with the scenario", () => {
-    const body = built().get("pass-tests--sol-med")!;
+    const body = built().get("pass-tests--standard")!;
     expect(body).toContain("A test that cannot observe what it claims to test is a `P2` defect");
     for (const shape of [
       "patched to a no-op",

@@ -11,6 +11,11 @@
 # (dry_run = false, memory off), the pi login read-only, QCR_ROUTE=action (no
 # default cost cap, nothing asked) and the GitHub token as a read-once file in
 # $RUNNER_TEMP, never in the environment or the command line.
+#
+# A model credential reaches the review by name only: the step forwards every
+# environment name pi reads a credential from, whatever the provider, so a key
+# is set with the workflow's own `env:` on the step that uses this Action. The
+# four key inputs below are the same route under older names.
 name: qcr review
 description: Review a pull request with qcr and post the findings as a comment-only review.
 
@@ -44,12 +49,23 @@ inputs:
     description: A cost limit in USD for this review. There is no default limit; with none, the review is not capped.
     required: false
     default: ""
+  model:
+    description: >-
+      The model the review runs on, as pi names it (provider/model, with an
+      optional :level). Default is the newest model of the provider whose
+      credential the step has.
+    required: false
+    default: ""
   pi-auth:
-    description: The contents of a pi auth.json (a model login), as a secret. Not needed when an API key is given.
+    description: >-
+      The contents of a pi auth.json (a model login for any provider), as a
+      secret. Not needed when the step's env carries an API key.
     required: false
     default: ""
   openai-api-key:
-    description: A model API key, as a secret.
+    description: >-
+      A model API key, as a secret. Any other provider's key goes in the step's
+      own env, under the name pi reads it from (docs/action.md).
     required: false
     default: ""
   anthropic-api-key:
@@ -61,7 +77,9 @@ inputs:
     required: false
     default: ""
   digitalocean-api-key:
-    description: A model API key, as a secret.
+    description: >-
+      A model API key, as a secret. pi has no built-in provider for it: the
+      login given as pi-auth must define one in its models.json.
     required: false
     default: ""
   image:
@@ -111,12 +129,15 @@ runs:
         QCR_ACTION_PR: ${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}
         QCR_ACTION_REPO: ${{ inputs.repo }}
         QCR_ACTION_LIMIT: ${{ inputs.limit }}
+        QCR_ACTION_MODEL: ${{ inputs.model }}
         QCR_ACTION_GH_TOKEN: ${{ inputs.github-token }}
         QCR_ACTION_PI_AUTH: ${{ inputs.pi-auth }}
-        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
-        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
-        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
-        DIGITALOCEAN_API_KEY: ${{ inputs.digitalocean-api-key }}
+        # The key inputs travel under names of their own, so an empty input
+        # never blanks a key the workflow set in the step's env.
+        QCR_ACTION_OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        QCR_ACTION_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        QCR_ACTION_GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        QCR_ACTION_DIGITALOCEAN_API_KEY: ${{ inputs.digitalocean-api-key }}
       run: bash "$QCR_ACTION_PATH/scripts/action.sh" run
 
     - name: Remove what the action staged

@@ -414,7 +414,7 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
     expect(r.sides.old).toMatchObject({ profile: "acme", baseline: second.commit!.id });
     // The old side is the profile BEFORE the second write: security still
     // critical, tests not yet ignored.
-    expect(r.sides.old.cfg.lenses?.["pass-security"]).toMatchObject({ min_tier: "sol-high" });
+    expect(r.sides.old.cfg.lenses?.["pass-security"]).toMatchObject({ min_tier: "deep" });
     expect(r.sides.old.cfg.lenses?.["pass-tests"]).toBeUndefined();
     expect(r.sides.new.cfg.lenses?.["pass-tests"]).toEqual({ enabled: false });
     // The real profile is untouched by putting the old one back together.
@@ -470,9 +470,9 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
     tune({ security: "critical" });
     const r = sides();
     if (!r.ok) throw new Error(r.errors.join("; "));
-    const newSec = r.sides.new.agentText("pass-security--sol-high")!;
+    const newSec = r.sides.new.agentText("pass-security--deep")!;
     expect(newSec).toContain("Severity ceiling for `pass-security`: `P0`");
-    expect(r.sides.old.agentText("pass-security--sol-high")).not.toContain(
+    expect(r.sides.old.agentText("pass-security--deep")).not.toContain(
       "Severity ceiling for `pass-security`",
     );
     for (const side of ["old", "new"] as const) {
@@ -484,8 +484,8 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
       }
     }
     // A lens the profile does not touch builds to the same bytes on both sides.
-    expect(r.sides.old.agentText("pass-baseline--sol-med")).toBe(
-      r.sides.new.agentText("pass-baseline--sol-med"),
+    expect(r.sides.old.agentText("pass-baseline--standard")).toBe(
+      r.sides.new.agentText("pass-baseline--standard"),
     );
   });
 
@@ -500,7 +500,7 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
     if (!r.ok) throw new Error(r.errors.join("; "));
     for (const side of ["old", "new"] as const)
       expect(
-        /^model:\s*(.*)$/m.exec(r.sides[side].agentText("pass-baseline--sol-med")!)?.[1],
+        /^model:\s*(.*)$/m.exec(r.sides[side].agentText("pass-baseline--standard")!)?.[1],
       ).toMatch(/^openai-codex\/moved-model/);
   });
 
@@ -576,10 +576,10 @@ describe("replay: cost first, subagents, side by side", () => {
     const plans = p.prs[0]!.plans;
     const row = (side: "old" | "new", lens: string) => plans[side].find((r) => r.lens === lens);
     // The profile's effect on the plan: the tests lens off; the security lens
-    // (a risk pass, sol-high on both) built differently — its own case.
+    // (a risk pass, deep on both) built differently — its own case.
     expect(row("old", "pass-tests")).toBeDefined();
     expect(row("new", "pass-tests")).toBeUndefined();
-    expect(row("new", "pass-security")!.tier).toBe("sol-high");
+    expect(row("new", "pass-security")!.tier).toBe("deep");
     expect(row("old", "pass-security")!.case).not.toBe(row("new", "pass-security")!.case);
     // A lens the profile does not touch is ONE case, planned on both sides.
     const base = p.cases.find((c) => c.lens === "pass-baseline")!;
@@ -627,7 +627,7 @@ describe("replay: cost first, subagents, side by side", () => {
     // The security lens differs by side, so each side's build runs its own.
     expect(
       calls
-        .filter((c) => c.spec.agent === "pass-security--sol-high")
+        .filter((c) => c.spec.agent === "pass-security--deep")
         .map((c) => c.agentsDir)
         .sort(),
     ).toEqual([newDir, oldDir]);
@@ -651,7 +651,7 @@ describe("replay: cost first, subagents, side by side", () => {
       doubt: { word: "refuted" },
       validated: true,
     });
-    // Only the new profile's sol-high security lens saw the timing problem.
+    // Only the new profile's deep security lens saw the timing problem.
     expect(c!.new_only.map((f) => [f.lens, f.kind])).toEqual([["pass-security", "timing"]]);
     expect(c!.cost.shared).toBeGreaterThan(0);
 
@@ -990,6 +990,59 @@ describe("replay: cost first, subagents, side by side", () => {
       again.rate_bases.some((b) => b.startsWith("measured on this install's last replay")),
     ).toBe(true);
     expect(again.key).not.toBe(p.key);
+  });
+
+  // The shipped config pins no tier, so a built agent carries no `model:`
+  // line: its case is keyed by the route it runs on, at the agent's level.
+  // MUTATION: key a case by `modelOf(text)` alone in the planner
+  // (src/setup/replayrun.ts, drop `caseModelSpec`) - an unpinned tier's case
+  // has no key, no rate is ever learned, and this fails.
+  it("on unpinned tiers a case is keyed by the route it runs on, and its measured rate prices the next preview", async () => {
+    write(
+      join(configHome(env), "config.toml"),
+      fixtureToml
+        .replace(/^"light" = .*$/m, '"light" = ":medium"')
+        .replace(/^"standard" = .*$/m, '"standard" = ":medium"')
+        .replace(/^"deep" = .*$/m, '"deep" = ":high"'),
+    );
+    const over = (route?: () => { spec: string } | undefined): ReplayRunner => {
+      const state = stateHomeFs(stateRoot());
+      return new ReplayRunner({
+        state,
+        clock: () => now,
+        source: {
+          pr: async (n) => ({ ok: true, pr: pr(n) }),
+          open: () => ({ ok: true, tree: tree() }),
+        },
+        sides: (req) =>
+          replaySides({ root: sandbox, env, stateRoot: stateRoot(), state, clock: () => now }, req),
+        cases: fakeRunner([], () => 0.5),
+        styleGuide: () => [],
+        concurrency: 2,
+        ...(route ? { route } : {}),
+      });
+    };
+    // With no route nothing names the model: no key, and the reference stands.
+    const bare = over();
+    const unkeyed = await ran(bare, previewOf(await bare.preview({ prs: [7], old: "none" })).key);
+    expect(unkeyed.cases.map((c) => c.model)).toEqual(unkeyed.cases.map(() => null));
+    expect(previewOf(await bare.preview({ prs: [7], old: "none" })).rate_bases).toEqual([
+      REFERENCE_BASIS,
+    ]);
+
+    const rr = over(() => ({ spec: "north/large-3" }));
+    const first = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    expect(first.rate_bases).toEqual([REFERENCE_BASIS]);
+    const run = await ran(rr, first.key);
+    expect(run.cases.length).toBeGreaterThan(0);
+    // the route's spec at the agent's own level: what the child pi is handed
+    for (const c of run.cases) expect(c.model, c.agent).toMatch(/^north\/large-3:[a-z]+$/);
+    const again = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    expect(
+      again.rate_bases.filter((b) =>
+        /^measured on this install's last replay \(\d+ case\(s\) with north\/large-3:/.test(b),
+      ).length,
+    ).toBeGreaterThan(0);
   });
 
   it("refuses more than two PRs, a PR GitHub will not give, and a second start while one runs", async () => {

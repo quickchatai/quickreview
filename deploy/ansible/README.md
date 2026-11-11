@@ -59,8 +59,10 @@ yours either way — the wizard never creates a machine.
    (`deploy.sh provision` passes the install locator's answer as `secrets_src`;
    an old `~/.config/quickreview-bot/` is never read — `qcr install migrate`
    moves it) contains:
-   `app_id`, `app.pem`, `webhook_secret` (plus `openai_api_key` optional —
-   pi's API-key route — and `tunnel_token` when the tunnel is enabled), and
+   `app_id`, `app.pem`, `webhook_secret` (plus, optional, a model provider's
+   key for pi as `model-env/<ENV_NAME>`, one file per environment variable,
+   the older `openai_api_key` still read; and `tunnel_token` when the tunnel
+   is enabled), and
    `openviking_root_key` / `openviking_reviewer_key` for the memory engine.
    Memory embeds locally by default (nothing but the model call leaves the
    VM); `openai_embeddings_api_key` exists only under the hosted-embeddings
@@ -323,23 +325,33 @@ but the daemon is not, a GitHub test delivery returns a 502 *from cloudflared*
 rather than timing out; that distinction is itself the proof the tunnel path
 works.
 
-## OpenAI auth for pi
+## The model credential for pi
 
-Native in pi — nothing to install. Both routes and their
-cost shapes are in [../../docs/llm-setup.md](../../docs/llm-setup.md); here is
-what this route does with each:
+Native in pi — nothing to install. The server runs on any model provider pi
+supports, on the credential it has there: how the model is chosen, how to pin
+one and what it costs are in
+[../../docs/llm-setup.md](../../docs/llm-setup.md). Here is what this route
+does with each kind of credential:
 
-- **API key (wired automatically)**: the daemon mode of the image's entrypoint
-  exports `OPENAI_API_KEY` from the mounted `secrets/openai_api_key`, so the tmux
-  server and every pi session inherit it. Works headless from the first boot.
-- **ChatGPT-subscription OAuth (optional)**: run `/login` once inside any pi
-  session in the container (`docker exec -it quickreview-sandbox pi` →
-  `/login`); tokens land in `/home/qcr/.pi/agent/auth.json`, which lives on
-  the persistent `pihome` volume, auto-refresh, and **take precedence** over
-  the env-var key (pi's resolution order: CLI flag → auth.json → env var).
-  Both routes can coexist. A login here does **not** cover a companion
-  container on your own machine, or a pi you run on the host: pi's tokens do
-  not transfer, so each pi home needs its own.
+- **A provider key (works headless from the first boot)**: the playbook
+  copies `model-env/` from the local secrets dir, and the daemon hands every
+  file in it to its review workers under the file's own name, the
+  environment variable the provider documents. The older
+  `secrets/openai_api_key` is still copied and still read as
+  `OPENAI_API_KEY`.
+- **A login (a subscription, or a provider's OAuth)**: sign in once in the
+  container with the image's `login` mode, which opens pi's own `/login` with
+  every provider it offers; tokens land in `/home/qcr/.pi/agent/auth.json`,
+  which lives on the persistent `pihome` volume, and auto-refresh. A stored
+  login that can last a review keeps its provider even when a key for the
+  same provider is in `model-env/` (pi's own order); the key is used when the
+  login cannot last. Both can coexist. A login here does **not** cover a
+  companion container on your own machine, or a pi you run on the host: a
+  login is never copied to or from the server, so each pi home needs its own.
+
+`qcr model` in the container says which model the daemon's reviews run on and
+why, the daemon's `login` preflight refuses a boot where no model route
+resolves, and `qcr status` names the model the workers last reported.
 
 The `pihome` volume also persists pi's session JSONLs across container
 recreates — required for the sticky per-PR conversations, not just for auth.

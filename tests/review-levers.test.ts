@@ -44,7 +44,7 @@ import type { PrStateRow } from "../src/state.js";
 const fixture = readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8");
 const baseCfg: Config = parseConfig(fixture);
 // The shipped pins (DEFAULT_PASS_TIERS: baseline, sweep and behaviour-delta at
-// sol-high) are cleared here: these tests exercise the
+// deep) are cleared here: these tests exercise the
 // unpinned tier heuristics; the pins themselves are pinned in lens-knobs.test.ts.
 baseCfg.models.pass_tiers = {};
 
@@ -93,9 +93,9 @@ describe("[models] effort — one reasoning level for every model", () => {
     ["medium", "medium"],
     ["med", "medium"],
     ["high", "max"],
-  ])("effort = %s sets :%s on default, conversation, overseer and every tier", (effort, level) => {
+  ])("effort = %s sets :%s on the review's model and every tier", (effort, level) => {
     const cfg = parseConfig(fixture.replace("[models]\n", `[models]\neffort = "${effort}"\n`));
-    const specs = [cfg.models.default, cfg.models.conversation, ...Object.values(cfg.models.tiers)];
+    const specs = [cfg.models.model, ...Object.values(cfg.models.tiers)];
     for (const spec of specs) expect(spec.endsWith(`:${level}`)).toBe(true);
   });
 
@@ -103,7 +103,7 @@ describe("[models] effort — one reasoning level for every model", () => {
     const cfg = parseConfig(
       fixture.replace("[models]\n", `[models]\neffort = "high"\neffort_max = "xhigh"\n`),
     );
-    expect(cfg.models.tiers["sol-high"].endsWith(":xhigh")).toBe(true);
+    expect(cfg.models.tiers["deep"].endsWith(":xhigh")).toBe(true);
   });
 
   it("refuses an unknown effort or ceiling rather than measuring nothing", () => {
@@ -138,14 +138,14 @@ describe("[review] preset — default / low / max", () => {
 
   it("low: every model at low reasoning, the lean plan", () => {
     const cfg = withPreset(`preset = "low"`);
-    for (const spec of [cfg.models.conversation, ...Object.values(cfg.models.tiers)])
+    for (const spec of [cfg.models.model, ...Object.values(cfg.models.tiers)])
       expect(spec.endsWith(":low")).toBe(true);
     expect(cfg.review).toMatchObject(REVIEW_PRESETS.default.levers);
   });
 
   it("max: every model at its ceiling, the full lever plan", () => {
     const cfg = withPreset(`preset = "max"`);
-    for (const spec of [cfg.models.conversation, ...Object.values(cfg.models.tiers)])
+    for (const spec of [cfg.models.model, ...Object.values(cfg.models.tiers)])
       expect(spec.endsWith(":max")).toBe(true);
     expect(cfg.review).toMatchObject({
       intent_min_words: 20,
@@ -165,7 +165,7 @@ describe("[review] preset — default / low / max", () => {
         .replace(/\[review\]\n/, `[review]\npreset = "max"\n`)
         .replace("[models]\n", `[models]\neffort = "medium"\n`),
     );
-    expect(mixed.models.tiers["sol-high"].endsWith(":medium")).toBe(true);
+    expect(mixed.models.tiers["deep"].endsWith(":medium")).toBe(true);
   });
 
   it("refuses an unknown preset", () => {
@@ -183,7 +183,7 @@ describe("bench --config: one run's levers on the shipped config", () => {
     );
     expect(cfg.review.sweep).toBe(false);
     expect(cfg.review.sweep_max_groups).toBe(2);
-    expect(cfg.models.conversation.endsWith(":max")).toBe(true);
+    expect(cfg.models.model.endsWith(":max")).toBe(true);
     // the input config is untouched
     expect(baseCfg.review.sweep).toBe(true);
   });
@@ -191,8 +191,8 @@ describe("bench --config: one run's levers on the shipped config", () => {
   it("review.preset re-parses the config as if it said that preset; other pairs still override", () => {
     const max = applyConfigOverrides(baseCfg, "review.preset=max", fixture);
     expect(max.review.preset).toBe("max");
-    expect(max.models.conversation.endsWith(":max")).toBe(true);
-    expect(max.models.tiers["terra-med"].endsWith(":max")).toBe(true);
+    expect(max.models.model.endsWith(":max")).toBe(true);
+    expect(max.models.tiers["light"].endsWith(":max")).toBe(true);
     expect(max.review).toMatchObject(REVIEW_PRESETS.max.levers);
     // exactly what production parses from the same text with that preset
     expect(max).toEqual(parseConfig(withPresetInToml(fixture, "max")));
@@ -204,7 +204,7 @@ describe("bench --config: one run's levers on the shipped config", () => {
     expect(maxNoSweep.review.sweep).toBe(false);
     expect(maxNoSweep.review.intent_min_words).toBe(20);
     const low = applyConfigOverrides(baseCfg, "review.preset=low", fixture);
-    expect(low.models.tiers["sol-high"].endsWith(":low")).toBe(true);
+    expect(low.models.tiers["deep"].endsWith(":low")).toBe(true);
     expect(() => applyConfigOverrides(baseCfg, "review.preset=turbo", fixture)).toThrow(/preset/);
   });
 
@@ -212,7 +212,7 @@ describe("bench --config: one run's levers on the shipped config", () => {
     const maxText = withPresetInToml(fixture, "max");
     const def = applyConfigOverrides(parseConfig(maxText), "review.preset=default", maxText);
     expect(def.models.tiers).toEqual(baseCfg.models.tiers);
-    expect(def.models.conversation).toBe(baseCfg.models.conversation);
+    expect(def.models.model).toBe(baseCfg.models.model);
     expect(def.review.preset).toBe("default");
   });
 
@@ -224,7 +224,7 @@ describe("bench --config: one run's levers on the shipped config", () => {
 
   it("spaced, repeated or text-less preset pairs never relabel a run without applying it", () => {
     const spaced = applyConfigOverrides(baseCfg, "review.preset = max", fixture);
-    expect(spaced.models.tiers["sol-high"].endsWith(":max")).toBe(true);
+    expect(spaced.models.tiers["deep"].endsWith(":max")).toBe(true);
     expect(() =>
       applyConfigOverrides(baseCfg, "review.preset=max,review.preset=low", fixture),
     ).toThrow(/more than once/);
@@ -240,6 +240,39 @@ describe("bench --config: one run's levers on the shipped config", () => {
 
   it("an empty spec is the shipped config", () => {
     expect(applyConfigOverrides(baseCfg, "")).toBe(baseCfg);
+  });
+
+  it("models.model pins the review's model for the run, or unpins it", () => {
+    const pinned = applyConfigOverrides(baseCfg, "models.model=prov/levered:high");
+    expect(pinned.models.model).toBe("prov/levered:high");
+    // A config edit for one run: the file's own tier pins stand.
+    expect(pinned.models.tiers).toEqual(baseCfg.models.tiers);
+    expect(applyConfigOverrides(baseCfg, "models.model=").models.model).toBe("");
+  });
+
+  // MUTATION: drop the isModelSpec check from applyConfigOverrides — a lever
+  // writes what the file may not, and this fails.
+  it("a model a lever writes is held to the file's grammar", () => {
+    const shape = 'must be "provider/model" with an optional ":<thinking level>"';
+    expect(() => applyConfigOverrides(baseCfg, "models.model=gpt-x")).toThrow(
+      `--config: config.toml [models] model ${shape} (got "gpt-x")`,
+    );
+    expect(() => applyConfigOverrides(baseCfg, "models.model=:high")).toThrow(/\[models\] model/);
+    expect(() => applyConfigOverrides(baseCfg, "models.tiers.deep=gpt-x:high")).toThrow(
+      `--config: config.toml [models.tiers] deep ${shape} (got "gpt-x:high")`,
+    );
+    // A tier may be unpinned, by a lever as in the file.
+    expect(applyConfigOverrides(baseCfg, "models.tiers.deep=:xhigh").models.tiers["deep"]).toBe(
+      ":xhigh",
+    );
+  });
+
+  it("models.effort reaches the model a lever of the same set names", () => {
+    const cfg = applyConfigOverrides(baseCfg, "models.effort=low,models.model=prov/levered:high");
+    expect(cfg.models.model).toBe("prov/levered:low");
+    // An unpinned model takes the level too, and stays unpinned.
+    const unpinned = applyConfigOverrides(baseCfg, "models.model=,models.effort=high");
+    expect(unpinned.models.model).toBe(":max");
   });
 });
 
@@ -455,9 +488,9 @@ describe("buildPassPlan with the levers", () => {
     expect(sweeps).toMatchObject([
       {
         lens: SWEEP_PASS,
-        agent: "pass-sweep--terra-med",
-        tier: "terra-med",
-        raisable_to: ["pass-sweep--sol-med", "pass-sweep--sol-high"],
+        agent: "pass-sweep--light",
+        tier: "light",
+        raisable_to: ["pass-sweep--standard", "pass-sweep--deep"],
         focus: ["src/joystick.c", "src/hid.c"],
       },
     ]);
@@ -543,13 +576,18 @@ describe("selection tuning — the [review] cost knobs", () => {
 describe("renderPassPlan", () => {
   it("without focus or reasons the table is exactly the four-column one", () => {
     const text = renderPassPlan([
-      { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
+      {
+        lens: "pass-baseline",
+        agent: "pass-baseline--standard",
+        tier: "standard",
+        raisable_to: [],
+      },
     ]);
     expect(text).toBe(
       [
         "| lens | subagent to call | tier | may raise to |",
         "| --- | --- | --- | --- |",
-        "| pass-baseline | `pass-baseline--sol-med` | sol-med | — (pinned) |",
+        "| pass-baseline | `pass-baseline--standard` | standard | — (pinned) |",
       ].join("\n"),
     );
   });
@@ -559,8 +597,8 @@ describe("renderPassPlan", () => {
       [
         {
           lens: SWEEP_PASS,
-          agent: "pass-sweep--terra-med",
-          tier: "terra-med",
+          agent: "pass-sweep--light",
+          tier: "light",
           raisable_to: [],
           focus: ["a.ts"],
         },

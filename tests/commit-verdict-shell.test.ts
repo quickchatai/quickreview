@@ -188,10 +188,10 @@ describe("commit-verdict.sh", () => {
       comments_posted: 1,
       verdict: "REQUEST_CHANGES",
       summary: "One blocker found.",
-      lenses_applied: "pass-baseline (sol-high)",
+      lenses_applied: "pass-baseline (deep)",
       passes: [
-        { name: "pass-baseline", tier: "sol-high", findings: 1 },
-        { name: "pass-validate", tier: "sol-high", findings: 0, survived: 1, killed: 0 },
+        { name: "pass-baseline", tier: "deep", findings: 1 },
+        { name: "pass-validate", tier: "deep", findings: 0, survived: 1, killed: 0 },
       ],
       findings: [{ id: "f1", lens: "pass-baseline", disposition: "posted", posted_as: "blocker" }],
       prior: [],

@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { coreExtensionPath } from "./coreext.js";
-import type { Config } from "./config.js";
+import { piModelFlags, type Config } from "./config.js";
 import {
   DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S,
   githubCloneDir,
@@ -38,6 +38,7 @@ import {
   type OvSessionLifecycle,
   type OvcliWriteResult,
 } from "./memory/ovsession.js";
+import { modelEnvFrom } from "./modelenv.js";
 import { waitForSessionBridgeReady, writeSessionBridgeState } from "./session-bridge.js";
 import { messagePayload } from "./session-command-payload.js";
 import { piCliPath } from "./picli.js";
@@ -110,6 +111,12 @@ const ARGV_ENV_PREFIXES = ["QCR_", "OPENVIKING_", "GIT_CONFIG_"] as const;
  *     that block stays load-bearing. Env pins the floor; the guard stops it
  *     being lifted.
  */
+/** The names a session's environment sets for itself. A model variable of the
+ * secrets dir (src/modelenv.ts) never replaces one: a file called `PATH` under
+ * `model-env/` is not the session's PATH. The loader refuses the other names
+ * this file sets by their prefix (`QCR_`, `GIT_`, `OPENVIKING_`). */
+export const SESSION_ENV_OWN: readonly string[] = ["PATH", "HOME", "TERM", "LANG"];
+
 /** `QCR_SECRETS_MOUNT` from the daemon's own environment, when it names an
  * absolute path (`docker/entrypoint.sh` exports it in every daemon container). */
 export function secretsMountEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
@@ -134,6 +141,7 @@ export function isSandboxSession(name: string): boolean {
 
 export interface PiCommandSpec {
   piBin: string;
+  /** `[provider/id][:level]`; "" names no model. */
   model: string;
   sessionDir: string;
   systemPromptPath: string;
@@ -147,7 +155,9 @@ export interface PiCommandSpec {
  * The pi argv for a session.
  *
  * VERIFY-ON-PIN, every flag:
- * - `--model <provider/id>` — documented.
+ * - `--model <provider/id>` — documented. Passed only for a spec that names
+ *   a model (config.ts piModelFlags): one that names none starts pi on its
+ *   own choice, and one that names only a level passes `--thinking`.
  * - `--session-dir <path>` — documented for RPC mode; assumed to
  *   apply to the interactive TUI as well. Per-session dir (not the shared
  *   store) so archival can pick "the newest .jsonl" unambiguously — all PR
@@ -174,8 +184,7 @@ export function buildPiCommand(spec: PiCommandSpec): string[] {
     // project folder?" modal and the session stalls forever. The reviewer
     // never blocks on interactive input.
     "--approve",
-    "--model",
-    spec.model,
+    ...piModelFlags(spec.model),
     "--session-dir",
     spec.sessionDir,
     "--system-prompt",
@@ -409,14 +418,39 @@ export class PiSessionManager {
   }
 
   /**
+   * The model environment a CLI pi's session carries: every variable of the
+   * secrets dir's `model-env/` and the older `openai_api_key` file, by the one
+   * loader (src/modelenv.ts), less the names a session sets for itself
+   * (`SESSION_ENV_OWN`). Read from the files at each call, never from
+   * process.env. A worker's session carries none of it: `workerSessionEnv`
+   * (src/workerworld.ts) drops exactly these names.
+   */
+  modelEnv(): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const [name, value] of Object.entries(modelEnvFrom(this.cfg.github.secrets_dir)))
+      if (!SESSION_ENV_OWN.includes(name)) env[name] = value;
+    return env;
+  }
+
+  /**
    * The environment a session runs in — built from scratch, never spread from
-   * process.env. Only the app credential path is reachable: the OpenAI key
+   * process.env. Only the app credential path is reachable: the model env
    * comes out of the app secrets dir, and GitHub auth is minted per command by
    * scripts/mint-token.sh from the app PEM. No GH_TOKEN/GITHUB_TOKEN, no
    * personal credential, is ever placed here (the App-only credential rule).
+   *
+   * `modelEnv` is the model environment to carry (default: `this.modelEnv()`,
+   * read now). A caller that must know which names it added reads it once and
+   * hands it in, so the two cannot disagree about a file that came or went in
+   * between. It goes in first: no name below is ever replaced by one of its.
    */
-  buildEnv(session: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  buildEnv(
+    session: string,
+    extra: NodeJS.ProcessEnv = {},
+    modelEnv: Readonly<Record<string, string>> = this.modelEnv(),
+  ): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = {
+      ...modelEnv,
       PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
       HOME: this.piHome,
       TERM: "xterm-256color",
@@ -456,8 +490,6 @@ export class PiSessionManager {
           }
         : {}),
     };
-    const openai = this.secret("openai_api_key");
-    if (openai) env.OPENAI_API_KEY = openai;
     // OpenViking identity. Explicit, because every session shares one
     // working directory and the extension's path-derived peer id therefore
     // cannot tell two PRs apart. The PR's raw-notes session is attached by id;
@@ -541,9 +573,9 @@ export class PiSessionManager {
     });
     // tmux panes inherit the tmux server's environment, not the client's, so
     // per-session vars must ride the command line itself. Only the QCR_* routing
-    // vars and the OPENVIKING_* identity are prefixed — HOME/PATH/OPENAI_API_KEY
-    // stay whatever the container (or dev box) provides, which is where pi's
-    // auth actually lives.
+    // vars and the OPENVIKING_* identity are prefixed — HOME, PATH and a model
+    // key stay whatever the container (or dev box) provides, which is where
+    // pi's auth actually lives.
     //
     // Nothing prefixed here is a secret, and nothing may become one: argv is
     // world-readable inside the container (`ps`), which is why the OpenViking

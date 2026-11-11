@@ -26,10 +26,12 @@ import {
   loginSummary,
   scanAuthCases,
   scanCasesForEnv,
+  SCAN_AUTH_PROVIDERS_ENV,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
   syncScanAuth,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { syncScanAuthFromEnv } from "../src/scanauth.js";
 import { LOGIN_SUMMARY_SCRIPT, SCAN_AUTH_COPY_SCRIPT, SCANBOX } from "../src/scanbox.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "../src/setup/engine.js";
 
@@ -93,6 +95,54 @@ describe("the scan's copy of the companion's login", () => {
     expect(msg).toMatch(/never refreshes/);
     expect(msg).toMatch(/open the companion/i);
     expect(msg).toMatch(/qcr scan login/);
+    expect(() => statSync(join(dst, "auth.json"))).toThrow();
+  });
+
+  // With the providers the scan's models are on, only their tokens are
+  // judged; the copy is still the whole login.
+  // MUTATION: pass `providers` on to copyPiAuth in syncScanAuth (a filtered
+  // copy) — the other provider's entry is missing from the copy and this fails.
+  it("judges only the scan's providers, and still copies the whole login", () => {
+    const both = JSON.stringify({
+      "made-up": { type: "oauth", access: "tok-M", refresh: "r1", expires: 10 * HOUR },
+      "other-one": { type: "oauth", access: "tok-O", refresh: "r2", expires: HOUR },
+    });
+    writeFileSync(join(src, "auth.json"), both);
+    // The whole login: the other provider's token is inside the window.
+    expect(() =>
+      syncScanAuth({ srcDir: src, dstDir: dst, needMs: 2 * HOUR, now: () => 0 }),
+    ).toThrow(/other-one/);
+    const r = syncScanAuth({
+      srcDir: src,
+      dstDir: dst,
+      needMs: 2 * HOUR,
+      now: () => 0,
+      providers: ["made-up"],
+    });
+    expect(r.expiresAt).toBe(10 * HOUR);
+    const copy = JSON.parse(readFileSync(join(dst, "auth.json"), "utf8"));
+    expect(Object.keys(copy).sort()).toEqual(["made-up", "other-one"]);
+    expect(copy["made-up"].refresh).toBe(DISABLED_REFRESH);
+    expect(copy["other-one"].refresh).toBe(DISABLED_REFRESH);
+  });
+
+  it("the scan's own provider's short token is still refused, and nothing is written", () => {
+    writeFileSync(
+      join(src, "auth.json"),
+      JSON.stringify({
+        "made-up": { type: "oauth", access: "tok-M", refresh: "r1", expires: HOUR },
+        "other-one": { type: "oauth", access: "tok-O", refresh: "r2", expires: 10 * HOUR },
+      }),
+    );
+    expect(() =>
+      syncScanAuth({
+        srcDir: src,
+        dstDir: dst,
+        needMs: 2 * HOUR,
+        now: () => 0,
+        providers: ["made-up"],
+      }),
+    ).toThrow(/made-up access token/);
     expect(() => statSync(join(dst, "auth.json"))).toThrow();
   });
 
@@ -206,6 +256,58 @@ describe("the sandbox's one-shot scripts, run against the built app", () => {
     );
     expect(JSON.parse(out.trim())).toEqual({ "openai-codex": { type: "oauth", expires: 42 } });
     expect(out).not.toMatch(/SECRET|real-refresh/);
+  });
+});
+
+// The doctor's probe copy (src/scanauth.ts), at the seam the container calls:
+// the providers its env names are the only logins it judges.
+describe("the probe's one-shot copy judges the route's logins only", () => {
+  const twoLogins = (otherExpires: number): string =>
+    JSON.stringify({
+      "openai-codex": { type: "oauth", access: "tok-A", refresh: "r", expires: 10 * HOUR },
+      "other-one": { type: "oauth", access: "tok-B", refresh: "r", expires: otherExpires },
+    });
+  const run = (env: Record<string, string>): string | null => {
+    const errors: string[] = [];
+    const err = vi.spyOn(console, "error").mockImplementation((m: unknown) => {
+      errors.push(String(m));
+    });
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("exit");
+    });
+    const now = vi.spyOn(Date, "now").mockReturnValue(0);
+    try {
+      syncScanAuthFromEnv({ [SCAN_AUTH_SRC_ENV]: src, PI_CODING_AGENT_DIR: dst, ...env }, HOUR);
+      return null;
+    } catch {
+      return errors.join("\n");
+    } finally {
+      err.mockRestore();
+      exit.mockRestore();
+      now.mockRestore();
+    }
+  };
+
+  // MUTATION: drop `providers` from the syncScanAuth call in
+  // syncScanAuthFromEnv — the first expectation fails: the unused provider's
+  // stale login refuses the probe.
+  it("another provider's stale login refuses nothing when the env names the route's providers", () => {
+    writeFileSync(join(src, "auth.json"), twoLogins(1));
+    expect(run({ [SCAN_AUTH_PROVIDERS_ENV]: JSON.stringify(["openai-codex"]) })).toBeNull();
+    // the copy is still the whole login
+    const copy = JSON.parse(readFileSync(join(dst, "auth.json"), "utf8"));
+    expect(Object.keys(copy).sort()).toEqual(["openai-codex", "other-one"]);
+    // a stale login of a provider the route IS on still refuses
+    expect(
+      run({ [SCAN_AUTH_PROVIDERS_ENV]: JSON.stringify(["openai-codex", "other-one"]) }),
+    ).toMatch(/never refreshes/);
+  });
+
+  it("with no list, or one that cannot be read, the whole login is judged", () => {
+    writeFileSync(join(src, "auth.json"), twoLogins(1));
+    expect(run({})).toMatch(/never refreshes/);
+    expect(run({ [SCAN_AUTH_PROVIDERS_ENV]: "not json" })).toMatch(/never refreshes/);
+    expect(run({ [SCAN_AUTH_PROVIDERS_ENV]: '{"openai-codex":1}' })).toMatch(/never refreshes/);
   });
 });
 

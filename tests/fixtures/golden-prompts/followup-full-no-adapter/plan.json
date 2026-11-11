@@ -1,23 +1,23 @@
 {
   "plannedLenses": [
-    "pass-baseline--sol-high",
-    "pass-sweep--sol-high",
-    "pass-tests--terra-med",
-    "pass-validate--sol-high"
+    "pass-baseline--deep",
+    "pass-sweep--deep",
+    "pass-tests--light",
+    "pass-validate--deep"
   ],
   "passPlan": [
     {
       "lens": "pass-baseline",
-      "agent": "pass-baseline--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-baseline--deep",
+      "tier": "deep",
       "raisable_to": [],
       "why": "every round: the PR against its own claims",
       "required": true
     },
     {
       "lens": "pass-sweep",
-      "agent": "pass-sweep--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-sweep--deep",
+      "tier": "deep",
       "raisable_to": [],
       "why": "every changed line of b.py, read one by one",
       "focus": [
@@ -26,18 +26,18 @@
     },
     {
       "lens": "pass-tests",
-      "agent": "pass-tests--terra-med",
-      "tier": "terra-med",
+      "agent": "pass-tests--light",
+      "tier": "light",
       "raisable_to": [
-        "pass-tests--sol-med",
-        "pass-tests--sol-high"
+        "pass-tests--standard",
+        "pass-tests--deep"
       ],
       "why": "the PR changes code: existing tests are its consumers, and its own tests are claims"
     },
     {
       "lens": "pass-validate",
-      "agent": "pass-validate--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-validate--deep",
+      "tier": "deep",
       "raisable_to": []
     }
   ],

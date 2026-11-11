@@ -525,6 +525,52 @@ describe("tui_* tools — the read surface", () => {
     expect(answer).toContain("snapshot.json");
   });
 
+  // A day whose rounds all ran on a model pi has no price for sums to 0: the
+  // companion must not be told the day cost nothing.
+  // MUTATION: drop `today_unknown_spend_rounds` from buildTuiView's board
+  // block (src/tui/feed.ts), or say the sum through `fmt` alone in
+  // boardAnswer (extensions/tui-view.ts) — "spend today (USD): 0" is
+  // published for an unpriced day, and this fails.
+  it("publishes the unknown-spend round counts beside the sums, and tui_board never says 0 for them", () => {
+    const board = (overrides: Partial<StatusSnapshot>): string => {
+      const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap(overrides) });
+      return boardAnswer(publish(v), NOW);
+    };
+    const unpriced = buildTuiView({
+      now: NOW,
+      tab: "board",
+      snapshot: snap({
+        today_spend_usd: 0,
+        today_unknown_spend_rounds: 3,
+        total_unknown_spend_rounds: 3,
+      }),
+    });
+    expect(unpriced.board.today_unknown_spend_rounds).toBe(3);
+    expect(unpriced.board.total_unknown_spend_rounds).toBe(3);
+    const answer = boardAnswer(publish(unpriced), NOW);
+    expect(answer).toContain("spend today (USD): UNKNOWN (3 rounds");
+    expect(answer).not.toMatch(/spend today \(USD\): 0/);
+    expect(answer).toContain("spend in total (USD): 12.5 + 3 rounds of unknown spend");
+
+    // every round priced: the sums as they are
+    const priced = board({ today_unknown_spend_rounds: 0, total_unknown_spend_rounds: 0 });
+    expect(priced).toMatch(/^spend today \(USD\): 1\.25$/m);
+    expect(priced).toMatch(/^spend in total \(USD\): 12\.5$/m);
+
+    // an older daemon's snapshot carries no count: published as null, and
+    // said as unknown beside the sum
+    const old = buildTuiView({ now: NOW, tab: "board", snapshot: snap() });
+    expect(old.board.today_unknown_spend_rounds).toBeNull();
+    expect(old.board.total_unknown_spend_rounds).toBeNull();
+    expect(boardAnswer(publish(old), NOW)).toContain(
+      "spend today (USD): 1.25 (rounds with no price: UNKNOWN",
+    );
+    // no snapshot at all: no sum is published, and no count is claimed
+    const none = buildTuiView({ now: NOW, tab: "board" });
+    expect(none.board.today_unknown_spend_rounds).toBeNull();
+    expect(boardAnswer(publish(none), NOW)).not.toContain("spend today");
+  });
+
   it("a stale view SAYS it is stale instead of presenting old state as current", () => {
     const v = buildTuiView({ now: NOW, tab: "board", deploy: DEPLOY });
     const later = new Date(NOW.getTime() + STALE_AFTER_MS + 60_000);

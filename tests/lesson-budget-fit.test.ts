@@ -127,8 +127,8 @@ function eventsOf(store: StateStore, kind: string): Array<Record<string, unknown
 function order(over: Partial<RoundOrder> = {}): RoundOrder {
   const row = (lens: string, focus?: string[]): PassPlanEntry => ({
     lens,
-    agent: `${lens}--sol-med`,
-    tier: "sol-med",
+    agent: `${lens}--standard`,
+    tier: "standard",
     raisable_to: [],
     ...(focus ? { focus } : {}),
   });

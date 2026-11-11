@@ -55,6 +55,7 @@ import {
 import { auditExecViolationDetails } from "../src/usage.js";
 import { profileSearchDirs, type InstallEnv } from "../src/install.js";
 import { sessionGitConfigPins } from "../src/sessions.js";
+import { MODEL_CHOICE_FILE } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import { EXEC_CORPUS as CORPUS } from "./helpers/exec-corpus.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -602,6 +603,64 @@ describe("the post-hoc audit is not blind to the corpus", () => {
     ]) {
       expect(auditExecViolationDetails([bashLine(cmd)]), `false line on: ${cmd}`).toEqual([]);
     }
+  });
+});
+
+// The remembered model choice (`<pi agent dir>/qcr-model.json`) decides which
+// provider's credential and money every later review spends. It is written by
+// our own code only. A pi home is wherever PI_CODING_AGENT_DIR says, so the
+// `.pi/` rule does not cover it: the name does, with its atomic-write sibling.
+// MUTATION: remove "qcr-model.json" from DYNAMIC_POLICY_FILES — this fails.
+describe("the model choice is not a session's to write", () => {
+  const line = (name: string, args: Record<string, string>): string =>
+    JSON.stringify({
+      type: "message",
+      timestamp: "2026-08-31T10:00:00Z",
+      message: { role: "assistant", content: [{ type: "toolCall", name, arguments: args }] },
+    });
+  const rows = CORPUS.filter((c) => /qcr-mode/.test(c.chain));
+
+  it("the corpus holds a write to it by path and by name, through a file tool and through bash", () => {
+    const writes = rows.filter((c) => c.via === "write").map((c) => c.chain);
+    // by path, under no `.pi/`, and by the bare name
+    expect(writes.some((p) => p.startsWith("/") && !p.includes(".pi/"))).toBe(true);
+    expect(writes).toContain(MODEL_CHOICE_FILE);
+    expect(writes.some((p) => p.endsWith(`${MODEL_CHOICE_FILE}.tmp`))).toBe(true);
+    expect(rows.filter((c) => c.via === "bash").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("the guard refuses each as its own policy surface, and the audit names it", () => {
+    for (const c of rows) {
+      const res = c.via === "bash" ? checkBashCommand(c.chain) : checkWritePath(c.chain);
+      expect(res.allowed, c.chain).toBe(false);
+      expect(res.reason, c.chain).toContain("policy surface");
+      const said = auditExecViolationDetails([
+        c.via === "bash"
+          ? line("bash", { command: c.chain })
+          : line("write", { path: c.chain, content: "{}" }),
+      ]);
+      expect(
+        said.map((v) => v.kind),
+        c.chain,
+      ).toEqual(["policy_surface_write"]);
+    }
+    for (const path of [`/srv/pi/${MODEL_CHOICE_FILE}`, `/srv/pi/${MODEL_CHOICE_FILE}.tmp`])
+      expect(isPolicySurface(path), path).toBe(true);
+  });
+
+  it("reading it, and a name that only resembles it, are nobody's concern", () => {
+    for (const cmd of [`cat pihome/agent/${MODEL_CHOICE_FILE}`, "rg -n qcr-model src/"]) {
+      expect(checkBashCommand(cmd).allowed, cmd).toBe(true);
+      expect(auditExecViolationDetails([line("bash", { command: cmd })]), cmd).toEqual([]);
+    }
+    expect(checkWritePath(`pihome/agent/${MODEL_CHOICE_FILE}.bak`).allowed).toBe(true);
+    expect(isPolicySurface("pihome/agent/model.json")).toBe(false);
+  });
+
+  // Layer 4 hashes what it watches at each round boundary; a file a person may
+  // change while a round runs would read as an attack on the round.
+  it("is not in the round-boundary watch set", () => {
+    for (const w of policySurfaceWatchPaths("/sb/")) expect(w).not.toContain(MODEL_CHOICE_FILE);
   });
 });
 
@@ -1542,11 +1601,19 @@ const SECRET_READ_CORPUS = [
 ];
 describe("custom config-home secret reads against source and compiled guard", () => {
   it("refuses each expanded secrets-directory read and keeps public files readable", async () => {
-    const source = await import("@quickchatai/pi-quickreview/extensions/bash-guard.js");
-    const compiled = (await import(
+    const sourceGuard = await import("@quickchatai/pi-quickreview/extensions/bash-guard.js");
+    const compiledGuard = (await import(
       resolve(process.cwd(), "packages/pi-plugin/dist/extensions/bash-guard.js")
-    )) as typeof source;
-    for (const guard of [source, compiled]) {
+    )) as typeof sourceGuard;
+    // The whole-command check runs through the ambient wrapper (this process
+    // as the policy), in source and in its compiled form.
+    const compiledAmbient = (await import(
+      resolve(process.cwd(), "dist/extensions/cli/bash-guard-ambient.js")
+    )) as { checkBashCommand: typeof checkBashCommand };
+    for (const guard of [
+      { ...sourceGuard, checkBashCommand },
+      { ...compiledGuard, checkBashCommand: compiledAmbient.checkBashCommand },
+    ]) {
       const ctx = guard.defaultSecretPathContext(
         { HOME: "/home/op", QCR_CONFIG_HOME: "/srv/custom-config" },
         "/work",
@@ -1556,6 +1623,73 @@ describe("custom config-home secret reads against source and compiled guard", ()
       expect(guard.checkSecretPaths("cat /srv/custom-config/public/readme.txt", ctx).allowed).toBe(
         true,
       );
+    }
+  });
+});
+
+// The model env (`<secrets dir>/model-env/<NAME>`, src/modelenv.ts) holds a
+// model provider's keys and the settings that say where a key is sent. Its
+// files have no names to list (a name is whatever a provider documents), so
+// the directory's own name is what the guard refuses, under any prefix: a
+// read hands a session the key, a write moves where the daemon's next worker
+// sends it. Like the other secret reads these are not in CORPUS, which the
+// transcript audit replays too and which has no secret rule on purpose.
+// MUTATION: remove "model-env" from APP_SECRET_FILES — every row outside the
+// known secrets dirs passes the guard and this fails.
+const MODEL_ENV_CORPUS = {
+  bash: [
+    // reads
+    "cat /opt/quickreview/secrets/model-env/PROV_API_KEY",
+    "cat /srv/elsewhere/model-env/PROV_API_KEY",
+    "head -c 64 model-env/PROV_API_KEY",
+    "ls /srv/elsewhere/model-env",
+    "cat /srv/elsewhere/model-e*/PROV_API_KEY",
+    "base64 /srv/elsewhere/model-env/PROV_API_KEY",
+    // writes
+    "printf forged > /srv/elsewhere/model-env/PROV_BASE_URL",
+    "cp wt/pr-5/key.txt /srv/elsewhere/model-env/PROV_API_KEY",
+  ],
+  // a file tool's path, for a read tool and a write tool alike
+  paths: [
+    "/opt/quickreview/secrets/model-env/PROV_API_KEY",
+    "/srv/elsewhere/model-env/PROV_BASE_URL",
+    "model-env/PROV_API_KEY",
+    "@/srv/elsewhere/model-env/PROV_API_KEY",
+  ],
+  // what a reviewer of code about the model env still does
+  free: ["grep -rn model-env wt/pr-5", "cat wt/pr-5/docs/model-environment.md"],
+} as const;
+describe("the model env is not a session's to read or write, in source and compiled guard", () => {
+  it("refuses every read and write under it, by the directory's name alone", async () => {
+    const sourceGuard = await import("@quickchatai/pi-quickreview/extensions/bash-guard.js");
+    const compiledGuard = (await import(
+      resolve(process.cwd(), "packages/pi-plugin/dist/extensions/bash-guard.js")
+    )) as typeof sourceGuard;
+    // The whole-command check runs through the ambient wrapper (this process
+    // as the policy), in source and in its compiled form.
+    const compiledAmbient = (await import(
+      resolve(process.cwd(), "dist/extensions/cli/bash-guard-ambient.js")
+    )) as { checkBashCommand: typeof checkBashCommand };
+    for (const guard of [
+      { ...sourceGuard, checkBashCommand },
+      { ...compiledGuard, checkBashCommand: compiledAmbient.checkBashCommand },
+    ]) {
+      // A context that knows no secrets dir but the image's own: the rows
+      // under /srv/elsewhere are refused by the name, not by a known dir.
+      const ctx = guard.defaultSecretPathContext({ HOME: "/home/qcr" }, "/opt/quickreview/sandbox");
+      for (const chain of MODEL_ENV_CORPUS.bash) {
+        expect(guard.checkSecretPaths(chain, ctx).allowed, chain).toBe(false);
+        const full = guard.checkBashCommand(chain);
+        expect(full.allowed, chain).toBe(false);
+        expect(full.reason, chain).toBeTruthy();
+      }
+      for (const path of MODEL_ENV_CORPUS.paths) {
+        const res = guard.checkReadPath(path, ctx);
+        expect(res.allowed, path).toBe(false);
+        expect(res.reason, path).toContain("model env");
+      }
+      for (const chain of MODEL_ENV_CORPUS.free)
+        expect(guard.checkSecretPaths(chain, ctx).allowed, chain).toBe(true);
     }
   });
 });

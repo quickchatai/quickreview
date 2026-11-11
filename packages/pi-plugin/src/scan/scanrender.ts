@@ -4,6 +4,7 @@
 // Each surface names its own next step (`ScanVerbs`); none carries a rule of
 // its own.
 import { usd, findingLocation } from "./presentation.js";
+import { NO_PRICE_NO_STOP, scanRanUnpriced } from "../pricing.js";
 import { FINDING_STATES } from "./findings.js";
 import type {
   FindingsFilter,
@@ -29,6 +30,7 @@ import { escapeControls } from "./textsniff.js";
 import {
   SCAN_TRANSCRIPTS_DIR,
   THREAT_MODEL_DRAFT_FILE,
+  type ScanModelView,
   type ScanRunner,
   type ScanPreview,
   type ScanRun,
@@ -38,6 +40,7 @@ import {
   type ThreatModelPreview,
 } from "./scanrun.js";
 import { REPO_THREAT_MODEL_PATH } from "../threatmodel.js";
+import { foldTier } from "../types.js";
 
 /** What closing the tickets of the findings a match fixed did: the tickets
  * closed, and the closes the tracker refused. A host with no tracker has no
@@ -122,8 +125,41 @@ function owedClause(d: ScanPreview["delta"]): string {
   return `; ${parts.join("; ")} — read first`;
 }
 
+/** The scan's model in a plan, as one block: the model line (which model,
+ * why, and how to change it) and what the host added under it. Nothing when
+ * the plan's host named no model. */
+function modelBlock(p: ScanModelView): string[] {
+  const lines = p.model_lines ?? [];
+  return lines.length > 0 ? [lines.join("\n")] : [];
+}
+
+/** A stored tier name in the ladder's spelling: a proposal written under the
+ * older names never shows one. */
+const tierName = (tier: string): string => foldTier(tier) ?? tier;
+
+/** Was this preview's estimate measured on a model pi has no price for? pi
+ * stamps every call of such a model at exactly 0, so the finished cases the
+ * rate stands on cost "nothing" and the estimate, and the stop at it, come
+ * out as zero. That zero is not a price: the preview says there is none. */
+const unpricedEstimate = (p: Pick<ScanPreview, "rate" | "estimate_usd">): boolean =>
+  p.rate !== null && p.rate.cases > 0 && p.rate.usd_per_kline === 0 && (p.estimate_usd ?? 0) === 0;
+
+/** The stop a started run is held to, as its start line says it: the dollar
+ * cap, or that there is none because the plan was priced at pi's zero. */
+const stopWords = (capUsd: number): string =>
+  capUsd > 0 ? `hard stop ${usd(capUsd)}` : NO_PRICE_NO_STOP;
+
+/** One case's cost in a status row: a finished case pi stamped at exactly 0
+ * has no price, which is not "$0.00". */
+const caseCostWords = (c: { status: string; cost_usd: number | null }): string =>
+  c.status === "done" && c.cost_usd === 0 ? "no price" : usd(c.cost_usd);
+
 export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): string {
   const out: string[] = [];
+  // MUTATION: make unpricedEstimate return false - a zero-rate preview says
+  // "Estimate $0.00" again and tests/scan-run.test.ts fails.
+  const noPrice = unpricedEstimate(p);
+  const noPriceWords = `${NO_PRICE_NO_STOP} (pi priced the ${p.rate?.cases ?? 0} finished case(s) an estimate would be measured on at zero, which is not a price).`;
   const deep = p.depth === "deep";
   const head = `${deep ? "(deep) " : ""}${p.path ? `of ${p.path}/ ` : ""}at ${p.sha.slice(0, 12)} — ${p.settings.tier} at ${p.settings.effort} effort, skeptic ${p.settings.validator ? `on (at the lens's tier, ${p.settings.validate_tier}; its cost is in the price)` : "off (findings stay unjudged — validity unknown)"}`;
   // A rate measured at the other depth stands in until this depth is priced.
@@ -136,8 +172,10 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
       `Files whose content changed since, and any not yet read whole: ${p.files} files, ${p.lines} lines in ${p.cases.length} case(s) — ` +
         `${p.covered} already read at this content` +
         owedClause(p.delta) +
-        `. Estimate ${usd(p.estimate_usd)}, measured at ` +
-        `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate. ` +
+        (noPrice
+          ? `. No estimate: ${noPriceWords} `
+          : `. Estimate ${usd(p.estimate_usd)}, measured at ` +
+            `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate. `) +
         "No deep pass runs on a delta.",
     );
   } else if (p.mode === "calibration") {
@@ -151,10 +189,13 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
   } else {
     out.push(
       `STAGE 1 ${head}.`,
-      `Estimate ${usd(p.estimate_usd)} for ${p.cases.length} case(s), ${p.files} files, ${p.lines} lines — measured at ` +
-        `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate.`,
+      noPrice
+        ? `${p.cases.length} case(s), ${p.files} files, ${p.lines} lines. No estimate: ${noPriceWords}`
+        : `Estimate ${usd(p.estimate_usd)} for ${p.cases.length} case(s), ${p.files} files, ${p.lines} lines — measured at ` +
+            `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate.`,
     );
   }
+  out.push(...modelBlock(p));
   if (deep) {
     out.push(
       "DEEP: pass-scan names a deep lens for every focus file, and a file the ledger holds only a standard reading of is read again. " +
@@ -222,12 +263,20 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
     out.push(
       "FIRST, before this scan reads anything: the threat model ([scan] threat_model). " +
         `Start stage 0 below; ${reads} ${off}`,
+      // Stage 0 runs on the scan's model, which is said above.
       renderThreatModelPreview(stage0, verbs),
     );
   } else if (p.blockers.length === 0) {
     out.push(`To run it: ${verbs.start(p)} — only after the operator agreed to the cost.`);
   }
   return out.join("\n\n");
+}
+
+/** A plan less its model lines: a structured result carries the `model`
+ * object instead. */
+function withoutModelLines<T extends ScanModelView>(p: T): Omit<T, "model_lines"> {
+  const { model_lines: _lines, ...rest } = p;
+  return rest;
 }
 
 /** The ratified model a stage-0 draft would revise, by name. */
@@ -264,17 +313,22 @@ function tierCounts(r: NonNullable<ScanStatus["run"]>, findings: number, doubted
 }
 
 /** The threat-model stage's proposal: why it runs (or not), what it reads,
- * its price and how to start it. */
+ * its price and how to start it. `model` is what the proposing host resolved
+ * of the scan's model (scanrun.ts `proposeThreatModel`), said under the head. */
 export function renderThreatModelPreview(
   p: ThreatModelPreview,
   verbs: ScanVerbs = TOOL_VERBS,
+  model: ScanModelView = {},
 ): string {
   const out: string[] = [];
   out.push(
     `THREAT MODEL (stage 0) at ${p.sha.slice(0, 12)} — ${p.tier}, one case: ${p.why}.`,
     p.estimate_usd === null
       ? `No threat-model run has finished here, so there is no estimate: it stops hard at ${usd(p.cap_usd)}.`
-      : `The last one cost ${usd(p.estimate_usd)}; this one stops hard at ${usd(p.cap_usd)}.`,
+      : p.estimate_usd === 0
+        ? // The last run's total is pi's zero stamp, not a price.
+          `What the last one cost is not known (${NO_PRICE_NO_STOP}); this one stops hard at ${usd(p.cap_usd)}, which only a priced model can reach.`
+        : `The last one cost ${usd(p.estimate_usd)}; this one stops hard at ${usd(p.cap_usd)}.`,
     p.existing === null
       ? `It writes a DRAFT to ${THREAT_MODEL_DRAFT_FILE} in the state home — never to the repository. Later scans read it, labelled DRAFT, ` +
           `until a person copies it to ${REPO_THREAT_MODEL_PATH} (or the profile's threat-model.md).`
@@ -282,6 +336,7 @@ export function renderThreatModelPreview(
           `It revises ${existingName(p.existing.source)} (sha256 ${p.existing.hash.slice(0, 12)}): scans keep reading that model, ` +
           `and the draft takes effect only once a person copies it over ${p.existing.source === "repo" ? REPO_THREAT_MODEL_PATH : "the profile's threat-model.md"}.`,
   );
+  out.push(...modelBlock(model));
   out.push(
     p.inventory !== ""
       ? `What it starts from — the route inventory, read by line parsers:\n${p.inventory}`
@@ -308,6 +363,11 @@ export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): stri
     const unpriced = r.unpriced_cases
       ? ` (${r.unpriced_cases} unpriced case(s) counted at their estimate)`
       : "";
+    // A run whose cases pi stamped at zero spent an unknown amount, and no
+    // dollar stop held it: never "spent $0.00 of $0.00".
+    const spent = scanRanUnpriced(r)
+      ? NO_PRICE_NO_STOP
+      : `spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}${unpriced}`;
     if (r.mode === "threat-model") {
       // Stage 0 reads no findings: what it leaves is the draft.
       out.push(
@@ -315,14 +375,15 @@ export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): stri
           (r.threat_model
             ? `DRAFT written to ${THREAT_MODEL_DRAFT_FILE} (sha256 ${r.threat_model.hash.slice(0, 12)}) — read it, then copy it to ${REPO_THREAT_MODEL_PATH}`
             : "no draft written") +
-          `, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}${unpriced}`,
+          `, ${spent}`,
       );
     } else
       out.push(
         `${r.id} (${r.mode === "stage2" ? "stage 2" : r.mode}${r.settings.depth === "deep" ? ", deep" : ""}) at ${r.sha.slice(0, 12)}: ${r.display.toUpperCase()} — ${done}/${r.cases.length} cases, ` +
-          `${findings} finding(s)${tierCounts(r, findings, doubted)}, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}` +
-          unpriced,
+          `${findings} finding(s)${tierCounts(r, findings, doubted)}, ${spent}`,
       );
+    // The one model every case of the run was handed, when its host named one.
+    if (r.settings.model !== undefined) out.push(`Model: ${r.settings.model}`);
     if (r.mode !== "threat-model" && r.threat_model) out.push(threatModelLine(r.threat_model));
     const offKind = r.cases.reduce((n, c) => n + (c.off_kind ?? 0), 0);
     if (offKind > 0)
@@ -344,7 +405,7 @@ export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): stri
     if (r.mode === "stage2") {
       for (const c of r.cases.slice(0, 40)) {
         out.push(
-          `  - ${c.id} ${c.lens ?? "?"} at ${c.tier ?? "?"} (${(c.units ?? [c.unit]).join(", ")}): ${c.status}, ${c.findings} finding(s), ${usd(c.cost_usd)}` +
+          `  - ${c.id} ${c.lens ?? "?"} at ${c.tier ?? "?"} (${(c.units ?? [c.unit]).join(", ")}): ${c.status}, ${c.findings} finding(s), ${caseCostWords(c)}` +
             (c.reads !== undefined ? `, ${c.reads} read(s)` : "") +
             (c.unopened?.length ? `, ${c.unopened.length} focus file(s) not opened` : ""),
         );
@@ -516,7 +577,7 @@ function renderFloor(p: StoredStage2Proposal): string[] {
     const covered = rows.filter((r) => r.status === "covered");
     const ids = rows.length === 1 ? rows[0]!.id : `${rows[0]!.id}…${rows[rows.length - 1]!.id}`;
     out.push(
-      `  ${lens} (floor ${ids}) at ${rows[0]!.tier}: ${rows.length} row(s) over ${[...new Set(rows.flatMap((r) => r.units))].length} unit(s), ` +
+      `  ${lens} (floor ${ids}) at ${tierName(rows[0]!.tier)}: ${rows.length} row(s) over ${[...new Set(rows.flatMap((r) => r.units))].length} unit(s), ` +
         `${rows.reduce((n, r) => n + r.files.length, 0)} file(s), ${rows.reduce((n, r) => n + r.lines, 0)} lines — ` +
         `${run.length} to run, ~${usd(run.reduce((n, r) => n + r.estimate_usd, 0))} (${priceLabel(rows[0]!.price)})` +
         (covered.length ? `; ${covered.length} covered (free)` : "") +
@@ -549,7 +610,14 @@ function renderFloor(p: StoredStage2Proposal): string[] {
   return out;
 }
 
-export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_VERBS): string {
+/** The stored proposal in words. `model` is what the proposing host resolved
+ * of the scan's model (scanrun.ts `proposeStage2`): it is said under the
+ * head, and a proposal with no model names no start. */
+export function renderProposal(
+  p: StoredStage2Proposal,
+  verbs: ScanVerbs = TOOL_VERBS,
+  model: ScanModelView = {},
+): string {
   const out: string[] = [];
   const run = p.rows.filter((r) => r.status === "run");
   const deep = p.depth === "deep";
@@ -558,6 +626,7 @@ export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_
       (p.budget_usd !== null ? `, fitted to a ${usd(p.budget_usd)} budget` : "") +
       `; validator ${p.validator ? "on" : "off"}.`,
   );
+  out.push(...modelBlock(model));
   if (deep) {
     const own = run.filter((r) => !r.floor);
     const floor = run.filter((r) => r.floor);
@@ -579,7 +648,7 @@ export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_
             : ` — OVER BUDGET (${usd(r.estimate_usd)}, left out)`;
       const price = priceLabel(r.price);
       return [
-        `  ${r.id}: ${rowLensKey(r.lens, r.strategy)} at ${r.tier} over ${r.units.join(" + ")}${r.units.length > 1 ? " (cross-module)" : ""} — ${r.files.length} file(s)` +
+        `  ${r.id}: ${rowLensKey(r.lens, r.strategy)} at ${tierName(r.tier)} over ${r.units.join(" + ")}${r.units.length > 1 ? " (cross-module)" : ""} — ${r.files.length} file(s)` +
           (r.tests.length ? ` + ${r.tests.length} paired test(s)` : "") +
           `, ${r.lines} lines, ~${usd(r.estimate_usd)} (${price})${mark}`,
         `      ${r.reason}`,
@@ -601,7 +670,9 @@ export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_
     );
   }
   if (p.over_budget_usd > 0) out.push(`Left out by the budget: ${usd(p.over_budget_usd)} of rows.`);
-  if (p.runnable > 0) {
+  if (p.runnable > 0 && model.model === null) {
+    out.push("✗ nothing starts without a model: see the model line above, then propose again.");
+  } else if (p.runnable > 0) {
     out.push(`To run it: ${verbs.stage2Start(p.key)}`);
   } else out.push("✗ nothing to run: every row is covered or over the budget.");
   return out.join("\n\n");
@@ -613,10 +684,21 @@ export function renderProposal(p: StoredStage2Proposal, verbs: ScanVerbs = TOOL_
 // the checks, the orders and the structured results. Each surface renders
 // them its own way; neither carries a rule of its own.
 
+/** A plan's fields about the model as a structured result carries them: the
+ * `model` object and what goes with it, never the lines written for a person. */
+export function modelDetails(p: ScanModelView): Omit<ScanModelView, "model_lines"> {
+  return {
+    ...(p.model !== undefined ? { model: p.model } : {}),
+    ...(p.model_unknown !== undefined ? { model_unknown: p.model_unknown } : {}),
+    ...(p.alternatives !== undefined ? { alternatives: p.alternatives } : {}),
+    ...(p.tiers !== undefined ? { tiers: p.tiers } : {}),
+  };
+}
+
 /** A preview's structured result: its cases summarised (counts, not files). */
 export function previewDetails(p: ScanPreview): Record<string, unknown> {
   return {
-    ...p,
+    ...withoutModelLines(p),
     cases: p.cases.map((c) => ({
       id: c.id,
       files: c.files.length,
@@ -765,7 +847,7 @@ export function stage2StartedLine(
       ? `${run.cases.length} row(s) of ${runnable} (${run.cases.map((c) => c.id).join(", ")})`
       : `${run.cases.length} row(s)`;
   return (
-    `Stage 2 ${run.id} started at ${run.sha.slice(0, 12)}: ${count}, hard stop ${usd(run.cap_usd)}. ` +
+    `Stage 2 ${run.id} started at ${run.sha.slice(0, 12)}: ${count}, ${stopWords(run.cap_usd)}. ` +
     `It runs in the background — ${verbs.status} shows progress, ${verbs.stop} stops it.`
   );
 }
@@ -773,7 +855,7 @@ export function stage2StartedLine(
 /** The line a stage-1 start answers. */
 export function startedLine(run: ScanRun, verbs: ScanVerbs = TOOL_VERBS): string {
   return (
-    `Scan ${run.id} (${run.mode}) started${run.path ? ` over ${run.path}/` : ""} at ${run.sha.slice(0, 12)}: ${run.cases.length} case(s), hard stop ${usd(run.cap_usd)}. ` +
+    `Scan ${run.id} (${run.mode}) started${run.path ? ` over ${run.path}/` : ""} at ${run.sha.slice(0, 12)}: ${run.cases.length} case(s), ${stopWords(run.cap_usd)}. ` +
     `It runs in the background — ${verbs.status} shows progress, ${verbs.stop} stops it.`
   );
 }

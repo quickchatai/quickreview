@@ -161,7 +161,7 @@ const DEFAULTS = {
   authSrc: "/pi-agent-src",
   /** The sandbox's own agent dir (tmpfs): a refresh-disabled token copy. */
   agentDir: "/tmp/pi-agent",
-  /** 75 min: with sol-high on baseline/sweep/behaviour-delta (the shipped default) a large PR can exceed 45. */
+  /** 75 min: with deep on baseline/sweep/behaviour-delta (the shipped default) a large PR can exceed 45. */
   timeoutMin: 75,
   /** The loopback Codex bridge in-container.sh starts (bench/aacr/codex_bridge.py
    * --port 8766): OCR, OpenCode and PR-Agent reach the model through it. */
@@ -457,7 +457,7 @@ async function main(): Promise<number> {
       ...authFingerprint(),
       models: {
         effort: ctx.cfg.models.effort,
-        conversation: ctx.cfg.models.conversation,
+        conversation: ctx.cfg.models.model,
         tiers: ctx.cfg.models.tiers,
         validate_tier: ctx.cfg.models.validate_tier,
       },

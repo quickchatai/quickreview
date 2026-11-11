@@ -25,7 +25,7 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { FINDING_CLUSTERS_ENTRY, extensionFile } from "../coreext.js";
 import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
-import { routeModelSpecForLogin } from "@quickchatai/pi-quickreview/src/modelroute.js";
+import { piModelFlags } from "../config.js";
 import { piCliPath } from "../picli.js";
 import {
   DEBUG_STATUS_FILE,
@@ -47,8 +47,10 @@ import {
 import type { PiRun } from "@quickchatai/pi-quickreview/src/engine/port.js";
 
 /** The extensions of a debug round: the round's own set with the debug
- * extension (which carries the lens tools) in the lens tool's place. The env
- * shims are the app's, by path under the production tree (`extensions/cli/`);
+ * extension (which carries the lens tools) in the lens tool's place, and the
+ * login route, which a round's SDK host has no need of and a CLI pi does: it
+ * keeps the session on a model that has a credential. The env shims are the
+ * app's, by path under the production tree (`extensions/cli/`);
  * `cluster_findings` is the review core's own extension, found in the core
  * package (`extensionFile`, src/coreext.ts). Nothing here posts. */
 export const DEBUG_ROUND_EXTENSIONS = [
@@ -56,16 +58,13 @@ export const DEBUG_ROUND_EXTENSIONS = [
   "extensions/cli/ledger-pin.ts",
   "extensions/cli/debug-round.ts",
   FINDING_CLUSTERS_ENTRY,
+  "extensions/cli/login-route.ts",
 ] as const;
 
-/** The login file in an agent dir, as text; null when there is none. */
-function loginIn(agentDir: string): string | null {
-  try {
-    return readFileSync(join(agentDir, "auth.json"), "utf8");
-  } catch {
-    return null;
-  }
-}
+/** What the login route's shim reads to know the pi runs on the run's private
+ * copy of a login: with no model to run on it says why and opens no `/login`,
+ * since a login made there would be thrown away with the copy. */
+export const DEBUG_LOGIN_OPEN = { QCR_LOGIN_OPEN: "none" } as const;
 
 /** pi's first message: the extension command that starts the round. */
 export const DEBUG_START_MESSAGE = "/qcr-round";
@@ -84,8 +83,9 @@ export function debugArgv(o: {
     "--approve",
     "-ne",
     "-ns",
-    "--model",
-    o.model,
+    // Only a pin: with none, pi starts on its own choice for the run's login
+    // and the lens passes run on the session's model.
+    ...piModelFlags(o.model),
     "--system-prompt",
     o.sysPath,
     "--session-dir",
@@ -98,7 +98,8 @@ export function debugArgv(o: {
 }
 
 /** The env a debug round's pi is started with: the person's terminal env without
- * any GitHub token, then the round's env, then the names the debug extension reads. */
+ * any GitHub token, then the round's env, then the names the debug extension and
+ * the login route read. */
 export function debugEnv(
   base: Readonly<Record<string, string | undefined>>,
   prep: Pick<PreparedRound, "env">,
@@ -111,6 +112,7 @@ export function debugEnv(
     ...prep.env,
     QCR_DEBUG_ORDER_FILE: files.order,
     QCR_DEBUG_TASKS_DIR: files.tasksDir,
+    ...DEBUG_LOGIN_OPEN,
   };
 }
 
@@ -202,9 +204,9 @@ export async function runDebugRound(i: RoundSpec, deps: DebugRoundDeps = {}): Pr
     });
     const args = debugArgv({
       root: i.root,
-      // An OpenAI model runs on the OpenAI login the run's agent dir holds
-      // (packages/pi-plugin/src/modelroute.ts).
-      model: routeModelSpecForLogin(i.cfg.models.conversation, loginIn(i.agentDir), env),
+      // The config's pin, or "" for none: the login route inside pi keeps the
+      // session on a model the run's login can use.
+      model: i.cfg.models.model,
       sysPath: prep.sysPath,
       sessionDir: prep.sessionDir,
       sessionName: prep.sessionName,

@@ -12,9 +12,10 @@
 //   * the App slug GitHub itself reports reaches the slug reconciliation;
 //   * the topology reaches the transport selection (compose here, ssh there);
 //   * the ingress choice reaches the config fill AND the tunnel profile;
-//   * the LLM auth route reaches the config rewrite and the fill's shape line.
+//   * the model the model step found reaches the fill's shape line, and the
+//     step asks nothing, rewrites nothing and writes no key file on the way.
 //
-// Faked: a routed fake ProcessRunner (docker), a fake fetch (GitHub), a
+// Faked: a routed fake ProcessRunner (docker, `qcr model`), a fake fetch (GitHub), a
 // scripted prompter (the operator), temp dirs for the checkout. No network, no
 // docker, no ssh, no pi.
 //
@@ -28,6 +29,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -72,6 +74,28 @@ const HOSTNAME = "review.example.com";
 /** A customised trigger label: the App step must create THIS, not the default. */
 const TRIGGER_LABEL = "please review";
 
+/** The model this machine's pi runs, as `qcr model --json` answers
+ * (src/modelcli.ts): a provider that is nobody's default, on a key in the
+ * environment. */
+const MODEL_SPEC = "example-provider/example-model";
+const MODEL_ANSWER = JSON.stringify({
+  ok: true,
+  route: {
+    spec: MODEL_SPEC,
+    providerName: "Example",
+    movedFrom: null,
+    credential: {
+      kind: "api_key",
+      origin: "env-key",
+      label: "EXAMPLE_API_KEY",
+      subscription: false,
+    },
+  },
+  choice: null,
+  config_pin: null,
+  skipped: [],
+});
+
 let root: string;
 let secretsDir: string;
 let checkout: string;
@@ -106,7 +130,8 @@ function answers(): Record<AnswerKey, string> {
 function prompter(): (q: string) => Promise<string> {
   return async (question: string) => {
     prompts.push(question);
-    if (/ChatGPT|OAuth|API key/i.test(question) && /1|2/.test(question)) return "2"; // the LLM route
+    // The model step asks nothing: a route or key question would land here
+    // and throw, as any question the script has no answer for does.
     for (const q of QUESTIONS) {
       if (question.includes(q.prompt)) return answers()[q.id];
     }
@@ -127,6 +152,9 @@ function runner(): OnboardAdapters["runner"] {
       if (cmd === "docker" && args[0] === "inspect")
         return { code: 1, stdout: "", stderr: "No such object" };
       if (/compose .*ps/.test(line)) return { code: 0, stdout: "", stderr: "" }; // nothing up yet
+      // This machine's pi, asked which model it runs (`qcr model --json`).
+      if (args.slice(-2).join(" ") === "model --json")
+        return { code: 0, stdout: `${MODEL_ANSWER}\n`, stderr: "" };
       // The own-account route's host tools: a signed-in gh at the broker
       // wrapper's path (NOT /usr/bin/gh), and a crontab.
       if (cmd === "sh" && args[1] === "command -v gh")
@@ -244,8 +272,8 @@ beforeEach(() => {
   crontab = null;
 
   // A checkout-shaped root: the template the interview patches, plus an
-  // existing config.toml (the LLM step would otherwise seed one) pointed at
-  // this test's secrets dir and carrying a CUSTOMISED trigger label.
+  // existing config.toml pointed at this test's secrets dir and carrying a
+  // CUSTOMISED trigger label.
   writeFileSync(join(root, "config.example.toml"), exampleConfig);
   let cfg = setTomlKey(exampleConfig, "github", "secrets_dir", secretsDir)!;
   cfg = setTomlKey(cfg, "github", "trigger_label", TRIGGER_LABEL)!;
@@ -257,7 +285,6 @@ beforeEach(() => {
   writeFileSync(join(secretsDir, SECRET_FILES.appId), "4242\n");
   writeFileSync(join(secretsDir, SECRET_FILES.pem), PEM);
   writeFileSync(join(secretsDir, SECRET_FILES.webhookSecret), "s".repeat(40));
-  writeFileSync(join(secretsDir, "openai_api_key"), "sk-testkeytestkeytestkeytestkey");
   writeFileSync(join(secretsDir, "tunnel_token"), "cf-tunnel-token");
 });
 
@@ -307,6 +334,17 @@ function detail(d: Drive, stepId: string, checkName: string): string {
   const found = d.results.get(stepId)?.checks.find((c) => c.name === checkName);
   expect(found, `step ${stepId} has no "${checkName}" check`).toBeDefined();
   return found!.detail;
+}
+
+/** The `[models]` tables of a config text, from the `[models]` header to the
+ * next table that is not one of them. */
+function modelsSection(text: string): string {
+  const lines = text.split("\n");
+  const start = lines.findIndex((l) => l.trim() === "[models]");
+  expect(start, "the config has no [models] table").toBeGreaterThanOrEqual(0);
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((l) => /^\s*\[/.test(l) && !/^\s*\[models[.\]]/.test(l));
+  return lines.slice(start, end < 0 ? undefined : start + 1 + end).join("\n");
 }
 
 function producedConfig(): ReturnType<typeof loadConfig> {
@@ -548,15 +586,37 @@ describe("the registered steps hand their choices to each other", () => {
     expect(producedConfig().server.hostname).toBe(HOSTNAME);
   });
 
-  it("HANDOFF 5 — the auth route reaches the config rewrite and the fill's shape line", async () => {
+  // MUTATION: stop recording CHOICE_KEYS.model in llmAuthStep's run()
+  // (src/onboard/steps/llmauth.ts) — the shape line loses its model and this
+  // fails. Ask a route question there again — the scripted operator has no
+  // answer for it and the drive throws. Rewrite a model string in config.toml,
+  // or write a key file — the byte and directory comparisons fail.
+  it("HANDOFF 5 — the model the model step found reaches the fill's shape line; nothing is asked, rewritten or written", async () => {
+    const modelsBefore = modelsSection(readFileSync(join(root, "config.toml"), "utf8"));
+    const secretsBefore = readdirSync(secretsDir).sort();
     const engine = new OnboardingEngine(defaultSteps(), adapters());
     const d = await drive(engine, LAPTOP_INPUTS, "config_fill", SKIP);
 
-    expect(engine.choices()[CHOICE_KEYS.authRoute]).toBe("api");
-    // The rewrite the route drives: pi's direct-API provider prefix.
-    expect(readFileSync(join(root, "config.toml"), "utf8")).toContain('"openai/');
-    // And the shape line reads the same route vocabulary the step records.
-    expect(detail(d, "config_fill", "shape")).toContain("auth route api");
+    // No daemon runs yet, so this machine's pi stands in for it.
+    expect(detail(d, "llm_auth", "host_model")).toContain(`this machine's pi runs ${MODEL_SPEC}`);
+    expect(engine.choices()[CHOICE_KEYS.model]).toBe(MODEL_SPEC);
+    // The shape line reads the key the step records.
+    expect(detail(d, "config_fill", "shape")).toContain(`model: ${MODEL_SPEC}`);
+    // No route question and no key question: every prompt was the interview's.
+    for (const q of prompts)
+      expect(
+        QUESTIONS.some((known) => q.includes(known.prompt)),
+        `an unexpected question: ${q.slice(0, 120)}`,
+      ).toBe(true);
+    // No config rewrite: the [models] tables are byte for byte what they were.
+    expect(modelsSection(readFileSync(join(root, "config.toml"), "utf8"))).toBe(modelsBefore);
+    // No key file written, under the older name or the newer directory.
+    expect(readdirSync(secretsDir).sort()).toEqual(secretsBefore);
+    expect(existsSync(join(secretsDir, "openai_api_key"))).toBe(false);
+    expect(existsSync(join(secretsDir, "model-env"))).toBe(false);
+    // The retired keys are written by nothing.
+    expect(Object.keys(engine.choices())).not.toContain("llm_auth_route");
+    expect(Object.keys(engine.choices())).not.toContain("llm_model_prefix");
   });
 });
 
@@ -602,7 +662,7 @@ describe("the checklist the flow leaves behind", () => {
     for (const key of [
       CHOICE_KEYS.repo,
       CHOICE_KEYS.topology,
-      CHOICE_KEYS.authRoute,
+      CHOICE_KEYS.model,
       CHOICE_KEYS.ingress,
       CHOICE_KEYS.appSlug,
     ]) {

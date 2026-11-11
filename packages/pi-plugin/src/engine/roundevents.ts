@@ -247,13 +247,14 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
 }
 
 /** Model-call failures one review saw, by kind. `rate_limited` and
- * `overloaded` are the shared login pushing back (every bench container
- * draws on ONE ChatGPT login): a case that failed with either is retried by
- * arm.sh after a pause, never scored as the reviewer's own miss.
- * `usage_limit` is the login's PLAN window exhausted ("Codex error: The usage
- * limit has been reached", each case failing within seconds): no pause of
- * minutes cures it, so arm.sh stops launching instead of burning the retries
- * (older summaries lack this kind). */
+ * `overloaded` are the provider pushing back (every bench container draws on
+ * one login): a case that failed with either is retried by arm.sh after a
+ * pause, never scored as the reviewer's own miss. `usage_limit` is the
+ * account's or the plan's window spent (each case failing within seconds):
+ * no pause of minutes cures it, so arm.sh stops launching instead of burning
+ * the retries (older summaries lack this kind). Every other kind the one
+ * classifier names (a refused credential, a refused model, a dropped
+ * connection) is counted under `other`. */
 export interface ModelErrors {
   rate_limited: number;
   overloaded: number;
@@ -264,7 +265,8 @@ export interface ModelErrors {
 }
 
 // The error-message reading lives in src/modelerrors.ts (outside the engine,
-// so the daemon can read a worker's provider failure the same way).
+// so the daemon can read a worker's provider failure the same way):
+// `modelErrorKind` is its one ordered classifier, kept to these three kinds.
 export { USAGE_LIMIT_RE, RATE_LIMIT_RE, OVERLOAD_RE, modelErrorKind } from "../modelerrors.js";
 
 /**

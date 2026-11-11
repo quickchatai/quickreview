@@ -12,6 +12,13 @@
 // each member leases the group, hands its finished sessions over with keep(),
 // and the last release disposes them together.
 //
+// The shared id is for every API: where a provider has no cache routing keyed
+// on it, the id is harmless. What is not for every API is the pack: a group is
+// PACKED (warm-up, wait, pack-first requests) only when its model speaks an API
+// of the family the rewrite is built for (leaf-cache.ts PACK_FIRST_APIS). The
+// runner decides that per model, before a pass joins its group (runlens.ts),
+// so every member of a group takes the same path.
+//
 // Seen in production at pi 1.3.0: cleanupSessionResources closes by session id
 // alone (groups disposed their sessions together, and no sibling lens failed after).
 import { CacheGrouper, type CacheSlot } from "./cache-group.js";
@@ -42,7 +49,7 @@ export class CacheLease {
     readonly key: string,
     /** Whether this member is the group's first. */
     readonly first: boolean,
-    /** How long a pack-less member should wait before starting. */
+    /** How long a member of a group that is not packed should wait before starting. */
     readonly delayMs: number,
     private readonly life: Lifetime,
     private readonly leave: () => void,

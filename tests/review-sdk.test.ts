@@ -1,19 +1,36 @@
 // reviewSdkRuntime (packages/pi-plugin/src/engine/reviewsdk.ts): the runtime `qcr review` hosts its
 // main session on under `[engine] runtime = "sdk"`, here over pi-ai's faux
 // provider (the real SDK, no network, no model). What it builds its host from,
-// what it refuses before any host exists, and what the process env carries while
-// a session lives.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// what it refuses before any host exists, what it leaves to the host's route
+// to refuse (a login too short for the turn), and what the process env carries
+// while a session lives.
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { AuthExpiring, DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import {
+  DISABLED_REFRESH,
+  keyOnlyCredentials,
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { RouteRefused, type ModelRoute } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import type { SessionSpec } from "@quickchatai/pi-quickreview/src/engine/port.js";
-import { reviewSdkRuntime } from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
+import {
+  reviewHostOptions,
+  reviewSdkRuntime,
+} from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
 import { REPO_ROOT } from "./helpers/round-rig.js";
-import { pricedFaux } from "./helpers/priced-faux.js";
+import { pricedFaux, ROUTABLE_FAUX_MODEL, routableFaux } from "./helpers/priced-faux.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -134,12 +151,100 @@ describe("reviewSdkRuntime", () => {
     expect(seen).toHaveLength(1);
   });
 
-  it("refuses a login that would expire inside the turn, before any host exists", async () => {
-    login(Date.now() + 60_000);
+  // The agent dir's own login is borrowed with nothing to renew it. The three
+  // situations the runtime once refused by itself, at the same seam:
+
+  // MUTATION: refuse in reviewHostOptions when the agent dir's login would
+  // expire inside the turn (the retired refusing borrow) - no host is built and
+  // the first session throws.
+  // MUTATION: drop the borrow's `skipped` from the route reviewHostOptions
+  // hands the host - the session on that provider is refused as a pin with no
+  // credential instead, and this fails.
+  it("a login that would expire inside the turn is left out and named to the route: only a session on it is refused", async () => {
+    const expires = Date.now() + 60_000;
+    login(expires);
+    const skipped = [{ provider: "openai-codex", name: "openai-codex", expiresAt: expires }];
     const seen: PiHostOptions[] = [];
-    const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens });
-    await expect(rt.create(spec())).rejects.toBeInstanceOf(AuthExpiring);
-    expect(seen).toEqual([]);
+    const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens, processEnv: {} });
+
+    // A session on another provider runs: the login left out is not its.
+    const s = await rt.create(spec());
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+    expect(seen).toHaveLength(1);
+    expect(await seen[0]!.credentials!.list()).toEqual([]);
+    expect(seen[0]!.route).toEqual({ skipped });
+
+    // A session on the provider of the login left out is refused, in the
+    // route's own words, and never moved.
+    const refused = await rt
+      .create(
+        spec({
+          model: "openai-codex/any-model",
+          eventsFile: join(dir, "e2.jsonl"),
+          stderrFile: join(dir, "s2"),
+        }),
+      )
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(refused).toBeInstanceOf(RouteRefused);
+    expect((refused as RouteRefused).refusal).toEqual({ code: "login-too-short", logins: skipped });
+  });
+
+  // MUTATION: throw for a missing auth.json in reviewHostOptions (the retired
+  // `missing` refusal) - a run whose only credential is a key in the
+  // environment never starts, and this fails.
+  it("no login file is an empty store, not a refusal: the host is built and nothing is written", async () => {
+    const seen: PiHostOptions[] = [];
+    const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens, processEnv: {} });
+    const s = await rt.create(spec());
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+    expect(await seen[0]!.credentials!.list()).toEqual([]);
+    expect(seen[0]).not.toHaveProperty("route");
+    expect(existsSync(join(agentDir, "auth.json"))).toBe(false);
+  });
+
+  // A file that does not parse is waited out first (a login being rewritten),
+  // so this one takes the borrow's whole retry.
+  it(
+    "a login file that cannot be read is refused, typed, before any host exists",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      writeFileSync(join(agentDir, "auth.json"), "{ not json");
+      const seen: PiHostOptions[] = [];
+      const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens, processEnv: {} });
+      await expect(rt.create(spec())).rejects.toMatchObject({
+        code: "unreadable",
+        path: join(agentDir, "auth.json"),
+      });
+      expect(seen).toEqual([]);
+    },
+  );
+
+  it("the logins left out join the route's own inputs; a route resolved before the run is used as it is", () => {
+    const expires = Date.now() + 60_000;
+    login(expires);
+    const skipped = [{ provider: "openai-codex", name: "openai-codex", expiresAt: expires }];
+    const at = { agentDir, needMs: 20_000 };
+    const pin = { text: "faux/m", from: "flag" as const };
+    expect(reviewHostOptions({ processEnv: {}, route: { pin } }, at).route).toEqual({
+      pin,
+      skipped,
+    });
+    const earlier = [{ provider: "other", name: "Other", expiresAt: 1 }];
+    expect(reviewHostOptions({ processEnv: {}, route: { skipped: earlier } }, at).route).toEqual({
+      skipped: [...earlier, ...skipped],
+    });
+    // A fixed route came with the login its own step borrowed: nothing is added.
+    const fixed = { fixed: { spec: "faux/m" } as ModelRoute };
+    expect(reviewHostOptions({ processEnv: {}, route: fixed }, at).route).toBe(fixed);
+    // A login that lasts the turn leaves the route as it was handed, or absent.
+    login(Date.now() + 3 * 3_600_000);
+    expect(reviewHostOptions({ processEnv: {}, route: { pin } }, at).route).toEqual({ pin });
+    expect(reviewHostOptions({ processEnv: {} }, at)).not.toHaveProperty("route");
   });
 
   it("refuses a spec with no agent dir, or a relative one", async () => {
@@ -150,18 +255,137 @@ describe("reviewSdkRuntime", () => {
     );
   });
 
-  it("gives an API key in the spec's env to the runtime, in memory (the key route)", async () => {
+  /** The credential the host's inventory names for `provider`. */
+  const credentialOf = async (provider: string) =>
+    (await hosts.at(-1)!.inventory()).find((e) => e.provider === provider)?.credential;
+
+  // MUTATION: drop `authEnv` from the host options in reviewSdkRuntime — pi
+  // looks in the test process's env, finds neither key, and this fails.
+  it("pi finds a provider key by its own lookup, in the spec's env over the process's (the key route)", async () => {
     writeFileSync(join(agentDir, "auth.json"), "{}\n");
-    let keyed: Array<[string, string]> = [];
     const seen: PiHostOptions[] = [];
-    const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens });
+    const rt = reviewSdkRuntime({
+      makeHost: fauxHost(seen),
+      lens: noLens,
+      processEnv: { GROQ_API_KEY: "not-a-key" },
+    });
     const s = await rt.create(spec({}, { OPENAI_API_KEY: "sk-test" }));
+    expect(await credentialOf("openai")).toEqual({
+      kind: "api_key",
+      origin: "env-key",
+      label: "OPENAI_API_KEY",
+      subscription: false,
+    });
+    expect(await credentialOf("groq")).toMatchObject({ origin: "env-key", label: "GROQ_API_KEY" });
+    // No key is handed to the runtime: nothing outranks what pi has stored.
+    expect(seen[0]!.configureModels).toBeUndefined();
     await s.dispose();
-    await seen[0]!.configureModels!({
-      setRuntimeApiKey: async (p: string, k: string) => void keyed.push([p, k]),
-    } as never);
-    expect(keyed).toEqual([["openai", "sk-test"]]);
-    keyed = [];
+  });
+
+  // MUTATION: hand the env key to the runtime again (setRuntimeApiKey in a
+  // configureModels) — the env key wins and this fails.
+  it("a stored credential owns its provider: a key in the env for it does not outrank it", async () => {
+    writeFileSync(
+      join(agentDir, "auth.json"),
+      JSON.stringify({ openai: { type: "api_key", key: "stored-key" } }),
+    );
+    const rt = reviewSdkRuntime({ makeHost: fauxHost([]), lens: noLens, processEnv: {} });
+    const s = await rt.create(spec({}, { OPENAI_API_KEY: "sk-test" }));
+    expect(await credentialOf("openai")).toMatchObject({ origin: "stored" });
+    expect(await hosts.at(-1)!.modelRuntime.getAuth("openai")).toMatchObject({
+      auth: { apiKey: "stored-key" },
+    });
+    await s.dispose();
+  });
+
+  // MUTATION: borrow the agent dir's auth.json whatever `credentials` says
+  // (reviewHostOptions) — the host holds a store of its own, not the one the
+  // route handed over, and this fails.
+  it("a login the route borrowed is the host's: the agent dir holds no login file and none is read", async () => {
+    const seen: PiHostOptions[] = [];
+    const borrowed = keyOnlyCredentials();
+    const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens, credentials: borrowed });
+    const s = await rt.create(spec());
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.credentials).toBe(borrowed);
+    expect(existsSync(join(agentDir, "auth.json"))).toBe(false);
+  });
+
+  // MUTATION: drop `route` from the host options in reviewHostOptions — the
+  // host resolves a route of its own, the pin is lost, and this fails.
+  it("the route's inputs reach the host: a session whose spec names no model runs on the pin", async () => {
+    const seen: PiHostOptions[] = [];
+    const pin = { text: "faux/m", from: "flag" as const };
+    const rt = reviewSdkRuntime({
+      makeHost: fauxHost(seen),
+      lens: noLens,
+      credentials: keyOnlyCredentials(),
+      route: { pin },
+    });
+    const s = await rt.create(spec({ model: "" }));
+    expect(seen[0]!.route).toEqual({ pin });
+    expect(await hosts[0]!.route()).toMatchObject({
+      ok: true,
+      route: { spec: "faux/m", source: "flag" },
+    });
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+  });
+
+  // MUTATION: build a host whatever `prebuilt` answers (runtimeFor) — a second
+  // host is made, `seen` holds its options, and this fails.
+  it("a host built before the run hosts its agent dir's sessions, and no other is built", async () => {
+    const faux = routableFaux();
+    faux.appendResponses([() => fauxAssistantMessage("done")]);
+    // What the route does first: the host, from the options the runtime
+    // itself would build it with, over a dir that holds no login.
+    const options = reviewHostOptions(
+      { processEnv: {}, ownsProcess: false, credentials: keyOnlyCredentials() },
+      { agentDir, needMs: 60_000 },
+    );
+    expect(options).toMatchObject({ agentDir, ownsProcess: false, authEnv: {} });
+    const prebuilt = await PiHost.create({
+      ...options,
+      configureModels: (r) => {
+        r.registerNativeProvider(faux.provider);
+      },
+    });
+    hosts.push(prebuilt);
+    const route = await prebuilt.route();
+    expect(route).toMatchObject({ ok: true, route: { spec: `faux/${ROUTABLE_FAUX_MODEL.id}` } });
+
+    const seen: PiHostOptions[] = [];
+    const asked: string[] = [];
+    const rt = reviewSdkRuntime({
+      makeHost: fauxHost(seen),
+      lens: noLens,
+      prebuilt: (dir) => {
+        asked.push(dir);
+        return dir === agentDir ? prebuilt : undefined;
+      },
+    });
+    const s = await rt.create(spec({ model: "" }));
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+    expect(asked).toEqual([agentDir]);
+    expect(seen).toEqual([]);
+    // the turn was the prebuilt host's provider's
+    expect(faux.state.callCount).toBe(1);
+
+    // a dir it has no host for is built as always
+    const other = join(dir, "other-agent");
+    mkdirSync(other);
+    writeFileSync(join(other, "auth.json"), "{}\n");
+    const t = await rt.create(
+      spec(
+        { eventsFile: join(dir, "e2.jsonl"), stderrFile: join(dir, "s2") },
+        { PI_CODING_AGENT_DIR: other },
+      ),
+    );
+    await t.dispose();
+    expect(seen.map((o) => o.agentDir)).toEqual([other]);
   });
 
   describe("the tool uid", () => {

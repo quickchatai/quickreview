@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fauxAssistantMessage,
+  fauxProvider,
   fauxToolCall,
   type SimpleStreamOptions,
   type TranscriptContext,
@@ -31,6 +32,8 @@ import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { lensLogName, readLiveEvents } from "@quickchatai/pi-quickreview/src/live/events.js";
 import { createLiveWriter } from "@quickchatai/pi-quickreview/src/live/writer.js";
 import { parseLedger } from "@quickchatai/pi-quickreview/src/lensresult.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { ROUTABLE_FAUX_MODEL, routableFaux } from "./helpers/priced-faux.js";
 import {
   FakeTransport,
   createHostRig,
@@ -281,6 +284,201 @@ describe("[runLens] a pass", () => {
       errorMessage: "529 overloaded",
     });
     expect(ledger()[0]).toMatchObject({ exitCode: 1, stopReason: "error" });
+  });
+});
+
+// An unpinned tier's agent file carries no `model:` line. Such a pass runs on
+// the model the host resolved for the run, and says which.
+describe("[runLens] a lens that names no model runs on the host's route", () => {
+  const ROUTE_SPEC = `faux/${ROUTABLE_FAUX_MODEL.id}`;
+  /** An agent file as an unpinned tier is built: no `model:`, a `thinking:`. */
+  const unpinned = (name: string, extra = ""): string =>
+    `---\nname: ${name}\ndescription: ${name} lens\ntools: read\nthinking: low\n${extra}---\nYou are ${name}.\n`;
+  const hosts: PiHost[] = [];
+  /** What each session the host made was asked for. */
+  let asked: Array<{ model: unknown; thinkingLevel: unknown; sessionId: unknown }>;
+
+  /** A host whose only provider is a faux one. `routable`: its first model
+   * is one the pick rule accepts, so the host has a route. Its environment
+   * holds no key: the developer's own never count. */
+  async function routedHost(routable: boolean) {
+    const faux = routable ? routableFaux() : fauxProvider();
+    const host = await PiHost.create({
+      agentDir: join(dir, `agent-${hosts.length}`),
+      authEnv: {},
+      settings: { compaction: { enabled: false }, retry: { enabled: false } },
+      configureModels: (runtime) => runtime.registerNativeProvider(faux.provider),
+    });
+    hosts.push(host);
+    const real = host.makeSession.bind(host);
+    vi.spyOn(host, "makeSession").mockImplementation(async (spec) => {
+      asked.push({
+        model: spec.model,
+        thinkingLevel: spec.thinkingLevel,
+        sessionId: spec.sessionId,
+      });
+      return real(spec);
+    });
+    return { host, faux };
+  }
+
+  beforeEach(() => {
+    asked = [];
+    writeFileSync(join(dir, "agents", "pass-free.md"), unpinned("pass-free"));
+    writeFileSync(join(dir, "agents", "pass-free-b.md"), unpinned("pass-free-b"));
+    // A file an older build left: `model:` holds a level and no model.
+    writeFileSync(
+      join(dir, "agents", "pass-level.md"),
+      `---\nname: pass-level\ndescription: level lens\nmodel: :high\ntools: read\n---\nYou are pass-level.\n`,
+    );
+  });
+  afterEach(() => {
+    for (const h of hosts.splice(0)) h.dispose();
+  });
+
+  // MUTATION: restore the refusal of an agent with no model in attemptsOf
+  // (`names no model and the run has no default`) — this fails.
+  // MUTATION: pass `model: on.spec` to the session for a routed pass — the
+  // "asked for no model" assertion fails.
+  it("the session is asked for no model, runs on the route's, and the pass reports the route's spec", async () => {
+    const { host, faux } = await routedHost(true);
+    faux.setResponses([() => fauxAssistantMessage("routed answer")]);
+    const runner = createLensRunner(config({ host }));
+    const { result, text } = await runner.run({ agent: "pass-free", task: "go" });
+    expect(result.errorMessage).toBeUndefined();
+    expect(text).toBe("routed answer");
+    expect(result).toMatchObject({ agent: "pass-free", exitCode: 0 });
+    // The model the provider answered as is the route's.
+    expect(result.model).toContain(ROUTABLE_FAUX_MODEL.id);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.model, "the session spec names no model").toBeUndefined();
+    expect(asked[0]!.thinkingLevel).toBe("low");
+    // What the provider was asked is the route's model.
+    expect(faux.state.callCount).toBe(1);
+    const routed = await host.route();
+    expect(routed.ok && routed.route.spec).toBe(ROUTE_SPEC);
+    expect(ledger()).toHaveLength(1);
+    expect(ledger()[0]).toMatchObject({ kind: "lens", agent: "pass-free", exitCode: 0 });
+  });
+
+  it("a failed routed pass reports the route's spec, never 'unknown'", async () => {
+    const { host, faux } = await routedHost(true);
+    faux.setResponses([
+      () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "529 overloaded" }),
+    ]);
+    const runner = createLensRunner(config({ host }));
+    // A pass whose session cannot be built never reaches the provider: its
+    // envelope's model is what the runner says, which is the route's spec.
+    vi.mocked(host.makeSession).mockImplementationOnce(async () => {
+      throw new Error("no session today");
+    });
+    const broken = await runner.run({ agent: "pass-free", task: "go" });
+    expect(broken.result).toMatchObject({ exitCode: 1, model: ROUTE_SPEC });
+    expect(broken.result.errorMessage).toMatch(/no session today/);
+    const failed = await runner.run({ agent: "pass-free", task: "go" });
+    expect(failed.result).toMatchObject({ exitCode: 1, errorMessage: "529 overloaded" });
+  });
+
+  // MUTATION: call config.host.route() in every pass instead of once per
+  // runner — the call count fails.
+  it("asks the host for its route once, however many passes need it", async () => {
+    const { host, faux } = await routedHost(true);
+    faux.setResponses([
+      () => fauxAssistantMessage("1"),
+      () => fauxAssistantMessage("2"),
+      () => fauxAssistantMessage("3"),
+    ]);
+    // The runner's own asks, apart from the host's: the host reads its route
+    // again (memoised) for every session it makes.
+    let runnerAsks = 0;
+    const seen = new Proxy(host, {
+      get(target, key) {
+        if (key === "route")
+          return () => {
+            runnerAsks++;
+            return target.route();
+          };
+        const value: unknown = Reflect.get(target, key, target);
+        return typeof value === "function"
+          ? (value as (...a: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    });
+    const runner = createLensRunner(config({ host: seen }));
+    const runs = await Promise.all([
+      runner.run({ agent: "pass-free", task: "a" }),
+      runner.run({ agent: "pass-free-b", task: "b" }),
+      runner.run({ agent: "pass-free", task: "c" }),
+    ]);
+    expect(runs.map((r) => r.result.exitCode)).toEqual([0, 0, 0]);
+    expect(runnerAsks).toBe(1);
+    expect(asked.map((a) => a.model)).toEqual([undefined, undefined, undefined]);
+  });
+
+  // The cache group is per model: routed passes share the route's group, and
+  // so one session id.
+  // MUTATION: join no group for a pass with no model of its own (the old
+  // `modelSpec !== undefined` guard) — each pass gets an id of its own and
+  // this fails.
+  it("routed passes share one cache group, keyed by the route's spec", async () => {
+    const { host, faux } = await routedHost(true);
+    faux.setResponses([() => fauxAssistantMessage("1"), () => fauxAssistantMessage("2")]);
+    const runner = createLensRunner(config({ host, cache: { size: 4, staggerMs: 0 } }));
+    const [a, b] = await Promise.all([
+      runner.run({ agent: "pass-free", task: "a" }),
+      runner.run({ agent: "pass-free-b", task: "b" }),
+    ]);
+    expect([a.result.exitCode, b.result.exitCode]).toEqual([0, 0]);
+    expect(asked).toHaveLength(2);
+    expect(typeof asked[0]!.sessionId).toBe("string");
+    expect(asked[1]!.sessionId).toBe(asked[0]!.sessionId);
+  });
+
+  it("an agent whose model field holds only a level is routed too, at that level", async () => {
+    const { host, faux } = await routedHost(true);
+    faux.setResponses([() => fauxAssistantMessage("ok")]);
+    const runner = createLensRunner(config({ host }));
+    const { result } = await runner.run({ agent: "pass-level", task: "go" });
+    expect(result.errorMessage).toBeUndefined();
+    expect(result.exitCode).toBe(0);
+    expect(asked[0]).toMatchObject({ model: undefined, thinkingLevel: "high" });
+  });
+
+  it("a pinned agent beside a routed one keeps its own model", async () => {
+    const { host, faux } = await routedHost(true);
+    writeFileSync(
+      join(dir, "agents", "pass-pinned.md"),
+      `---\nname: pass-pinned\ndescription: pinned lens\nmodel: ${ROUTE_SPEC}:medium\ntools: read\n---\nYou are pass-pinned.\n`,
+    );
+    faux.setResponses([() => fauxAssistantMessage("ok")]);
+    const runner = createLensRunner(config({ host }));
+    const { result } = await runner.run({ agent: "pass-pinned", task: "go" });
+    expect(result.exitCode).toBe(0);
+    expect(asked[0]).toMatchObject({ model: ROUTE_SPEC, thinkingLevel: "medium" });
+  });
+
+  // MUTATION: swallow a refused route and make the session anyway — the
+  // "no session" assertion fails, and the error is pi's, not the refusal's.
+  it("a host with no route fails the pass with the refusal's words, and makes no session", async () => {
+    // The plain faux model does not reason: the pick rule accepts none of the
+    // host's models, so it has a credential and no route.
+    const { host } = await routedHost(false);
+    const routed = await host.route();
+    expect(routed.ok).toBe(false);
+    const runner = createLensRunner(config({ host }));
+    const first = await runner.run({ agent: "pass-free", task: "go" });
+    const second = await runner.run({ agent: "pass-free-b", task: "go" });
+    for (const { result } of [first, second]) {
+      expect(result.exitCode).toBe(1);
+      expect(result.stopReason).toBe("error");
+      expect(result.errorMessage).toMatch(/none of (its|their) models|no model/i);
+      expect(result.errorMessage).not.toMatch(/names no model and the run has no default/);
+    }
+    expect(asked, "no session is made for a pass with no route").toEqual([]);
+    expect(runner.liveSessions()).toBe(0);
+    // Each failed pass still has its ledger line, and its permit came back.
+    expect(ledger().map((l) => l.exitCode)).toEqual([1, 1]);
+    expect(lensSemaphoreFor(host, 4).held).toBe(0);
   });
 });
 
@@ -588,7 +786,7 @@ describe("[runLens] a built lens names only tools its leaf holds", () => {
         root,
         tiers,
         riskPasses: [],
-        validateTier: "terra-med",
+        validateTier: "light",
       });
       // One session per distinct tools line: the line is what is under test.
       const byLine = new Map<string, string>();

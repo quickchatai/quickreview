@@ -1,156 +1,179 @@
-// The LLM auth onboarding step — both routes end to end, with every
-// piece of I/O faked: temp dirs for config/state/secrets/pi-home, a fake
-// ProcessRunner for every docker probe, a scripted prompter. No network, no
-// docker, no pi.
+// The wizard's model step: a route resolves where the daemon runs.
+//
+// The step asks `qcr model --json` in two places (this machine, and the
+// daemon's container) and decides nothing of its own. Every piece of I/O is
+// faked: temp dirs for config, state and secrets, and a ProcessRunner that
+// answers for docker, ssh and this machine's `qcr`. No network, no docker, no
+// pi, and no real pi home: the step opens no login file at all.
 //
 // The properties that matter:
-//   - the five-string rewrite is comment-preserving, IDEMPOTENT and REVERSIBLE
-//     (oauth → api → oauth restores the original bytes);
-//   - a bad key is refused and nothing is written;
-//   - switching routes re-runs cleanly in either direction;
-//   - verify() re-verifies without asking anything (and without writing);
-//   - OAuth verification proves the token landed on the container's persistent
-//     pi home, not merely that a login happened;
+//   - the daemon's own answer is the step's, whatever provider it names; this
+//     machine's pi stands in only for a daemon on this computer that is not
+//     running yet, and for nothing on a server;
+//   - a red check names the login the daemon reads (this machine's, where the
+//     stack mounts it) and the secrets dir this machine's `qcr model` reads;
+//   - an answer that cannot be read is said as that, never as a route;
+//   - there is no route question, no key question, no config rewrite and no
+//     key file; what an older wizard recorded is not read;
+//   - run() and verify() ask the same questions and neither writes a file;
 //   - NO credential value ever reaches an argv, the checklist, or a message.
-import { spawnSync } from "node:child_process";
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  refusalText,
+  type ModelRoute,
+  type RouteRefusal,
+} from "@quickchatai/pi-quickreview/src/modelroute.js";
+import type { ModelCliJson } from "../src/modelcli.js";
 import { CHOICE_KEYS } from "../src/onboard/choices.js";
 import {
   OnboardingEngine,
+  checklistPath,
   readChecklist,
+  type ChecklistFile,
   type OnboardAdapters,
   type ProcessResult,
 } from "../src/onboard/engine.js";
 import {
-  API_PREFIX,
-  AUTH_ROUTE_CHOICE_KEY,
+  CONTAINER_MODEL_QUERY,
+  EMBEDDINGS_NOTE,
   LLM_AUTH_STEP_ID,
-  MODEL_LOCATIONS,
-  MODEL_PREFIX_CHOICE_KEY,
-  OAUTH_PREFIX,
-  OPENAI_KEY_FILE,
-  auditModelStrings,
-  companionContainerName,
-  daemonContainerName,
-  expandHomePath,
-  hostAuthJsonPath,
+  MODEL_QUERY,
+  STEP_EXPLAIN,
+  configExamplePathFor,
   llmAuthStep,
-  modelLabels,
-  parseRouteAnswer,
-  probeContainerLogin,
-  readTomlString,
-  resolveSecretsDir,
-  rewriteModelPrefixes,
-  validateOpenAiKey,
+  parseModelAnswer,
 } from "../src/onboard/steps/llmauth.js";
 
-/** The config beside the state dir — what these tests hand the adapters as the
- * locator's answer. */
-const configPathFor = (dir: string): string => join(dirname(dir), "config.toml");
-
-const KEY = "sk-proj-onboardingtestkey000000000000";
+/** The node and cli.js the step is told to ask this machine's pi with. */
+const NODE = "/opt/node/bin/node";
+const CLI = "/opt/qcr/dist/src/cli.js";
+/** The shipped daemon container name on a server (`[tui] container`). */
+const CONTAINER = "quickreview-sandbox";
+/** A value that must never leave its file. Not shaped like any real key. */
+const SECRET = "credential-value-that-stays-in-its-file";
 
 let root: string;
 let stateDir: string;
 let secretsDir: string;
-let home: string;
-let savedHome: string | undefined;
-let savedSecretsEnv: string | undefined;
-
-/** A config.example.toml with the real shape: the five model strings, comments
- * between them, and other `openai-codex/` mentions that must NOT be touched. */
-const EXAMPLE_CONFIG = `# QuickReview config
-[github]
-repo = "acme/widgets"
-secrets_dir = "SECRETS_DIR"
-
-[models]
-# Provider prefix is \`openai-codex/\` — the ChatGPT-OAuth route's provider key
-# in pi's auth.json (direct \`openai/\` needs an API key we don't ship).
-default = "openai-codex/gpt-5.6-sol"
-conversation = "openai-codex/gpt-5.6-sol"   # sticky per-PR session
-risk_passes = ["pass-security"]
-validate_tier = "sol-high"
-
-[models.tiers]
-"terra-med" = "openai-codex/gpt-5.6-terra:medium"
-"sol-med" = "openai-codex/gpt-5.6-sol:medium"
-"sol-high" = "openai-codex/gpt-5.6-sol:high"
-
-[tui]
-container = "quickreview-sandbox"
-
-[companion]
-# model = "openai-codex/gpt-5.6-sol"
-`;
-
-function writeExample(text = EXAMPLE_CONFIG): void {
-  writeFileSync(join(root, "config.example.toml"), text.replace("SECRETS_DIR", secretsDir));
-}
+let configPath: string;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "qcr-llmauth-"));
   stateDir = join(root, "state");
   mkdirSync(stateDir, { recursive: true });
   secretsDir = join(root, "secrets");
-  home = join(root, "home");
-  mkdirSync(home, { recursive: true });
-  savedHome = process.env.HOME;
-  savedSecretsEnv = process.env.QC_SECRETS_DIR;
-  process.env.HOME = home;
-  delete process.env.QC_SECRETS_DIR;
-  writeExample();
+  configPath = join(root, "config.toml");
+  // A scratch home: a path the step derives from $HOME (the install's secrets
+  // dir, when no config names one) is never the one of the person running the
+  // suite. The step itself reads no pi home.
+  vi.stubEnv("HOME", join(root, "home"));
+  vi.stubEnv("QC_SECRETS_DIR", undefined);
 });
 
 afterEach(() => {
-  if (savedHome === undefined) delete process.env.HOME;
-  else process.env.HOME = savedHome;
-  if (savedSecretsEnv === undefined) delete process.env.QC_SECRETS_DIR;
-  else process.env.QC_SECRETS_DIR = savedSecretsEnv;
+  vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
 });
 
-// ---- fakes ------------------------------------------------------------------
+// ---- what `qcr model --json` prints ------------------------------------------
+//
+// Typed as the verb's own output (src/modelcli.ts), so a change of its shape
+// fails the typecheck here before it fails a wizard.
 
-interface FakeContainer {
-  /** Destination of the pi-home mount; omit for "no volume on the pi home". */
-  piHome?: string;
-  mountType?: string;
-  mountName?: string;
-  running?: boolean;
-  /** true = a ChatGPT (openai-codex) OAuth login; a string = auth.json's exact
-   * bytes; false/absent = no auth.json at all. */
-  auth?: boolean | string;
+function routeJson(over: Partial<ModelRoute> = {}): string {
+  const route: ModelRoute = {
+    provider: "anthropic",
+    modelId: "claude-opus-5-5",
+    providerName: "Anthropic",
+    spec: "anthropic/claude-opus-5-5",
+    thinking: null,
+    source: "only-credential",
+    pick: "newest",
+    piDefaultId: null,
+    custom: false,
+    movedFrom: null,
+    credential: { kind: "oauth", origin: "stored", subscription: true },
+    priced: true,
+    ask: false,
+    alternatives: [],
+    notices: [],
+    ...over,
+  };
+  const out: ModelCliJson = { ok: true, route, choice: null, config_pin: null, skipped: [] };
+  return JSON.stringify(out);
 }
 
-interface World {
-  containers?: Record<string, FakeContainer>;
-  /** Containers on the review HOST, reachable only through `ssh <alias>`. */
-  remote?: { alias: string; containers: Record<string, FakeContainer> };
-  /** docker itself unavailable. */
-  noDocker?: boolean;
-  /** The name `docker compose ps` reports for the daemon service on this
-   * machine; unset = compose answers as if there were no stack here. */
-  composeDaemon?: string;
+/** Another provider's route: a key in the environment. */
+const KEY_ROUTE: Partial<ModelRoute> = {
+  provider: "xai",
+  modelId: "grok-5",
+  providerName: "xAI",
+  spec: "xai/grok-5",
+  credential: { kind: "api_key", origin: "env-key", label: "XAI_API_KEY", subscription: false },
+};
+
+/** A refusal in the verb's own words (packages/pi-plugin/src/modelroute.ts). */
+function refusalJson(refusal: RouteRefusal): string {
+  const out: ModelCliJson = {
+    ok: false,
+    route: null,
+    refusal: { code: refusal.code, text: refusalText(refusal, "app", { agentDir: "/pi/agent" }) },
+    choice: null,
+    config_pin: null,
+    skipped: [],
+  };
+  return JSON.stringify(out);
 }
 
-const CODEX_LOGIN = JSON.stringify({
-  "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: 1 },
+const NO_CREDENTIAL = refusalJson({ code: "no-credential" });
+const PIN_NO_CREDENTIAL = refusalJson({
+  code: "pin-no-credential",
+  pin: "mistral/mistral-large-3",
+  provider: "mistral",
+  from: "config",
+  candidates: [],
+});
+const LOGIN_TOO_SHORT = refusalJson({
+  code: "login-too-short",
+  logins: [{ provider: "anthropic", name: "Anthropic", expiresAt: 0 }],
 });
 
-/** Undo `shellQuote` (src/tui/remote.ts) on the ssh remote command string. */
+/** A failure that is not a refusal: the verb ran and could not tell. */
+const failedJson = (error: string): string => JSON.stringify({ ok: false, route: null, error });
+
+// ---- the world ----------------------------------------------------------------
+
+/** What a place answers: the JSON line, or a raw process result. */
+type Answer = string | ProcessResult;
+
+const result = (a: Answer): ProcessResult =>
+  typeof a === "string"
+    ? { code: a.includes('"ok":true') ? 0 : 1, stdout: `${a}\n`, stderr: "" }
+    : a;
+
+interface World {
+  /** This machine's `qcr model --json`. Unset: the command is not found. */
+  host?: Answer;
+  /** The daemon on this machine, through docker compose. Unset: no stack. */
+  daemon?: { running?: boolean; model?: Answer };
+  /** The daemon on the server, reachable only through `ssh <alias>`. */
+  remote?: { alias: string; container?: string; running?: boolean; model?: Answer };
+  /** docker itself unavailable on this machine. */
+  noDocker?: boolean;
+}
+
+/** Undo `shellQuote` on the ssh remote command string. */
 function unquoteRemote(cmd: string): string[] {
   const out: string[] = [];
   const re = /'((?:[^']|'\\'')*)'|(\S+)/g;
@@ -160,922 +183,839 @@ function unquoteRemote(cmd: string): string[] {
   return out;
 }
 
-/** Run the probe's REAL in-container script with this machine's node against
- * a scratch copy of the fake auth.json — the fake emulates docker, never the
- * check itself. */
-function runLoginScript(args: string[], auth: FakeContainer["auth"]): ProcessResult {
-  const [node, flag, script] = args;
-  if (node !== "node" || flag !== "-e" || script === undefined)
-    return { code: 1, stdout: "", stderr: "unexpected exec" };
-  const file = join(root, `auth-${Math.random().toString(36).slice(2)}.json`);
-  if (auth !== undefined && auth !== false) writeFileSync(file, auth === true ? CODEX_LOGIN : auth);
-  const r = spawnSync(process.execPath, ["-e", script, file], { encoding: "utf8" });
-  rmSync(file, { force: true });
-  return { code: r.status ?? 1, stdout: r.stdout, stderr: r.stderr };
+const NOT_FOUND = (cmd: string): ProcessResult => ({
+  code: 127,
+  stdout: "",
+  stderr: `${cmd}: command not found`,
+});
+
+/** The daemon's container, asked the one question the step asks it. Any other
+ * exec is a failure of the test, said loudly. */
+function containerAnswer(argv: string[], model: Answer | undefined): ProcessResult {
+  if (argv.join(" ") !== CONTAINER_MODEL_QUERY.join(" "))
+    return { code: 1, stdout: "", stderr: `unexpected exec: ${argv.join(" ")}` };
+  return model === undefined
+    ? { code: 1, stdout: "", stderr: "no answer scripted" }
+    : result(model);
 }
 
-function fakeAdapters(
-  world: World = {},
-  calls: string[][] = [],
-  answers: string[] = [],
-): OnboardAdapters {
-  const localContainers = world.containers ?? {};
-  const adapters: OnboardAdapters = {
+function fakeAdapters(world: World = {}, calls: string[][] = []): OnboardAdapters {
+  return {
     fetch: (() => {
       throw new Error("no network in tests");
     }) as unknown as typeof fetch,
     runner: {
-      run: async (cmd0, args0): Promise<ProcessResult> => {
-        calls.push([cmd0, ...args0]);
-        let cmd = cmd0;
-        let args = args0;
-        let containers = localContainers;
-        if (cmd0 === "ssh" && world.remote) {
-          const remote = unquoteRemote(args0.at(-1) ?? "");
-          if (!args0.includes(world.remote.alias))
-            return { code: 255, stdout: "", stderr: "ssh: unknown host" };
-          if (remote[0] === "sudo") remote.shift();
-          [cmd, ...args] = remote as [string, ...string[]];
-          containers = world.remote.containers;
+      run: async (cmd, args): Promise<ProcessResult> => {
+        calls.push([cmd, ...args]);
+        if (cmd === NODE) {
+          if (args.join(" ") !== [CLI, ...MODEL_QUERY].join(" "))
+            return { code: 1, stdout: "", stderr: `unexpected qcr call: ${args.join(" ")}` };
+          return world.host === undefined ? NOT_FOUND(cmd) : result(world.host);
         }
-        if (world.noDocker) return { code: 127, stdout: "", stderr: "docker: command not found" };
-        if (cmd !== "docker") return { code: 127, stdout: "", stderr: `${cmd}: not found` };
-        const name = args[args.length - 1] ?? "";
-        if (args[0] === "compose" && args.includes("ps")) {
-          if (args.at(-1) !== "json" && world.composeDaemon === undefined)
-            return { code: 1, stdout: "", stderr: "no name listing available" };
+        if (cmd === "ssh") {
+          const remote = world.remote;
+          if (!remote || !args.includes(remote.alias))
+            return { code: 255, stdout: "", stderr: "ssh: unknown host" };
+          const argv = unquoteRemote(args.at(-1) ?? "");
+          if (argv[0] === "sudo") argv.shift();
+          const container = remote.container ?? CONTAINER;
+          if (argv[0] !== "docker") return NOT_FOUND(argv[0] ?? "");
+          if (argv[1] === "ps")
+            return { code: 0, stdout: remote.running ? `${container}\n` : "", stderr: "" };
+          if (argv[1] === "exec" && argv[2] === container)
+            return containerAnswer(argv.slice(3), remote.model);
+          return { code: 1, stdout: "", stderr: `unexpected remote docker: ${argv.join(" ")}` };
+        }
+        if (cmd !== "docker" || world.noDocker) return NOT_FOUND(cmd);
+        if (args[0] === "compose" && args.includes("ps"))
           return {
             code: 0,
-            stdout:
-              args.at(-1) === "json"
-                ? JSON.stringify(
-                    world.composeDaemon ? [{ Service: "daemon", State: "running" }] : [],
-                  )
-                : `${world.composeDaemon ?? ""}\n`,
+            stdout: JSON.stringify(
+              world.daemon
+                ? [{ Service: "daemon", State: world.daemon.running ? "running" : "exited" }]
+                : [],
+            ),
             stderr: "",
           };
-        }
-        if (args[0] === "inspect" && args[1] === "--format" && args[2] === "{{json .Mounts}}") {
-          const c = containers[name];
-          if (!c) return { code: 1, stdout: "", stderr: `Error: No such object: ${name}` };
-          const mounts = c.piHome
-            ? [
-                {
-                  Type: c.mountType ?? "volume",
-                  Name: c.mountName ?? "some-pihome",
-                  Destination: c.piHome,
-                },
-              ]
-            : [{ Type: "bind", Source: "/repo", Destination: "/opt/quickreview/sandbox" }];
-          return { code: 0, stdout: JSON.stringify(mounts), stderr: "" };
-        }
-        if (args[0] === "inspect" && args[2] === "{{.State.Running}}") {
-          const c = containers[name];
-          if (!c) return { code: 1, stdout: "", stderr: "No such object" };
-          return { code: 0, stdout: `${c.running ?? true}\n`, stderr: "" };
-        }
-        if (args[0] === "exec") {
-          const c = containers[args[1] ?? ""];
-          return runLoginScript(args.slice(2), c?.auth);
-        }
-        return { code: 1, stdout: "", stderr: "unexpected docker args" };
+        const exec = args.indexOf("exec");
+        if (args[0] === "compose" && exec > 0 && args[exec + 2] === "daemon")
+          return containerAnswer(args.slice(exec + 3), world.daemon?.model);
+        return { code: 1, stdout: "", stderr: `unexpected docker: ${args.join(" ")}` };
       },
     },
     clock: () => new Date("2026-08-30T12:00:00Z"),
+    // The step asks nothing: a question from it is a failure.
+    prompter: async (question) => {
+      throw new Error(`the model step asked a question: ${question.slice(0, 120)}`);
+    },
     host: { nodeVersion: "v22.5.1", uid: 1000 },
-    paths: { stateDir, configPath: join(dirname(stateDir), "config.toml") },
+    paths: { stateDir, configPath },
   };
-  if (answers.length) {
-    adapters.prompter = async () => answers.shift() ?? "";
-  }
-  return adapters;
 }
 
-function engine(
-  world: World = {},
-  calls: string[][] = [],
-  answers: string[] = [],
-): OnboardingEngine {
-  return new OnboardingEngine([llmAuthStep()], fakeAdapters(world, calls, answers));
+const step = (): ReturnType<typeof llmAuthStep> => llmAuthStep({ nodePath: NODE, cliPath: CLI });
+
+function engine(world: World = {}, calls: string[][] = []): OnboardingEngine {
+  return new OnboardingEngine([step()], fakeAdapters(world, calls));
 }
 
-function configText(): string {
-  return readFileSync(configPathFor(stateDir), "utf8");
-}
-
-/** pi's auth.json with a ChatGPT (openai-codex) OAuth login in it — the
- * shape pi writes; `body` overrides it for the logins that are NOT that. */
-function hostLogin(
-  body = '{"openai-codex":{"type":"oauth","access":"redacted","refresh":"redacted","expires":1}}',
+/** A checklist as an earlier session left it: these choices, and whatever
+ * record of this step it kept. */
+function seedChecklist(
+  choices: Record<string, unknown>,
+  record?: Partial<ChecklistFile["steps"][string]>,
 ): void {
-  const p = hostAuthJsonPath(home);
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, body);
+  const file: ChecklistFile = {
+    version: 1,
+    created_at: "2026-08-01T00:00:00Z",
+    updated_at: "2026-08-01T00:00:00Z",
+    completed_at: null,
+    choices,
+    steps: record
+      ? {
+          [LLM_AUTH_STEP_ID]: {
+            status: "done",
+            completed_at: "2026-08-01T00:00:00Z",
+            verified_at: null,
+            note: null,
+            data: {},
+            ...record,
+          },
+        }
+      : {},
+  };
+  mkdirSync(dirname(checklistPath(stateDir)), { recursive: true });
+  writeFileSync(checklistPath(stateDir), JSON.stringify(file));
 }
 
-function keyFileOnDisk(value = KEY): void {
-  mkdirSync(secretsDir, { recursive: true });
-  writeFileSync(join(secretsDir, OPENAI_KEY_FILE), value);
+const onServer = (alias = "review-vm"): Record<string, unknown> => ({
+  [CHOICE_KEYS.topology]: "vm",
+  [CHOICE_KEYS.sshAlias]: alias,
+});
+
+function writeConfig(text: string): void {
+  writeFileSync(configPath, text);
 }
 
 function detailOf(checks: Array<{ name: string; detail: string }>, name: string): string {
   return checks.find((c) => c.name === name)?.detail ?? "";
 }
 
-// ---- the pure rewrite -------------------------------------------------------
+function checkOf(
+  checks: Array<{ name: string; ok: boolean; detail: string }>,
+  name: string,
+): { ok: boolean; detail: string } {
+  const found = checks.find((c) => c.name === name);
+  expect(found, `no "${name}" check`).toBeDefined();
+  return found!;
+}
 
-describe("model-string rewrite", () => {
-  it("names exactly five locations, all under [models]/[models.tiers]", () => {
-    expect(modelLabels()).toEqual([
-      "models.default",
-      "models.conversation",
-      "models.tiers.terra-med",
-      "models.tiers.sol-med",
-      "models.tiers.sol-high",
-    ]);
-    expect(MODEL_LOCATIONS).toHaveLength(5);
+// ---- reading the answer -------------------------------------------------------
+
+describe("reading what qcr model --json printed", () => {
+  it("a route is the model and its credential, in the route's own words", () => {
+    expect(parseModelAnswer(result(routeJson()))).toEqual({
+      kind: "route",
+      spec: "anthropic/claude-opus-5-5",
+      words: "anthropic/claude-opus-5-5 (Anthropic, signed in with pi (subscription))",
+    });
+    // An environment key is named by pi's own label, never by its value.
+    expect(parseModelAnswer(result(routeJson(KEY_ROUTE)))).toMatchObject({
+      words: "xai/grok-5 (xAI, XAI_API_KEY)",
+    });
   });
 
-  it("rewrites all five to the API prefix and touches nothing else (comments, other keys, commented-out models)", () => {
-    const before = EXAMPLE_CONFIG;
-    const { text, rewritten, custom, missing } = rewriteModelPrefixes(before, "api");
-    expect(rewritten).toEqual(modelLabels());
-    expect(custom).toEqual([]);
-    expect(missing).toEqual([]);
-    for (const a of auditModelStrings(text)) expect(a.kind).toBe("api");
-    expect(text).toContain('default = "openai/gpt-5.6-sol"');
-    expect(text).toContain('"sol-high" = "openai/gpt-5.6-sol:high"');
-    // Comments, trailing comments, unrelated keys and the commented-out
-    // [companion] model line all survive byte-for-byte.
-    expect(text).toContain(
-      "# Provider prefix is `openai-codex/` — the ChatGPT-OAuth route's provider key",
+  it("a pin that moved to a provider with a credential says where it moved from", () => {
+    const answer = parseModelAnswer(
+      result(routeJson({ movedFrom: "openai-codex", source: "config", pick: "pinned" })),
     );
-    expect(text).toContain('conversation = "openai/gpt-5.6-sol"   # sticky per-PR session');
-    expect(text).toContain('# model = "openai-codex/gpt-5.6-sol"');
-    expect(text).toContain('risk_passes = ["pass-security"]');
-    // Same number of lines: a line-oriented edit, never a TOML round-trip.
-    expect(text.split("\n")).toHaveLength(before.split("\n").length);
+    expect(answer).toMatchObject({
+      kind: "route",
+      words:
+        "anthropic/claude-opus-5-5 (Anthropic, signed in with pi (subscription)) " +
+        "(moved from openai-codex: no credential for it there)",
+    });
   });
 
-  it("is idempotent: a second pass rewrites nothing and changes no byte", () => {
-    const once = rewriteModelPrefixes(EXAMPLE_CONFIG, "api");
-    const twice = rewriteModelPrefixes(once.text, "api");
-    expect(twice.text).toBe(once.text);
-    expect(twice.rewritten).toEqual([]);
-    expect(twice.unchanged).toEqual(modelLabels());
+  it("a refusal keeps its code and its text; a failure keeps its reason", () => {
+    const refused = parseModelAnswer(result(NO_CREDENTIAL));
+    expect(refused).toMatchObject({ kind: "refused", code: "no-credential" });
+    expect(refused.kind === "refused" && refused.text).toContain("pi has no model credential");
+    expect(parseModelAnswer(result(failedJson("cannot read /pi/agent/auth.json")))).toEqual({
+      kind: "failed",
+      error: "cannot read /pi/agent/auth.json",
+    });
   });
 
-  it("is reversible: oauth → api → oauth restores the original bytes", () => {
-    const api = rewriteModelPrefixes(EXAMPLE_CONFIG, "api");
-    const back = rewriteModelPrefixes(api.text, "oauth");
-    expect(back.text).toBe(EXAMPLE_CONFIG);
-    expect(back.rewritten).toEqual(modelLabels());
+  it("reads the JSON line among other lines a wrapper printed", () => {
+    const noisy = { code: 0, stdout: `Warning: banner\n${routeJson()}\n`, stderr: "note: x\n" };
+    expect(parseModelAnswer(noisy).kind).toBe("route");
   });
 
-  it("leaves a deliberately custom provider alone and reports it", () => {
-    const custom = EXAMPLE_CONFIG.replace(
-      'conversation = "openai-codex/gpt-5.6-sol"',
-      'conversation = "anthropic/some-model"',
-    );
-    const out = rewriteModelPrefixes(custom, "api");
-    expect(out.custom).toEqual(["models.conversation"]);
-    expect(out.text).toContain('conversation = "anthropic/some-model"');
-  });
-
-  it("reports a location that is missing from the file rather than inventing it", () => {
-    const trimmed = EXAMPLE_CONFIG.replace('"sol-med" = "openai-codex/gpt-5.6-sol:medium"\n', "");
-    const out = rewriteModelPrefixes(trimmed, "api");
-    expect(out.missing).toEqual(["models.tiers.sol-med"]);
-  });
-
-  it("never rewrites a same-named key in another section", () => {
-    const withOther = `${EXAMPLE_CONFIG}\n[somewhere]\ndefault = "openai-codex/other"\n`;
-    const out = rewriteModelPrefixes(withOther, "api");
-    expect(out.text).toContain('[somewhere]\ndefault = "openai-codex/other"');
-  });
-
-  it("reads and rewrites a literal-string model, keeping its quote style", () => {
-    const literal = EXAMPLE_CONFIG.replace(/^default = "([^"]*)"/m, "default = '$1'");
-    expect(literal).not.toBe(EXAMPLE_CONFIG);
-    const out = rewriteModelPrefixes(literal, "api");
-    expect(out.missing).toEqual([]);
-    expect(out.rewritten).toContain("models.default");
-    expect(out.text).toMatch(/^default = 'openai\//m);
-    expect(rewriteModelPrefixes(out.text, "oauth").text).toBe(literal);
-  });
-});
-
-describe("tolerant config reads", () => {
-  it("reads a string key from its own section only, ignoring comments", () => {
-    expect(readTomlString(EXAMPLE_CONFIG, "tui", "container")).toBe("quickreview-sandbox");
-    expect(readTomlString(EXAMPLE_CONFIG, "companion", "model")).toBeNull(); // commented out
-    expect(readTomlString(EXAMPLE_CONFIG, "models", "nope")).toBeNull();
-    expect(readTomlString("[tui]\ncontainer = 'my-box'\n", "tui", "container")).toBe("my-box");
-    // A basic string's escapes are decoded as the loader decodes them.
-    expect(readTomlString('[tui]\ncontainer = "my\\u002dbox" # c\n', "tui", "container")).toBe(
-      "my-box",
-    );
-  });
-
-  it("resolves the secrets dir: config first, then $QC_SECRETS_DIR, then the install locator", async () => {
-    expect(resolveSecretsDir('[github]\nsecrets_dir = "~/keys"\n', "/h")).toBe("/h/keys");
-    expect(resolveSecretsDir("[github]\n", "/h", "/env/keys")).toBe("/env/keys");
-    // Nothing set → the install locator (the test's temp XDG config
-    // home; /h holds no legacy dir), and the legacy spelling means the same.
-    const { secretsHome } = await import("../src/install.js");
-    const home = secretsHome({ ...process.env, HOME: "/h" });
-    expect(resolveSecretsDir("", "/h")).toBe(home);
-    expect(resolveSecretsDir('[github]\nsecrets_dir = "~/.config/quickreview-bot"\n', "/h")).toBe(
-      home,
-    );
-    expect(expandHomePath("~", "/h")).toBe("/h");
-    expect(expandHomePath("/abs", "/h")).toBe("/abs");
-  });
-
-  it("reads a single-quoted secrets_dir the way every other onboarding step does", () => {
-    expect(resolveSecretsDir("[github]\nsecrets_dir = '/lit/keys'\n", "/h")).toBe("/lit/keys");
-    expect(resolveSecretsDir('[github]\nsecrets_dir = "secrets"\n', "/h", undefined, "/box")).toBe(
-      "/box/secrets",
-    );
-  });
-
-  it("falls back to the shipped container names when config does not override them", () => {
-    expect(daemonContainerName(EXAMPLE_CONFIG)).toBe("quickreview-sandbox");
-    expect(companionContainerName(EXAMPLE_CONFIG)).toBe("qcr-companion");
-    expect(daemonContainerName("")).toBe("quickreview-sandbox");
-    expect(companionContainerName("")).toBe("qcr-companion");
-  });
-});
-
-// ---- key validation ---------------------------------------------------------
-
-describe("API key validation", () => {
-  it("accepts sk- keys, refuses everything else", () => {
-    expect(validateOpenAiKey(KEY)).toBe(true);
-    expect(validateOpenAiKey(`  ${KEY}\n`)).toBe(true);
-    expect(validateOpenAiKey("nope")).toBe(false);
-    expect(validateOpenAiKey("")).toBe(false);
-    expect(validateOpenAiKey("sk-")).toBe(false);
-    expect(validateOpenAiKey("sk- with space")).toBe(false);
-  });
-
-  it("mirrors deploy/collect-secrets.sh's validator and file name — the two must not drift", () => {
-    const shell = readFileSync(join(process.cwd(), "deploy", "collect-secrets.sh"), "utf8");
-    expect(shell).toContain(OPENAI_KEY_FILE);
-    // Run the shell's own function against the TypeScript validator's table:
-    // the two must AGREE on every value, not merely mention the same prefix.
-    const fn = /^v_openai\(\).*$/m.exec(shell)?.[0];
-    expect(fn).toBeDefined();
-    const shellAccepts = (value: string, locale: string): boolean =>
-      spawnSync("bash", ["-c", `${fn}\nprintf '%s' "$1" | v_openai`, "v", value], {
-        encoding: "utf8",
-        env: { ...process.env, LC_ALL: locale },
-      }).status === 0;
-    // `read -r` hands the shell an already-trimmed value; the TS side trims.
-    for (const value of [
-      KEY,
-      "nope",
-      "",
-      "sk-",
-      "sk- with space",
-      "sk-a\tb",
-      "sk-a\u00a0b",
-      "sk-a\u2003b",
-      "sk-a\u2028b",
-      "sk-a\ufeffb",
-      "sk-x",
-      "SK-upper",
-    ]) {
-      for (const locale of ["C", "C.UTF-8"])
-        expect(shellAccepts(value.trim(), locale), `${locale}:${JSON.stringify(value)}`).toBe(
-          validateOpenAiKey(value),
-        );
-    }
-  });
-});
-
-describe("triple-quoted model strings", () => {
-  it("are read and rewritten by their value, keeping their quotes", () => {
-    const text = '[models]\ndefault = """openai-codex/gpt-5.6-sol"""\n';
-    expect(readTomlString(text, "models", "default")).toBe("openai-codex/gpt-5.6-sol");
-    const out = rewriteModelPrefixes(text, "api");
-    expect(out.rewritten).toEqual(["models.default"]);
-    expect(out.text).toContain('default = """openai/gpt-5.6-sol"""');
-  });
-});
-
-describe("parseRouteAnswer", () => {
-  it("understands both spellings of both routes and nothing else", () => {
-    expect(parseRouteAnswer("1")).toBe("oauth");
-    expect(parseRouteAnswer("OAuth")).toBe("oauth");
-    expect(parseRouteAnswer("2")).toBe("api");
-    expect(parseRouteAnswer(" api ")).toBe("api");
-    expect(parseRouteAnswer("maybe")).toBeNull();
-  });
-});
-
-// ---- the OAuth route --------------------------------------------------------
-
-describe("OAuth route", () => {
-  it("run: records the route, keeps the openai-codex prefix, and states the three-login cost per surface", async () => {
-    hostLogin();
-    const e = engine({}, [], ["oauth"]);
-    const result = await e.runStep(LLM_AUTH_STEP_ID);
-    expect(result.ok).toBe(true);
-    expect(e.choices()[AUTH_ROUTE_CHOICE_KEY]).toBe("oauth");
-    expect(e.choices()[MODEL_PREFIX_CHOICE_KEY]).toBe(OAUTH_PREFIX);
-    for (const a of auditModelStrings(configText())) expect(a.kind).toBe("oauth");
-    expect(detailOf(result.checks, "wizard_login")).toMatch(/login 1 of 3/);
-    // The containers do not exist yet: guided later, never a blocker now.
-    expect(detailOf(result.checks, "daemon_login")).toMatch(/no container yet/);
-    expect(detailOf(result.checks, "companion_login")).toMatch(/no container yet/);
-  });
-
-  it("verify: a companion on another provider is not probed for a ChatGPT login", async () => {
-    hostLogin();
-    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    writeFileSync(
-      configPathFor(stateDir),
-      configText().replace("[companion]\n", '[companion]\nmodel = "anthropic/claude-x"\n'),
-    );
-    const world = {
-      containers: {
-        "quickreview-sandbox": { piHome: "/home/review/.pi", auth: true },
-        "qcr-companion": { piHome: "/home/companion/.pi", auth: false },
-      },
+  // MUTATION: make routeOf in src/onboard/steps/llmauth.ts accept a route
+  // whose credential it cannot read (return the spec with a fixed phrase), or
+  // make parseModelAnswer return a route for any `ok: true` — this fails: an
+  // answer the step cannot read would be reported as a model that runs.
+  it("an answer it cannot read is silent, with the reason: never a route, never a refusal", () => {
+    const silent = (r: ProcessResult): string => {
+      const answer = parseModelAnswer(r);
+      expect(answer.kind, JSON.stringify(r)).toBe("silent");
+      return answer.kind === "silent" ? answer.why : "";
     };
-    const report = await engine(world).verifyAll();
-    expect((report.results[0]?.failures ?? []).join(" ")).not.toContain("companion_login");
+    expect(silent({ code: 0, stdout: "", stderr: "" })).toBe("exit 0, no output");
+    // An image whose cli has no such verb prints its usage.
+    expect(silent({ code: 2, stdout: "", stderr: "usage: qcr <version|status|…>\n" })).toBe(
+      "exit 2: usage: qcr <version|status|…>",
+    );
+    expect(silent(NOT_FOUND("node"))).toContain("command not found");
+    // JSON of another family, a broken line, a route with no credential, a
+    // credential of an origin this build does not know, ok with no route.
+    silent({ code: 0, stdout: '{"version":"1.4.2"}\n', stderr: "" });
+    silent({ code: 0, stdout: '{"ok":true,"route":{"spec":"a/b"\n', stderr: "" });
+    silent(result(JSON.stringify({ ok: true, route: { spec: "a/b", providerName: "A" } })));
+    silent(
+      result(
+        JSON.stringify({
+          ok: true,
+          route: { spec: "a/b", credential: { kind: "api_key", origin: "constructor" } },
+        }),
+      ),
+    );
+    silent(result(JSON.stringify({ ok: true, route: null })));
+    silent({ code: 1, stdout: JSON.stringify({ ok: false, route: null }), stderr: "" });
   });
 
-  it("run: with no host login the step is red and tells you to /login in this session", async () => {
-    const e = engine({}, [], ["oauth"]);
-    const result = await e.runStep(LLM_AUTH_STEP_ID);
-    expect(result.ok).toBe(false);
-    expect(detailOf(result.checks, "wizard_login")).toMatch(/\/login/);
+  it("a long or many-lined text from the other process is one short line", () => {
+    const answer = parseModelAnswer(result(failedJson(`first\nsecond ${"x".repeat(2000)}`)));
+    expect(answer.kind === "failed" && answer.error.length).toBeLessThanOrEqual(400);
+    expect(answer.kind === "failed" && answer.error).not.toContain("\n");
+  });
+});
+
+// ---- the daemon on this computer ----------------------------------------------
+
+describe("the daemon on this computer", () => {
+  it("before the daemon runs, this machine's pi stands in for it: a route is green and its model is recorded", async () => {
+    const e = engine({ host: routeJson() });
+    const r = await e.runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(detailOf(r.checks, "host_model")).toBe(
+      "this machine's pi runs anthropic/claude-opus-5-5 (Anthropic, signed in with pi (subscription))",
+    );
+    // The daemon's line says it was not asked, and when it will be.
+    const daemon = checkOf(r.checks, "daemon_model");
+    expect(daemon.ok).toBe(true);
+    expect(daemon.detail).toMatch(/no daemon is running on this machine.* yet/);
+    expect(daemon.detail).toMatch(/asks the daemon's own pi then/);
+    expect(e.choices()[CHOICE_KEYS.model]).toBe("anthropic/claude-opus-5-5");
+    expect(readChecklist(stateDir)?.steps[LLM_AUTH_STEP_ID]?.status).toBe("done");
+    expect(readChecklist(stateDir)?.steps[LLM_AUTH_STEP_ID]?.data).toEqual({
+      model: "anthropic/claude-opus-5-5",
+    });
+  });
+
+  it("before the daemon runs, no credential on this machine is red: it names /login, qcr login and the key's place", async () => {
+    writeConfig(`[github]\nsecrets_dir = "${secretsDir}"\n`);
+    const e = engine({ host: NO_CREDENTIAL });
+    const r = await e.runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok).toBe(false);
+    const host = checkOf(r.checks, "host_model");
+    expect(host.ok).toBe(false);
+    expect(host.detail).toContain("this machine's pi has no model credential");
+    expect(host.detail).toContain("/login in this pi session");
+    expect(host.detail).toContain("`qcr login`");
+    expect(host.detail).toContain("pi's /login lists every provider");
+    expect(host.detail).toContain(join(secretsDir, "model-env", "<ENV_NAME>"));
+    // Nothing is recorded and the step stays open.
+    expect(e.choices()[CHOICE_KEYS.model]).toBeUndefined();
     expect(readChecklist(stateDir)?.steps[LLM_AUTH_STEP_ID]?.status).toBe("pending");
   });
 
-  it("says memory embeddings need nothing from this route — local by default, pi's key never read for them", async () => {
-    hostLogin();
-    const result = await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    const embeddings = result.checks.find((c) => c.name === "embeddings");
-    expect(embeddings?.ok).toBe(true); // a note, never a blocker
-    expect(embeddings?.detail).toMatch(/embeds LOCALLY by default/);
-    expect(embeddings?.detail).toMatch(/never read for embeddings/);
-    expect(embeddings?.detail).toMatch(/embeddings step, order 38/);
-    // No route recommends an embeddings key.
-    expect(embeddings?.detail).not.toMatch(/recommend|worth providing/i);
+  it("a pin pi has no credential for is red in the refusal's own words", async () => {
+    const r = await engine({ host: PIN_NO_CREDENTIAL }).runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok).toBe(false);
+    const detail = detailOf(r.checks, "host_model");
+    expect(detail).toContain("this review is pinned to mistral/mistral-large-3");
+    expect(detail).toContain("pi has no credential for mistral");
+    expect(detail).toContain("remove model from [models]");
   });
 
-  it("verify: a container login on its pi-home volume is green; one in the writable layer is not", async () => {
-    hostLogin();
-    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
+  it("a login too short to last outside pi is a login: green, and the daemon is asked once it runs", async () => {
+    const e = engine({ host: LOGIN_TOO_SHORT });
+    const r = await e.runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(detailOf(r.checks, "host_model")).toMatch(/signed in with a login too short/);
+    expect(detailOf(r.checks, "host_model")).toMatch(/asks the daemon's own pi once it runs/);
+    // No route was named, so no model is recorded as the one that runs.
+    expect(e.choices()[CHOICE_KEYS.model]).toBeUndefined();
+  });
 
-    const good = engine({
-      containers: {
-        "quickreview-sandbox": { piHome: "/home/review/.pi", mountName: "qcr-pihome", auth: true },
-        "qcr-companion": {
-          piHome: "/home/companion/.pi",
-          mountName: "companion-pihome",
-          auth: true,
-        },
-      },
+  // MUTATION: make hostDecidingCheck in src/onboard/steps/llmauth.ts return
+  // ok: true for a silent or a failed answer — this fails: a machine that
+  // could not be asked would pass as one with a credential.
+  it("a pi that could not be asked is red: unknown is never a credential", async () => {
+    const silent = await engine({}).runStep(LLM_AUTH_STEP_ID);
+    expect(silent.ok).toBe(false);
+    expect(detailOf(silent.checks, "host_model")).toMatch(
+      /could not ask this machine's pi which model it runs \(exit 127: .*command not found\)/,
+    );
+    const failed = await engine({ host: failedJson("cannot read the login file") }).runStep(
+      LLM_AUTH_STEP_ID,
+    );
+    expect(failed.ok).toBe(false);
+    expect(detailOf(failed.checks, "host_model")).toContain("cannot read the login file");
+  });
+
+  // MUTATION: in modelChecks (src/onboard/steps/llmauth.ts) let this machine's
+  // answer decide although the daemon answered (`hostDecides = !place.server`)
+  // — the first case goes red on the machine's missing credential and the
+  // second goes green on the machine's route: both fail.
+  it("once the daemon runs its own answer is the step's, on whatever provider it is signed in to", async () => {
+    // The daemon on one provider's key, this machine on another's login.
+    const green = engine({
+      host: NO_CREDENTIAL,
+      daemon: { running: true, model: routeJson(KEY_ROUTE) },
     });
-    const greenAll = await good.verifyAll();
-    expect(greenAll.ok).toBe(true);
-
-    // Logged in, but the pi home is NOT a mount: a recreate would eat it.
-    const unmounted = engine({ containers: { "quickreview-sandbox": { auth: true } } });
-    const report = await unmounted.verifyAll();
-    expect(report.ok).toBe(false);
-    expect(report.results[0]?.failures.join(" ")).toMatch(/no volume mounted on its pi home/);
-  });
-
-  it("verify: a running container with no auth.json is red with the attach-and-login instruction", async () => {
-    hostLogin();
-    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    const e = engine({
-      containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: false } },
-    });
-    const report = await e.verifyAll();
-    expect(report.ok).toBe(false);
-    expect(report.results[0]?.failures.join(" ")).toMatch(/no auth\.json on the pi home/);
-    expect(report.results[0]?.failures.join(" ")).toMatch(
-      /docker exec -it \S+ \/opt\/qcr\/docker\/entrypoint\.sh login/,
+    const r = await green.runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(detailOf(r.checks, "daemon_model")).toBe(
+      "the daemon's pi runs xai/grok-5 (xAI, XAI_API_KEY)",
     );
-  });
+    // This machine's line is a note, and says so.
+    const host = checkOf(r.checks, "host_model");
+    expect(host.ok).toBe(true);
+    expect(host.detail).toMatch(/no route of its own \(no-credential\)/);
+    expect(host.detail).toMatch(/The daemon answered for itself, so this line decides nothing/);
+    expect(green.choices()[CHOICE_KEYS.model]).toBe("xai/grok-5");
 
-  it("verify: the companion's login repair attaches to the COMPANION's session, never a daemon tmux session", async () => {
-    hostLogin();
-    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    const world = {
-      containers: { "qcr-companion": { piHome: "/home/companion/.pi", auth: false } },
-    };
-    const detail = async (): Promise<string> =>
-      ((await engine(world).verifyAll()).results[0]?.failures ?? []).join(" ");
-    expect(await detail()).toContain("docker exec -it qcr-companion tmux attach -t companion");
-    expect(await detail()).not.toMatch(/-t overseer/);
-    // A configured session name is the one attached to.
-    writeFileSync(
-      configPathFor(stateDir),
-      configText().replace("[companion]\n", '[companion]\nsession = "buddy"\n'),
+    // The reverse: this machine is signed in, the daemon has nothing.
+    writeConfig(`[github]\nsecrets_dir = '${secretsDir}'\n`);
+    const red = await engine({
+      host: routeJson(),
+      daemon: { running: true, model: NO_CREDENTIAL },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(red.ok).toBe(false);
+    expect(detailOf(red.checks, "daemon_model")).toBe(
+      "the daemon's pi has no model credential. Sign in there with " +
+        "`docker compose exec daemon /opt/qcr/docker/entrypoint.sh login` (pi's /login lists every provider), " +
+        `or put a provider key in ${join(secretsDir, "model-env", "<ENV_NAME>")}.`,
     );
-    expect(await detail()).toContain("tmux attach -t buddy");
+    expect(checkOf(red.checks, "host_model").ok).toBe(true);
   });
 
-  it("verify: on this machine the daemon is the container compose names, not the VM's configured name", async () => {
-    hostLogin();
-    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    // The compose project names its daemon `quickreview-daemon-1`; nothing is
-    // called `quickreview-sandbox` here, so probing that name would pass as
-    // "no container yet" while the real daemon has no login.
-    const world = {
-      composeDaemon: "quickreview-daemon-1",
-      containers: {
-        "quickreview-daemon-1": { piHome: "/home/review/.pi", auth: false },
-        "qcr-companion": { piHome: "/home/companion/.pi", auth: true },
-      },
-    };
-    const report = await engine(world).verifyAll();
-    expect(report.ok).toBe(false);
-    const failures = report.results[0]?.failures.join(" ") ?? "";
-    expect(failures).toMatch(/daemon container: no auth\.json/);
-    expect(failures).toContain(
-      "docker exec -it quickreview-daemon-1 /opt/qcr/docker/entrypoint.sh login",
-    );
-  });
-
-  it("verify: a stopped container and an undetectable docker are notes, not failures", async () => {
-    hostLogin();
-    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    const stopped = await engine({
-      containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", running: false } },
-    }).verifyAll();
-    expect(stopped.ok).toBe(true);
-    const noDocker = await engine({ noDocker: true }).verifyAll();
-    expect(noDocker.ok).toBe(true);
-  });
-
-  it("probeContainerLogin asks about the MOUNT, not $HOME", async () => {
+  it("the daemon is asked in its container, with the image's own cli", async () => {
     const calls: string[][] = [];
-    const adapters = fakeAdapters(
-      { containers: { c1: { piHome: "/home/review/.pi", auth: true } } },
+    await engine(
+      { host: routeJson(), daemon: { running: true, model: routeJson() } },
       calls,
-    );
-    const probe = await probeContainerLogin(adapters.runner, "c1");
-    expect(probe.state).toBe("ok");
-    const exec = calls.find((c) => c[1] === "exec");
-    expect(exec?.at(-1)).toBe("/home/review/.pi/agent/auth.json");
-    expect(exec?.join(" ")).not.toContain("$HOME");
+    ).runStep(LLM_AUTH_STEP_ID);
+    const exec = calls.find((c) => c[0] === "docker" && c.includes("exec"));
+    expect(exec?.slice(-6)).toEqual(["-T", "daemon", ...CONTAINER_MODEL_QUERY]);
+    expect(CONTAINER_MODEL_QUERY).toEqual(["node", "dist/src/cli.js", "model", "--json"]);
+    // And this machine with the node and cli.js the step was given.
+    expect(calls).toContainEqual([NODE, CLI, "model", "--json"]);
   });
 
-  it("probeContainerLogin accepts any OpenAI login — an empty store or another provider is not one", async () => {
-    for (const [auth, state] of [
-      [true, "ok"],
-      // pi 1.4's newer Sign in with ChatGPT, and an OpenAI API key stored by /login:
-      // the engine runs the openai-codex/ models on either (modelroute.ts).
-      ['{"openai":{"type":"oauth","access":"x","refresh":"y","expires":1}}', "ok"],
-      ['{"openai":{"type":"api_key","key":"sk-test"}}', "ok"],
-      ['{"openai":{"type":"api_key","key":"  "}}', "wrong-provider"],
-      ["{}", "wrong-provider"],
-      ['{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}', "wrong-provider"],
-      ['{"openai-codex":{"type":"api_key","key":"k"}}', "wrong-provider"],
-      ["", "no-auth"],
-      [false, "no-auth"],
-    ] as const) {
-      const adapters = fakeAdapters({
-        containers: { c1: { piHome: "/home/review/.pi", auth } },
-      });
-      expect((await probeContainerLogin(adapters.runner, "c1")).state, String(auth)).toBe(state);
-    }
+  it("a daemon whose pin is unusable, or whose login cannot last, is red with the refusal and the way in", async () => {
+    const pinned = await engine({
+      host: routeJson(),
+      daemon: { running: true, model: PIN_NO_CREDENTIAL },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(pinned.ok).toBe(false);
+    expect(detailOf(pinned.checks, "daemon_model")).toMatch(
+      /^the daemon's pi cannot run a review: this review is pinned to mistral\/mistral-large-3/,
+    );
+    const short = await engine({
+      host: routeJson(),
+      daemon: { running: true, model: LOGIN_TOO_SHORT },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(short.ok).toBe(false);
+    expect(detailOf(short.checks, "daemon_model")).toContain("your Anthropic login expired");
+    expect(detailOf(short.checks, "daemon_model")).toContain(
+      "Sign in again there with `docker compose exec daemon /opt/qcr/docker/entrypoint.sh login`.",
+    );
+    const failed = await engine({
+      host: routeJson(),
+      daemon: { running: true, model: failedJson("cannot read the login file") },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(failed.ok).toBe(false);
+    expect(detailOf(failed.checks, "daemon_model")).toBe(
+      "the daemon's pi could not say which model it runs: cannot read the login file",
+    );
   });
 
-  it("verify: a container whose /login went to ANOTHER provider is red, not 'logged in'", async () => {
-    hostLogin();
-    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    const report = await engine({
-      containers: {
-        "quickreview-sandbox": {
-          piHome: "/home/review/.pi",
-          auth: '{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}',
-        },
-      },
-    }).verifyAll();
-    expect(report.ok).toBe(false);
-    const failures = report.results[0]?.failures.join(" ") ?? "";
-    expect(failures).toMatch(/holds no OpenAI login/);
-    // one instruction, naming every login that works
-    expect(failures).toContain("any OpenAI login works");
-    expect(failures).toContain('"OpenAI Codex (legacy)"');
-    expect(failures).toContain("Sign in with ChatGPT");
-  });
-
-  it("verify on the VM route probes the daemon container ON THE REVIEW HOST, over ssh — the companion stays local", async () => {
-    hostLogin();
-    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    const file = readChecklist(stateDir)!;
-    file.choices[CHOICE_KEYS.topology] = "vm";
-    file.choices[CHOICE_KEYS.sshAlias] = "review-vm";
-    writeFileSync(join(stateDir, "onboarding", "checklist.json"), JSON.stringify(file));
-
-    // The daemon's login is lost on the VM; there is no local daemon at all.
-    const calls: string[][] = [];
-    const report = await engine(
-      {
-        containers: {},
-        remote: {
-          alias: "review-vm",
-          containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: false } },
-        },
-      },
-      calls,
-    ).verifyAll();
-    expect(report.ok).toBe(false);
-    expect(report.results[0]?.failures.join(" ")).toMatch(/daemon container: no auth\.json/);
-    expect(calls.some((c) => c[0] === "ssh" && c.includes("review-vm"))).toBe(true);
-    // The repair command reaches the same host and container the probe did.
-    expect(report.results[0]?.failures.join(" ")).toContain(
-      "ssh -t review-vm sudo docker exec -it quickreview-sandbox /opt/qcr/docker/entrypoint.sh login",
+  // A stack the home switched on mounts this machine's login for the daemon
+  // (steps/loginshare.ts writes QCR_PI_LOGIN_DIR into the project .env), and
+  // the daemon reads no other: the container's own login mode would sign in
+  // to a pi home it does not review on.
+  // MUTATION: make sharedLoginOf in src/onboard/steps/llmauth.ts return null
+  // — the red checks name the container's login mode again and this fails.
+  it("a daemon that reviews on this machine's login is signed in on this machine, never in its container", async () => {
+    const piHome = join(root, "home", ".pi", "agent");
+    writeFileSync(join(root, ".env"), `QCR_VERSION=1.0.0\nQCR_PI_LOGIN_DIR=${piHome}\n`);
+    writeConfig(`[github]\nsecrets_dir = '${secretsDir}'\n`);
+    const none = await engine({
+      host: NO_CREDENTIAL,
+      daemon: { running: true, model: NO_CREDENTIAL },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(none.ok).toBe(false);
+    expect(detailOf(none.checks, "daemon_model")).toBe(
+      `the daemon's pi has no model credential. The daemon reviews on this machine's login (${piHome}), ` +
+        "not on one of its container's own: sign in here with /login in this pi session, or `qcr login` in a terminal " +
+        `(pi's /login lists every provider), or put a provider key in ${join(secretsDir, "model-env", "<ENV_NAME>")}.`,
     );
-    // That command opens pi directly (no tmux), so no tmux detach advice rides it.
-    expect(report.results[0]?.failures.join(" ")).not.toMatch(
-      /sandbox \/opt\/qcr\/docker\/entrypoint\.sh login[^;]*detach/,
+    const short = await engine({
+      host: LOGIN_TOO_SHORT,
+      daemon: { running: true, model: LOGIN_TOO_SHORT },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(short.ok).toBe(false);
+    const detail = detailOf(short.checks, "daemon_model");
+    expect(detail).toContain("your Anthropic login expired");
+    expect(detail).toContain(
+      `The daemon reviews on this machine's login (${piHome}), not on one of its container's own: ` +
+        "sign in again here with /login in this pi session, or `qcr login` in a terminal",
     );
-    // The companion is this machine's: never probed over ssh.
-    expect(
-      calls.filter((c) => c[0] === "ssh").some((c) => (c.at(-1) ?? "").includes("qcr-companion")),
-    ).toBe(false);
-
-    // And a VM daemon that IS logged in is green.
+    for (const said of [detailOf(none.checks, "daemon_model"), detail])
+      expect(said).not.toContain("entrypoint.sh login");
+    // A daemon with a route is green as before: the line names no login.
     const green = await engine({
-      remote: {
-        alias: "review-vm",
-        containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: true } },
-      },
-    }).verifyAll();
-    expect(green.ok).toBe(true);
+      host: routeJson(),
+      daemon: { running: true, model: routeJson() },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(green.ok, green.failures.join("; ")).toBe(true);
+    // An .env that names no login (the compose default) keeps the container's own.
+    writeFileSync(join(root, ".env"), "QCR_VERSION=1.0.0\nQCR_PI_LOGIN_DIR=\n");
+    const own = await engine({
+      host: routeJson(),
+      daemon: { running: true, model: NO_CREDENTIAL },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(detailOf(own.checks, "daemon_model")).toContain(
+      "Sign in there with `docker compose exec daemon /opt/qcr/docker/entrypoint.sh login`",
+    );
+  });
+
+  // The place the red check names for a key is the one this machine's
+  // `qcr model` reads (tests/model-cli.test.ts pins the verb's half): before
+  // any config names a secrets dir, that is `$QC_SECRETS_DIR` when it is set.
+  // MUTATION: drop `override: env.QC_SECRETS_DIR` from secretsDirFor
+  // (src/onboard/steps/ingress.ts) — the detail names the config home's
+  // secrets dir, where the verb asked with that override does not look, and
+  // this fails.
+  it("with no secrets dir in any config, the key's place is $QC_SECRETS_DIR, as the verb reads it", async () => {
+    const override = join(root, "wizard-secrets");
+    vi.stubEnv("QC_SECRETS_DIR", override);
+    const r = await engine({ host: NO_CREDENTIAL }).runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok).toBe(false);
+    expect(detailOf(r.checks, "host_model")).toContain(
+      `or put a provider key in ${join(override, "model-env", "<ENV_NAME>")}; then run this step again.`,
+    );
+    // A config that names one wins over it, on both sides.
+    writeConfig(`[github]\nsecrets_dir = '${secretsDir}'\n`);
+    const named = await engine({ host: NO_CREDENTIAL }).runStep(LLM_AUTH_STEP_ID);
+    expect(detailOf(named.checks, "host_model")).toContain(
+      join(secretsDir, "model-env", "<ENV_NAME>"),
+    );
+  });
+
+  // MUTATION: make askDaemon in src/onboard/steps/llmauth.ts report a silent
+  // exec as an answer (`asked: true`), or daemonUnaskedCheck claim a route —
+  // this fails.
+  it("a daemon that cannot be asked is said as that, and this machine's pi stands in", async () => {
+    // An image older than the verb: its cli prints a usage and exits 2.
+    const usage = { code: 2, stdout: "", stderr: "usage: qcr <version|status>\n" };
+    for (const [world, said] of [
+      [
+        { daemon: { running: true, model: usage } },
+        /gave no answer to `qcr model --json` \(exit 2: usage/,
+      ],
+      [{ noDocker: true }, /could not tell whether the daemon is running on this machine/],
+      [{ daemon: { running: false } }, /no daemon is running on this machine/],
+    ] as const) {
+      const green = await engine({ ...world, host: routeJson() }).runStep(LLM_AUTH_STEP_ID);
+      expect(green.ok, green.failures.join("; ")).toBe(true);
+      const daemon = checkOf(green.checks, "daemon_model");
+      expect(daemon.ok).toBe(true);
+      expect(daemon.detail).toMatch(said);
+      expect(daemon.detail).not.toMatch(/the daemon's pi runs/);
+      expect(detailOf(green.checks, "host_model")).toMatch(/^this machine's pi runs /);
+      // …and with nothing on this machine either, the step is red.
+      const red = await engine({ ...world, host: NO_CREDENTIAL }).runStep(LLM_AUTH_STEP_ID);
+      expect(red.ok).toBe(false);
+    }
   });
 });
 
-// ---- the API-key route ------------------------------------------------------
+// ---- the daemon on a server ---------------------------------------------------
 
-describe("API-key route", () => {
-  it("run: one paste stores the key 0600 and rewrites all five model strings", async () => {
+describe("the daemon on a server", () => {
+  // MUTATION: drop the `!place.server` half of hostDecides in modelChecks
+  // (src/onboard/steps/llmauth.ts) — this machine's login then passes for the
+  // server's, the first case records its model and this fails.
+  it("before the deploy nothing stands in: this machine's login is never the server's", async () => {
+    seedChecklist(onServer());
     const calls: string[][] = [];
-    const e = engine({}, calls, ["api", KEY]);
-    const result = await e.runStep(LLM_AUTH_STEP_ID);
-    expect(result.ok).toBe(true);
-    expect(e.choices()[AUTH_ROUTE_CHOICE_KEY]).toBe("api");
-    expect(e.choices()[MODEL_PREFIX_CHOICE_KEY]).toBe(API_PREFIX);
-
-    const keyPath = join(secretsDir, OPENAI_KEY_FILE);
-    expect(readFileSync(keyPath, "utf8")).toBe(KEY);
-    expect(statSync(keyPath).mode & 0o777).toBe(0o600);
-    expect(statSync(secretsDir).mode & 0o777).toBe(0o700);
-
-    for (const a of auditModelStrings(configText())) expect(a.kind).toBe("api");
-    expect(detailOf(result.checks, "models")).toMatch(/rewrote 5/);
-    expect(detailOf(result.checks, "credential")).toMatch(/OPENAI_API_KEY/);
-    // The companion container is never handed the key file: the step must not
-    // claim it is covered.
-    expect(detailOf(result.checks, "credential")).not.toMatch(/companion are all covered/);
-    expect(detailOf(result.checks, "credential")).toMatch(/companion container is never handed it/);
-    expect(detailOf(result.checks, "models")).toMatch(/companion .*keeps its own login/);
-    // No container logins are asked for on this route.
-    expect(result.checks.map((c) => c.name)).not.toContain("wizard_login");
-  });
-
-  it("run: a malformed key is refused, nothing is written, and the value is never echoed", async () => {
-    const e = engine({}, [], ["api", "not-a-key"]);
-    const result = await e.runStep(LLM_AUTH_STEP_ID);
-    expect(result.ok).toBe(false);
-    expect(existsSync(join(secretsDir, OPENAI_KEY_FILE))).toBe(false);
-    const rendered = JSON.stringify(result.checks);
-    expect(rendered).toMatch(/does not look like an OpenAI API key/);
-    expect(rendered).not.toContain("not-a-key");
-  });
-
-  it("run: with no prompter (the pi-driven flow) the key is never handled here — it points at the secrets wizard", async () => {
-    const e = engine();
-    // No prompter and no credential on disk ⇒ no route can be inferred yet.
-    const undecided = await e.runStep(LLM_AUTH_STEP_ID);
-    expect(undecided.ok).toBe(false);
-    expect(detailOf(undecided.checks, "route")).toMatch(/1\) oauth/);
-    expect(detailOf(undecided.checks, "route")).toMatch(/three separate browser logins/);
-
-    // The operator runs the shell wizard; the step then finds and adopts it.
-    keyFileOnDisk();
-    const decided = await e.runStep(LLM_AUTH_STEP_ID);
-    expect(decided.ok).toBe(true);
-    expect(detailOf(decided.checks, "route")).toMatch(/api route/);
-    for (const a of auditModelStrings(configText())) expect(a.kind).toBe("api");
-  });
-
-  it("run: a pi login for ANOTHER provider (or an empty auth.json) is not an OpenAI OAuth login — the key file decides", async () => {
-    keyFileOnDisk();
-    for (const body of [
-      "{}",
-      '{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}',
-    ]) {
-      hostLogin(body);
-      const result = await engine().runStep(LLM_AUTH_STEP_ID);
-      expect(result.ok, result.failures.join("; ")).toBe(true);
-      expect(detailOf(result.checks, "route")).toMatch(/api route/);
-      for (const a of auditModelStrings(configText())) expect(a.kind).toBe("api");
-    }
-  });
-
-  it("run: on the OAuth route, an auth.json without an openai-codex login does not count as login 1 of 3", async () => {
-    hostLogin('{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}');
-    const result = await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    expect(result.ok).toBe(false);
-    expect(detailOf(result.checks, "wizard_login")).toMatch(/\/login/);
-  });
-
-  it("run: a cancelled or invalid key paste leaves an OAuth install's models and delivery untouched", async () => {
-    for (const answer of ["", "not-a-key"]) {
-      const calls: string[][] = [];
-      const result = await engine({}, calls, ["api", answer]).runStep(LLM_AUTH_STEP_ID);
-      expect(result.ok).toBe(false);
-      expect(detailOf(result.checks, "credential")).not.toBe("");
-      // Still the working ChatGPT-OAuth models: nothing was rewritten or delivered.
-      expect(configText()).toBe(EXAMPLE_CONFIG.replace("SECRETS_DIR", secretsDir));
-      expect(result.checks.map((c) => c.name)).not.toContain("models");
-    }
-  });
-
-  it("run: an invalid key file on disk sends you to collect-secrets.sh rather than the LLM", async () => {
-    // Record the route first, then corrupt the file: the pi-driven flow (no
-    // prompter) must never ask for the value itself.
-    keyFileOnDisk();
-    await engine().runStep(LLM_AUTH_STEP_ID);
-    keyFileOnDisk("garbage");
-    const result = await engine().runStep(LLM_AUTH_STEP_ID);
-    expect(result.ok).toBe(false);
-    expect(detailOf(result.checks, "credential")).toMatch(/collect-secrets\.sh/);
-    expect(detailOf(result.checks, "credential")).toMatch(/never passes through this session/);
-  });
-
-  it("verify: the recorded route must be coherent with disk — a deleted key file goes red", async () => {
-    await engine({}, [], ["api", KEY]).runStep(LLM_AUTH_STEP_ID);
-    rmSync(join(secretsDir, OPENAI_KEY_FILE));
-    const report = await engine().verifyAll();
-    expect(report.ok).toBe(false);
-    expect(report.results[0]?.failures.join(" ")).toMatch(/the api route needs openai_api_key/);
-  });
-
-  it("verify: hand-edited model strings that contradict the recorded route go red", async () => {
-    await engine({}, [], ["api", KEY]).runStep(LLM_AUTH_STEP_ID);
-    writeFileSync(
-      configPathFor(stateDir),
-      configText().replace('default = "openai/', 'default = "openai-codex/'),
+    const e = engine({ host: routeJson(), remote: { alias: "review-vm" } }, calls);
+    const r = await e.runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    const daemon = checkOf(r.checks, "daemon_model");
+    expect(daemon.detail).toMatch(/^no daemon is running on review-vm, over ssh yet\./);
+    expect(daemon.detail).toContain("never this machine's login");
+    expect(daemon.detail).toContain(
+      `ssh -t review-vm sudo docker exec -it ${CONTAINER} /opt/qcr/docker/entrypoint.sh login`,
     );
-    const report = await engine().verifyAll();
-    expect(report.ok).toBe(false);
-    expect(report.results[0]?.failures.join(" ")).toMatch(/models\.default/);
-  });
-});
-
-// ---- route switching, resume, config seeding --------------------------------
-
-describe("switching routes", () => {
-  it("oauth → api → oauth: each re-run rewrites cleanly and the config returns to its original bytes", async () => {
-    hostLogin();
-    const original = readFileSync(join(root, "config.example.toml"), "utf8");
-
-    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    expect(configText()).toBe(original);
-
-    const toApi = await engine({}, [], ["api", KEY]).runStep(LLM_AUTH_STEP_ID);
-    expect(toApi.ok).toBe(true);
-    for (const a of auditModelStrings(configText())) expect(a.kind).toBe("api");
-
-    const back = await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    expect(back.ok).toBe(true);
-    expect(configText()).toBe(original);
-    expect(readChecklist(stateDir)?.choices[AUTH_ROUTE_CHOICE_KEY]).toBe("oauth");
-  });
-
-  it("an unrecognised answer refuses without touching the config or the recorded route", async () => {
-    hostLogin();
-    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    const before = configText();
-    const confused = await engine({}, [], ["banana"]).runStep(LLM_AUTH_STEP_ID);
-    expect(confused.ok).toBe(false);
-    expect(detailOf(confused.checks, "route")).toMatch(/did not understand/);
-    expect(configText()).toBe(before);
-    expect(readChecklist(stateDir)?.choices[AUTH_ROUTE_CHOICE_KEY]).toBe("oauth");
-  });
-
-  it("an empty answer keeps the recorded route instead of re-asking", async () => {
-    keyFileOnDisk();
-    await engine({}, [], ["api"]).runStep(LLM_AUTH_STEP_ID);
-    const again = await engine({}, [], [""]).runStep(LLM_AUTH_STEP_ID);
-    expect(again.ok).toBe(true);
-    expect(detailOf(again.checks, "route")).toMatch(/kept the recorded route/);
-  });
-});
-
-describe("resume and re-run", () => {
-  it("a re-run over a finished installation VERIFIES: no prompt, no write, still done", async () => {
-    keyFileOnDisk();
-    await engine({}, [], ["api"]).runStep(LLM_AUTH_STEP_ID);
-    const bytes = configText();
-
-    // No prompter at all on the resumed engine: reconcile must not need one.
-    const resumed = engine();
-    const report = await resumed.reconcile();
-    expect(report.verified).toEqual([LLM_AUTH_STEP_ID]);
-    expect(report.demoted).toEqual([]);
-    expect(configText()).toBe(bytes);
-    expect(readChecklist(stateDir)?.steps[LLM_AUTH_STEP_ID]?.status).toBe("done");
-  });
-
-  it("a checklist that claims done with no recorded route is demoted, not trusted", async () => {
-    keyFileOnDisk();
-    const e = engine({}, [], ["api"]);
-    await e.runStep(LLM_AUTH_STEP_ID);
-    const file = readChecklist(stateDir)!;
-    delete file.choices[AUTH_ROUTE_CHOICE_KEY];
-    file.steps[LLM_AUTH_STEP_ID]!.data = {};
-    writeFileSync(join(stateDir, "onboarding", "checklist.json"), JSON.stringify(file));
-    const report = await engine().reconcile();
-    expect(report.demoted[0]?.failures.join(" ")).toMatch(/no LLM auth route recorded/);
-  });
-
-  it("seeds config.toml from config.example.toml when the wizard runs before any config exists", async () => {
-    hostLogin();
-    expect(existsSync(configPathFor(stateDir))).toBe(false);
-    const result = await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    expect(result.ok).toBe(true);
-    expect(detailOf(result.checks, "config")).toMatch(
-      /created .*config\.toml from config\.example\.toml/,
+    expect(daemon.detail).toContain("the server's secrets dir, as model-env/<ENV_NAME>");
+    expect(detailOf(r.checks, "host_model")).toMatch(
+      /keeps its own credential, so this line decides nothing/,
     );
-    // FILL values are left for the config step — the wizard only touched models.
-    expect(configText()).toContain('repo = "acme/widgets"');
+    // This machine's model is not the daemon's: nothing is recorded.
+    expect(e.choices()[CHOICE_KEYS.model]).toBeUndefined();
+    expect(calls.some((c) => c[0] === "ssh" && c.includes("review-vm"))).toBe(true);
+    // …and a machine with no credential at all changes nothing there.
+    seedChecklist(onServer());
+    const bare = await engine({ host: NO_CREDENTIAL, remote: { alias: "review-vm" } }).runStep(
+      LLM_AUTH_STEP_ID,
+    );
+    expect(bare.ok, bare.failures.join("; ")).toBe(true);
   });
 
-  it("verify never seeds: a missing config.toml is reported, not created", async () => {
-    keyFileOnDisk();
-    await engine({}, [], ["api"]).runStep(LLM_AUTH_STEP_ID);
-    rmSync(configPathFor(stateDir));
-    const report = await engine().verifyAll();
-    expect(report.ok).toBe(false);
-    expect(report.results[0]?.failures.join(" ")).toMatch(/does not exist yet/);
-    expect(existsSync(configPathFor(stateDir))).toBe(false);
-  });
-
-  it("an unreadable config.toml is a plain red check, never a throw", async () => {
-    writeFileSync(configPathFor(stateDir), EXAMPLE_CONFIG);
-    chmodSync(configPathFor(stateDir), 0o000);
-    const result = await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    chmodSync(configPathFor(stateDir), 0o600);
-    // Root can read anything; only assert the no-throw contract in both worlds.
-    expect(typeof result.ok).toBe("boolean");
-  });
-});
-
-// ---- the house rule ---------------------------------------------------------
-
-describe("no credential ever reaches an argv (or any other record)", () => {
-  it("the key stays in the file: not in a command line, the checklist, or a check detail", async () => {
+  it("once deployed, the server's daemon is asked over ssh and its answer is the step's", async () => {
+    seedChecklist(onServer());
     const calls: string[][] = [];
     const e = engine(
-      { containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: true } } },
+      { host: NO_CREDENTIAL, remote: { alias: "review-vm", running: true, model: routeJson() } },
       calls,
-      ["api", KEY],
     );
-    const result = await e.runStep(LLM_AUTH_STEP_ID);
-    expect(result.ok).toBe(true);
+    const r = await e.runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(detailOf(r.checks, "daemon_model")).toMatch(
+      /^the daemon's pi runs anthropic\/claude-opus-5-5 /,
+    );
+    expect(e.choices()[CHOICE_KEYS.model]).toBe("anthropic/claude-opus-5-5");
+    const asked = calls
+      .filter((c) => c[0] === "ssh")
+      .map((c) => unquoteRemote(c.at(-1) ?? "").join(" "));
+    expect(asked).toContain(`sudo docker exec ${CONTAINER} ${CONTAINER_MODEL_QUERY.join(" ")}`);
+    // docker on this machine is not where that daemon is.
+    expect(calls.some((c) => c[0] === "docker")).toBe(false);
+  });
 
-    for (const call of calls) for (const arg of call) expect(arg).not.toContain(KEY);
-    expect(JSON.stringify(result.checks)).not.toContain(KEY);
-    expect(readFileSync(join(stateDir, "onboarding", "checklist.json"), "utf8")).not.toContain(KEY);
-    expect(configText()).not.toContain(KEY);
+  it("a server daemon with no credential is red, with the command that reaches ITS login", async () => {
+    seedChecklist(onServer());
+    const r = await engine({
+      host: routeJson(),
+      remote: { alias: "review-vm", running: true, model: NO_CREDENTIAL },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok).toBe(false);
+    expect(detailOf(r.checks, "daemon_model")).toBe(
+      "the daemon's pi has no model credential. Sign in there with " +
+        `\`ssh -t review-vm sudo docker exec -it ${CONTAINER} /opt/qcr/docker/entrypoint.sh login\` ` +
+        "(pi's /login lists every provider), or put a provider key in the server's secrets dir, as model-env/<ENV_NAME>.",
+    );
+  });
 
-    // …and the same for the verify pass, which probes docker.
-    calls.length = 0;
-    const verified = await engine(
-      { containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: true } } },
-      calls,
-    ).verifyAll();
-    expect(verified.ok).toBe(true);
-    for (const call of calls) for (const arg of call) expect(arg).not.toContain(KEY);
-    expect(JSON.stringify(verified.results)).not.toContain(KEY);
+  // MUTATION: read the project .env's login for a server too (drop
+  // `sharedLogin: null` from the vm branch of daemonPlace in
+  // src/onboard/steps/llmauth.ts) — the server's daemon is told to sign in on
+  // this machine and this fails.
+  it("a login this machine's stack once shared is never the server's way in", async () => {
+    writeFileSync(join(root, ".env"), `QCR_PI_LOGIN_DIR=${join(root, "home", ".pi", "agent")}\n`);
+    seedChecklist(onServer());
+    const r = await engine({
+      host: routeJson(),
+      remote: { alias: "review-vm", running: true, model: NO_CREDENTIAL },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(r.ok).toBe(false);
+    const detail = detailOf(r.checks, "daemon_model");
+    expect(detail).toContain(
+      `Sign in there with \`ssh -t review-vm sudo docker exec -it ${CONTAINER} /opt/qcr/docker/entrypoint.sh login\``,
+    );
+    expect(detail).not.toContain("this machine's login");
+  });
+
+  it("an unreachable server is said as that: not a route, and not a failure of this step", async () => {
+    seedChecklist(onServer("gone-vm"));
+    const r = await engine({ host: routeJson(), remote: { alias: "review-vm" } }).runStep(
+      LLM_AUTH_STEP_ID,
+    );
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(detailOf(r.checks, "daemon_model")).toMatch(
+      /^could not tell whether the daemon is running on gone-vm, over ssh \(ssh: unknown host\)/,
+    );
   });
 });
 
-describe("API route companion credentials", () => {
-  it("requires the default companion's independent OAuth login", async () => {
-    writeExample();
-    keyFileOnDisk();
-    const result = await engine(
-      { containers: { "qcr-companion": { piHome: "/home/companion/.pi", auth: false } } },
-      [],
-      ["api"],
-    ).runStep(LLM_AUTH_STEP_ID);
-    expect(result.ok).toBe(false);
-    expect(result.failures.join(" ")).toContain("companion_login");
+// ---- tolerant config reads ----------------------------------------------------
+
+describe("tolerant config reads", () => {
+  it("a half-filled config names the container and the docker prefix; one that does not parse falls back to the shipped names", async () => {
+    // FILL values and a line the strict loader refuses: the wizard's own key
+    // readers still find `[tui]`.
+    writeConfig(
+      "[github]\nrepo = \"FILL/ME\"\nthis line is not toml\n\n[tui]\ncontainer = 'reviewer-box' # renamed\nsudo_docker = false\n",
+    );
+    seedChecklist(onServer());
+    const renamed = await engine({
+      host: routeJson(),
+      remote: {
+        alias: "review-vm",
+        container: "reviewer-box",
+        running: true,
+        model: NO_CREDENTIAL,
+      },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(detailOf(renamed.checks, "daemon_model")).toContain(
+      "`ssh -t review-vm docker exec -it reviewer-box /opt/qcr/docker/entrypoint.sh login`",
+    );
+
+    writeConfig("\u0000 not a config at all [[[");
+    seedChecklist(onServer());
+    const shipped = await engine({
+      host: routeJson(),
+      remote: { alias: "review-vm", running: true, model: routeJson() },
+    }).runStep(LLM_AUTH_STEP_ID);
+    expect(shipped.ok, shipped.failures.join("; ")).toBe(true);
+  });
+
+  it("with no config.toml at all the step still answers, and creates none", async () => {
+    expect(existsSync(configPath)).toBe(false);
+    const r = await engine({ host: NO_CREDENTIAL }).runStep(LLM_AUTH_STEP_ID);
+    expect(detailOf(r.checks, "host_model")).toMatch(/[/\\]model-env[/\\]<ENV_NAME>/);
+    expect(existsSync(configPath)).toBe(false);
+  });
+
+  it("the shipped template is found beside the state dir, for the steps that read their defaults from it", () => {
+    expect(configExamplePathFor(stateDir)).toBe(join(root, "config.example.toml"));
   });
 });
 
-// ---- the pi-driven wizard: no prompter, the answer is the step's input -------
+// ---- what the step no longer does ---------------------------------------------
 
-/** pi 1.4's newer "Sign in with ChatGPT" login, on the `openai` provider. */
-const API_KEY_LOGIN = '{"openai":{"type":"api_key","key":"sk-test-not-a-key"}}';
-const CHATGPT_LOGIN =
-  '{"openai":{"type":"oauth","access":"redacted","refresh":"redacted","expires":1}}';
-
-describe("the pi-driven route answer", () => {
-  it("declares a route input, so the guide can pass the operator's answer", () => {
-    const schema = llmAuthStep().parameters as {
-      properties: { route: { enum: readonly string[] } };
-    };
-    expect(schema.properties.route.enum).toEqual(["oauth", "api"]);
+describe("no route question, no key question, no config rewrite, no key file", () => {
+  it("keeps its id and its order, which persisted checklists name, and says nothing about one provider", () => {
+    const s = step();
+    expect(s.id).toBe("llm_auth");
+    expect(LLM_AUTH_STEP_ID).toBe("llm_auth");
+    expect(s.order).toBe(30);
+    expect(s.title).toBe("Model credential: a login or key pi can use");
+    expect(s.explain).toBe(STEP_EXPLAIN);
+    expect(STEP_EXPLAIN).toBe(
+      "QuickReview runs on whatever model credential pi has: a subscription login, an API key stored by /login, or a " +
+        "provider key in the environment. With several, `qcr model` shows which one runs.",
+    );
   });
 
-  it("with nothing to infer from, asks for the route input, never for a typed answer", async () => {
-    const result = await engine().runStep(LLM_AUTH_STEP_ID);
-    expect(result.ok).toBe(false);
-    const route = detailOf(result.checks, "route");
-    expect(route).toMatch(/1\) oauth/);
-    expect(route).toMatch(/route: "oauth" or route: "api"/);
-    expect(route).not.toMatch(/Answer 1\/oauth/);
+  // MUTATION: give the step a `parameters` schema with a route again, or call
+  // ctx.adapters.prompter in src/onboard/steps/llmauth.ts — this fails (the
+  // fake prompter throws on any question).
+  it("declares no input, asks nothing, and an answer an older guide still passes changes nothing", async () => {
+    expect(step().parameters).toBeUndefined();
+    const plain = await engine({ host: routeJson() }).runStep(LLM_AUTH_STEP_ID);
+    rmSync(checklistPath(stateDir));
+    for (const input of [{ route: "api" }, { route: "oauth" }, { route: 7, key: SECRET }]) {
+      const r = await engine({ host: routeJson() }).runStep(LLM_AUTH_STEP_ID, input);
+      expect(r.checks).toEqual(plain.checks);
+      expect(JSON.stringify(readChecklist(stateDir))).not.toContain(SECRET);
+      rmSync(checklistPath(stateDir));
+    }
   });
 
-  it("route: oauth on a fresh state advances to login verification and is kept for the re-run", async () => {
-    const e = engine();
-    const first = await e.runStep(LLM_AUTH_STEP_ID, { route: "oauth" });
-    expect(first.ok).toBe(false);
-    expect(detailOf(first.checks, "route")).toMatch(/oauth route — you chose it/);
-    expect(detailOf(first.checks, "wizard_login")).toMatch(/OpenAI Codex \(legacy\)/);
-    expect(e.choices()[AUTH_ROUTE_CHOICE_KEY]).toBe("oauth");
-
-    hostLogin();
-    const again = await e.runStep(LLM_AUTH_STEP_ID);
-    expect(again.ok, again.failures.join("; ")).toBe(true);
-    expect(detailOf(again.checks, "route")).toMatch(/oauth route/);
+  // MUTATION: write config.toml, or anything under the secrets dir, from
+  // run() in src/onboard/steps/llmauth.ts — this fails.
+  it("run and verify change no file but the checklist: the config's bytes, the secrets dir, the checkout", async () => {
+    const config =
+      `[github]\nsecrets_dir = "${secretsDir}"\n\n[models]\n` +
+      '# a comment the older rewrite had to preserve\ndefault = "openai-codex/gpt-6.1-sol"\n' +
+      'conversation = "openai-codex/gpt-6.1-sol"\n\n[models.tiers]\n"sol-high" = "openai-codex/gpt-6.1-sol:high"\n';
+    writeConfig(config);
+    mkdirSync(secretsDir);
+    writeFileSync(join(secretsDir, "openai_api_key"), SECRET);
+    const listing = (): string[] =>
+      (readdirSync(root, { recursive: true }) as string[])
+        .filter((p) => !p.startsWith(join("state", "onboarding")))
+        .sort();
+    const before = listing();
+    for (const world of [
+      { host: routeJson() },
+      { host: NO_CREDENTIAL },
+      { host: routeJson(), daemon: { running: true, model: NO_CREDENTIAL } },
+      { host: NO_CREDENTIAL, daemon: { running: true, model: routeJson(KEY_ROUTE) } },
+    ]) {
+      const e = engine(world);
+      await e.runStep(LLM_AUTH_STEP_ID);
+      await e.verifyAll();
+      expect(readFileSync(configPath, "utf8")).toBe(config);
+      expect(readFileSync(join(secretsDir, "openai_api_key"), "utf8")).toBe(SECRET);
+      expect(listing()).toEqual(before);
+    }
   });
 
-  it("route: api wins over a ChatGPT login on this host", async () => {
-    hostLogin();
-    keyFileOnDisk();
-    const result = await engine().runStep(LLM_AUTH_STEP_ID, { route: "api" });
-    expect(result.ok, result.failures.join("; ")).toBe(true);
-    expect(detailOf(result.checks, "route")).toMatch(/api route — you chose it/);
-    for (const a of auditModelStrings(configText())) expect(a.kind).toBe("api");
-  });
-
-  it("pi's newer Sign in with ChatGPT login decides the oauth route and serves this session", async () => {
-    hostLogin(CHATGPT_LOGIN);
-    const result = await engine().runStep(LLM_AUTH_STEP_ID);
-    expect(result.ok, result.failures.join("; ")).toBe(true);
-    expect(detailOf(result.checks, "route")).toMatch(/oauth route/);
-    expect(detailOf(result.checks, "wizard_login")).toMatch(/login 1 of 3/);
-    for (const a of auditModelStrings(configText())) expect(a.kind).toBe("oauth");
-  });
-
-  it("a container holding only the newer login is logged in: the engine runs the models on it", async () => {
-    const adapters = fakeAdapters({
-      containers: { c1: { piHome: "/home/review/.pi", auth: CHATGPT_LOGIN } },
+  // MUTATION: record CHOICE_KEYS.model from verify() in
+  // src/onboard/steps/llmauth.ts — this fails.
+  it("verify records nothing: the model on record is the one the last run found", async () => {
+    await engine({ host: routeJson() }).runStep(LLM_AUTH_STEP_ID);
+    const bytes = readFileSync(checklistPath(stateDir), "utf8");
+    // The credential changed since: verify sees the new route and writes nothing.
+    const report = await step().verify({
+      adapters: fakeAdapters({ host: routeJson(KEY_ROUTE) }),
+      input: {},
+      choices: readChecklist(stateDir)!.choices,
+      data: {},
+      recordChoice: () => {
+        throw new Error("verify recorded a choice");
+      },
     });
-    expect((await probeContainerLogin(adapters.runner, "c1")).state).toBe("ok");
+    expect(report.ok).toBe(true);
+    expect(detailOf(report.checks, "host_model")).toContain("xai/grok-5");
+    expect(readFileSync(checklistPath(stateDir), "utf8")).toBe(bytes);
+    expect(readChecklist(stateDir)!.choices[CHOICE_KEYS.model]).toBe("anthropic/claude-opus-5-5");
+  });
+});
 
-    hostLogin();
-    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    const report = await engine({
-      containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: CHATGPT_LOGIN } },
-    }).verifyAll();
-    expect(report.ok, report.results[0]?.failures.join("; ")).toBe(true);
-    // the shipped prefix stays: the route, not a rewrite, serves the newer login
-    for (const a of auditModelStrings(configText())) expect(a.kind).toBe("oauth");
+// ---- what an older wizard left behind -----------------------------------------
+
+describe("an older wizard's record of this step", () => {
+  // The older step chose between two routes and recorded the answer, the
+  // provider prefix it rewrote the config to, and its own bookkeeping. A
+  // checklist that carries any of it is read as one that does not.
+  //
+  // MUTATION: read `llm_auth_route` in src/onboard/steps/llmauth.ts and go red
+  // (or pick a branch) on its value — a value below changes the checks and
+  // this fails. Write either key from run() — the "left as it was" assertion
+  // fails.
+  it("llm_auth_route and llm_model_prefix are read as nothing, whatever their value, and are never written", async () => {
+    const baseline = await engine({ host: routeJson() }).runStep(LLM_AUTH_STEP_ID);
+    rmSync(checklistPath(stateDir));
+    for (const [route, prefix] of [
+      ["oauth", "openai-codex/"],
+      ["api", "openai/"],
+      ["api_key", ""],
+      ["banana", "banana/"],
+      [7, null],
+      [{ nested: true }, ["a"]],
+    ] as const) {
+      const legacy = { llm_auth_route: route, llm_model_prefix: prefix };
+      seedChecklist(legacy, {
+        data: {
+          route,
+          prefix,
+          config_path: configPath,
+          models: ["models.default", "models.conversation"],
+          restart_owed: true,
+          credentials_owed: true,
+        },
+      });
+      // A resumed session re-verifies the step it finds done.
+      const resumed = engine({ host: routeJson() });
+      const report = await resumed.reconcile();
+      expect(report.verified, JSON.stringify(legacy)).toEqual([LLM_AUTH_STEP_ID]);
+      expect(report.demoted).toEqual([]);
+      // …and a run gives the checks of a checklist that never had them.
+      const again = await resumed.runStep(LLM_AUTH_STEP_ID);
+      expect(again.checks).toEqual(baseline.checks);
+      // The older values are left as they were: nothing rewrote or dropped them.
+      const choices = readChecklist(stateDir)!.choices;
+      expect(choices.llm_auth_route).toEqual(route);
+      expect(choices.llm_model_prefix).toEqual(prefix);
+      expect(choices[CHOICE_KEYS.model]).toBe("anthropic/claude-opus-5-5");
+      rmSync(checklistPath(stateDir));
+    }
   });
 
-  it("an OpenAI API key this host's pi stored at /login serves the wizard's own session on the oauth route", async () => {
-    hostLogin(API_KEY_LOGIN);
-    const result = await engine().runStep(LLM_AUTH_STEP_ID, { route: "oauth" });
-    expect(result.ok, result.failures.join("; ")).toBe(true);
-    expect(detailOf(result.checks, "wizard_login")).toMatch(/an OpenAI API key/);
+  it("the older key file is not this step's to judge: any content, or none, and the answer is pi's", async () => {
+    writeConfig(`[github]\nsecrets_dir = "${secretsDir}"\n`);
+    mkdirSync(secretsDir);
+    const baseline = await engine({ host: routeJson() }).runStep(LLM_AUTH_STEP_ID);
+    for (const content of ["not shaped like any key", "", SECRET]) {
+      writeFileSync(join(secretsDir, "openai_api_key"), content);
+      rmSync(checklistPath(stateDir));
+      const r = await engine({ host: routeJson() }).runStep(LLM_AUTH_STEP_ID);
+      expect(r.checks).toEqual(baseline.checks);
+    }
   });
+});
 
-  it("with only an OpenAI API key at this host's /login, the api route is decided — the daemon's key file is still owed", async () => {
-    hostLogin(API_KEY_LOGIN);
-    const result = await engine().runStep(LLM_AUTH_STEP_ID);
-    expect(detailOf(result.checks, "route")).toMatch(
-      /api route — this host's pi signed in with an OpenAI API key/,
+// ---- resume -------------------------------------------------------------------
+
+describe("resume and re-verification", () => {
+  it("a done step is re-verified by asking again, and a daemon that lost its credential demotes it", async () => {
+    await engine({ host: routeJson() }).runStep(LLM_AUTH_STEP_ID);
+    // The stack came up since, and the daemon's pi has a credential.
+    const held = await engine({
+      host: routeJson(),
+      daemon: { running: true, model: routeJson() },
+    }).reconcile();
+    expect(held.verified).toEqual([LLM_AUTH_STEP_ID]);
+    // Later it has none, though this machine still does.
+    const lost = await engine({
+      host: routeJson(),
+      daemon: { running: true, model: NO_CREDENTIAL },
+    }).reconcile();
+    expect(lost.demoted.map((d) => d.id)).toEqual([LLM_AUTH_STEP_ID]);
+    expect(lost.demoted[0]?.failures.join(" ")).toContain(
+      "daemon_model: the daemon's pi has no model credential",
     );
-    expect(result.ok).toBe(false);
-    expect(detailOf(result.checks, "credential")).toMatch(/collect-secrets/);
+    expect(readChecklist(stateDir)?.steps[LLM_AUTH_STEP_ID]?.status).toBe("pending");
   });
+});
 
-  it("no OpenAI login at all on this host: one precise instruction that names every login that works", async () => {
-    hostLogin('{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}');
-    const result = await engine().runStep(LLM_AUTH_STEP_ID, { route: "oauth" });
-    expect(result.ok).toBe(false);
-    const detail = detailOf(result.checks, "wizard_login");
-    expect(detail).toMatch(/no OpenAI login in this host's pi/);
-    expect(detail).toContain("any OpenAI login works");
-    expect(detail).not.toMatch(/choose "OpenAI Codex \(legacy\)"/);
+// ---- the house rule -----------------------------------------------------------
+
+describe("no credential ever reaches an argv (or any other record)", () => {
+  // The step opens no credential file: it runs fixed commands and reads their
+  // JSON. So a value in the secrets dir can reach nothing the step produces.
+  //
+  // MUTATION: read `<secrets>/openai_api_key` in src/onboard/steps/llmauth.ts
+  // and pass it on (an env assignment on the exec argv, a detail) — this fails.
+  it("a key in the secrets dir stays in its file: not on a command line, in the checklist, or in a check detail", async () => {
+    writeConfig(`[github]\nsecrets_dir = "${secretsDir}"\n`);
+    mkdirSync(join(secretsDir, "model-env"), { recursive: true });
+    writeFileSync(join(secretsDir, "openai_api_key"), SECRET);
+    writeFileSync(join(secretsDir, "model-env", "XAI_API_KEY"), SECRET);
+
+    for (const [choices, world] of [
+      [{}, { host: routeJson(KEY_ROUTE), daemon: { running: true, model: routeJson(KEY_ROUTE) } }],
+      [{}, { host: NO_CREDENTIAL, daemon: { running: true, model: NO_CREDENTIAL } }],
+      [{}, { host: NO_CREDENTIAL }],
+      [
+        onServer(),
+        { host: routeJson(), remote: { alias: "review-vm", running: true, model: NO_CREDENTIAL } },
+      ],
+    ] as const) {
+      seedChecklist({ ...choices });
+      const calls: string[][] = [];
+      const e = engine(world, calls);
+      const ran = await e.runStep(LLM_AUTH_STEP_ID);
+      const verified = await e.verifyAll();
+      expect(calls.length).toBeGreaterThan(0);
+      for (const call of calls) for (const arg of call) expect(arg).not.toContain(SECRET);
+      expect(JSON.stringify(ran.checks)).not.toContain(SECRET);
+      expect(JSON.stringify(verified.results)).not.toContain(SECRET);
+      expect(readFileSync(checklistPath(stateDir), "utf8")).not.toContain(SECRET);
+      // Every command is one of the fixed ones: a question, or where to ask it.
+      for (const call of calls) {
+        const line =
+          call[0] === "ssh" ? unquoteRemote(call.at(-1) ?? "").join(" ") : call.join(" ");
+        expect(line).toMatch(/ model --json$| ps( |$)/);
+      }
+    }
+  });
+});
+
+// ---- the embeddings note ------------------------------------------------------
+
+describe("the embeddings note", () => {
+  it("says memory embeddings need nothing from this step, on every outcome, and recommends no key", async () => {
+    for (const world of [{ host: routeJson() }, { host: NO_CREDENTIAL }]) {
+      const r = await engine(world).runStep(LLM_AUTH_STEP_ID);
+      const note = checkOf(r.checks, "embeddings");
+      expect(note.ok).toBe(true); // a note, never a blocker
+      expect(note.detail).toBe(EMBEDDINGS_NOTE);
+      rmSync(checklistPath(stateDir));
+    }
+    expect(EMBEDDINGS_NOTE).toMatch(/embeds locally by default/);
+    expect(EMBEDDINGS_NOTE).toMatch(/No model credential is ever read for embeddings/);
+    expect(EMBEDDINGS_NOTE).toMatch(/embeddings step, order 38/);
+    expect(EMBEDDINGS_NOTE).toContain("openai_embeddings_api_key");
+    expect(EMBEDDINGS_NOTE).not.toMatch(/recommend|worth providing/i);
   });
 });

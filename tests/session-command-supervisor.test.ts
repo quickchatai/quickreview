@@ -48,7 +48,7 @@ function seedRoundCommand(
     attempt?: number;
     nextCheckAt?: string;
     lenses?: string[];
-    passPlan?: { lens: string; agent: string; tier: "sol-med"; raisable_to: string[] }[];
+    passPlan?: { lens: string; agent: string; tier: "standard"; raisable_to: string[] }[];
     addablePasses?: { lens: string; tier: string; optional?: true }[];
   } = {},
 ) {
@@ -1038,7 +1038,7 @@ describe("bounded round-stage supervision", () => {
       agents: [
         {
           execution_id: "foreign",
-          agent: "pass-validate--sol-high",
+          agent: "pass-validate--deep",
           status: "running" as const,
           duration_ms: 1,
           tool_count: 0,
@@ -1076,8 +1076,8 @@ describe("bounded round-stage supervision", () => {
         lenses: ["pass-baseline", "pass-validate"],
         addablePasses: [
           optional
-            ? { lens: "pass-sweep", tier: "sol-high", optional: true }
-            : { lens: "pass-sweep", tier: "sol-high" },
+            ? { lens: "pass-sweep", tier: "deep", optional: true }
+            : { lens: "pass-sweep", tier: "deep" },
         ],
       });
       clock = new Date("2026-08-27T20:05:00.000Z");
@@ -1096,8 +1096,8 @@ describe("bounded round-stage supervision", () => {
         last_activity: "optional rows first",
         agents: [
           {
-            execution_id: "lens-1:pass-sweep--sol-high",
-            agent: "pass-sweep--sol-high",
+            execution_id: "lens-1:pass-sweep--deep",
+            agent: "pass-sweep--deep",
             status: "running" as const,
             duration_ms: 1,
             tool_count: 0,
@@ -1133,14 +1133,14 @@ describe("bounded round-stage supervision", () => {
     const rows = [
       ...Array.from({ length: 30 }, () => ({
         lens: "pass-baseline",
-        agent: "pass-baseline--sol-med",
-        tier: "sol-med" as const,
+        agent: "pass-baseline--standard",
+        tier: "standard" as const,
         raisable_to: [],
       })),
       {
         lens: "pass-validate",
-        agent: "pass-validate--sol-med",
-        tier: "sol-med" as const,
+        agent: "pass-validate--standard",
+        tier: "standard" as const,
         raisable_to: [],
       },
     ];
@@ -1174,8 +1174,8 @@ describe("bounded round-stage supervision", () => {
         last_activity: "a large wave",
         agents: [
           {
-            execution_id: "lens-1:pass-baseline--sol-med",
-            agent: "pass-baseline--sol-med",
+            execution_id: "lens-1:pass-baseline--standard",
+            agent: "pass-baseline--standard",
             status: "running" as const,
             duration_ms: 1,
             tool_count: 0,
@@ -1254,8 +1254,8 @@ describe("bounded round-stage supervision", () => {
       last_activity: "validator never launched",
       agents: [
         {
-          execution_id: "lens-1:pass-baseline--sol-med",
-          agent: "pass-baseline--sol-med",
+          execution_id: "lens-1:pass-baseline--standard",
+          agent: "pass-baseline--standard",
           status: "completed" as const,
           duration_ms: 60_000,
           tool_count: 1,
@@ -1293,14 +1293,14 @@ describe("bounded round-stage supervision", () => {
       passPlan: [
         {
           lens: "pass-baseline",
-          agent: "pass-baseline--sol-med",
-          tier: "sol-med",
+          agent: "pass-baseline--standard",
+          tier: "standard",
           raisable_to: [],
         },
         {
           lens: "pass-baseline",
-          agent: "pass-baseline--sol-med",
-          tier: "sol-med",
+          agent: "pass-baseline--standard",
+          tier: "standard",
           raisable_to: [],
         },
       ],
@@ -1322,8 +1322,8 @@ describe("bounded round-stage supervision", () => {
       last_activity: "validator never launched",
       agents: [
         {
-          execution_id: "lens-1:pass-baseline--sol-med",
-          agent: "pass-baseline--sol-med",
+          execution_id: "lens-1:pass-baseline--standard",
+          agent: "pass-baseline--standard",
           status: "completed" as const,
           duration_ms: 60_000,
           tool_count: 1,
@@ -1991,20 +1991,20 @@ describe("a follow-up round with the pre-approval sweep owed", () => {
     owe(roundId);
     const progress = progressFor(id, pr, [
       {
-        agent: "pass-baseline--sol-med",
+        agent: "pass-baseline--standard",
         status: "completed",
         started: "2026-08-27T20:01:00.000Z",
         finished: "2026-08-27T20:10:00.000Z",
       },
       {
-        agent: "pass-validate--sol-high",
+        agent: "pass-validate--deep",
         status: "completed",
         started: "2026-08-27T20:11:00.000Z",
         finished: "2026-08-27T20:15:00.000Z",
       },
       // The sweep: pass-security, then a second pass-baseline, still running.
-      { agent: "pass-security--sol-high", status: "running", started: "2026-08-27T20:16:00.000Z" },
-      { agent: "pass-baseline--sol-med", status: "running", started: "2026-08-27T20:16:00.000Z" },
+      { agent: "pass-security--deep", status: "running", started: "2026-08-27T20:16:00.000Z" },
+      { agent: "pass-baseline--standard", status: "running", started: "2026-08-27T20:16:00.000Z" },
     ]);
     const onRoundFailure = vi.fn(async () => "requeued" as const);
 
@@ -2032,7 +2032,7 @@ describe("a follow-up round with the pre-approval sweep owed", () => {
       round.round_no,
       "passes_incomplete",
       expect.stringContaining(
-        "within 55 minutes; outstanding: pass-security--sol-high, pass-baseline--sol-med",
+        "within 55 minutes; outstanding: pass-security--deep, pass-baseline--standard",
       ),
     );
   });
@@ -2047,12 +2047,12 @@ describe("a follow-up round with the pre-approval sweep owed", () => {
     });
     const progress = progressFor(id, pr, [
       {
-        agent: "pass-baseline--sol-med",
+        agent: "pass-baseline--standard",
         status: "completed",
         started: "2026-08-27T20:01:00.000Z",
         finished: "2026-08-27T20:10:00.000Z",
       },
-      { agent: "pass-baseline--sol-med", status: "running", started: "2026-08-27T20:16:00.000Z" },
+      { agent: "pass-baseline--standard", status: "running", started: "2026-08-27T20:16:00.000Z" },
     ]);
     const onRoundFailure = vi.fn(async () => "requeued" as const);
     clock = new Date("2026-08-27T20:35:00.000Z");

@@ -40,11 +40,11 @@ const read = (file: string): string =>
   readFileSync(resolve(process.cwd(), "prompts", file), "utf8");
 
 const PLAN: PassPlanEntry[] = [
-  { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
-  { lens: "pass-validate", agent: "pass-validate--sol-med", tier: "sol-med", raisable_to: [] },
+  { lens: "pass-baseline", agent: "pass-baseline--standard", tier: "standard", raisable_to: [] },
+  { lens: "pass-validate", agent: "pass-validate--standard", tier: "standard", raisable_to: [] },
 ];
 const SWEEP: PassPlanEntry[] = [
-  { lens: "pass-sweep", agent: "pass-sweep--sol-med", tier: "sol-med", raisable_to: [] },
+  { lens: "pass-sweep", agent: "pass-sweep--standard", tier: "standard", raisable_to: [] },
 ];
 const files = (dir: string, plan: PassPlanEntry[]) =>
   plan.map((p, row) => ({ row, agent: p.agent, path: `${dir}/0${row + 1}-${p.agent}.md` }));

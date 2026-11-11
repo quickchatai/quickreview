@@ -18,6 +18,7 @@ import {
   type Runner,
 } from "../src/home/adapters.js";
 import { stateHome } from "../src/homes.js";
+import { replacedLogin } from "../src/home/loginowner.js";
 
 const files =
   (map: Record<string, string | Error>) =>
@@ -58,6 +59,27 @@ describe("the pi login port", () => {
     const r = await port.providers();
     expect(r).toEqual({ kind: "known", value: ["openai-codex", "anthropic"] });
     expect(JSON.stringify(r)).not.toMatch(/SECRET|"K"/);
+  });
+
+  // MUTATION: build the stamp from the type and the expiry alone in
+  // piLoginPort - an API key replaced by another reads the same, so a re-login
+  // that pasted a new key ends as "no stored login changed"; this fails.
+  it("a replaced API key stamps differently, and the stamp holds no key", async () => {
+    const stampsOf = async (key: string): Promise<ReadonlyMap<string, string>> => {
+      const r = await piLoginPort(
+        AGENT,
+        files({ [AUTH]: JSON.stringify({ north: { type: "api_key", key } }) }),
+      ).stamps!();
+      if (r.kind !== "known") throw new Error("unknown stamps");
+      return r.value;
+    };
+    const before = { kind: "known" as const, value: await stampsOf("FIRST-KEY-VALUE") };
+    const same = { kind: "known" as const, value: await stampsOf("FIRST-KEY-VALUE") };
+    const after = { kind: "known" as const, value: await stampsOf("OTHER-KEY-VALUE") };
+    expect(replacedLogin(before, same)).toBeNull();
+    expect(replacedLogin(before, after)).toBe("north");
+    expect(after.value.get("north")).toMatch(/^api_key::[0-9a-f]{8}$/);
+    expect(JSON.stringify([...after.value])).not.toMatch(/KEY-VALUE/);
   });
 
   it("no auth file is no login", async () => {
@@ -202,15 +224,23 @@ describe("the ports without an adapter yet", () => {
 });
 
 describe("the home's options from the env", () => {
-  it("take the launch's model and tool set, else the defaults", () => {
+  // MUTATION: fall back to a model name when QCR_HOME_MODEL is unset — this fails.
+  it("take the launch's pinned model and tool set, else no model and the reviewer tools", () => {
     const a = homeOptionsFromEnv({
       HOME: "/h",
-      QCR_HOME_MODEL: "anthropic/claude-x",
+      QCR_HOME_MODEL: "made-up/large-3",
       QCR_HOME_TOOLS: "full",
     });
-    expect([a.model, a.tools]).toEqual(["anthropic/claude-x", "full"]);
+    expect([a.model, a.tools]).toEqual(["made-up/large-3", "full"]);
     const b = homeOptionsFromEnv({ HOME: "/h" });
-    expect([b.model, b.tools]).toEqual(["openai-codex/gpt-6.1-sol", "reviewer"]);
+    expect([b.model, b.tools]).toEqual(["", "reviewer"]);
+  });
+
+  it("name pi's agent dir, where the model route reads the remembered choice", () => {
+    expect(homeOptionsFromEnv({ HOME: "/h" }).agentDir).toBe("/h/.pi/agent");
+    expect(homeOptionsFromEnv({ HOME: "/h", PI_CODING_AGENT_DIR: "/srv/pi" }).agentDir).toBe(
+      "/srv/pi",
+    );
   });
 
   it("read the login from the agent dir pi itself reads", async () => {

@@ -7,7 +7,7 @@
  * inferred as pending or done.
  */
 import { appendFileSync, renameSync, statSync } from "node:fs";
-import { PASS_TIER_ORDER } from "./types.js";
+import { LEGACY_TIER_NAMES, PASS_TIER_ORDER } from "./types.js";
 
 export const LIVE_AGENT_STATUSES = ["running", "completed", "failed"] as const;
 export type LiveAgentStatus = (typeof LIVE_AGENT_STATUSES)[number];
@@ -95,8 +95,12 @@ export function lensForAgent(agent: string): string {
   return agent.replace(TIER_SUFFIX, "");
 }
 
-/** `--<tier>` for every tier on the ladder (`PASS_TIER_ORDER`). */
-const TIER_SUFFIX = new RegExp(`--(?:${PASS_TIER_ORDER.join("|")})$`);
+/** `--<tier>` for every tier on the ladder (`PASS_TIER_ORDER`), in either
+ * spelling: a session's transcript keeps the names it started with, so it
+ * may go on reporting an agent under a tier's other name. */
+const TIER_SUFFIX = new RegExp(
+  `--(?:${[...PASS_TIER_ORDER, ...Object.keys(LEGACY_TIER_NAMES)].join("|")})$`,
+);
 
 /** A pass execution that has ended, either way. */
 export function isTerminalAgentStatus(status: LiveAgentStatus): boolean {

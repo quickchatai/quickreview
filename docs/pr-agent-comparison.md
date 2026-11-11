@@ -185,7 +185,12 @@ state, and authority.
   we have and they don't.
 - **Fallback models** (`fallback_models=["gpt-5.6-terra"]`). A silent model swap
   would invalidate the calibration behind the addenda registry. Resilience stays
-  at the orchestration layer.
+  at the orchestration layer. (Note: QuickReview's model route is not that.
+  Which model runs is resolved once, before the run, from the credentials pi
+  has; it is stated before anything is spent, a pin holds, and a failing
+  model fails the round rather than handing it to another. On the bot a
+  change of route between rounds raises an alert:
+  [llm-setup.md](llm-setup.md).)
 - **Runtime prompt configurability.** Their config-plane hardening (below) is
   the tax for it. We don't pay it because nothing repo-side configures us.
 - **Model-judged thread resolution.** See above.

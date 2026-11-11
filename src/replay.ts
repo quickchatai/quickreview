@@ -350,7 +350,7 @@ export class ScratchReplay {
       // the same clone worktrees.ts maintains, whatever the repo is called.
       baseClone: opts.baseClone ?? join(opts.sandboxRoot, githubCloneDir(opts.cfg.github)),
       baseBranch: opts.baseBranch ?? opts.cfg.github.base_branch,
-      model: opts.model ?? opts.cfg.models.conversation,
+      model: opts.model ?? opts.cfg.models.model,
       timeoutMs: opts.timeoutMs ?? DEFAULTS.timeoutMs,
       pollMs: opts.pollMs ?? DEFAULTS.pollMs,
       runId: opts.runId ?? `${Date.now()}-${process.pid}`,
@@ -589,8 +589,8 @@ export class ScratchReplay {
  *
  * `PiSessionManager` is rooted at the SCRATCH root so the session's cwd, inject
  * dir, prompts and session JSONLs are all scratch — but `piHome` stays the real
- * one, because that volume is where the ChatGPT OAuth tokens live and a replay
- * must not cost the login.
+ * one, because that volume is where the model login lives and a replay must
+ * not cost the login.
  */
 export async function nodeReplayIo(opts: {
   cfg: Config;

@@ -242,7 +242,7 @@ describe("paired tests obey the named files' rules, and never crowd out a readab
       exclude,
       budget: { maxFiles: 30, maxLines: 3000 },
       riskPasses: [],
-      defaultTier: "sol-med",
+      defaultTier: "standard",
       covered: () => new Set(),
       price: () => ({
         rate: { usd_per_kline: 1, cases: 1, lines: 1000, cost_usd: 1 },
@@ -294,7 +294,7 @@ describe("a stage 2 proposal", () => {
     expect(row).toMatchObject({
       id: "row-1",
       lens: "pass-security",
-      tier: "sol-med",
+      tier: "standard",
       status: "run",
       units: ["app", "lib", "tests"],
     });
@@ -318,7 +318,7 @@ describe("a stage 2 proposal", () => {
 
   it("never borrows pass-scan's rate: a deep lens at stage 1's tier and effort is still extrapolated", async () => {
     // A profile giving pass-security `effort = "low"` puts it at pass-scan's
-    // exact settings (sol-med, low, validator off) — stage 1's cheap rate must
+    // exact settings (standard, low, validator off) — stage 1's cheap rate must
     // still reach it only through the factor.
     const s = new ScanRunner(ports(runner(), { lenses: { "pass-security": { effort: "low" } } }));
     await calibrate(s);
@@ -334,7 +334,7 @@ describe("a stage 2 proposal", () => {
   it("refuses, as a whole, a row naming a test, an excluded or missing file, a non-deep or switched-off lens, or a tier the lens is not built at", async () => {
     const s = new ScanRunner(
       ports(runner(), {
-        lenses: { "pass-ui": { enabled: false }, "pass-contracts": { min_tier: "sol-high" } },
+        lenses: { "pass-ui": { enabled: false }, "pass-contracts": { min_tier: "deep" } },
       }),
     );
     await calibrate(s);
@@ -346,8 +346,8 @@ describe("a stage 2 proposal", () => {
         { lens: "pass-intent", files: ["app/views.py"], reason: "r" },
         { lens: "pass-scan", files: ["app/views.py"], reason: "r" },
         { lens: "pass-ui", files: ["web/index.ts"], reason: "r" },
-        { lens: "pass-contracts", files: ["web/index.ts"], tier: "sol-med", reason: "r" },
-        { lens: "pass-data-safety", files: ["app/models.py"], tier: "sol-med", reason: "r" },
+        { lens: "pass-contracts", files: ["web/index.ts"], tier: "standard", reason: "r" },
+        { lens: "pass-data-safety", files: ["app/models.py"], tier: "standard", reason: "r" },
         { lens: "pass-security", files: ["app/views.py"], reason: "" },
       ],
     });
@@ -360,10 +360,10 @@ describe("a stage 2 proposal", () => {
     expect(errors[3]).toMatch(/^row-5: pass-scan is stage 1's lens/);
     expect(errors[4]).toMatch(/^row-6: "pass-ui" is switched off/);
     expect(errors[5]).toMatch(
-      /^row-7: pass-contracts cannot run at "sol-med" here — one of: sol-high/,
+      /^row-7: pass-contracts cannot run at "standard" here — one of: deep/,
     );
     expect(errors[6]).toMatch(
-      /^row-8: pass-data-safety cannot run at "sol-med" here — one of: sol-high/,
+      /^row-8: pass-data-safety cannot run at "standard" here — one of: deep/,
     );
     expect(errors[7]).toMatch(/^row-9: no reason/);
     // Nothing stored from a refused proposal.
@@ -372,7 +372,7 @@ describe("a stage 2 proposal", () => {
 
   it("names migrations outright, and gives a lens with a floor its floor by default", async () => {
     const s = new ScanRunner(
-      ports(runner(), { lenses: { "pass-contracts": { min_tier: "sol-high" } } }),
+      ports(runner(), { lenses: { "pass-contracts": { min_tier: "deep" } } }),
     );
     await calibrate(s);
     const p = await propose(s, [
@@ -383,7 +383,7 @@ describe("a stage 2 proposal", () => {
       },
       { lens: "pass-contracts", files: ["web/index.ts"], reason: "the exported API" },
     ]);
-    expect(p.rows.map((r) => r.tier)).toEqual(["sol-high", "sol-high"]);
+    expect(p.rows.map((r) => r.tier)).toEqual(["deep", "deep"]);
     expect(p.rows[0]!.files.map((f) => f.path)).toContain("app/migrations/0001_init.py");
   });
 
@@ -447,7 +447,7 @@ describe("starting stage 2 on the operator's word", () => {
     await s.idle();
 
     const spec = cases.specs.at(-1)!;
-    expect(spec.agent).toBe("pass-security--sol-med");
+    expect(spec.agent).toBe("pass-security--standard");
     expect(spec.files).toEqual([
       "app/views.py",
       "lib/util.py",
@@ -462,7 +462,7 @@ describe("starting stage 2 on the operator's word", () => {
     expect(run).toMatchObject({ mode: "stage2", state: "complete", plan_key: p.key });
     expect(run.cases[0]).toMatchObject({
       lens: "pass-security",
-      tier: "sol-med",
+      tier: "standard",
       units: ["app", "lib", "tests"],
       findings: 2,
     });
@@ -479,7 +479,7 @@ describe("starting stage 2 on the operator's word", () => {
       "lib/util.py",
       "tests/lib/test_util.py",
     ]);
-    expect(deep.every((e) => e.tier === "sol-med" && e.effort === "tier" && e.sha === SHA)).toBe(
+    expect(deep.every((e) => e.tier === "standard" && e.effort === "tier" && e.sha === SHA)).toBe(
       true,
     );
     expect(s.status().ledger).toMatchObject({ deep_files: 4 });
@@ -541,7 +541,7 @@ describe("starting stage 2 on the operator's word", () => {
     });
     new Ledger(stateHomeFs(stateDir)).record([
       past("pass-scan", SCAN_DEFAULTS.tier, SCAN_DEFAULTS.effort, 0.5, 1),
-      past("pass-security", "sol-med", "tier", 1.5, 2),
+      past("pass-security", "standard", "tier", 1.5, 2),
     ]);
     const p = await propose(s, [CROSS]);
     const row = p.rows[0]!;

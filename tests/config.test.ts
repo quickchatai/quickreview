@@ -13,13 +13,23 @@ import {
   loadConfig,
   parseCaps,
   parseConfig,
+  piModelFlags,
   tierModel,
 } from "../src/config.js";
 import { tuiMemoryContainer } from "../src/tui/memforward.js";
 import {
+  isModelSpec,
+  isPinned,
   parseCoreConfig,
+  parseModels,
+  splitModelSpec,
+  stripPins,
+  tierSpec,
+  TIER_LEVELS,
   withSecurityFamily,
+  withThinking,
 } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { PASS_TIER_ORDER } from "@quickchatai/pi-quickreview/src/types.js";
 import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -406,9 +416,9 @@ describe("[models] tiered pass scheme", () => {
 
   it("reads the shipped tier map, risk passes, validate tier, and diff knob", () => {
     expect(cfg.models.tiers).toEqual({
-      "terra-med": "openai-codex/gpt-5.6-terra:medium",
-      "sol-med": "openai-codex/gpt-5.6-sol:medium",
-      "sol-high": "openai-codex/gpt-5.6-sol:high",
+      light: "openai-codex/gpt-5.6-terra:medium",
+      standard: "openai-codex/gpt-5.6-sol:medium",
+      deep: "openai-codex/gpt-5.6-sol:high",
     });
     // The configured list, then the security family: a family lens always
     // runs at the risk tier, whatever the list says.
@@ -419,7 +429,7 @@ describe("[models] tiered pass scheme", () => {
       ...SECURITY_FAMILY,
     ]);
     // The fixture runs the validator at the top tier.
-    expect(cfg.models.validate_tier).toBe("sol-high");
+    expect(cfg.models.validate_tier).toBe("deep");
     expect(cfg.models.small_diff_lines).toBe(150);
   });
 
@@ -431,9 +441,69 @@ describe("[models] tiered pass scheme", () => {
     const cfg2 = parseConfig(minimal);
     expect(cfg2.models.tiers).toEqual(MODELS_TIER_DEFAULTS.tiers);
     expect(cfg2.models.risk_passes).toEqual(withSecurityFamily(MODELS_TIER_DEFAULTS.risk_passes));
-    expect(cfg2.models.validate_tier).toBe("sol-high");
+    expect(cfg2.models.validate_tier).toBe("deep");
     expect(cfg2.models.small_diff_lines).toBe(150);
     expect(cfg2.models.pricing).toEqual({});
+  });
+
+  // MUTATION: restore `String(req(raw, "conversation"))` in parseModels — a
+  // [models] with no model key is `missing key` and this fails.
+  it("a [models] that names no model pins none: every knob defaults, the model is empty", () => {
+    const bare = readFileSync(configPath, "utf8").replace(
+      /\[models\][\s\S]*?(?=\n\[tui\])/,
+      "[models]\n",
+    );
+    for (const parse of [parseConfig, parseCoreConfig]) {
+      const m = parse(bare).models;
+      expect(m.model).toBe("");
+      expect(m.tiers).toEqual(MODELS_TIER_DEFAULTS.tiers);
+      expect(m.validate_tier).toBe("deep");
+      expect(m.pass_models).toEqual({});
+    }
+  });
+
+  // MUTATION: restore `req(raw, "models")` in parseCoreConfig or in
+  // parseConfig — a config with no [models] section is `missing key 'models'`
+  // in that parser, and this fails.
+  it("a config with no [models] section at all pins nothing, in both parsers", () => {
+    const none = readFileSync(configPath, "utf8").replace(/\[models\][\s\S]*?(?=\n\[tui\])/, "");
+    expect(none).not.toMatch(/^\[models/m);
+    for (const parse of [parseConfig, parseCoreConfig]) {
+      const m = parse(none).models;
+      expect(m.model).toBe("");
+      expect(m.tiers).toEqual(MODELS_TIER_DEFAULTS.tiers);
+      expect(Object.values(m.tiers).some(isPinned)).toBe(false);
+      expect(m.risk_passes).toEqual(withSecurityFamily(MODELS_TIER_DEFAULTS.risk_passes));
+      expect(m.validate_tier).toBe("deep");
+      expect(m.small_diff_lines).toBe(150);
+      expect(m.pass_models).toEqual({});
+    }
+    // A `models` that is no table is not an absent one.
+    for (const parse of [parseConfig, parseCoreConfig])
+      expect(() => parse(`models = "prov/model-a"\n${none}`)).toThrow(/\[models\] must be a table/);
+  });
+
+  // The shipped defaults name no model: each tier is the run's route at its
+  // level. A [models.tiers] entry is laid over them key by key.
+  // MUTATION: put a `provider/id` back into MODELS_TIER_DEFAULTS.tiers — this fails.
+  it("the default tiers pin no model and carry the tier levels", () => {
+    expect(MODELS_TIER_DEFAULTS.tiers).toEqual({
+      light: `:${TIER_LEVELS.light}`,
+      standard: `:${TIER_LEVELS.standard}`,
+      deep: `:${TIER_LEVELS.deep}`,
+    });
+    expect(MODELS_TIER_DEFAULTS.tiers).toEqual({
+      light: ":medium",
+      standard: ":medium",
+      deep: ":high",
+    });
+    const one = parseModels({ tiers: { deep: "prov/model-a:xhigh" } });
+    expect(one.tiers).toEqual({
+      light: ":medium",
+      standard: ":medium",
+      deep: "prov/model-a:xhigh",
+    });
+    expect(one.model).toBe("");
   });
 
   it("refuses a validate_tier outside the tier ladder (selfscan)", () => {
@@ -458,8 +528,215 @@ describe("[models] tiered pass scheme", () => {
   });
 
   it("tierModel resolves the full spec for a tier", () => {
-    expect(tierModel(cfg, "terra-med")).toBe("openai-codex/gpt-5.6-terra:medium");
-    expect(tierModel(cfg, "sol-high")).toBe("openai-codex/gpt-5.6-sol:high");
+    expect(tierModel(cfg, "light")).toBe("openai-codex/gpt-5.6-terra:medium");
+    expect(tierModel(cfg, "deep")).toBe("openai-codex/gpt-5.6-sol:high");
+  });
+});
+
+describe("[models] model and the model spec grammar", () => {
+  const [BASE, ADD, RISK] = PASS_TIER_ORDER;
+  const SHAPE = 'must be "provider/model" with an optional ":<thinking level>"';
+
+  it("a spec is [provider/model][:level]: the model part may be empty", () => {
+    expect(splitModelSpec("prov/m:high")).toEqual({ model: "prov/m", thinking: "high" });
+    expect(splitModelSpec("prov/m")).toEqual({ model: "prov/m", thinking: null });
+    // MUTATION: put `(.+)` back in splitModelSpec's pattern — ":high" is a
+    // model named ":high" and this fails.
+    expect(splitModelSpec(":high")).toEqual({ model: "", thinking: "high" });
+    expect(splitModelSpec("")).toEqual({ model: "", thinking: null });
+    // Only a thinking level is a suffix: any other tail is the id's own.
+    expect(splitModelSpec("prov/m:v2")).toEqual({ model: "prov/m:v2", thinking: null });
+    expect(splitModelSpec(":v2")).toEqual({ model: ":v2", thinking: null });
+    expect(["prov/m:high", "prov/m", ":high", ""].map(isPinned)).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
+    // An unpinned spec stays unpinned under a new level.
+    expect(withThinking("", "high")).toBe(":high");
+    expect(withThinking(":medium", "low")).toBe(":low");
+  });
+
+  it("[models] model is the pin, as written, with its level", () => {
+    expect(parseModels({ model: "prov/m:high" }).model).toBe("prov/m:high");
+    expect(parseModels({ model: "prov/m" }).model).toBe("prov/m");
+    expect(parseModels({ model: "" }).model).toBe("");
+    expect(parseModels({}).model).toBe("");
+  });
+
+  // MUTATION: check `model` with the old pass_models pattern
+  // (`/^[\w.-]+\/[\w.:-]+$/`) — the three ids below are refused and this fails.
+  it("a model id keeps its own slashes and its @, as pi's ids have them", () => {
+    for (const id of [
+      "openrouter/moonshotai/kimi-k2.6",
+      "fireworks/accounts/fireworks/models/kimi-k3",
+      "cloudflare-workers-ai/@cf/meta/llama-4",
+    ]) {
+      expect(parseModels({ model: id }).model).toBe(id);
+      expect(parseModels({ model: `${id}:high` }).model).toBe(`${id}:high`);
+      expect(parseModels({ tiers: { deep: `${id}:high` } }).tiers[RISK]).toBe(`${id}:high`);
+    }
+  });
+
+  it.each([
+    ["a bare id", "gpt-x"],
+    ["a bare id with a level", "gpt-x:high"],
+    ["a level and no model", ":high"],
+    ["a provider and no id", "prov/"],
+    ["an id and no provider", "/m"],
+    ["a number", 5],
+    ["a table", { id: "prov/m" }],
+  ])("[models] model refuses %s", (_what, value) => {
+    expect(() => parseModels({ model: value })).toThrow(
+      `config.toml [models] model ${SHAPE} (got ${JSON.stringify(value)})`,
+    );
+  });
+
+  // MUTATION: drop the isModelSpec check from parseTierSpecs — a tier with a
+  // bare id loads and this fails.
+  it("[models.tiers]: a value pins a provider's model or none, and the key is named as written", () => {
+    // No model part: the tier runs on the run's route, at that level.
+    const unpinned = parseModels({ tiers: { light: ":low", deep: "" } }).tiers;
+    expect(unpinned[BASE]).toBe(":low");
+    expect(unpinned[RISK]).toBe("");
+    expect(unpinned[ADD]).toBe(MODELS_TIER_DEFAULTS.tiers[ADD]);
+    expect(() => parseModels({ tiers: { deep: "gpt-x:high" } })).toThrow(
+      `config.toml [models.tiers] deep ${SHAPE} (got "gpt-x:high")`,
+    );
+    expect(() => parseModels({ tiers: { "sol-high": "gpt-x" } })).toThrow(
+      `config.toml [models.tiers] sol-high ${SHAPE} (got "gpt-x")`,
+    );
+    expect(() => parseModels({ tiers: { standard: 7 } })).toThrow(
+      `config.toml [models.tiers] standard ${SHAPE} (got 7)`,
+    );
+    // A key that is no tier is left out before its value is read.
+    expect(parseModels({ tiers: { "sol-ultra": "gpt-x" } }).tiers).toEqual(
+      MODELS_TIER_DEFAULTS.tiers,
+    );
+  });
+
+  it("isModelSpec: which spec with no model part counts depends on the place", () => {
+    const bare = (v: unknown) =>
+      (["whole", "any", "level"] as const).map((place) => isModelSpec(v, place));
+    expect(bare("prov/m:high")).toEqual([true, true, true]);
+    expect(bare("")).toEqual([true, true, false]);
+    expect(bare(":high")).toEqual([false, true, true]);
+    expect(bare("gpt-x")).toEqual([false, false, false]);
+    expect(bare(undefined)).toEqual([false, false, false]);
+  });
+
+  it("[models] effort sets the level of an unpinned spec too", () => {
+    const m = parseModels({ effort: "high", tiers: { light: ":low" } });
+    expect(m.model).toBe(":max");
+    expect(m.tiers[BASE]).toBe(":max");
+    expect(isPinned(m.model)).toBe(false);
+  });
+
+  it("TIER_LEVELS names a level for every tier of the ladder", () => {
+    expect(TIER_LEVELS).toEqual({ [BASE]: "medium", [ADD]: "medium", [RISK]: "high" });
+  });
+
+  describe("tierSpec: the literal spec a tier runs on", () => {
+    const route = { spec: "routed/model" };
+    const cfg = (tiers: Record<string, string>) => ({ models: parseModels({ tiers }) });
+
+    it("a pinned tier is its own spec, whatever the route", () => {
+      const pinned = cfg({ light: "prov/a:low", standard: "prov/b", deep: "prov/c:high" });
+      expect(tierSpec(route, pinned, BASE)).toBe("prov/a:low");
+      expect(tierSpec(route, pinned, ADD)).toBe("prov/b");
+      expect(tierSpec(route, pinned, RISK)).toBe("prov/c:high");
+    });
+
+    // MUTATION: return the tier's own spec for an unpinned tier too — a
+    // child pi is started on `--model :low` and this fails.
+    it("an unpinned tier is the route's model at the tier's level", () => {
+      const unpinned = cfg({ light: ":low", standard: "", deep: ":xhigh" });
+      expect(tierSpec(route, unpinned, BASE)).toBe("routed/model:low");
+      // No level of its own: the tier's.
+      expect(tierSpec(route, unpinned, ADD)).toBe(`routed/model:${TIER_LEVELS[ADD]}`);
+      expect(tierSpec(route, unpinned, RISK)).toBe("routed/model:xhigh");
+    });
+  });
+
+  describe("stripPins: a run's one model replaces every pin below it", () => {
+    const pinned = {
+      models: {
+        ...parseModels({
+          model: "prov/main:high",
+          tiers: { light: "prov/a:low", standard: "prov/b", deep: ":high" },
+        }),
+        pass_models: {
+          "pass-style": "prov/small:low",
+          "pass-ui": "prov/small",
+          "pass-docs": ":low",
+        },
+      },
+    };
+
+    // MUTATION: keep a tier's model part in stripPins — this fails.
+    it("each pinned tier and lens override loses its model and keeps its level", () => {
+      const { cfg, replaced } = stripPins(pinned);
+      expect(cfg.models.tiers).toEqual({
+        [BASE]: ":low",
+        // It named no level: the tier's own.
+        [ADD]: `:${TIER_LEVELS[ADD]}`,
+        [RISK]: ":high",
+      });
+      // An override that named no level says nothing without its model.
+      expect(cfg.models.pass_models).toEqual({ "pass-style": ":low", "pass-docs": ":low" });
+      // light, standard, pass-style, pass-ui: the specs that named a model.
+      expect(replaced).toBe(4);
+      expect(Object.values(cfg.models.tiers).some(isPinned)).toBe(false);
+      expect(Object.values(cfg.models.pass_models).some(isPinned)).toBe(false);
+    });
+
+    it("the review's own model and the input are left as they were", () => {
+      const before = structuredClone(pinned);
+      const { cfg } = stripPins(pinned);
+      expect(cfg.models.model).toBe("prov/main:high");
+      expect(pinned).toEqual(before);
+    });
+
+    it("a config that pins nothing below its model is unchanged, and counts none", () => {
+      const once = stripPins(pinned).cfg;
+      expect(stripPins(once)).toEqual({ cfg: once, replaced: 0 });
+    });
+  });
+});
+
+describe("a model spec as the flags a CLI pi is started with", () => {
+  // MUTATION: return `["--model", spec]` for every spec — a launcher with no
+  // pin starts pi on an empty model name and this fails.
+  it("names a model only for a spec that names one", () => {
+    expect(piModelFlags("prov/model-a")).toEqual(["--model", "prov/model-a"]);
+    // The level rides the spec: pi reads `provider/id:level` itself.
+    expect(piModelFlags("prov/model-a:high")).toEqual(["--model", "prov/model-a:high"]);
+    // An id that holds a colon is still a model: only a thinking level is a suffix.
+    expect(piModelFlags("prov/a/b:free")).toEqual(["--model", "prov/a/b:free"]);
+    // Nothing pinned: pi starts on its own choice, and the route decides the rest.
+    expect(piModelFlags("")).toEqual([]);
+    expect(piModelFlags("  ")).toEqual([]);
+    // A level with no model is the level alone.
+    expect(piModelFlags(":high")).toEqual(["--thinking", "high"]);
+  });
+
+  it("the home and the companion ship with no model, and take a pin as written", () => {
+    const base = readFileSync(configPath, "utf8");
+    const shipped = parseConfig(base);
+    expect(shipped.home).toEqual({ model: "", tools: "reviewer" });
+    expect(shipped.companion.model).toBe("");
+    const pinned = parseConfig(
+      base.replace(
+        "\n[companion]\n",
+        '\n[home]\nmodel = "prov/model-a"\n\n[companion]\nmodel = "prov/model-b:low"\n',
+      ),
+    );
+    expect(pinned.home?.model).toBe("prov/model-a");
+    expect(pinned.companion.model).toBe("prov/model-b:low");
+    expect(() =>
+      parseConfig(base.replace("\n[companion]\n", '\n[home]\nmodel = "model-a"\n\n[companion]\n')),
+    ).toThrow(/\[home\]: model must be "provider\/id", or ""/);
   });
 });
 
@@ -590,6 +867,23 @@ describe("config.example.toml", () => {
     expect(cfg.dry_run).toBe(true); // safe default: a fresh install never mutates GitHub
     expect(cfg.slack.enabled).toBe(false); // enabling Slack is a deliberate act
     expect(cfg.server.port).toBe(8787);
+  });
+
+  // The example is what a fresh install runs: it names no model, so a
+  // review runs on whatever provider pi has a credential for.
+  // MUTATION: uncomment `model = ` in config.example.toml's [models], or a
+  // line of its [models.tiers] — this fails.
+  it("pins no model: the review's model and every tier are the route's", () => {
+    const cfg = loadConfig(examplePath);
+    expect(cfg.models.model).toBe("");
+    expect(cfg.models.tiers).toEqual(MODELS_TIER_DEFAULTS.tiers);
+    expect(cfg.models.pass_models).toEqual({});
+    // The older keys are gone from the file: nothing folds to a pin.
+    const text = readFileSync(examplePath, "utf8");
+    const models = text.slice(text.indexOf("\n[models]\n"), text.indexOf("\n[models.pricing]\n"));
+    expect(models).not.toMatch(/^\s*"?(model|default|conversation|light|standard|deep)"?\s*=/m);
+    // …and the pin is there to uncomment, in pi's own spelling.
+    expect(models).toMatch(/^# model = "provider\/id"$/m);
   });
 
   it("ships empty identities for the values an operator must fill", () => {

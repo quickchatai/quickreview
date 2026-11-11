@@ -56,7 +56,7 @@ import {
   triggeredServerLines,
 } from "./securitytriggers.js";
 import { renderThreatModelExcerpt, type ThreatModel } from "./threatmodel.js";
-import { PASS_TIER_ORDER } from "./types.js";
+import { ADD_TIER, BASE_TIER, PASS_TIER_ORDER, RISK_TIER } from "./types.js";
 import type {
   LedgerCarry,
   PassPlanEntry,
@@ -107,13 +107,13 @@ export function validatorTier(cfg: Pick<CoreConfig, "lenses" | "models">): PassT
 
 /**
  * The tier a lens ADDED by the session runs at (the round templates' add
- * rule): a risk pass exists only as `sol-high`; every other lens at `sol-med`,
+ * rule): a risk pass exists only as `deep`; every other lens at `standard`,
  * or at the profile's `min_tier` for it when that is higher.
  */
 export function addTierOf(cfg: CoreConfig, lens: string): PassTier {
   return cfg.models.risk_passes.includes(lens)
-    ? "sol-high"
-    : flooredTier(cfg.lenses, lens, "sol-med");
+    ? RISK_TIER
+    : flooredTier(cfg.lenses, lens, ADD_TIER);
 }
 
 /** The facts a prepared worktree hands the round — the tree's own, less
@@ -175,7 +175,7 @@ export interface PassPlan {
 }
 
 /** Deterministic per-round pass plan (agent = `${lens}--${tier}`):
- * - risk passes are always "sol-high", single variant, not raisable;
+ * - risk passes are always "deep", single variant, not raisable;
  * - pass-validate runs at validatorTier() — its own configured tier, never
  *   raised to match a lens — is not raisable, and is always last;
  * - every other selected lens gets the passTier() tier and may be raised to
@@ -206,7 +206,7 @@ export function buildPassPlan(
   files: PrFileEntry[],
   intent?: { title?: string | null; body?: string | null },
   /** Whose tier-forcing gate applies. Default Django; `none` never forces
-   * sol-med off a migrations path. */
+   * standard off a migrations path. */
   ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
   /** Profile lens-heuristics extension; absent ⇒ generic core. */
   heuristics?: HeuristicsExtension,
@@ -378,7 +378,7 @@ export function buildPassPlan(
   // whatever the diff size, and is not raisable (config refuses a pin on a
   // risk pass or on pass-validate). A profile `min_tier` still floors it.
   const pins: Readonly<Record<string, PassTier>> = cfg.models.pass_tiers ?? {};
-  // pass-intent starts at terra-med whatever the round's default:
+  // pass-intent starts at light whatever the round's default:
   // reading comprehension over two short texts, not a judgment over production
   // risk. It is NOT pinned — the session may raise it like any other lens.
   // A profile `min_tier` floors whatever this picks (it never lowers one).
@@ -386,9 +386,7 @@ export function buildPassPlan(
     flooredTier(
       cfg.lenses,
       lens,
-      risk.has(lens)
-        ? "sol-high"
-        : (pins[lens] ?? (lens === INTENT_PASS ? "terra-med" : defaultTier)),
+      risk.has(lens) ? RISK_TIER : (pins[lens] ?? (lens === INTENT_PASS ? BASE_TIER : defaultTier)),
     );
   // The sweep and behaviour-delta are planned as grouped rows of their own,
   // so `plan = "always"` reaches them here, as their lever would: on a change
@@ -402,7 +400,7 @@ export function buildPassPlan(
   // The sweep's rows run at the cheapest tier unless pinned (`[models.pass_tiers]`)
   // or floored by the profile.
   const sweepOn = groupedOn(SWEEP_PASS, cfg.review.sweep);
-  const sweepTier = flooredTier(cfg.lenses, SWEEP_PASS, pins[SWEEP_PASS] ?? "terra-med");
+  const sweepTier = flooredTier(cfg.lenses, SWEEP_PASS, pins[SWEEP_PASS] ?? BASE_TIER);
   // The validator runs at its own tier — never raised to match a lens,
   // pinned or not.
   const validate = validatorTier(cfg);
@@ -614,7 +612,7 @@ const CHEAP_LAST_PASSES: ReadonlySet<string> = new Set([
  * (packages/pi-plugin/src/engine/lens/runlens.ts) runs them under a process-wide cap in that order,
  * so a 15–27 row plan runs in waves: a slow row listed late starts in the
  * last wave and sets the round's critical path (typically pass-baseline,
- * sol-high sweep and behaviour-delta rows). The order:
+ * deep sweep and behaviour-delta rows). The order:
  * pass-baseline; then by tier, highest first; within a tier the risk passes,
  * then the focused rows (behaviour-delta, then sweep) by the changed lines
  * their focus covers, larger first, then every other lens, then the cheap
@@ -1185,7 +1183,7 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
  *  - `security_fold` and `security_only`, from `[security]`;
  *  - `security_validator_agent`: when a family row is planned and the
  *    round's validator runs below the risk tier, the round's security
- *    candidates are validated at `pass-validate--sol-high`, as their own
+ *    candidates are validated at `pass-validate--deep`, as their own
  *    group. The validator row itself keeps its tier (`validatorTier`): the
  *    raise is for the security group alone;
  *  - when a family row is planned: the threat model (its source, hash and
@@ -1252,7 +1250,7 @@ function securityOrderFields(
 
 /** The tier a round's security candidates are validated at: the risk tier
  * the family's lenses run at. */
-export const SECURITY_VALIDATOR_TIER: PassTier = "sol-high";
+export const SECURITY_VALIDATOR_TIER: PassTier = RISK_TIER;
 
 /** Build the round order for one PR — pure once the files list is in hand. */
 export function buildRoundOrder(args: {
@@ -1363,7 +1361,7 @@ export function buildRoundOrder(args: {
     addable_lenses
       .filter((l) => !args.cfg.models.risk_passes.includes(l))
       .map((l) => [l, addTierOf(args.cfg, l)] as const)
-      .filter(([, t]) => t !== "sol-med"),
+      .filter(([, t]) => t !== ADD_TIER),
   );
   return {
     pr: args.row.number,

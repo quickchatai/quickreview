@@ -5,7 +5,7 @@
 //
 //   ╭─ quickreview ──────────────────────────── setup ─╮
 //   │   Welcome to quickreview            1 of 3 done   │
-//   │   ✓  Sign in to OpenAI   ChatGPT · signed in with pi │
+//   │   ✓  Sign in to a model provider   <name>, signed in with pi │
 //   │   ▸  Connect GitHub                  alt+n check   │  the next step
 //   │        gh is signed out: run `gh auth login` …     │
 //   │   ○  Choose a repository                           │
@@ -35,7 +35,7 @@ export const SETUP_OVERLAY = {
 
 /** The share of the terminal's height the card fills. */
 export const CARD_HEIGHT = 0.5;
-/** Sub-rows (instructions, the device code) are indented under the label. */
+/** Sub-rows (instructions) are indented under the label. */
 const INDENT = "       ";
 const NOTICE_ROWS = 3;
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -57,6 +57,7 @@ const VERB: Record<SetupStepView["id"], string> = {
   login: "sign in",
   github: "check",
   repo: "choose",
+  review_model: "choose",
 };
 
 export class SetupCard implements Component {
@@ -127,7 +128,7 @@ export class SetupCard implements Component {
     } else if (s.state === "running") {
       mark = this.c("accent", this.spin());
       label = this.th.bold(this.c("text", s.title));
-      right = this.c("dim", v.login.code ? "waiting for you…" : "starting…");
+      right = this.c("dim", v.login.how ? "waiting for you…" : "starting…");
     } else if (s.unknown !== undefined) {
       mark = this.c("dim", "?");
       label = s.next ? this.th.bold(this.c("text", s.title)) : this.c("text", s.title);
@@ -156,6 +157,13 @@ export class SetupCard implements Component {
           "One of your recently pushed repositories, or paste any owner/name or GitHub URL.",
         ),
       );
+    else if (s.next && s.id === "review_model" && s.missing)
+      out.push(
+        ...this.sub(
+          w,
+          `${capital(s.missing)}. ${k} picks the provider; dismiss the list to keep it.`,
+        ),
+      );
     return out;
   }
 
@@ -163,47 +171,40 @@ export class SetupCard implements Component {
     const v = this.host.setup.view();
     const k = this.key();
     const out: string[] = [];
-    const chatgpt = v.provider === "OpenAI";
-    const setting = "Device-code login must be on first: ChatGPT → Settings → Security.";
+    // any provider pi supports: pi's own menu names them, the card names none
+    const how = "pi's own /login lists every provider it supports: sign in, or paste an API key.";
     if (s.state === "running") {
-      const code = v.login.code;
-      if (!code) {
-        if (chatgpt) out.push(...this.sub(w, setting));
+      if (v.login.how === undefined) {
         out.push(
           this.row(
             w,
-            `${INDENT}${this.c("accent", this.spin())} ${this.c("dim", "asking for a code…")}`,
+            `${INDENT}${this.c("accent", this.spin())} ${this.c("dim", "opening pi's /login…")}`,
           ),
         );
         return out;
       }
-      out.push(this.row(w, ""));
       out.push(
-        this.row(
+        ...this.sub(
           w,
-          `${INDENT}${this.c("muted", "1  Open ")}  ${this.c("accent", code.verificationUri)}`,
+          v.login.how === "opened"
+            ? "pi's /login is open: pick a provider there and sign in, or paste an API key."
+            : "/login is on the input line: press Enter to open pi's menu.",
         ),
       );
       out.push(
         this.row(
           w,
-          `${INDENT}${this.c("muted", "2  Enter")}  ${this.th.bold(this.c("text", code.userCode))}`,
-        ),
-      );
-      out.push(this.row(w, ""));
-      if (chatgpt) out.push(...this.sub(w, setting, "dim"));
-      out.push(
-        this.row(
-          w,
-          `${INDENT}${this.c("accent", this.spin())} ${this.c("dim", "waiting for you to approve…")}`,
+          `${INDENT}${this.c("accent", this.spin())} ${this.c("dim", "waiting for pi to have a credential…")}`,
         ),
       );
       return out;
     }
     if (v.login.failure) out.push(...this.sub(w, loginFailureText(v.login.failure, k), "warning"));
     if (s.unknown !== undefined) out.push(...this.sub(w, `Unknown — ${s.unknown}.`, "warning"));
-    if (s.next && chatgpt && v.login.failure?.kind !== "not_enabled")
-      out.push(...this.sub(w, setting));
+    else if (s.next) {
+      if (s.missing) out.push(...this.sub(w, `${capital(s.missing)}.`, "warning"));
+      out.push(...this.sub(w, how));
+    }
     return out;
   }
 

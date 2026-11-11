@@ -22,6 +22,7 @@ import {
   configDeprecations,
   foldLegacyOwnerSlackId,
   MEMORY_DELIVERY_MODES,
+  modelsTable,
   parseEngine,
   parseEscalation,
   parseGithubSection,
@@ -36,6 +37,7 @@ import {
   req,
   requireGithubKeys,
   REVIEW_PRESETS,
+  splitModelSpec,
   validateReviewSection,
   type CoreConfig,
   type GithubConfig,
@@ -44,6 +46,21 @@ import {
 } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 
 export * from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+
+/**
+ * A model spec (`[provider/id][:level]`) as the flags a CLI pi is started
+ * with. A spec that names a model is a pin and is passed whole (`--model`,
+ * which reads the `:level` itself). One that names only a level passes the
+ * level (`--thinking`). One that names neither passes nothing: pi starts on
+ * its own choice (its saved default, or the model a resumed session last ran
+ * on), and the login route inside it moves a session whose model has no
+ * credential (extensions/login-route.ts).
+ */
+export function piModelFlags(spec: string): string[] {
+  const { model, thinking } = splitModelSpec(spec.trim());
+  if (model !== "") return ["--model", spec.trim()];
+  return thinking !== null ? ["--thinking", thinking] : [];
+}
 
 /** Directory name of the base clone: `[github] clone_dir` when set, else the
  * repo slug's basename ("owner/name" → "name"; a URL's trailing path segment,
@@ -108,6 +125,10 @@ export interface CompanionConfig {
   pihome_volume: string;
   /** tmux session name inside the container. */
   session: string;
+  /** The companion's model, `provider/id[:thinking]`: a pin. `""` (the
+   * default) names none: the companion's pi starts on its own choice for the
+   * login it has, and the login route moves it only when that model has no
+   * credential (extensions/login-route.ts). */
   model: string;
   /** Host path of the review-sandbox repo → /workspace (rw). */
   repo_dir: string;
@@ -1192,14 +1213,16 @@ export type HomeToolSet = "reviewer" | "full";
 
 /** `[home]`: the home a bare `qcr` opens (src/home/launch.ts reads it). */
 export interface HomeConfig {
-  /** The chat's model, `provider/id`. The panel's login line counts only
-   * this model's provider as signed in. */
+  /** The chat's model, `provider/id`: a pin. `""` (the default) names none:
+   * the chat keeps the model pi starts on (its saved default, or the resumed
+   * session's) while that model has a credential, and runs on the review's
+   * route when it has none (extensions/login-route.ts). */
   model: string;
   tools: HomeToolSet;
 }
 
 export const HOME_DEFAULTS: Readonly<HomeConfig> = {
-  model: "openai-codex/gpt-6.1-sol",
+  model: "",
   tools: "reviewer",
 };
 
@@ -1207,9 +1230,9 @@ export const HOME_DEFAULTS: Readonly<HomeConfig> = {
 export function parseHomeSection(raw: unknown): HomeConfig {
   const t = (raw ?? {}) as Record<string, unknown>;
   const model = t["model"] ?? HOME_DEFAULTS.model;
-  if (typeof model !== "string" || !/^[^/\s]+\/\S+$/.test(model))
+  if (typeof model !== "string" || (model !== "" && !/^[^/\s]+\/\S+$/.test(model)))
     throw new Error(
-      `config.toml [home]: model must be "provider/id" (got ${JSON.stringify(model)})`,
+      `config.toml [home]: model must be "provider/id", or "" for the model pi's login decides (got ${JSON.stringify(model)})`,
     );
   const tools = t["tools"] ?? HOME_DEFAULTS.tools;
   if (tools !== "reviewer" && tools !== "full")
@@ -1550,7 +1573,7 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   image: COMPANION_IMAGE,
   pihome_volume: "companion-pihome",
   session: "companion",
-  model: "openai-codex/gpt-6.1-sol:medium",
+  model: "", // none pinned: pi's own choice for the companion's login
   repo_dir: "", // → sandboxRoot()
   tracker_dir: "", // → /tracker (rw) when set; empty = no tracker mount
   tracker_docs_dir: "", // → /tracker-docs (ro) when set
@@ -1858,7 +1881,7 @@ export function parseConfig(toml: string): Config {
       "[eod] timezone",
     ),
     caps: parseCaps(req(raw, "caps") as Record<string, unknown>),
-    models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
+    models: parseModels(modelsTable(raw), REVIEW_PRESETS[preset].effort),
     engine,
     pi: parsePiSection(raw),
     openviking: parseOpenViking((raw.openviking ?? {}) as Record<string, unknown>),

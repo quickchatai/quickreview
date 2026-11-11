@@ -1,7 +1,9 @@
-// Passive pi auth-failure detection (packages/pi-plugin/src/authwatch.ts) + its surfaces:
-// status.json flag, wake-grade anomaly, and the TUI alert bridge. No smoke
-// calls: detection is purely observational over the session JSONLs pi
-// already writes.
+// Passive detection of a refused model credential (packages/pi-plugin/src/authwatch.ts)
+// + its surfaces: status.json flag, wake-grade anomaly, and the TUI alert
+// bridge. No smoke calls: detection is purely observational over the session
+// JSONLs pi already writes. Only the one classifier's `auth` kind
+// (packages/pi-plugin/src/modelerrors.ts) is a detection: a lens failure is not
+// a login failure.
 import {
   chmodSync,
   mkdirSync,
@@ -17,10 +19,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AUTH_TAIL_BYTES,
-  PI_AUTH_ERROR_RE,
   PiAuthWatch,
+  authErrorIn,
+  credentialRefusedText,
+  lineHasAuthError,
   scanPiAuthErrors,
 } from "@quickchatai/pi-quickreview/src/authwatch.js";
+import { AUTH_ERROR_RE } from "@quickchatai/pi-quickreview/src/modelerrors.js";
 import { anomalySeverity } from "../src/anomalies.js";
 import { buildStatusSnapshot, StateStore } from "../src/state.js";
 import { maybeWritePiAuthAlert } from "../src/tui/alerts.js";
@@ -45,7 +50,7 @@ function jsonl(rel: string, content: string, mtime?: Date): string {
 
 describe("scanPiAuthErrors", () => {
   it("matches the live error signature, in nested per-cwd dirs, tail-only", () => {
-    expect(PI_AUTH_ERROR_RE.test(ERR)).toBe(true);
+    expect(AUTH_ERROR_RE.test(ERR)).toBe(true);
     jsonl(
       "--opt-quickreview-sandbox--/a.jsonl",
       JSON.stringify({ pad: "x".repeat(200) }) + "\n" + ERR,
@@ -171,6 +176,103 @@ describe("PiAuthWatch", () => {
     t += 60_000;
     watch.scan();
     expect(watch.status()!.hits).toBe(1);
+  });
+});
+
+// Fence: a lens failure is not a login failure. The watch reads every
+// `errorMessage` at any depth, so it must read it with the one ordered
+// classifier and count its `auth` kind only.
+describe("a lens failure is not a login failure", () => {
+  /** A main session's line that carries a lens child's failed message, nested
+   * in the lens tool's result, the way pi records it. */
+  const lensChild = (provider: string, errorMessage: string): string =>
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "lens_wave",
+        details: {
+          results: [
+            {
+              pass: "pass-security",
+              messages: [{ role: "assistant", provider, stopReason: "error", errorMessage }],
+            },
+          ],
+        },
+      },
+    }) + "\n";
+
+  // MUTATION: add `\\b403\\b` to AUTH_ERROR_RE in
+  // packages/pi-plugin/src/modelerrors.ts - the lens child's 403 raises
+  // pi_auth_expired and this fails.
+  // MUTATION: test a pattern of authwatch's own (the old three phrases plus a
+  // status number) instead of calling providerErrorKind - the rate limit that
+  // names "401 errors" is a hit and this fails.
+  it("a lens child's 403 on one pinned model raises nothing; its refused credential does", () => {
+    let t = Date.parse("2026-11-10T09:00:00Z");
+    const watch = new PiAuthWatch(dir, () => new Date(t));
+    const path = jsonl(
+      "pr-7/main.jsonl",
+      lensChild("some-cloud", "403 Forbidden: model not available in your region") +
+        lensChild("some-cloud", "AccessDeniedException: You don't have access to the model") +
+        lensChild("some-cloud", "The API deployment for this resource does not exist") +
+        lensChild("some-cloud", "429 Too Many Requests: rate limit reached after 401 errors") +
+        lensChild("some-cloud", "402 Payment Required: account blocked") +
+        lensChild("some-cloud", "529 Platform overloaded"),
+      new Date(t),
+    );
+    t += 60_000;
+    expect(watch.scan()).toEqual([]);
+    expect(watch.status()).toBeUndefined();
+
+    // The same child, refused for its credential: that is the login's.
+    writeFileSync(path, lensChild("some-cloud", "authentication_error: invalid x-api-key"), {
+      flag: "a",
+    });
+    utimesSync(path, new Date(t), new Date(t));
+    t += 60_000;
+    const hits = watch.scan();
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.providers).toEqual(["some-cloud"]);
+    expect(watch.status()).toMatchObject({ hits: 1, provider: "some-cloud" });
+  });
+
+  it.each([
+    ["Provided authentication token is expired.", true],
+    ["invalid_grant", true],
+    ["401 Unauthorized", true],
+    ["authentication_error: invalid x-api-key", true],
+    ["API key not valid. Please pass a valid API key.", true],
+    ["OAuth refresh failed for anthropic", true],
+    ["Credential store modify failed for github-copilot", true],
+    ["AccessDeniedException: You don't have access to the model", false],
+    ["403 Forbidden: model not available in your region", false],
+    ["DeploymentNotFound", false],
+    ["429 Too Many Requests: 403 of 402 requests used in the last minute", false],
+    ["The usage limit has been reached", false],
+    ["insufficient_quota", false],
+    ["Your credit balance is too low to access the API", false],
+    ["Insufficient credits", false],
+    ["RESOURCE_EXHAUSTED: Quota exceeded for requests per minute", false],
+    ["529 Platform overloaded", false],
+  ] as const)("an errorMessage of %s: a login failure is %s", (errorMessage, login) => {
+    expect(lineHasAuthError(JSON.stringify({ errorMessage }))).toBe(login);
+    expect(lineHasAuthError(lensChild("some-cloud", errorMessage))).toBe(login);
+  });
+
+  it("names the provider the failing record names, and none when it names none", () => {
+    expect(authErrorIn(lensChild("some-cloud", "invalid_grant"))).toEqual({
+      provider: "some-cloud",
+    });
+    expect(authErrorIn(ERR)).toEqual({ provider: null });
+    expect(authErrorIn(lensChild("some-cloud", "529 Platform overloaded"))).toBeUndefined();
+    // A flag whose records named no provider carries none: unknown, not a guess.
+    let t = Date.parse("2026-11-10T09:00:00Z");
+    const watch = new PiAuthWatch(dir, () => new Date(t));
+    jsonl("s.jsonl", ERR, new Date(t));
+    t += 60_000;
+    expect(watch.scan()[0]!.providers).toEqual([]);
+    expect(watch.status()).not.toHaveProperty("provider");
   });
 });
 
@@ -303,6 +405,9 @@ describe("surfaces", () => {
     expect(name).toMatch(/pi-auth-expired\.json$/);
     const body = JSON.parse(readFileSync(join(alertsDir, name!), "utf8"));
     expect(body).toMatchObject({ tier: "alert", cause: "pi-auth-expired", pr: null });
+    // The anomaly's own sentence; a flag that names no provider guesses none.
+    expect(body.body).toContain(credentialRefusedText([]));
+    expect(body.body).toContain("model credential: the provider refused it.");
 
     // Same detection again: no second file. New detection: one more.
     expect(maybeWritePiAuthAlert(alertsDir, flag, mem, now)).toBeUndefined();
@@ -327,5 +432,30 @@ describe("surfaces", () => {
     ).toBeUndefined();
     // Absent flag: nothing.
     expect(maybeWritePiAuthAlert(alertsDir, undefined, mem, now)).toBeUndefined();
+  });
+
+  // MUTATION: name a provider, a login kind or "token expired" in
+  // credentialRefusedText - this fails.
+  it("the anomaly and the alert say one sentence, for any provider and either kind of credential", () => {
+    expect(credentialRefusedText(["some-cloud"])).toBe(
+      "model credential: some-cloud refused it. Reviews wait until it is fixed: sign in again with /login in the container for a login, or replace the key.",
+    );
+    expect(credentialRefusedText(["a", "b", "a", ""])).toMatch(
+      /^model credential: a, b refused it\./,
+    );
+    expect(credentialRefusedText([])).toMatch(/^model credential: the provider refused it\./);
+
+    const alertsDir = join(dir, "alerts-named");
+    const now = () => new Date("2026-11-10T09:05:00Z");
+    const name = maybeWritePiAuthAlert(
+      alertsDir,
+      { last_at: "2026-11-10T09:04:00Z", hits: 1, provider: "some-cloud" },
+      { lastWritten: "" },
+      now,
+    );
+    const body = JSON.parse(readFileSync(join(alertsDir, name!), "utf8"));
+    expect(body.title).toBe("model credential refused");
+    expect(body.body).toContain(credentialRefusedText(["some-cloud"]));
+    expect(body.body).not.toMatch(/token.expired|OAuth/i);
   });
 });

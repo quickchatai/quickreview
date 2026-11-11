@@ -108,6 +108,30 @@ describe("the bin's routes", () => {
     expect(binRoute(["update"])).toEqual({ route: "update", args: [], json: false });
   });
 
+  // MUTATION: drop `cmd === "model"` from binRoute — the verb goes to the
+  // app's main, which knows none, and this fails.
+  it("qcr model is the bin's own verb, with its subcommand and --json taken off", () => {
+    expect(binRoute(["model"])).toEqual({ route: "model", args: [], json: false });
+    expect(binRoute(["model", "--json"])).toEqual({ route: "model", args: [], json: true });
+    expect(binRoute(["model", "use", "anthropic/claude", "--json"])).toEqual({
+      route: "model",
+      args: ["use", "anthropic/claude"],
+      json: true,
+    });
+    expect(binRoute(["model", "reset"])).toEqual({ route: "model", args: ["reset"], json: false });
+    expect(BIN_HELP).toMatch(/^ {2}qcr model \[use\|reset\] /m);
+  });
+
+  // The image's `qcr` is the app's main, never this front door, and the
+  // wizard and the scan sandbox ask it there.
+  // MUTATION: delete `case "model"` from src/cli.ts main — in the image the
+  // verb prints the app's usage, and this fails.
+  it("the app's main runs the same verb, for the image", () => {
+    const cli = readFileSync(join(ROOT, "src", "cli.ts"), "utf8");
+    expect(cli).toMatch(/case "model": \{[\s\S]{0,500}?runModelCli\(rest, json\)/);
+    expect(cli).toMatch(/usage: qcr <version\|model \[use /);
+  });
+
   // MUTATION: strip --json before the pi route — pi loses its own flag.
   it("qcr pi passes every argument to pi, --json included", () => {
     expect(binRoute(["pi", "--mode", "json", "--json"])).toEqual({

@@ -1,6 +1,14 @@
-// The versioned JSON contract (packages/pi-plugin/src/contract.ts, schemas/*.v1.json): every
+// The versioned JSON contract (packages/pi-plugin/src/contract.ts, schemas/*.json): every
 // `--json` payload of `qcr review` and `qcr scan` leads with schema_version and
 // validates against its schema, and `qcr version --json` names the versions.
+//
+// The review family is at version 2 (schemas/review-result.v2.json): a review
+// on a model with no measured price has no estimate. The goldens named
+// `review-*` are version 2, on a model nothing was fitted to. Version 1
+// (schemas/review-result.v1.json) is still printed, by projection, for a
+// caller on contract 1, and only while the estimate is a number: the goldens
+// named `review-*-v1` are the measured model's, and a review version 1 cannot
+// state is refused in words (the last block of the review section).
 //
 // Two checks per payload. The committed golden outputs (fixtures/json-contract)
 // validate against the schema — the contract a plugin reads. The same verbs,
@@ -36,8 +44,10 @@ import {
   VERSION_SCHEMA_VERSION,
   withSchemaVersion,
 } from "@quickchatai/pi-quickreview/src/contract.js";
+import { MEASURED } from "@quickchatai/pi-quickreview/src/measured.js";
 import { renderVersion, versionInfo } from "../src/version.js";
 import { validate } from "./helpers/json-schema-lite.js";
+import { FAKE_ROUTE_MODEL, writeFakeProvider } from "./helpers/fake-openai.js";
 import { FILES, SHA, scanRig } from "./helpers/scan-cli-rig.js";
 
 vi.stubEnv(
@@ -55,7 +65,9 @@ const tmp = mkdtempSync(join(tmpdir(), "json-contract-"));
 type Json = Record<string, unknown>;
 const schemaOf = (name: string): Json =>
   JSON.parse(readFileSync(join(ROOT, "schemas", `${name}.json`), "utf8")) as Json;
-const review = schemaOf("review-result.v1");
+const review = schemaOf("review-result.v2");
+/** The version before: what a caller on contract 1 reads. */
+const reviewV1 = schemaOf("review-result.v1");
 const scan = schemaOf("scan-result.v1");
 const versionSchema = schemaOf("version.v1");
 
@@ -106,6 +118,9 @@ const REVIEW_GOLDENS = [
   "review-status-done",
   "review-stop",
 ];
+/** Contract 1's reading of a review on the measured model, and of one it
+ * cannot state. */
+const REVIEW_V1_GOLDENS = ["review-preview-v1", "review-done-v1", "review-refused-v1"];
 const SCAN_GOLDENS = [
   "scan-preview",
   "scan-status",
@@ -115,10 +130,19 @@ const SCAN_GOLDENS = [
 ];
 
 describe("the committed golden outputs", () => {
-  it.skipIf(UPDATE).each(REVIEW_GOLDENS)("%s validates against review-result.v1", (name) => {
+  it.skipIf(UPDATE).each(REVIEW_GOLDENS)("%s validates against review-result.v2", (name) => {
     const g = golden(name);
     expect(g["schema_version"]).toBe(REVIEW_SCHEMA_VERSION);
     expect(validate(review, g)).toEqual([]);
+  });
+
+  it.skipIf(UPDATE).each(REVIEW_V1_GOLDENS)("%s validates against review-result.v1", (name) => {
+    const g = golden(name);
+    expect(g["schema_version"]).toBe(1);
+    expect(validate(reviewV1, g)).toEqual([]);
+    // version 1 promises a number wherever it carries an estimate
+    const preview = g["preview"] as Json | undefined;
+    if (preview !== undefined) expect(typeof preview["estimate_usd"]).toBe("number");
   });
 
   it.skipIf(UPDATE).each(SCAN_GOLDENS)("%s validates against scan-result.v1", (name) => {
@@ -151,16 +175,22 @@ describe("the committed golden outputs", () => {
     expect(validate(versionSchema, golden("version"))).toEqual([]);
   });
 
-  it("every golden file is listed above (none is orphaned)", () => {
+  // Skipped while regenerating: a golden new to the list is written when the run ends.
+  it.skipIf(UPDATE)("every golden file is listed above (none is orphaned)", () => {
     expect(
       readdirSync(GOLDEN_DIR)
         .map((f) => f.replace(/\.json$/, ""))
         .sort(),
-    ).toEqual([...REVIEW_GOLDENS, ...SCAN_GOLDENS, "version"].sort());
+    ).toEqual([...REVIEW_GOLDENS, ...REVIEW_V1_GOLDENS, ...SCAN_GOLDENS, "version"].sort());
   });
 
   it("the schema files pin the version the code prints", () => {
-    expect(review["$id"]).toBe("review-result.v1.json");
+    expect(review["$id"]).toBe("review-result.v2.json");
+    // the version before stays as it was published: a contract is never redefined
+    expect(reviewV1["$id"]).toBe("review-result.v1.json");
+    expect(
+      (reviewV1["properties"] as Record<string, { const?: number }>)["schema_version"]!.const,
+    ).toBe(1);
     expect(scan["$id"]).toBe("scan-result.v1.json");
     expect(versionSchema["$id"]).toBe("version.v1.json");
     for (const [s, v] of [
@@ -175,7 +205,8 @@ describe("the committed golden outputs", () => {
 
   it("the validator rejects what the contract forbids", () => {
     const ok = golden("review-done");
-    expect(validate(review, { ...ok, schema_version: 2 })).not.toEqual([]);
+    expect(validate(review, { ...ok, schema_version: 3 })).not.toEqual([]);
+    expect(validate(review, { ...ok, schema_version: 1 })).not.toEqual([]);
     const { schema_version: _drop, ...bare } = ok;
     expect(validate(review, bare)).not.toEqual([]);
     expect(validate(review, { ...ok, ok: "yes" })).not.toEqual([]);
@@ -197,10 +228,10 @@ describe("qcr version", () => {
     expect(v.schemas).toEqual({ review: REVIEW_SCHEMA_VERSION, scan: SCAN_SCHEMA_VERSION });
     expect(v.pi).toEqual({ package: "@earendil-works/pi-coding-agent", version: "1.4.0" });
     expect(renderVersion(v)).toMatch(
-      /JSON schemas: review v1, scan v1; host-plugin contracts: 1$/m,
+      /JSON schemas: review v2, scan v1; host-plugin contracts: 1, 2$/m,
     );
     // an added field: the version family stays at 1
-    expect(v.contracts).toEqual([1]);
+    expect(v.contracts).toEqual([1, 2]);
     expect(VERSION_SCHEMA_VERSION).toBe(1);
     expectContract(versionSchema, "version", VERSION_SCHEMA_VERSION, v as unknown as Json);
   });
@@ -281,12 +312,56 @@ function fakePi(name: string, script: string[]): string {
 
 let root: string;
 let ctx: ReturnType<typeof contextFor>;
+/** The pi home the reviews borrow from: one provider of its own `models.json`,
+ * so a route resolves with no login and no key, and nothing is sent. */
+const piHome = join(tmp, "pi-home");
 beforeAll(() => {
   root = join(tmp, "root");
   mkdirSync(root);
   for (const e of readdirSync(ROOT))
     if (!["wt", ".git", "state"].includes(e)) symlinkSync(join(ROOT, e), join(root, e));
   ctx = contextFor(root, "");
+  writeFakeProvider(piHome, "http://127.0.0.1:9/v1", { routable: true });
+  // The measured model, as a provider of this home's own `models.json` lists
+  // it: its id, its rates and an API of the measured family (measured.ts).
+  mkdirSync(measuredHome, { recursive: true });
+  writeFileSync(
+    join(measuredHome, "models.json"),
+    JSON.stringify({
+      providers: {
+        local: {
+          baseUrl: "http://127.0.0.1:9/v1",
+          api: MEASURED.apis[0],
+          apiKey: "not-a-key",
+          models: [
+            {
+              id: MEASURED.model_id,
+              name: MEASURED.model_id,
+              reasoning: true,
+              input: ["text"],
+              cost: { ...MEASURED.rates, cacheWrite: 0 },
+              contextWindow: 200000,
+              maxTokens: 4000,
+            },
+          ],
+        },
+      },
+    }),
+  );
+});
+/** A pi home whose one provider serves the measured model. */
+const measuredHome = join(tmp, "pi-home-measured");
+const MEASURED_SPEC = `local/${MEASURED.model_id}`;
+
+/** The fixture config with no model pinned, as the shipped one: the review
+ * runs on the route, and the preview says which model that is. */
+const onTheRoute = (): ReturnType<typeof contextFor>["cfg"] => ({
+  ...ctx.cfg,
+  models: {
+    ...ctx.cfg.models,
+    model: "",
+    tiers: { light: ":medium", standard: ":medium", deep: ":high" },
+  },
 });
 
 async function reviewJson(
@@ -294,6 +369,9 @@ async function reviewJson(
   piBin: string,
   args: string[],
   stdin?: string,
+  /** The pi home the route is resolved over, and the contract the caller
+   * reads (`qcr --schema N`); default: the unmeasured home, the code's own. */
+  on: { home?: string; contract?: number } = {},
 ): Promise<[number, Json]> {
   const lines: string[] = [];
   const code = await runReviewCli(args, true, {
@@ -302,10 +380,19 @@ async function reviewJson(
     out: (l: string) => lines.push(l),
     confirm: null,
     root,
-    agentDir: join(tmp, "agent"),
-    cfg: ctx.cfg,
+    agentDir: on.home ?? piHome,
+    ...(on.contract !== undefined ? { contract: on.contract } : {}),
+    cfg: onTheRoute(),
     ecosystem: ctx.ecosystem,
     runtime: piCliRuntime({ bin: piBin }),
+    // The model is resolved as `qcr review` resolves it, over the pi home above.
+    models: {
+      env: {},
+      tmpDir: join(tmp, "state-tmp"),
+      configPath: null,
+      choose: null,
+      host: { ownsProcess: false, homeDir: join(tmp, "no-home") },
+    },
     runsDir: join(tmp, `runs-${Math.random().toString(36).slice(2)}`),
     dryrunDir: join(tmp, `dryrun-${Math.random().toString(36).slice(2)}`),
     timeoutMs: 10 * 60_000,
@@ -314,32 +401,152 @@ async function reviewJson(
   return [code, JSON.parse(lines[0]!) as Json];
 }
 
+/** The keys of a payload's `preview` object. */
+const previewKeys = (payload: Json): string[] => Object.keys(payload["preview"] as Json).sort();
+
 describe("qcr review --json", () => {
   it("a preview, a finished review, a capped one and a refusal each carry the version", async () => {
     const [c1, preview] = await reviewJson(mkRepo("pv"), "false", ["--preview"]);
     expect(c1).toBe(0);
     expectContract(review, "review-preview", REVIEW_SCHEMA_VERSION, preview);
+    // The model fields are additions inside `preview`, in the same schema
+    // version: the golden holds them and the live preview has the same keys.
+    // MUTATION: drop `model`, `alternatives` and `tiers` from previewData
+    // (packages/pi-plugin/src/reviewapi.ts) — this fails.
+    expect((preview["preview"] as Json)["model"]).toMatchObject({ spec: FAKE_ROUTE_MODEL });
+    expect(previewKeys(preview)).toEqual(
+      expect.arrayContaining(["alternatives", "model", "price_basis", "tiers"]),
+    );
+    if (!UPDATE) expect(previewKeys(preview)).toEqual(previewKeys(golden("review-preview")));
+    // Nothing was fitted to this home's model: version 2 says so with a null
+    // estimate and the spend at which the run stops.
+    expect(preview["preview"]).toMatchObject({
+      price_basis: "unmeasured",
+      estimate_usd: null,
+      cap_usd: 15,
+      limit_usd: 15,
+      auto: false,
+    });
 
     const happy = fakePi("happy", [
       `echo '{"type":"message_end","message":{"role":"assistant","usage":{"input":1,"output":1,"cost":{"total":0.25}}}}'`,
       `printf '%s' ${JSON.stringify(record)} > "$cd/findings-record.json"`,
       `printf '%s' ${JSON.stringify(outcome)} > "$cd/outcome.json"`,
     ]);
-    const [c2, done] = await reviewJson(mkRepo("done"), happy, []);
+    // --limit names the stop, which is the person's word on a model with no estimate
+    const [c2, done] = await reviewJson(mkRepo("done"), happy, ["--limit", "5"]);
     expect(c2).toBe(0);
     expectContract(review, "review-done", REVIEW_SCHEMA_VERSION, done);
+    // a finished review repeats the preview it ran under, model and all
+    if (!UPDATE) expect(previewKeys(done)).toEqual(previewKeys(golden("review-done")));
+    expect(done["preview"]).toMatchObject({ estimate_usd: null, cap_usd: 5, auto: true });
 
     const runaway = fakePi("runaway", [
       `echo '{"type":"message_end","message":{"role":"assistant","usage":{"cost":{"total":9999}}}}'`,
       "sleep 60",
     ]);
-    const [c3, partial] = await reviewJson(mkRepo("capped"), runaway, []);
+    const [c3, partial] = await reviewJson(mkRepo("capped"), runaway, ["--limit", "5"]);
     expect(c3).toBe(1);
     expectContract(review, "review-partial", REVIEW_SCHEMA_VERSION, partial);
 
     const [c4, refused] = await reviewJson(mkRepo("bad"), "false", ["--bogus"]);
     expect(c4).toBe(2);
     expectContract(review, "review-refused", REVIEW_SCHEMA_VERSION, refused);
+  }, 120_000);
+
+  // Contract 1 on the measured model: the payload it always read. Each golden
+  // is the same review as its version-2 twin would be, under version 1.
+  it("contract 1 reads a review on the measured model as version 1, estimate and all", async () => {
+    const one = { home: measuredHome, contract: 1 };
+    const [c1, preview] = await reviewJson(mkRepo("pv-v1"), "false", ["--preview"], undefined, one);
+    expect(c1).toBe(0);
+    expectContract(reviewV1, "review-preview-v1", 1, preview);
+    const p = preview["preview"] as Json;
+    expect(p["model"]).toMatchObject({ spec: MEASURED_SPEC });
+    expect(p["price_basis"]).toBe("measured");
+    expect(p["estimate_usd"]).toBeGreaterThan(0);
+    expect(p["cap_usd"]).toBeCloseTo((p["estimate_usd"] as number) * 2, 2);
+    if (!UPDATE) expect(previewKeys(preview)).toEqual(previewKeys(golden("review-preview-v1")));
+
+    const happy = fakePi("happy-v1", [
+      `echo '{"type":"message_end","message":{"role":"assistant","usage":{"input":1,"output":1,"cost":{"total":0.25}}}}'`,
+      `printf '%s' ${JSON.stringify(record)} > "$cd/findings-record.json"`,
+      `printf '%s' ${JSON.stringify(outcome)} > "$cd/outcome.json"`,
+    ]);
+    const [c2, done] = await reviewJson(mkRepo("done-v1"), happy, [], undefined, one);
+    expect(c2).toBe(0);
+    expectContract(reviewV1, "review-done-v1", 1, done);
+
+    // the same review for a caller that names no contract is version 2
+    const [, two] = await reviewJson(mkRepo("pv-v2-measured"), "false", ["--preview"], undefined, {
+      home: measuredHome,
+    });
+    expect(two["schema_version"]).toBe(2);
+    expect(validate(review, two)).toEqual([]);
+    expect(previewKeys(two)).toEqual(previewKeys(preview));
+  }, 120_000);
+
+  // Fence: contract 1 never carries a missing estimate.
+  // MUTATION: return the v1 projection for an unmeasured preview (drop the
+  // `needsEstimate && price === null` refusal in
+  // packages/pi-plugin/src/reviewapi.ts and restamp the payload in
+  // localreview.ts `reviewForContract`) - this fails.
+  it("contract 1 never carries a missing estimate: the review is refused in words, before anything runs", async () => {
+    // the schema itself: version 1 has no way to say "no estimate"
+    const v1 = golden("review-preview-v1");
+    if (!UPDATE)
+      expect(
+        validate(reviewV1, { ...v1, preview: { ...(v1["preview"] as Json), estimate_usd: null } }),
+      ).not.toEqual([]);
+
+    const one = { contract: 1 };
+    const words =
+      `this review would run on ${FAKE_ROUTE_MODEL}, which has no measured price, and contract 1 cannot say so. ` +
+      "Update the QuickReview skills (qcr plugin install).";
+    const [c1, refused] = await reviewJson(mkRepo("pv-c1"), "false", ["--preview"], undefined, one);
+    expect(c1).toBe(1);
+    expect(refused).toEqual({ schema_version: 1, ok: false, errors: [words] });
+    expectContract(reviewV1, "review-refused-v1", 1, refused);
+
+    // a start too, with the stop named: no pi is run (the bin would fail the round)
+    const [c2, started] = await reviewJson(
+      mkRepo("start-c1"),
+      "false",
+      ["--limit", "5"],
+      undefined,
+      one,
+    );
+    expect(c2).toBe(1);
+    expect(started).toEqual({ schema_version: 1, ok: false, errors: [words] });
+
+    // with no model credential at all, the login refusal wins over the price's
+    const [c3, none] = await reviewJson(mkRepo("pv-c1-none"), "false", ["--preview"], undefined, {
+      home: join(tmp, "pi-home-empty"),
+      contract: 1,
+    });
+    expect(c3).toBe(1);
+    expect(none["schema_version"]).toBe(1);
+    expect(none["ok"]).toBe(false);
+    expect((none["errors"] as string[])[0]).toMatch(/^pi has no model credential/);
+    expect(JSON.stringify(none)).not.toMatch(/estimate_usd|measured price/);
+    // the same preview for a caller on version 2 says what is not known
+    const [c4, unknown] = await reviewJson(
+      mkRepo("pv-v2-none"),
+      "false",
+      ["--preview"],
+      undefined,
+      { home: join(tmp, "pi-home-empty") },
+    );
+    expect(c4).toBe(0);
+    expect(validate(review, unknown)).toEqual([]);
+    expect(unknown["preview"]).toMatchObject({
+      model: null,
+      price_basis: "unknown",
+      estimate_usd: null,
+      cap_usd: null,
+      limit_usd: null,
+      auto: false,
+    });
   }, 120_000);
 
   it("a piped diff is a diff target: target.kind = diff, with a repository around it and without", async () => {

@@ -19,7 +19,10 @@
 //      appends: not a fork) in the production tree's root even when the JSONL's
 //      header names the legacy tree (src/picwd.ts: its scripts, state/ and verdict/
 //      are there, and bash-guard sanctions the scripts only there), with the round's extensions, `/qcr-round` as its first
-//      message, and the capability fd inherited. The cwd's own context files are off
+//      message, and the capability fd inherited. `--model` is passed only for a
+//      model the config pins: with none, pi resumes the session on the model it
+//      last ran on (the worker's route), and the lens passes run on the session's
+//      model. The login route rides along with its prompt off, as in a takeover. The cwd's own context files are off
 //      and the reviewer stub is appended, so the dev instructions of the
 //      production tree never reach a reviewer;
 //   5. returns pi's exit code. The tmux session ends with this process, and the
@@ -53,14 +56,15 @@ import { CONTEXT_PACK_FILE } from "@quickchatai/pi-quickreview/src/contextpack.j
 import { verifiedPayload } from "./session-command-payload.js";
 import { DEBUG_START_MESSAGE } from "./engine/debugpi.js";
 import { DEBUG_STATUS_NAME, debugSession, type DebugRoundSpec } from "./debuground.js";
+import { piModelFlags } from "./config.js";
 import {
+  loginRouteExtension,
   onTerminal,
   paneLaunch,
+  paneModelEnv,
   prepareBorrowedAgent,
-  readLogin,
   takeoverEnv,
 } from "./takeoverpi.js";
-import { routeModelSpecForLogin } from "@quickchatai/pi-quickreview/src/modelroute.js";
 
 export { DEBUG_START_MESSAGE };
 
@@ -132,8 +136,12 @@ export function debugRoundOrder(spec: DebugRoundSpec, path = process.env["PATH"]
 /** Prepare the pi's own agent dir: the blanked login copy and models/settings (the
  * takeover's borrow), the built lens agents linked, the order file, and the lens
  * dir. Returns the order file. Nothing is written to the owner's dir. */
-export function prepareDebugAgent(spec: DebugRoundSpec, now?: () => number): { orderFile: string } {
-  prepareBorrowedAgent(spec, now);
+export function prepareDebugAgent(
+  spec: DebugRoundSpec,
+  now?: () => number,
+  keyed = false,
+): { orderFile: string } {
+  prepareBorrowedAgent(spec, now, keyed);
   // The lens passes read the built agents from the pi's agent dir.
   const agents = join(spec.agent_dir, "agents");
   const link = join(spec.borrow_dir, "agents");
@@ -155,14 +163,14 @@ export function debugRoundArgv(spec: DebugRoundSpec): string[] {
     "-ne",
     "-ns",
     "-nc",
-    "--model",
-    spec.model,
+    // Only a pin: with none, the session resumes on the model it last ran on.
+    ...piModelFlags(spec.model),
     "--system-prompt",
     spec.system_prompt_file,
     ...(spec.stub_file ? ["--append-system-prompt", spec.stub_file] : []),
     // The PR's real session, written to (not forked); a PR with none gets one born.
     ...(spec.session_file ? ["--session", spec.session_file] : ["--session-dir", spec.session_dir]),
-    ...spec.extensions.flatMap((e) => ["--extension", e]),
+    ...[...spec.extensions, loginRouteExtension(spec.root)].flatMap((e) => ["--extension", e]),
     "--name",
     spec.session,
     DEBUG_START_MESSAGE,
@@ -170,13 +178,14 @@ export function debugRoundArgv(spec: DebugRoundSpec): string[] {
 }
 
 /** The env the pi is started with: the takeover's (the allowlisted part of the
- * pane's env, the daemon's spec env, the agent dir, no GitHub token), then the names
- * the debug extension reads. */
+ * pane's env, the daemon's spec env, the agent dir, the login route's word that
+ * the login is borrowed, no GitHub token), then the names the debug extension reads. */
 export function debugRoundEnv(
   base: Readonly<Record<string, string | undefined>>,
   spec: DebugRoundSpec,
+  modelEnv: Readonly<Record<string, string>> = {},
 ): NodeJS.ProcessEnv {
-  const env = takeoverEnv(base, spec);
+  const env = takeoverEnv(base, spec, modelEnv);
   env["QCR_DEBUG_ORDER_FILE"] = join(spec.borrow_dir, DEBUG_ORDER_NAME);
   env["QCR_DEBUG_STATUS_FILE"] = join(spec.borrow_dir, DEBUG_STATUS_NAME);
   env["QCR_DEBUG_LENS_DIR"] = spec.lens_dir;
@@ -218,6 +227,8 @@ export async function runDebugRoundPane(
     log(`debug round: ${(e as Error).message}`);
     return 2;
   }
+  // The secrets dir's model env, read in this process (the spec holds its path only).
+  const modelEnv = paneModelEnv(spec);
   try {
     // The pi's bash runs in pi's uid: where the image asks for a separate tool uid
     // the pi is started as that uid (below); where it asked and could not arrange it,
@@ -227,15 +238,12 @@ export async function runDebugRoundPane(
       instead: "none; the image must arrange the tool uid",
       isolated: true,
     });
-    prepareDebugAgent(spec, deps.now);
+    prepareDebugAgent(spec, deps.now, Object.keys(modelEnv).length > 0);
   } catch (e) {
     log(`debug round: ${(e as Error).message}`);
     return 3;
   }
-  const env = debugRoundEnv(procEnv, spec);
-  // An OpenAI model runs on the OpenAI login the borrowed copy holds
-  // (packages/pi-plugin/src/modelroute.ts): the spec's own provider when it is there.
-  spec = { ...spec, model: routeModelSpecForLogin(spec.model, readLogin(spec.borrow_dir), env) };
+  const env = debugRoundEnv(procEnv, spec, modelEnv);
   const pi = paneLaunch(debugRoundArgv(spec), deps.piBin ?? spec.pi_bin);
   const launch = toolIsolation(pi.bin, pi.argv, procEnv);
   if ("refused" in launch) {

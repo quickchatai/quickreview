@@ -119,7 +119,10 @@ export function caseReadout(
   readonly final: string;
   readonly failure: string | null;
   readonly reads: string[];
-  /** The summed cost; null when no message priced itself. */
+  /** The summed cost; null when no message priced itself. A sum of exactly
+   * 0 over a case that ran is pi's stamp on a model it has no price for, not
+   * a free case: the surfaces that show it say so (pricing.ts
+   * `scanRanUnpriced`), and the rate measured over such cases is zero. */
   spent(): number | null;
 } {
   let final = "";

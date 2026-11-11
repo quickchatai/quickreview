@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "image": {
-    "version": "0.1.0",
+    "version": "1.4.2",
     "build_sha": null
   },
   "schemas": {
-    "review": 1,
+    "review": 2,
     "scan": 1
   },
-  "contracts": [1],
+  "contracts": [1, 2],
   "pi": {
     "package": "@earendil-works/pi-coding-agent",
     "version": "1.4.0"

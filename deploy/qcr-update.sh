@@ -652,7 +652,13 @@ step preflight
 # The scratch copy: the snapshot's db files and the sessions, owned by the
 # container uid, mounted as the app's state dir. --network none: the preflight
 # reads, it reaches nothing. `daemon --preflight` is the image's own check
-#: migrate the scratch db forward, resume the live JSONLs offline.
+#: migrate the scratch db forward, resume the live JSONLs offline, and resolve
+# the model route the bot will run on. That last check needs the credentials a
+# worker will have, so the VM's own secrets are mounted where the daemon has
+# them, read-only: a daemon whose model credential is a key file under
+# secrets/model-env has no login to show, and without the mount it would fail
+# the check and every later release would be refused. The config tar still may
+# not carry a secrets/ entry.
 SCRATCH="$WORK/preflight-state"
 mkdir -p "$SCRATCH"
 for f in "${STATE_DB_FILES[@]}"; do
@@ -664,6 +670,7 @@ chmod -R go+rX "$SCRATCH"
 d run --rm --network none --user "$UID_GID" \
   -e "QCR_CONFIG=$CONFIG_PATH_IN_CONTAINER" \
   -v "$SCRATCH:${C[APP_ROOT]}/state" -v "$CFG.next:/opt/quickreview/config-home:ro" \
+  -v "$ROOT/secrets:/opt/quickreview/secrets:ro" \
   -v "$ROOT/pihome:/home/qcr/.pi:ro" \
   "$DAEMON_REF" daemon --preflight >"$WORK/preflight.out" 2>&1 ||
   { tail -n 20 "$WORK/preflight.out" >&2 || true; die "the new image's \`daemon --preflight\` failed on a scratch copy of the snapshot"; }

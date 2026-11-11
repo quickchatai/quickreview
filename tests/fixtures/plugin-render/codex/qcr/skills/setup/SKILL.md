@@ -14,13 +14,13 @@ qcr needs the network (GitHub and the model provider) and writes its own state o
 ## 1. A qcr that speaks the skills' contract
 
 ```sh
-qcr --schema 1 version
+qcr --schema 2 version
 ```
 
-`--schema 1` asks qcr for contract 1, the JSON these skills were written for.
+`--schema 2` asks qcr for contract 2, the JSON these skills were written for.
 
 - **It exits 0 and prints JSON:** the installed qcr is ready. `image.version` is its release.
-- **`qcr` is not found:** there is no global install. Offer the person `npm i -g @quickchatai/quickreview` (it needs Node 22.19 or later) and run it only on their go. Until it is installed, every qcr call runs as `npx -y @quickchatai/quickreview@0.0.0-golden` in place of `qcr`, the release these skills came from: check that one with `npx -y @quickchatai/quickreview@0.0.0-golden --schema 1 version`.
+- **`qcr` is not found:** there is no global install. Offer the person `npm i -g @quickchatai/quickreview` (it needs Node 22.19 or later) and run it only on their go. Until it is installed, every qcr call runs as `npx -y @quickchatai/quickreview@0.0.0-golden` in place of `qcr`, the release these skills came from: check that one with `npx -y @quickchatai/quickreview@0.0.0-golden --schema 2 version`.
 - **It exits nonzero or prints anything but JSON:** the installed qcr is too old for these skills (one that does not print the contract exits 3 with nothing on stdout). Offer `npm i -g @quickchatai/quickreview` to bring it up to date, and meanwhile use the `npx` form above.
 
 If the `npx` form fails as well, report its error as printed and stop.

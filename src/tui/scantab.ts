@@ -37,6 +37,8 @@
 // companion is down — or that the companion answered it is not driving — is
 // shown as interrupted, never as "no scan"; no action is offered from a value
 // that was not read.
+import { foldTier } from "@quickchatai/pi-quickreview/src/types.js";
+import { NO_PRICE_NO_STOP, scanRanUnpriced } from "@quickchatai/pi-quickreview/src/pricing.js";
 import { FINDING_STATES } from "../setup/scanreport.js";
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
@@ -678,7 +680,11 @@ function headerLines(deps: ScanTabDeps, repo: string | undefined): string[] {
       `${notReproduced > 0 ? ` · ${notReproduced} not reproduced` : ""}` +
       `${q ? ` · ${q.unreported.length} awaiting the companion's match` : ""}`;
   }
-  const spend = `spend ${usd(run.spent_usd)} / ${usd(run.cap_usd)} hard stop${run.unpriced_cases > 0 ? ` (${run.unpriced_cases} unpriced, counted at estimate)` : ""}`;
+  // A run pi stamped at zero spent an unknown amount under no dollar stop:
+  // never "$0.00 / $0.00".
+  const spend = scanRanUnpriced(run)
+    ? `spend: ${NO_PRICE_NO_STOP}`
+    : `spend ${usd(run.spent_usd)} / ${usd(run.cap_usd)} hard stop${run.unpriced_cases > 0 ? ` (${run.unpriced_cases} unpriced, counted at estimate)` : ""}`;
   return [line1, `${spend}  ·  ${counts}`];
 }
 
@@ -861,7 +867,7 @@ function planRows(
           : `${usd(r.estimate_usd)} ${priceIsMeasured(r.price) ? "meas" : `${MUTED}est${RESET}`}`;
     const files = [...r.files, ...r.tests].length;
     const text = truncate(
-      `[${mark}] ${r.id} ${r.lens.replace(/^pass-/, "")}  ${r.tier}${r.effort !== "tier" ? `/${r.effort}` : ""}  ${r.units.join("+")} (${files} files)  ${what}`,
+      `[${mark}] ${r.id} ${r.lens.replace(/^pass-/, "")}  ${foldTier(r.tier) ?? r.tier}${r.effort !== "tier" ? `/${r.effort}` : ""}  ${r.units.join("+")} (${files} files)  ${what}`,
       rightW - 3,
     );
     row([{ text: i === st.planSel ? selectedLine(text) : text, action: { t: "row", i } }]);

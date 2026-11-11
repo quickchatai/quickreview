@@ -30,6 +30,14 @@
 // while its container is up, which the wrapper tells every call it makes in
 // QCR_LIVE_REVIEWS, and `stop` marks the run stopped and leaves the killing
 // to the wrapper's `docker stop`, then `docker kill`.
+//
+// The contract. A run's output is kept as the review printed it, and what a
+// verb prints is made for the contract its caller named (`DetachDeps.contract`,
+// `qcr --schema N`): `status` restamps the stored result for the reader, and a
+// reader on contract 1 is refused in words where the result has no estimate
+// to state (packages/pi-plugin/src/localreview.ts `reviewForContract`). The
+// contract a run was started under is kept in its record, so its driver
+// refuses such a review before it spends anything.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -55,6 +63,7 @@ import {
   originRepo,
   resolveBranch,
   resolveUncommitted,
+  reviewForContract,
 } from "@quickchatai/pi-quickreview/src/localreview.js";
 import { latestLiveRound, viewRound } from "@quickchatai/pi-quickreview/src/live/read.js";
 import { lensActivityLine, lensElapsedMs } from "@quickchatai/pi-quickreview/src/live/lensline.js";
@@ -66,7 +75,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/contract.js";
 
 export const DETACHED_USAGE =
-  "usage: qcr review start [branch | --uncommitted | --diff FILE | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--full] [--security] [--to DEST] [--out FILE] --json\n" +
+  "usage: qcr review start [branch | --uncommitted | --diff FILE | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--model PROVIDER/MODEL] [--full] [--security] [--to DEST] [--out FILE] --json\n" +
   "       qcr review status [RUN_ID] [--wait [--timeout SECONDS]] --json\n" +
   "       qcr review stop [RUN_ID]";
 
@@ -75,6 +84,9 @@ export type Identified = { ok: true; key: string; label: string } | { ok: false;
 export interface DetachDeps {
   /** The registry directory. */
   home: string;
+  /** The host-plugin contract the caller reads (`qcr --schema N`). Absent:
+   * the code's own review schema. */
+  contract?: number;
   out: (line: string) => void;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -110,6 +122,9 @@ interface RunRecord {
   pid: number | null;
   /** The container that is this run, when it is one (the release image). */
   container?: string;
+  /** The contract the start named, when it named one: the run's driver
+   * refuses a review that contract cannot state. */
+  contract?: number;
   started_at: number;
 }
 
@@ -182,7 +197,9 @@ export function identifyTarget(rest: readonly string[], cwd: string): Identified
     else if (a === "--base") base = rest[++i];
     else if (a === "--uncommitted") uncommitted = true;
     else if (a === "--diff") diff = rest[++i];
-    else if (a === "--key" || a === "--limit" || a === "--to" || a === "--out") i++;
+    // A flag's value is never the target: `--model 5` names no pull request.
+    else if (a === "--key" || a === "--limit" || a === "--to" || a === "--out" || a === "--model")
+      i++;
     else if (/^#?\d+$/.test(a) || /^https?:\/\//.test(a)) pr = a;
   }
   if (diff !== undefined) {
@@ -436,8 +453,15 @@ export async function runDetachedVerb(
   deps: DetachDeps,
 ): Promise<number> {
   const emit: Emit = (code, human, data) => {
-    deps.out(json ? JSON.stringify(withSchemaVersion(REVIEW_SCHEMA_VERSION, data)) : human);
-    return code;
+    if (!json) {
+      deps.out(human);
+      return code;
+    }
+    // Printed for the reader's contract: a result contract 1 cannot carry
+    // goes out as its refusal, and the call fails.
+    const printed = reviewForContract(deps.contract, data);
+    deps.out(JSON.stringify(printed.data));
+    return printed.refused !== null && code === 0 ? 1 : code;
   };
   const usage = (why: string): number => {
     const msg = `${DETACHED_USAGE}\n(${why})`;
@@ -558,6 +582,7 @@ function start(
     label: id.label,
     argv: [...rest],
     pid: null,
+    ...(deps.contract !== undefined ? { contract: deps.contract } : {}),
     started_at: deps.now(),
   };
   writeFileSync(join(dir, "run.json"), JSON.stringify(run));
@@ -598,13 +623,26 @@ export function readContainerRun(
   home: string,
   runId: string,
   container: string,
-): { dir: string; key: string; argv: string[] } | null {
+): { dir: string; key: string; argv: string[]; contract?: number } | null {
   if (!/^[A-Za-z0-9._-]+$/.test(runId) || runId.startsWith(".")) return null;
   const dir = join(runsDir(home), runId);
   const run = readJson<RunRecord>(join(dir, "run.json"));
   if (run === null || run.container !== container) return null;
   if (existsSync(join(dir, "exit.json")) || existsSync(join(dir, "stopped.json"))) return null;
-  return { dir, key: run.key, argv: run.argv };
+  const contract = contractOf(run);
+  return { dir, key: run.key, argv: run.argv, ...(contract !== undefined ? { contract } : {}) };
+}
+
+function contractOf(run: RunRecord | null): number | undefined {
+  return typeof run?.contract === "number" && Number.isInteger(run.contract)
+    ? run.contract
+    : undefined;
+}
+
+/** The contract the run in `dir` was started under; undefined when its start
+ * named none (or the record cannot be read): the code's own. */
+export function runContract(dir: string): number | undefined {
+  return contractOf(readJson<RunRecord>(join(dir, "run.json")));
 }
 
 /** Launch a command as a detached process-group leader that outlives this one,

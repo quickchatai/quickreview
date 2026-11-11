@@ -40,6 +40,14 @@
 // Before any of that, the image's build stamp must be the checkout's
 // (src/appstamp.ts): a container never drives a scan with other code.
 //
+// The model. The login a sandboxed scan runs on is in the companion's pi
+// home, which the host does not read. So a plan made on the host asks the
+// image which model a scan there runs on (`askOnLogin`): one module script,
+// over the same read-only login mounts and env a scan container's driver
+// gets, with no network and nothing else mounted. The driver inside resolves
+// the same route by the same function when the run starts, and the plan's
+// key holds only when the two agree.
+//
 // This launch is the clone route's (the operator's TUI and companion). A scan
 // started through the host wrapper (scripts/qcr-host.sh, docs/host-wrapper.md)
 // never gets here: the wrapper's per-call release-image container IS the
@@ -63,12 +71,15 @@ import { loginInPi } from "./pilogin.js";
 import { appStamp } from "./appstamp.js";
 import { isInside } from "@quickchatai/pi-quickreview/src/pathinside.js";
 import type { ScanSandboxConfig } from "./config.js";
+import { isPinned } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import type { LoginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   PI_REFRESH_MARGIN_MS,
   SCAN_AUTH_FIX,
+  SCAN_AUTH_PROVIDERS_ENV,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
+  expiryText,
   scanAuthExpiring,
   scanAuthMissing,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
@@ -345,8 +356,9 @@ export async function scanLoginRoute(
       ...PUBLIC_DNS.flatMap((d) => ["--dns", d]),
       "--mount",
       mountSpec({ dest: SCANBOX.piHome, source: vol }),
-      "--env",
-      `QCR_PI_DEFAULT_MODEL=${companion.model}`,
+      // A pinned `[companion] model` is the default the entrypoint writes;
+      // with none pinned nothing is passed, and nothing is written.
+      ...(isPinned(companion.model) ? ["--env", `QCR_PI_DEFAULT_MODEL=${companion.model}`] : []),
       s.image,
       ...pi,
     ],
@@ -415,12 +427,95 @@ export async function readLoginSummary(
   }
 }
 
-/** The earliest OAuth expiry in a login — the token a copy must outlive. */
-function earliestExpiry(s: LoginSummary): { provider: string; expiresAt: number } | null {
+// ---- asking the image, over the read-only login ----------------------------------
+
+/** Where a script run by `askOnLogin` may write: the run's private tmpfs pi
+ * home. */
+export const SCANBOX_SCRATCH = `${SCANBOX.piHome}/tmp`;
+/** How long the image is given to answer. */
+export const LOGIN_SCRIPT_TIMEOUT_MS = 90_000;
+
+/** `docker run` of one module script in the scan image, over the companion's
+ * login as a scan container's driver sees it (`loginMounts`, `loginEnvArgv`):
+ * read-only, its sessions hidden, a private tmpfs pi home. No network: what
+ * the script learns, it reads. Its arguments are the script's own
+ * (`process.argv.slice(1)`). */
+export function loginScriptArgv(
+  image: string,
+  pihomeVolume: string,
+  script: string,
+  args: readonly string[],
+): string[] {
+  return [
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    ...loginMounts(pihomeVolume).flatMap((m) => ["--mount", mountSpec(m)]),
+    ...loginEnvArgv(),
+    image,
+    "node",
+    "--input-type=module",
+    "-e",
+    script,
+    ...args,
+  ];
+}
+
+/**
+ * Run `script` in the scan image over the companion's login and read its
+ * answer: the JSON value on its last output line. Checked first, as a launch
+ * checks: the image carries this checkout's code (the script imports it), and
+ * the pi home volume exists (`docker run` would create it empty, and an empty
+ * login would then be read as "never logged in"). Why it cannot be asked, or
+ * did not answer, is the error: never a guess.
+ */
+export async function askOnLogin(
+  docker: DockerRunner,
+  o: {
+    sandbox: Pick<ScanSandboxConfig, "image" | "pihome_volume">;
+    /** The build stamp the image must carry. */
+    stamp: () => string;
+    script: string;
+    args: readonly string[];
+    timeoutMs?: number;
+  },
+): Promise<{ ok: true; answer: unknown } | { ok: false; error: string }> {
+  const problem = await imageProblem(docker, o.sandbox.image, o.stamp());
+  if (problem !== null) return { ok: false, error: problem };
+  const vol = o.sandbox.pihome_volume;
+  const volume = await docker(["volume", "inspect", vol]);
+  if (!volume.ok)
+    return {
+      ok: false,
+      error: /no such volume/i.test(dockerFailureLine(volume))
+        ? `the companion's pi home volume ${vol} does not exist — run \`qcr scan login\` to log the companion's pi in`
+        : `the companion's pi home volume ${vol} cannot be inspected: ${dockerFailureLine(volume)}`,
+    };
+  const r = await docker(loginScriptArgv(o.sandbox.image, vol, o.script, o.args), {
+    timeoutMs: o.timeoutMs ?? LOGIN_SCRIPT_TIMEOUT_MS,
+  });
+  if (!r.ok) return { ok: false, error: dockerFailureLine(r) };
+  const last = r.stdout.trim().split("\n").pop() ?? "";
+  try {
+    return { ok: true, answer: JSON.parse(last) as unknown };
+  } catch {
+    return { ok: false, error: `the scan image's answer could not be read: ${last.slice(0, 200)}` };
+  }
+}
+
+/** The earliest OAuth expiry in a login, the token a copy must outlive:
+ * among `providers` when given, else over every login. */
+function earliestExpiry(
+  s: LoginSummary,
+  providers?: readonly string[],
+): { provider: string; expiresAt: number } | null {
   let out: { provider: string; expiresAt: number } | null = null;
-  for (const [provider, c] of Object.entries(s))
+  for (const [provider, c] of Object.entries(s)) {
+    if (providers !== undefined && !providers.includes(provider)) continue;
     if (c.type === "oauth" && c.expires !== null && (out === null || c.expires < out.expiresAt))
       out = { provider, expiresAt: c.expires };
+  }
   return out;
 }
 
@@ -433,13 +528,29 @@ export function lifeWords(ms: number): string {
   return d > 0 ? `${d}d ${h}h` : `${h}h ${m % 60}m`;
 }
 
-/** Why a scan cannot run on this login now, or null: no login at all, or
- * a token that would expire inside a case's budget. */
-export function loginProblem(s: LoginSummary, now: number): string | null {
-  if (Object.keys(s).length === 0) return scanAuthMissing(`${SCANBOX.authSrc}/auth.json`);
-  const e = earliestExpiry(s);
+/**
+ * Why a scan cannot run on this login now, or null.
+ *
+ * With `providers` (the route's, `scanProviders`): a token of one of those
+ * providers that would expire inside a case's budget. Nothing else is judged:
+ * a route was resolved, so a credential exists, and it may be one the login
+ * file does not hold (a key in the environment), so an empty login file is no
+ * problem here; another provider's short login is not the scan's.
+ *
+ * Without (no route is known): the whole login, as before a scan had a
+ * route: no login at all, or any token that would expire inside the budget.
+ */
+export function loginProblem(
+  s: LoginSummary,
+  now: number,
+  providers?: readonly string[],
+): string | null {
+  if (providers === undefined && Object.keys(s).length === 0)
+    return scanAuthMissing(`${SCANBOX.authSrc}/auth.json`);
+  const e = earliestExpiry(s, providers);
   // The scan's SDK runner admits a token only past the budget plus pi's
-  // refresh margin (engineCredentials), so launch and doctor ask the same.
+  // refresh margin (the borrow a case is built on), so launch and doctor ask
+  // the same.
   const needMs = SCAN_CASE_AUTH_BUDGET_MS + PI_REFRESH_MARGIN_MS;
   if (e !== null && e.expiresAt < now + needMs) return scanAuthExpiring({ ...e, needMs });
   return null;
@@ -552,6 +663,13 @@ export interface ScanBoxDeps {
   /** The memory wiring (the companion's; degrades, never refuses). */
   memory?: () => Promise<MemoryWiring>;
   mirror?: (source: string, dir: string) => ConfigMirrorOutcome;
+  /** The providers the planned scan's models are on (`scanProviders`), when
+   * a route is known for the start's arguments (its `--model` among them):
+   * the only logins the launch then judges. Omitted, or answering nothing:
+   * the whole login is judged. */
+  providers?: (
+    argv: readonly string[],
+  ) => readonly string[] | undefined | Promise<readonly string[] | undefined>;
   token?: () => string;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -664,7 +782,7 @@ export function dockerDetach<R = unknown>(
     const login = await readLoginSummary(deps.docker, deps.sandbox.image, vol);
     if (!login.ok)
       return refuse(`the companion's pi login in ${vol} cannot be read: ${login.error}`);
-    const loginWhy = loginProblem(login.summary, now());
+    const loginWhy = loginProblem(login.summary, now(), await deps.providers?.(argv));
     if (loginWhy !== null) return refuse(loginWhy);
     const git = (deps.gitDirs ?? hostGitDirs)(repo);
     if (!git.ok) return refuse(`git cannot read the reviewed repo at ${repo}: ${git.error}`);
@@ -869,6 +987,23 @@ export interface DoctorReport {
   checks: DoctorCheck[];
 }
 
+/** What the doctor needs of the scan's route, or why there is none. */
+export type DoctorRoute =
+  | {
+      ok: true;
+      /** The spec stage 1 runs on, as pi's `--model` takes it. */
+      model: string;
+      /** The provider `model` is on, and pi's name for it (the id, for a
+       * tier pinned to a provider the route is not on). */
+      provider: string;
+      providerName: string;
+      /** Whose credential `model` runs on, in words (never a value). */
+      credential: string;
+      /** The providers the scan's models are on (`scanProviders`). */
+      providers: readonly string[];
+    }
+  | { ok: false; error: string };
+
 export interface DoctorDeps {
   sandbox: ScanSandboxConfig;
   /** Why `sandbox` is not the configured one (`effectiveSandbox`). */
@@ -879,12 +1014,28 @@ export interface DoctorDeps {
   gitDirs?: (repo: string) => GitDirs;
   /** Whether a unit cut is saved, and what made it unreadable. */
   cut: () => { saved: boolean; problems: readonly string[] };
-  /** The model the scan's stage 1 runs on — the login the probe needs. */
-  model: string;
+  /** The scan's route where it would run (the scan image's answer for a
+   * sandboxed scan, this machine's for a host one): the model the probe
+   * asks, and the logins it needs. Asked once the image is known to match. */
+  route: () => Promise<DoctorRoute>;
   /** `pi …` on this machine (sandbox = "host"); default the PATH's. */
   hostPi?: (argv: string[], opts: { timeoutMs: number }) => Promise<DockerResult>;
+  /** The environment the default host probe's pi runs in: the one the route
+   * was resolved over (this process's, with the secrets dir's model env), so
+   * the probe finds the credential the route names. Unset: this process's. */
+  hostPiEnv?: NodeJS.ProcessEnv;
   piTimeoutMs?: number;
   now?: () => number;
+}
+
+/** The host probe: `bin argv…` (the PATH's pi) in `env` when one is given.
+ * The model env reaches the probe's child alone, never this process's own
+ * environment. */
+export function hostPiProbe(
+  env?: NodeJS.ProcessEnv,
+  bin = "pi",
+): NonNullable<DoctorDeps["hostPi"]> {
+  return (argv, o) => runCommand(bin, argv, { ...o, ...(env !== undefined ? { env } : {}) });
 }
 
 /** pi's one-shot probe arguments. */
@@ -927,18 +1078,30 @@ export async function scanDoctor(d: DoctorDeps): Promise<DoctorReport> {
       checks.push(await pihomeCheck(d, problem === null, timeoutMs, LOGIN));
     }
   } else {
-    const pi = d.hostPi ?? ((argv, o) => runCommand("pi", argv, o));
-    const r = await pi(probeArgv(d.model), { timeoutMs });
-    checks.push(
-      r.ok
-        ? { check: "pi", ok: true, detail: `pi on this machine answers on ${d.model}` }
-        : {
-            check: "pi",
-            ok: false,
-            detail: `pi on this machine did not answer on ${d.model}: ${dockerFailureLine(r)}`,
-            fix: "install pi on the PATH, run `pi` and /login",
-          },
-    );
+    const pi = d.hostPi ?? hostPiProbe(d.hostPiEnv);
+    const route = await askRoute(d);
+    if (!route.ok) {
+      // No model to ask: nothing is probed, and nothing is guessed.
+      checks.push({
+        check: "pi",
+        ok: false,
+        detail: `no model for a scan on this machine: ${route.error}`,
+        fix: "qcr login (or run `pi` and /login), then qcr model",
+      });
+    } else {
+      const r = await pi(probeArgv(route.model), { timeoutMs });
+      const on = `${route.model} (${route.providerName}, ${route.credential})`;
+      checks.push(
+        r.ok
+          ? { check: "pi", ok: true, detail: `pi on this machine answers on ${on}` }
+          : {
+              check: "pi",
+              ok: false,
+              detail: `pi on this machine did not answer on ${on}: ${dockerFailureLine(r)}`,
+              fix: "install pi on the PATH, run `pi` and /login",
+            },
+      );
+    }
   }
   checks.push(repoCheck(d));
   const cut = d.cut();
@@ -962,6 +1125,15 @@ export async function scanDoctor(d: DoctorDeps): Promise<DoctorReport> {
     reviewed_repo: d.reviewedRepo,
     checks,
   };
+}
+
+/** The route, or why it could not be asked: a port that throws is an answer. */
+async function askRoute(d: DoctorDeps): Promise<DoctorRoute> {
+  try {
+    return await d.route();
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 async function pihomeCheck(
@@ -990,26 +1162,36 @@ async function pihomeCheck(
       detail: `the login in ${vol} cannot be read: ${read.error}`,
       fix: login,
     };
-  const provider = d.model.split("/")[0] ?? "";
-  const cred = read.summary[provider];
-  if (cred === undefined)
+  // The model is the route's, asked where the scan would run: over this same
+  // login, read-only. No provider is assumed and none is looked up by name.
+  const route = await askRoute(d);
+  if (!route.ok)
     return {
       check: "pihome",
       ok: false,
-      detail: `no ${provider} login in ${vol} — the stage-1 model ${d.model} needs one`,
+      detail: `${vol}: no model for a scan on this login: ${route.error}`,
       fix: login,
     };
   const now = (d.now ?? Date.now)();
+  // The probed model's own login, when the login file holds one: a model may
+  // also be on a credential pi found elsewhere (a key in the container's
+  // environment), and then the route's words for it are all there is.
+  const cred = read.summary[route.provider];
   const life =
-    cred.expires === null
-      ? `a ${cred.type} login (no expiry)`
-      : `access token good for ${lifeWords(cred.expires - now)} (until ${new Date(cred.expires).toISOString()})`;
-  const why = loginProblem(read.summary, now);
+    cred === undefined
+      ? route.credential
+      : cred.expires === null
+        ? `a ${cred.type} login (no expiry)`
+        : `access token good for ${lifeWords(cred.expires - now)} (until ${expiryText(cred.expires)})`;
+  const on = `${route.providerName} ${life}`;
+  // Only the logins the scan's models are on: another provider's short login
+  // in the same pi home is not the scan's to refuse.
+  const why = loginProblem(read.summary, now, route.providers);
   if (why !== null)
     return {
       check: "pihome",
       ok: false,
-      detail: `${vol}: ${provider} ${life} — ${why}`,
+      detail: `${vol}: ${on} — ${why}`,
       fix: SCAN_AUTH_FIX,
     };
   // The probe runs the scan's own route: a refresh-disabled copy of the
@@ -1021,12 +1203,17 @@ async function pihomeCheck(
       ...PUBLIC_DNS.flatMap((x) => ["--dns", x]),
       ...loginMounts(vol).flatMap((m) => ["--mount", mountSpec(m)]),
       ...loginEnvArgv(),
+      // The copy judges the logins the narrowed check above judged, and no
+      // other: without this the probe would refuse on a login the scan
+      // never uses.
+      "--env",
+      `${SCAN_AUTH_PROVIDERS_ENV}=${JSON.stringify(route.providers)}`,
       d.sandbox.image,
       "sh",
       "-c",
       'node --input-type=module -e "$0" && exec pi "$@"',
       SCAN_AUTH_COPY_SCRIPT,
-      ...probeArgv(d.model),
+      ...probeArgv(route.model),
     ],
     { timeoutMs },
   );
@@ -1034,12 +1221,12 @@ async function pihomeCheck(
     ? {
         check: "pihome",
         ok: true,
-        detail: `${vol}: ${provider} ${life}; pi on a read-only copy answers on ${d.model}`,
+        detail: `${vol}: ${on}; pi on a read-only copy answers on ${route.model}`,
       }
     : {
         check: "pihome",
         ok: false,
-        detail: `${vol}: ${provider} ${life}; pi on a read-only copy did not answer on ${d.model}: ${dockerFailureLine(r)}`,
+        detail: `${vol}: ${on}; pi on a read-only copy did not answer on ${route.model}: ${dockerFailureLine(r)}`,
         fix: login,
       };
 }

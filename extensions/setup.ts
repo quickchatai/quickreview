@@ -1337,12 +1337,28 @@ function registerSetup(pi: ExtensionAPI, config: SetupConfig): void {
     return;
   }
   for (const def of toolDefinitions(engine)) registerQcrTool(pi, def);
+  // The model this pi is on, as its session last said: the route, as the
+  // login-route extension applied it. A scan or replay case whose agent file
+  // pins no model is a child pi with no host to resolve one, so it is handed
+  // this one and the run stays on one model. Nothing said yet: nothing is
+  // handed, and the child runs on pi's own choice for the login.
+  let sessionModel: { spec: string; provider: string } | undefined;
+  const noteModel = (model: { provider: string; id: string } | undefined): void => {
+    sessionModel =
+      model === undefined
+        ? undefined
+        : { spec: `${model.provider}/${model.id}`, provider: model.provider };
+  };
+  const route = (): { spec: string; provider: string } | undefined => sessionModel;
   // The scan tools, over the same engine's saved unit cut.
   const { scan, findings, settingsOf, triage, home } = buildScan(
     engine,
     reviewedCheckout(env),
     env,
     shared,
+    null,
+    undefined,
+    route,
   );
   for (const def of scanToolDefinitions(
     scan,
@@ -1355,16 +1371,21 @@ function registerSetup(pi: ExtensionAPI, config: SetupConfig): void {
   // Triage — dismiss, promote, close fixed, scan memory.
   if (triage) for (const def of triageToolDefinitions(triage)) registerQcrTool(pi, def);
   // The PR replay — old vs new profile, cost first.
-  const replay = buildReplay(reviewedCheckout(env), env, resolveMaxConcurrency(env));
+  const replay = buildReplay(reviewedCheckout(env), env, resolveMaxConcurrency(env), route);
   for (const def of replayToolDefinitions(replay)) registerQcrTool(pi, def);
   // The TUI's stage-2 start click and its scan stop, answered while the
   // companion's session runs (the inject-bridge's lifecycle: start on
   // session_start, stop on session_shutdown).
   let unwatch: (() => void) | null = null;
   // VERIFY-ON-PIN: "session_start" / "session_shutdown" event names (as inject-bridge).
-  pi.on("session_start", () => {
+  pi.on("session_start", (_event, ctx) => {
+    noteModel(ctx.model);
     unwatch?.();
     unwatch = watchTuiRequests(scan);
+  });
+  // pi's "model_select" carries the model selected (`event.model`).
+  pi.on("model_select", (event) => {
+    noteModel(event.model);
   });
   pi.on("session_shutdown", () => {
     unwatch?.();

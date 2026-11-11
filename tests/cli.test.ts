@@ -12,6 +12,8 @@ import {
   parseRelayoutArgs,
   rebuildCompanion,
   renderStatus,
+  roundSpendWord,
+  spendLines,
   todayCancellationLine,
   todayJson,
   whyHeaderLine,
@@ -66,9 +68,12 @@ describe("renderStatus", () => {
     );
     // The archiver's line, every time — the same honest-unknown.
     expect(lines[5]).toBe("archive: NOT REPORTED (this daemon predates the archive block)");
-    expect(lines[7]).toMatch(/^PR\s+state\s+stale\s+head\s+title$/);
+    // The model line, every time — a snapshot with no block says unknown,
+    // never a model.
+    expect(lines[6]).toBe("model: unknown (this daemon does not report the model reviews run on)");
+    expect(lines[8]).toMatch(/^PR\s+state\s+stale\s+head\s+title$/);
 
-    const rows = lines.slice(8);
+    const rows = lines.slice(9);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain("#1421");
     expect(rows[0]).toContain("reviewing");
@@ -154,9 +159,64 @@ describe("renderStatus", () => {
     const title = "Fix\x1b[2J\x1b[31m widget\r\nrow\x9b2Kend";
     const out = renderStatus({ ...snapshot, prs: [{ ...snapshot.prs[0]!, title }] });
     const lines = out.split("\n");
-    expect(lines.slice(8)).toHaveLength(1);
+    expect(lines.slice(9)).toHaveLength(1);
     expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
-    expect(lines[8]).toContain("Fix [2J [31m widget row 2Kend");
+    expect(lines[9]).toContain("Fix [2J [31m widget row 2Kend");
+  });
+
+  // The model reviews run on is the newest worker's report (status.json
+  // `model_route`), and every way of not having one reads `unknown`.
+  describe("the model line", () => {
+    const route = {
+      spec: "prov-a/model-9",
+      source: "config",
+      pick: "pinned",
+      moved_from: null,
+      credential_origin: "stored",
+      at: "2026-08-13T17:00:00.000Z",
+    };
+    const modelLine = (model_route: unknown): string =>
+      renderStatus({ ...snapshot, model_route } as StatusSnapshot)
+        .split("\n")
+        .find((l) => l.startsWith("model:"))!;
+
+    it("names the reported model, why it is the one, and when it was reported", () => {
+      expect(modelLine(route)).toBe(
+        "model: prov-a/model-9 (pinned by [models] model); last reported 2026-08-13T17:00:00.000Z",
+      );
+      expect(modelLine({ ...route, source: "only-credential", pick: "newest" })).toBe(
+        "model: prov-a/model-9 (the one provider pi has a credential for); last reported 2026-08-13T17:00:00.000Z",
+      );
+    });
+
+    it("names the move when the run left the provider the config names", () => {
+      expect(modelLine({ ...route, spec: "prov-c/model-9", moved_from: "prov-a" })).toBe(
+        "model: prov-c/model-9 (pinned by [models] model), moved off prov-a, which the config " +
+          "names and which has no credential; last reported 2026-08-13T17:00:00.000Z",
+      );
+    });
+
+    // MUTATION: print the block's `spec` whenever it is a string (skip
+    // parseRouteRecord in modelRouteLine) — a block this build cannot read is
+    // shown as a model, and this fails.
+    it("says unknown, with why, for no report, an older daemon's snapshot and a block it cannot read", () => {
+      expect(modelLine(null)).toBe(
+        "model: unknown (no worker has reported the model it ran on yet)",
+      );
+      expect(modelLine(undefined)).toBe(
+        "model: unknown (this daemon does not report the model reviews run on)",
+      );
+      for (const bad of [{ spec: "prov-a/model-9" }, { ...route, at: 7 }, "prov-a/model-9", 3])
+        expect(modelLine(bad), JSON.stringify(bad)).toBe(
+          "model: unknown (unreadable model_route block)",
+        );
+    });
+
+    it("a source this build does not know is shown as written", () => {
+      expect(modelLine({ ...route, source: "a-newer-source" })).toContain(
+        "model: prov-a/model-9 (a-newer-source)",
+      );
+    });
   });
 
   it("strips control bytes (incl. C1) from a session's pause reason", () => {
@@ -245,14 +305,14 @@ describe("usage-aware spend reporting", () => {
     const store = new StateStore(":memory:");
     try {
       const id = store.startRound(5408, "re-review", ["pass-baseline", "pass-validate"], 75, {
-        validate_tier: "sol-high",
+        validate_tier: "deep",
       });
       store.db
         .prepare("UPDATE rounds SET executed_passes = ? WHERE id = ?")
         .run(JSON.stringify([{ name: "pass-baseline", status: "completed" }]), id);
       const round = whyJson(store, 5408, "/nonexistent-archive").rounds[0]!;
       expect(round.deadline_at).toMatch(/Z$/);
-      expect(round.validate_tier).toBe("sol-high");
+      expect(round.validate_tier).toBe("deep");
       expect(round.executed_passes).toEqual([{ name: "pass-baseline", status: "completed" }]);
     } finally {
       store.close();
@@ -285,6 +345,105 @@ describe("usage-aware spend reporting", () => {
     } finally {
       store.close();
     }
+  });
+});
+
+// Fence 7: unknown spend is never zero. A round with tokens and no price (a
+// model pi has no price for is stamped at 0, and the round's est_usd is NULL)
+// is counted beside the sum and said as "unknown" on every line `qcr` prints.
+describe("spend where a round's cost is not known", () => {
+  const TODAY = new Date().toISOString().slice(0, 10);
+
+  /** PR 7: one priced round ($0.31) and `unpriced` rounds with tokens and no price. */
+  function storeWith(unpriced: number, priced = true): StateStore {
+    const store = new StateStore(":memory:");
+    if (priced) {
+      const a = store.startRound(7, "initial", [], 45);
+      store.recordRoundUsage(a, { tokens_in: 120_000, tokens_out: 8_000, est_usd: 0.31 });
+    }
+    for (let i = 0; i < unpriced; i++) {
+      const b = store.startRound(7, "re_review", [], 45);
+      store.recordRoundUsage(b, { tokens_in: 50_000, tokens_out: 2_000, est_usd: null });
+    }
+    return store;
+  }
+
+  // MUTATION: restore `r.est_usd ?? 0` without the count in roundUsage - the
+  // lines read "$0.31" alone and this fails.
+  it("qcr spend says the sum at list prices and the rounds it could not count", () => {
+    const store = storeWith(2);
+    try {
+      const [total, today] = spendLines(store, TODAY);
+      expect(total).toBe(
+        "total spend: $0.31 at list prices + 2 rounds unknown — 220000 in / 12000 out tokens",
+      );
+      expect(today).toBe(
+        `today (${TODAY}): $0.31 + 2 rounds unknown across 3 rounds — 220000 in / 12000 out tokens`,
+      );
+      expect(total).not.toContain("(est)");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("qcr spend with nothing priced says unknown, never $0.00", () => {
+    const store = storeWith(1, false);
+    try {
+      const [total, today] = spendLines(store, TODAY);
+      expect(total).toContain("total spend: unknown (1 round) — ");
+      expect(today).toContain(": unknown (1 round) across 1 rounds");
+      expect(`${total}${today}`).not.toContain("$0.00");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("qcr spend with every round priced says the sum alone", () => {
+    const store = storeWith(0);
+    try {
+      const [total, today] = spendLines(store, TODAY);
+      expect(total).toBe("total spend: $0.31 at list prices — 120000 in / 8000 out tokens");
+      expect(today).not.toContain("unknown");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("qcr today says each round's spend: its price, unknown, or never measured", () => {
+    expect(roundSpendWord({ est_usd: 0.31, tokens_in: 10, tokens_out: 1 })).toBe("$0.31");
+    expect(roundSpendWord({ est_usd: null, tokens_in: 10, tokens_out: 1 })).toBe("unknown");
+    expect(roundSpendWord({ est_usd: null, tokens_in: null, tokens_out: null })).toBe("—");
+  });
+
+  it("the JSON payloads carry the count beside the sum", () => {
+    const store = storeWith(2);
+    try {
+      expect(todayJson(store, TODAY)).toMatchObject({ unknown_spend_rounds: 2 });
+      expect(todayJson(store, TODAY).spend_usd).toBeCloseTo(0.31, 6);
+      const why = whyJson(store, 7, "/nonexistent-archive");
+      expect(why.spend_usd).toBeCloseTo(0.31, 6);
+      expect(why.unknown_spend_rounds).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("qcr status says the count the snapshot carries, and the sum alone for a snapshot without one", () => {
+    const line = (s: StatusSnapshot): string =>
+      renderStatus(s)
+        .split("\n")
+        .find((l) => l.startsWith("rounds running:"))!;
+    expect(line({ ...snapshot, total_unknown_spend_rounds: 4 })).toBe(
+      "rounds running: 2   total spend: $3.50 + 4 rounds unknown",
+    );
+    expect(line({ ...snapshot, total_spend_usd: 0, total_unknown_spend_rounds: 1 })).toBe(
+      "rounds running: 2   total spend: unknown (1 round)",
+    );
+    expect(line({ ...snapshot, total_unknown_spend_rounds: 0 })).toBe(
+      "rounds running: 2   total spend: $3.50",
+    );
+    // An older daemon's snapshot has no count: unknown, so nothing is claimed.
+    expect(line(snapshot)).toBe("rounds running: 2   total spend: $3.50");
   });
 });
 

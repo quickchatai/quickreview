@@ -22,8 +22,22 @@ import type { PrFileEntry } from "./githubcore.js";
 import { normalizeDisposition, recordNumber, recordString } from "./findingkey.js";
 import { severityRank } from "./severityrank.js";
 import { planKey } from "./plankey.js";
+import { roundAgentModels, type LensTuningMap } from "./lenstuning.js";
+import {
+  moveToCredentialed,
+  refusalText,
+  splitProvider,
+  type ModelRoute,
+  type ProviderInventory,
+  type RouteSurface,
+  type SkippedLogin,
+} from "./modelroute.js";
+import { splitModelSpec, TIER_LEVELS, type ModelsConfig } from "./reviewconfig.js";
+import { foldTier, PASS_TIER_ORDER, type PassTier } from "./types.js";
 import { parseUnifiedDiff } from "./diffinput.js";
 import { nodeExec, runOrThrow } from "./execfn.js";
+import { reviewVersionFor, toReviewNative, toReviewV1 } from "./contract.js";
+import { MEASURED } from "./measured.js";
 
 /** A git command's stdout, trimmed; throws with git's own words. */
 function git(
@@ -473,11 +487,8 @@ export function removeReviewTree(_cwd: string, dir: string): void {
 
 // ---- the repo's settings and the price -----------------------------------------------
 
-/** What a repo has decided about local reviews, kept in its git dir (never
- * tracked, never shared): the price under which a review starts without
- * asking, and the price model's three rates. */
-export interface ReviewSettings {
-  auto_limit_usd: number;
+/** The three rates an estimate is made of. */
+export interface ReviewRates {
   /** Dollars a review costs before any lens runs. */
   usd_base: number;
   /** Dollars one planned lens costs, whatever the diff. */
@@ -486,18 +497,28 @@ export interface ReviewSettings {
   usd_per_kline: number;
 }
 
-/** The rates are a least-squares fit to what 295 recorded default-preset
- * reviews cost (the final1 bench runs, gpt-6.1-sol list prices: $2 / M
- * uncached input, $0.10 / M cached input, $10 / M output): the median PR is
- * off by about a fifth, the sum by 1%, and no recorded review cost more than
- * twice its estimate. The table is tests/fixtures/review-cost/recorded.json.
- * A different model moves them; the repo's settings override them. */
+/** What a repo has decided about local reviews, kept in its git dir (never
+ * tracked, never shared): the estimate under which a review starts without
+ * asking, the spend at which a review with no estimate stops, and, when the
+ * repo has measured its own, the three rates of the estimate. */
+export interface ReviewSettings extends Partial<ReviewRates> {
+  auto_limit_usd: number;
+  /** Where a review on a model with no measured estimate stops, unless the
+   * run names its own stop (`--limit`). */
+  unmeasured_limit_usd: number;
+}
+
+/** The defaults hold no rate: the fitted estimate is data about one measured
+ * model (measured.ts `MEASURED`), and a repo's own rates are the repo's to
+ * state. `unmeasured_limit_usd` lets 97% of the recorded reviews finish at
+ * up to three times what they cost on the measured model, and caps a
+ * surprise at about six average reviews. */
 export const DEFAULT_REVIEW_SETTINGS: ReviewSettings = {
   auto_limit_usd: 2,
-  usd_base: 0.1,
-  usd_per_lens: 0.125,
-  usd_per_kline: 1.85,
+  unmeasured_limit_usd: 15,
 };
+
+const RATE_KEYS = ["usd_base", "usd_per_lens", "usd_per_kline"] as const;
 
 /** A review stops hard at this many times its estimate. The estimate is the
  * expected cost, so stopping at it would cut about half the reviews short. */
@@ -513,12 +534,16 @@ export function settingsPath(cwd: string): string | null {
 /** The repo's settings over the defaults. A key that is not a positive number
  * is ignored, so a typo never turns the limit off. */
 export function loadReviewSettings(cwd: string): ReviewSettings {
-  const out = { ...DEFAULT_REVIEW_SETTINGS };
+  const out: ReviewSettings = { ...DEFAULT_REVIEW_SETTINGS };
   const path = settingsPath(cwd);
   if (path === null || !existsSync(path)) return out;
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-    for (const k of Object.keys(out) as Array<keyof ReviewSettings>) {
+    const keys: Array<keyof ReviewSettings> = [
+      ...(Object.keys(DEFAULT_REVIEW_SETTINGS) as Array<keyof ReviewSettings>),
+      ...RATE_KEYS,
+    ];
+    for (const k of keys) {
       const v = raw[k];
       if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = v;
     }
@@ -528,10 +553,21 @@ export function loadReviewSettings(cwd: string): ReviewSettings {
   return out;
 }
 
+/** The repo's own rates, which price a review on any model; null when the
+ * repo sets none. A rate it leaves out is the measured one. */
+export function repoRates(s: ReviewSettings): ReviewRates | null {
+  if (RATE_KEYS.every((k) => s[k] === undefined)) return null;
+  return {
+    usd_base: s.usd_base ?? MEASURED.usd_base,
+    usd_per_lens: s.usd_per_lens ?? MEASURED.usd_per_lens,
+    usd_per_kline: s.usd_per_kline ?? MEASURED.usd_per_kline,
+  };
+}
+
 /** The estimated cost of reviewing `lines` changed lines with `lenses` lenses:
  * a base, a fixed cost per lens and one term for the diff. Rounded UP to the
  * cent shown. */
-export function priceReview(lenses: number, lines: number, s: ReviewSettings): number {
+export function priceReview(lenses: number, lines: number, s: ReviewRates): number {
   const usd = s.usd_base + s.usd_per_lens * lenses + (s.usd_per_kline * lines) / 1000;
   return Math.max(0.01, Math.ceil(usd * 100 - 1e-9) / 100);
 }
@@ -541,18 +577,177 @@ export function hardStopFor(estimateUsd: number): number {
   return Math.ceil(estimateUsd * HARD_STOP_FACTOR * 100 - 1e-9) / 100;
 }
 
-/** What a start must quote: change the branch, the plan or the price and the
- * key moves. */
+/** What a start must quote: change the branch, the plan, the price or the
+ * models the run is on and the key moves. */
 export function reviewKey(parts: {
   headSha: string;
   baseSha: string;
   lenses: readonly string[];
   lines: number;
   cap_usd: number;
+  /** The model specs the run will use (`runModels`): the main session's and
+   * each planned lens's, level included. Their order and repeats say nothing,
+   * so the key reads them sorted and distinct. */
+  models: readonly string[];
   /** A delta review: the head it reviews from. */
   since?: string;
 }): string {
-  return planKey({ ...parts, cap: Math.round(parts.cap_usd * 100) });
+  return planKey({
+    ...parts,
+    models: [...new Set(parts.models)].sort(),
+    cap: Math.round(parts.cap_usd * 100),
+  });
+}
+
+// ---- the models a run is on ----------------------------------------------------------
+
+/** What a spec is resolved against: the run's route (null: none resolved) and
+ * the providers pi has a usable credential for. */
+export interface RunRoute {
+  route: ModelRoute | null;
+  inventory: readonly ProviderInventory[];
+  /** The remembered provider: it breaks a tie between unrelated candidates
+   * when a spec moves off a provider with no credential. */
+  prefer?: string;
+  /** The stored logins left out as too short for the run: a spec on one of
+   * their providers is not moved, since the run refuses it as such. */
+  skipped?: readonly SkippedLogin[];
+}
+
+/**
+ * A model spec as it will run (engine/pisdk.ts `resolveModel` decides the
+ * same way at the start). One that names no model runs on the route, at
+ * its own level, else at `level`. One whose provider has no credential here
+ * runs on the provider the route's own rule moves it to
+ * (modelroute.ts `moveToCredentialed`), and stays as written where that rule
+ * has no answer or the provider's login was left out as too short: the run
+ * refuses it then. With nothing to resolve against (`on` null, or no route
+ * for a spec that names no model) the spec stays as written, so what is not
+ * known is never filled in.
+ */
+export function specAsRun(spec: string, on: RunRoute | null, level?: string | null): string {
+  const { model, thinking } = splitModelSpec(spec);
+  if (model === "") {
+    const at = thinking ?? level ?? null;
+    return `${on?.route?.spec ?? ""}${at ? `:${at}` : ""}`;
+  }
+  if (on === null) return spec;
+  const named = splitProvider(model);
+  if (named === null || on.inventory.some((e) => e.provider === named.provider)) return spec;
+  // A login that exists and is too short is refused as such, never moved.
+  if (on.skipped?.some((l) => l.provider === named.provider)) return spec;
+  const move = moveToCredentialed(
+    { provider: named.provider, id: named.rest },
+    on.inventory,
+    on.prefer,
+  );
+  if (move === null || !("provider" in move)) return spec;
+  return `${move.provider}/${named.rest}${thinking ? `:${thinking}` : ""}`;
+}
+
+/** The tier a built agent's name ends in (`pass-x--deep`), in either spelling. */
+function tierOfAgent(agent: string): PassTier | undefined {
+  const at = agent.lastIndexOf("--");
+  return at < 0 ? undefined : foldTier(agent.slice(at + 2));
+}
+
+/**
+ * The models one run is on: the main session's spec, each tier's, and every
+ * spec the run will use (the main session's and each planned lens's), all as
+ * they will run (`specAsRun`). A lens's spec is the one its built agent
+ * carries (`roundAgentModels`, else its tier's).
+ */
+export function runModels(
+  cfg: {
+    models: Pick<ModelsConfig, "model" | "tiers" | "effort_max" | "pass_tiers" | "pass_models">;
+    lenses?: LensTuningMap | undefined;
+    review: { sweep_light_tier?: "" | PassTier };
+  },
+  lenses: readonly string[],
+  on: RunRoute | null,
+): { main: string; tiers: Record<PassTier, string>; all: string[] } {
+  const main = specAsRun(cfg.models.model, on, on?.route?.thinking);
+  const tiers = Object.fromEntries(
+    PASS_TIER_ORDER.map((tier) => [tier, specAsRun(cfg.models.tiers[tier], on, TIER_LEVELS[tier])]),
+  ) as Record<PassTier, string>;
+  const variants = roundAgentModels(cfg);
+  const ofLens = (agent: string): string => {
+    const tier = tierOfAgent(agent);
+    const spec = variants[agent] ?? (tier !== undefined ? cfg.models.tiers[tier] : "");
+    return specAsRun(spec, on, tier !== undefined ? TIER_LEVELS[tier] : null);
+  };
+  return { main, tiers, all: [...new Set([main, ...lenses.map(ofLens)])].sort() };
+}
+
+/** The stored logins a run's specs (each as it will run, `runModels`) lean
+ * on that were left out as too short for the run: a tier or a lens the
+ * config pins to such a provider would fail when its session is opened, so
+ * the run is refused before anything starts. A provider that still has a
+ * credential here (an environment key beside the short login) is not one of
+ * them: its sessions open on that credential, as the route itself resolved.
+ * Empty when there are none. */
+export function tooShortFor(specs: readonly string[], on: RunRoute | null): SkippedLogin[] {
+  const skipped = on?.skipped ?? [];
+  if (skipped.length === 0) return [];
+  const providers = new Set<string>();
+  for (const spec of specs) {
+    const named = splitProvider(splitModelSpec(spec).model);
+    if (named !== null) providers.add(named.provider);
+  }
+  const held = new Set((on?.inventory ?? []).map((e) => e.provider));
+  return skipped.filter((l) => providers.has(l.provider) && !held.has(l.provider));
+}
+
+// ---- the contract a caller reads -----------------------------------------------------
+
+/** Why contract 1 cannot carry a review that has no estimate, in the words
+ * its caller prints. `measured` is a spec the caller could run on to get one
+ * (measured.ts `measuredSpec`); null when no credentialed provider serves it. */
+export function contractOneNoPrice(spec: string, measured: string | null): string {
+  return (
+    `this review would run on ${spec === "" ? "a model" : spec}, which has no measured price, and contract 1 cannot say so. ` +
+    `Update the QuickReview skills (qcr plugin install)` +
+    (measured !== null ? `, or run on a measured model: --model ${measured}` : "") +
+    "."
+  );
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * A review payload as the caller's contract reads it (contract.ts): under the
+ * code's own version for a caller that named none or the current one; for
+ * contract 1 the projection, which exists only while every estimate in the
+ * payload is a number. A payload contract 1 cannot carry is never printed
+ * under it: the caller gets a refusal in contract 1's own shape instead,
+ * `{ schema_version: 1, ok: false, errors }` (a detached run's status keeps
+ * its own fields and loses the result), and `refused` holds the words. With
+ * no model route behind the preview the words are the login refusal, which
+ * the host skills key on; otherwise they say the review has no measured
+ * price.
+ */
+export function reviewForContract(
+  contract: number | undefined,
+  payload: Record<string, unknown>,
+  surface: RouteSurface = "app",
+): { data: Record<string, unknown>; refused: string | null } {
+  if (reviewVersionFor(contract) !== 1) return { data: toReviewNative(payload), refused: null };
+  const projected = toReviewV1(payload);
+  if (projected !== null) return { data: projected, refused: null };
+  const wrapped = isRecord(payload["result"]) ? payload["result"] : payload;
+  const preview = isRecord(wrapped["preview"]) ? wrapped["preview"] : {};
+  const model = preview["model"];
+  const spec = isRecord(model) && typeof model["spec"] === "string" ? model["spec"] : "";
+  // "unknown" is the one basis with no model route behind it.
+  const refused =
+    preview["price_basis"] === "unknown"
+      ? refusalText({ code: "no-credential" }, surface)
+      : contractOneNoPrice(spec, null);
+  const { schema_version: _was, result: _result, preview: _preview, ...own } = payload;
+  // A status keeps what it says of the run; a review's own payload keeps nothing.
+  const kept = wrapped === payload ? {} : own;
+  return { data: { schema_version: 1, ...kept, ok: false, errors: [refused] }, refused };
 }
 
 // ---- the findings in a terminal ------------------------------------------------------

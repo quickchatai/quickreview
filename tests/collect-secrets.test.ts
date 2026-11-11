@@ -9,11 +9,23 @@
 //   * the wizard's existing UX conventions hold: values land 0600, validators
 //     reject junk and re-prompt, existing files are kept.
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
-import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { OPENVIKING_DEFAULTS } from "../src/config.js";
+import { validateEmbeddingsKey } from "../src/onboard/steps/embeddings.js";
+import { MODEL_ENV_DIR, modelEnvFrom, modelEnvNameProblem } from "../src/modelenv.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = resolve(root, "deploy/collect-secrets.sh");
@@ -64,18 +76,19 @@ function seedRequired(): void {
 describe("the hosted-embeddings key is its OWN file", () => {
   it("is prompted separately from pi's key, lands 0600, and skipping it leaves memory local with nothing else changed", async () => {
     seedRequired();
-    // stdin: skip openai_api_key, paste the embeddings key, skip both openviking keys.
+    // stdin: skip the model key, paste the embeddings key, skip both openviking keys.
     const { code, out } = await runWizard("\nsk-embeddings-only-0123456789\n\n\n", {
       env: { QC_DEPLOY_SHAPE: "docker" },
     });
     expect(code).toBe(0);
     expect(out).toContain("openai_embeddings_api_key saved");
-    expect(out).toContain("skipped openai_api_key");
+    expect(out).toContain("skipped the model API key");
     expect(readFileSync(join(dir, "openai_embeddings_api_key"), "utf8")).toBe(
       "sk-embeddings-only-0123456789",
     );
     expect(statSync(join(dir, "openai_embeddings_api_key")).mode & 0o777).toBe(0o600);
     expect(() => readFileSync(join(dir, "openai_api_key"))).toThrow();
+    expect(existsSync(join(dir, MODEL_ENV_DIR))).toBe(false);
     // The overview says what the file is for, and that the default needs none.
     expect(out).toMatch(/embeds LOCALLY by default/);
     expect(out).toMatch(/pi's key is never used for embeddings/);
@@ -91,6 +104,163 @@ describe("the hosted-embeddings key is its OWN file", () => {
     expect(readFileSync(join(dir, "openai_embeddings_api_key"), "utf8")).toBe(
       "sk-embeddings-second-try-0123",
     );
+  });
+
+  // The shell collects the key and the wizard's embeddings step checks the
+  // file: one rule, two languages. The shell's own function is run against
+  // the TypeScript validator's table, so the two AGREE on every value and do
+  // not merely mention the same prefix.
+  //
+  // MUTATION: drop the `!/\s/.test(v)` clause from validateEmbeddingsKey in
+  // src/onboard/steps/embeddings.ts — the keys with whitespace inside pass
+  // there and are refused by the shell, and this fails. Or give the embeddings
+  // prompt another validator than v_openai — this fails.
+  it("the shell's validator and the embeddings step's agree on every value", () => {
+    const shell = readFileSync(script, "utf8");
+    const file = OPENVIKING_DEFAULTS.embedding_key_file;
+    // The validator is the one the embeddings key's prompt uses.
+    expect(shell).toMatch(new RegExp(`^\\s*prompt_hidden ${file} "[^"]*" v_openai$`, "m"));
+    const fn = /^v_openai\(\).*$/m.exec(shell)?.[0];
+    expect(fn).toBeDefined();
+    const shellAccepts = (value: string, locale: string): boolean =>
+      spawnSync("bash", ["-c", `${fn}\nprintf '%s' "$1" | v_openai`, "v", value], {
+        encoding: "utf8",
+        env: { ...process.env, LC_ALL: locale },
+      }).status === 0;
+    // `read -r` hands the shell an already-trimmed value; the TS side trims.
+    for (const value of [
+      "sk-embeddings-table-0123456789",
+      "nope",
+      "",
+      "sk-",
+      "sk- with space",
+      "sk-a\tb",
+      "sk-a b",
+      "sk-a b",
+      "sk-a b",
+      "sk-a﻿b",
+      "sk-x",
+      "SK-upper",
+    ]) {
+      for (const locale of ["C", "C.UTF-8"])
+        expect(shellAccepts(value.trim(), locale), `${locale}:${JSON.stringify(value)}`).toBe(
+          validateEmbeddingsKey(value),
+        );
+    }
+  });
+});
+
+describe("a model API key goes in the variable its provider documents", () => {
+  // The wizard knows no provider: it asks for the variable's name and writes
+  // model-env/<NAME>, the file the daemon's loader reads.
+  // MUTATION: save the value as openai_api_key whatever name was typed — the
+  // loader answers under OPENAI_API_KEY and this fails.
+  it("asks for the name, then the value, and writes model-env/<NAME> 0600 where the loader reads it", async () => {
+    seedRequired();
+    // stdin: the name, the value, then Enter-skips for the embeddings key and
+    // both openviking keys.
+    const { code, out } = await runWizard("PROV_API_KEY\nvalue-0123456789\n\n\n\n", {
+      env: { QC_DEPLOY_SHAPE: "docker" },
+    });
+    expect(code).toBe(0);
+    expect(out).toContain("which environment variable does it go in?");
+    expect(out).toContain("model-env/PROV_API_KEY saved");
+    expect(out).not.toContain("value-0123456789");
+    const file = join(dir, MODEL_ENV_DIR, "PROV_API_KEY");
+    expect(readFileSync(file, "utf8")).toBe("value-0123456789");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(statSync(join(dir, MODEL_ENV_DIR)).mode & 0o777).toBe(0o700);
+    expect(existsSync(join(dir, "openai_api_key"))).toBe(false);
+    expect(modelEnvFrom(dir)).toEqual({ PROV_API_KEY: "value-0123456789" });
+    // the closing overview names the variable, never its value
+    expect(out).toMatch(/model-env\/\s+present: PROV_API_KEY/);
+  });
+
+  it("refuses a name that is not a model variable's and asks again", async () => {
+    seedRequired();
+    const { code, out } = await runWizard(
+      "GITHUB_TOKEN\nlower_case\nPROV_API_KEY\nvalue-0123456789\n\n\n\n",
+      { env: { QC_DEPLOY_SHAPE: "docker" } },
+    );
+    expect(code).toBe(0);
+    expect(out).toContain("names starting with GITHUB_ are not model variables");
+    expect(out).toContain("not an environment variable's name");
+    expect(readdirSync(join(dir, MODEL_ENV_DIR))).toEqual(["PROV_API_KEY"]);
+  });
+
+  // MUTATION: prompt for a model key although openai_api_key is there — the
+  // run reads the embeddings key as a variable name and this fails.
+  it("an older openai_api_key is recognised and left: no prompt, no rewrite, still the loader's", async () => {
+    seedRequired();
+    writeFileSync(join(dir, "openai_api_key"), "sk-older-key-0123456789");
+    // stdin: paste the embeddings key, skip both openviking keys.
+    const { code, out } = await runWizard("sk-embeddings-only-0123456789\n\n\n", {
+      env: { QC_DEPLOY_SHAPE: "docker" },
+    });
+    expect(code).toBe(0);
+    expect(out).toContain("openai_api_key is present");
+    expect(out).not.toContain("which environment variable does it go in?");
+    expect(out).toContain("openai_embeddings_api_key saved");
+    expect(readFileSync(join(dir, "openai_api_key"), "utf8")).toBe("sk-older-key-0123456789");
+    expect(existsSync(join(dir, MODEL_ENV_DIR))).toBe(false);
+    expect(modelEnvFrom(dir)).toEqual({ OPENAI_API_KEY: "sk-older-key-0123456789" });
+  });
+
+  it("a key already under model-env/ is kept without a prompt", async () => {
+    seedRequired();
+    mkdirSync(join(dir, MODEL_ENV_DIR));
+    writeFileSync(join(dir, MODEL_ENV_DIR, "PROV_API_KEY"), "kept-value");
+    const { code, out } = await runWizard("\n\n\n", { env: { QC_DEPLOY_SHAPE: "docker" } });
+    expect(code).toBe(0);
+    expect(out).not.toContain("which environment variable does it go in?");
+    expect(out).not.toContain("kept-value");
+    expect(readFileSync(join(dir, MODEL_ENV_DIR, "PROV_API_KEY"), "utf8")).toBe("kept-value");
+  });
+
+  // One rule, two languages: the shell's own function is run against the
+  // loader's rule, so a name the wizard saves is a name the daemon reads.
+  // MUTATION: delete "GIT_" from MODEL_ENV_REFUSED_PREFIXES in
+  // src/modelenv.ts, or `GIT_*` from v_model_env_name — the two disagree on
+  // GIT_SSH_COMMAND and this fails.
+  it("the shell's name rule and the loader's agree on every name", () => {
+    const shell = readFileSync(script, "utf8");
+    const start = shell.indexOf("v_model_env_name() {");
+    expect(start).toBeGreaterThan(-1);
+    const fn = shell.slice(start, shell.indexOf("\n}\n", start) + 3);
+    const shellAccepts = (name: string, locale: string): boolean =>
+      spawnSync("bash", ["-c", `${fn}\nv_model_env_name "$1"`, "v", name], {
+        encoding: "utf8",
+        env: { ...process.env, LC_ALL: locale },
+      }).status === 0;
+    for (const name of [
+      "PROV_API_KEY",
+      "AWS_REGION",
+      "A",
+      "A1_B2",
+      "COPILOT_GITHUB_TOKEN",
+      "GITLAB_TOKEN",
+      "PIPELINE_KEY",
+      "GH_TOKEN",
+      "GITHUB_TOKEN",
+      "QCR_CONFIG",
+      "PI_CODING_AGENT_DIR",
+      "OPENVIKING_API_KEY",
+      "GIT_SSH_COMMAND",
+      "lower_case",
+      "Mixed_Case",
+      "1LEADING",
+      "_LEADING",
+      "WITH-DASH",
+      "WITH SPACE",
+      "WITH.DOT",
+      "ÄB",
+      "",
+    ]) {
+      for (const locale of ["C", "C.UTF-8"])
+        expect(shellAccepts(name, locale), `${locale}:${JSON.stringify(name)}`).toBe(
+          modelEnvNameProblem(name) === null,
+        );
+    }
   });
 });
 

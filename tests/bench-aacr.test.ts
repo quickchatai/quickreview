@@ -926,7 +926,7 @@ describe("the round the bench runs is the production round", () => {
     const swapped = benchConfig("example-django");
     expect(swapped.review.profile).toBe("example-django");
     expect({ ...swapped, review: { ...swapped.review, profile: "" } }).toEqual(cfg);
-    expect(cfg.models.conversation).toMatch(/^openai-codex\//);
+    expect(cfg.models.model).toMatch(/^openai-codex\//);
     void buildBenchAgents; // exercised in the sandbox; the pure build is above
   });
 });

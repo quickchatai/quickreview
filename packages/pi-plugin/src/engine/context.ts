@@ -1,14 +1,18 @@
 // The review context both one-shot routes build before a prompt is rendered:
 // the loaded config with a profile (and `--config` levers) applied, and the
 // ecosystem that profile names. Shared by `qcr review`, the benchmark and the
-// engine; the bench's credential route decides only the model specs. Where
-// the config and the profiles live is the caller's: it hands the loaded
-// config in (src/homes.ts for the CLI, src/reviewcontext.ts for the app).
+// engine. The model specs are the config's own, as written: which provider a
+// spec runs on is the run's route's to say (../modelroute.ts), never this
+// module's. Where the config and the profiles live is the caller's: it hands
+// the loaded config in (src/homes.ts for the CLI, src/reviewcontext.ts for the
+// app).
 
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import { applyProfileOverlays, loadProfileEcosystem, type ProfileLookup } from "../profiles.js";
 import {
   applyReviewEffort,
+  isModelSpec,
+  modelSpecError,
   parseCoreConfig,
   parseEffort,
   parsePreset,
@@ -17,7 +21,7 @@ import {
   type CoreConfig,
   type ReviewPreset,
 } from "../reviewconfig.js";
-import { benchAuthMode, modelForAuth, type BenchAuthMode } from "./keyroute.js";
+import { foldTier } from "../types.js";
 
 /** A loaded config.toml: the parsed config and the text it was parsed from
  * (a `review.preset` lever re-parses the text). */
@@ -40,7 +44,7 @@ export function withProfile<C extends CoreConfig>(cfg: C, profile: string): C {
  * only in the knobs named on the command line (recorded in the fingerprint).
  * A key must already exist in the config (a typo fails loudly instead of
  * measuring nothing) — except inside an OPEN map (`OPEN_MAP_KEYS`, e.g.
- * `models.pass_tiers.pass-sweep=sol-high`), whose keys are data. `true`/`false`
+ * `models.pass_tiers.pass-sweep=deep`), whose keys are data. `true`/`false`
  * and numbers are coerced to the type the key already holds; an array-valued
  * key takes `|`-separated items (`,` separates pairs), empty = `[]`.
  * `models.effort` is re-applied to every model spec, and the per-lens knobs
@@ -67,6 +71,37 @@ export function withPresetInToml(toml: string, preset: ReviewPreset): string {
     }
   lines.splice(head + 1, 0, `preset = "${preset}"`);
   return lines.join("\n");
+}
+
+/** `--config` keys whose value is a tier name; a key ending in `.` is a
+ * table whose every value is one. */
+const TIER_VALUED_KEYS: readonly string[] = [
+  "models.validate_tier",
+  "models.pass_tiers.",
+  "review.sweep_light_tier",
+  "scan.tier",
+];
+
+/** `--config` keys that name the review's model, strongest first. The two
+ * older keys fold to `models.model` as config.toml's do: in one lever set
+ * the strongest key given is the model, and a weaker one beside it is
+ * accepted and read by nothing. */
+const MODEL_LEVER_KEYS: readonly string[] = [
+  "models.model",
+  "models.conversation",
+  "models.default",
+];
+
+/** A lever's key as the path it sets. `models.tiers.<name>` names a tier,
+ * in either spelling: the path is the ladder's name, the key the config
+ * holds. A key that names the review's model, in any of its spellings, sets
+ * `models.model`. */
+function leverPath(key: string): string[] {
+  if (MODEL_LEVER_KEYS.includes(key)) return ["models", "model"];
+  const path = key.split(".");
+  if (path.length === 3 && path[0] === "models" && path[1] === "tiers")
+    path[2] = foldTier(path[2] as string) ?? (path[2] as string);
+  return path;
 }
 
 /** `--config` keys that went with the overseer session. */
@@ -110,19 +145,41 @@ export function applyConfigOverrides<C extends CoreConfig>(
   const rest = pairs.filter((p) => p !== presetPair);
   if (rest.length === 0) return base;
   const out = structuredClone(base) as unknown as Record<string, unknown>;
+  /** The spelling of the review's model this lever set is read by. */
+  const modelKey = MODEL_LEVER_KEYS.find((k) => rest.some((p) => keyOf(p) === k));
   for (const pair of rest) {
     const eq = pair.indexOf("=");
     if (eq <= 0) throw new Error(`--config: "${pair}" is not key=value`);
+    const named = pair.slice(0, eq).trim();
     // The overseer session is deleted: bench plans still pin its model, so
     // the key is accepted, named once and ignored (like the config file's).
-    if (RETIRED_CONFIG_KEYS.has(pair.slice(0, eq).trim())) {
-      warn(
-        `--config: ${pair.slice(0, eq).trim()} is deprecated and ignored (the overseer session was deleted)`,
-      );
+    if (RETIRED_CONFIG_KEYS.has(named)) {
+      warn(`--config: ${named} is deprecated and ignored (the overseer session was deleted)`);
       continue;
     }
-    const path = pair.slice(0, eq).trim().split(".");
-    const raw = pair.slice(eq + 1).trim();
+    // An older spelling of the model beside a stronger one: read by nothing.
+    if (MODEL_LEVER_KEYS.includes(named) && named !== modelKey) continue;
+    const path = leverPath(named);
+    const key = path.join(".");
+    const written = pair.slice(eq + 1).trim();
+    // A model the lever writes is checked as the file's is: `model` itself
+    // and a tier's spec. An older spelling is taken as written, as the
+    // file's older keys are.
+    const misspelt =
+      named === "models.model"
+        ? !isModelSpec(written, "whole")
+        : key.startsWith("models.tiers.") && !isModelSpec(written, "any");
+    if (misspelt) {
+      const where =
+        named === "models.model"
+          ? "[models] model"
+          : `[models.tiers] ${key.slice("models.tiers.".length)}`;
+      throw new Error(`--config: ${modelSpecError(where, written).message}`);
+    }
+    // A lever that names a tier names it in either spelling, as the file may.
+    const raw = TIER_VALUED_KEYS.some((k) => (k.endsWith(".") ? key.startsWith(k) : key === k))
+      ? (foldTier(written) ?? written)
+      : written;
     let node = out;
     for (const k of path.slice(0, -1)) {
       const next = node[k];
@@ -228,25 +285,6 @@ export function contextFrom<C extends CoreConfig>(
   // `[posting]` policy) are applied LAST — after the `--config` levers and
   // any preset re-parse — through the one function production overlays with
   // after config.toml: the profile wins.
-  const cfg = withAuthModels(applyProfileOverlays(root, levered, lookup));
+  const cfg = applyProfileOverlays(root, levered, lookup);
   return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, chosen, lookup)) };
-}
-
-/** Every model spec of the config as it runs on the bench's credential route
- * (packages/pi-plugin/src/engine/keyroute.ts): on the API-key route `openai-codex/` → `openai/`, the
- * same model on the public API; on the login route the config unchanged. */
-export function withAuthModels<C extends CoreConfig>(
-  cfg: C,
-  mode: BenchAuthMode = benchAuthMode(),
-): C {
-  if (mode !== "api-key") return cfg;
-  const out = structuredClone(cfg);
-  const m = out.models;
-  m.default = modelForAuth(m.default, mode);
-  m.conversation = modelForAuth(m.conversation, mode);
-  for (const k of Object.keys(m.tiers) as (keyof typeof m.tiers)[])
-    m.tiers[k] = modelForAuth(m.tiers[k], mode);
-  for (const pass of Object.keys(m.pass_models))
-    m.pass_models[pass] = modelForAuth(m.pass_models[pass]!, mode);
-  return out;
 }

@@ -74,7 +74,7 @@ describe("daemon topology", () => {
     expect(isSandboxSession("pr-5263")).toBe(true);
     for (const name of [
       "overseer",
-      "pass-security--sol-high",
+      "pass-security--deep",
       "pr-5263-pass",
       "companion",
       "reviewer",
@@ -515,7 +515,7 @@ describe("buildAgents — built passes cannot launch agents", () => {
       "---\nname: pass-baseline\ntools: read, bash, subagent, grep\nmodel: openai/x\n---\n\nbody\n",
     );
 
-    const built = buildAgents(src, out, { riskPasses: [], validateTier: "terra-med" });
+    const built = buildAgents(src, out, { riskPasses: [], validateTier: "light" });
     expect(built.length).toBeGreaterThan(0);
     for (const agent of built) {
       const text = readFileSync(agent.output, "utf8");
@@ -535,7 +535,7 @@ describe("buildAgents — built passes cannot launch agents", () => {
       join(src, "pass-baseline.md"),
       "---\nname: pass-baseline\ntools: read, lens, bash, lens_wave, grep\nmodel: openai/x\n---\n\nbody\n",
     );
-    for (const agent of buildAgents(src, out, { riskPasses: [], validateTier: "terra-med" })) {
+    for (const agent of buildAgents(src, out, { riskPasses: [], validateTier: "light" })) {
       const text = readFileSync(agent.output, "utf8");
       const tools = /^tools:[ \t]*(.*)$/m
         .exec(text)![1]!
@@ -568,7 +568,7 @@ describe("buildAgents — built passes cannot launch agents", () => {
     expect(LENS_LEAVES_LOAD_MEMORY).toBe(false);
     const plain = buildAgents(src, join(dir, "built"), {
       riskPasses: [],
-      validateTier: "terra-med",
+      validateTier: "light",
     });
     for (const agent of plain) {
       const text = readFileSync(agent.output, "utf8");
@@ -578,7 +578,7 @@ describe("buildAgents — built passes cannot launch agents", () => {
 
     const withMemory = buildAgents(src, join(dir, "built-mem"), {
       riskPasses: [],
-      validateTier: "terra-med",
+      validateTier: "light",
       memory: true,
     });
     for (const agent of withMemory) {
@@ -594,7 +594,7 @@ describe("buildAgents — built passes cannot launch agents", () => {
     mkdirSync(src, { recursive: true });
     const seed = "---\nname: pass-ui\ntools: read, bash, grep, glob\n---\n\nseed body\n";
     writeFileSync(join(src, "pass-ui.md"), seed);
-    buildAgents(src, out, { riskPasses: [], validateTier: "terra-med" });
+    buildAgents(src, out, { riskPasses: [], validateTier: "light" });
     expect(readFileSync(join(src, "pass-ui.md"), "utf8")).toBe(seed);
   });
 });
@@ -1093,7 +1093,7 @@ describe("buildAgents — memory tools follow the leaf", () => {
         readFileSync(
           buildAgents(src, join(dir, out), {
             riskPasses: [],
-            validateTier: "terra-med",
+            validateTier: "light",
             ...extra,
           })[0]!.output,
           "utf8",

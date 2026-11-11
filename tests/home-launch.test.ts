@@ -85,15 +85,29 @@ describe("the home's launch", () => {
     expect(loaded).toEqual([PLUGIN, join(APP, "extensions", "cli", "home.ts")]);
   });
 
-  // MUTATION: drop --approve or --model — the start is no longer quiet.
-  it("starts quietly: the per-run trust flag and an explicit model", () => {
+  // MUTATION: drop --approve — the start is no longer quiet.
+  it("starts quietly: the per-run trust flag, and no version check", () => {
     const l = launch();
     expect(l.args).toContain("--approve");
-    expect(flag(l.args, "--model")).toBe("openai-codex/gpt-6.1-sol");
     expect(l.env["PI_SKIP_VERSION_CHECK"]).toBe("1");
-    expect(flag(launch({ model: "anthropic/claude-x", tools: "reviewer" }).args, "--model")).toBe(
-      "anthropic/claude-x",
-    );
+  });
+
+  // MUTATION: pass `--model o.home.model` whatever it holds — the default
+  // launch gets an empty `--model` and this fails.
+  it("names no model by default: pi starts on its own choice, and the route decides the rest", () => {
+    const l = launch();
+    expect(l.args).not.toContain("--model");
+    expect(l.env["QCR_HOME_MODEL"]).toBeUndefined();
+    // A name left in the person's shell is not the config's pin.
+    const stray = launch(undefined, { QCR_HOME_MODEL: "made-up/stray-1" });
+    expect(stray.args).not.toContain("--model");
+    expect(stray.env["QCR_HOME_MODEL"]).toBeUndefined();
+  });
+
+  it("[home] model is a pin: it rides --model and the env the extension reads", () => {
+    const l = launch({ model: "made-up/large-3", tools: "reviewer" });
+    expect(flag(l.args, "--model")).toBe("made-up/large-3");
+    expect(l.env["QCR_HOME_MODEL"]).toBe("made-up/large-3");
   });
 
   // MUTATION: drop --continue — a relaunch starts a new session.
@@ -140,7 +154,6 @@ describe("the home's launch", () => {
     for (const t of ["bash", "edit", "write"]) expect(tools).not.toContain(t);
     expect(l.args).toContain("--no-mcp");
     expect(l.env["QCR_HOME_TOOLS"]).toBe("reviewer");
-    expect(l.env["QCR_HOME_MODEL"]).toBe("openai-codex/gpt-6.1-sol");
   });
 
   it('[home] tools = "full" gives every pi tool', () => {
@@ -223,10 +236,7 @@ describe("[home] in the config", () => {
   const env = { QCR_CONFIG: "/cfg/config.toml" };
 
   it("defaults every key", () => {
-    expect(parseHomeSection(undefined)).toEqual({
-      model: "openai-codex/gpt-6.1-sol",
-      tools: "reviewer",
-    });
+    expect(parseHomeSection(undefined)).toEqual({ model: "", tools: "reviewer" });
     expect(readHomeConfig(env, read({}))).toEqual({ home: HOME_DEFAULTS });
   });
 
@@ -234,11 +244,14 @@ describe("[home] in the config", () => {
     expect(
       readHomeConfig(
         env,
-        read({ "/cfg/config.toml": '[home]\nmodel = "anthropic/claude-x"\ntools = "full"\n' }),
+        read({ "/cfg/config.toml": '[home]\nmodel = "made-up/large-3"\ntools = "full"\n' }),
       ),
-    ).toEqual({ home: { model: "anthropic/claude-x", tools: "full" } });
+    ).toEqual({ home: { model: "made-up/large-3", tools: "full" } });
     expect(() => parseHomeSection({ tools: "all" })).toThrow(/tools must be "reviewer" or "full"/);
-    expect(() => parseHomeSection({ model: "gpt" })).toThrow(/model must be "provider\/id"/);
+    expect(() => parseHomeSection({ model: "large-3" })).toThrow(/model must be "provider\/id"/);
+    expect(() => parseHomeSection({ model: 3 })).toThrow(/model must be "provider\/id"/);
+    // An empty model is "none pinned", the shipped default, and is accepted as written.
+    expect(parseHomeSection({ model: "" })).toEqual({ model: "", tools: "reviewer" });
     const bad = readHomeConfig(env, read({ "/cfg/config.toml": '[home]\ntools = "all"\n' }));
     expect(bad.home).toEqual(HOME_DEFAULTS);
     expect(bad.problem).toMatch(/tools must be/);
@@ -252,8 +265,11 @@ describe("[home] in the config", () => {
     });
   });
 
-  it("the shipped example sets the defaults, and the full config parses them", () => {
+  // MUTATION: restore a `model = "provider/id"` line under [home] in
+  // config.example.toml, or a model in HOME_DEFAULTS — this fails.
+  it("the shipped example sets the defaults, which pin no model, and the full config parses them", () => {
     const example = readFileSync(join(ROOT, "config.example.toml"), "utf8");
     expect(parseConfig(example).home).toEqual(HOME_DEFAULTS);
+    expect(HOME_DEFAULTS.model).toBe("");
   });
 });

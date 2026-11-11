@@ -23,6 +23,7 @@ import {
   embeddingsStep,
   keyFileCheck,
   localEmbedderEnvEntries,
+  validateEmbeddingsKey,
 } from "../src/onboard/steps/embeddings.js";
 import { readEnvKey } from "../src/onboard/steps/ingress.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
@@ -397,6 +398,35 @@ describe("localEmbedderEnvEntries", () => {
       ["QCR_OPENVIKING_LOCAL_EMBEDDER_PORT", "1934"],
       ["QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS", "1"],
     ]);
+  });
+});
+
+/** A key of the hosted embedder's real length and alphabet: a fake. */
+const EMBEDDINGS_KEY = "sk-proj-onboardingtestkey000000000000";
+
+describe("the hosted embedder's key shape", () => {
+  // The one place the wizard judges a key by its form: the hosted embedder is
+  // one vendor's, and its keys start `sk-`. A model credential is never put
+  // through this (the model step asks pi instead).
+  //
+  // MUTATION: make validateEmbeddingsKey return `v.startsWith("sk-")` alone in
+  // src/onboard/steps/embeddings.ts — the bare prefix and the key with a space
+  // pass, and this fails.
+  it("accepts sk- keys, surrounding whitespace aside, and refuses everything else", () => {
+    expect(validateEmbeddingsKey(EMBEDDINGS_KEY)).toBe(true);
+    expect(validateEmbeddingsKey(`  ${EMBEDDINGS_KEY}\n`)).toBe(true);
+    expect(validateEmbeddingsKey("nope")).toBe(false);
+    expect(validateEmbeddingsKey("")).toBe(false);
+    expect(validateEmbeddingsKey("sk-")).toBe(false);
+    expect(validateEmbeddingsKey("sk- with space")).toBe(false);
+    expect(validateEmbeddingsKey("SK-upper")).toBe(false);
+  });
+
+  it("is the rule the key file's check applies, and the value never reaches the detail", () => {
+    writeFileSync(join(secretsDir, "openai_embeddings_api_key"), `${EMBEDDINGS_KEY}\n`);
+    const check = keyFileCheck(secretsDir, "openai_embeddings_api_key");
+    expect(check.ok).toBe(true);
+    expect(check.detail).not.toContain(EMBEDDINGS_KEY);
   });
 });
 

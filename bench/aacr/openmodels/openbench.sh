@@ -86,20 +86,11 @@ print(",".join(f"models.pass_models.{k}={sys.argv[1]}" + (":" + v.rsplit(":", 1)
   [[ -z "$pins" || "$MODEL_CONFIG" == *"$pins"* ]] || MODEL_CONFIG="$MODEL_CONFIG,$pins"
 }
 
-# Refuse a config where any reviewer model spec would still name another model.
+# Refuse a config where any reviewer model spec would still name another model
+# (modelspecs.py: a tier's key is read in either spelling, in the config and in the levers).
 check_models() {
-  docker run --rm --network none --entrypoint cat "$IMAGE" /opt/quickreview/sandbox/config.toml | python3 -I -c '
-import sys, tomllib
-m = tomllib.loads(sys.stdin.read()).get("models", {})
-over = dict(p.split("=", 1) for p in sys.argv[1].split(","))
-want = sys.argv[2]
-specs = {f"models.{k}": m.get(k) for k in ("default", "conversation", "overseer")}
-specs |= {f"models.tiers.{k}": v for k, v in m.get("tiers", {}).items()}
-specs |= {f"models.pass_models.{k}": v for k, v in m.get("pass_models", {}).items()}
-bad = [k for k, v in specs.items() if v and not (over.get(k, v) == want or over.get(k, v).startswith(want + ":"))]
-print("ok   every reviewer model spec is %s (%d specs, %d per-lens pins re-pointed)" % (want, len(specs), len(m.get("pass_models", {}))) if not bad else "FAIL not %s: %s" % (want, ", ".join(bad)))
-sys.exit(1 if bad else 0)
-' "$MODEL_CONFIG" "$M"
+  docker run --rm --network none --entrypoint cat "$IMAGE" /opt/quickreview/sandbox/config.toml \
+    | python3 -I "$HERE/modelspecs.py" "$MODEL_CONFIG" "$M"
 }
 
 # Review containers running, every 10 s, until killed: "<epoch> <count>".

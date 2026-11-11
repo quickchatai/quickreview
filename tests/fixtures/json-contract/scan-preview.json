@@ -43,7 +43,7 @@
     "unreadable": 0,
     "skipped": [],
     "settings": {
-      "tier": "sol-med",
+      "tier": "standard",
       "effort": "low",
       "validator": false,
       "validate_tier": null,
@@ -53,5 +53,5 @@
     "delta": null,
     "blockers": []
   },
-  "start": ["--key", "76756845f96e3e70", "--sha", "0000000000000000000000000000000000000000"]
+  "start": ["--key", "eb4b2ecf7202a728", "--sha", "0000000000000000000000000000000000000000"]
 }

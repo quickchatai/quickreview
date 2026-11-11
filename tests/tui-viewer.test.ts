@@ -157,7 +157,7 @@ function mainLog(round: number, over: { settle?: boolean } = {}): string {
       type: "tool_start",
       id: "t1",
       tool: "lens",
-      executions: [{ agent: "pass-security--sol-high" }, { agent: "pass-security--sol-high" }],
+      executions: [{ agent: "pass-security--deep" }, { agent: "pass-security--deep" }],
     },
     {
       type: "tool_update",
@@ -167,13 +167,13 @@ function mainLog(round: number, over: { settle?: boolean } = {}): string {
       results: [
         {
           slot: 0,
-          agent: "pass-security--sol-high",
+          agent: "pass-security--deep",
           id: "L1",
           progress: { status: "running", tool_count: 2 },
         },
         {
           slot: 1,
-          agent: "pass-security--sol-high",
+          agent: "pass-security--deep",
           id: "L2",
           progress: { status: "running", tool_count: 1 },
         },
@@ -194,7 +194,7 @@ function lensLog(id: string, round: number, said: string): string {
       pr: 7,
       session: `lens-${id}`,
       lens_id: id,
-      agent: "pass-security--sol-high",
+      agent: "pass-security--deep",
     },
     { type: "message_delta", text: said },
   ]
@@ -239,7 +239,7 @@ describe("TranscriptViewer — a hand-written round", () => {
     expect(lines.some((l) => l.includes("> Round order for PR 7 round 1"))).toBe(true);
     expect(lines).toContain("    Looking at the diff");
     expect(lines).toContain("    second line");
-    expect(lines.join(" ")).toMatch(/tool lens pass-security--sol-high, pass-security--sol-high/);
+    expect(lines.join(" ")).toMatch(/tool lens pass-security--deep, pass-security--deep/);
     expect(lines.some((l) => /agent settled/.test(l))).toBe(true);
     // the assistant's text streamed, so message_end does not print it again
     expect(lines.filter((l) => l.includes("Looking at")).length).toBe(1);
@@ -362,7 +362,7 @@ describe("TranscriptViewer — a hand-written round", () => {
     await v.refresh(7);
     let view = v.view(7)!;
     expect(view.viewer).toMatchObject({
-      stream: "pass-security--sol-high",
+      stream: "pass-security--deep",
       streamIndex: 2,
       streams: 3,
     });
@@ -394,7 +394,7 @@ describe("TranscriptViewer — a hand-written round", () => {
     expect(text(v.view(7)!.lines).join("\n")).toContain("first lens speaking");
     // a lens the round never started has no transcript to show
     expect(v.selectLens(7, "pass-tests", 0)).toBe(false);
-    expect(v.view(7)!.viewer?.stream).toBe("pass-security--sol-high");
+    expect(v.view(7)!.viewer?.stream).toBe("pass-security--deep");
   });
 
   it("follows the newest round, and a past round stays pinned and is read no more", async () => {

@@ -34,7 +34,9 @@ import {
   readJudgeEvents,
 } from "../src/bench/defectjudge.js";
 import { recordUnprefetched, runJudgeSession, type RunFingerprint } from "../src/bench/runner.js";
-import { caseCostUsd, caseTokenCounts, CODEX_USD_PER_MTOK, runCostUsd } from "../src/bench/cost.js";
+import { caseTokenCounts, runCostUsd } from "../src/bench/cost.js";
+// The hand price table is the bench's own module: no product path imports it.
+import { caseCostUsd, CODEX_USD_PER_MTOK } from "../src/bench/pricetable.js";
 
 const D = (id: string, severity: "high" | "medium" | "low" = "high"): Defect => ({
   id,
@@ -908,6 +910,27 @@ describe("dollar cost, as pi prices it", () => {
     expect(caseCostUsd(dir)).toEqual({ usd: 1 + 0.1 + 1, source: "priced", model: "gpt-6-sol" });
     expect(caseCostUsd(join(dir, "nope"))).toBeNull();
   });
+
+  // pi stamps a cost of exactly 0 on a call of a model it has no price for.
+  // MUTATION: return the stream's sum whatever its unpricedCalls in
+  // caseCostUsd - this is { usd: 0.1, source: "pi" } and fails.
+  it("a pi case with a call stamped at zero for its tokens has no price, never the sum of the rest", () => {
+    const dir = mkdtempSync(join(tmpdir(), "defects-cost-unpriced-"));
+    const ev = [
+      {
+        type: "message_end",
+        message: { role: "assistant", usage: { input: 100, output: 10, cost: { total: 0.1 } } },
+      },
+      {
+        type: "message_end",
+        message: { role: "assistant", usage: { input: 5000, output: 500, cost: { total: 0 } } },
+      },
+    ];
+    writeFileSync(join(dir, "pi-events.jsonl"), ev.map((e) => JSON.stringify(e)).join("\n"));
+    expect(caseCostUsd(dir)).toBeNull();
+    // A run with only such a case reports no dollars at all.
+    expect(runCostUsd([dir])).toEqual({});
+  });
 });
 
 describe("dollar cost across the arms", () => {
@@ -1059,7 +1082,9 @@ describe("dollar cost across the arms", () => {
     expect(runCostUsd([dirs[1]!])).toEqual({});
   });
 
-  it("compare.py carries the same price list as src/bench/cost.ts", () => {
+  // MUTATION: change a rate in src/bench/pricetable.ts CODEX_USD_PER_MTOK - the
+  // Python mirrors no longer match and this fails.
+  it("compare.py and rerun_plan.py carry the same price list as src/bench/pricetable.ts", () => {
     const root = join(import.meta.dirname, "..", "bench", "aacr");
     const r = spawnSync(
       "python3",

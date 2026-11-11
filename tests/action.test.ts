@@ -182,6 +182,55 @@ describe("action.yml", () => {
     expect(action.inputs["limit"]!.default).toBe("");
   });
 
+  // Any provider's key is set with the workflow's own `env:`; the Action has
+  // one input for the model and none per provider beyond the four it had.
+  // MUTATION: add an `xai-api-key` input to action.yml — this fails.
+  it("takes a model, and no key input beyond the four older ones", () => {
+    expect(Object.keys(action.inputs).sort()).toEqual([
+      "anthropic-api-key",
+      "digitalocean-api-key",
+      "gemini-api-key",
+      "github-token",
+      "image",
+      "limit",
+      "model",
+      "openai-api-key",
+      "pi-auth",
+      "pr",
+      "registry-token",
+      "registry-user",
+      "repo",
+    ]);
+    expect(action.inputs["model"]!.default).toBe("");
+    const run = action.runs.steps.find((s) => s.run?.endsWith('action.sh" run'))!;
+    expect(run.env!["QCR_ACTION_MODEL"]).toBe("${{ inputs.model }}");
+  });
+
+  // An input that was not given is an empty string: under the variable's own
+  // name it would blank a key the workflow set in the step's env.
+  // MUTATION: map `OPENAI_API_KEY: ${{ inputs.openai-api-key }}` in the run
+  // step's env — this fails.
+  it("hands the key inputs over under names of their own, never the variable pi reads", () => {
+    const run = action.runs.steps.find((s) => s.run?.endsWith('action.sh" run'))!;
+    const keys = Object.keys(run.env!).filter((k) => k.endsWith("_API_KEY"));
+    expect(keys.sort()).toEqual([
+      "QCR_ACTION_ANTHROPIC_API_KEY",
+      "QCR_ACTION_DIGITALOCEAN_API_KEY",
+      "QCR_ACTION_GEMINI_API_KEY",
+      "QCR_ACTION_OPENAI_API_KEY",
+    ]);
+    for (const k of Object.keys(run.env!)) expect(k).toMatch(/^QCR_ACTION_/);
+  });
+
+  it("the docs show a provider's key in the step's env, and the template points at it", () => {
+    const doc = read("docs/action.md");
+    expect(doc).toMatch(/^\s+env:\n\s+[A-Z][A-Z0-9_]*_API_KEY: \$\{\{ secrets\.\w+ \}\}$/m);
+    expect(doc).toContain("QCR_MODEL_ENV");
+    expect(doc).toContain("# BEGIN pi model env names");
+    expect(templateText).toMatch(/^\s*#\s+env:$/m);
+    expect(templateText).toMatch(/^\s*# model: /m);
+  });
+
   it("scripts/action.sh parses and is committed executable", () => {
     expect(spawnSync("bash", ["-n", SCRIPT]).status).toBe(0);
     expect(statSync(SCRIPT).mode & 0o111).not.toBe(0);
@@ -394,6 +443,204 @@ describe("scripts/action.sh run — the docker run line", () => {
     }
   });
 
+  it("passes --model only when the model input is given, and refuses what is not a model spec", () => {
+    const none = rig();
+    expect(sh("run", none.env()).status).toBe(0);
+    expect(calls(none.dir).find((c) => c.verb === "run")!.argv).not.toContain("--model");
+
+    const some = rig();
+    const res = sh("run", some.env({ QCR_ACTION_MODEL: "made-up/large-3:high" }));
+    expect(res.status, res.stderr).toBe(0);
+    const a = calls(some.dir).find((c) => c.verb === "run")!.argv;
+    // An argument of the review, after the image: never an option of docker.
+    expect(a.indexOf("--model")).toBeGreaterThan(a.indexOf("ghcr.io/acme/qcr:1.2.3"));
+    expect(a.slice(a.indexOf("--model"))).toEqual(["--model", "made-up/large-3:high"]);
+
+    for (const bad of ["--rm", "a b", "x; id", "$(id)", "-e"]) {
+      const b = rig();
+      expect(sh("run", b.env({ QCR_ACTION_MODEL: bad })).status, bad).toBe(1);
+      expect(
+        calls(b.dir).find((c) => c.verb === "run"),
+        bad,
+      ).toBeUndefined();
+    }
+  });
+
+  const envNamesOf = (argv: string[]): string[] =>
+    argv.flatMap((x, i) => (argv[i - 1] === "-e" ? [x] : []));
+
+  // MUTATION: forward `-e "$key=$val"` in run_review — the value is in the
+  // docker command line and this fails.
+  it("forwards any provider's credential the step's env holds, by name only", () => {
+    const r = rig();
+    const res = sh(
+      "run",
+      r.env({
+        XAI_API_KEY: "value-of-x",
+        HF_TOKEN: "value-of-h",
+        AWS_ACCESS_KEY_ID: "value-of-id",
+        AWS_SECRET_ACCESS_KEY: "value-of-secret",
+        DIGITALOCEAN_API_KEY: "value-of-d",
+        QCR_DEBUG: "1",
+        NOT_A_MODEL_NAME: "value-of-n",
+      }),
+    );
+    expect(res.status, res.stderr).toBe(0);
+    const run = calls(r.dir).find((c) => c.verb === "run")!;
+    const names = envNamesOf(run.argv);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "XAI_API_KEY",
+        "HF_TOKEN",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "DIGITALOCEAN_API_KEY",
+        "QCR_DEBUG",
+      ]),
+    );
+    // A name pi does not read is not forwarded, and a name that is unset is not either.
+    expect(names).not.toContain("NOT_A_MODEL_NAME");
+    expect(names).not.toContain("OPENAI_API_KEY");
+    for (const v of ["value-of-x", "value-of-h", "value-of-id", "value-of-secret", "value-of-d"])
+      expect(run.argv.join("\n")).not.toContain(v);
+    // The GitHub token is still in no name and no argument.
+    expect(run.argv.join("\n")).not.toContain(TOKEN);
+    expect(names.filter((n) => /^(GH|GITHUB)_/.test(n))).toEqual([]);
+  });
+
+  // Temporary AWS credentials are three values: pi reads the session token
+  // when it makes a request, so the generated block does not hold the name.
+  // MUTATION: drop $MODEL_ENV_COMPANIONS from run_review's forward loop — the
+  // key pair travels without its session token and this fails.
+  it("forwards the session token of temporary AWS credentials beside the key pair", () => {
+    const r = rig();
+    const res = sh(
+      "run",
+      r.env({
+        AWS_ACCESS_KEY_ID: "value-of-id",
+        AWS_SECRET_ACCESS_KEY: "value-of-secret",
+        AWS_SESSION_TOKEN: "value-of-session",
+      }),
+    );
+    expect(res.status, res.stderr).toBe(0);
+    const run = calls(r.dir).find((c) => c.verb === "run")!;
+    expect(envNamesOf(run.argv)).toEqual(
+      expect.arrayContaining(["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]),
+    );
+    expect(run.argv.join("\n")).not.toContain("value-of-session");
+    // Named in QCR_MODEL_ENV it is no refusal either.
+    const named = rig();
+    expect(
+      sh("run", named.env({ QCR_MODEL_ENV: "AWS_SESSION_TOKEN", AWS_SESSION_TOKEN: "x" })).status,
+    ).toBe(0);
+  });
+
+  // A name that points at a profile or a file on the runner is set in the
+  // container and names nothing there: pi would count the provider as
+  // credentialed on the name alone and fail at its first call.
+  // MUTATION: drop the host_only test from run_review's forward loop — the
+  // names below reach the container and this fails.
+  it("never forwards a name that points at a profile or a file on the runner", () => {
+    const r = rig();
+    const file = join(r.dir, "adc.json");
+    writeFileSync(file, "{}");
+    const res = sh(
+      "run",
+      r.env({
+        AWS_PROFILE: "work",
+        AWS_WEB_IDENTITY_TOKEN_FILE: "/var/run/token",
+        ANTHROPIC_IDENTITY_TOKEN_FILE: "/var/run/other",
+        GOOGLE_APPLICATION_CREDENTIALS: file,
+        QCR_MODEL_ENV: "MY_CA_BUNDLE",
+        MY_CA_BUNDLE: file,
+        XAI_API_KEY: "value-of-x",
+      }),
+    );
+    expect(res.status, res.stderr).toBe(0);
+    const names = envNamesOf(calls(r.dir).find((c) => c.verb === "run")!.argv);
+    for (const n of [
+      "AWS_PROFILE",
+      "AWS_WEB_IDENTITY_TOKEN_FILE",
+      "ANTHROPIC_IDENTITY_TOKEN_FILE",
+      "GOOGLE_APPLICATION_CREDENTIALS",
+      "MY_CA_BUNDLE",
+    ])
+      expect(names, n).not.toContain(n);
+    expect(names).toContain("XAI_API_KEY");
+  });
+
+  it("QCR_MODEL_ENV adds names; this program's own, a token-shaped one and a malformed one are refused", () => {
+    const r = rig();
+    const res = sh(
+      "run",
+      r.env({
+        QCR_MODEL_ENV: "MY_GATEWAY_URL, MY_GATEWAY_KEY UNSET_ONE",
+        MY_GATEWAY_URL: "value-of-url",
+        MY_GATEWAY_KEY: "value-of-key",
+      }),
+    );
+    expect(res.status, res.stderr).toBe(0);
+    const run = calls(r.dir).find((c) => c.verb === "run")!;
+    expect(envNamesOf(run.argv)).toEqual(
+      expect.arrayContaining(["MY_GATEWAY_URL", "MY_GATEWAY_KEY"]),
+    );
+    expect(envNamesOf(run.argv)).not.toContain("UNSET_ONE");
+    expect(run.argv.join("\n")).not.toContain("value-of-url");
+
+    const refused: Array<[string, RegExp]> = [
+      ["GH_TOKEN", /GH_TOKEN is not a model setting/],
+      ["GITHUB_TOKEN", /not a model setting/],
+      ["QCR_ACTION_GH_TOKEN", /not a model setting/],
+      ["PI_CODING_AGENT_DIR", /not a model setting/],
+      ["GIT_CONFIG_GLOBAL", /not a model setting/],
+      ["OPENVIKING_ROOT_KEY", /not a model setting/],
+      ["MY_SECRET", /MY_SECRET is not forwarded/],
+      ["SOME_TOKEN", /SOME_TOKEN is not forwarded/],
+      ["lower_case", /names of environment variables/],
+      ["A=b", /names of environment variables/],
+      ["9LIVES", /not the name of an environment variable/],
+    ];
+    for (const [value, why] of refused) {
+      const b = rig();
+      const out = sh("run", b.env({ QCR_MODEL_ENV: value }));
+      expect(out.status, value).toBe(1);
+      expect(out.stderr, value).toMatch(why);
+      // The refusal ends the step: an annotation, and no container.
+      expect(out.stdout, value).toContain("::error::qcr action:");
+      expect(
+        calls(b.dir).find((c) => c.verb === "run"),
+        value,
+      ).toBeUndefined();
+    }
+    // One of pi's own names may be repeated there, whatever it is called.
+    const own = rig();
+    expect(sh("run", own.env({ QCR_MODEL_ENV: "HF_TOKEN", HF_TOKEN: "x" })).status).toBe(0);
+  });
+
+  // MUTATION: map the inputs straight onto the variables in action.yml and
+  // drop the loop in run_review — the workflow's own key is blanked by an
+  // empty input and this fails (with the action.yml case above).
+  it("a key input becomes the variable pi reads; an empty input leaves the step's own key alone", () => {
+    const given = rig();
+    const res = sh("run", given.env({ QCR_ACTION_ANTHROPIC_API_KEY: "value-from-input" }));
+    expect(res.status, res.stderr).toBe(0);
+    const a = calls(given.dir).find((c) => c.verb === "run")!;
+    expect(envNamesOf(a.argv)).toContain("ANTHROPIC_API_KEY");
+    // docker reads the value from its own environment, under the variable's name.
+    expect(a.env).toContain("ANTHROPIC_API_KEY=value-from-input");
+    expect(a.env).not.toContain("QCR_ACTION_ANTHROPIC_API_KEY");
+    expect(a.argv.join("\n")).not.toContain("value-from-input");
+
+    const own = rig();
+    expect(
+      sh("run", own.env({ QCR_ACTION_OPENAI_API_KEY: "", OPENAI_API_KEY: "value-from-env" }))
+        .status,
+    ).toBe(0);
+    const b = calls(own.dir).find((c) => c.verb === "run")!;
+    expect(envNamesOf(b.argv)).toContain("OPENAI_API_KEY");
+    expect(b.env).toContain("OPENAI_API_KEY=value-from-env");
+  });
+
   it("holds no token: not in the argv, not in -e, not in an env file, not in docker's environment", () => {
     const r = rig();
     const res = sh("run", r.env({ OPENAI_API_KEY: "sk-test-key-value" }));
@@ -474,6 +721,19 @@ describe("scripts/action.sh run — the docker run line", () => {
     expect(probe(["docker", "run", "--link", "quickreview-memory", "IMG:1"]).status).toBe(1);
     expect(probe(["docker", "run", "--network", "memory_net", "IMG:1"]).status).toBe(1);
     expect(probe(["docker", "run", "-e", "QCR_MEMORY=on", "IMG:1"]).status).toBe(1);
+    // One of pi's own model names passes by name, and by name only; a name
+    // of the same shape that is not pi's does not.
+    // MUTATION: let any `*_TOKEN` through assert_argv ahead of the refusal —
+    // MY_TOKEN passes and this fails.
+    expect(probe(["docker", "run", "-e", "HF_TOKEN", "IMG:1"]).status).toBe(0);
+    expect(probe(["docker", "run", "-e", "AWS_SECRET_ACCESS_KEY", "IMG:1"]).status).toBe(0);
+    expect(probe(["docker", "run", "-e", "HF_TOKEN=abc", "IMG:1"]).status).toBe(1);
+    // the session token of temporary AWS credentials is pi's own too
+    expect(probe(["docker", "run", "-e", "AWS_SESSION_TOKEN", "IMG:1"]).status).toBe(0);
+    expect(probe(["docker", "run", "-e", "AWS_SESSION_TOKEN=abc", "IMG:1"]).status).toBe(1);
+    expect(probe(["docker", "run", "-e", "MY_TOKEN", "IMG:1"]).status).toBe(1);
+    expect(probe(["docker", "run", "-e", "DB_PASSWORD", "IMG:1"]).status).toBe(1);
+    expect(probe(["docker", "run", "--env", "COPILOT_GITHUB_TOKEN", "IMG:1"]).status).toBe(0);
     // a mount path or a repository named after a memory engine is no service
     expect(
       probe([

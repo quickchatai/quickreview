@@ -202,8 +202,8 @@ describe("the stage 2 tools", () => {
 
     const sugs = await call(defs, "scan_suggestions");
     expect(sugs).toMatch(/^No deep-lens suggestions stored/);
-    expect(sugs).toMatch(/Stage 2 may run: .*pass-security \(terra-med\|sol-med\|sol-high\)/);
-    expect(sugs).toMatch(/pass-data-safety \(sol-high\)/);
+    expect(sugs).toMatch(/Stage 2 may run: .*pass-security \(light\|standard\|deep\)/);
+    expect(sugs).toMatch(/pass-data-safety \(deep\)/);
     expect(sugs).not.toMatch(/pass-intent/);
 
     expect(
@@ -220,7 +220,7 @@ describe("the stage 2 tools", () => {
       /^STAGE 2 proposal at aaaaaaaaaaaa — 1 row\(s\) to run, estimate \$\d+\.\d\d \(the run stops hard there\); validator off\./,
     );
     expect(proposal).toMatch(
-      /row-1: pass-security at sol-med over app \+ lib \(cross-module\) — 2 file\(s\) \+ 1 paired test\(s\)/,
+      /row-1: pass-security at standard over app \+ lib \(cross-module\) — 2 file\(s\) \+ 1 paired test\(s\)/,
     );
     expect(proposal).toMatch(/extrapolated from pass-scan/);
     expect(proposal).toMatch(/tests: lib\/tests\/test_b\.py/);
@@ -235,7 +235,7 @@ describe("the stage 2 tools", () => {
     await scan.idle();
     const status = await call(defs, "scan_status");
     expect(status).toMatch(/\(stage 2\) at aaaaaaaaaaaa: COMPLETE — 1\/1 cases/);
-    expect(status).toMatch(/- row-1 pass-security at sol-med \(app, lib\): done/);
+    expect(status).toMatch(/- row-1 pass-security at standard \(app, lib\): done/);
     expect(status).toMatch(/3 file × lens read by stage 2/);
   });
 

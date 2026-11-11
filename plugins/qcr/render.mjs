@@ -35,8 +35,10 @@ export const MARKETPLACE_NAME = "quickreview-local";
 export const APP_PACKAGE = "@quickchatai/quickreview";
 
 /** The host-plugin contract the templates are written for: the N of
- * `qcr --schema N`. */
-export const TEMPLATE_CONTRACT = 1;
+ * `qcr --schema N`. One number for every template: contract 2 is review
+ * schema 2 (a preview may have no estimate, and names its model) with the
+ * scan and version families unchanged. */
+export const TEMPLATE_CONTRACT = 2;
 
 /** Every command a host plugin or the Plugin may carry, in render order.
  * Only those with a template are rendered. */

@@ -119,20 +119,60 @@ const errorsOf = (o: Json | undefined, fallback: string): string => {
   return Array.isArray(e) && e.length > 0 ? e.map(String).join("; ") : fallback;
 };
 
-/** `qcr review --preview --json`'s answer as a quote. */
+const BASES: readonly ReviewQuote["basis"][] = ["repo", "measured", "unpriced", "unmeasured"];
+
+/** `qcr review --preview --json`'s answer as a quote. A preview with an
+ * estimate is a quote whatever else it says (an older reviewer names no
+ * basis: its estimate was the measured one). One without an estimate is a
+ * quote only when it says why there is none: an unmeasured model, which a
+ * spend limit holds, or one pi has no price for. A preview with no model
+ * route is no quote: the review could not start, and the reason is the
+ * preview's own refusal, in its words. Signing in is said only where it is
+ * the cure: the refusal's code is `no-credential`, or an older reviewer
+ * named no refusal (its only one then was a missing credential). */
 export function parsePreview(o: Json | undefined): Outcome<{ quote: ReviewQuote }> {
   const p = obj(o?.["preview"]);
   const est = num(p?.["estimate_usd"]);
   const key = str(p?.["key"]);
-  if (o?.["ok"] !== true || p === undefined || est === undefined || key === undefined)
+  const said = str(p?.["price_basis"]);
+  const basis = BASES.find((b) => b === said) ?? (est !== undefined ? "measured" : undefined);
+  if (o?.["ok"] === true && p !== undefined && said === "unknown") {
+    const refusal = obj(p["refusal"]);
+    const words = str(refusal?.["text"]);
+    return {
+      ok: false,
+      why:
+        words !== undefined && str(refusal?.["code"]) !== "no-credential"
+          ? words
+          : "no model credential: sign in to a model provider (qcr login), then review again",
+    };
+  }
+  if (
+    o?.["ok"] !== true ||
+    p === undefined ||
+    key === undefined ||
+    basis === undefined ||
+    // an estimate is there exactly when the basis has one
+    (est === undefined) !== (basis === "unpriced" || basis === "unmeasured")
+  )
     return { ok: false, why: errorsOf(o, "the reviewer gave no price") };
   const cap = p["cap_usd"];
   const lenses = p["lenses"];
   return {
     ok: true,
     quote: {
-      estimateUsd: est,
+      estimateUsd: est ?? null,
       capUsd: num(cap) ?? null,
+      basis,
+      model: str(obj(p["model"])?.["spec"]) ?? null,
+      // two or more providers tie and nothing was chosen: the setup card's
+      // optional "Review model" step asks (src/home/setup.ts)
+      ...(obj(p["model"])?.["ask"] === true
+        ? {
+            ask: true as const,
+            providers: 1 + (Array.isArray(p["alternatives"]) ? p["alternatives"].length : 1),
+          }
+        : {}),
       key,
       lenses: Array.isArray(lenses) ? lenses.map(String) : [],
       files: num(p["files"]) ?? 0,

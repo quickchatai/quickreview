@@ -15,6 +15,7 @@ import {
   redirectTargets,
   type SecretPathContext,
 } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
+import { MODEL_CHOICE_FILE } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import activate from "../extensions/cli/bash-guard.js";
 import {
   bashGuardConfigFromEnv,
@@ -1445,7 +1446,7 @@ describe("checkSecretPaths — the App's secret files and dir", () => {
   // put `[{"name":"pass-a"}]` in a quoted printf argument; the word's `[name:pass-a]`
   // became a regex class with a reversed range and the guard THREW instead of answering.
   it("a glob class JavaScript cannot compile is judged, never thrown, and widened, never narrowed", () => {
-    const verdict = `printf '%s' '{"pr":7,"passes":[{"name":"pass-a","tier":"sol-high"}]}' > verdict/pr-7-round-2.json.tmp`;
+    const verdict = `printf '%s' '{"pr":7,"passes":[{"name":"pass-a","tier":"deep"}]}' > verdict/pr-7-round-2.json.tmp`;
     passes(verdict);
     expect(checkProcSecrets(verdict, "/opt/quickreview/sandbox").allowed).toBe(true);
     expect(checkBashCommand(verdict).allowed).toBe(true);
@@ -1484,6 +1485,29 @@ describe("checkSecretPaths — the App's secret files and dir", () => {
     refused("cat /x/openai_embeddings_api_key");
     refused("cat /x/openai-other-key"); // the openai*key family
     refused("cat /x/slack_bot_token");
+  });
+
+  // The model env's files have no names to list: the directory's name is the
+  // component that is refused, wherever the secrets dir is.
+  // MUTATION: remove "model-env" from APP_SECRET_FILES — this fails.
+  it("refuses the model env by its directory's name, under any prefix, for a read and a write alike", () => {
+    expect(APP_SECRET_FILES).toContain("model-env");
+    refused("cat /opt/quickreview/secrets/model-env/PROV_API_KEY");
+    refused("cat /somewhere/else/model-env/PROV_API_KEY");
+    refused("cat model-env/PROV_API_KEY");
+    refused("ls /somewhere/else/model-env");
+    refused("cat /somewhere/else/model-e*/PROV_API_KEY");
+    refused("cat /somewhere/else/mod{el-env,ules}/PROV_API_KEY");
+    refused("printf forged > /somewhere/else/model-env/PROV_BASE_URL");
+    refused("cp wt/pr-5/key.txt /somewhere/else/model-env/PROV_API_KEY");
+    expect(checkBashCommand("cat /somewhere/else/model-env/PROV_API_KEY").reason).toContain(
+      "model env",
+    );
+    // a pattern is not a path, and a name that only starts the same is not the directory
+    passes("grep -rn model-env wt/pr-5");
+    passes("cat wt/pr-5/docs/model-environment.md");
+    passes("cat wt/pr-5/model_env.py");
+    passes("ls wt/pr-5/mod*");
   });
 
   it("refuses the encoders, copiers and archivers too (belt over the program check)", () => {
@@ -1653,8 +1677,17 @@ describe("checkReadPath and the file-tool veto", () => {
     expect(veto("edit", { path: "/opt/quickreview/secrets/app_id" })).toMatchObject({
       block: true,
     });
+    // the model env, for a read tool and a write tool alike
+    expect(veto("read", { path: "/somewhere/else/model-env/PROV_API_KEY" })).toMatchObject({
+      block: true,
+    });
+    expect(
+      veto("write", { path: "/somewhere/else/model-env/PROV_BASE_URL", content: "forged" }),
+    ).toMatchObject({ block: true });
+    expect(veto("ls", { path: "model-env" })).toMatchObject({ block: true });
     expect(veto("read", { path: "wt/pr-5/src/app.ts" })).toBeUndefined();
     expect(veto("grep", { pattern: "openai_api_key", path: "wt/pr-5" })).toBeUndefined();
+    expect(veto("grep", { pattern: "model-env", path: "wt/pr-5" })).toBeUndefined();
   });
 });
 
@@ -1807,6 +1840,46 @@ describe("the dynamic profile recovery journal is protected policy", () => {
   );
   it("protects expansion onto the journal", () =>
     block("printf forged > state/setup/qcr-profile-write.js?n"));
+});
+
+// The remembered model choice decides which provider's credential and money
+// every later review spends. Our own code writes it (`qcr model use`, the ask);
+// a session never does. A pi home is wherever PI_CODING_AGENT_DIR says, so the
+// paths here sit under no `.pi/`: the name alone has to be refused.
+// MUTATION: remove "qcr-model.json" from DYNAMIC_POLICY_FILES — this fails.
+describe("the remembered model choice is not a session's to write", () => {
+  const dir = "pihome/agent";
+
+  it.each([MODEL_CHOICE_FILE, `${MODEL_CHOICE_FILE}.tmp`])(
+    "refuses file tools and shell writes to %s, by path and by name",
+    (name) => {
+      for (const path of [name, `${dir}/${name}`, `/opt/quickreview/${dir}/${name}`]) {
+        const res = checkWritePath(path);
+        expect(res.allowed, path).toBe(false);
+        expect(res.reason).toContain("policy surface");
+        block(`printf forged > ${path}`, "policy surface");
+        block(`printf forged >> ${path}`);
+        // Reading it is the job of whoever wants to know the route.
+        allow(`cat ${path}`);
+      }
+    },
+  );
+
+  it("protects every spelling bash opens the choice through", () => {
+    block(`printf forged > ${dir}/qcr-mode?.json`);
+    block(`printf forged > ${dir}/qcr-model.js*`);
+    block(`printf forged > ${dir}/qcr-model.json.tm[p]`);
+    block(`printf forged > ${dir}/qcr-"model".json`);
+    block(`printf forged &> ${dir}/qcr-model.json`);
+    block(`printf forged >| ${dir}/qcr-model.json`);
+    block(`sed -i s/a/b/ ${dir}/qcr-model.json`);
+  });
+
+  it("leaves a file that only resembles it alone", () => {
+    expect(checkWritePath(`${dir}/qcr-model.json.bak`).allowed).toBe(true);
+    expect(checkWritePath(`${dir}/my-qcr-model.json`).allowed).toBe(true);
+    expect(checkWritePath("notes/qcr-model.md").allowed).toBe(true);
+  });
 });
 
 // A review session's parent holds credentials in memory and argv, and `cat` is

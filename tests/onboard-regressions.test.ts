@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "smol-toml";
@@ -20,11 +20,32 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "qcr-onboard-regressions-"));
   mkdirSync(join(root, "state"));
   writeFileSync(join(root, "config.toml"), template);
+  // A scratch home, so a path a step derives from $HOME (the install's
+  // secrets dir) is never the one of the person running the suite.
+  vi.stubEnv("HOME", root);
 });
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
+});
+/** What `qcr model --json` prints when a route resolves (src/modelcli.ts). */
+const MODEL_ANSWER = JSON.stringify({
+  ok: true,
+  route: {
+    spec: "example-provider/example-model",
+    providerName: "Example",
+    movedFrom: null,
+    credential: {
+      kind: "api_key",
+      origin: "env-key",
+      label: "EXAMPLE_API_KEY",
+      subscription: false,
+    },
+  },
+  choice: null,
+  config_pin: null,
+  skipped: [],
 });
 function ctx(): StepContext {
   return {
@@ -242,7 +263,13 @@ describe("onboarding regression seams", () => {
     expect(report.ok).toBe(false);
     expect(report.data?.restart_owed).toBe(true);
   });
-  it("ships a precollected API key when switching a running VM to the API route", async () => {
+  // The model step is a check. An older one chose a route, wrote a key file,
+  // rewrote the config's model strings and shipped all of it; this one asks pi
+  // which model runs and changes nothing, on either topology.
+  //
+  // MUTATION: call deliverConfigChange from llmAuthStep's run() in
+  // src/onboard/steps/llmauth.ts, or write the config there — this fails.
+  it("the model step ships nothing: a key in the secrets dir is not provisioned by it, and no file changes", async () => {
     const c = ctx();
     c.choices = {
       topology: "vm",
@@ -255,29 +282,31 @@ describe("onboarding regression seams", () => {
         host: "review-vm",
       },
     };
+    // What an older run of the step may have left: its answers, and a delivery
+    // it never finished. Neither is read.
+    c.input = { route: "api" };
+    c.data = { route: "api", restart_owed: true, credentials_owed: true };
     const secrets = join(root, "secrets");
     mkdirSync(secrets);
     writeFileSync(join(secrets, "openai_api_key"), "sk-proj-test0000000000000000000000000");
-    writeFileSync(
-      join(root, "config.toml"),
-      template.replace(/^secrets_dir = .*$/m, `secrets_dir = "${secrets}"`),
-    );
+    const config = template.replace(/^secrets_dir = .*$/m, `secrets_dir = "${secrets}"`);
+    writeFileSync(join(root, "config.toml"), config);
     mkdirSync(join(root, "deploy", "ansible"), { recursive: true });
     writeFileSync(join(root, "deploy", "ansible", "inventory.ini"), "[quickreview]\nreview-vm\n");
+    const argvs: string[][] = [];
     c.adapters.runner = {
-      run: async (cmd) =>
-        cmd === "ssh"
-          ? { code: 0, stdout: "quickreview-sandbox Up", stderr: "" }
-          : { code: 1, stdout: "", stderr: "No such object" },
+      run: async (cmd, args) => {
+        argvs.push([cmd, ...args]);
+        if (cmd !== "ssh") return { code: 0, stdout: MODEL_ANSWER, stderr: "" };
+        // The server: the container is listed, and its cli answers the question.
+        return (args.at(-1) ?? "").includes("model")
+          ? { code: 0, stdout: MODEL_ANSWER, stderr: "" }
+          : { code: 0, stdout: "quickreview-sandbox Up", stderr: "" };
+      },
     };
-    const stream = {
-      run: vi.fn(async (_cmd: string, _args: string[], _line: (line: string) => void) => ({
-        code: 0,
-        stdout: "",
-        stderr: "",
-      })),
-    };
-    const report = await llmAuthStep({ transport: { stream } }).run(c);
+    const stream = { run: vi.fn(async () => ({ code: 0, stdout: "", stderr: "" })) };
+    const step = llmAuthStep({ transport: { stream } });
+    const report = await step.run(c);
     expect(
       report.ok,
       report.checks
@@ -285,12 +314,15 @@ describe("onboarding regression seams", () => {
         .map((check) => check.detail)
         .join(" "),
     ).toBe(true);
-    // New secrets need the host provisioning a release skips: provision, then
-    // a re-release of the version on record.
-    expect(stream.run.mock.calls.map((call) => call[1]?.slice(1))).toEqual([
-      ["provision"],
-      ["release", "1.2.0"],
-    ]);
+    expect((await step.verify({ ...c, data: report.data ?? {} })).ok).toBe(true);
+    // No deploy, no restart, no owed delivery carried on.
+    expect(stream.run).not.toHaveBeenCalled();
+    expect(report.data).toEqual({ model: "example-provider/example-model" });
+    // The config and the key file are as they were, and no model key file appeared.
+    expect(readFileSync(join(root, "config.toml"), "utf8")).toBe(config);
+    expect(readdirSync(secrets)).toEqual(["openai_api_key"]);
+    // The key stayed in its file: no argv carries it.
+    for (const argv of argvs) for (const arg of argv) expect(arg).not.toContain("sk-proj-test");
   });
   it("never ships the release version recorded for another host", async () => {
     const c = ctx();
@@ -305,13 +337,7 @@ describe("onboarding regression seams", () => {
         host: "old-vm",
       },
     };
-    const secrets = join(root, "secrets");
-    mkdirSync(secrets);
-    writeFileSync(join(secrets, "openai_api_key"), "sk-proj-test0000000000000000000000000");
-    writeFileSync(
-      join(root, "config.toml"),
-      template.replace(/^secrets_dir = .*$/m, `secrets_dir = "${secrets}"`),
-    );
+    c.input = { enable: "yes", targets: "alice", why: "owns schema", paths: "db/**" };
     mkdirSync(join(root, "deploy", "ansible"), { recursive: true });
     writeFileSync(join(root, "deploy", "ansible", "inventory.ini"), "[quickreview]\nnew-vm\n");
     c.adapters.runner = {
@@ -321,26 +347,12 @@ describe("onboarding regression seams", () => {
           : { code: 1, stdout: "", stderr: "No such object" },
     };
     const stream = { run: vi.fn(async () => ({ code: 0, stdout: "", stderr: "" })) };
-    await llmAuthStep({ transport: { stream } }).run(c);
+    // A step that does deliver a config change: the escalation answer.
+    const report = await escalationStep({ transport: { stream } }).run(c);
+    expect(report.checks.find((check) => check.name === "daemon-restart")?.ok).toBe(false);
     expect(
       stream.run.mock.calls.some((call) => (call as unknown[])[1]?.toString().includes("1.2.0")),
     ).toBe(false);
-  });
-  it("delivers changed model routing and persists a failed restart", async () => {
-    const c = ctx();
-    c.input = { route: "api" };
-    const secrets = join(root, "secrets");
-    mkdirSync(secrets);
-    writeFileSync(join(secrets, "openai_api_key"), "sk-proj-test0000000000000000000000000");
-    writeFileSync(
-      join(root, "config.toml"),
-      template.replace(/^secrets_dir = .*$/m, `secrets_dir = "${secrets}"`),
-    );
-    const stream = { run: vi.fn(async () => ({ code: 1, stdout: "", stderr: "restart failed" })) };
-    const report = await llmAuthStep({ transport: { stream } }).run(c);
-    expect(stream.run).toHaveBeenCalledOnce();
-    expect(report.data?.restart_owed).toBe(true);
-    expect(report.ok).toBe(false);
   });
   it("delivers changed escalation config and keeps a failed restart owed", async () => {
     const c = ctx();

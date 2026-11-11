@@ -2,7 +2,9 @@
 // adapters: what the panel shows, and what its keys, the mouse and the
 // `home_*` tools do. Each case drives the home as a person or the model
 // would and asserts the rendered lines (tests/helpers/fake-theme.ts) and what
-// was asked of the outside world.
+// was asked of the outside world. Signed in is read off pi's own model
+// registry (a fake by shape; the inventory over it is the real one), and the
+// providers are made up: no rule here knows a real one.
 import { describe, expect, it } from "vitest";
 import { createHome } from "../extensions/home.js";
 import { HOME_TOOL_NAMES } from "../src/home/toolnames.js";
@@ -41,7 +43,11 @@ function pull(n: number, over: Partial<OpenPull> = {}): OpenPull {
 const range = (from: number, to: number): number[] =>
   Array.from({ length: to - from + 1 }, (_, i) => from + i);
 
+/** pi's display names for the made-up providers. */
+const NAMES: Record<string, string> = { north: "North", south: "South" };
+
 interface World {
+  /** The providers pi has a stored login for; unknown: its registry throws. */
   login: Known<readonly string[]>;
   user: Known<string | null>;
   repo: Known<string | null>;
@@ -54,10 +60,37 @@ interface World {
   open: { ok: true } | { ok: false; why: string };
 }
 
-/** A configured machine: the openai-codex login, gh signed in, a repo. */
+/** pi's model registry, by shape, over the world's logins. */
+function registry(w: World) {
+  const models = Object.keys(NAMES).map((provider) => ({
+    provider,
+    id: "large-3",
+    name: "large-3",
+    api: "made-up",
+    reasoning: true,
+    contextWindow: 200_000,
+    cost: { input: 5, output: 15, cacheRead: 0, cacheWrite: 0 },
+  }));
+  const signed = (p: string): boolean => w.login.kind === "known" && w.login.value.includes(p);
+  return {
+    getAll: () => models as never,
+    getAvailable: () => {
+      if (w.login.kind === "unknown") throw new Error(w.login.why);
+      return models.filter((m) => signed(m.provider)) as never;
+    },
+    find: (p: string, id: string) => models.find((m) => m.provider === p && m.id === id) as never,
+    getProviderAuthStatus: (p: string) =>
+      signed(p) ? { configured: true, source: "stored" } : { configured: false },
+    getProvider: () => undefined,
+    getProviderDisplayName: (p: string) => NAMES[p] ?? p,
+    isUsingOAuth: () => true,
+  };
+}
+
+/** A configured machine: a login pi stores, gh signed in, a repo. */
 function configured(over: Partial<World> = {}): World {
   return {
-    login: known(["openai-codex"]),
+    login: known(["north"]),
     user: known("octo"),
     repo: known("acme/widgets"),
     pulls: known([pull(1), pull(3), pull(2)]),
@@ -99,7 +132,8 @@ function idleReviews(w: World): ReviewsPort {
 
 function adaptersOver(w: World, calls: Calls): HomeAdapters {
   return {
-    login: { providers: async () => w.login },
+    // the login file: read only by a pi that hands the home no registry
+    login: { providers: async () => unknown("the login file is not read here") },
     github: {
       user: async () => {
         calls.user++;
@@ -144,9 +178,12 @@ async function openHome(
   const calls: Calls = { pulls: [], user: 0, opened: [] };
   const timers: Home["timers"] = [];
   const pi = fakePi(o.piModel ? { model: o.piModel } : {});
+  Object.assign(pi.ctx, { modelRegistry: registry(w) });
+  // the route step moves a chat whose model has no credential
+  Object.assign(pi.api, { setModel: async () => true });
   await createHome({
     adapters: adaptersOver(w, calls),
-    model: o.model ?? "openai-codex/gpt-6.1-sol",
+    model: o.model ?? "",
     tools: o.tools ?? "reviewer",
     every: (ms, fn) => {
       const t = { ms, fn, stopped: false };
@@ -195,7 +232,7 @@ describe("the home on a configured machine", () => {
     expect(listed(lines)).toEqual([3, 2, 1]);
     expect(lines.find((l) => l.includes("#3"))).toMatch(/@dev3 · 3h/);
     expect(flat(lines)).toMatch(
-      /Found your OpenAI login, GitHub @octo and acme\/widgets from your qcr config: you're set\. 3 open pull requests\./,
+      /Found your North login, GitHub @octo and acme\/widgets from your qcr config: you're set\. 3 open pull requests\./,
     );
     expect(h.calls.pulls).toEqual(["acme/widgets"]);
   });
@@ -208,10 +245,10 @@ describe("the home on a configured machine", () => {
     expect(lines.at(-1)).toMatch(/^╰─+╯$/);
   });
 
-  it("shows the logins: the chat's provider and GitHub, and the tool set", async () => {
+  it("shows the logins: pi's credential in pi's own name, GitHub, and the tool set", async () => {
     const h = await openHome();
     const login = h.lines().find((l) => l.includes("GitHub"))!;
-    expect(login).toMatch(/✓ OpenAI ChatGPT {4}✓ GitHub @octo/);
+    expect(login).toMatch(/✓ North · signed in with pi {4}✓ GitHub @octo/);
     expect(login).toMatch(/reviewer tools │$/);
     const full = await openHome(configured(), { tools: "full" });
     expect(full.lines().find((l) => l.includes("GitHub"))).toMatch(/all pi tools │$/);
@@ -242,7 +279,7 @@ describe("the home on a configured machine", () => {
     };
     await createHome({
       adapters: stuck,
-      model: "openai-codex/x",
+      model: "",
       tools: "reviewer",
       every: () => () => {},
     })(pi.api);
@@ -250,41 +287,55 @@ describe("the home on a configured machine", () => {
     const lines = pi.render(100, 40).lines;
     expect(lines[0]).toMatch(/quickreview/);
     expect(text(lines)).toMatch(/Auto-review checking…/);
-    expect(text(lines)).toMatch(/OpenAI checking…/);
+    expect(text(lines)).toMatch(/model login checking…/);
     expect(text(lines)).toMatch(/reading the pull requests…/);
     // nothing read yet is shown as a value
     expect(text(lines)).not.toMatch(/unknown|not signed in|\$0/);
   });
 });
 
-describe("the login that counts", () => {
-  // MUTATION: count any provider in the auth file as signed in — this fails.
-  it("a login under another provider shows as not signed in, and is a setup step", async () => {
-    const h = await openHome(configured({ login: known(["anthropic", "openai-other"]) }));
-    // the setup card (tests/home-setup.test.ts), on its login step
-    expect(h.lines()[0]).toMatch(/quickreview ─+ setup ─╮$/);
-    expect(text(h.lines())).toMatch(/Sign in to OpenAI/);
-    expect(text(h.lines())).not.toMatch(/ChatGPT · signed in/);
+describe("any provider's credential counts", () => {
+  // MUTATION: count only the chat's provider in HomeModel.signedIn — a login
+  // under another provider is "not signed in", a setup step, and this fails.
+  it("a login under a provider the chat is not on is signed in, and no setup step", async () => {
+    const h = await openHome(configured({ login: known(["south"]) }), {
+      piModel: { provider: "north", id: "large-3" },
+    });
+    expect(h.lines()[0]).toMatch(/quickreview ─+ acme\/widgets ─╮$/);
+    expect(h.lines().find((l) => l.includes("GitHub"))).toMatch(/✓ South · signed in with pi/);
     const status = JSON.parse(await h.pi.tool("home_status")) as {
       login: unknown;
       setup_needed: unknown;
     };
-    expect(status.login).toEqual({ provider: "openai-codex", signed_in: false });
-    expect(status.setup_needed).toEqual(["login"]);
-  });
-
-  it("counts the provider of the model the chat runs on, as pi reports it", async () => {
-    const h = await openHome(configured({ login: known(["anthropic"]) }), {
-      piModel: { provider: "anthropic", id: "claude-x" },
+    expect(status.login).toEqual({
+      providers: [{ provider: "south", name: "South", credential: "signed in with pi" }],
+      chat_provider: "north",
+      signed_in: true,
     });
-    expect(h.lines().find((l) => l.includes("GitHub"))).toMatch(/✓ anthropic signed in/);
+    expect(status.setup_needed).toEqual([]);
   });
 
-  it("follows the person's /model to another provider", async () => {
-    const h = await openHome();
-    expect(h.lines().find((l) => l.includes("GitHub"))).toMatch(/✓ OpenAI ChatGPT/);
-    await h.pi.emit("model_select", { model: { provider: "anthropic", id: "c" } });
-    expect(h.lines().find((l) => l.includes("GitHub"))).toMatch(/✗ anthropic not signed in/);
+  it("names the chat's provider's credential when pi has one, and follows /model", async () => {
+    const h = await openHome(configured({ login: known(["north", "south"]) }), {
+      piModel: { provider: "south", id: "large-3" },
+    });
+    const line = (): string => h.lines().find((l) => l.includes("GitHub"))!;
+    expect(line()).toMatch(/✓ South · signed in with pi \+1 {4}✓ GitHub/);
+    await h.pi.emit("model_select", { model: { provider: "north", id: "large-3" } });
+    expect(line()).toMatch(/✓ North · signed in with pi \+1 {4}✓ GitHub/);
+  });
+
+  it("no credential for any provider is the setup card's first step, naming none", async () => {
+    const h = await openHome(configured({ login: known([]) }));
+    // the setup card (tests/home-setup.test.ts), on its login step
+    expect(h.lines()[0]).toMatch(/quickreview ─+ setup ─╮$/);
+    expect(text(h.lines())).toMatch(/Sign in to a model provider/);
+    const status = JSON.parse(await h.pi.tool("home_status")) as {
+      login: unknown;
+      setup_needed: unknown;
+    };
+    expect(status.login).toEqual({ providers: [], chat_provider: null, signed_in: false });
+    expect(status.setup_needed).toEqual(["login"]);
   });
 
   it("names each missing piece as a setup step, and only those", async () => {
@@ -292,7 +343,7 @@ describe("the login that counts", () => {
     const lines = h.lines();
     // the setup card: what was found is done, what is missing is a step
     expect(lines[0]).toMatch(/quickreview ─+ setup ─╮$/);
-    expect(text(lines)).toMatch(/✓ {2}Sign in to OpenAI/);
+    expect(text(lines)).toMatch(/✓ {2}Sign in to a model provider/);
     expect(text(lines)).toMatch(/▸ {2}Connect GitHub/);
     expect(text(lines)).toMatch(/○ {2}Choose a repository/);
     expect(text(lines)).not.toMatch(/To review/);
@@ -305,7 +356,7 @@ describe("a source that can't be read renders Unknown (invariant 9)", () => {
   it("unreadable logins and repository are Unknown, not missing", async () => {
     const h = await openHome(
       configured({
-        login: unknown("can't read auth.json: EACCES"),
+        login: unknown("the registry is down"),
         user: unknown("gh is not installed"),
         repo: unknown("config.toml is not valid TOML"),
       }),
@@ -313,7 +364,7 @@ describe("a source that can't be read renders Unknown (invariant 9)", () => {
     const lines = h.lines();
     expect(lines[0]).toMatch(/repository unknown ─╮$/);
     expect(lines.find((l) => l.includes("GitHub"))).toMatch(
-      /\? OpenAI unknown {4}\? GitHub unknown/,
+      /\? model login unknown {4}\? GitHub unknown/,
     );
     // unknown is not a gap: no setup step claims something is missing
     expect(text(lines)).not.toMatch(/Setup|not signed in/);
@@ -359,7 +410,7 @@ describe("a source that can't be read renders Unknown (invariant 9)", () => {
     const pi = fakePi();
     await createHome({
       adapters,
-      model: "openai-codex/x",
+      model: "",
       tools: "reviewer",
       every: () => () => {},
     })(pi.api);
@@ -643,7 +694,7 @@ describe("every action is also a home_* tool", () => {
     const s = JSON.parse(await h.pi.tool("home_status")) as Record<string, unknown>;
     expect(s).toMatchObject({
       repo: "acme/widgets",
-      login: { provider: "openai-codex", signed_in: true },
+      login: { chat_provider: null, signed_in: true },
       github: { user: "octo", signed_in: true },
       tools: "reviewer",
       setup_needed: [],
@@ -682,7 +733,7 @@ describe("the session's life", () => {
     const pi = fakePi({ mode: "print" });
     await createHome({
       adapters: adaptersOver(configured(), calls),
-      model: "openai-codex/x",
+      model: "",
       tools: "reviewer",
       every: () => () => {},
     })(pi.api);

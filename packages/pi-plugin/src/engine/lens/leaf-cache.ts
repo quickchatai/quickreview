@@ -14,14 +14,52 @@
 // not the expected shape goes out unchanged, and a throw inside the handler is
 // pi's to contain (it reports it as an extension error), never the request's.
 //
+// The rewrite is an optimisation for one API family, PACK_FIRST_APIS: the
+// request it builds is that family's, so the runner attaches this extension
+// only to a cache group whose model speaks one of those APIs (runlens.ts). A
+// lens on any other API gets its own request untouched and reads the pack file
+// its task names.
+//
 // VERIFY-ON-PIN (pi 1.3.0, re-read at 1.4.0): `before_provider_request` may return a replacement
 // payload; the codex payload carries `instructions` (string), `input` (an array
 // of `{ role, content: [{ type: "input_text", text }] }`) and `prompt_cache_key`.
 import { createHash } from "node:crypto";
+import type { KnownApi } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 const ADDENDUM_OPEN = "<addendum>";
 const ADDENDUM_CLOSE = "</addendum>";
+
+// VERIFY-ON-PIN (pi 1.4.0): pi-ai's own name (`KnownApi`, a model's `api`) for
+// the one API whose request carries the system prompt as a string in
+// `instructions`, which is what the rewrite moves. The annotation holds the
+// name to that union, so a pi that renames or drops it stops the build. pi's
+// other Responses APIs (`openai-responses`, `azure-openai-responses`) send the
+// system prompt as the first input message: the rewrite would leave their
+// request as it is, so they are not in the family, and a group on one gets no
+// warm-up to wait for. An API is added here by hand, once pi builds its
+// request in the shape the rewrite reads (a test holds that).
+const PACK_FIRST_FAMILY: readonly KnownApi[] = ["openai-codex-responses"];
+
+/**
+ * The API family the pack-first rewrite is built for, as pi's API names: what
+ * a model's `api` says, never a provider and never a model. A cache group is
+ * packed (warm-up, wait, rewrite) only when its model's API is in this set.
+ * Inside the family the rewrite is still fail-open: a request that is not the
+ * shape it expects (the system prompt as a string in `instructions`, the
+ * conversation in `input`) goes out unchanged, with one warning line.
+ *
+ * The measured cost estimate is true for this family alone, since the pack is
+ * what its token mix rests on: `MEASURED.apis` (measured.ts) is this set, and
+ * a test holds the two equal.
+ */
+export const PACK_FIRST_APIS: ReadonlySet<string> = new Set<string>(PACK_FIRST_FAMILY);
+
+/** Whether a model that speaks `api` gets the pack first. An API the host could
+ * not name is not in the family. */
+export function isPackFirstApi(api: string | undefined): boolean {
+  return api !== undefined && PACK_FIRST_APIS.has(api);
+}
 
 /** Short hashes of the parts that make up a request's cacheable prefix, in
  * request order (never their content). */

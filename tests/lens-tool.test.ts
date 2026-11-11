@@ -17,8 +17,11 @@ import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-a
 import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import {
   interactiveLens,
+  lensHostRoute,
   lensRunConfigFromEnv,
   lensTools,
+  sessionRoute,
+  type LensHostRoute,
 } from "@quickchatai/pi-quickreview/extensions/lens.js";
 import { usageFromEvents, stagesFromEvents } from "../src/bench/aacr.js";
 import { EventCostMeter } from "../src/bench/cost.js";
@@ -619,6 +622,143 @@ describe("[lens] extensions/lens.ts in an interactive pi", () => {
     expect(() => lensRunConfigFromEnv({ PI_CODING_AGENT_DIR: "agent" }, rig.host, dir)).toThrow(
       /absolute/,
     );
+  });
+
+  /** A session's model and pi's registry over it, by shape: `logins` are the
+   * providers pi has a credential for. The providers are made up. */
+  const sessionModel = (provider: string, id: string) => ({
+    provider,
+    id,
+    name: id,
+    api: "made-up",
+    reasoning: true,
+    contextWindow: 200_000,
+    cost: { input: 3, output: 9, cacheRead: 0, cacheWrite: 0 },
+  });
+  const NORTH = sessionModel("north", "large-3");
+  const SOUTH = sessionModel("south", "pro-5");
+  const sessionRegistry = (logins: string[]) => ({
+    getAll: () => [NORTH, SOUTH] as never,
+    getAvailable: () => [NORTH, SOUTH].filter((m) => logins.includes(m.provider)) as never,
+    getProviderAuthStatus: (p: string) =>
+      logins.includes(p)
+        ? { configured: true, source: "environment", label: "SOUTH_API_KEY" }
+        : { configured: false },
+    getProvider: () => undefined,
+    getProviderDisplayName: (p: string) => (p === "south" ? "South" : p),
+    isUsingOAuth: () => false,
+  });
+
+  // MUTATION: drop the `model_select` handler in interactiveLensBoard — the
+  // host is handed the model the session started on, not the one it is on,
+  // and this fails. Call `makeHost(agentDir)` with no route — it fails too.
+  it("hands its host the model the session is on when the first lens is asked for", async () => {
+    const handlers = new Map<string, (event: unknown, ctx: unknown) => void>();
+    const registered: Array<{ name: string; execute: (...a: never[]) => Promise<unknown> }> = [];
+    const handed: Array<LensHostRoute | undefined> = [];
+    void interactiveLens(
+      shimEnv(),
+      () => dir,
+      async (_agentDir, route) => {
+        handed.push(route);
+        return rig.host;
+      },
+    )({
+      registerTool: (t: never) => registered.push(t),
+      on: (event: string, h: (event: unknown, ctx: unknown) => void) => handlers.set(event, h),
+    } as never);
+    const registry = sessionRegistry(["north", "south"]);
+    handlers.get("session_start")!({}, { model: NORTH, modelRegistry: registry });
+    // The person picks another model before any lens runs.
+    handlers.get("model_select")!({ model: SOUTH }, { model: SOUTH, modelRegistry: registry });
+    expect(handed).toEqual([]);
+    slowAnswers(2, 1);
+    const lens = registered[0] as unknown as {
+      execute: (id: string, p: Record<string, unknown>) => Promise<{ isError?: boolean }>;
+    };
+    expect((await lens.execute("l1", { agent: "pass-a", task: "t" })).isError).toBeUndefined();
+    // A later pick does not move the host: it was built by the first pass.
+    handlers.get("model_select")!({ model: NORTH }, { model: NORTH, modelRegistry: registry });
+    await lens.execute("l2", { agent: "pass-b", task: "t" });
+    expect(handed).toHaveLength(1);
+    expect(handed[0]!.model).toBe(SOUTH);
+    expect(handed[0]!.fixed).toMatchObject({
+      provider: "south",
+      modelId: "pro-5",
+      spec: "south/pro-5",
+      providerName: "South",
+      pick: "pinned",
+      thinking: null,
+      movedFrom: null,
+      ask: false,
+      priced: true,
+      // the credential is the one pi's registry reports, never one made up here
+      credential: { kind: "api_key", origin: "env-key", label: "SOUTH_API_KEY" },
+    });
+  });
+
+  it("hands over no route for a session with no model, no registry, or no credential for its model", () => {
+    const registry = sessionRegistry(["south"]);
+    expect(sessionRoute({ model: undefined, modelRegistry: registry as never })).toBeUndefined();
+    expect(sessionRoute({ model: SOUTH as never, modelRegistry: undefined })).toBeUndefined();
+    // pi has no credential for the session's provider: the host resolves its own route
+    expect(
+      sessionRoute({ model: NORTH as never, modelRegistry: registry as never }),
+    ).toBeUndefined();
+    expect(
+      sessionRoute({
+        model: SOUTH as never,
+        modelRegistry: {
+          ...registry,
+          getAll: () => {
+            throw new Error("not ready");
+          },
+        } as never,
+      }),
+    ).toBeUndefined();
+    expect(
+      sessionRoute({ model: SOUTH as never, modelRegistry: registry as never })?.fixed.spec,
+    ).toBe("south/pro-5");
+  });
+
+  // The lens host borrows the pi's login with nothing to renew it, so a login
+  // shorter than a round is left out. What the host's route is then built from:
+  describe("lensHostRoute: the session's model and the logins the borrow left out", () => {
+    const registry = sessionRegistry(["south"]);
+    const session = sessionRoute({ model: SOUTH as never, modelRegistry: registry as never })!;
+    const short = (provider: string) => ({
+      provider,
+      name: provider,
+      expiresAt: 1_700_000_000_000,
+    });
+
+    it("nothing left out: the session's route as it is, or none", () => {
+      expect(lensHostRoute(session, [])).toBe(session);
+      expect(lensHostRoute(undefined, [])).toBeUndefined();
+    });
+
+    // MUTATION: return `session` (undefined) when there is no session route -
+    // the host is not told what was left out, refuses `no-credential` where a
+    // login exists, and this fails.
+    it("no session route: the host resolves its own, told what was left out", () => {
+      expect(lensHostRoute(undefined, [short("south")])).toEqual({ skipped: [short("south")] });
+    });
+
+    // MUTATION: keep the fixed route when the session's own login was left out
+    // - the host starts a lens on a provider it holds no login for, pi fails it
+    // with its own words instead of the route's refusal, and this fails.
+    it("the session's own login was left out: its model is a stated choice, never a fixed route", () => {
+      const route = lensHostRoute(session, [short("north"), short("south")]);
+      expect(route).toEqual({
+        skipped: [short("north"), short("south")],
+        choice: { provider: "south", model: "pro-5", via: "use", no_estimate_ok: [] },
+      });
+      expect(route).not.toHaveProperty("fixed");
+    });
+
+    it("another provider's login was left out: the session's route is untouched", () => {
+      expect(lensHostRoute(session, [short("north")])).toBe(session);
+    });
   });
 });
 

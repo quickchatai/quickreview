@@ -11,14 +11,28 @@
 // tests/review-post-cli.test.ts. git runs: each fake host's repo is a scratch
 // git repo (the review store keys a repo's state by its root commit).
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   createQuickReview,
+  hostAuth,
   QUICKREVIEW_COMMANDS,
+  routeInRunningPi,
+  unborrowable,
+  unseenByReviewHost,
+  type RunningPi,
 } from "@quickchatai/pi-quickreview/extensions/quickreview.js";
 import {
   declaredPiRange,
@@ -39,8 +53,23 @@ import {
   planDestinations,
   printDestinations,
 } from "@quickchatai/pi-quickreview/src/reviewdest.js";
-import { borrowLogin, type HostAuth } from "@quickchatai/pi-quickreview/src/plugin/login.js";
-import { reviewProviders } from "@quickchatai/pi-quickreview/src/modelroute.js";
+import {
+  borrowLogin,
+  providerRows,
+  routeProviders,
+  type HostAuth,
+} from "@quickchatai/pi-quickreview/src/plugin/login.js";
+import { MEASURED } from "@quickchatai/pi-quickreview/src/measured.js";
+import { DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import type { ReviewRuntimeOptions } from "@quickchatai/pi-quickreview/src/engine/reviewruntime.js";
+import { MODEL_CHOICE_FILE, readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
+import {
+  refusalText,
+  routeNotice,
+  type ModelRoute,
+  type ProviderInventory,
+} from "@quickchatai/pi-quickreview/src/modelroute.js";
+import { isPinned, parseCoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import {
   KEEP_IT_HERE,
   REVIEW_MESSAGE,
@@ -55,6 +84,8 @@ import type {
   ReviewIo,
   ReviewOptions,
   ReviewResult,
+  ReviewRouted,
+  ReviewRuntime,
   ReviewTarget,
 } from "@quickchatai/pi-quickreview/src/reviewapi.js";
 import {
@@ -69,6 +100,7 @@ import {
   type ScanCommandDeps,
 } from "@quickchatai/pi-quickreview/src/plugin/scan.js";
 import {
+  AUTOMATIC,
   PLUGIN_SETUP_STEPS,
   pluginSetupRegistry,
   renderChecklist,
@@ -81,7 +113,12 @@ import type {
   RunResult,
   SessionUi,
 } from "@quickchatai/pi-quickreview/src/plugin/session.js";
-import { fillCaseAgentDir } from "@quickchatai/pi-quickreview/src/plugin/scancases.js";
+import {
+  makeCaseAgentDir,
+  pluginScanCases,
+  scanWords,
+  type ScanCaseRoute,
+} from "@quickchatai/pi-quickreview/src/plugin/scancases.js";
 import { coreExtensionFile } from "@quickchatai/pi-quickreview/src/engine/extfiles.js";
 import { ROUND_EXTENSIONS } from "@quickchatai/pi-quickreview/src/engine/round.js";
 import { parseSkillFrontmatter } from "./helpers/skill-frontmatter.js";
@@ -132,6 +169,20 @@ describe("the plugin's manifest", () => {
       expect(fm.fields.has("disable-model-invocation"), name).toBe(false);
       expect(fm.body, name).toContain(`/${name}`);
     }
+  });
+
+  // The plugin installs with no qcr bin: its setup skill sends a person who
+  // wants another model to the plugin's own command.
+  // MUTATION: write `qcr model use` in the pi body of
+  // plugins/qcr/templates/setup.md — this fails.
+  it("its setup skill names /qcr-setup model as the way to choose a model, never a qcr verb", () => {
+    const files = render(loadSource(), "pi", {
+      version: pluginPkg()["version"] as string,
+      contract: TEMPLATE_CONTRACT,
+    });
+    const body = parseSkillFrontmatter(files["skills/qcr-setup/SKILL.md"]!).body;
+    expect(body).toContain("`/qcr-setup model`");
+    expect(body).not.toMatch(/qcr model|qcr login/);
   });
 
   // pi supplies these; a copy beside it would be a second instance of pi's
@@ -492,133 +543,410 @@ describe("where a result goes (the rule qcr review keeps; the session shows and 
   });
 });
 
-/** A host auth over a fixed login file and a refresh that extends it. */
-function fakeAuth(
-  logins: Record<string, { type: string; expires: number | null }>,
-  o: { configured?: string[]; refreshTo?: number; refuse?: boolean } = {},
+/** A model the pick rule takes: it reasons and a review fits in its window. */
+const fakeModel = (provider: string, id: string): Model<Api> =>
+  ({
+    id,
+    name: id,
+    provider,
+    api: "openai-completions",
+    baseUrl: "http://127.0.0.1:9/v1",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 200_000,
+    maxTokens: 4_000,
+  }) as Model<Api>;
+
+/** What a fake pi holds for one provider. The provider ids are made up on
+ * purpose: nothing in the plugin may know a provider by name. */
+interface FakeProvider {
+  /** Its model ids; default one, `m-2`. */
+  models?: string[];
+  /** Where pi found the credential, as its auth status names it; "none": pi
+   * knows the provider and has no credential for it. Default `stored`. */
+  source?: "stored" | "environment" | "runtime" | "models_json_key" | "none";
+  /** pi's label for an environment source. */
+  label?: string;
+  /** The stored credential is an OAuth login that expires then. */
+  oauth?: { expires: number };
+  /** An extension of the running pi registered the provider. */
+  registered?: boolean;
+  /** pi's status says "not configured" although its models are available. */
+  statusSaysNo?: boolean;
+  /** The provider's own lookup finds its credential in a file there. */
+  credentialFile?: string;
+}
+
+type FakeProviders = Record<string, FakeProvider>;
+
+/** A running pi's model registry over `providers`, by the public methods the
+ * route reads. Display names are the id with a capital. */
+function fakeRegistry(providers: FakeProviders): RunningPi["modelRegistry"] {
+  const modelsOf = (p: string): Model<Api>[] =>
+    (providers[p]?.models ?? ["m-2"]).map((id) => fakeModel(p, id));
+  const has = (p: string): boolean => providers[p] !== undefined && providers[p].source !== "none";
+  return {
+    getAll: () => Object.keys(providers).flatMap(modelsOf),
+    getAvailable: () => Object.keys(providers).filter(has).flatMap(modelsOf),
+    getProviderAuthStatus: (p) =>
+      has(p) && providers[p]!.statusSaysNo !== true
+        ? {
+            configured: true,
+            source: providers[p]!.source ?? "stored",
+            ...(providers[p]!.label !== undefined ? { label: providers[p]!.label } : {}),
+          }
+        : { configured: false },
+    getProvider: (p) =>
+      providers[p] === undefined
+        ? undefined
+        : {
+            auth: {
+              ...(providers[p].oauth ? { oauth: { isSubscription: false } } : {}),
+              ...(providers[p].credentialFile !== undefined
+                ? {
+                    apiKey: {
+                      resolve: async (o: {
+                        ctx: { fileExists(path: string): Promise<boolean> };
+                      }): Promise<unknown> =>
+                        (await o.ctx.fileExists(providers[p]!.credentialFile!))
+                          ? { auth: {} }
+                          : undefined,
+                    },
+                  }
+                : {}),
+            },
+          },
+    getProviderDisplayName: (p) => p.charAt(0).toUpperCase() + p.slice(1),
+    isUsingOAuth: (m) => providers[m.provider]?.oauth !== undefined,
+    find: (p, id) => modelsOf(p).find((m) => m.id === id),
+    getRegisteredProviderIds: () => Object.keys(providers).filter((p) => providers[p]!.registered),
+  };
+}
+
+/** Write the login file a pi with `providers` would hold: an entry for each
+ * stored credential, none for a key from elsewhere. The values are not keys. */
+function writeLogins(agentDir: string, providers: FakeProviders): void {
+  mkdirSync(agentDir, { recursive: true });
+  const held: Record<string, unknown> = {};
+  for (const [p, o] of Object.entries(providers)) {
+    if ((o.source ?? "stored") !== "stored") continue;
+    held[p] = o.oauth
+      ? { type: "oauth", access: "not-a-token", refresh: "not-a-token", expires: o.oauth.expires }
+      : { type: "api_key", key: "not-a-key" };
+  }
+  if (Object.keys(held).length > 0)
+    writeFileSync(join(agentDir, "auth.json"), JSON.stringify(held));
+}
+
+/** The host auth the extension builds over a running pi (`hostAuth`), with
+ * the refresh recorded: it extends the stored login to `refreshTo` (ten hours
+ * on by default), or refuses. */
+function piAuth(
+  registry: RunningPi["modelRegistry"],
+  agentDir: string,
+  o: { model?: Model<Api>; refreshTo?: number; refuse?: boolean } = {},
 ): HostAuth & { refreshed: Array<[string, number]> } {
   const refreshed: Array<[string, number]> = [];
+  const base = hostAuth(
+    { model: o.model, modelRegistry: registry } as unknown as ExtensionCommandContext,
+    agentDir,
+  );
   return {
+    ...base,
     refreshed,
-    logins: () => structuredClone(logins),
-    configured: (p) => logins[p] !== undefined || (o.configured ?? []).includes(p),
-    refresh: async (p, ms) => {
-      refreshed.push([p, ms]);
+    refresh: async (provider, ms) => {
+      refreshed.push([provider, ms]);
       if (o.refuse) throw new Error("token endpoint said no");
-      logins[p] = { type: "oauth", expires: o.refreshTo ?? Date.now() + 10 * 3600_000 };
+      const file = join(agentDir, "auth.json");
+      const held = JSON.parse(readFileSync(file, "utf8")) as Record<string, object>;
+      held[provider] = { ...held[provider], expires: o.refreshTo ?? Date.now() + 10 * 3600_000 };
+      writeFileSync(file, JSON.stringify(held));
     },
   };
 }
 
+let piN = 0;
+/** A pi home holding `providers`: its login file, and its host auth. */
+function fakePi2(
+  providers: FakeProviders,
+  o: Parameters<typeof piAuth>[2] = {},
+): { agentDir: string; auth: ReturnType<typeof piAuth> } {
+  const agentDir = join(tmp, `pi-home-${++piN}`);
+  writeLogins(agentDir, providers);
+  return { agentDir, auth: piAuth(fakeRegistry(providers), agentDir, o) };
+}
+
+const HOUR = 3600_000;
+
+/** Make `agentDir` unable to keep a model choice, whoever runs the suite:
+ * the file a write goes through is a directory there. Reads still find
+ * nothing remembered. */
+function refuseChoiceWrites(agentDir: string): void {
+  mkdirSync(join(agentDir, `${MODEL_CHOICE_FILE}.tmp`), { recursive: true });
+}
+
+// The extension's side of the route: the running pi's own registry, read
+// through the functions every other route uses.
+describe("the route inside a running pi", () => {
+  it("is the one provider pi has a credential for, with pi's own model object", () => {
+    const registry = fakeRegistry({ alpha: {}, gamma: { source: "none" } });
+    const r = routeInRunningPi({ model: undefined, modelRegistry: registry });
+    expect(r.result).toMatchObject({
+      ok: true,
+      route: { spec: "alpha/m-2", source: "only-credential", providerName: "Alpha" },
+    });
+    expect(r.model).toEqual(registry.find("alpha", "m-2"));
+    expect(r.inventory.map((e) => e.provider)).toEqual(["alpha"]);
+    expect(r.nameOf("gamma")).toBe("Gamma");
+  });
+
+  // MUTATION: drop `piProvider` from routeInRunningPi's route input — the
+  // route goes by the provider id's order and this fails.
+  it("goes to the provider the session is on, among several", () => {
+    const registry = fakeRegistry({ alpha: {}, beta: {} });
+    const r = routeInRunningPi({ model: fakeModel("beta", "m-2"), modelRegistry: registry });
+    expect(r.result).toMatchObject({
+      ok: true,
+      route: { provider: "beta", source: "pi-provider" },
+    });
+    expect(routeNotice((r.result as { route: ModelRoute }).route, "plugin")).toMatch(
+      /this pi session is on Beta\). Change it: \/qcr-setup model, or --model for one run/,
+    );
+  });
+
+  // The run's sessions are on a nested host that loads no extension and holds
+  // no key of this process.
+  // MUTATION: return an empty set from unborrowable — the review resolves to
+  // the extension's provider, which its own host cannot use, and this fails.
+  it("leaves out a provider an extension registered and one keyed for this process, and says so", () => {
+    const providers: FakeProviders = {
+      ext: { registered: true },
+      keyed: { source: "runtime" },
+      alpha: { source: "environment", label: "ALPHA_API_KEY" },
+    };
+    const registry = fakeRegistry(providers);
+    expect([...unborrowable(registry)].sort()).toEqual(["ext", "keyed"]);
+    const r = routeInRunningPi({ model: fakeModel("ext", "m-2"), modelRegistry: registry });
+    expect(r.result).toMatchObject({
+      ok: true,
+      route: { spec: "alpha/m-2", source: "only-credential", alternatives: [] },
+    });
+    const note =
+      "Ext is registered by a pi extension (or keyed with --api-key): the review cannot borrow it";
+    expect(r.notes).toEqual([note]);
+    expect((r.result as { route: ModelRoute }).route.notices).toContain(note);
+    // with nothing else, there is no route, and the note still says why
+    const alone = routeInRunningPi({
+      model: fakeModel("keyed", "m-2"),
+      modelRegistry: fakeRegistry({ keyed: { source: "runtime" } }),
+    });
+    expect(alone.result).toEqual({ ok: false, refusal: { code: "no-credential" } });
+    expect(alone.notes[0]).toMatch(/^Keyed is registered by a pi extension/);
+  });
+
+  // The running pi looks under the home directory for a credential; the
+  // run's host does not (engine/authcontext.ts).
+  // MUTATION: answer an empty set from unseenByReviewHost, or drop `unseen`
+  // from routeInRunningPi's exclusions - the route names the provider the
+  // session is on, which no session of the run could open; this fails.
+  it("leaves out a provider whose credential is a file under the home directory, and says so", async () => {
+    const here = join(tmp, "ambient-credential.json");
+    writeFileSync(here, "{}");
+    const providers: FakeProviders = {
+      homely: { source: "environment", label: "a file", credentialFile: "~/.config/x/cred.json" },
+      absolute: { source: "environment", label: "a file", credentialFile: here },
+      alpha: { source: "environment", label: "ALPHA_API_KEY" },
+      stored: { credentialFile: "~/.config/x/other.json" },
+    };
+    const registry = fakeRegistry(providers);
+    const unseen = await unseenByReviewHost(registry, {});
+    expect([...unseen]).toEqual(["homely"]);
+    const r = routeInRunningPi(
+      { model: fakeModel("homely", "m-2"), modelRegistry: registry },
+      {},
+      unseen,
+    );
+    expect(r.inventory.map((e) => e.provider).sort()).toEqual(["absolute", "alpha", "stored"]);
+    expect(r.result.ok && r.result.route.provider).not.toBe("homely");
+    const note =
+      "Homely's credential is under your home directory, which a review host does not read: point the provider's credential variable at an absolute path (docs/llm-setup.md)";
+    expect(r.notes).toEqual([note]);
+    // alone, there is no route, and the note says why
+    const alone = fakeRegistry({ homely: providers["homely"]! });
+    const none = routeInRunningPi(
+      { model: fakeModel("homely", "m-2"), modelRegistry: alone },
+      {},
+      await unseenByReviewHost(alone, {}),
+    );
+    expect(none.result).toEqual({ ok: false, refusal: { code: "no-credential" } });
+    expect(none.notes).toEqual([note]);
+  });
+
+  // MUTATION: hand textResolver the registry's own getAvailable in
+  // routeInRunningPi — the bare id is read as the extension's model, the pin
+  // is refused for want of a credential, and this fails.
+  it("reads a pin's text among the providers a run can borrow", () => {
+    const registry = fakeRegistry({
+      ext: { registered: true, models: ["shared-3"] },
+      alpha: { models: ["shared-3", "m-2"] },
+    });
+    const r = routeInRunningPi(
+      { model: undefined, modelRegistry: registry },
+      { pin: { text: "shared-3:high", from: "flag" } },
+    );
+    expect(r.result).toMatchObject({
+      ok: true,
+      route: { spec: "alpha/shared-3", source: "flag", pick: "pinned", thinking: "high" },
+    });
+  });
+
+  // Availability is the credential test, as in the route's inventory: pi's
+  // status can say "not configured" of a provider whose models it lists.
+  // MUTATION: skip a provider whose getProviderAuthStatus(p).configured is
+  // false in registryInventory — this fails.
+  it("routes on a provider pi lists as available though its status says not configured", () => {
+    const { auth } = fakePi2({ alpha: { statusSaysNo: true }, gamma: { source: "none" } });
+    expect(auth.route!({}).result).toMatchObject({ ok: true, route: { provider: "alpha" } });
+  });
+});
+
 describe("the borrowed login", () => {
-  const cfg = {
-    models: {
-      conversation: "openai-codex/gpt-6.1-sol",
-      default: "openai-codex/gpt-6.1-sol",
-      tiers: { "sol-high": "openai-codex/gpt-6.1-sol:high", "terra-med": "anthropic/x:medium" },
-      pass_models: { "pass-x": "google/g" },
-    },
-  } as unknown as Parameters<typeof reviewProviders>[0];
+  const inventoryOf = (providers: FakeProviders): readonly ProviderInventory[] =>
+    routeInRunningPi({ model: undefined, modelRegistry: fakeRegistry(providers) }).inventory;
+  const listed = async (store: { list(): Promise<readonly { providerId: string }[]> }) =>
+    (await store.list()).map((c) => c.providerId).sort();
 
-  it("collects every provider the review's models name", () => {
-    expect(reviewProviders(cfg)).toEqual(["openai-codex", "anthropic", "google"]);
+  // MUTATION: return `[route.provider]` alone from routeProviders — a tier
+  // pinned to another provider gets no login, and this fails.
+  it("is for the route's provider and the providers the config's pinned specs run on", () => {
+    const inventory = inventoryOf({ alpha: {}, beta: {} });
+    const unpinned = {
+      models: { model: "", tiers: { light: ":medium", deep: ":high" }, pass_models: {} },
+    } as unknown as Parameters<typeof routeProviders>[1];
+    expect(routeProviders({ provider: "alpha" }, unpinned, { inventory })).toEqual(["alpha"]);
+    const pinned = {
+      models: {
+        model: "alpha/m-2",
+        tiers: { light: "beta/m-2:medium", deep: ":high" },
+        pass_models: { "pass-x": "gamma/m-2" },
+      },
+    } as unknown as Parameters<typeof routeProviders>[1];
+    // gamma has no credential and nothing else serves its model: it stays
+    // named, and there is simply no login to borrow for it
+    expect(routeProviders({ provider: "alpha" }, pinned, { inventory })).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
+    // the shipped config pins nothing
+    const shipped = parseCoreConfig(readFileSync(join(ROOT, "config.example.toml"), "utf8"));
+    expect(routeProviders({ provider: "beta" }, shipped, { inventory })).toEqual(["beta"]);
   });
 
-  it("leaves a long login alone and has the host refresh a short one", async () => {
+  // MUTATION: return `borrowed.credentials` unnarrowed from borrowLogin — the
+  // run holds the other provider's login too, and this fails.
+  it("leaves a long login alone, and holds the route's providers and no other", async () => {
     const now = Date.now();
-    const long = fakeAuth({ "openai-codex": { type: "oauth", expires: now + 5 * 3600_000 } });
-    expect(
-      await borrowLogin({ providers: ["openai-codex"], host: long, needMs: 3600_000, marginMs: 0 }),
-    ).toEqual({ ok: true, refreshed: [], providers: ["openai-codex"] });
-    expect(long.refreshed).toEqual([]);
-    // MUTATION: refuse a short login instead of asking the host — this fails.
-    const short = fakeAuth({ "openai-codex": { type: "oauth", expires: now + 600_000 } });
-    expect(
-      await borrowLogin({
-        providers: ["openai-codex"],
-        host: short,
-        needMs: 3600_000,
-        marginMs: 300_000,
-      }),
-    ).toEqual({ ok: true, refreshed: ["openai-codex"], providers: ["openai-codex"] });
-    expect(short.refreshed).toEqual([["openai-codex", 3900_000]]);
+    const { agentDir, auth } = fakePi2({
+      alpha: { oauth: { expires: now + 5 * HOUR } },
+      beta: {},
+      delta: { oauth: { expires: now + 60_000 } },
+    });
+    const r = await borrowLogin({ agentDir, host: auth, providers: ["alpha"], needMs: HOUR });
+    if (!r.ok) throw new Error("refused");
+    expect(auth.refreshed).toEqual([]);
+    expect(await listed(r.credentials)).toEqual(["alpha"]);
+    expect(await r.credentials.read("beta")).toBeUndefined();
+    // the copy cannot refresh: the token's refresh half never leaves the host
+    expect((await r.credentials.read("alpha")) as { refresh?: string }).toMatchObject({
+      refresh: DISABLED_REFRESH,
+    });
   });
 
-  it("fails with pi's /login when the host cannot refresh, or the refresh is still short", async () => {
+  // MUTATION: refuse a short login instead of asking the host — this fails.
+  it("has the host renew a login that would not last the run, for the run's window", async () => {
     const now = Date.now();
-    const refused = fakeAuth(
-      { "openai-codex": { type: "oauth", expires: now + 1000 } },
+    const { agentDir, auth } = fakePi2({ alpha: { oauth: { expires: now + 600_000 } } });
+    const r = await borrowLogin({
+      agentDir,
+      host: auth,
+      providers: ["alpha"],
+      needMs: HOUR,
+      marginMs: 300_000,
+    });
+    expect(r.ok).toBe(true);
+    expect(auth.refreshed).toEqual([["alpha", 3_900_000]]);
+  });
+
+  // An owner route: this pi renews its login while the run goes, so a login
+  // shorter than the run is kept even when the renewal asked for failed.
+  // MUTATION: borrow with `owner: false` — the short login is left out, the
+  // run is refused, and this fails.
+  it("keeps a login shorter than the run that the host could not renew now", async () => {
+    const now = Date.now();
+    const { agentDir, auth } = fakePi2(
+      { alpha: { oauth: { expires: now + 20 * 60_000 } } },
       { refuse: true },
     );
-    const r1 = await borrowLogin({
-      providers: ["openai-codex"],
-      host: refused,
-      needMs: 3600_000,
-      marginMs: 0,
-    });
-    expect(r1.ok).toBe(false);
-    expect(!r1.ok && r1.error).toMatch(/\/login openai-codex/);
-    const stillShort = fakeAuth(
-      { "openai-codex": { type: "oauth", expires: now + 1000 } },
-      { refreshTo: now + 60_000 },
-    );
-    const r2 = await borrowLogin({
-      providers: ["openai-codex"],
-      host: stillShort,
-      needMs: 3600_000,
-      marginMs: 0,
-    });
-    expect(!r2.ok && r2.error).toMatch(/does not last/);
+    const r = await borrowLogin({ agentDir, host: auth, providers: ["alpha"], needMs: HOUR });
+    if (!r.ok) throw new Error("refused");
+    expect(auth.refreshed).toHaveLength(1);
+    expect(await listed(r.credentials)).toEqual(["alpha"]);
   });
 
-  // MUTATION: drop routeProvider from borrowLogin — the openai-codex review is
-  // refused although an OpenAI login exists.
-  it("an openai-codex review runs on whichever OpenAI login pi has, and carries only that one", async () => {
+  // MUTATION: answer `ok` whatever the borrow skipped — the run starts on a
+  // login that has run out, and this fails.
+  it("refuses a login of the route that has run out and that the host could not renew, by pi's name for it", async () => {
     const now = Date.now();
-    for (const login of [
-      { type: "api_key", expires: null },
-      { type: "oauth", expires: now + 5 * 3600_000 },
-    ] as const) {
-      const r = await borrowLogin({
-        providers: ["openai-codex", "anthropic"],
-        host: fakeAuth({ openai: login, anthropic: { type: "api_key", expires: null } }),
-        needMs: 3600_000,
-        marginMs: 0,
-      });
-      expect(r).toEqual({ ok: true, refreshed: [], providers: ["openai", "anthropic"] });
-    }
-    // the provider the spec names wins when its login exists
-    const both = await borrowLogin({
-      providers: ["openai-codex"],
-      host: fakeAuth({
-        openai: { type: "api_key", expires: null },
-        "openai-codex": { type: "oauth", expires: now + 5 * 3600_000 },
-      }),
-      needMs: 3600_000,
-      marginMs: 0,
+    const expires = now + 60_000;
+    const { agentDir, auth } = fakePi2(
+      { alpha: { oauth: { expires } }, beta: {} },
+      { refuse: true },
+    );
+    const r = await borrowLogin({
+      agentDir,
+      host: auth,
+      providers: ["alpha", "beta"],
+      needMs: HOUR,
+      nameOf: (p) => p.toUpperCase(),
     });
-    expect(both).toEqual({ ok: true, refreshed: [], providers: ["openai-codex"] });
+    expect(r).toEqual({
+      ok: false,
+      refusal: {
+        code: "login-too-short",
+        logins: [{ provider: "alpha", name: "ALPHA", expiresAt: expires }],
+      },
+    });
+    // a login of a provider the run is not on refuses nothing
+    const other = await borrowLogin({ agentDir, host: auth, providers: ["beta"], needMs: HOUR });
+    expect(other.ok).toBe(true);
+    expect(auth.refreshed.map(([p]) => p)).toEqual(["alpha"]);
   });
 
-  // Only a key for another provider and no login fails with a hint; the review
-  // never switches models across providers. MUTATION: accept any configured
-  // provider — this fails.
-  it("fails a provider pi has no login for, naming /login, even with a key for another", async () => {
-    const keyOnly = fakeAuth({ anthropic: { type: "api_key", expires: null } });
-    const r = await borrowLogin({
-      providers: ["openai-codex"],
-      host: keyOnly,
-      needMs: 1,
-      marginMs: 0,
+  it("borrows nothing for a provider keyed in the environment, and refuses nothing", async () => {
+    const { agentDir, auth } = fakePi2({
+      alpha: { source: "environment", label: "ALPHA_API_KEY" },
     });
-    expect(r.ok).toBe(false);
-    expect(!r.ok && r.error).toMatch(/Run \/login openai-codex in pi/);
-    expect(!r.ok && r.error).toMatch(/does not switch models/);
-    // a key for the provider the review runs on is that provider's route
-    const keyed = fakeAuth({}, { configured: ["anthropic"] });
-    expect(
-      await borrowLogin({ providers: ["anthropic"], host: keyed, needMs: 1, marginMs: 0 }),
-    ).toEqual({ ok: true, refreshed: [], providers: ["anthropic"] });
+    expect(existsSync(join(agentDir, "auth.json"))).toBe(false);
+    const r = await borrowLogin({ agentDir, host: auth, providers: ["alpha"], needMs: HOUR });
+    if (!r.ok) throw new Error("refused");
+    expect(await listed(r.credentials)).toEqual([]);
+  });
+
+  // A host that resolved no route names no provider: the whole login, less
+  // what cannot last, and what was left out is told to the run's own host.
+  it("with no providers named, holds every login that lasts and names the ones left out", async () => {
+    const now = Date.now();
+    const expires = now + 60_000;
+    const { agentDir, auth } = fakePi2(
+      { alpha: {}, beta: { oauth: { expires: now + 5 * HOUR } }, delta: { oauth: { expires } } },
+      { refuse: true },
+    );
+    const r = await borrowLogin({ agentDir, host: auth, needMs: HOUR });
+    if (!r.ok) throw new Error("refused");
+    expect(await listed(r.credentials)).toEqual(["alpha", "beta"]);
+    expect(r.skipped).toEqual([{ provider: "delta", name: "delta", expiresAt: expires }]);
   });
 });
 
@@ -668,8 +996,38 @@ function fakeUi(o: Partial<SessionUi> & { picks?: string[]; yes?: boolean } = {}
   };
 }
 
+/** The shipped config with `[models] model` pinned to `model`, written under
+ * `dir`: for the cases about a review whose config names a provider. The
+ * shipped one names none. */
+function pinnedConfig(dir: string, model: string): string {
+  const shipped = readFileSync(join(ROOT, "config.example.toml"), "utf8");
+  const pinned = shipped.replace(/^# model = "provider\/id"$/m, `model = "${model}"`);
+  if (pinned === shipped) throw new Error("config.example.toml has no model line to pin");
+  const file = join(dir, "qcr-config-pinned.toml");
+  writeFileSync(file, pinned);
+  return file;
+}
+
+/** The shipped config with its deep tier pinned to `spec`, written under
+ * `dir`. The shipped one pins no tier. */
+function pinnedTierConfig(dir: string, spec: string): string {
+  const shipped = readFileSync(join(ROOT, "config.example.toml"), "utf8");
+  const pinned = shipped.replace(/^# "deep" = "provider\/id:high"$/m, `"deep" = "${spec}"`);
+  if (pinned === shipped) throw new Error("config.example.toml has no deep tier line to pin");
+  const file = join(dir, "qcr-config-pinned-tier.toml");
+  writeFileSync(file, pinned);
+  return file;
+}
+
 let hostN = 0;
-function fakeHost(o: Partial<PluginHost> = {}): PluginHost {
+/** A plugin host over a scratch repo and a pi that holds `providers` (one
+ * stored key, by default). `pi` is that pi's session model and how its
+ * refresh answers. */
+function fakeHost(
+  o: Omit<Partial<PluginHost>, "auth"> = {},
+  providers: FakeProviders = { alpha: {} },
+  pi: Parameters<typeof piAuth>[2] = {},
+): PluginHost & { auth: ReturnType<typeof piAuth> } {
   const dir = join(tmp, `host-${++hostN}`);
   mkdirSync(join(dir, "repo"), { recursive: true });
   const git = (...args: string[]): void =>
@@ -688,6 +1046,8 @@ function fakeHost(o: Partial<PluginHost> = {}): PluginHost {
     );
   git("init", "-q", "-b", "main");
   git("commit", "-q", "--allow-empty", "-m", "root");
+  const agentDir = join(dir, "agent");
+  writeLogins(agentDir, providers);
   return {
     cwd: join(dir, "repo"),
     env: {
@@ -697,24 +1057,58 @@ function fakeHost(o: Partial<PluginHost> = {}): PluginHost {
     },
     home: dir,
     piVersion: "1.4.0",
-    agentDir: join(dir, "agent"),
-    auth: fakeAuth({ "openai-codex": { type: "oauth", expires: Date.now() + 10 * 3600_000 } }),
+    agentDir,
+    auth: piAuth(fakeRegistry(providers), agentDir, pi),
     runner: noRunner,
     shutdown: new AbortController().signal,
     ...o,
   };
 }
 
-/** Review deps whose review() records its call and returns `result`. */
+/** One recorded call of a fake review. */
+interface FakeReviewCall {
+  target: ReviewTarget;
+  opts: ReviewOptions;
+  io: ReviewIo;
+  mode: string;
+  /** What the host's route answered (the core asks once it has a plan). */
+  routed?: ReviewRouted;
+  /** What the run's runtime was built from: asked for by a start whose route
+   * resolved, as the core asks. */
+  runtime?: ReviewRuntimeOptions;
+}
+
+/** Review deps whose review() goes the core's way as far as the model side:
+ * it asks the host for the route, refuses a start that has none in the
+ * route's own words, asks for the runtime, records all of it, and returns
+ * `result`. */
 function fakeReview(result: Partial<ReviewResult> = {}): ReviewCommandDeps & {
-  calls: Array<{ target: ReviewTarget; opts: ReviewOptions; io: ReviewIo; mode: string }>;
+  calls: FakeReviewCall[];
 } {
-  const calls: Array<{ target: ReviewTarget; opts: ReviewOptions; io: ReviewIo; mode: string }> =
-    [];
+  const calls: FakeReviewCall[] = [];
+  let handed: ReviewRuntimeOptions | undefined;
   const done =
     (mode: string) =>
     async (target: ReviewTarget, opts: ReviewOptions, io: ReviewIo = {}) => {
-      calls.push({ target, opts, io, mode });
+      const call: FakeReviewCall = { target, opts, io, mode };
+      calls.push(call);
+      if (opts.route) call.routed = await opts.route();
+      const routed = call.routed;
+      if (routed && !routed.result.ok && mode === "review") {
+        const why = refusalText(routed.result.refusal, routed.surface, routed.facts);
+        return {
+          data: { schema_version: 1, ok: false, errors: [why] },
+          markdown: null,
+          text: `✗ ${why}`,
+          exitCode: 1 as const,
+          destinations: null,
+        };
+      }
+      if (mode === "review") {
+        handed = undefined;
+        opts.runtime({ runDir: join(tmp, "no-such-run") });
+        if (handed !== undefined) call.runtime = handed;
+      }
       return {
         data: { schema_version: 1, ok: true },
         markdown: "# Review\n\nNo findings.\n",
@@ -729,8 +1123,9 @@ function fakeReview(result: Partial<ReviewResult> = {}): ReviewCommandDeps & {
     review: done("review"),
     preview: done("preview"),
     root: () => ROOT,
-    runtime: () => {
-      throw new Error("no runtime in a fake review");
+    runtime: (_cfg, o) => {
+      handed = o;
+      return {} as ReviewRuntime;
     },
   };
 }
@@ -801,31 +1196,291 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
     const ui = fakeUi({ mode: "print", interactive: false });
     await runReviewCommand("", fakeHost(), ui, deps);
     expect(ui.asked).toHaveLength(0);
-    expect(ui.printed).toEqual(["# Review\n\nNo findings.\n"]);
+    // nobody to ask: the line that names the model is printed, then the review
+    expect(ui.printed).toEqual([
+      "model: alpha/m-2 (the provider pi has a credential for)",
+      "# Review\n\nNo findings.\n",
+    ]);
     const uj = fakeUi({ mode: "print", interactive: false });
     await runReviewCommand("--json", fakeHost(), uj, deps);
     expect(JSON.parse(uj.printed[0]!)).toEqual({ schema_version: 1, ok: true });
   });
 
-  it("refuses with pi's /login when only a key is there, before anything runs", async () => {
+  // The shipped config pins no model, so the review runs on whichever
+  // provider pi has a credential for: no provider is "the wrong one". The
+  // providers here have names no code could know.
+  // MUTATION: restore a pinned model in MODELS_TIER_DEFAULTS or the example
+  // config — the route is that pin, it has no credential here, the review is
+  // refused, and this fails.
+  it("runs on whatever credential pi has: a stored login or a key in the environment, of any provider", async () => {
+    const homes: FakeProviders[] = [
+      { beta: { oauth: { expires: Date.now() + 10 * HOUR } } },
+      { delta: { source: "environment", label: "DELTA_API_KEY" } },
+    ];
+    for (const providers of homes) {
+      const provider = Object.keys(providers)[0]!;
+      const deps = fakeReview();
+      const ui = fakeUi();
+      const host = fakeHost({}, providers);
+      await runReviewCommand("", host, ui, deps);
+      expect(ui.notes.filter(([l]) => l === "error")).toEqual([]);
+      const call = deps.calls[0]!;
+      expect(call.mode).toBe("review");
+      expect(isPinned(call.opts.config.models.model)).toBe(false);
+      expect(call.routed).toMatchObject({
+        surface: "plugin",
+        result: { ok: true, route: { spec: `${provider}/m-2`, source: "only-credential" } },
+      });
+      // the person is told which model runs, once
+      expect(ui.notes.filter(([, m]) => m.startsWith("model: "))).toEqual([
+        ["info", `model: ${provider}/m-2 (the provider pi has a credential for)`],
+      ]);
+    }
+  });
+
+  // The run's own host resolves nothing: it is handed the route this pi
+  // resolved, with pi's model object, and the login of that provider alone.
+  // MUTATION: drop `...runHost` from the runtime's options in reviewJob — the
+  // nested host gets no route and no login, and this fails.
+  it("hands the run's host the route as fixed, pi's model object, and only the route's login", async () => {
+    const deps = fakeReview();
+    const host = fakeHost({}, { alpha: {}, beta: {} }, { model: fakeModel("beta", "m-2") });
+    await runReviewCommand("", host, fakeUi(), deps);
+    const handed = deps.calls[0]!.runtime!;
+    expect(handed.hostPi).toBe(true);
+    expect(handed.fenceDirs).toEqual([host.agentDir]);
+    expect(handed.route).toMatchObject({
+      fixed: { spec: "beta/m-2", source: "pi-provider" },
+      model: { provider: "beta", id: "m-2" },
+    });
+    const store = handed.credentials as { list(): Promise<readonly { providerId: string }[]> };
+    expect((await store.list()).map((c) => c.providerId)).toEqual(["beta"]);
+    // the private agent dir gets no login file: the host holds it in memory
+    const run = mkdtempSync(join(tmp, "prepared-"));
+    writeFileSync(join(host.agentDir, "models-store.json"), "{}");
+    const prepared = deps.calls[0]!.opts.prepareHost!({
+      root: ROOT,
+      srcAgentDir: host.agentDir,
+      agentDir: join(run, "agent"),
+      cwd: join(run, "out"),
+      cfg: deps.calls[0]!.opts.config,
+      needMs: 60_000,
+      checkouts: [],
+      profile: { lookup: {} },
+    });
+    expect(existsSync(join(prepared.agentDir, "auth.json"))).toBe(false);
+    // and pi's catalog overlay rides along, so the host knows what this pi knows
+    expect(existsSync(join(prepared.agentDir, "models-store.json"))).toBe(true);
+  });
+
+  // A config that pins a model names its provider, and the review runs on
+  // that model or not at all.
+  it("with a pinned model whose provider has no credential, refuses naming the pin and pi's /login", async () => {
     const deps = fakeReview();
     const ui = fakeUi();
-    const host = fakeHost({ auth: fakeAuth({ anthropic: { type: "api_key", expires: null } }) });
+    // gamma's model is served nowhere else: there is no provider to move to
+    const host = fakeHost({}, { alpha: {}, gamma: { source: "none", models: ["g-9"] } });
+    const config = pinnedConfig(host.home, "gamma/g-9");
+    host.env["QCR_CONFIG"] = config;
     await runReviewCommand("", host, ui, deps);
-    expect(deps.calls).toHaveLength(0);
+    expect(deps.calls[0]!.runtime).toBeUndefined();
+    const said = ui.notes.find(([l]) => l === "error")?.[1] ?? "";
+    expect(said).toContain(
+      `this review is pinned to gamma/g-9 ([models] model in ${config}), and pi has no credential for gamma.`,
+    );
+    expect(said).toMatch(
+      /Sign in with \/login in pi, or drop the pin \(remove model from \[models\]\)/,
+    );
+    // nothing on this surface points at a qcr bin, which may not be installed
+    expect(said).not.toMatch(/qcr model|qcr login/);
+  });
+
+  it("with no credential at all, refuses with pi's /login", async () => {
+    const deps = fakeReview();
+    const ui = fakeUi();
+    await runReviewCommand("", fakeHost({}, { gamma: { source: "none" } }), ui, deps);
+    expect(ui.notes.find(([l]) => l === "error")?.[1]).toBe(
+      "✗ pi has no model credential. Run /login in pi, then /qcr-review again.",
+    );
+    expect(deps.calls[0]!.runtime).toBeUndefined();
+  });
+
+  // --model is the whole review's model for the run.
+  // MUTATION: drop the stripPins call under `cmd.model` in reviewJob — the
+  // pinned tier keeps its own model, and this fails.
+  it("--model is the route's pin, and no tier or lens keeps a model of its own under it", async () => {
+    const deps = fakeReview();
+    const ui = fakeUi();
+    const host = fakeHost({}, { alpha: {}, beta: { models: ["m-2", "b-3"] } });
+    host.env["QCR_CONFIG"] = pinnedTierConfig(host.home, "alpha/m-2:high");
+    // as the config stands, the deep tier is on its own model
+    await runReviewCommand("", host, fakeUi(), deps);
+    expect(deps.calls[0]!.opts.config.models.tiers.deep).toBe("alpha/m-2:high");
+    await runReviewCommand("--model beta/b-3:low", host, ui, deps);
+    const call = deps.calls[1]!;
+    expect(call.opts.config.models.tiers.deep).toBe(":high");
+    expect(call.opts.config.models.model).toBe("");
+    expect(call.routed).toMatchObject({
+      result: { ok: true, route: { spec: "beta/b-3", source: "flag", thinking: "low" } },
+      notes: ["--model replaces 1 pinned tier and lens model for this run"],
+    });
+    expect(ui.notes).toContainEqual(["info", "model: beta/b-3 (pinned by --model)"]);
+    // only the flag's provider is borrowed now: no spec names another
+    const store = call.runtime!.credentials as {
+      list(): Promise<readonly { providerId: string }[]>;
+    };
+    expect((await store.list()).map((c) => c.providerId)).toEqual(["beta"]);
+    expect(parseReviewCommand("--model")).toMatchObject({
+      error: expect.stringMatching(/--model needs a value/),
+    });
+    expect(parseReviewCommand("12 --model beta/b-3")).toMatchObject({ model: "beta/b-3" });
+  });
+
+  // Two providers tie and nothing was chosen: the person is asked once,
+  // through pi's own select, and the answer is remembered beside pi's logins.
+  // MUTATION: drop the writeModelChoice call from routeInPi — the second
+  // review asks again, and this fails.
+  it("asks once which provider when two tie, remembers it, and does not ask again", async () => {
+    const deps = fakeReview();
+    const host = fakeHost({}, { alpha: {}, beta: {} });
+    const titles: string[] = [];
+    const ui = fakeUi({
+      select: async (title, options) => {
+        titles.push(title);
+        ui.asked.push(options);
+        return options.find((x) => x.startsWith("beta/"));
+      },
+    });
+    await runReviewCommand("", host, ui, deps);
+    expect(titles).toEqual(["QuickReview: which provider runs the review?"]);
+    // the first row is the one the order would take; each says what is
+    // known of its price (the fakes' models were never measured)
+    expect(ui.asked).toEqual([
+      [
+        "alpha/m-2    Alpha, an API key stored in pi    no estimate",
+        "beta/m-2     Beta, an API key stored in pi    no estimate",
+      ],
+    ]);
+    expect(ui.notes).toContainEqual([
+      "info",
+      "QuickReview will use Beta from now on. /qcr-setup model changes it.",
+    ]);
+    expect(readModelChoice(host.agentDir).choice).toMatchObject({
+      provider: "beta",
+      model: null,
+      via: "ask",
+    });
+    expect(deps.calls[0]!.routed).toMatchObject({
+      result: { ok: true, route: { spec: "beta/m-2", source: "remembered", ask: false } },
+      prefer: "beta",
+    });
+    const again = fakeUi();
+    await runReviewCommand("", host, again, deps);
+    expect(again.asked).toEqual([]);
+    expect(again.notes).toContainEqual([
+      "info",
+      "model: beta/m-2 (you picked Beta when asked; /qcr-setup model changes it)",
+    ]);
+  });
+
+  // MUTATION: leave `choice` as the file read it when the write failed in
+  // routeInPi — the review runs on the order's first provider, and this fails.
+  it("runs on an answer the agent dir would not keep, and says why it was not kept", async () => {
+    const deps = fakeReview();
+    const host = fakeHost({}, { alpha: {}, beta: {} });
+    refuseChoiceWrites(host.agentDir);
+    const ui = fakeUi({ picks: ["beta/m-2     Beta, an API key stored in pi    no estimate"] });
+    await runReviewCommand("", host, ui, deps);
+    expect(ui.asked).toHaveLength(1);
+    expect(ui.notes).toContainEqual([
+      "warning",
+      expect.stringMatching(/^cannot remember the choice in .+\. Pin it instead: /),
+    ]);
+    expect(ui.notes.map((n) => n[1]).join("\n")).not.toMatch(/will use Beta from now on/);
+    expect(readModelChoice(host.agentDir).choice).toBeUndefined();
+    expect(deps.calls[0]!.routed).toMatchObject({
+      result: { ok: true, route: { spec: "beta/m-2", source: "remembered" } },
+      prefer: "beta",
+    });
+    expect(deps.calls[0]!.runtime?.route).toMatchObject({ fixed: { spec: "beta/m-2" } });
+  });
+
+  // MUTATION: ask whenever `route.ask` is set in routeInPi, whatever the
+  // caller says — a preview and a JSON run open a dialog, and this fails.
+  it("never asks for a preview, for JSON, or with nobody to ask: the order decides and the line says how to change it", async () => {
+    for (const [args, o] of [
+      ["--preview", {}],
+      ["--json", {}],
+      ["", { mode: "print", interactive: false }],
+    ] as const) {
+      const deps = fakeReview();
+      const host = fakeHost({}, { alpha: {}, beta: {} });
+      const ui = fakeUi(o);
+      await runReviewCommand(args, host, ui, deps);
+      expect(ui.asked, args).toEqual([]);
+      expect(existsSync(join(host.agentDir, MODEL_CHOICE_FILE)), args).toBe(false);
+      expect(deps.calls[0]!.routed, args).toMatchObject({
+        result: { ok: true, route: { spec: "alpha/m-2", ask: true } },
+      });
+    }
+    // pi's print mode prints the line; a JSON result stays the only output
+    const deps = fakeReview();
+    const printed = fakeUi({ mode: "print", interactive: false });
+    await runReviewCommand("", fakeHost({}, { alpha: {}, beta: {} }), printed, deps);
+    expect(printed.printed[0]).toMatch(
+      /^model: alpha\/m-2 \(picked among 2 providers pi has credentials for: it has the newest model\)\. Change it: \/qcr-setup model, or --model for one run$/,
+    );
+    const json = fakeUi({ mode: "print", interactive: false });
+    await runReviewCommand("--json", fakeHost({}, { alpha: {}, beta: {} }), json, deps);
+    expect(json.printed).toHaveLength(1);
+    expect(JSON.parse(json.printed[0]!)).toEqual({ schema_version: 1, ok: true });
+  });
+
+  // MUTATION: skip the borrow in routeInPi (hand the route over without a
+  // login) — the review starts on a login that has run out, and this fails.
+  it("refuses before anything runs when pi could not renew the route's login", async () => {
+    const deps = fakeReview();
+    const ui = fakeUi();
+    const host = fakeHost(
+      {},
+      { alpha: { oauth: { expires: Date.now() + 60_000 } } },
+      { refuse: true },
+    );
+    await runReviewCommand("", host, ui, deps);
+    expect(host.auth.refreshed.map(([p]) => p)).toEqual(["alpha"]);
+    expect(deps.calls[0]!.runtime).toBeUndefined();
     expect(ui.notes.find(([l]) => l === "error")?.[1]).toMatch(
-      /\/login openai-codex.*\/qcr-review again/,
+      /^✗ your Alpha login expires at \d\d:\d\d, inside this review's 60-minute budget, and pi did not renew it\. Sign in again with \/login/,
     );
   });
 
-  it("a preview needs no login and asks nothing", async () => {
+  it("a preview borrows no login and asks nothing, and still names the model", async () => {
     const deps = fakeReview({ markdown: null, text: "price: $0.61" });
     const ui = fakeUi();
-    const host = fakeHost({ auth: fakeAuth({}) });
+    const host = fakeHost({}, { alpha: { oauth: { expires: Date.now() + 60_000 } } });
     await runReviewCommand("--preview", host, ui, deps);
     expect(deps.calls[0]!.mode).toBe("preview");
+    expect(deps.calls[0]!.routed).toMatchObject({ result: { ok: true } });
+    expect(host.auth.refreshed).toEqual([]);
     expect(ui.asked).toHaveLength(0);
     expect(ui.shown[0]).toMatch(/price: \$0\.61/);
+  });
+
+  // A host that hands no registry names no model before the run: the run's
+  // own host resolves one from the whole borrowed login.
+  it("on a host with no registry, names no route and lends the run's host the whole login to resolve one", async () => {
+    const deps = fakeReview();
+    const ui = fakeUi();
+    const full = fakeHost({}, { alpha: {}, beta: {} });
+    const { route: _none, ...auth } = full.auth;
+    await runReviewCommand("", { ...full, auth }, ui, deps);
+    const call = deps.calls[0]!;
+    expect(call.opts.route).toBeUndefined();
+    expect(call.runtime!.route).toEqual({ skipped: [] });
+    const store = call.runtime!.credentials as {
+      list(): Promise<readonly { providerId: string }[]>;
+    };
+    expect((await store.list()).map((c) => c.providerId).sort()).toEqual(["alpha", "beta"]);
   });
 
   it("says a usage error and runs nothing", async () => {
@@ -834,6 +1489,77 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
     await runReviewCommand("--nope pr", fakeHost(), ui, deps);
     expect(deps.calls).toHaveLength(0);
     expect(ui.notes[0]).toEqual(["error", expect.stringMatching(/unknown flag --nope/)]);
+  });
+
+  // MUTATION: drop the `priceKnowledge` column from providerRows
+  // (packages/pi-plugin/src/plugin/login.ts) — the question's rows say
+  // nothing of an estimate, and this fails.
+  it("each row of the provider question says what is known of its price", () => {
+    const credential = { kind: "oauth", origin: "stored", subscription: false } as const;
+    const rows = providerRows(
+      {
+        provider: "alpha",
+        modelId: MEASURED.model_id,
+        providerName: "Alpha",
+        spec: `alpha/${MEASURED.model_id}`,
+        thinking: null,
+        source: "credential-order",
+        pick: "newest",
+        piDefaultId: null,
+        custom: false,
+        movedFrom: null,
+        credential,
+        priced: true,
+        ask: true,
+        alternatives: [
+          {
+            provider: "beta",
+            providerName: "Beta",
+            modelId: "other-model",
+            spec: "beta/other-model",
+            credential,
+            priced: true,
+          },
+          {
+            provider: "gamma",
+            providerName: "Gamma",
+            modelId: "local-model",
+            spec: "gamma/local-model",
+            credential,
+            priced: false,
+          },
+        ],
+        notices: [],
+      },
+      [
+        {
+          provider: "alpha",
+          name: "Alpha",
+          credential,
+          models: [
+            {
+              provider: "alpha",
+              id: MEASURED.model_id,
+              api: MEASURED.apis[0],
+              cost: { ...MEASURED.rates },
+            },
+          ],
+        },
+        {
+          provider: "beta",
+          name: "Beta",
+          credential,
+          models: [
+            { provider: "beta", id: "other-model", api: "x", cost: { input: 4, output: 20 } },
+          ],
+        },
+      ],
+    );
+    expect(rows.map((r) => r.split(/\s{4,}/).at(-1))).toEqual([
+      "measured estimate",
+      "no estimate",
+      "no list price",
+    ]);
   });
 
   // One function builds every status line, so a later stage can enrich it.
@@ -849,6 +1575,29 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
         at + 79_000,
       ),
     ).toBe("QuickReview: reviewing PR #12 — 9 lenses, about $1.10, stops at $2.20 · 1m 19s");
+    // A run with no estimate says so and names its stop: never a price.
+    // MUTATION: drop the `p.estimateUsd === null` arm from reviewStatusLine
+    // (packages/pi-plugin/src/plugin/review.ts) — `null.toFixed` throws, and this fails.
+    expect(
+      reviewStatusLine(
+        { ...base, stage: "running", lenses: 9, estimateUsd: null, capUsd: 15 },
+        at + 79_000,
+      ),
+    ).toBe("QuickReview: reviewing PR #12 — 9 lenses, no estimate, stops at $15.00 · 1m 19s");
+    // pi has no price for the model: no dollar figure at all
+    expect(
+      reviewStatusLine(
+        { ...base, stage: "running", lenses: 9, estimateUsd: null, capUsd: null },
+        at + 79_000,
+      ),
+    ).toBe("QuickReview: reviewing PR #12 — 9 lenses, no estimate, no dollar stop · 1m 19s");
+    // an estimate with no cap (the Action's route) says only the estimate
+    expect(
+      reviewStatusLine(
+        { ...base, stage: "running", lenses: 9, estimateUsd: 1.1, capUsd: null },
+        at + 79_000,
+      ),
+    ).toBe("QuickReview: reviewing PR #12 — 9 lenses, about $1.10 · 1m 19s");
     expect(reviewStatusLine({ ...base, stage: "asking" }, at + 5_000)).toMatch(/post it\?/);
     // While lenses run, the first one's activity, and how many more are running.
     expect(
@@ -875,6 +1624,7 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
 function fakeCtx(
   ui: ReturnType<typeof fakeUi>,
   cwd: string,
+  providers: FakeProviders = { alpha: {} },
 ): { ctx: unknown; statuses: Array<string | undefined> } {
   const statuses: Array<string | undefined> = [];
   const ctx = {
@@ -882,10 +1632,8 @@ function fakeCtx(
     hasUI: ui.interactive,
     cwd,
     isIdle: () => true,
-    modelRegistry: {
-      getProviderAuthStatus: () => ({ configured: false }),
-      getProviderAuth: async () => undefined,
-    },
+    model: undefined,
+    modelRegistry: { ...fakeRegistry(providers), getProviderAuth: async () => undefined },
     ui: {
       select: (t: string, o: string[], x?: { signal?: AbortSignal }) => ui.select(t, o, x?.signal),
       confirm: (t: string, m: string, x?: { signal?: AbortSignal }) => ui.confirm(t, m, x?.signal),
@@ -977,11 +1725,6 @@ function pluginOnFakePi(
   ) => Promise<{ statuses: Array<string | undefined> }>;
 } {
   const host = fakeHost();
-  mkdirSync(host.agentDir, { recursive: true });
-  writeFileSync(
-    join(host.agentDir, "auth.json"),
-    JSON.stringify({ "openai-codex": { type: "oauth", expires: Date.now() + 10 * 3600_000 } }),
-  );
   const pi = fakePi(settings);
   createQuickReview({
     env: host.env,
@@ -1220,8 +1963,12 @@ function scriptedRunner(
 }
 
 /** A fake host whose repo has code to scan: two top-level units and the rest. */
-function scanHost(o: Partial<PluginHost> = {}): PluginHost & { head: string } {
-  const host = fakeHost(o);
+function scanHost(
+  o: Omit<Partial<PluginHost>, "auth"> = {},
+  providers?: FakeProviders,
+  pi?: Parameters<typeof piAuth>[2],
+): ReturnType<typeof fakeHost> & { head: string } {
+  const host = fakeHost(o, providers, pi);
   const git = (...args: string[]): string =>
     execFileSync(
       "git",
@@ -1627,48 +2374,250 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     expect(ui.shown.at(-1)).toMatch(/STOPPED/);
   });
 
-  // The case runner outlives one command; a later start reloads the config.
-  // MUTATION: read the providers once when the runner is built — the
-  // credentials stay the old config's, and this fails.
-  it("each case borrows the providers of the config as it reads now", async () => {
-    const host = scanHost();
-    const config = join(host.home, "qcr-config.toml");
-    const shipped = readFileSync(join(ROOT, "config.example.toml"), "utf8");
-    writeFileSync(config, shipped);
-    host.env["QCR_CONFIG"] = config;
-    const seen: { providers?: () => readonly string[] } = {};
-    const deps = fakeScan(host, { built: (o) => (seen.providers = o.providers) });
+  // A scan has one model: the route this pi resolved when the run started.
+  // MUTATION: leave `engine.caseRoute` unset in scanRouteOn — the cases get
+  // no route, each case's host resolves its own, and this fails.
+  it("plans on the route, records it on the run, and hands every case's host that one route", async () => {
+    const host = scanHost({}, { alpha: {}, gamma: { source: "none" } });
+    const seen: { route?: () => ScanCaseRoute | undefined } = {};
+    const deps = fakeScan(host, { built: (o) => (seen.route = o.route) });
     const sessions = new ScanSessions();
+    const preview = fakeUi();
+    await runScanCommand("--preview", host, preview, { sessions, deps });
+    // the plan names the model, in the plugin's words
+    expect(preview.shown.at(-1)).toContain(
+      "model: alpha/m-2 (the provider pi has a credential for)",
+    );
+    // a plan starts nothing, so no case has a route yet
+    expect(seen.route?.()).toBeUndefined();
     await runScanCommand("", host, fakeUi(), { sessions, deps });
     await sessions.idle();
-    const providers = seen.providers;
-    if (providers === undefined) throw new Error("no case runner was built");
-    expect(providers()).toContain("openai-codex");
-    writeFileSync(config, shipped.replaceAll('"openai-codex/', '"anthropic/'));
-    expect(providers()).toContain("anthropic");
-    expect(providers()).not.toContain("openai-codex");
+    const on = seen.route?.();
+    expect(on).toMatchObject({
+      route: { fixed: { spec: "alpha/m-2" }, model: { provider: "alpha", id: "m-2" } },
+      providers: ["alpha"],
+    });
+    expect(sessions.engine(host, deps).scan.status().run?.settings.model).toBe("alpha/m-2");
   });
 
-  // MUTATION: drop fillCaseAgentDir's no-file branch (copyPiAuth on a host
-  // with no auth.json) — it throws "no pi login", and this fails.
-  it("a case on an environment-key host, with no login file, gets an empty login store", () => {
-    const hostAgent = mkdtempSync(join(tmp, "host-agent-"));
-    const caseDir = mkdtempSync(join(tmp, "case-agent-"));
-    fillCaseAgentDir(hostAgent, caseDir, ["openai"]);
-    expect(readFileSync(join(caseDir, "auth.json"), "utf8")).toBe("{}\n");
-    // with a login file, only the borrowed providers ride along
-    writeFileSync(
-      join(hostAgent, "auth.json"),
-      JSON.stringify({
-        openai: { type: "api_key", key: "k1" },
-        anthropic: { type: "api_key", key: "k2" },
-      }),
+  // --model is the whole scan's model, and a plan made under it is started
+  // under it.
+  // MUTATION: drop `slashModelFlag(o.model)` from guidedScanLine — the line a
+  // preview offers starts the scan on another model, and this fails.
+  it("--model names the scan's model for one run, and every start line repeats it", async () => {
+    const host = scanHost({}, { alpha: {}, beta: { models: ["m-2", "b-3"] } });
+    host.env["QCR_CONFIG"] = pinnedTierConfig(host.home, "alpha/m-2:high");
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await runScanCommand("--preview --model beta/b-3", host, ui, { sessions, deps });
+    const shown = ui.shown.at(-1)!;
+    expect(shown).toContain("model: beta/b-3 (pinned by --model)");
+    expect(shown).toContain("--model replaces 1 pinned tier and lens model for this run");
+    expect(shown).toMatch(/Start it with `\/qcr-scan start --key \S+ --sha \S+ --model beta\/b-3`/);
+    expect(shown).toContain("or `/qcr-scan --model beta/b-3`.");
+    expect(parseScanCommand("--model beta/b-3 --delta")).toEqual({
+      kind: "guided",
+      o: { delta: true, model: "beta/b-3" },
+    });
+    expect(guidedScanLine({ delta: true, model: "beta/b-3" })).toBe(
+      "/qcr-scan --delta --model beta/b-3",
     );
-    const second = mkdtempSync(join(tmp, "case-agent-"));
-    fillCaseAgentDir(hostAgent, second, ["openai"]);
-    expect(Object.keys(JSON.parse(readFileSync(join(second, "auth.json"), "utf8")))).toEqual([
-      "openai",
+    expect(SCAN_COMMAND_USAGE).toMatch(/\[--model M\]/);
+    // the run it starts is on that model
+    await runScanCommand("--model beta/b-3", host, fakeUi(), { sessions, deps });
+    await sessions.idle();
+    expect(sessions.engine(host, deps).scan.status().run?.settings.model).toBe("beta/b-3");
+    // and a verb takes it too, where the host resolves a model
+    const verb = fakeUi();
+    await runScanCommand("preview --model beta/b-3", host, verb, { sessions, deps });
+    expect(verb.shown.at(-1)).toContain("model: beta/b-3 (pinned by --model)");
+  });
+
+  // MUTATION: pass the plan no model in priceAndStart (drop `...planned`) —
+  // a scan with no credential is priced and offered, and this fails.
+  it("with no model credential, says pi's /login and starts nothing", async () => {
+    const host = scanHost({}, { gamma: { source: "none" } });
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await runScanCommand("", host, ui, { sessions, deps });
+    expect(sessions.running).toBeNull();
+    expect(deps.agents).toEqual([]);
+    expect(ui.notes.at(-1)).toEqual([
+      "error",
+      "the scan cannot start: pi has no model credential. Run /login in pi, then /qcr-scan again.",
     ]);
+  });
+
+  // The login is checked again where it is spent: before a start, for the
+  // route's provider alone.
+  // MUTATION: resolve a start's route with `run: false` in priceAndStart —
+  // the scan starts on a login that has run out, and this fails.
+  it("refuses a start when pi could not renew the route's login, in a scan's words", async () => {
+    const host = scanHost(
+      {},
+      { alpha: { oauth: { expires: Date.now() + 60_000 } } },
+      { refuse: true },
+    );
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await runScanCommand("", host, ui, { sessions, deps });
+    expect(sessions.running).toBeNull();
+    expect(deps.agents).toEqual([]);
+    expect(ui.notes.at(-1)?.[1]).toMatch(
+      /your Alpha login expires at \d\d:\d\d, inside this scan's 30-minute budget, and pi did not renew it/,
+    );
+  });
+
+  // The borrow never takes a login file it cannot read for an empty one: it
+  // throws, and the guided start is where that surfaces.
+  // MUTATION: drop the catch from priceAndStart — the command rejects with
+  // nobody told, and this fails.
+  it("a login file that cannot be read refuses the guided start, said to the person, and nothing runs", async () => {
+    const host = scanHost();
+    writeFileSync(join(host.agentDir, "auth.json"), "not the object pi writes");
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await expect(runScanCommand("", host, ui, { sessions, deps })).resolves.toBeUndefined();
+    expect(sessions.running).toBeNull();
+    expect(deps.agents).toEqual([]);
+    expect(ui.notes.at(-1)?.[0]).toBe("error");
+    expect(ui.notes.at(-1)?.[1]).toMatch(/^could not read pi's credentials at .+auth\.json: /);
+    const waited = await guidedScan(host, fakeUi(), { delta: false }, { sessions, deps });
+    expect(waited).toEqual({
+      ok: false,
+      error: expect.stringMatching(/^could not read pi's credentials at /),
+    });
+  });
+
+  // A plan and its start are one run: the answer to the plan's question
+  // holds for the start even where it could not be written, or the start is
+  // routed on another provider and its key is no longer the plan's.
+  // MUTATION: drop `held` from the routeInPi call in scanRouteOn — the start
+  // resolves on the order's first provider, the runner refuses the key as
+  // changed, and this fails.
+  it("starts on the provider picked for the plan when pi's agent dir would not keep the answer", async () => {
+    const beta = "beta/m-2     Beta, an API key stored in pi    no estimate";
+    const host = scanHost({}, { alpha: {}, beta: {} });
+    refuseChoiceWrites(host.agentDir);
+    const seen: { route?: () => ScanCaseRoute | undefined } = {};
+    const deps = fakeScan(host, { built: (o) => (seen.route = o.route) });
+    const sessions = new ScanSessions();
+    const ui = fakeUi({ picks: [beta] });
+    await runScanCommand("", host, ui, { sessions, deps });
+    await sessions.idle();
+    // asked once, for the plan; the start asked nothing
+    expect(ui.asked).toHaveLength(1);
+    expect(ui.notes).toContainEqual([
+      "warning",
+      expect.stringMatching(/^cannot remember the choice in /),
+    ]);
+    expect(readModelChoice(host.agentDir).choice).toBeUndefined();
+    expect(ui.notes.filter((n) => n[0] === "error")).toEqual([]);
+    expect(seen.route?.()).toMatchObject({
+      route: { fixed: { spec: "beta/m-2" } },
+      providers: ["beta"],
+    });
+    expect(sessions.engine(host, deps).scan.status().run?.settings.model).toBe("beta/m-2");
+  });
+
+  // The same holds across two commands: `preview`, then the start it names.
+  // (The mutation above fails this one too.)
+  it("a verb's start is on the provider picked for its preview, and the next plan asks again", async () => {
+    const beta = "beta/m-2     Beta, an API key stored in pi    no estimate";
+    const host = scanHost({}, { alpha: {}, beta: {} });
+    refuseChoiceWrites(host.agentDir);
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi({ picks: [beta] });
+    await runScanCommand("units propose", host, ui, { sessions, deps });
+    await runScanCommand("units save", host, ui, { sessions, deps });
+    await runScanCommand("preview", host, ui, { sessions, deps });
+    expect(ui.asked).toHaveLength(1);
+    expect(ui.shown.at(-1)).toContain("model: beta/m-2");
+    const start = /\/qcr-scan (start --key \S+ --sha \S+)/.exec(ui.shown.at(-1)!)?.[1];
+    expect(start).toBeDefined();
+    await runScanCommand(start!, host, ui, { sessions, deps });
+    await sessions.idle();
+    expect(ui.asked).toHaveLength(1);
+    expect(ui.shown.join("\n")).not.toMatch(/the plan changed since that preview/);
+    expect(sessions.engine(host, deps).scan.status().run?.settings.model).toBe("beta/m-2");
+    // nothing was kept, so the next plan made for a person asks again
+    await runScanCommand("--preview", host, ui, { sessions, deps });
+    expect(ui.asked).toHaveLength(2);
+  });
+
+  it("says a review's refusal of a scan", () => {
+    expect(scanWords("pi has no model credential. Run /login in pi, then /qcr-review again.")).toBe(
+      "pi has no model credential. Run /login in pi, then /qcr-scan again.",
+    );
+    expect(scanWords("inside this review's 30-minute budget")).toBe(
+      "inside this scan's 30-minute budget",
+    );
+  });
+
+  // The real case runner, as far as the login: a case borrows the route's
+  // login again, and one this pi could not renew stops the run with the fix.
+  // MUTATION: borrow the whole login in pluginScanCases (drop `providers`) —
+  // the case goes on without the route's login, and this fails.
+  it("a case whose route's login ran out stops the run, naming pi's /login, before any host is built", async () => {
+    const host = fakeHost(
+      {},
+      { alpha: { oauth: { expires: Date.now() + 60_000 } } },
+      { refuse: true },
+    );
+    const home = mkdtempSync(join(tmp, "scan-home-"));
+    const agentsDir = join(home, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(
+      join(agentsDir, "pass-scan.md"),
+      "---\nname: pass-scan\ndescription: reads\ntools: read\n---\n\nRead the files.\n",
+    );
+    const stopped: string[] = [];
+    const routed = host.auth.route!({});
+    if (!routed.result.ok) throw new Error("no route");
+    const cases = pluginScanCases({
+      host: () => host,
+      root: ROOT,
+      home,
+      route: () => ({
+        route: { fixed: (routed.result as { route: ModelRoute }).route },
+        providers: ["alpha"],
+        nameOf: routed.nameOf,
+      }),
+      agentsDir,
+      transcriptDir: join(home, "transcripts"),
+      stop: (reason) => stopped.push(reason),
+    });
+    const outcome = await cases.run(
+      { id: "c1", unit: "u", agent: "pass-scan", files: ["a.py"], prompt: "read" },
+      new AbortController().signal,
+    );
+    expect(outcome.ok).toBe(false);
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]).toMatch(
+      /^your Alpha login expires at \d\d:\d\d, inside this scan's 30-minute budget, and pi did not renew it\. Sign in again with \/login/,
+    );
+    // no private agent dir was made for the case
+    expect(existsSync(join(home, "scan", "plugin-agent"))).toBe(false);
+  });
+
+  // One catalog: the case's host must know the models the running pi
+  // resolved the route over, the ones pi learned since its build included.
+  // MUTATION: copy models.json alone in makeCaseAgentDir — a route on a model
+  // from pi's stored overlay is unknown to the case's host, and this fails.
+  it("a case's private agent dir gets pi's two catalog files and no login", () => {
+    const host = fakeHost();
+    writeFileSync(join(host.agentDir, "models.json"), '{"providers":{}}');
+    writeFileSync(join(host.agentDir, "models-store.json"), "{}");
+    expect(existsSync(join(host.agentDir, "auth.json"))).toBe(true);
+    const home = mkdtempSync(join(tmp, "scan-home-"));
+    const dir = makeCaseAgentDir(host.agentDir, home);
+    expect(dir.startsWith(join(home, "scan", "plugin-agent"))).toBe(true);
+    expect(readdirSync(dir).sort()).toEqual(["models-store.json", "models.json"]);
   });
 
   it("leaves the app's sandbox and triage to the app", async () => {
@@ -1692,17 +2641,15 @@ describe("/qcr-setup", () => {
 
   /** The plugin on a fake pi over `runner`, signed in through its agent dir,
    * with /qcr-setup run as the person types it. */
-  function setupOnFakePi(runner: Runner): {
+  function setupOnFakePi(
+    runner: Runner,
+    providers: FakeProviders = { alpha: {} },
+  ): {
     pi: ReturnType<typeof fakePi>;
     host: PluginHost;
     run: (args: string, ui: ReturnType<typeof fakeUi>) => Promise<void>;
   } {
-    const host = fakeHost({ runner });
-    mkdirSync(host.agentDir, { recursive: true });
-    writeFileSync(
-      join(host.agentDir, "auth.json"),
-      JSON.stringify({ "openai-codex": { type: "oauth", expires: Date.now() + 10 * 3600_000 } }),
-    );
+    const host = fakeHost({ runner }, providers);
     const pi = fakePi();
     createQuickReview({
       env: host.env,
@@ -1714,13 +2661,13 @@ describe("/qcr-setup", () => {
       agentDir: host.agentDir,
     })(pi.api);
     const run = async (args: string, ui: ReturnType<typeof fakeUi>): Promise<void> => {
-      const { ctx } = fakeCtx(ui, host.cwd);
+      const { ctx } = fakeCtx(ui, host.cwd, providers);
       await pi.commands.get("qcr-setup")!.handler(args, ctx);
     };
     return { pi, host, run };
   }
 
-  it("detects pi, the login, git, GitHub and the repo profile, each with what it found", async () => {
+  it("detects pi, the login, the review's model, git, GitHub and the repo profile, each with what it found", async () => {
     const lines = await runSetupChecks({
       host: fakeHost({ runner: scriptedRunner(ghOk) }),
       range,
@@ -1729,10 +2676,14 @@ describe("/qcr-setup", () => {
     expect(lines.map((l) => [l.id, l.title, l.status])).toEqual([
       [PLUGIN_SETUP_STEPS.pi, "pi version", "done"],
       [PLUGIN_SETUP_STEPS.login, "login", "done"],
+      [PLUGIN_SETUP_STEPS.model, "review model", "done"],
       [PLUGIN_SETUP_STEPS.git, "git", "done"],
       [PLUGIN_SETUP_STEPS.github, "GitHub", "done"],
       [PLUGIN_SETUP_STEPS.profile, "repo profile", "pending"],
     ]);
+    expect(lines.find((l) => l.id === PLUGIN_SETUP_STEPS.model)!.found).toBe(
+      "alpha/m-2 (the one provider pi has a usable credential for)",
+    );
     expect(lines.find((l) => l.id === PLUGIN_SETUP_STEPS.pi)!.found).toBe(
       "pi 1.4.0, inside ^1.4.0",
     );
@@ -1742,44 +2693,170 @@ describe("/qcr-setup", () => {
     );
   });
 
-  it("leaves the login missing with the /login hint when only another provider's key is there", async () => {
-    const host = fakeHost({
-      runner: scriptedRunner({}),
-      auth: fakeAuth({ anthropic: { type: "api_key", expires: null } }),
-    });
+  // The shipped config pins no model: a credential for any provider is one a
+  // review can run on, wherever pi found it.
+  // MUTATION: read the login step off the stored logins (`host.auth.logins()`)
+  // instead of the route — the key in the environment reads missing, and this
+  // fails.
+  it("with no model pinned, a credential for any provider is the login, and none is missing", async () => {
+    const homes: Array<[FakeProviders, string]> = [
+      [{ beta: {} }, "Beta, an API key stored in pi: a review runs on beta/m-2"],
+      [
+        { delta: { oauth: { expires: Date.now() + 10 * HOUR } } },
+        "Delta, signed in with pi: a review runs on delta/m-2",
+      ],
+      [
+        { zeta: { source: "environment", label: "ZETA_API_KEY" } },
+        "Zeta, ZETA_API_KEY: a review runs on zeta/m-2",
+      ],
+    ];
+    for (const [providers, found] of homes) {
+      const host = fakeHost({ runner: scriptedRunner({}) }, providers);
+      const lines = await runSetupChecks({ host, range, root: () => ROOT });
+      const login = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
+      expect(login.status).toBe("done");
+      expect(login.found).toBe(found);
+    }
+    const none = fakeHost({ runner: scriptedRunner({}) }, { gamma: { source: "none" } });
+    const lines = await runSetupChecks({ host: none, range, root: () => ROOT });
+    const login = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
+    expect(login.status).toBe("pending");
+    expect(login.note).toBe(
+      "pi has no model credential. Run /login in pi, then /qcr-review again.",
+    );
+    // the model step has nothing to show, and is not a second failure
+    const model = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.model)!;
+    expect(model.status).toBe("pending");
+    expect(renderChecklist(lines)).toMatch(/✗ \*\*login\*\*/);
+    expect(renderChecklist(lines)).toMatch(/! \*\*review model\*\*/);
+    expect(renderChecklist(lines)).toMatch(/1 check failed\./);
+  });
+
+  it("with a pinned model, leaves the login missing when pi has no credential for its provider", async () => {
+    const host = fakeHost(
+      { runner: scriptedRunner({}) },
+      { alpha: {}, gamma: { source: "none", models: ["g-9"] } },
+    );
+    const config = pinnedConfig(host.home, "gamma/g-9");
+    host.env["QCR_CONFIG"] = config;
     const lines = await runSetupChecks({ host, range, root: () => ROOT });
     const login = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
     expect(login.status).toBe("pending");
-    expect(login.note).toMatch(/\/login openai-codex/);
-    expect(login.note).toMatch(/pi has a key for anthropic/);
+    expect(login.note).toContain(
+      `this review is pinned to gamma/g-9 ([models] model in ${config}), and pi has no credential for gamma.`,
+    );
     expect(renderChecklist(lines)).toMatch(/✗ \*\*login\*\*/);
     expect(renderChecklist(lines)).toMatch(/1 check failed\./);
   });
 
-  // The checklist reads the login the way a review borrows it: the shipped
-  // openai-codex models run on an openai login when only that one exists.
-  // MUTATION: check reviewProviders(cfg) instead of routedProviders(…) in the
-  // login step — the twin's login reads missing and this fails.
-  it("counts the OpenAI twin's login or key as the login a review runs on", async () => {
-    for (const login of [
-      { type: "oauth", expires: Date.now() + 10 * 3600_000 },
-      { type: "api_key", expires: null },
-    ]) {
-      const auth = fakeAuth({ openai: login });
-      const host = fakeHost({ runner: scriptedRunner({}), auth });
-      const lines = await runSetupChecks({ host, range, root: () => ROOT });
-      const step = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
-      expect(step.status, login.type).toBe("done");
-      expect(step.found, login.type).toMatch(/pi can reach openai,/);
-      // and the review itself borrows that same login
-      const borrowed = await borrowLogin({
-        providers: ["openai-codex"],
-        host: auth,
-        needMs: 60_000,
-        marginMs: 0,
-      });
-      expect(borrowed, login.type).toMatchObject({ ok: true, providers: ["openai"] });
-    }
+  // The checklist reads the credential the way a review resolves its route:
+  // a pin on a provider with no credential runs where the same model is
+  // served under a credential, when that is no guess.
+  // MUTATION: test `inventory.some((e) => e.provider === <the pin's provider>)`
+  // in the login step instead of resolving the route — the moved pin reads
+  // missing, and this fails.
+  it("counts the provider a pinned model moves to as the login a pinned review runs on", async () => {
+    const host = fakeHost(
+      { runner: scriptedRunner({}) },
+      { gamma: { source: "none", models: ["shared-3"] }, "gamma-two": { models: ["shared-3"] } },
+    );
+    host.env["QCR_CONFIG"] = pinnedConfig(host.home, "gamma/shared-3");
+    const lines = await runSetupChecks({ host, range, root: () => ROOT });
+    const step = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login)!;
+    expect(step.status).toBe("done");
+    expect(step.found).toBe(
+      "Gamma-two, an API key stored in pi: a review runs on gamma-two/shared-3",
+    );
+    expect(lines.find((l) => l.id === PLUGIN_SETUP_STEPS.model)!.found).toMatch(
+      /^gamma-two\/shared-3 \(pinned by \[models\] model in .*; it runs on Gamma-two, since pi has no credential for gamma\)$/,
+    );
+  });
+
+  // /qcr-setup model: the one way to change the remembered choice where no
+  // qcr bin is installed.
+  // MUTATION: write `via: "ask"` from modelSetup — a stated choice would be a
+  // preference the order may override, and this fails.
+  it("`model` picks the provider through pi's select, remembers it as a stated choice, and says the new route", async () => {
+    const providers: FakeProviders = { alpha: {}, beta: {} };
+    const { host, run } = setupOnFakePi(scriptedRunner(ghOk), providers);
+    const titles: string[] = [];
+    const ui = fakeUi({
+      select: async (title, options) => {
+        titles.push(title);
+        ui.asked.push(options);
+        return options.find((x) => x.startsWith("beta/"));
+      },
+    });
+    await run("model", ui);
+    expect(titles).toEqual(["QuickReview: which provider do reviews run on?"]);
+    expect(ui.asked).toEqual([
+      [
+        "alpha/m-2    Alpha, an API key stored in pi",
+        "beta/m-2     Beta, an API key stored in pi",
+        AUTOMATIC,
+      ],
+    ]);
+    expect(readModelChoice(host.agentDir).choice).toMatchObject({
+      provider: "beta",
+      model: null,
+      via: "use",
+    });
+    expect(ui.notes.at(-1)).toEqual([
+      "info",
+      "QuickReview will use Beta from now on.\nmodel: beta/m-2 (your choice; /qcr-setup model changes it)",
+    ]);
+    // automatic forgets the choice, and the rule picks again
+    const back = fakeUi({ picks: [AUTOMATIC] });
+    await run("model", back);
+    expect(existsSync(join(host.agentDir, MODEL_CHOICE_FILE))).toBe(false);
+    expect(back.notes.at(-1)?.[1]).toMatch(
+      /^QuickReview picks the model again\.\nmodel: alpha\/m-2 \(picked among 2 providers/,
+    );
+    // dismissed: nothing changes and nothing is said
+    const dismissed = fakeUi();
+    await run("model", dismissed);
+    expect(dismissed.notes).toEqual([]);
+    expect(existsSync(join(host.agentDir, MODEL_CHOICE_FILE))).toBe(false);
+  });
+
+  it("`model` with nobody to ask says the route and how to name a model, and changes nothing", async () => {
+    const { pi, host, run } = setupOnFakePi(scriptedRunner(ghOk), { alpha: {}, beta: {} });
+    const ui = fakeUi({ interactive: false, mode: "rpc" });
+    await run("model", ui);
+    expect(ui.asked).toEqual([]);
+    expect(existsSync(join(host.agentDir, MODEL_CHOICE_FILE))).toBe(false);
+    const said = reviewMessages(pi).at(-1)!;
+    expect(said).toMatch(/^model: alpha\/m-2 \(picked among 2 providers/);
+    expect(said).toContain("--model <provider>/<id>");
+    // with no credential there is nothing to choose among: the refusal says the fix
+    const none = setupOnFakePi(scriptedRunner(ghOk), { gamma: { source: "none" } });
+    await none.run("model", fakeUi());
+    expect(reviewMessages(none.pi).at(-1)).toBe(
+      "model: none\npi has no model credential. Run /login in pi, then /qcr-review again.",
+    );
+  });
+
+  // The checklist's optional step: pending only while two providers tie and
+  // nothing was chosen, and then the bare command offers the pick.
+  // MUTATION: return `found` for a route whose `ask` is set in the model
+  // step — the pick is never offered, and this fails.
+  it("offers the provider pick after the list while two providers tie, before the profile offer", async () => {
+    const { pi, host, run } = setupOnFakePi(scriptedRunner(ghOk), { alpha: {}, beta: {} });
+    const ui = fakeUi({ picks: ["beta/m-2     Beta, an API key stored in pi", "No, not now"] });
+    await run("", ui);
+    expect(reviewMessages(pi)[0]).toContain(
+      "- ! **review model** — alpha/m-2 (the newest model among 2 providers). pi has credentials for 2 providers: `/qcr-setup model` picks the one reviews run on",
+    );
+    expect(reviewMessages(pi)[0]).toMatch(/Ready\./);
+    expect(ui.asked.map((o) => o.at(-1))).toEqual([AUTOMATIC, "Yes, set up this repo's profile"]);
+    expect(readModelChoice(host.agentDir).choice).toMatchObject({ provider: "beta", via: "use" });
+    // chosen: the step is done, and only the profile is offered
+    const again = fakeUi({ picks: ["No, not now"] });
+    await run("", again);
+    expect(reviewMessages(pi).at(-1)).toContain(
+      "- ✓ **review model** — beta/m-2 (you chose it (/qcr-setup model))",
+    );
+    expect(again.asked).toEqual([["No, not now", "Yes, set up this repo's profile"]]);
   });
 
   it("reads a GitHub token's presence only", async () => {
@@ -1821,7 +2898,7 @@ describe("/qcr-setup", () => {
     const shown = reviewMessages(pi);
     expect(shown).toHaveLength(1);
     expect(shown[0]).toMatch(/^QuickReview setup/);
-    for (const title of ["pi version", "login", "git", "GitHub"])
+    for (const title of ["pi version", "login", "review model", "git", "GitHub"])
       expect(shown[0]).toContain(`- ✓ **${title}**`);
     expect(shown[0]).toContain("- ! **repo profile**");
     expect(shown[0]).toMatch(/Ready\./);
@@ -1909,6 +2986,7 @@ describe("/qcr-setup", () => {
     expect(app.list().map((l) => l.id)).toEqual([
       PLUGIN_SETUP_STEPS.pi,
       PLUGIN_SETUP_STEPS.login,
+      PLUGIN_SETUP_STEPS.model,
       PLUGIN_SETUP_STEPS.git,
       "repo_pick",
       PLUGIN_SETUP_STEPS.github,

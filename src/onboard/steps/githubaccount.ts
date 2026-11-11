@@ -278,8 +278,8 @@ function userConfig(text: string, login: string): string | string[] {
   return patchTomlSection(next, "ingress", ingressBlock(polling));
 }
 
-/** Read config.toml, seeding it from the shipped template on a fresh install
- * (the LLM step normally has already). */
+/** Read config.toml, seeding it from the shipped template on a fresh install:
+ * no earlier step writes one (the model step, order 30, writes no file). */
 function configText(ctx: StepContext): { text: string | null; seeded: boolean; detail: string } {
   const path = ctx.adapters.paths.configPath;
   const text = readTextOrNull(path);
@@ -599,7 +599,7 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
       "you, as comments stating the verdict. The alternative is a GitHub App (webhooks, its own bot identity). Call this tool " +
       "with no arguments: where gh is signed in it goes straight down the own-account route, saves your token (0600, never " +
       "shown), sets up its refresh, and lists your repositories to pick one from — then call it again with repo.",
-    // 33: after the LLM step (30) seeds config.toml, BEFORE the interview (35)
+    // 33: after the model step (30), which writes no file, BEFORE the interview (35)
     // — which asks the App questions only on the App route and reads the
     // repo and login this step records — and before the App step (40).
     order: 33,

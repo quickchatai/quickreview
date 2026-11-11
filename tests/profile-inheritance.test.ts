@@ -95,8 +95,8 @@ function agents(name: string): Map<string, string> {
 
 /** The body of one built baseline variant. */
 function baselineBody(name: string): string {
-  const body = agents(name).get("pass-baseline--terra-med");
-  if (body === undefined) throw new Error("no pass-baseline--terra-med built");
+  const body = agents(name).get("pass-baseline--light");
+  if (body === undefined) throw new Error("no pass-baseline--light built");
   return body;
 }
 
@@ -194,7 +194,7 @@ describe("addenda merge down the chain", () => {
     expect(at("RULE A (base)")).toBeLessThan(at("RULE B (child)"));
     expect(at("RULE B (child)")).toBeLessThan(at("RULE D (child)"));
     // The scope follows the replacing entry, not the replaced one.
-    expect(agents("child").get("pass-security--sol-high")).not.toContain("RULE B (child)");
+    expect(agents("child").get("pass-security--deep")).not.toContain("RULE B (child)");
   });
 
   it("the replacing entry's scope wins", () => {
@@ -204,8 +204,8 @@ describe("addenda merge down the chain", () => {
       addenda: { "10-b.md": ["rule-b", "all", "RULE B (everywhere)"] },
     });
     const built = agents("child");
-    expect(built.get("pass-validate--sol-high")).toContain("## RULE B (everywhere)");
-    expect(built.get("pass-validate--sol-high")).not.toContain("## RULE A (base)");
+    expect(built.get("pass-validate--deep")).toContain("## RULE B (everywhere)");
+    expect(built.get("pass-validate--deep")).not.toContain("## RULE A (base)");
   });
 
   it("dropping an id and defining it again moves it to the tail", () => {
@@ -302,10 +302,10 @@ describe("scalars: the nearest profile that sets one wins", () => {
     profile("dj", { toml: 'extends = "default"\necosystem = "django"\n' });
     profile("inherits", { toml: 'extends = "dj"\n' });
     profile("overrides", { toml: 'extends = "dj"\necosystem = "none"\n' });
-    expect(baselineTier("")).toBe("terra-med");
-    expect(baselineTier("dj")).toBe("sol-med"); // the django tier gate
-    expect(baselineTier("inherits")).toBe("sol-med");
-    expect(baselineTier("overrides")).toBe("terra-med");
+    expect(baselineTier("")).toBe("light");
+    expect(baselineTier("dj")).toBe("standard"); // the django tier gate
+    expect(baselineTier("inherits")).toBe("standard");
+    expect(baselineTier("overrides")).toBe("light");
   });
 
   it("a base naming an unknown ecosystem breaks every child, overridden or not", () => {

@@ -5,6 +5,7 @@
 import type { PrFileEntry } from "./githubcore.js";
 import { packByBudget } from "./packing.js";
 import { SECURITY_FAMILY } from "./passes.js";
+import { ADD_TIER, BASE_TIER } from "./types.js";
 
 export interface PrFile {
   filename: string;
@@ -62,17 +63,17 @@ export function migrationGate(files: PrFile[]): boolean {
   return files.some((f) => isMigrationPath(f.filename));
 }
 
-/** Pass model tier for a round: small quiet diffs start at terra-med; a
- * migration or a size at/over `smallDiffLines` starts at sol-med. (Risk passes
+/** Pass model tier for a round: small quiet diffs start at light; a
+ * migration or a size at/over `smallDiffLines` starts at standard. (Risk passes
  * and pass-validate have fixed tiers in config — this function only picks the
  * base tier for the raisable passes.) */
 export function passTier(
   files: PrFileEntry[],
   opts: { migrationGate: boolean; smallDiffLines: number },
-): "terra-med" | "sol-med" {
+): typeof BASE_TIER | typeof ADD_TIER {
   const total = files.reduce((n, f) => n + f.additions + f.deletions, 0);
-  if (total < opts.smallDiffLines && !opts.migrationGate) return "terra-med";
-  return "sol-med";
+  if (total < opts.smallDiffLines && !opts.migrationGate) return BASE_TIER;
+  return ADD_TIER;
 }
 
 // ---- pass-intent -----------------------------------------------------------

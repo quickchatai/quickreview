@@ -228,32 +228,24 @@ if (ourSkillsPresent && !cfg.skills.includes(ourSkillsDir)) cfg.skills.push(ourS
 // model. Set unconditionally, like defaultProjectTrust: seed-only-if-absent is
 // how keys silently stopped landing once pi had written settings.json itself.
 cfg.enableSkillCommands = true;
-// The configured model ("provider/model[:thinking]", [companion] model) is
-// pi's default on every start, so a fresh login or a bare `pi` never falls
-// back to a model an older login stored.
-const defModel = process.env.QCR_PI_DEFAULT_MODEL || "";
-const defMatch = /^([^/:\s]+)\/([^:\s]+)(?::([a-z]+))?$/.exec(defModel);
-if (defMatch) {
-  cfg.defaultProvider = defMatch[1];
-  cfg.defaultModel = defMatch[2];
-  if (defMatch[3]) cfg.defaultThinkingLevel = defMatch[3];
-  // Any OpenAI login serves the model: `openai-codex` (the legacy Codex login)
-  // and `openai` (Sign in with ChatGPT, or an API key) carry the same ids. When
-  // the named provider has no login and its twin has one, the default is the
-  // twin (the rule of packages/pi-plugin/src/modelroute.ts, which the companion's
-  // login-route extension applies again inside pi).
-  const twin = { "openai-codex": "openai", openai: "openai-codex" }[cfg.defaultProvider];
-  if (twin) {
-    let logins = {};
-    try { logins = JSON.parse(fs.readFileSync(process.env.HOME + "/.pi/agent/auth.json", "utf8")); } catch {}
-    const has = (p) => {
-      const c = logins[p];
-      if (c && c.type === "oauth") return true;
-      if (c && c.type === "api_key" && typeof c.key === "string" && c.key.trim() !== "") return true;
-      return p === "openai" && (process.env.OPENAI_API_KEY || "").trim() !== "";
-    };
-    if (!has(cfg.defaultProvider) && has(twin)) cfg.defaultProvider = twin;
-  }
+// A pinned model ("provider/model[:level]", [companion] model) is pi's default
+// on every start. With none pinned nothing is written about a default and
+// nothing is removed: pi starts on a model whose provider has a credential,
+// and the companion's login-route extension applies the route inside pi. No
+// model is resolved here, so a route can never be read back later as "pi's
+// own default".
+// The level is cut off only when it is one pi knows (THINKING_LEVELS,
+// packages/pi-plugin/src/reviewconfig.ts), so an id that holds a ":" stays whole.
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const defSpec = (process.env.QCR_PI_DEFAULT_MODEL || "").trim();
+const defCut = defSpec.lastIndexOf(":");
+const defLevel = defCut >= 0 && THINKING_LEVELS.includes(defSpec.slice(defCut + 1)) ? defSpec.slice(defCut + 1) : "";
+const defNamed = defLevel ? defSpec.slice(0, defCut) : defSpec;
+const defSlash = defNamed.indexOf("/");
+if (defSlash > 0 && defSlash < defNamed.length - 1 && !/\s/.test(defNamed)) {
+  cfg.defaultProvider = defNamed.slice(0, defSlash);
+  cfg.defaultModel = defNamed.slice(defSlash + 1);
+  if (defLevel) cfg.defaultThinkingLevel = defLevel;
 }
 
 fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
@@ -316,12 +308,10 @@ if [ "$ENTRY_MODE" = oneshot ]; then
   exec "$@"
 fi
 
-# OpenAI auth: the OAuth route (`/login` once inside a pi session) persists in
-# $PI_HOME_DIR/agent/auth.json on the volume and takes precedence over the env
-# var. OPENAI_API_KEY is honored when the caller passes one.
-# Any OpenAI login works: the shipped model prefix is `openai-codex/` (the
-# legacy Codex login), and a model whose provider has no login runs on the
-# other OpenAI login (`openai/`: Sign in with ChatGPT, or an API key).
+# The model credential: a login (`/login` once inside a pi session, any
+# provider pi offers) persists in $PI_HOME_DIR/agent/auth.json on the volume.
+# A provider's key the caller passes in the environment, under the name pi
+# reads, is honoured too. Nothing here names a provider or picks a model.
 
 # Memory health watcher: probes OpenViking through the host-owned
 # forward and drops an alert file into /alerts when it stops answering (and a

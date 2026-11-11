@@ -1,6 +1,7 @@
-// Passive pi auth-failure detection: no smoke calls — watch the session
-// JSONLs pi already writes and raise when sessions start failing with
-// token-expired API errors. The live signature:
+// Passive detection of a refused model credential: no smoke calls. The watch
+// reads the session JSONLs pi already writes and raises when sessions start
+// failing because the provider refused the credential (an expired or revoked
+// login, a key the provider does not accept). One live signature:
 //   "errorMessage":"Provided authentication token is expired."
 // The scanner tail-reads recently-modified *.jsonl under the pi sessions dir
 // (one nesting level: pi groups sessions by cwd) — cheap enough for a 60s
@@ -8,32 +9,64 @@
 // Only a record's own `errorMessage` FIELD is tested — never the raw line:
 // reviewer sessions store tool results verbatim (diffs, file reads, CI logs),
 // and a PR touching OAuth code puts "invalid_grant" in them as plain text.
+// The field is read by the one classifier (src/modelerrors.ts), and only its
+// `auth` kind counts: a lens child whose provider refused one model (a 403, a
+// model the account may not use) is that pass's failure, not the login's.
 import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { join, sep } from "node:path";
+import { providerErrorKind } from "./modelerrors.js";
 
-export const PI_AUTH_ERROR_RE = /authentication token is expired|invalid_grant|401 unauthorized/i;
-
-/** True when a JSONL line is a record carrying an auth-failure `errorMessage`
- * field — at any depth, since a subagent's failed message arrives nested in
- * its tool result. Text inside string values (tool output, quoted JSON) never
- * matches: it is data, not a key. Non-JSON lines never match. */
-export function lineHasAuthError(line: string): boolean {
-  if (!line.includes("errorMessage")) return false;
+/** The record in a JSONL line whose `errorMessage` says the provider refused
+ * the credential, as the provider that record names (null when it names
+ * none), or undefined when the line holds no such record. Looked for at any
+ * depth, since a lens child's failed message arrives nested in its tool
+ * result. Text inside string values (tool output, quoted JSON) never matches:
+ * it is data, not a key. Non-JSON lines never match. */
+export function authErrorIn(line: string): { provider: string | null } | undefined {
+  if (!line.includes("errorMessage")) return undefined;
   let record: unknown;
   try {
     record = JSON.parse(line);
   } catch {
-    return false;
+    return undefined;
   }
-  const visit = (x: unknown, depth: number): boolean => {
-    if (depth > 12 || typeof x !== "object" || x === null) return false;
-    if (Array.isArray(x)) return x.some((y) => visit(y, depth + 1));
+  const visit = (x: unknown, depth: number): { provider: string | null } | undefined => {
+    if (depth > 12 || typeof x !== "object" || x === null) return undefined;
+    if (Array.isArray(x)) {
+      for (const y of x) {
+        const found = visit(y, depth + 1);
+        if (found) return found;
+      }
+      return undefined;
+    }
     const r = x as Record<string, unknown>;
     const msg = r["errorMessage"];
-    if (typeof msg === "string" && PI_AUTH_ERROR_RE.test(msg)) return true;
-    return Object.values(r).some((v) => visit(v, depth + 1));
+    if (typeof msg === "string" && providerErrorKind(msg) === "auth") {
+      const provider = r["provider"];
+      return { provider: typeof provider === "string" && provider !== "" ? provider : null };
+    }
+    for (const v of Object.values(r)) {
+      const found = visit(v, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
   };
   return visit(record, 0);
+}
+
+/** True when a JSONL line is a record carrying a refused-credential
+ * `errorMessage` field (`authErrorIn`). */
+export function lineHasAuthError(line: string): boolean {
+  return authErrorIn(line) !== undefined;
+}
+
+/** What a refused model credential means for the bot, in one sentence: the
+ * anomaly's text and the TUI alert's. `providers` are the ones the failing
+ * records named; with none, the sentence does not guess one. */
+export function credentialRefusedText(providers: readonly string[]): string {
+  const named = [...new Set(providers.filter((p) => p !== ""))];
+  const who = named.length > 0 ? named.join(", ") : "the provider";
+  return `model credential: ${who} refused it. Reviews wait until it is fixed: sign in again with /login in the container for a login, or replace the key.`;
 }
 
 /** Only the tail is read: session JSONLs grow large, and a live auth failure
@@ -43,6 +76,9 @@ export const AUTH_TAIL_BYTES = 128 * 1024;
 export interface AuthScanHit {
   file: string;
   mtimeMs: number;
+  /** The providers the file's new failing records named, each once; empty
+   * when none named one. */
+  providers: string[];
 }
 
 /** The complete lines of `path` not yet scanned: from `from` (clamped into the
@@ -68,7 +104,7 @@ function readFrom(path: string, from: number, bytes: number): { text: string; ne
 }
 
 /** Scan *.jsonl files modified at/after `sinceMs` (dir + one sublevel) for
- * auth-error signatures. Unreadable files are skipped — observation must
+ * refused-credential records. Unreadable files are skipped — observation must
  * never throw into the daemon tick — and counted (`scanPiAuth`'s `unread`),
  * so a caller keeps them inside its next window.
  *
@@ -138,7 +174,11 @@ function scanPiAuth(
       try {
         const { text, next } = readFrom(path, seen?.get(path) ?? 0, AUTH_TAIL_BYTES);
         seen?.set(path, next);
-        if (text.split("\n").some(lineHasAuthError)) hits.push({ file: path, mtimeMs: st.mtimeMs });
+        const refused = text.split("\n").flatMap((line) => authErrorIn(line) ?? []);
+        if (refused.length > 0) {
+          const named = refused.flatMap((r) => (r.provider === null ? [] : [r.provider]));
+          hits.push({ file: path, mtimeMs: st.mtimeMs, providers: [...new Set(named)] });
+        }
       } catch {
         unread++;
       }
@@ -162,6 +202,9 @@ export const AUTH_FLAG_FRESH_MS = 30 * 60 * 1000;
 export interface PiAuthStatus {
   last_at: string;
   hits: number;
+  /** The provider (or providers) the newest detection's records named; absent
+   * when they named none. */
+  provider?: string;
 }
 
 /**
@@ -173,6 +216,7 @@ export interface PiAuthStatus {
 export class PiAuthWatch {
   private sinceMs: number;
   private lastErrorAt: number | null = null;
+  private lastProviders: string[] = [];
   private totalHits = 0;
   /** Per-file offset already scanned — a match is a NEW error line, never an
    * old one the tail still holds. */
@@ -208,6 +252,7 @@ export class PiAuthWatch {
     if (scans.every((x) => x.unread === 0)) this.sinceMs = started - 60 * 1000;
     if (hits.length > 0) {
       this.lastErrorAt = started;
+      this.lastProviders = [...new Set(hits.flatMap((h) => h.providers))];
       this.totalHits += hits.length;
     }
     return hits;
@@ -216,6 +261,10 @@ export class PiAuthWatch {
   status(): PiAuthStatus | undefined {
     if (this.lastErrorAt === null) return undefined;
     if (this.now().getTime() - this.lastErrorAt > AUTH_FLAG_FRESH_MS) return undefined;
-    return { last_at: new Date(this.lastErrorAt).toISOString(), hits: this.totalHits };
+    return {
+      last_at: new Date(this.lastErrorAt).toISOString(),
+      hits: this.totalHits,
+      ...(this.lastProviders.length > 0 ? { provider: this.lastProviders.join(", ") } : {}),
+    };
   }
 }

@@ -26,8 +26,11 @@ vi.stubEnv(
   resolve(dirname(fileURLToPath(import.meta.url)), "fixtures", "config.toml"),
 );
 
-const { runReviewCli, parseReviewArgs, REVIEW_USAGE, reviewHelp } =
+const { runReviewCli, parseReviewArgs, providerRows, REVIEW_USAGE, reviewHelp } =
   await import("../src/reviewcli.js");
+const { MEASURED } = await import("@quickchatai/pi-quickreview/src/measured.js");
+type ModelRoute = import("@quickchatai/pi-quickreview/src/modelroute.js").ModelRoute;
+type ProviderInventory = import("@quickchatai/pi-quickreview/src/modelroute.js").ProviderInventory;
 const { contextFor } = await import("../src/bench/runner.js");
 const { reviewMemoryPort } = await import("../src/reviewmemory.js");
 const { SECURITY_FAMILY } = await import("@quickchatai/pi-quickreview/src/passes.js");
@@ -344,7 +347,7 @@ describe("qcr review: under and over the limit", () => {
     });
     const deps = {
       ...h.deps,
-      cfg: { ...h.deps.cfg, models: { ...h.deps.cfg.models, conversation: "faux/m" } },
+      cfg: { ...h.deps.cfg, models: { ...h.deps.cfg.models, model: "faux/m" } },
       runtime,
     };
     const code = await runReviewCli([], false, deps);
@@ -1199,4 +1202,132 @@ describe("qcr review: a session that runs out of time", () => {
     expect(await runReviewCli([], true, deps)).toBe(1);
     expect(readFileSync(pi.calls, "utf8").trim().split("\n")).toHaveLength(2);
   }, 60_000);
+});
+
+describe("qcr review: the contract its caller reads", () => {
+  // The caller names a contract with `qcr --schema N` (src/schemaflag.ts);
+  // the verb is handed it as `deps.contract`. This harness resolves no route,
+  // so the estimate is the fitted one: a number, which version 1 can state.
+  it("prints review schema 2 when no contract is named, and for contract 2", async () => {
+    for (const contract of [undefined, 2]) {
+      const h = harness({ repo: mkRepo(`contract-${contract ?? "none"}`), piBin: "false" });
+      const deps = { ...h.deps, ...(contract !== undefined ? { contract } : {}) };
+      expect(await runReviewCli(["--preview"], true, deps)).toBe(0);
+      const o = JSON.parse(h.lines[0]!);
+      expect(Object.keys(o)[0]).toBe("schema_version");
+      expect(o.schema_version).toBe(2);
+      // the fields version 2 added are always there
+      expect(o.preview).toMatchObject({ model: null, alternatives: [], price_basis: "measured" });
+      expect(Object.keys(o.preview.tiers)).toEqual(["light", "standard", "deep"]);
+    }
+  });
+
+  // MUTATION: stamp REVIEW_SCHEMA_VERSION in runReviewCli's `refuse` whatever
+  // the contract (src/reviewcli.ts) — a contract-1 caller's usage error is
+  // version 2, and this fails.
+  it("contract 1 reads version 1, on a preview and on a refusal the verb makes itself", async () => {
+    const h = harness({ repo: mkRepo("contract-one"), piBin: "false" });
+    const deps = { ...h.deps, contract: 1 };
+    expect(await runReviewCli(["--preview"], true, deps)).toBe(0);
+    const o = JSON.parse(h.lines[0]!);
+    expect(o.schema_version).toBe(1);
+    expect(o.preview.estimate_usd).toBeGreaterThan(0);
+
+    const bad = harness({ repo: mkRepo("contract-one-usage"), piBin: "false" });
+    expect(await runReviewCli(["--bogus"], true, { ...bad.deps, contract: 1 })).toBe(2);
+    expect(JSON.parse(bad.lines[0]!)).toMatchObject({ schema_version: 1, ok: false });
+    const plain = harness({ repo: mkRepo("contract-none-usage"), piBin: "false" });
+    expect(await runReviewCli(["--bogus"], true, plain.deps)).toBe(2);
+    expect(JSON.parse(plain.lines[0]!)).toMatchObject({ schema_version: 2, ok: false });
+  });
+});
+
+describe("qcr review: what the help and the provider question say of the price", () => {
+  it("--help says what --limit is with an estimate and without one, and names the repo's two limits", () => {
+    const help = reviewHelp();
+    expect(help).toMatch(/--limit USD\s+the limit for this run/);
+    expect(help).toMatch(/On the measured model: the estimate\s+a review may have without asking/);
+    expect(help).toMatch(/the hard stop stays twice the estimate/);
+    expect(help).toMatch(/On a model with no estimate: the stop itself/);
+    expect(help).toMatch(/--key K\s+start without asking \(over the limit, or with no estimate\)/);
+    expect(help).toMatch(/auto_limit_usd/);
+    expect(help).toMatch(/unmeasured_limit_usd/);
+    // the help names no model: the measured one is data, said by the preview
+    expect(help).not.toContain(MEASURED.model_id);
+  });
+
+  // MUTATION: drop the `priceKnowledge` column from providerRows
+  // (src/reviewcli.ts) — a person picks a provider without knowing which
+  // one has an estimate, and this fails.
+  it("each row of the provider question says what is known of its price", () => {
+    const credential = { kind: "api_key", origin: "env-key", subscription: false } as const;
+    const route: ModelRoute = {
+      provider: "alpha",
+      modelId: MEASURED.model_id,
+      providerName: "Alpha",
+      spec: `alpha/${MEASURED.model_id}`,
+      thinking: null,
+      source: "credential-order",
+      pick: "newest",
+      piDefaultId: null,
+      custom: false,
+      movedFrom: null,
+      credential: { ...credential, label: "ALPHA_KEY" },
+      priced: true,
+      ask: true,
+      alternatives: [
+        {
+          provider: "beta",
+          providerName: "Beta",
+          modelId: "other-model",
+          spec: "beta/other-model",
+          credential: { ...credential, label: "BETA_KEY" },
+          priced: true,
+        },
+        {
+          provider: "gamma",
+          providerName: "Gamma",
+          modelId: "local-model",
+          spec: "gamma/local-model",
+          credential: { ...credential, label: "GAMMA_KEY" },
+          priced: false,
+        },
+      ],
+      notices: [],
+    };
+    const inventory: ProviderInventory[] = [
+      {
+        provider: "alpha",
+        name: "Alpha",
+        credential,
+        models: [
+          {
+            provider: "alpha",
+            id: MEASURED.model_id,
+            api: MEASURED.apis[0],
+            cost: { ...MEASURED.rates },
+          },
+        ],
+      },
+      {
+        provider: "beta",
+        name: "Beta",
+        credential,
+        models: [{ provider: "beta", id: "other-model", api: "x", cost: { input: 4, output: 20 } }],
+      },
+      {
+        provider: "gamma",
+        name: "Gamma",
+        credential,
+        models: [{ provider: "gamma", id: "local-model", api: "x", cost: { input: 0, output: 0 } }],
+      },
+    ];
+    const rows = providerRows(route, inventory);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatch(/^alpha\/\S+\s+Alpha, ALPHA_KEY\s+measured estimate$/);
+    expect(rows[1]).toMatch(/^beta\/other-model\s+Beta, BETA_KEY\s+no estimate$/);
+    expect(rows[2]).toMatch(/^gamma\/local-model\s+Gamma, GAMMA_KEY\s+no list price$/);
+    // with no inventory to read, a row says only what the route knows
+    expect(providerRows(route).map((r) => r.split(/\s{4,}/).length)).toEqual([2, 2, 3]);
+  });
 });

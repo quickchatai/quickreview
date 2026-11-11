@@ -38,7 +38,7 @@ const fixture: Config = parseConfig(
   readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"),
 );
 // The shipped pins (DEFAULT_PASS_TIERS: baseline, sweep and behaviour-delta at
-// sol-high) are cleared here: these tests exercise the
+// deep) are cleared here: these tests exercise the
 // UNPINNED tier heuristics; the pins themselves are pinned in lens-knobs.test.ts.
 fixture.models.pass_tiers = {};
 
@@ -103,7 +103,7 @@ const file = (filename: string, extra: Partial<PrFileEntry> = {}): PrFileEntry =
   ...extra,
 });
 
-/** A small code change: default tier terra-med, baseline planned. */
+/** A small code change: default tier light, baseline planned. */
 const SMALL = [file("app/views.py")];
 /** A security-shaped change: pass-security (a risk pass) planned. */
 const AUTH = [file("svc/auth/token.py", { patch: "+def check(t): return t\n" })];
@@ -138,61 +138,61 @@ describe("an untuned profile changes nothing", () => {
 describe("min_tier floors the plan", () => {
   it("in the lens's row and its raisable set", () => {
     expect(row(fixture, SMALL, "pass-baseline")).toMatchObject({
-      tier: "terra-med",
-      raisable_to: ["pass-baseline--sol-med", "pass-baseline--sol-high"],
+      tier: "light",
+      raisable_to: ["pass-baseline--standard", "pass-baseline--deep"],
     });
-    profile("floor", '[lenses.pass-baseline]\nmin_tier = "sol-med"\n');
+    profile("floor", '[lenses.pass-baseline]\nmin_tier = "standard"\n');
     expect(row(tuned("floor"), SMALL, "pass-baseline")).toMatchObject({
       lens: "pass-baseline",
-      agent: "pass-baseline--sol-med",
-      tier: "sol-med",
-      raisable_to: ["pass-baseline--sol-high"],
+      agent: "pass-baseline--standard",
+      tier: "standard",
+      raisable_to: ["pass-baseline--deep"],
     });
   });
 
-  it("never lowers: a risk pass stays sol-high and pinned", () => {
-    profile("low", '[lenses.pass-security]\nmin_tier = "terra-med"\n');
+  it("never lowers: a risk pass stays deep and pinned", () => {
+    profile("low", '[lenses.pass-security]\nmin_tier = "light"\n');
     expect(row(tuned("low"), AUTH, "pass-security")).toMatchObject({
-      tier: "sol-high",
+      tier: "deep",
       raisable_to: [],
     });
   });
 
   it("raises the validator's floor; a floored lens never raises the validator", () => {
     const lowFloor = structuredClone(fixture);
-    lowFloor.models.validate_tier = "terra-med";
-    expect(row(lowFloor, SMALL, "pass-validate")?.tier).toBe("terra-med");
-    profile("vfloor", '[lenses.pass-validate]\nmin_tier = "sol-med"\n');
-    expect(row(tuned("vfloor", lowFloor), SMALL, "pass-validate")?.tier).toBe("sol-med");
-    profile("lfloor", '[lenses.pass-baseline]\nmin_tier = "sol-high"\n');
-    expect(row(tuned("lfloor", lowFloor), SMALL, "pass-validate")?.tier).toBe("terra-med");
+    lowFloor.models.validate_tier = "light";
+    expect(row(lowFloor, SMALL, "pass-validate")?.tier).toBe("light");
+    profile("vfloor", '[lenses.pass-validate]\nmin_tier = "standard"\n');
+    expect(row(tuned("vfloor", lowFloor), SMALL, "pass-validate")?.tier).toBe("standard");
+    profile("lfloor", '[lenses.pass-baseline]\nmin_tier = "deep"\n');
+    expect(row(tuned("lfloor", lowFloor), SMALL, "pass-validate")?.tier).toBe("light");
   });
 
   it("in the sweep's rows — and a floored sweep leaves the validator alone", () => {
     const swept = structuredClone(fixture);
     swept.review.sweep = true;
-    swept.models.validate_tier = "terra-med";
+    swept.models.validate_tier = "light";
     const sweepRows = (cfg: Config) =>
       plan(cfg, SMALL).pass_plan.filter((p) => p.lens === "pass-sweep");
-    expect(sweepRows(swept).map((r) => r.tier)).toEqual(["terra-med"]);
-    profile("sweep", '[lenses.pass-sweep]\nmin_tier = "sol-med"\n');
+    expect(sweepRows(swept).map((r) => r.tier)).toEqual(["light"]);
+    profile("sweep", '[lenses.pass-sweep]\nmin_tier = "standard"\n');
     const cfg = tuned("sweep", swept);
     expect(sweepRows(cfg)).toEqual([
       expect.objectContaining({
-        agent: "pass-sweep--sol-med",
-        tier: "sol-med",
-        raisable_to: ["pass-sweep--sol-high"],
+        agent: "pass-sweep--standard",
+        tier: "standard",
+        raisable_to: ["pass-sweep--deep"],
       }),
     ]);
-    expect(row(cfg, SMALL, "pass-validate")?.tier).toBe("terra-med");
+    expect(row(cfg, SMALL, "pass-validate")?.tier).toBe("light");
   });
 
   it("in the add rule: the addable lens is named with its floored variant", () => {
-    expect(addTierOf(fixture, "pass-concurrency")).toBe("sol-med");
-    expect(addTierOf(fixture, "pass-security")).toBe("sol-high");
-    profile("add", '[lenses.pass-concurrency]\nmin_tier = "sol-high"\n');
+    expect(addTierOf(fixture, "pass-concurrency")).toBe("standard");
+    expect(addTierOf(fixture, "pass-security")).toBe("deep");
+    profile("add", '[lenses.pass-concurrency]\nmin_tier = "deep"\n');
     const cfg = tuned("add");
-    expect(addTierOf(cfg, "pass-concurrency")).toBe("sol-high");
+    expect(addTierOf(cfg, "pass-concurrency")).toBe("deep");
     const order = (c: Config) =>
       buildRoundOrder({
         cfg: c,
@@ -208,9 +208,9 @@ describe("min_tier floors the plan", () => {
       });
     expect(order(fixture).addable_tiers).toBeUndefined();
     const o = order(cfg);
-    expect(o.addable_tiers).toEqual({ "pass-concurrency": "sol-high" });
+    expect(o.addable_tiers).toEqual({ "pass-concurrency": "deep" });
     expect(renderAddableLenses(o.addable_lenses, o.addable_tiers)).toContain(
-      "pass-concurrency (run `pass-concurrency--sol-high`)",
+      "pass-concurrency (run `pass-concurrency--deep`)",
     );
     // The templates tell the session to honour a named variant.
     for (const t of ["round-first.md", "round-re-review.md", "round-staleness.md"]) {
@@ -243,10 +243,10 @@ describe("effort rewrites only that lens's built variants", () => {
     globalLow.models = applyReviewEffort({ ...globalLow.models, effort: "low" });
     profile("max", '[lenses.pass-security]\neffort = "high"\n');
     const built = agents(tuned("max", globalLow));
-    expect(modelOf(built.get("pass-security--sol-high"))).toBe(
+    expect(modelOf(built.get("pass-security--deep"))).toBe(
       `openai-codex/gpt-5.6-sol:${fixture.models.effort_max}`,
     );
-    expect(modelOf(built.get("pass-baseline--sol-high"))).toBe("openai-codex/gpt-5.6-sol:low");
+    expect(modelOf(built.get("pass-baseline--deep"))).toBe("openai-codex/gpt-5.6-sol:low");
   });
 });
 
@@ -349,7 +349,7 @@ describe("max_severity raises or lowers the lens's ceiling", () => {
       '[lenses.pass-placement]\nmax_severity = "P1"\n[lenses.pass-ui]\nmax_severity = "P3"\n',
     );
     const built = agents(tuned("ceil"));
-    const validator = built.get("pass-validate--sol-high") ?? "";
+    const validator = built.get("pass-validate--deep") ?? "";
     // Raise: placement's built-in P2 cap is replaced by P1.
     const raise = validator.indexOf("Severity ceiling for `pass-placement`: `P1`");
     expect(raise).toBeGreaterThan(validator.indexOf("capped at P2 (sandbox rule)"));
@@ -359,8 +359,10 @@ describe("max_severity raises or lowers the lens's ceiling", () => {
     expect(validator).toContain(PROFILE_CAP_WORD);
     expect(DOWNGRADE_WORDS).toContain(PROFILE_CAP_WORD);
     // The lens itself is told; an untuned lens is not.
-    expect(built.get("pass-placement--sol-med")).toContain("Severity ceiling for `pass-placement`");
-    expect(built.get("pass-baseline--sol-med")).not.toContain("Severity ceiling");
+    expect(built.get("pass-placement--standard")).toContain(
+      "Severity ceiling for `pass-placement`",
+    );
+    expect(built.get("pass-baseline--standard")).not.toContain("Severity ceiling");
   });
 
   it("P0 lifts the cap entirely", () => {
@@ -376,11 +378,11 @@ describe("resolution", () => {
   it("merges down the extends chain: per lens, per key, the child wins", () => {
     profile(
       "base",
-      '[lenses.pass-ui]\nmin_tier = "sol-high"\neffort = "low"\n[lenses.pass-baseline]\nenabled = false\n',
+      '[lenses.pass-ui]\nmin_tier = "deep"\neffort = "low"\n[lenses.pass-baseline]\nenabled = false\n',
     );
     profile("child", 'extends = "base"\n[lenses.pass-ui]\neffort = "medium"\n');
     expect(tuned("child").lenses).toEqual({
-      "pass-ui": { min_tier: "sol-high", effort: "medium" },
+      "pass-ui": { min_tier: "deep", effort: "medium" },
       "pass-baseline": { enabled: false },
     });
   });
@@ -398,7 +400,7 @@ describe("resolution", () => {
       '[lenses.pass-baseline]\neffort = "low"\n[lenses.pass-tests]\nenabled = false\n',
     );
     const cfg = tuned("calm", maxPreset);
-    expect(modelOf(agents(cfg).get("pass-baseline--sol-high"))).toMatch(/:low$/);
+    expect(modelOf(agents(cfg).get("pass-baseline--deep"))).toMatch(/:low$/);
     expect(lensesOf(maxPreset, SMALL)).toContain("pass-tests");
     expect(lensesOf(cfg, SMALL)).not.toContain("pass-tests");
   });
@@ -454,9 +456,9 @@ describe("the daemon's assembly overlays the tuning (wire.ts buildParts)", () =>
 describe("the bench fingerprint records the resolved tuning", () => {
   it("present when tuned, absent (unchanged) when not", () => {
     expect(runFingerprint(tuned(""), "")).not.toHaveProperty("lenses");
-    profile("fp", '[lenses.pass-ui]\nmin_tier = "sol-high"\nenabled = true\n');
+    profile("fp", '[lenses.pass-ui]\nmin_tier = "deep"\nenabled = true\n');
     expect(runFingerprint(tuned("fp"), "fp").lenses).toEqual({
-      "pass-ui": { min_tier: "sol-high", enabled: true },
+      "pass-ui": { min_tier: "deep", enabled: true },
     });
   });
 });

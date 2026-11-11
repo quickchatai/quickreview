@@ -203,8 +203,8 @@ describe("post.review in dry-run", () => {
     const plan: PassPlanEntry[] = [
       {
         lens: "pass-baseline",
-        agent: "pass-baseline--sol-high",
-        tier: "sol-high",
+        agent: "pass-baseline--deep",
+        tier: "deep",
         raisable_to: [],
         required: true,
       },
@@ -233,7 +233,7 @@ describe("post.review in dry-run", () => {
         agents: [
           {
             execution_id: "call:pass-baseline#1",
-            agent: "pass-baseline--sol-high",
+            agent: "pass-baseline--deep",
             status: "failed",
             duration_ms: 1,
             tool_count: 0,
@@ -260,15 +260,15 @@ describe("post.review in dry-run", () => {
     const plan: PassPlanEntry[] = [
       {
         lens: "pass-baseline",
-        agent: "pass-baseline--sol-high",
-        tier: "sol-high",
+        agent: "pass-baseline--deep",
+        tier: "deep",
         raisable_to: [],
         required: true,
       },
       {
         lens: "pass-sec-access",
-        agent: "pass-sec-access--sol-high",
-        tier: "sol-high",
+        agent: "pass-sec-access--deep",
+        tier: "deep",
         raisable_to: [],
       },
     ];
@@ -305,10 +305,7 @@ describe("post.review in dry-run", () => {
         head_sha: HEAD,
         last_activity_at: "2026-10-15T10:00:03.000Z",
         last_activity: "x",
-        agents: [
-          run("pass-baseline--sol-high", "completed"),
-          run("pass-sec-access--sol-high", "failed"),
-        ],
+        agents: [run("pass-baseline--deep", "completed"), run("pass-sec-access--deep", "failed")],
       }),
     );
     const line = securityPassIncompleteLine("pass-sec-access");
@@ -336,8 +333,8 @@ describe("post.review in dry-run", () => {
   it("names a failed compose row, read from the round's recorded post rows", async () => {
     const compose: PassPlanEntry = {
       lens: "pass-sec-exploit-chain",
-      agent: "pass-sec-exploit-chain--sol-high",
-      tier: "sol-high",
+      agent: "pass-sec-exploit-chain--deep",
+      tier: "deep",
       raisable_to: [],
       strategy: "compose",
       stage: "post-discovery",
@@ -346,8 +343,8 @@ describe("post.review in dry-run", () => {
       pass_plan: [
         {
           lens: "pass-baseline",
-          agent: "pass-baseline--sol-high",
-          tier: "sol-high",
+          agent: "pass-baseline--deep",
+          tier: "deep",
           raisable_to: [],
           required: true,
         },
@@ -377,7 +374,7 @@ describe("post.review in dry-run", () => {
         agents: [
           {
             execution_id: "call:pass-baseline#1",
-            agent: "pass-baseline--sol-high",
+            agent: "pass-baseline--deep",
             status: "completed",
             duration_ms: 1,
             tool_count: 0,
@@ -386,7 +383,7 @@ describe("post.review in dry-run", () => {
           },
           {
             execution_id: "call:pass-sec-exploit-chain#1",
-            agent: "pass-sec-exploit-chain--sol-high",
+            agent: "pass-sec-exploit-chain--deep",
             strategy: "compose",
             phase: "post",
             status: "failed",
@@ -421,8 +418,8 @@ describe("post.review in dry-run", () => {
   it("names a failed family row of the round's owed sweep", async () => {
     const baseline: PassPlanEntry = {
       lens: "pass-baseline",
-      agent: "pass-baseline--sol-high",
-      tier: "sol-high",
+      agent: "pass-baseline--deep",
+      tier: "deep",
       raisable_to: [],
       required: true,
     };
@@ -432,8 +429,8 @@ describe("post.review in dry-run", () => {
         baseline,
         {
           lens: "pass-sec-access",
-          agent: "pass-sec-access--sol-high",
-          tier: "sol-high",
+          agent: "pass-sec-access--deep",
+          tier: "deep",
           raisable_to: [],
         },
       ],
@@ -470,9 +467,9 @@ describe("post.review in dry-run", () => {
         last_activity_at: "2026-10-15T10:00:03.000Z",
         last_activity: "x",
         agents: [
-          run("pass-baseline--sol-high", "completed"),
-          run("pass-baseline--sol-high", "completed", "sweep"),
-          run("pass-sec-access--sol-high", "failed", "sweep"),
+          run("pass-baseline--deep", "completed"),
+          run("pass-baseline--deep", "completed", "sweep"),
+          run("pass-sec-access--deep", "failed", "sweep"),
         ],
       }),
     );
@@ -498,15 +495,15 @@ describe("post.review in dry-run", () => {
     const secPlan: PassPlanEntry[] = [
       {
         lens: "pass-baseline",
-        agent: "pass-baseline--sol-high",
-        tier: "sol-high",
+        agent: "pass-baseline--deep",
+        tier: "deep",
         raisable_to: [],
         required: true,
       },
       {
         lens: "pass-sec-access",
-        agent: "pass-sec-access--sol-high",
-        tier: "sol-high",
+        agent: "pass-sec-access--deep",
+        tier: "deep",
         raisable_to: [],
       },
     ];
@@ -534,7 +531,7 @@ describe("post.review in dry-run", () => {
           agents: [
             {
               execution_id: "call:pass-baseline#1",
-              agent: "pass-baseline--sol-high",
+              agent: "pass-baseline--deep",
               status: "completed",
               duration_ms: 1,
               tool_count: 0,

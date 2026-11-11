@@ -27,9 +27,17 @@ import {
   RUN_FILE,
   ScanRunner,
   type ScanPorts,
+  type ScanRouted,
   type ScanSource,
   type ScanTree,
 } from "../src/setup/scanrun.js";
+import type { ModelRoute } from "@quickchatai/pi-quickreview/src/modelroute.js";
+import {
+  modelDetails,
+  previewDetails,
+  renderStatus,
+  renderThreatModelPreview,
+} from "@quickchatai/pi-quickreview/src/scan/scanrender.js";
 import { gitScanSource } from "../src/setup/scantree.js";
 import { renderPreview } from "../extensions/setup-scan.js";
 import type { UnitCut } from "../src/setup/unitcut.js";
@@ -316,7 +324,7 @@ describe("first-scan calibration, then previews from the ledger", () => {
     expect(
       rows.every(
         (e) =>
-          e.lens === "pass-scan" && e.sha === SHA1 && e.tier === "sol-med" && e.effort === "low",
+          e.lens === "pass-scan" && e.sha === SHA1 && e.tier === "standard" && e.effort === "low",
       ),
     ).toBe(true);
 
@@ -329,6 +337,43 @@ describe("first-scan calibration, then previews from the ledger", () => {
     expect(next.estimate_usd).toBeCloseTo(0.015 * (0.05 / 150) * 1000, 9);
     expect(next.cap_usd).toBe(next.estimate_usd);
     expect(next.covered).toBe(5);
+  });
+
+  // pi stamps a cost of exactly 0 on every call of a model it has no price
+  // for, so such a scan's cases "cost" 0 and the rate measured on them is 0.
+  // The measured-rate mechanism is left as it is; what is said is not "$0.00".
+  // MUTATION: make unpricedEstimate return false in scanrender.ts (or
+  // scanRanUnpriced in pricing.ts) - the texts say "$0.00" again and this fails.
+  it("a scan on a model pi has no price for says so, never $0.00: the run, its cases and the next preview", async () => {
+    const s = new ScanRunner(ports(runner({ perFile: 0 })));
+    const cal = await runToEnd(s);
+    expect(cal.run.state).toBe("complete");
+    expect(cal.run.spent_usd).toBe(0);
+    const status = renderStatus(s.status());
+    expect(status).toContain("no price for this model: no dollar stop");
+    expect(status).not.toContain("spent $0.00");
+
+    const next = await previewOf(s);
+    expect(next.mode).toBe("stage1");
+    // The mechanism is untouched: a rate of zero, an estimate of zero.
+    expect(next.rate!.usd_per_kline).toBe(0);
+    expect(next.estimate_usd).toBe(0);
+    const text = renderPreview(next);
+    expect(text).toContain("No estimate: no price for this model: no dollar stop");
+    expect(text).not.toContain("Estimate $0.00");
+    expect(text).not.toContain("$0.00/kline");
+    expect(text).not.toContain("stops hard at the estimate");
+  });
+
+  it("a priced scan still says its dollars", async () => {
+    const s = new ScanRunner(ports(runner({ perFile: 0.01 })));
+    await runToEnd(s);
+    const status = renderStatus(s.status());
+    expect(status).toMatch(/spent \$0\.05 of \$/);
+    expect(status).not.toContain("no price for this model");
+    const text = renderPreview(await previewOf(s));
+    expect(text).toMatch(/Estimate \$\d/);
+    expect(text).toContain("The run stops hard at the estimate.");
   });
 
   it("a runner that prices nothing blocks the estimate rather than calling it free", async () => {
@@ -665,7 +710,7 @@ describe("the validator — the skeptic; a profile may switch it off", () => {
   it("off: only pass-scan runs", async () => {
     const r = runner();
     await runToEnd(new ScanRunner(ports(r)));
-    expect(new Set(r.specs.map((x) => x.agent))).toEqual(new Set(["pass-scan--sol-med"]));
+    expect(new Set(r.specs.map((x) => x.agent))).toEqual(new Set(["pass-scan--standard"]));
   });
 
   it("on: it runs at the LENS's tier; a DOUBTED finding is kept as 'may not be valid', and so is a KILLED one", async () => {
@@ -683,9 +728,9 @@ describe("the validator — the skeptic; a profile may switch it off", () => {
     };
     const r = runner({ answer });
     await runToEnd(new ScanRunner(ports(r, { validator: true })));
-    // Never raised: pass-scan runs at sol-med, so its skeptic does too.
-    expect(r.specs.filter((x) => x.agent === "pass-validate--sol-med")).toHaveLength(3);
-    expect(r.specs.some((x) => x.agent === "pass-validate--sol-high")).toBe(false);
+    // Never raised: pass-scan runs at standard, so its skeptic does too.
+    expect(r.specs.filter((x) => x.agent === "pass-validate--standard")).toHaveLength(3);
+    expect(r.specs.some((x) => x.agent === "pass-validate--deep")).toBe(false);
     const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
     const byUnit = new Map(findings.map((f) => [f.unit, f]));
     expect(byUnit.get("app")).toMatchObject({
@@ -1356,5 +1401,306 @@ describe("scan runner hardening", () => {
     expect(preview.cases.length).toBeGreaterThan(1);
     expect(r.specs).toHaveLength(1);
     expect(run.cases.some((c) => c.status === "skipped")).toBe(true);
+  });
+});
+
+// One model per scan. The host resolves the scan's route and hands it to the
+// verbs that plan and start; the runner shows it, keys the plan on it and
+// records it. It resolves nothing itself: every route here is a plain value.
+describe("one model per scan: the route in the plan, the key and the record", () => {
+  const route = (over: Partial<ModelRoute> = {}): ModelRoute => ({
+    provider: "prov",
+    modelId: "model-a",
+    providerName: "Prov",
+    spec: "prov/model-a",
+    thinking: null,
+    source: "only-credential",
+    pick: "newest",
+    piDefaultId: null,
+    custom: false,
+    movedFrom: null,
+    credential: {
+      kind: "api_key",
+      origin: "env-key",
+      label: "PROV_SECRET_NAME",
+      subscription: false,
+    },
+    priced: true,
+    ask: false,
+    alternatives: [],
+    notices: [],
+    ...over,
+  });
+  const on = (over: Partial<ModelRoute> = {}, more: Partial<ScanRouted> = {}): ScanRouted => ({
+    result: { ok: true, route: route(over) },
+    surface: "app",
+    ...more,
+  });
+  const B = { modelId: "model-b", spec: "prov/model-b" };
+  const none: ScanRouted = {
+    result: { ok: false, refusal: { code: "no-credential" } },
+    surface: "app",
+    refusal: "pi has no model credential. Run `qcr login`.",
+  };
+  const preview = async (s: ScanRunner, model?: ScanRouted) => {
+    const p = await s.preview(model ? { model } : {});
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    return p.preview;
+  };
+
+  it("a host that names no model: the plan says nothing of one", async () => {
+    const p = await preview(new ScanRunner(ports(runner())));
+    expect("model" in p).toBe(false);
+    expect("model" in p.settings).toBe(false);
+    expect(p.model_lines).toBeUndefined();
+    expect(renderPreview(p)).not.toMatch(/model:/);
+  });
+
+  // MUTATION: drop `...model.view` from the preview in ScanRunner.plan — the
+  // plan carries no model, and this fails.
+  it("the plan shows the route: the review preview's model object, and one line of words", async () => {
+    const alt = {
+      provider: "other",
+      providerName: "Other",
+      modelId: "m2",
+      spec: "other/m2",
+      credential: { kind: "oauth" as const, origin: "stored" as const, subscription: true },
+      priced: false,
+    };
+    const tiers = {
+      light: "prov/model-a:medium",
+      standard: "x/y:medium",
+      deep: "prov/model-a:high",
+    };
+    const p = await preview(
+      new ScanRunner(ports(runner())),
+      on({ alternatives: [alt], ask: true }, { tiers, notes: ["a note from the host"] }),
+    );
+    expect(p.model).toEqual({
+      spec: "prov/model-a",
+      provider: "prov",
+      id: "model-a",
+      provider_name: "Prov",
+      source: "only-credential",
+      pick: "newest",
+      pi_default: null,
+      custom: false,
+      moved_from: null,
+      priced: true,
+      ask: true,
+      credential: { kind: "api_key", origin: "env-key", subscription: false },
+    });
+    expect(p.alternatives).toEqual([
+      {
+        spec: "other/m2",
+        provider: "other",
+        provider_name: "Other",
+        priced: false,
+        credential: { kind: "oauth", origin: "stored", subscription: true },
+      },
+    ]);
+    expect(p.tiers).toEqual(tiers);
+    expect(p.settings.model).toBe("prov/model-a");
+    // Never the name of the environment source a key came from.
+    expect(JSON.stringify(previewDetails(p))).not.toContain("PROV_SECRET_NAME");
+    const text = renderPreview(p);
+    expect(text).toMatch(
+      /\n\nmodel: prov\/model-a \(the provider pi has a credential for\)\na note from the host\n\n/,
+    );
+    // The words are for a person; the structured result carries the object.
+    expect(previewDetails(p)).not.toHaveProperty("model_lines");
+    expect(previewDetails(p)).toHaveProperty("model.spec", "prov/model-a");
+  });
+
+  // MUTATION: drop `model` from `runSettings` in ScanRunner.plan — two models
+  // key alike, and this fails.
+  // MUTATION: drop the `tiers` part of the plan key — a tier moved to another
+  // model keys alike, and this fails.
+  it("the key covers the model and each tier's spec; a plan with no route keys apart", async () => {
+    const s = new ScanRunner(ports(runner()));
+    const bare = (await preview(s)).key;
+    const a = (await preview(s, on())).key;
+    expect((await preview(s, on())).key).toBe(a);
+    expect(a).not.toBe(bare);
+    expect((await preview(s, on(B))).key).not.toBe(a);
+    const tiers = {
+      light: "prov/model-a:medium",
+      standard: "prov/model-a:medium",
+      deep: "prov/model-a:high",
+    };
+    const withTiers = (await preview(s, on({}, { tiers }))).key;
+    expect(withTiers).not.toBe(a);
+    expect(
+      (await preview(s, on({}, { tiers: { ...tiers, standard: "x/y:medium" } }))).key,
+    ).not.toBe(withTiers);
+    // Why the route was picked is no part of what runs.
+    expect((await preview(s, on({ source: "flag", pick: "pinned" }))).key).toBe(a);
+  });
+
+  it("a start runs under the model its preview showed, and the run records it", async () => {
+    const s = new ScanRunner(ports(runner()));
+    const p = await preview(s, on());
+    const other = await s.start({ key: p.key, model: on(B) });
+    expect(other).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/^the plan changed since that preview/)],
+    });
+    // A start that names no model is not the plan that was shown either.
+    expect(await s.start({ key: p.key })).toMatchObject({ ok: false });
+    expect(s.status().run).toBeNull();
+    const r = await s.start({ key: p.key, model: on() });
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    expect(r.run.settings.model).toBe("prov/model-a");
+    await s.idle();
+    const st = s.status();
+    expect(st.run!.settings.model).toBe("prov/model-a");
+    expect(renderStatus(st)).toMatch(/^Model: prov\/model-a$/m);
+    expect(
+      (
+        JSON.parse(readFileSync(join(stateDir, RUN_FILE), "utf8")) as {
+          current: { settings: { model?: string } };
+        }
+      ).current.settings.model,
+    ).toBe("prov/model-a");
+  });
+
+  it("a run whose host named no model records none, and its status names none", async () => {
+    const s = new ScanRunner(ports(runner()));
+    const { run } = await runToEnd(s);
+    expect("model" in run.settings).toBe(false);
+    expect(renderStatus(s.status())).not.toMatch(/^Model:/m);
+  });
+
+  it("no route: the plan is shown with no model, in the host's words, and nothing starts", async () => {
+    const s = new ScanRunner(ports(runner()));
+    const p = await preview(s, none);
+    expect(p.model).toBeNull();
+    expect(p.alternatives).toEqual([]);
+    expect(p.cases.length).toBeGreaterThan(0);
+    expect(p.blockers).toEqual(["pi has no model credential. Run `qcr login`."]);
+    const text = renderPreview(p);
+    expect(text).toMatch(/^model: none \(no model credential: qcr login\)$/m);
+    expect(text).toMatch(/✗ pi has no model credential/);
+    expect(text).not.toMatch(/To run it:/);
+    expect(await s.start({ key: p.key, model: none })).toEqual({
+      ok: false,
+      errors: ["pi has no model credential. Run `qcr login`."],
+    });
+    // Another refusal is said in the route's own sentence when the host adds no words.
+    const pinned = await preview(s, {
+      result: {
+        ok: false,
+        refusal: { code: "pin-unknown", pin: "nope", detail: "no model matches" },
+      },
+      surface: "app",
+    });
+    expect(pinned.model_lines).toEqual([
+      'model: none (pi knows no model "nope" (no model matches))',
+    ]);
+    expect(pinned.blockers).toEqual(['pi knows no model "nope" (no model matches)']);
+  });
+
+  // A sandboxed scan reads the companion's login: `qcr login` signs in a pi
+  // it never reads, so the host names the way in and the model line uses it.
+  // MUTATION: build the head from the surface alone in plannedModel (drop
+  // `routed.login`) — the model line says `qcr login` over a blocker that
+  // says `qcr scan login`, and this fails.
+  it("no credential where the host names its own way in: the model line and the blocker name the same command", async () => {
+    const s = new ScanRunner(ports(runner()));
+    const boxed: ScanRouted = {
+      result: { ok: false, refusal: { code: "no-credential" } },
+      surface: "app",
+      refusal: "no pi login in the companion's pi home — run `qcr scan login`",
+      login: "qcr scan login",
+    };
+    const p = await preview(s, boxed);
+    expect(p.model_lines).toEqual(["model: none (no model credential: qcr scan login)"]);
+    expect(p.blockers).toEqual(["no pi login in the companion's pi home — run `qcr scan login`"]);
+    expect(renderPreview(p)).not.toMatch(/qcr login/);
+    // Without it the surface's own stands: the app's verb, and pi's command.
+    expect((await preview(s, none)).model_lines).toEqual([
+      "model: none (no model credential: qcr login)",
+    ]);
+    expect((await preview(s, { ...none, surface: "plugin" })).model_lines).toEqual([
+      "model: none (no model credential: /login)",
+    ]);
+  });
+
+  // MUTATION: drop the `refusedModel` check at the top of ScanRunner.start —
+  // the start plans, finds another key and says the plan changed; this fails.
+  it("a start whose route is gone is refused in the route's words, not as a changed plan", async () => {
+    const s = new ScanRunner(ports(runner()));
+    const p = await preview(s, on());
+    expect(await s.start({ key: p.key, model: none })).toEqual({
+      ok: false,
+      errors: ["pi has no model credential. Run `qcr login`."],
+    });
+    expect(s.status().run).toBeNull();
+  });
+
+  // MUTATION: treat `result: null` as a route-less host in plannedModel (no
+  // blocker) — an unknown model starts a run, and this fails.
+  it("a model the host could not find out is unknown: shown as such, and nothing starts", async () => {
+    const s = new ScanRunner(ports(runner()));
+    const unknown: ScanRouted = {
+      result: null,
+      surface: "app",
+      refusal: "the scan sandbox could not be asked: docker is not reachable",
+    };
+    const p = await preview(s, unknown);
+    expect(p.model).toBeNull();
+    expect(p.model_lines).toEqual([
+      "model: unknown (the scan sandbox could not be asked: docker is not reachable)",
+    ]);
+    // Honest-unknown in the structured result too: nothing was read, so the
+    // plan says so and lists no provider, where "no credential" says there is
+    // none.
+    // MUTATION: answer `alternatives: []` and no `model_unknown` for an
+    // unknown model in plannedModel — a script reads a docker failure as "pi
+    // has no credential", and this fails.
+    const details = previewDetails(p);
+    expect(details).toMatchObject({ model: null, model_unknown: true });
+    expect(details).not.toHaveProperty("alternatives");
+    const refused = previewDetails(await preview(s, none));
+    expect(refused).toMatchObject({ model: null, alternatives: [] });
+    expect(refused).not.toHaveProperty("model_unknown");
+    expect(modelDetails(p)).toEqual({ model: null, model_unknown: true });
+    expect(p.blockers[0]).toMatch(
+      /^the scan's model is unknown \(the scan sandbox could not be asked/,
+    );
+    expect(await s.start({ key: p.key, model: unknown })).toMatchObject({ ok: false });
+    expect(s.status().run).toBeNull();
+  });
+
+  // Stage 0 runs on the scan's model like any case.
+  // MUTATION: drop `...model.key` from the stage-0 key in planThreatModelFrom
+  // — a proposal made under one model starts under another, and this fails.
+  it("the threat-model stage is keyed on the model, says it, and records it", async () => {
+    const s = new ScanRunner(ports(runner(), { threat_model: "always" }));
+    const bare = await s.proposeThreatModel();
+    const a = await s.proposeThreatModel({ model: on() });
+    const b = await s.proposeThreatModel({ model: on(B) });
+    if (!bare.ok || !a.ok || !b.ok) throw new Error("propose");
+    expect(new Set([bare.preview.key, a.preview.key, b.preview.key]).size).toBe(3);
+    expect("model" in bare).toBe(false);
+    expect(a.model).toMatchObject({ spec: "prov/model-a" });
+    expect(renderThreatModelPreview(a.preview, undefined, a)).toMatch(/^model: prov\/model-a /m);
+    expect(renderThreatModelPreview(a.preview)).not.toMatch(/^model:/m);
+    // The stage's key is a stage-1 preview's too, under the same model.
+    const p = await preview(s, on());
+    expect(p.threat_model_stage?.key).toBe(a.preview.key);
+    const refused = await s.proposeThreatModel({ model: none });
+    expect(refused.ok && refused.preview.blockers).toEqual([
+      "pi has no model credential. Run `qcr login`.",
+    ]);
+    expect(await s.startThreatModel({ key: a.preview.key, model: on(B) })).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/the plan changed since that proposal/)],
+    });
+    // `start` with stage 0's key starts stage 0, under the same model.
+    const r = await s.start({ key: a.preview.key, model: on() });
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    expect(r.run).toMatchObject({ mode: "threat-model", settings: { model: "prov/model-a" } });
+    await s.idle();
   });
 });

@@ -496,6 +496,26 @@ describe("a review call", () => {
     expect(envs(argv!)).toContain("PI_CODING_AGENT_DIR=/qcr-login");
   });
 
+  // The remembered choice lives beside the login: the two calls that write
+  // it are the only cli calls that mount the volume read-write.
+  // MUTATION: mount the login read-only for `model use` — the choice cannot
+  // be remembered through the wrapper and this fails.
+  it("mounts the login read-write for `qcr model use` and `qcr model reset`, and for no other cli call", () => {
+    const login = (args: string[]): string[] => {
+      const r = rig();
+      r.run(args);
+      return mounts(r.calls()[0]!).filter((m) => m.includes("src=qcr-login"));
+    };
+    expect(login(["model", "use", "anthropic"])).toEqual([
+      "type=volume,src=qcr-login,dst=/qcr-login",
+    ]);
+    expect(login(["model", "reset"])).toEqual(["type=volume,src=qcr-login,dst=/qcr-login"]);
+    for (const args of [["model"], ["model", "--json"], ["review", "use"], ["scan", "reset"]])
+      expect(login(args), args.join(" ")).toEqual([
+        "type=volume,src=qcr-login,dst=/qcr-login,readonly",
+      ]);
+  });
+
   it("hands the token over as a 0600 file in a 0700 dir under XDG_RUNTIME_DIR, gone after the call", () => {
     const r = rig();
     r.run(["review"], { env: { GITHUB_TOKEN: TOKEN } });
@@ -525,6 +545,139 @@ describe("a review call", () => {
     // a model key goes by name only: docker reads its value from the caller's env
     expect(envs(argv!)).toContain("OPENAI_API_KEY");
     expect(envs(argv!).filter((e) => e.startsWith("ANTHROPIC"))).toEqual([]);
+  });
+
+  // The wrapper names no provider: it forwards every name pi reads a model
+  // credential from (its generated block), by name only.
+  // MUTATION: forward `-e "$name=$val"` in the wrapper's model loop — a value
+  // is in the docker command line and this fails.
+  it("forwards any provider's credential in the caller's env, by name only", () => {
+    const r = rig();
+    const done = r.run(["review", "42"], {
+      env: {
+        GITHUB_TOKEN: TOKEN,
+        XAI_API_KEY: "value-of-x",
+        HF_TOKEN: "value-of-h",
+        AWS_ACCESS_KEY_ID: "value-of-id",
+        AWS_SECRET_ACCESS_KEY: "value-of-secret",
+        DIGITALOCEAN_API_KEY: "value-of-d",
+        QCR_DEBUG: "1",
+        NOT_A_MODEL_NAME: "value-of-n",
+      },
+    });
+    expect(done.status, done.stderr).toBe(0);
+    const [argv] = r.calls();
+    expect(envs(argv!)).toEqual(
+      expect.arrayContaining([
+        "XAI_API_KEY",
+        "HF_TOKEN",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "DIGITALOCEAN_API_KEY",
+        "QCR_DEBUG",
+      ]),
+    );
+    // A name pi does not read stays on the host, and so does one that is unset.
+    expect(envs(argv!)).not.toContain("NOT_A_MODEL_NAME");
+    expect(envs(argv!)).not.toContain("OPENAI_API_KEY");
+    const all = argv!.join("\n");
+    for (const v of ["value-of-x", "value-of-h", "value-of-id", "value-of-secret", "value-of-d"])
+      expect(all).not.toContain(v);
+    // The GitHub token still travels as a file, under no name.
+    expect(all).not.toContain(TOKEN);
+    expect(envs(argv!).filter((e) => /^(GITHUB_TOKEN|GH_TOKEN)/.test(e))).toEqual([]);
+  });
+
+  // MUTATION: drop $MODEL_ENV_COMPANIONS from the wrapper's model loop — the
+  // AWS key pair travels without its session token and this fails.
+  it("forwards the session token of temporary AWS credentials beside the key pair", () => {
+    const r = rig();
+    const done = r.run(["review", "42"], {
+      env: {
+        GITHUB_TOKEN: TOKEN,
+        AWS_ACCESS_KEY_ID: "value-of-id",
+        AWS_SECRET_ACCESS_KEY: "value-of-secret",
+        AWS_SESSION_TOKEN: "value-of-session",
+      },
+    });
+    expect(done.status, done.stderr).toBe(0);
+    const [argv] = r.calls();
+    expect(envs(argv!)).toEqual(
+      expect.arrayContaining(["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]),
+    );
+    expect(argv!.join("\n")).not.toContain("value-of-session");
+  });
+
+  // A name that points at a profile or a file on this machine is set in the
+  // container and names nothing there: pi would count the provider as
+  // credentialed on the name alone, and the no-credential refusal with its
+  // `qcr login` hint would become a failure at the first model call.
+  // MUTATION: drop the host_only test from the wrapper's model loop — the
+  // names below reach the container and this fails.
+  it("never forwards a name that points at a profile or a file on this machine", () => {
+    const r = rig();
+    const file = join(r.dir, "adc.json");
+    writeFileSync(file, "{}");
+    const done = r.run(["review", "42"], {
+      env: {
+        GITHUB_TOKEN: TOKEN,
+        AWS_PROFILE: "work",
+        AWS_WEB_IDENTITY_TOKEN_FILE: "/var/run/token",
+        ANTHROPIC_IDENTITY_TOKEN_FILE: "/var/run/other",
+        GOOGLE_APPLICATION_CREDENTIALS: file,
+        QCR_MODEL_ENV: "MY_CA_BUNDLE",
+        MY_CA_BUNDLE: file,
+        XAI_API_KEY: "value-of-x",
+      },
+    });
+    expect(done.status, done.stderr).toBe(0);
+    const [argv] = r.calls();
+    for (const n of [
+      "AWS_PROFILE",
+      "AWS_WEB_IDENTITY_TOKEN_FILE",
+      "ANTHROPIC_IDENTITY_TOKEN_FILE",
+      "GOOGLE_APPLICATION_CREDENTIALS",
+      "MY_CA_BUNDLE",
+    ])
+      expect(envs(argv!), n).not.toContain(n);
+    expect(envs(argv!)).toContain("XAI_API_KEY");
+  });
+
+  it("QCR_MODEL_ENV adds names to forward; one of this program's own, or a malformed one, stops the call", () => {
+    const r = rig();
+    const done = r.run(["review"], {
+      env: {
+        QCR_MODEL_ENV: "MY_GATEWAY_URL, MY_GATEWAY_KEY UNSET_ONE",
+        MY_GATEWAY_URL: "value-of-url",
+        MY_GATEWAY_KEY: "value-of-key",
+      },
+    });
+    expect(done.status, done.stderr).toBe(0);
+    const [argv] = r.calls();
+    expect(envs(argv!)).toEqual(expect.arrayContaining(["MY_GATEWAY_URL", "MY_GATEWAY_KEY"]));
+    expect(envs(argv!)).not.toContain("UNSET_ONE");
+    expect(argv!.join("\n")).not.toContain("value-of-url");
+
+    // MUTATION: drop `GH_*` from the wrapper's refused prefixes — GH_TOKEN is
+    // forwarded into the container's environment and this fails.
+    const refused: Array<[string, RegExp]> = [
+      ["GH_TOKEN", /GH_TOKEN is not a model setting/],
+      ["GITHUB_TOKEN", /not a model setting/],
+      ["QCR_GH_TOKEN_FILE", /not a model setting/],
+      ["PI_CODING_AGENT_DIR", /not a model setting/],
+      ["GIT_CONFIG_GLOBAL", /not a model setting/],
+      ["OPENVIKING_ROOT_KEY", /not a model setting/],
+      ["A=b", /names of environment variables/],
+      ["a;id", /names of environment variables/],
+      ["9LIVES", /not the name of an environment variable/],
+    ];
+    for (const [value, why] of refused) {
+      const b = rig();
+      const out = b.run(["review"], { env: { QCR_MODEL_ENV: value, GH_TOKEN: TOKEN } });
+      expect(out.status, value).toBe(1);
+      expect(out.stderr, value).toMatch(why);
+      expect(b.calls(true), value).toEqual([]);
+    }
   });
 
   it("resolves GITHUB_TOKEN, then GH_TOKEN, then gh; nothing found mounts nothing", () => {

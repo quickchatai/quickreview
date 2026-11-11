@@ -142,6 +142,25 @@ describe("the pack-first payload (child side)", () => {
     expect(packFirstPayload(payload(`${base}\n\n${lens}`), lens, "  ")).toBeUndefined();
     expect(packFirstPayload(null, lens, "PACK")).toBeUndefined();
   });
+
+  // Inside the API family the rewrite is still fail-open. At the pinned pi the
+  // codex request carries the system prompt in `instructions`; the other two
+  // Responses APIs send it as the first message of `input`, with no
+  // `instructions` at all, and such a request goes out as pi built it.
+  // MUTATION: default a missing `instructions` to "" in packFirstPayload - the
+  // warm-up form then puts the pack ahead of the system message and this fails.
+  it("fail-open inside the family: a request with its system prompt in the input is sent as it came", () => {
+    const inInput = (system: string) => ({
+      model: "gpt-6.1-sol",
+      input: [
+        { role: "developer", content: system },
+        { role: "user", content: [{ type: "input_text", text: "Task: Task file: /x.md." }] },
+      ],
+      prompt_cache_key: "k",
+    });
+    expect(packFirstPayload(inInput(piInstructions(lens)), lens, "PACK")).toBeUndefined();
+    expect(packFirstPayload(inInput(base), "", "PACK")).toBeUndefined();
+  });
 });
 
 describe("the context pack (daemon side)", () => {

@@ -12,6 +12,13 @@ import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
 import type { ArchiveStatus } from "./archive/status.js";
 import type { PermitStatus } from "./ipc/permits.js";
+import {
+  parseRouteRecord,
+  routeChangeText,
+  routeReportChanged,
+  type RouteRecord,
+  type RouteReport,
+} from "./ipc/routereport.js";
 import type { LoginRefreshStatus } from "./loginrefresh/types.js";
 import type { DaemonLoadStatus } from "./eventloop.js";
 import type { MemoryIncident, MemoryStatus } from "./memory/health.js";
@@ -45,6 +52,7 @@ import {
   type LeverKind,
 } from "./levers.js";
 import {
+  foldTier,
   parseRecheckPromptMarker,
   type PassPlanEntry,
   type SessionCommandObservation,
@@ -389,18 +397,35 @@ export function cancellationOrder(a: CancellationTally, b: CancellationTally): n
   return Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause);
 }
 
+/** Is this round's spend unknown: tokens recorded and no price beside them?
+ * A round on a model pi has no price for is one (its `est_usd` is NULL: pi
+ * stamps such calls at 0, which is not free), and so is an older row whose
+ * transcripts carried no cost object. The word for both is "unknown". A row
+ * with no tokens was never measured and is not counted: nothing says it
+ * spent anything. */
+export function spendIsUnknown(r: Pick<RoundRow, "est_usd" | "tokens_in" | "tokens_out">): boolean {
+  return r.est_usd === null && ((r.tokens_in ?? 0) > 0 || (r.tokens_out ?? 0) > 0);
+}
+
 /** Spend and measured tokens summed over `rounds`. Expired rounds count:
  * they blew a deadline, they did not get a refund — excluding them would
- * erase real token cost (see StateStore.totalSpend). */
+ * erase real token cost (see StateStore.totalSpend).
+ *
+ * `spend_usd` is the KNOWN sum: a round whose spend is unknown
+ * (`spendIsUnknown`) adds nothing to it and is counted in
+ * `unknown_spend_rounds` instead, so a reader never takes a missing price
+ * for $0. Say the two together (`spendText`). */
 export function roundUsage(
   rounds: readonly Pick<RoundRow, "est_usd" | "tokens_in" | "tokens_out">[],
 ): {
   spend_usd: number;
+  unknown_spend_rounds: number;
   tokens_in: number;
   tokens_out: number;
 } {
   return {
     spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
+    unknown_spend_rounds: rounds.filter(spendIsUnknown).length,
     tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
     tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
   };
@@ -4364,6 +4389,20 @@ export class StateStore {
     ).s;
   }
 
+  /** How many rounds `totalSpend` could not count: tokens recorded and no
+   * price (`spendIsUnknown`, the same rule in SQL). The sum is never said
+   * without it. */
+  totalUnknownSpendRounds(): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM rounds
+            WHERE est_usd IS NULL AND (COALESCE(tokens_in, 0) > 0 OR COALESCE(tokens_out, 0) > 0)`,
+        )
+        .get() as { n: number }
+    ).n;
+  }
+
   /**
    * Recurring zombie expiry: move to terminal `expired` every round
    * stuck `overdue` past `horizonHours` (measured from its deadline) whose PR
@@ -7609,6 +7648,49 @@ export class StateStore {
     }
   }
 
+  // ---- the model route workers report -------------------------------------
+
+  /** The newest report, read from the events table once per process: the
+   * daemon is the table's only writer, and every report it takes passes
+   * through `recordModelRoute`. */
+  private routeMemo: RouteRecord | null | undefined;
+
+  /** The route the newest worker reported, with when: the model reviews run
+   * on as far as the daemon knows. Null when no worker has reported one, or
+   * the newest record cannot be read: unknown, never a default. Events-table
+   * backed, so it stands across a daemon restart. */
+  modelRoute(): RouteRecord | null {
+    if (this.routeMemo === undefined)
+      this.routeMemo = parseRouteRecord(this.lastEventPayload("model_route"));
+    return this.routeMemo;
+  }
+
+  /**
+   * Take a worker's route report (the supervisor's, from `ready`): one
+   * `model_route` event per worker, and the report becomes the latest.
+   *
+   * When reviews now run somewhere else than the report before it said
+   * (another model, another provider a pin was moved off, a credential from
+   * another origin; `routeReportChanged`), one `model_route_changed` anomaly
+   * says where they run and where they ran. Never on the first report: with
+   * nothing to compare against, nothing changed. The comparison is against
+   * the stored record, so a change a daemon restart sits between is still
+   * one.
+   */
+  recordModelRoute(
+    report: RouteReport,
+    from: { pr: number; command_id: string },
+  ): "first" | "same" | "changed" {
+    const prev = this.modelRoute();
+    const record: RouteRecord = { ...report, at: this.ts() };
+    this.logEvent("model_route", from.pr, { ...record, command_id: from.command_id });
+    this.routeMemo = record;
+    if (prev === null) return "first";
+    if (!routeReportChanged(prev, report)) return "same";
+    this.logAnomaly("model_route_changed", null, null, routeChangeText(prev, report));
+    return "changed";
+  }
+
   // ---- deferred EOD sweeps ------------------------------------------------
 
   /** The ops days whose EOD sweep a drain held back and that have not fired
@@ -8654,10 +8736,20 @@ export interface StatusSnapshot {
    * Absent in snapshots from an older daemon: the home's spend line then
    * reads unknown, never a zero. */
   month_spend_usd?: number;
+  /** Beside each spend sum, how many of its rounds recorded tokens and no
+   * price (`spendIsUnknown`): the sum counts none of them. Absent in
+   * snapshots from an older daemon, where the count is UNKNOWN, not zero: a
+   * reader then says the sum as it is and claims nothing about the rest
+   * (`spendText`), and a reader that publishes the count publishes null. */
+  total_unknown_spend_rounds?: number;
+  today_unknown_spend_rounds?: number;
+  month_unknown_spend_rounds?: number;
   digest_headline?: string;
-  /** Present while pi sessions are failing API calls with token-expired
-   * errors (packages/pi-plugin/src/authwatch.ts, fresh < 30 min). The TUI raises an alert. */
-  pi_auth_expired?: { last_at: string; hits: number };
+  /** Present while pi sessions are failing API calls because a provider
+   * refuses the login (packages/pi-plugin/src/authwatch.ts, fresh < 30 min).
+   * `provider` names the one the records named, when they named one. The TUI
+   * raises an alert. */
+  pi_auth_expired?: { last_at: string; hits: number; provider?: string };
   /** The supervised OpenViking server: reachable, `/ready`, reported
    * version (drift-checked against the pin), RSS and CPU. Absent in snapshots
    * from a daemon with no supervisor wired — readers must default. */
@@ -8689,6 +8781,12 @@ export interface StatusSnapshot {
    * `paused`. Absent unless `[login_refresh] enabled`; readers say "not
    * reported". */
   login_refresh?: LoginRefreshStatus;
+  /** The model reviews run on, as the newest worker reported it
+   * (src/ipc/routereport.ts), with when the daemon took the report. `null`:
+   * no worker has reported one. ABSENT: the snapshot is from a daemon that
+   * does not report it. Both mean unknown; a reader never shows a model in
+   * their place, and reads the block through `parseRouteRecord`. */
+  model_route?: RouteRecord | null;
   /** The central lens permit broker (src/ipc/permits.ts): the ceiling,
    * the permits in use and the grants queued, with the split per command.
    * Absent while no daemon broker runs (the tmux bot, a stub daemon) —
@@ -8865,13 +8963,20 @@ function pipelineFrom(
 export const ROUND_STATS_SQL =
   "SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds WHERE status != 'expired' GROUP BY pr";
 
+/** A stored tier as a surface shows it: in the ladder's spelling. A row
+ * keeps the name it was written with (nothing migrates it), so the reader
+ * folds; an absent tier and a name that is no tier pass through. */
+function shownTier(stored: string | null): string | null {
+  return stored === null ? null : (foldTier(stored) ?? stored);
+}
+
 export function buildStatusSnapshot(
   store: StateStore,
   dryRun: boolean,
   digestHeadline?: string,
   now: () => Date = () => new Date(),
   maxConcurrentRounds?: number,
-  piAuth?: { last_at: string; hits: number },
+  piAuth?: { last_at: string; hits: number; provider?: string },
   openviking?: OpenVikingStatus,
   threadDecisions?: StatusSnapshot["thread_decisions"],
   roundStageSupervisor?: StatusSnapshot["round_stage_supervisor"],
@@ -8914,7 +9019,7 @@ export function buildStatusSnapshot(
               started_at: runningByPr.get(p.number)!.started_at,
               deadline_at: runningByPr.get(p.number)!.deadline_at,
               lenses: runningByPr.get(p.number)!.lenses,
-              validate_tier: runningByPr.get(p.number)!.validate_tier,
+              validate_tier: shownTier(runningByPr.get(p.number)!.validate_tier),
               ...(() => {
                 const round = runningByPr.get(p.number)!;
                 const command = store.sessionCommandForRound(p.number, round.round_no);
@@ -9003,10 +9108,21 @@ export function buildStatusSnapshot(
     })),
     running_rounds: store.runningRounds().length,
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
+    // Each sum with the rounds it could not count beside it: a round with
+    // tokens and no price is unknown spend, never $0 inside the sum.
     total_spend_usd: store.totalSpend(),
-    today_spend_usd: roundUsage(store.roundsOn(today)).spend_usd,
-    // roundsOn matches by prefix: the month's `YYYY-MM` is every day of it
-    month_spend_usd: roundUsage(store.roundsOn(today.slice(0, 7))).spend_usd,
+    total_unknown_spend_rounds: store.totalUnknownSpendRounds(),
+    ...(() => {
+      const day = roundUsage(store.roundsOn(today));
+      // roundsOn matches by prefix: the month's `YYYY-MM` is every day of it
+      const month = roundUsage(store.roundsOn(today.slice(0, 7)));
+      return {
+        today_spend_usd: day.spend_usd,
+        today_unknown_spend_rounds: day.unknown_spend_rounds,
+        month_spend_usd: month.spend_usd,
+        month_unknown_spend_rounds: month.unknown_spend_rounds,
+      };
+    })(),
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     ...(piAuth
       ? {
@@ -9024,6 +9140,8 @@ export function buildStatusSnapshot(
     ...(archive ? { archive } : {}),
     ...(loginRefresh ? { login_refresh: loginRefresh } : {}),
     ...(permits ? { permits } : {}),
+    // Always written, null included: "no report yet" is a fact of its own.
+    model_route: store.modelRoute(),
     ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
     ...(roundStageSupervisor ? { round_stage_supervisor: roundStageSupervisor } : {}),
     ...(pipeline ? { pipeline } : {}),

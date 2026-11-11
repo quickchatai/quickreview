@@ -34,21 +34,22 @@ import {
   KEY_ROUTE_PROVIDERS,
   type BenchAuthMode,
   type BenchProviderId,
-} from "@quickchatai/pi-quickreview/src/engine/keyroute.js";
+} from "./keyroute.js";
 
 // The credential route itself (the mode, the model rewrite, the keys a pi
-// process sees) and the sandbox's pi settings are the one-shot round's, so
-// core (packages/pi-plugin/src/engine/keyroute.ts, packages/pi-plugin/src/pibuiltins.ts); the bench's callers still
-// import them here.
+// child sees) is the bench's own (./keyroute.ts); the sandbox's pi settings
+// are the one-shot round's, so core (packages/pi-plugin/src/pibuiltins.ts).
+// The bench's callers import both here.
 export { BENCH_RETRY, benchSettings } from "@quickchatai/pi-quickreview/src/pibuiltins.js";
 export {
   apiKeyEnv,
   benchAuthMode,
   benchProvider,
   modelForAuth,
+  withAuthModels,
   type BenchAuthMode,
   type BenchProviderId,
-} from "@quickchatai/pi-quickreview/src/engine/keyroute.js";
+} from "./keyroute.js";
 
 // The API-key route: the published runs used the login above; an outsider
 // re-running the benchmark brings their own API key instead.

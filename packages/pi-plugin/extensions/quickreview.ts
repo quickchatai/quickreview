@@ -20,6 +20,16 @@
 // The person's own session gets commands and messages from the plugin, never
 // a tool: the review's lens tools exist only inside the engine's own nested
 // sessions (passes are leaves: the single-shepherd invariant in AGENTS.md).
+//
+// The model a run is on is resolved here, over the running pi's own model
+// registry (`routeInRunningPi`): the inventory and pi's own reading of a
+// model text are the ones every other route uses (./route-registry.ts), and
+// the rule is the one every other route uses (../src/modelroute.ts), so
+// /qcr-review names the model `qcr review` names on the same machine. Two
+// kinds of provider are left out, since the run's own nested host cannot use
+// them: one an extension of this pi registered (the nested host loads no
+// extension), and one keyed for this process alone (it holds no such key).
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   VERSION,
   getAgentDir,
@@ -30,7 +40,9 @@ import {
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loginSummary, type LoginSummary } from "../src/engine/auth.js";
-import type { HostAuth } from "../src/plugin/login.js";
+import { reviewAuthContext } from "../src/engine/authcontext.js";
+import { resolveRoute, type RouteInput } from "../src/modelroute.js";
+import type { HostAuth, HostRouteAsk, HostRouted } from "../src/plugin/login.js";
 import {
   REVIEW_DEPS,
   REVIEW_MESSAGE,
@@ -43,6 +55,7 @@ import type { PluginHost, Runner, SessionUi } from "../src/plugin/session.js";
 import { readQuickReviewSettings, type QuickReviewSettings } from "../src/plugin/settings.js";
 import { runSetupCommand } from "../src/plugin/setup.js";
 import { declaredPiRange, piGate } from "../src/plugin/versiongate.js";
+import { registryInventory, textResolver, type RouteRegistry } from "./route-registry.js";
 
 /** What the host entry hands the plugin. */
 export interface QuickReviewConfig {
@@ -68,8 +81,152 @@ export interface QuickReviewConfig {
 /** The commands, each also a skill of the same name (skills/<name>/SKILL.md). */
 export const QUICKREVIEW_COMMANDS = ["qcr-review", "qcr-scan", "qcr-setup"] as const;
 
-/** The host pi's auth, by the shape the plugin asks of it. */
-export function hostAuth(ctx: ExtensionCommandContext, agentDir: string): HostAuth {
+/** What the route reads of a running pi: the model its session is on, and
+ * its model registry by its public methods. A command's context is one. */
+export interface RunningPi {
+  model: Model<Api> | undefined;
+  modelRegistry: RouteRegistry & {
+    find(provider: string, modelId: string): Model<Api> | undefined;
+    getRegisteredProviderIds(): readonly string[];
+  };
+}
+
+/**
+ * The providers of the running pi that a run cannot borrow: the run's
+ * sessions are on a nested host of their own, which loads no extension and
+ * holds no key of this process.
+ *
+ * VERIFY-ON-PIN (pi 1.4.0): `getRegisteredProviderIds()` lists the providers
+ * an extension registered (never a built-in one, never one the person's
+ * `models.json` declares), and a provider keyed for this process only
+ * (`pi --api-key`) has the auth status source `runtime`.
+ */
+export function unborrowable(registry: RunningPi["modelRegistry"]): Set<string> {
+  const out = new Set<string>(registry.getRegisteredProviderIds());
+  for (const provider of new Set(registry.getAvailable().map((m) => m.provider)))
+    if (registry.getProviderAuthStatus(provider).source === "runtime") out.add(provider);
+  return out;
+}
+
+/** How long one provider's own lookup may take before it is left as found. */
+const UNSEEN_LOOKUP_MS = 5_000;
+
+/**
+ * The providers of the running pi whose credential a review host would not
+ * find: pi found it in its surroundings (no stored login, no key in
+ * `models.json`), and the provider's own lookup, asked again under a review
+ * host's auth context (engine/authcontext.ts: `env`, and no file under the
+ * home directory), finds nothing. The run's sessions are on such a host, so
+ * a route on one of these would name a model every session then fails on.
+ *
+ * Asked of each provider by its own lookup, never by name. A provider whose
+ * lookup is not the shape read here, or throws, is left as found: the run's
+ * own host says so then, as it did before.
+ *
+ * VERIFY-ON-PIN (pi 1.4.0): a credential found in the surroundings has the
+ * auth status source `environment`, and a provider's `auth.apiKey.resolve`
+ * takes `{ ctx, credential, signal }` and answers undefined for none.
+ */
+export async function unseenByReviewHost(
+  registry: RunningPi["modelRegistry"],
+  env: Readonly<Record<string, string | undefined>>,
+): Promise<Set<string>> {
+  const ctx = reviewAuthContext(env);
+  const out = new Set<string>();
+  for (const provider of new Set(registry.getAvailable().map((m) => m.provider))) {
+    if (registry.getProviderAuthStatus(provider).source !== "environment") continue;
+    const resolve = (
+      registry.getProvider(provider) as
+        { auth?: { apiKey?: { resolve?: (o: unknown) => Promise<unknown> } } } | undefined
+    )?.auth?.apiKey?.resolve;
+    if (typeof resolve !== "function") continue;
+    try {
+      const found = await resolve({
+        ctx,
+        credential: undefined,
+        signal: AbortSignal.timeout(UNSEEN_LOOKUP_MS),
+      });
+      if (found === undefined) out.add(provider);
+    } catch {
+      // not known: left as found
+    }
+  }
+  return out;
+}
+
+/**
+ * One run's route inside a running pi: the inventory and pi's own reading
+ * of a model text over its registry, less what a run cannot borrow and what
+ * its host would not find (`unseen`: `unseenByReviewHost`), then the rule
+ * (modelroute.ts `resolveRoute`). The provider the session is on goes first
+ * when it is usable. Nothing is skipped here: this pi renews its own logins,
+ * and the borrow that follows says when it could not.
+ */
+export function routeInRunningPi(
+  pi: RunningPi,
+  ask: HostRouteAsk = {},
+  unseen: ReadonlySet<string> = new Set(),
+): HostRouted {
+  const registry = pi.modelRegistry;
+  const unborrowed = unborrowable(registry);
+  const exclude = new Set([...unborrowed, ...unseen]);
+  const inventory = registryInventory(registry, { exclude });
+  // The route carries ids, not models: pi's object for an id its catalog
+  // does not hold (a custom pin) is kept for the run's host.
+  const custom = new Map<string, Model<Api>>();
+  const parse = textResolver({
+    getAll: () => registry.getAll(),
+    getAvailable: () => registry.getAvailable().filter((m) => !exclude.has(m.provider)),
+  });
+  const resolveText: RouteInput["resolveText"] = (text) => {
+    const r = parse(text);
+    if (r.model !== undefined && r.custom === true)
+      custom.set(`${r.model.provider}/${r.model.id}`, r.model as Model<Api>);
+    return r;
+  };
+  const session = pi.model;
+  const result = resolveRoute({
+    inventory,
+    skipped: [],
+    resolveText,
+    ...(ask.pin !== undefined ? { pin: ask.pin } : {}),
+    ...(ask.choice !== undefined ? { choice: ask.choice } : {}),
+    ...(session !== undefined
+      ? { piProvider: { provider: session.provider, from: "pi-session" as const } }
+      : {}),
+  });
+  const nameOf = (provider: string): string => registry.getProviderDisplayName(provider);
+  const notes =
+    session === undefined
+      ? []
+      : unborrowed.has(session.provider)
+        ? [
+            `${nameOf(session.provider)} is registered by a pi extension (or keyed with --api-key): the review cannot borrow it`,
+          ]
+        : unseen.has(session.provider)
+          ? [
+              `${nameOf(session.provider)}'s credential is under your home directory, which a review host does not read: point the provider's credential variable at an absolute path (docs/llm-setup.md)`,
+            ]
+          : [];
+  if (!result.ok) return { result, inventory, nameOf, notes };
+  const route = { ...result.route, notices: [...result.route.notices, ...notes] };
+  const model = registry.find(route.provider, route.modelId) ?? custom.get(route.spec);
+  return {
+    result: { ok: true, route },
+    inventory,
+    ...(model !== undefined ? { model } : {}),
+    nameOf,
+    notes,
+  };
+}
+
+/** The host pi's auth, by the shape the plugin asks of it. `unseen` is what
+ * `unseenByReviewHost` answered when the command began. */
+export function hostAuth(
+  ctx: ExtensionCommandContext,
+  agentDir: string,
+  unseen: ReadonlySet<string> = new Set(),
+): HostAuth {
   const registry = ctx.modelRegistry;
   return {
     logins(): LoginSummary {
@@ -81,7 +238,6 @@ export function hostAuth(ctx: ExtensionCommandContext, agentDir: string): HostAu
         return {};
       }
     },
-    configured: (provider) => registry.getProviderAuthStatus(provider).configured,
     refresh: async (provider, minValidityMs) => {
       // VERIFY-ON-PIN: the registry facade asks for pi's own five minutes of
       // validity only; its model runtime takes a longer minimum and refreshes
@@ -98,6 +254,9 @@ export function hostAuth(ctx: ExtensionCommandContext, agentDir: string): HostAu
         await runtime.getAuth(provider, { minOAuthValidityMs: minValidityMs });
       else await registry.getProviderAuth(provider);
     },
+    // The session's model is read when the route is asked for, not when the
+    // command began.
+    route: (ask) => routeInRunningPi({ model: ctx.model, modelRegistry: registry }, ask, unseen),
   };
 }
 
@@ -162,15 +321,17 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
       if (shutdown.signal.aborted) shutdown = new AbortController();
     });
     pi.on("session_shutdown", () => shutdown.abort());
-    const hostOf = (ctx: ExtensionCommandContext): PluginHost => {
+    const hostOf = async (ctx: ExtensionCommandContext): Promise<PluginHost> => {
       const agentDir = config.agentDir ?? getAgentDir();
+      // Asked once, as the command begins: the route is then read without a wait.
+      const unseen = await unseenByReviewHost(ctx.modelRegistry, config.env);
       return {
         cwd: ctx.cwd,
         env: config.env,
         home: config.home,
         piVersion: version,
         agentDir,
-        auth: hostAuth(ctx, agentDir),
+        auth: hostAuth(ctx, agentDir, unseen),
         runner: config.runner,
         shutdown: shutdown.signal,
       };
@@ -203,7 +364,7 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
           }
           busy = true;
           try {
-            await run(args.trim(), hostOf(ctx), sessionUi(pi, ctx, config.print));
+            await run(args.trim(), await hostOf(ctx), sessionUi(pi, ctx, config.print));
           } finally {
             busy = false;
           }
@@ -213,10 +374,10 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
     const reviews = new ReviewSlot();
     pi.registerCommand("qcr-review", {
       description:
-        "QuickReview: review this branch with its uncommitted changes, a PR, a branch or --uncommitted, in the background ([quick|full|security] first; --preview prices it, --stop stops it)",
+        "QuickReview: review this branch with its uncommitted changes, a PR, a branch or --uncommitted, in the background ([quick|full|security] first; --preview prices it, --model names the model for one run, --stop stops it)",
       handler: async (args, ctx) => {
         const ui = sessionUi(pi, ctx, config.print);
-        await startReviewCommand(args.trim(), hostOf(ctx), ui, {
+        await startReviewCommand(args.trim(), await hostOf(ctx), ui, {
           slot: reviews,
           deps: config.review ?? REVIEW_DEPS,
           settings: settings(ui),
@@ -228,16 +389,16 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
     const scans = new ScanSessions();
     pi.registerCommand("qcr-scan", {
       description:
-        "QuickReview: scan the whole repo in the background (--delta, --sha REF, --preview; or a scan subcommand: status, stop, findings, units …)",
+        "QuickReview: scan the whole repo in the background (--delta, --sha REF, --model M, --preview; or a scan subcommand: status, stop, findings, units …)",
       handler: async (args, ctx) => {
-        await runScanCommand(args.trim(), hostOf(ctx), sessionUi(pi, ctx, config.print), {
+        await runScanCommand(args.trim(), await hostOf(ctx), sessionUi(pi, ctx, config.print), {
           sessions: scans,
         });
       },
     });
     command(
       "qcr-setup",
-      "QuickReview: check what the plugin needs (pi, login, git, GitHub); `profile` sets up this repo's profile",
+      "QuickReview: check what the plugin needs (pi, login, git, GitHub); `model` picks the provider reviews run on, `profile` sets up this repo's profile",
       (args, host, ui) => runSetupCommand(args, host, ui, { range }),
     );
   };

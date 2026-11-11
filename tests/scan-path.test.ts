@@ -460,7 +460,7 @@ describe("the planners, pure", () => {
       ...base,
       rows: [],
       riskPasses: [],
-      defaultTier: "sol-high" as never,
+      defaultTier: "deep" as never,
       covered: () => new Set(),
       price: () => ({ rate: { usd_per_kline: 1 } }) as never,
       budgetUsd: null,

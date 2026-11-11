@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": true,
   "partial": false,
   "preview": {
@@ -15,14 +15,39 @@
     "lines": 2,
     "scope": "full",
     "lenses": [
-      "pass-baseline--sol-high",
-      "pass-sweep--sol-high",
-      "pass-tests--terra-med",
-      "pass-validate--sol-high"
+      "pass-baseline--deep",
+      "pass-sweep--deep",
+      "pass-tests--light",
+      "pass-validate--deep"
     ],
-    "estimate_usd": 0.61,
-    "cap_usd": 1.22,
-    "limit_usd": 1000,
+    "model": {
+      "spec": "local/r",
+      "provider": "local",
+      "id": "r",
+      "provider_name": "local",
+      "source": "only-credential",
+      "pick": "newest",
+      "pi_default": null,
+      "custom": false,
+      "moved_from": null,
+      "priced": true,
+      "ask": false,
+      "credential": {
+        "kind": "api_key",
+        "origin": "models-json",
+        "subscription": false
+      }
+    },
+    "alternatives": [],
+    "tiers": {
+      "light": "local/r:medium",
+      "standard": "local/r:medium",
+      "deep": "local/r:high"
+    },
+    "price_basis": "unmeasured",
+    "estimate_usd": null,
+    "cap_usd": 5,
+    "limit_usd": 5,
     "auto": true,
     "key": "0000000000000000"
   },

@@ -25,8 +25,17 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { AUTH_FLAG_FRESH_MS } from "@quickchatai/pi-quickreview/src/authwatch.js";
+import {
+  AUTH_FLAG_FRESH_MS,
+  credentialRefusedText,
+} from "@quickchatai/pi-quickreview/src/authwatch.js";
 import { zoneDateString } from "../eod.js";
+import {
+  parseRouteRecord,
+  routeChangeText,
+  routeReportChanged,
+  type RouteRecord,
+} from "../ipc/routereport.js";
 import { curationNeedsAttention } from "../learner/status.js";
 import { memoryStatusLine, type MemoryStatus } from "../memory/health.js";
 import type { StatusSnapshot } from "../state.js";
@@ -467,7 +476,7 @@ function publishAlert(alertsDir: string, name: string, record: unknown): void {
   renameSync(tmp, join(alertsDir, name));
 }
 
-// ---- daemon-detected pi auth failures → the same alert pipeline ----------
+// ---- a model credential the daemon saw refused → the same alert pipeline ----
 
 export interface PiAuthAlertMemory {
   /** `last_at` of the snapshot flag the last written file covered. */
@@ -484,7 +493,7 @@ export interface PiAuthAlertMemory {
  */
 export function maybeWritePiAuthAlert(
   alertsDir: string,
-  flag: { last_at: string; hits: number } | undefined,
+  flag: { last_at: string; hits: number; provider?: string } | undefined,
   mem: PiAuthAlertMemory,
   now: () => Date = () => new Date(),
 ): string | undefined {
@@ -497,8 +506,9 @@ export function maybeWritePiAuthAlert(
     tier: "alert",
     cause: "pi-auth-expired",
     pr: null,
-    title: "pi auth: API rejecting tokens as expired",
-    body: `The daemon is seeing token-expired API errors in pi session logs (${flag.hits} hit(s), latest ${flag.last_at}). Reviews will wedge until /login is re-run in the container.`,
+    title: "model credential refused",
+    // The anomaly's own sentence; a flag that names no provider guesses none.
+    body: `${credentialRefusedText(flag.provider ? [flag.provider] : [])} (${flag.hits} hit(s) in pi session logs, latest ${flag.last_at})`,
     ts: now().toISOString(),
   });
   mem.lastWritten = flag.last_at;
@@ -670,4 +680,54 @@ export function maybeWriteWorkerCrashAlerts(
         : "Workers failed on three PRs within 15 minutes with no success, so the bot drains: no round, answer or debug worker starts. Fix the cause, then run drain off.",
     );
   return names;
+}
+
+// ---- reviews run on another model or credential → the same alert pipeline ----
+
+export interface ModelRouteAlertMemory {
+  /** The route the last fresh snapshot carried; undefined until one did. */
+  last: RouteRecord | undefined;
+}
+
+/**
+ * Bridge from status.json `model_route` into the alert pipeline: ONE
+ * alert-tier file when the route a fresh snapshot carries is not the one the
+ * snapshot before it carried, by the daemon's own test for its
+ * `model_route_changed` anomaly (another model, another provider a pin was
+ * moved off, a credential from another origin) and in the anomaly's own words.
+ *
+ * Only a change seen while this TUI runs notifies: the first route it reads is
+ * where it starts, never news. A snapshot with no readable route (none
+ * reported yet, an older daemon, a block this build cannot read) is unknown:
+ * it raises nothing and is not remembered, so the route that comes after it is
+ * still held against the last one that was known. Fresh snapshots only.
+ */
+export function maybeWriteModelRouteAlert(
+  alertsDir: string,
+  block: unknown,
+  fresh: boolean,
+  mem: ModelRouteAlertMemory,
+  now: () => Date = () => new Date(),
+): string | undefined {
+  if (!fresh) return undefined;
+  const route = parseRouteRecord(block);
+  if (route === null) return undefined;
+  const prev = mem.last;
+  if (prev === undefined || !routeReportChanged(prev, route)) {
+    mem.last = route;
+    return undefined;
+  }
+  const name = `${now().toISOString().replace(/[:.]/g, "-")}-model-route-changed.json`;
+  publishAlert(alertsDir, name, {
+    tier: "alert",
+    cause: "model-route-changed",
+    pr: null,
+    title: "reviews now run on another model or credential",
+    body: routeChangeText(prev, route),
+    ts: now().toISOString(),
+  });
+  // Remembered only once the file is written: a failed write leaves the
+  // change to the next poll.
+  mem.last = route;
+  return name;
 }

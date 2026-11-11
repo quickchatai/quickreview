@@ -27,6 +27,7 @@ import {
   patchStatus,
   type DebugStatus,
 } from "../extensions/debug-round.js";
+import { loginRouteConfigFromEnv } from "../extensions/login-route.js";
 import {
   DEBUG_ROUND_EXTENSIONS,
   DEBUG_START_MESSAGE,
@@ -72,7 +73,7 @@ describe("[debug-pi] what pi is started with", () => {
     sessionName: "review-x",
   });
 
-  it("loads the round's extensions with the debug one in the lens tool's place, bash-guard included", () => {
+  it("loads the round's extensions with the debug one in the lens tool's place, bash-guard first and the login route last", () => {
     const loaded = argv.flatMap((a, i) =>
       argv[i - 1] === "--extension"
         ? [a.slice(a.indexOf("/extensions/") + "/extensions/".length)]
@@ -83,6 +84,7 @@ describe("[debug-pi] what pi is started with", () => {
       "cli/ledger-pin.ts",
       "cli/debug-round.ts",
       "finding-clusters.ts",
+      "cli/login-route.ts",
     ]);
     expect(
       DEBUG_ROUND_EXTENSIONS.map((e) => {
@@ -105,12 +107,25 @@ describe("[debug-pi] what pi is started with", () => {
   it("persists the main session under the round's dir and starts the round from the command", () => {
     expect(argv[argv.indexOf("--session-dir") + 1]).toBe("/out/session");
     expect(argv[argv.indexOf("--system-prompt") + 1]).toBe("/out/system-prompt.md");
-    expect(argv[argv.indexOf("--model") + 1]).toBe("local/m");
     // interactive: no --mode json, no -p
     expect(argv).not.toContain("--mode");
     expect(argv).not.toContain("-p");
     expect(argv.at(-1)).toBe(DEBUG_START_MESSAGE);
     expect(DEBUG_START_MESSAGE).toBe(`/${DEBUG_ROUND_COMMAND}`);
+  });
+
+  // MUTATION: pass `--model o.model` whatever it holds — an unpinned round
+  // starts pi with an empty `--model` and this fails.
+  it("names a model only when the config pins one: with none pi starts on its own choice", () => {
+    expect(argv[argv.indexOf("--model") + 1]).toBe("local/m");
+    const at = { root: "/root", sysPath: "/s.md", sessionDir: "/out/session", sessionName: "x" };
+    const unpinned = debugArgv({ ...at, model: "" });
+    expect(unpinned).not.toContain("--model");
+    expect(unpinned).not.toContain("--thinking");
+    expect(unpinned.at(-1)).toBe(DEBUG_START_MESSAGE);
+    const level = debugArgv({ ...at, model: ":high" });
+    expect(level).not.toContain("--model");
+    expect(level[level.indexOf("--thinking") + 1]).toBe("high");
   });
 
   it("has no GitHub token in its environment, and the round's env over the terminal's", () => {
@@ -133,6 +148,17 @@ describe("[debug-pi] what pi is started with", () => {
     expect(env["HOME"]).toBe("/round-home");
     expect(env["QCR_DEBUG_ORDER_FILE"]).toBe("/out/round-order.md");
     expect(env["QCR_DEBUG_TASKS_DIR"]).toBe("/out/tasks");
+  });
+
+  // MUTATION: drop DEBUG_LOGIN_OPEN from debugEnv — the login route prefills
+  // `/login` on the run's copy of the login and this fails.
+  it("tells the login route the login is the run's own copy: no /login is offered there", () => {
+    const env = debugEnv(
+      { QCR_LOGIN_OPEN: "submit" },
+      { env: { QCR_PR: "7" } },
+      { order: "/out/round-order.md", tasksDir: "/out/tasks" },
+    );
+    expect(loginRouteConfigFromEnv(env)).toEqual({ open: "prefill", prompt: false });
   });
 
   it("gives a lens pass the bash env a round's main session has", () => {
@@ -418,6 +444,48 @@ describe.skipIf(!hasScript || process.platform !== "linux")(
       await server.close();
     });
 
+    /** The pty: `script` gives pi a terminal; the test plays the person, who
+     * leaves once the round in `outDir` has settled its two lenses and the main
+     * session has answered. `screen` collects what pi drew. */
+    const inPty =
+      (outDir: string, screen?: { text: string }) =>
+      (cmd: { bin: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }) =>
+        new Promise<number>((done) => {
+          const line = `stty cols 140 rows 50; exec ${[cmd.bin, ...cmd.args].map(q).join(" ")}`;
+          const child = spawn("script", ["-qefc", line, "/dev/null"], {
+            cwd: cmd.cwd,
+            env: cmd.env,
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+          child.stdout.on("data", (b: Buffer) => {
+            if (screen) screen.text += b.toString();
+          });
+          const t0 = Date.now();
+          const poll = setInterval(() => {
+            let wave = 0;
+            try {
+              wave = (
+                JSON.parse(readFileSync(join(outDir, "debug-round.json"), "utf8")) as DebugStatus
+              ).wave_settled;
+            } catch {
+              // not written yet
+            }
+            const main = mainSessionOf(outDir);
+            const answered =
+              main !== null && readFileSync(main, "utf8").includes('"role":"assistant"');
+            if ((wave >= 2 && answered) || Date.now() - t0 > 45_000) {
+              clearInterval(poll);
+              // ^D on an empty editor: the person leaves pi
+              child.stdin.write("\x04");
+              setTimeout(() => child.kill("SIGKILL"), 10_000);
+            }
+          }, 250);
+          child.on("close", (c) => {
+            clearInterval(poll);
+            done(c ?? 1);
+          });
+        });
+
     it("starts the round from /qcr-round, runs the wave in-process, keeps every JSONL, and the main session resumes under its id", async () => {
       const dir = mkdtempSync(join(tmp, "smoke-"));
       // Under the image's tool-uid split (tests/tool-uid-container.test.ts runs this
@@ -443,7 +511,7 @@ describe.skipIf(!hasScript || process.platform !== "linux")(
       mkdirSync(cwd);
       copyFileSync(join(ROOT, REVIEWER_STUB), join(cwd, HOST_CONTEXT_STUB));
       const cfg = benchConfig("");
-      cfg.models.conversation = FAKE_MODEL;
+      cfg.models.model = FAKE_MODEL;
       server.script(Array.from({ length: 12 }, () => ({ text: "ok" })));
 
       const result = await runDebugRound(
@@ -479,43 +547,7 @@ describe.skipIf(!hasScript || process.platform !== "linux")(
             TERM: "xterm-256color",
             GITHUB_TOKEN: "ghp_smoke_token",
           },
-          // The pty: `script` gives pi a terminal; the test plays the person.
-          run: (cmd) =>
-            new Promise<number>((done) => {
-              const line = `stty cols 140 rows 50; exec ${[cmd.bin, ...cmd.args].map(q).join(" ")}`;
-              const child = spawn("script", ["-qefc", line, "/dev/null"], {
-                cwd: cmd.cwd,
-                env: cmd.env,
-                stdio: ["pipe", "pipe", "pipe"],
-              });
-              child.stdout.resume();
-              const t0 = Date.now();
-              const poll = setInterval(() => {
-                let wave = 0;
-                try {
-                  wave = (
-                    JSON.parse(
-                      readFileSync(join(outDir, "debug-round.json"), "utf8"),
-                    ) as DebugStatus
-                  ).wave_settled;
-                } catch {
-                  // not written yet
-                }
-                const main = mainSessionOf(outDir);
-                const answered =
-                  main !== null && readFileSync(main, "utf8").includes('"role":"assistant"');
-                if ((wave >= 2 && answered) || Date.now() - t0 > 45_000) {
-                  clearInterval(poll);
-                  // ^D on an empty editor: the person leaves pi
-                  child.stdin.write("\x04");
-                  setTimeout(() => child.kill("SIGKILL"), 10_000);
-                }
-              }, 250);
-              child.on("close", (c) => {
-                clearInterval(poll);
-                done(c ?? 1);
-              });
-            }),
+          run: inPty(outDir),
         },
       );
 
@@ -663,6 +695,103 @@ describe.skipIf(!hasScript || process.platform !== "linux")(
       expect(lensSessionsOf(outDir)).toHaveLength(2);
       // the copy of the login went with the open
       expect(existsSync(prepared!.agentDir)).toBe(false);
+    }, 120_000);
+
+    // MUTATION: build the lens host without the session's route (drop `route`
+    // from interactiveHost in packages/pi-plugin/extensions/lens.ts) — the
+    // lenses run on the model the host's own route picks, `local/r`, and this
+    // fails. Leave `--model` on debugArgv for an empty spec — pi refuses to
+    // start on a model with no name and this fails too.
+    it("with no model pinned, pi starts on its own choice and the lenses run on the session's model", async () => {
+      const dir = mkdtempSync(join(tmp, "unpinned-"));
+      if (process.env["QCR_TOOL_UID"] !== undefined) {
+        chmodSync(tmp, 0o775);
+        chmodSync(dir, 0o775);
+      }
+      const agentDir = join(dir, "agent");
+      // Two models: `m`, the provider's first, which a pi with nothing saved
+      // starts on, and `r`, the one the route's pick rule would take.
+      writeFakeProvider(agentDir, server.baseUrl, { routable: true });
+      writeFileSync(join(agentDir, "auth.json"), "{}\n", { mode: 0o600 });
+      mkdirSync(join(agentDir, "agents"), { recursive: true });
+      // An unpinned tier's built agent: no `model:` line, its level in `thinking:`.
+      for (const a of ["pass-a", "pass-b"])
+        writeFileSync(
+          join(agentDir, "agents", `${a}.md`),
+          `---\nname: ${a}\ndescription: ${a}\nthinking: low\ntools: read, bash\n---\nYou are ${a}.\n`,
+        );
+      const root = mkRoot(dir, "root");
+      const outDir = join(dir, "out");
+      const cwd = join(dir, "work");
+      mkdirSync(cwd);
+      copyFileSync(join(ROOT, REVIEWER_STUB), join(cwd, HOST_CONTEXT_STUB));
+      const cfg = benchConfig("");
+      cfg.models.model = "";
+      server.script(Array.from({ length: 12 }, () => ({ text: "ok" })));
+      const heard = server.requests.length;
+      const screen = { text: "" };
+      let args: string[] = [];
+
+      const result = await runDebugRound(
+        {
+          root,
+          cwd,
+          agentScope: "user",
+          agentDir,
+          tree: mkTree(dir, "tree"),
+          files: FILES,
+          target: TARGET,
+          outDir,
+          cfg,
+          ecosystem: ecosystemFor("none"),
+          timeoutMs: 60_000,
+          prompts: {
+            system: "You are the reviewer.",
+            order: "ROUND ORDER: review the PR.",
+            plannedLenses: ["pass-a", "pass-b"],
+            passPlan: [],
+            taskFiles: ["01-pass-a.md", "02-pass-b.md"].map((f) => ({
+              path: join(outDir, "tasks", f),
+              text: `task ${f}\n`,
+            })),
+          },
+        },
+        {
+          piBin: PI_BIN,
+          env: {
+            ...process.env,
+            PI_OFFLINE: "1",
+            PI_TELEMETRY: "0",
+            TERM: "xterm-256color",
+          },
+          run: (cmd) => {
+            args = cmd.args;
+            return inPty(outDir, screen)(cmd);
+          },
+        },
+      );
+
+      // pi was told no model, and loaded the login route beside the round's extensions
+      expect(args).not.toContain("--model");
+      expect(args.some((a) => a.endsWith("/extensions/cli/login-route.ts"))).toBe(true);
+      expect(screen.text).not.toMatch(/Extension error|Failed to load extension/i);
+      // the session had a usable model, so nothing was asked of the person
+      expect(screen.text).not.toContain("needs a model login");
+      expect(result.piRun.code).toBe(0);
+      expect(
+        JSON.parse(readFileSync(join(outDir, "debug-round.json"), "utf8")) as DebugStatus,
+      ).toMatchObject({ state: "started", wave: ["pass-a", "pass-b"], wave_settled: 2 });
+      // the main session and both lenses asked for the model pi itself started on
+      const asked = server.requests
+        .slice(heard)
+        .map((r) => (JSON.parse(r.body) as { model: string }).model);
+      expect(asked).toEqual(["m", "m", "m"]);
+      // and each lens's ledger line names the model that answered it
+      const ledger = readFileSync(join(outDir, "lens-ledger.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => (JSON.parse(l) as { model: string }).model);
+      expect(ledger).toEqual(["m", "m"]);
     }, 120_000);
   },
 );

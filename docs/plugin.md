@@ -130,7 +130,7 @@ The pi Plugin's `packages/pi-plugin/skills/` is that render, made by
 which checks the copy it wrote; `--check` only checks). It is gitignored and
 never edited.
 
-A host body probes the installed `qcr` first (`qcr --schema 1 version`) and,
+A host body probes the installed `qcr` first (`qcr --schema 2 version`) and,
 on any nonzero exit or output that is not JSON, runs the exact release it was
 rendered from through `npx -y @quickchatai/quickreview@<version>`. A host scan
 runs with `--sandbox host`: in `qcr`'s own process, behind its read-only
@@ -145,18 +145,26 @@ shows it beside the price.
 ## The schema check
 
 Skills never call `qcr review` or `qcr scan` bare. They call
-`qcr --schema 1 <verb> …`, which names host-plugin contract 1: one version per
+`qcr --schema 2 <verb> …`, which names host-plugin contract 2: one version per
 payload family (review, scan, version), held in `CONTRACTS` beside the family
 constants in `packages/pi-plugin/src/contract.ts` and read by
 `src/schemaflag.ts`. The flag goes before the verb, implies `--json`, and
 prints no update notice. A qcr that does not print the contract exits 3 with
 one line on stderr and nothing on stdout, and a qcr from before the flag
 exits nonzero without JSON, so a skill cannot read fields of a payload it was
-not written for. `qcr --schema 1 version` is the probe: its `contracts` field
+not written for. `qcr --schema 2 version` is the probe: its `contracts` field
 lists every contract this qcr prints. Adding a field keeps a family's version;
 renaming, removing or retyping one bumps it, and a bumped family version is a
-new contract number, so a plugin written for contract 1 keeps working while
+new contract number, so a plugin written for contract 2 keeps working while
 qcr adds fields. The schemas are in `schemas/`.
+
+Contract 1 is still printed, for skills rendered by an older release. Its
+review payload is a projection of the version-2 one (`toReviewV1`): the same
+object under `schema_version: 1`, legal while every estimate in it is a
+number. A review on a model with no measured price has a null estimate, which
+contract 1 cannot carry, so it is refused in words instead (`ok: false` with
+the reason, exit 1): the reason says to update the skills, or, with no model
+route at all, it is the no-credential refusal.
 
 The review skill posts nothing: a `--schema` run is always `--json`, which makes
 the result's destination `json` whatever the repo saved. Posting to a PR needs

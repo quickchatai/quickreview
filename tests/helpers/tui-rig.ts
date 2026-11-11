@@ -304,7 +304,7 @@ export function writeScanHome(
     estimate_usd: 55,
     spent_usd: 41.2,
     unpriced_cases: 0,
-    settings: { tier: "sol-low", effort: "low", validator: true, validate_tier: "sol-high" },
+    settings: { tier: "sol-low", effort: "low", validator: true, validate_tier: "deep" },
     cases: [
       scanCase("billing", "done", 1),
       scanCase("auth", "running", 2),
@@ -344,7 +344,7 @@ export function writeScanHome(
     const row = (id: string, lens: string, est: number, status = "run") => ({
       id,
       lens,
-      tier: "sol-high",
+      tier: "deep",
       effort: "tier",
       reason: `${lens} over the hot path`,
       units: ["billing"],

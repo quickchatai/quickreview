@@ -47,6 +47,12 @@
 //     (src/debuground.ts) has no worker process, but its row is still this module's to
 //     write: the debug manager asks for the claim, the start mark and the settlement
 //     (`claimHosted`, `markHostedStarted`, `settleHosted`).
+//   - ROUTE. The daemon asks pi nothing, so which model reviews run on is what a
+//     worker says in `ready` (src/ipc/routereport.ts). The report is logged, the
+//     latest is what status.json shows, and a report that names another model,
+//     another move or another credential origin than the one before it raises
+//     `model_route_changed` (StateStore.recordModelRoute). A `ready` that carries
+//     no readable report records nothing: the model is then unknown, not assumed.
 //   - RESTART. On a daemon restart every leased group is killed and its round is
 //     requeued under the same command id (`recover`), so the fresh worker resumes
 //     the JSONL and continues instead of sending the order again.
@@ -79,6 +85,7 @@ import {
 } from "./ipc/control.js";
 import { type GhReader, ghReadOps } from "./ghread.js";
 import { type PermitBroker, permitOps } from "./ipc/permits.js";
+import { parseRouteReport } from "./ipc/routereport.js";
 import type { EventHandler, OpHandler, RequestContext } from "./ipc/server.js";
 import {
   WAKES_ACK_OP,
@@ -99,6 +106,7 @@ import {
   workerLogPath,
   type WorkerLogLimits,
 } from "./workerlog.js";
+import { workerProcessEnv } from "./workerenv.js";
 import { WorkerBreaker, type BreakerLimits } from "./workerbreaker.js";
 import { WORKER_EXIT_AUTH, WORKER_EXIT_PROVIDER, providerBackoffMs } from "./providerfailure.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
@@ -113,39 +121,7 @@ import {
   type WorkerLease,
 } from "./workerlease.js";
 
-/** The env names a worker process may inherit from the daemon. Everything else is
- * dropped, whatever the daemon's own env holds: a worker carries the daemon's
- * locale, path and proxies, the tool-uid split the image arranged (the worker
- * reads them to run the model's tools under it), and nothing that is a secret. */
-export const WORKER_ENV_ALLOW: readonly string[] = [
-  "PATH",
-  "HOME",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
-  "TZ",
-  "TMPDIR",
-  "TERM",
-  "NODE_EXTRA_CA_CERTS",
-  "SSL_CERT_FILE",
-  "SSL_CERT_DIR",
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "NO_PROXY",
-  "http_proxy",
-  "https_proxy",
-  "no_proxy",
-  "PI_CODING_AGENT_DIR",
-  // The separate tool uid (packages/pi-plugin/src/engine/tooluid.ts TOOL_UID_ENVS; named here
-  // because the daemon never imports src/engine/).
-  "QCR_TOOL_UID",
-  "QCR_TOOL_GID",
-  "QCR_TOOL_UID_REQUIRED",
-  "QCR_ALLOW_SHARED_TOOL_UID",
-  // The bot's setid helper, which the worker reaches the tool uid through
-  // (tooluid.ts setidHelperOf): a path, no secret.
-  "QCR_SETPRIV_BIN",
-];
+export { WORKER_ENV_ALLOW, workerProcessEnv } from "./workerenv.js";
 
 export interface WorkerLimits {
   /** Spawn to `ready`: the connect, the spec, the login, the session open (a
@@ -270,27 +246,6 @@ export function decideOutcome(x: {
   };
 }
 
-/** The env of one worker process: the allowlisted part of the daemon's env, the
- * daemon's explicit additions, and the IPC names (the fd NUMBER, never the
- * capability). A GitHub credential is dropped last, by name, so no addition can
- * carry one in. */
-export function workerProcessEnv(
-  parent: NodeJS.ProcessEnv,
-  extra: Readonly<Record<string, string>>,
-  ipc: Readonly<Record<string, string>>,
-): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const name of WORKER_ENV_ALLOW) {
-    const value = parent[name];
-    if (value !== undefined && value !== "") env[name] = value;
-  }
-  for (const [name, value] of Object.entries(extra))
-    if (!name.startsWith("QCR_IPC_")) env[name] = value;
-  Object.assign(env, ipc);
-  for (const name of GITHUB_TOKEN_ENVS) delete env[name];
-  return env;
-}
-
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class WorkerLaunchError extends Error {
@@ -334,6 +289,11 @@ export interface WorkerSupervisorDeps {
   parentEnv?: NodeJS.ProcessEnv;
   /** Daemon-chosen additions to every worker's env. */
   extraEnv?: Readonly<Record<string, string>>;
+  /** The model environment of the install's secrets dir (src/modelenv.ts), asked
+   * for at each spawn and put in that worker's own process env, below
+   * everything else (`workerProcessEnv`). It is in no spec and in no other
+   * process: the daemon's own environment never holds it. */
+  modelEnv?: () => Readonly<Record<string, string>>;
   nodeBin?: string;
   limits?: Partial<WorkerLimits>;
   /** What a command's IPC calls are told beyond its row: a takeover/debug lease
@@ -602,6 +562,7 @@ export class WorkerSupervisor {
       case "ready":
         rec.readyAt = t;
         if (typeof b["session_id"] === "string") rec.sessionId = b["session_id"];
+        this.recordRoute(rec, b["route"]);
         break;
       case "accepted":
         if (rec.acceptedAt === undefined) {
@@ -642,6 +603,28 @@ export class WorkerSupervisor {
       this.log(`worker observer failed: ${String(e)}`);
     }
   };
+
+  /** The model a worker says its command runs on (`ready`'s `route`). A report
+   * that is absent or does not check records nothing, and a store that cannot
+   * take it never costs the worker its round. */
+  private recordRoute(rec: LiveWorker, raw: unknown): void {
+    const report = parseRouteReport(raw);
+    if (report === null) {
+      if (raw !== undefined)
+        this.log(`worker ${rec.row.id}: its route report could not be read and was not kept`);
+      return;
+    }
+    try {
+      const outcome = this.deps.store.recordModelRoute(report, {
+        pr: rec.row.pr,
+        command_id: rec.row.id,
+      });
+      if (outcome === "changed")
+        this.log(`workers: reviews now run on ${report.spec} (${report.credential_origin})`);
+    } catch (e) {
+      this.log(`worker ${rec.row.id}: its route report was not recorded: ${String(e)}`);
+    }
+  }
 
   // ---- the single writer of session_commands -------------------------------
 
@@ -826,6 +809,7 @@ export class WorkerSupervisor {
         this.deps.parentEnv ?? process.env,
         this.deps.extraEnv ?? {},
         ipcEnv({ socketPath: this.deps.socketPath, commandId: row.id, generation }),
+        this.deps.modelEnv?.() ?? {},
       );
       child = this.spawnFn(
         this.deps.nodeBin ?? process.execPath,

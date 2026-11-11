@@ -90,7 +90,7 @@ const DBEAVER = "dbeaver__dbeaver@bc3ac7b";
 const RAGFLOW = "infiniflow__ragflow@7051234";
 const LVGL = "lvgl__lvgl@4a57db3";
 const OLLAMA = "ollama__ollama@b6002f6";
-const WHO = { lens: "pass-baseline", agent: "pass-baseline--terra-med", call: 0 };
+const WHO = { lens: "pass-baseline", agent: "pass-baseline--light", call: 0 };
 
 describe("raw lens candidates from pi's event stream", () => {
   it("reads every pass's final findings text, skips non-subagent events and junk lines", () => {

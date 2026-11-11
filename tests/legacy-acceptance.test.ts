@@ -28,6 +28,29 @@
 //      "--branch" → the bare command's branch, "--to LIST" → accepted, its
 //      "json" still the JSON result. Skills and saved prompts still type them;
 //      ADR 0001's exception covers the command names, never these.
+//   4. pass tier names: the ladder has two spellings ("terra-med" / "sol-med" /
+//      "sol-high" and "light" / "standard" / "deep"), one emitted, both read
+//      (foldTier and foldAgentName, packages/pi-plugin/src/types.ts). A
+//      config.toml, a profile committed in someone else's repository, a bench
+//      plan's `--config` lever, a stored round or ledger row and, longest of
+//      all, a sticky PR session's transcript keep the name they were written
+//      with, so the session goes on calling `pass-x--sol-high` and writing
+//      `tier: "sol-high"` for as long as its pull request lives.
+//   5. the [models] keys: `conversation` and `default` are the review's
+//      `model` (parseModels, packages/pi-plugin/src/reviewconfig.ts; as
+//      `--config` levers, applyConfigOverrides in engine/context.ts), and
+//      `[models.pricing]` is a table a file may carry. Every config.toml
+//      written before `model` existed names its models this way, and so does
+//      every recorded bench plan.
+//   6. the model credential's older spellings: the single key file
+//      `<secrets>/openai_api_key` is still read, as the variable it always
+//      was (modelEnvFrom, src/modelenv.ts; the newer spelling is one file per
+//      variable under `model-env/`), and the two choices an older wizard
+//      recorded for its model step, `llm_auth_route` and `llm_model_prefix`,
+//      load under any value and are read by nothing
+//      (src/onboard/choices.ts). Every install set up before the model step
+//      stopped asking carries the keys in its checklist, and every install
+//      that pasted a key carries the file.
 // Not a fold: regression.ts's Recommendation "ask-owner-legacy" → "ask-owner" —
 // that value is produced and rendered only, never parsed back, so there is no
 // input side to keep.
@@ -37,9 +60,10 @@
 // shared with every other extension, so an alias would keep the collision the
 // rename removes. They are /qcr-review and /qcr-scan, and /selfimprove is the
 // app's own pi's; the last block below holds that no alias creeps back.
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   authorizeCommand,
@@ -48,11 +72,83 @@ import {
   validateCommand,
   type CommandDeps,
 } from "../src/commands.js";
+import { whyJson } from "../src/cli.js";
+import { parseConfig, TUI_DEFAULTS } from "../src/config.js";
+import {
+  LEGACY_MODEL_KEY_ENV,
+  LEGACY_MODEL_KEY_FILE,
+  MODEL_ENV_DIR,
+  modelEnvFrom,
+} from "../src/modelenv.js";
+import {
+  OnboardingEngine,
+  checklistPath,
+  readChecklist,
+  type ChecklistFile,
+  type OnboardAdapters,
+  type ProcessResult,
+} from "../src/onboard/engine.js";
+import { LLM_AUTH_STEP_ID, MODEL_QUERY, llmAuthStep } from "../src/onboard/steps/llmauth.js";
 import { OriginStore, parseOriginRecord } from "../src/slack/origin.js";
-import { foldSlackTier, StateStore } from "../src/state.js";
+import { buildStatusSnapshot, foldSlackTier, StateStore } from "../src/state.js";
+import { App } from "../src/tui/app.js";
+import { detailLines } from "../src/tui/board.js";
+import { stripAnsi } from "../src/tui/paint.js";
+import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createQuickReview } from "@quickchatai/pi-quickreview/extensions/quickreview.js";
+import { applyConfigOverrides } from "@quickchatai/pi-quickreview/src/engine/context.js";
+import { loadBuiltAgents } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
+import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
+import {
+  buildAgents,
+  configAddenda,
+  identityVars,
+  PASS_ADDENDA,
+} from "@quickchatai/pi-quickreview/src/include.js";
+import {
+  lensTuningAddenda,
+  parseLensTable,
+  roundAgentModels,
+} from "@quickchatai/pi-quickreview/src/lenstuning.js";
+import { ALL_PASSES } from "@quickchatai/pi-quickreview/src/passes.js";
 import { parseReviewCommand } from "@quickchatai/pi-quickreview/src/plugin/args.js";
+import { postingPolicyAddenda } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
+import {
+  parseCoreConfig,
+  parseModels,
+  parseReviewSection,
+  parseScan,
+  parseScanTable,
+  presetOf,
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  foldUnitKey,
+  planLaunch,
+} from "@quickchatai/pi-quickreview/src/engine/lens/launch-plan.js";
+import { lensForAgent } from "@quickchatai/pi-quickreview/src/round-progress.js";
+import {
+  measuredRate,
+  sameTier,
+  type LedgerEntry,
+} from "@quickchatai/pi-quickreview/src/scan/ledger.js";
+import { sdkCaseRunner } from "@quickchatai/pi-quickreview/src/scan/scanleaves.js";
+import {
+  planStage2,
+  priceStage2Row,
+  type Stage2PlanInput,
+} from "@quickchatai/pi-quickreview/src/scan/stage2.js";
+import { STAGE2_FILE } from "@quickchatai/pi-quickreview/src/scan/stage2request.js";
+import {
+  foldAgentName,
+  foldTier,
+  LEGACY_TIER_NAMES,
+  PASS_TIER_ORDER,
+  type PassPlanEntry,
+  type SessionHooks,
+} from "@quickchatai/pi-quickreview/src/types.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { fakeStreams, installScanRig, okSsh } from "./helpers/tui-rig.js";
 
 // ---- fold 1: the tier string --------------------------------------------
 
@@ -267,6 +363,993 @@ describe("/qcr-review argument folds: --full, --branch, --to", () => {
   it("the usage names only the current spellings", () => {
     const usage = (parseReviewCommand("--wat") as { error: string }).error;
     for (const old of ["--full", "--branch", "--to"]) expect(usage).not.toContain(old);
+  });
+});
+
+// ---- fold 4: pass tier names ----------------------------------------------
+
+describe("pass tiers: the older names are read forever", () => {
+  // Every case holds under either ladder: whichever spelling PASS_TIER_ORDER
+  // emits, the other one is read on every input, so each case names its
+  // expectation by rung (PASS_TIER_ORDER[i]) and feeds both spellings.
+  //
+  // MUTATION: delete "sol-high" from LEGACY_TIER_NAMES — the tier block
+  // fails. (While the ladder itself still spells its rungs that way the map
+  // holds the other three: delete "deep".)
+  const SPELLINGS = [
+    ["terra-med", "light"],
+    ["sol-med", "standard"],
+    ["sol-high", "deep"],
+  ] as const;
+  const OLDER: readonly string[] = SPELLINGS.map(([older]) => older);
+  const NEWER: readonly string[] = SPELLINGS.map(([, newer]) => newer);
+  const [BASE, ADD, RISK] = PASS_TIER_ORDER;
+  /** Rung `i` under each of its two names. */
+  const bothAt = (i: number): readonly string[] => SPELLINGS[i]!;
+  const FIXTURE = readFileSync(join(import.meta.dirname, "fixtures", "config.toml"), "utf8");
+  /** The fixture config with `[models.tiers]` holding exactly `tiers`. */
+  const configToml = (tiers: Record<string, string>): string => {
+    const without = FIXTURE.replace(/^\[models\.tiers\]\n(?:(?!\[).*\n)*/m, "");
+    expect(without).not.toContain("[models.tiers]");
+    const rows = Object.entries(tiers).map(([k, v]) => `"${k}" = "${v}"`);
+    return `${without}\n[models.tiers]\n${rows.join("\n")}\n`;
+  };
+  const models = (over: Record<string, unknown>) =>
+    parseModels({ default: "prov/m", conversation: "prov/m", ...over });
+
+  it("the ladder is one of the two spellings and the alias map holds the other", () => {
+    const ladder: readonly string[] = PASS_TIER_ORDER;
+    expect([OLDER, NEWER]).toContainEqual(ladder);
+    const other = ladder[0] === OLDER[0] ? NEWER : OLDER;
+    expect(Object.keys(LEGACY_TIER_NAMES).sort()).toEqual([...other].sort());
+    SPELLINGS.forEach((names, i) => {
+      for (const name of names) expect(foldTier(name)).toBe(PASS_TIER_ORDER[i]);
+    });
+    // The fold is not a wildcard: no near miss, no object key, no other case.
+    for (const not of ["", "sol-low", "sol-max", "Deep", "constructor", "toString"])
+      expect(foldTier(not)).toBeUndefined();
+  });
+
+  it("an agent name folds its tier suffix and nothing else", () => {
+    SPELLINGS.forEach((names, i) => {
+      for (const name of names)
+        expect(foldAgentName(`pass-x--${name}`)).toBe(`pass-x--${PASS_TIER_ORDER[i]}`);
+    });
+    for (const same of ["pass-x", "pass-x--sol-low", "deep", "pass-deep", "pass-x--deep--y"])
+      expect(foldAgentName(same)).toBe(same);
+  });
+
+  it("config.toml [models.tiers] keys: either spelling sets its rung", () => {
+    for (const names of [OLDER, NEWER]) {
+      const cfg = parseCoreConfig(
+        configToml({
+          [names[0]!]: "prov/a:medium",
+          [names[1]!]: "prov/b:medium",
+          [names[2]!]: "prov/c:high",
+        }),
+      );
+      expect(cfg.models.tiers).toEqual({
+        [BASE]: "prov/a:medium",
+        [ADD]: "prov/b:medium",
+        [RISK]: "prov/c:high",
+      });
+    }
+  });
+
+  it("config.toml [models.tiers]: both spellings of one rung must agree", () => {
+    const [a, b] = bothAt(2) as [string, string];
+    expect(models({ tiers: { [a]: "prov/c:high", [b]: "prov/c:high" } }).tiers[RISK]).toBe(
+      "prov/c:high",
+    );
+    expect(() => models({ tiers: { [a]: "prov/c:high", [b]: "prov/d:high" } })).toThrow(
+      /\[models\.tiers\] sets .* and its older name .* to different models/,
+    );
+  });
+
+  it("config.toml [models.tiers]: a key that is no tier loads, is left out, and is named once", () => {
+    const warned: string[] = [];
+    const cfg = parseCoreConfig(configToml({ [OLDER[2]!]: "prov/c:high", "sol-ultra": "prov/z" }), {
+      warn: (line) => warned.push(line),
+    });
+    expect(cfg.models.tiers[RISK]).toBe("prov/c:high");
+    expect(Object.keys(cfg.models.tiers).sort()).toEqual([...PASS_TIER_ORDER].sort());
+    const named = warned.filter((line) => line.includes("[models.tiers]"));
+    expect(named).toHaveLength(1);
+    expect(named[0]).toContain('"sol-ultra" is not a tier');
+    for (const name of [...OLDER, ...NEWER]) expect(named[0]).toContain(name);
+    // The app's parser hears the same line and loads the same tiers.
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "warn").mockImplementation((line) => void lines.push(line));
+    try {
+      const app = parseConfig(configToml({ [NEWER[2]!]: "prov/c:high", "sol-ultra": "prov/z" }));
+      expect(app.models.tiers[RISK]).toBe("prov/c:high");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(lines.filter((line) => line.includes('"sol-ultra" is not a tier'))).toHaveLength(1);
+  });
+
+  it("validate_tier and [models.pass_tiers] values: either spelling", () => {
+    for (const name of bothAt(0)) {
+      const m = models({ validate_tier: name, pass_tiers: { "pass-baseline": name } });
+      expect(m.validate_tier).toBe(BASE);
+      expect(m.pass_tiers["pass-baseline"]).toBe(BASE);
+    }
+    // A name that is no tier is still refused, naming the ladder.
+    expect(() =>
+      parseCoreConfig(FIXTURE.replace(/^validate_tier = .*$/m, 'validate_tier = "sol-ultra"')),
+    ).toThrow(`unknown tier "sol-ultra" (one of ${PASS_TIER_ORDER.join(", ")})`);
+  });
+
+  it("[review] sweep_light_tier: either spelling, and off stays off", () => {
+    const review = (v: string) =>
+      parseReviewSection({ review: { sweep_light_tier: v } }, presetOf({})).sweep_light_tier;
+    for (const name of bothAt(0)) expect(review(name)).toBe(BASE);
+    expect(review("")).toBe("");
+  });
+
+  it("[scan] tier, in config.toml and in a profile: either spelling", () => {
+    for (const name of bothAt(1)) {
+      expect(parseScan({ tier: name }).tier).toBe(ADD);
+      expect(parseScanTable("profile x", { tier: name }, ["tier"]).tier).toBe(ADD);
+    }
+    expect(() => parseScan({ tier: "sol-ultra" })).toThrow(
+      `must be one of ${PASS_TIER_ORDER.join(", ")}`,
+    );
+  });
+
+  it("a profile's [lenses.<pass>] min_tier: either spelling", () => {
+    for (const name of bothAt(2)) {
+      const table = parseLensTable(
+        "profile x",
+        { "pass-baseline": { min_tier: name } },
+        ALL_PASSES,
+      );
+      expect(table["pass-baseline"]?.min_tier).toBe(RISK);
+    }
+    expect(() =>
+      parseLensTable("profile x", { "pass-baseline": { min_tier: "sol-ultra" } }, ALL_PASSES),
+    ).toThrow(`min_tier must be one of ${PASS_TIER_ORDER.join(", ")}`);
+  });
+
+  it("a --config lever: the models.tiers key and every tier value, either spelling", () => {
+    const base = parseCoreConfig(FIXTURE);
+    for (const names of [OLDER, NEWER]) {
+      const out = applyConfigOverrides(
+        base,
+        [
+          `models.tiers.${names[2]}=prov/levered:high`,
+          `models.validate_tier=${names[1]}`,
+          `models.pass_tiers.pass-sweep=${names[0]}`,
+          `review.sweep_light_tier=${names[0]}`,
+          `scan.tier=${names[2]}`,
+        ].join(","),
+      );
+      expect(out.models.tiers[RISK]).toBe("prov/levered:high");
+      expect(Object.keys(out.models.tiers).sort()).toEqual([...PASS_TIER_ORDER].sort());
+      expect(out.models.validate_tier).toBe(ADD);
+      expect(out.models.pass_tiers["pass-sweep"]).toBe(BASE);
+      expect(out.review.sweep_light_tier).toBe(BASE);
+      expect(out.scan.tier).toBe(RISK);
+    }
+    // A key that is no tier is still a typo, never a new table entry.
+    expect(() => applyConfigOverrides(base, "models.tiers.sol-ultra=prov/m")).toThrow(
+      'no key "models.tiers.sol-ultra"',
+    );
+  });
+
+  describe("a verdict's tiers against the round's recorded plan", () => {
+    class Adapter implements VerdictAdapter {
+      async addLabel(): Promise<GateResult> {
+        return { executed: false, dryRunFile: "d" };
+      }
+      async removeLabel(): Promise<GateResult> {
+        return { executed: false, dryRunFile: "d" };
+      }
+    }
+    const hooks: SessionHooks = {
+      async dispatchRound() {},
+      async inject() {},
+      async archiveAndClose() {},
+    };
+    const cfg = parseConfig(FIXTURE);
+    let dir: string;
+    let store: StateStore;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "qcr-legacy-tier-verdict-"));
+      store = new StateStore(":memory:");
+    });
+    afterEach(() => {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    /** A round whose plan names its tiers in `plan`'s spelling, answered by
+     * a verdict that names them in `said`'s; `baseline` is the rung the
+     * verdict says pass-baseline ran at. Returns the mismatch payloads. */
+    async function mismatches(
+      pr: number,
+      plan: readonly string[],
+      said: readonly string[],
+      baseline: number,
+    ): Promise<Array<Record<string, unknown>>> {
+      store.upsertPr({
+        number: pr,
+        state: "reviewing",
+        head_sha: "abc123",
+        title: `PR ${pr}`,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      store.startRound(pr, "first", ["pass-baseline", "pass-validate"], 75, {
+        pass_plan: [
+          {
+            lens: "pass-baseline",
+            agent: `pass-baseline--${plan[1]}`,
+            tier: plan[1],
+            raisable_to: [`pass-baseline--${plan[2]}`],
+          },
+          {
+            lens: "pass-validate",
+            agent: `pass-validate--${plan[2]}`,
+            tier: plan[2],
+            raisable_to: [],
+          },
+        ] as unknown as PassPlanEntry[],
+        addable_passes: [{ lens: "pass-concurrency", tier: plan[1]! }],
+      });
+      const name = `pr-${pr}-round-1.json`;
+      writeFileSync(
+        join(dir, name),
+        JSON.stringify({
+          pr,
+          round_no: 1,
+          verdict: "REQUEST_CHANGES",
+          head_sha: "abc123",
+          spend_usd: 1,
+          finished_at: "2026-08-13T12:00:00Z",
+          passes: [
+            { name: "pass-baseline", tier: said[baseline], findings: 0 },
+            { name: "pass-concurrency", tier: said[1], reason: "added: a race", findings: 0 },
+            { name: "pass-validate", tier: said[2], findings: 0 },
+          ],
+        }),
+      );
+      await new VerdictWatcher({
+        cfg,
+        store,
+        adapter: new Adapter(),
+        hooks,
+        verdictDir: dir,
+        root: dir,
+        usage: {},
+        partialWrite: { windowMs: 0 },
+      }).handleFile(name);
+      return (
+        store.db
+          .prepare("SELECT payload FROM events WHERE kind = 'pass_plan_mismatch' AND pr = ?")
+          .all(pr) as Array<{ payload: string }>
+      ).map((row) => JSON.parse(row.payload) as Record<string, unknown>);
+    }
+
+    it("a verdict in the older names conforms to a plan in the newer ones, and the reverse", async () => {
+      // pass-baseline raised to the top rung (its row allows the raise by
+      // agent name), a reasoned addition at its tier, the validator at its own.
+      expect(await mismatches(301, NEWER, OLDER, 2)).toEqual([]);
+      expect(await mismatches(302, OLDER, NEWER, 2)).toEqual([]);
+      const additions = (
+        store.db
+          .prepare("SELECT payload FROM events WHERE kind = 'pass_plan_conformant_addition'")
+          .all() as Array<{ payload: string }>
+      ).map((row) => (JSON.parse(row.payload) as { additions: unknown[] }).additions);
+      // What is recorded names the tier one way: the ladder's.
+      expect(additions).toEqual([
+        [{ name: "pass-concurrency", tier: ADD, reason: "added: a race" }],
+        [{ name: "pass-concurrency", tier: ADD, reason: "added: a race" }],
+      ]);
+    });
+
+    it("the fold is not a wildcard: a rung the plan does not allow is still the wrong tier", async () => {
+      // pass-baseline BELOW its planned rung, across the two spellings.
+      const [payload] = await mismatches(303, NEWER, OLDER, 0);
+      expect(payload).toMatchObject({ wrong_tier: ["pass-baseline"] });
+    });
+  });
+
+  describe("a stored round's validator tier, on every surface that shows it", () => {
+    // A row keeps the name it was written with (nothing migrates it), so each
+    // reader folds on its own: three readers, three folds, a case for each.
+    let store: StateStore;
+    beforeEach(() => {
+      store = new StateStore(":memory:");
+      store.upsertPr({
+        number: 311,
+        state: "reviewing",
+        head_sha: "abc123",
+        title: "PR 311",
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+    });
+    afterEach(() => store.close());
+    /** A running round whose row holds `stored` as its validator's tier. */
+    const running = (stored: string): number =>
+      store.startRound(311, "first", ["pass-baseline", "pass-validate"], 75, {
+        validate_tier: stored,
+      });
+    const snapshotRow = () => buildStatusSnapshot(store, true).prs[0]!;
+
+    // MUTATION: return `stored` unfolded from shownTier (src/state.ts) — this
+    // fails.
+    it("status.json: the running round names its rung, whichever spelling was stored", () => {
+      SPELLINGS.forEach((names, i) => {
+        for (const name of names) {
+          const id = running(name);
+          expect(snapshotRow().current_round?.validate_tier, name).toBe(PASS_TIER_ORDER[i]);
+          store.finishRound(id, "APPROVE", null);
+        }
+      });
+      // A name that is no tier is shown as stored, and no tier stays none.
+      const custom = running("custom");
+      expect(snapshotRow().current_round?.validate_tier).toBe("custom");
+      store.finishRound(custom, "APPROVE", null);
+      store.startRound(311, "first", ["pass-baseline"], 75);
+      expect(snapshotRow().current_round?.validate_tier).toBeNull();
+    });
+
+    // MUTATION: in whyJson (src/cli.ts) emit `validate_tier: r.validate_tier ??
+    // null` — this fails.
+    it("qcr why --json: every round names its rung, whichever spelling was stored", () => {
+      const expected: Array<string | null> = [];
+      SPELLINGS.forEach((names, i) => {
+        for (const name of names) {
+          store.finishRound(running(name), "APPROVE", null);
+          expected.push(PASS_TIER_ORDER[i]!);
+        }
+      });
+      store.finishRound(running("custom"), "APPROVE", null);
+      store.finishRound(store.startRound(311, "first", ["pass-baseline"], 75), "APPROVE", null);
+      expect(
+        whyJson(store, 311, "/nonexistent-archive").rounds.map((r) => r.validate_tier),
+      ).toEqual([...expected, "custom", null]);
+    });
+
+    // The board reads status.json and `why --json` from a daemon that may be
+    // older than it is, so a row can still reach it under the other name.
+    // MUTATION: in currentProgressLines (src/tui/board.ts) render
+    // `round.validate_tier` unfolded — this fails.
+    it("the board's validator row names the rung, whichever spelling the row it was handed holds", () => {
+      running(PASS_TIER_ORDER[0]);
+      const row = snapshotRow();
+      const why = whyJson(store, 311, "/nonexistent-archive");
+      const validatorRow = (pr: typeof row, detail = why): string | undefined =>
+        detailLines(detail, pr, 100, new Date("2026-08-13T12:00:00Z"))
+          .map(stripAnsi)
+          .find((line) => line.includes("pass-validate"));
+      SPELLINGS.forEach((names, i) => {
+        for (const name of names) {
+          // From status.json's row…
+          expect(
+            validatorRow({ ...row, current_round: { ...row.current_round!, validate_tier: name } }),
+            name,
+          ).toBe(`  ? pass-validate · unknown · ${PASS_TIER_ORDER[i]}`);
+          // …and, with no current round there, from the cached `why` payload.
+          const { current_round: _none, ...bare } = row;
+          expect(
+            validatorRow(bare, {
+              ...why,
+              rounds: why.rounds.map((r) => ({ ...r, validate_tier: name })),
+            }),
+            name,
+          ).toBe(`  ? pass-validate · unknown · ${PASS_TIER_ORDER[i]}`);
+        }
+      });
+    });
+  });
+
+  it("lensForAgent strips the tier suffix in either spelling", () => {
+    for (const name of [...OLDER, ...NEWER])
+      expect(lensForAgent(`pass-x--${name}`), name).toBe("pass-x");
+    expect(lensForAgent("pass-x--sol-med")).toBe("pass-x");
+  });
+
+  describe("the built agent a name finds", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "qcr-legacy-tier-agents-"));
+    });
+    afterEach(() => rmSync(dir, { recursive: true, force: true }));
+    const build = (name: string): void =>
+      writeFileSync(
+        join(dir, `${name}.md`),
+        `---\nname: ${name}\ndescription: a lens\n---\n\nRead the diff.\n`,
+      );
+
+    it("the lens tool's lookup: pass-x--sol-high finds the top rung's built agent", () => {
+      build(`pass-x--${RISK}`);
+      const registry = loadBuiltAgents(dir);
+      for (const name of ["sol-high", ...bothAt(2)])
+        expect(registry.get(`pass-x--${name}`)?.name, name).toBe(`pass-x--${RISK}`);
+      // Another rung has no built agent here, under either name.
+      for (const name of bothAt(1)) expect(registry.get(`pass-x--${name}`)).toBeUndefined();
+      // Only the ladder's names are built and listed.
+      expect(registry.names()).toEqual([`pass-x--${RISK}`]);
+    });
+
+    it("a scan case: an agent named in either spelling finds the built file", async () => {
+      build(`pass-scan--${ADD}`);
+      const runner = sdkCaseRunner({
+        agentsDir: dir,
+        cwd: dir,
+        env: {},
+        home: dir,
+        runtime: () => {
+          throw new Error("no runtime here: the agent was found");
+        },
+      });
+      const run = (agent: string) =>
+        runner.run(
+          { id: "c1", unit: "u", agent, files: [], prompt: "p" },
+          new AbortController().signal,
+        );
+      // Found: the case gets as far as its session. (The built file names no
+      // model, which is a leaf on the run's route, not a refusal.)
+      for (const name of bothAt(1))
+        expect(await run(`pass-scan--${name}`)).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining("no runtime here: the agent was found"),
+        });
+      // Not found: a rung with no built file, under either name.
+      for (const name of bothAt(2))
+        expect(await run(`pass-scan--${name}`)).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining("no agent pass-scan--"),
+        });
+    });
+  });
+
+  // A sticky session's transcript keeps the agent names it started with, so
+  // it goes on naming `pass-x--sol-high` in a launch's `skip` and `extra`
+  // after the round's task files are written as `pass-x--deep`; and a round
+  // planned before the rename still has its files under the older names.
+  // MUTATION: match a row key by `unitKeys(u).includes(key)` again
+  // (launch-plan.ts) — a key in the other spelling answers to no row, and
+  // this fails.
+  describe("a launch's skip and extra keys against the round's task files", () => {
+    let root: string;
+    let tasks: string;
+    beforeEach(() => {
+      root = mkdtempSync(join(tmpdir(), "qcr-legacy-launch-"));
+      tasks = join(root, "state", "pr-7-round-2-passes", "tasks");
+      mkdirSync(tasks, { recursive: true });
+    });
+    afterEach(() => rmSync(root, { recursive: true, force: true }));
+    const write = (file: string): void => writeFileSync(join(tasks, file), `# task ${file}\n`);
+    const plan = (params: Record<string, unknown>) =>
+      planLaunch({ dirs: [tasks], ...params }, { QCR_SANDBOX_ROOT: root });
+
+    // Each direction: the files in one spelling of the top rung, the keys in
+    // the other (and in the same one, which always matched).
+    for (const [filed, said] of [
+      [bothAt(2)[1], bothAt(2)[0]],
+      [bothAt(2)[0], bothAt(2)[1]],
+      [bothAt(2)[1], bothAt(2)[1]],
+    ] as const) {
+      it(`files named --${filed}, keys named --${said}`, () => {
+        write(`01-pass-x--${filed}.md`);
+        write(`02-pass-y--${filed}@delta.md`);
+        write(`03-pass-z--${bothAt(1)[1]}.md`);
+        // skip: by agent, by file name with and without `.md`, by agent@strategy.
+        for (const key of [`pass-x--${said}`, `01-pass-x--${said}`, `01-pass-x--${said}.md`]) {
+          const p = plan({ skip: [key] });
+          expect(p.ok && p.skipped.map((u) => u.file), key).toEqual([`01-pass-x--${filed}.md`]);
+          expect(p.ok && p.units.map((u) => u.row), key).toEqual([2, 3]);
+        }
+        const strategy = plan({ skip: [`pass-y--${said}@delta`] });
+        expect(strategy.ok && strategy.skipped.map((u) => u.row)).toEqual([2]);
+        // extra: the text lands on the row the key names, and only there.
+        const extra = plan({ extra: { [`pass-x--${said}`]: "PRIOR FINDINGS" } });
+        if (!extra.ok) throw new Error(extra.error);
+        expect(extra.units.map((u) => u.task.includes("PRIOR FINDINGS"))).toEqual([
+          true,
+          false,
+          false,
+        ]);
+        // The unit keeps the name its file carries: the fold is the match only.
+        expect(extra.units[0]!.agent).toBe(`pass-x--${filed}`);
+      });
+    }
+
+    it("a key for another rung, or no row at all, still answers to nothing", () => {
+      write(`01-pass-x--${bothAt(2)[1]}.md`);
+      for (const name of bothAt(1)) {
+        expect(plan({ skip: [`pass-x--${name}`] })).toEqual({
+          ok: false,
+          error: `skip: no row answers to "pass-x--${name}"`,
+        });
+        expect(plan({ extra: { [`pass-x--${name}`]: "t" } })).toMatchObject({ ok: false });
+      }
+      expect(plan({ skip: ["pass-nope--sol-high"] })).toMatchObject({ ok: false });
+    });
+
+    it("foldUnitKey folds the agent in every key shape and leaves the rest", () => {
+      const [older, newer] = bothAt(2);
+      expect(foldUnitKey(`pass-x--${older}`)).toBe(`pass-x--${newer}`);
+      expect(foldUnitKey(`04-pass-x--${older}.md`)).toBe(`04-pass-x--${newer}.md`);
+      expect(foldUnitKey(`04-pass-x--${older}`)).toBe(`04-pass-x--${newer}`);
+      expect(foldUnitKey(`pass-x--${older}@delta`)).toBe(`pass-x--${newer}@delta`);
+      expect(foldUnitKey(`04-pass-x--${older}@delta.md`)).toBe(`04-pass-x--${newer}@delta.md`);
+      for (const same of ["3", "sweep:3", "plan:*", "*", "pass-x", `pass-x--${newer}`])
+        expect(foldUnitKey(same)).toBe(same);
+    });
+  });
+
+  it("a scan ledger row keyed sol-med still prices its rung, under either name", () => {
+    const row = (tier: string): LedgerEntry => ({
+      path: "src/a.ts",
+      blob: "b1",
+      lens: "pass-scan",
+      tier,
+      effort: "low",
+      validator: true,
+      sha: "1".repeat(40),
+      lines: 1000,
+      cost_usd: 2,
+      run: "r1",
+      case: "u",
+      at: "2026-08-13T12:00:00Z",
+    });
+    const key = (tier: string) => ({ lens: "pass-scan", tier, effort: "low", validator: true });
+    for (const stored of ["sol-med", ...bothAt(1)])
+      for (const asked of bothAt(1))
+        expect(measuredRate([row(stored)], key(asked))?.usd_per_kline, `${stored}/${asked}`).toBe(
+          2,
+        );
+    // Another rung's row prices nothing here.
+    for (const asked of bothAt(2)) expect(measuredRate([row("sol-med")], key(asked))).toBeNull();
+    // A name that is no tier is only itself.
+    expect(sameTier("custom", "custom")).toBe(true);
+    expect(sameTier("custom", bothAt(1)[0]!)).toBe(false);
+  });
+
+  // MUTATION: in priceFrom's borrowed-rate filter (packages/pi-plugin/src/scan/
+  // stage2.ts, `deepAt`) compare `e.tier === tier` — this fails.
+  it("a deep lens's measured rate, stored under either name, is still borrowed at its rung", () => {
+    const row = (tier: string): LedgerEntry => ({
+      path: "src/a.ts",
+      blob: "b1",
+      lens: "pass-security",
+      tier,
+      effort: "tier",
+      validator: true,
+      sha: "1".repeat(40),
+      lines: 1000,
+      cost_usd: 3,
+      run: "r1",
+      case: "u",
+      at: "2026-08-13T12:00:00Z",
+    });
+    const cfg = { tier: ADD, effort: "low", validator: true, unmeasured_rate_factor: 4 };
+    // pass-concurrency has no reading of its own: it borrows pass-security's.
+    const price = (stored: string, asked: string) =>
+      priceStage2Row([row(stored)], cfg, "pass-concurrency", asked, "tier");
+    for (const stored of ["sol-high", ...bothAt(2)])
+      for (const asked of bothAt(2))
+        expect(price(stored, asked), `${stored}/${asked}`).toMatchObject({
+          basis: "borrowed",
+          from: "pass-security",
+          rate: { usd_per_kline: 3 },
+        });
+    // Another rung borrows nothing from that row, under either name.
+    for (const asked of bothAt(1)) expect(price("sol-high", asked), asked).toBeNull();
+  });
+
+  // MUTATION: in planRows (src/tui/scantab.ts) render `r.tier` unfolded — this
+  // fails.
+  it("the scan tab's plan pane names a stored row's rung, whichever spelling the proposal holds", () => {
+    const streams = fakeStreams(150, 40);
+    const app = new App(TUI_DEFAULTS, okSsh, streams.out, streams.input);
+    const rig = installScanRig(app, { running: false });
+    rig.state.pane = "plan";
+    const file = join(rig.home, STAGE2_FILE);
+    const stored = JSON.parse(readFileSync(file, "utf8")) as {
+      proposal: { rows: Array<{ id: string; tier: string }> };
+    };
+    const planPane = (tier: string): string => {
+      for (const r of stored.proposal.rows) r.tier = tier;
+      writeFileSync(file, JSON.stringify(stored));
+      rig.store.reload();
+      return app.hooks.tabs.scan!.screen(app, 150, 40).lines.map(stripAnsi).join("\n");
+    };
+    SPELLINGS.forEach((names, i) => {
+      for (const name of names)
+        expect(planPane(name), name).toContain(
+          `[✓] row-1 security  ${PASS_TIER_ORDER[i]}  billing (1 files)`,
+        );
+    });
+    // A name that is no tier is shown as stored.
+    expect(planPane("custom")).toContain("[✓] row-1 security  custom  billing (1 files)");
+  });
+
+  it("a stage-2 request row may name its tier in either spelling", () => {
+    const plan = (tier: string) => {
+      const input: Stage2PlanInput = {
+        rows: [{ lens: "pass-security", files: ["pkg/foo.ts"], reason: "auth", tier }],
+        cut: { units: [{ name: "pkg", roots: ["pkg"], kind: "directory", note: "" }], ignored: [] },
+        files: [{ path: "pkg/foo.ts", blob: "b1" }],
+        linesOf: () => 5,
+        exclude: [],
+        budget: { maxFiles: 30, maxLines: 3000 },
+        riskPasses: [],
+        defaultTier: ADD,
+        covered: () => new Set(),
+        price: () => ({
+          rate: { usd_per_kline: 1, cases: 1, lines: 1000, cost_usd: 1 },
+          basis: "measured",
+          from: "x",
+        }),
+        budgetUsd: null,
+      };
+      return planStage2(input);
+    };
+    for (const name of bothAt(2)) {
+      const p = plan(name);
+      expect(p.ok && p.rows[0]?.tier, name).toBe(RISK);
+    }
+    const bad = plan("sol-ultra");
+    expect(!bad.ok && bad.errors.join("; ")).toContain('cannot run at "sol-ultra" here');
+  });
+
+  it("the posting route's Python mirror strips both spellings", () => {
+    // tests/required-passes.test.ts runs the script; this holds the list.
+    const src = readFileSync(
+      join(import.meta.dirname, "..", "scripts", "required-passes.py"),
+      "utf8",
+    );
+    const alt = /TIER_SUFFIX = re\.compile\(r"--\(\?:([^)]*)\)\$"\)/.exec(src)?.[1]?.split("|");
+    expect(alt?.sort()).toEqual([...OLDER, ...NEWER].sort());
+  });
+});
+
+// ---- fold 5: the [models] keys ---------------------------------------------
+
+describe("models: the older keys are read forever", () => {
+  // MUTATION: make parseModels require "model" (`String(req(raw, "model"))`
+  // in place of the fold) — the models block fails: no config written before
+  // the key existed loads.
+  const ROOT = join(import.meta.dirname, "..");
+  const FIXTURE = readFileSync(join(import.meta.dirname, "fixtures", "config.toml"), "utf8");
+  /** What the fixture's `conversation` says. */
+  const WRITTEN = /^conversation = "(.*)"$/m.exec(FIXTURE)?.[1];
+  /** The lines a parse said about `[models]`, with the config it gave. */
+  const heard = (toml: string) => {
+    const lines: string[] = [];
+    const cfg = parseCoreConfig(toml, { warn: (line) => lines.push(line) });
+    return { cfg, lines: lines.filter((line) => line.includes("[models]")) };
+  };
+
+  it("the fixture every test parses is written in the older keys", () => {
+    // Were it rewritten to `model`, the cases below would hold with the fold gone.
+    expect(WRITTEN).toMatch(/^[\w-]+\/[\w.-]+$/);
+    expect(FIXTURE).toMatch(/^default = "/m);
+    expect(FIXTURE).not.toMatch(/^model = /m);
+  });
+
+  it("conversation is the model, then default; model wins over both", () => {
+    expect(parseModels({ conversation: "prov/c:high", default: "prov/d" }).model).toBe(
+      "prov/c:high",
+    );
+    expect(parseModels({ default: "prov/d" }).model).toBe("prov/d");
+    expect(parseModels({ model: "prov/m", conversation: "prov/c", default: "prov/d" }).model).toBe(
+      "prov/m",
+    );
+    // "Pin nothing" is the newer key speaking too.
+    expect(parseModels({ model: "", conversation: "prov/c" }).model).toBe("");
+    // An older key is taken as written, as it always was: a bare id is pi's
+    // to resolve, and only `model` is held to "provider/model".
+    expect(parseModels({ conversation: "bare-id" }).model).toBe("bare-id");
+    expect(() => parseModels({ model: "bare-id" })).toThrow(/\[models\] model must be/);
+    // The pin is held once: neither older name is a field of the parsed config.
+    const folded = parseModels({ conversation: "prov/c", default: "prov/d" });
+    expect(folded).not.toHaveProperty("conversation");
+    expect(folded).not.toHaveProperty("default");
+  });
+
+  it("both parsers fold the fixture, and say nothing about it", () => {
+    const core = heard(FIXTURE);
+    expect(core.cfg.models.model).toBe(WRITTEN);
+    // A folded key stays accepted for good, so no line is owed for one.
+    expect(core.lines).toEqual([]);
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "warn").mockImplementation((line) => void lines.push(line));
+    try {
+      expect(parseConfig(FIXTURE).models.model).toBe(WRITTEN);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(lines.filter((line) => String(line).includes("[models]"))).toEqual([]);
+  });
+
+  // MUTATION: drop the model/conversation line from configDeprecations
+  // (packages/pi-plugin/src/reviewconfig.ts) — this fails.
+  it("a model beside a different conversation: model is used, and the file is told once", () => {
+    const both = FIXTURE.replace(
+      /^conversation = .*$/m,
+      'model = "prov/new:high"\nconversation = "prov/old"',
+    );
+    const { cfg, lines } = heard(both);
+    expect(cfg.models.model).toBe("prov/new:high");
+    expect(lines).toEqual([
+      "[quickreviewd] config.toml [models]: model = prov/new:high is used; conversation = prov/old is the older key",
+    ]);
+    // The same model under both keys is a file half-way through the rename: nothing to say.
+    const same = FIXTURE.replace(/^conversation = (.*)$/m, "model = $1\nconversation = $1");
+    expect(heard(same)).toMatchObject({ cfg: { models: { model: WRITTEN } }, lines: [] });
+  });
+
+  it("[models.pricing] loads and changes nothing else", () => {
+    expect(FIXTURE).toContain("[models.pricing]");
+    const table = { "gpt-x": { input_per_mtok: 1.25, output_per_mtok: 10 } };
+    const { pricing: _with, ...withTable } = parseModels({ model: "prov/m", pricing: table });
+    const { pricing: _without, ...without } = parseModels({ model: "prov/m" });
+    expect(withTable).toEqual(without);
+    const filled = FIXTURE.replace(
+      "[models.pricing]",
+      '[models.pricing]\n"gpt-x" = { input_per_mtok = 1.25, output_per_mtok = 10.0 }',
+    );
+    const { pricing: _a, ...a } = parseCoreConfig(filled).models;
+    const { pricing: _b, ...b } = parseCoreConfig(FIXTURE).models;
+    expect(a).toEqual(b);
+  });
+
+  // MUTATION: drop "models.conversation" from MODEL_LEVER_KEYS
+  // (packages/pi-plugin/src/engine/context.ts) — the lever is `no key
+  // "models.conversation"` and this fails.
+  it("a --config lever in an older key sets the model; the strongest key of one set wins", () => {
+    const base = parseCoreConfig(FIXTURE);
+    const model = (levers: string) => applyConfigOverrides(base, levers).models.model;
+    expect(model("models.conversation=prov/levered:high")).toBe("prov/levered:high");
+    expect(model("models.default=prov/levered")).toBe("prov/levered");
+    // model > conversation > default, wherever each stands in the set.
+    expect(model("models.default=prov/d,models.conversation=prov/c")).toBe("prov/c");
+    expect(model("models.conversation=prov/c,models.model=prov/m,models.default=prov/d")).toBe(
+      "prov/m",
+    );
+    // A recorded bench plan: five strings, in the keys and tier names of its day.
+    const plan = applyConfigOverrides(
+      base,
+      [
+        "models.default=prov/x",
+        "models.conversation=prov/x",
+        "models.tiers.terra-med=prov/x:medium",
+        "models.tiers.sol-med=prov/x:medium",
+        "models.tiers.sol-high=prov/x:high",
+      ].join(","),
+    );
+    expect(plan.models.model).toBe("prov/x");
+    expect(plan.models.tiers).toEqual({
+      [PASS_TIER_ORDER[0]]: "prov/x:medium",
+      [PASS_TIER_ORDER[1]]: "prov/x:medium",
+      [PASS_TIER_ORDER[2]]: "prov/x:high",
+    });
+    expect(plan.models).not.toHaveProperty("conversation");
+    expect(plan.models).not.toHaveProperty("default");
+    // The input config is untouched.
+    expect(base.models.model).toBe(WRITTEN);
+  });
+
+  describe("the agents a config in the older keys builds", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "qcr-legacy-models-agents-"));
+    });
+    afterEach(() => rmSync(dir, { recursive: true, force: true }));
+    /** sha256 of every agent file the daemon's build writes for `toml`, as
+     * tests/built-agents-golden.test.ts takes it. */
+    const built = (toml: string): Record<string, string> => {
+      const cfg = parseConfig(toml);
+      buildAgents(join(ROOT, "agents"), dir, {
+        root: ROOT,
+        tiers: cfg.models.tiers,
+        riskPasses: cfg.models.risk_passes,
+        validateTier: cfg.models.validate_tier,
+        vars: identityVars(cfg),
+        models: roundAgentModels(cfg),
+        addenda: [
+          ...PASS_ADDENDA,
+          ...configAddenda(cfg.review),
+          ...lensTuningAddenda(cfg.lenses),
+          ...postingPolicyAddenda(cfg.posting),
+        ],
+      });
+      return Object.fromEntries(
+        readdirSync(dir)
+          .sort()
+          .map((f) => [
+            f,
+            createHash("sha256")
+              .update(readFileSync(join(dir, f)))
+              .digest("hex"),
+          ]),
+      );
+    };
+
+    it(
+      "five explicit strings build what they built before the key existed, in either spelling",
+      { timeout: HEAVY_TIMEOUT_MS },
+      () => {
+        const golden = (
+          JSON.parse(
+            readFileSync(join(import.meta.dirname, "fixtures", "built-agents-golden.json"), "utf8"),
+          ) as { vm: Record<string, string> }
+        ).vm;
+        expect(Object.keys(golden).length).toBeGreaterThan(20);
+        // The golden was recorded from this fixture while `default` and
+        // `conversation` were the fields.
+        expect(built(FIXTURE)).toEqual(golden);
+        // The same five strings under the newer key build the same bytes.
+        const newer = FIXTURE.replace(/^default = .*\n/m, "").replace(
+          /^conversation = (.*)$/m,
+          "model = $1",
+        );
+        expect(newer).toMatch(/^model = "/m);
+        expect(newer).not.toMatch(/^(default|conversation) = /m);
+        expect(built(newer)).toEqual(golden);
+      },
+    );
+  });
+});
+
+// ---- fold 6: the model credential's older spellings -------------------------
+
+describe("the model credential: the older key file and the older checklist keys are read forever", () => {
+  /** A value that stays in its file. Not shaped like any real key. */
+  const VALUE = "model-key-value-that-stays-in-its-file";
+  /** The node and cli.js the wizard's model step is told to ask this machine's pi with. */
+  const NODE = "/opt/node/bin/node";
+  const CLI = "/opt/qcr/dist/src/cli.js";
+  /** What `qcr model --json` prints for a route (src/modelcli.ts), on a provider no code names. */
+  const ROUTE = JSON.stringify({
+    ok: true,
+    route: {
+      provider: "prov",
+      modelId: "model-1",
+      providerName: "Prov",
+      spec: "prov/model-1",
+      thinking: null,
+      source: "only-credential",
+      pick: "newest",
+      piDefaultId: null,
+      custom: false,
+      movedFrom: null,
+      credential: { kind: "api_key", origin: "env-key", label: "PROV_KEY", subscription: false },
+      priced: true,
+      ask: false,
+      alternatives: [],
+      notices: [],
+    },
+    choice: null,
+    config_pin: null,
+    skipped: [],
+  });
+
+  let root: string;
+  let stateDir: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "qcr-legacy-model-"));
+    stateDir = join(root, "state");
+    mkdirSync(stateDir, { recursive: true });
+    // A scratch home: a path the step derives from $HOME is never the one of
+    // the person running the suite.
+    vi.stubEnv("HOME", join(root, "home"));
+    vi.stubEnv("QC_SECRETS_DIR", undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** This machine's pi answers with a route, and no stack is up. */
+  const adapters = (): OnboardAdapters => ({
+    fetch: (() => {
+      throw new Error("no network in tests");
+    }) as unknown as typeof fetch,
+    runner: {
+      run: async (cmd, args): Promise<ProcessResult> => {
+        if (cmd === NODE && args.join(" ") === [CLI, ...MODEL_QUERY].join(" "))
+          return { code: 0, stdout: `${ROUTE}\n`, stderr: "" };
+        if (cmd !== "docker") return { code: 127, stdout: "", stderr: `${cmd}: command not found` };
+        // docker is there and no stack is up: the listing is empty.
+        if (args[0] === "compose" && args.includes("ps"))
+          return { code: 0, stdout: "[]", stderr: "" };
+        return { code: 1, stdout: "", stderr: `unexpected docker: ${args.join(" ")}` };
+      },
+    },
+    clock: () => new Date("2026-08-30T12:00:00Z"),
+    host: { nodeVersion: "v22.19.0", uid: 1000 },
+    paths: { stateDir, configPath: join(root, "config.toml") },
+  });
+  const engine = (): OnboardingEngine =>
+    new OnboardingEngine([llmAuthStep({ nodePath: NODE, cliPath: CLI })], adapters());
+
+  // MUTATION: drop the LEGACY_MODEL_KEY_FILE read from modelEnvFrom
+  // (src/modelenv.ts) — this fails: an install whose only model credential is
+  // that file has none.
+  it("<secrets>/openai_api_key is still a provider's key, under the variable it always was", () => {
+    const secrets = join(root, "secrets");
+    mkdirSync(secrets, { recursive: true });
+    // The names are spelled out: a rename of either constant is a rename of
+    // what installs have on disk.
+    expect(LEGACY_MODEL_KEY_FILE).toBe("openai_api_key");
+    expect(LEGACY_MODEL_KEY_ENV).toBe("OPENAI_API_KEY");
+    writeFileSync(join(secrets, "openai_api_key"), `${VALUE}\n`);
+    expect(modelEnvFrom(secrets)).toEqual({ OPENAI_API_KEY: VALUE });
+    // Beside the newer spelling both are read…
+    mkdirSync(join(secrets, MODEL_ENV_DIR));
+    writeFileSync(join(secrets, MODEL_ENV_DIR, "PROV_API_KEY"), "another-value\n");
+    expect(modelEnvFrom(secrets)).toEqual({ OPENAI_API_KEY: VALUE, PROV_API_KEY: "another-value" });
+    // …and a file that names the same variable there is the one that counts.
+    writeFileSync(join(secrets, MODEL_ENV_DIR, "OPENAI_API_KEY"), "the-newer-value\n");
+    expect(modelEnvFrom(secrets)["OPENAI_API_KEY"]).toBe("the-newer-value");
+  });
+
+  // MUTATION: read `llm_auth_route` in src/onboard/steps/llmauth.ts and refuse
+  // a value it does not know — a value below demotes the step and this fails.
+  // Drop an unknown choice key when the checklist is read
+  // (packages/pi-plugin/src/setupchecklist.ts) — the "left as it was"
+  // assertion fails.
+  it("a checklist that carries llm_auth_route and llm_model_prefix, under any value, loads and verifies", async () => {
+    const baseline = await engine().runStep(LLM_AUTH_STEP_ID);
+    expect(baseline.failures).toEqual([]);
+    rmSync(checklistPath(stateDir));
+    for (const [route, prefix] of [
+      ["oauth", "openai-codex/"],
+      ["api", "openai/"],
+      ["", ""],
+      ["no-such-route", "no-such-prefix/"],
+      [7, null],
+      [{ nested: true }, ["a"]],
+    ] as const) {
+      const legacy = { llm_auth_route: route, llm_model_prefix: prefix };
+      const file: ChecklistFile = {
+        version: 1,
+        created_at: "2026-08-01T00:00:00Z",
+        updated_at: "2026-08-01T00:00:00Z",
+        completed_at: null,
+        choices: legacy,
+        steps: {
+          [LLM_AUTH_STEP_ID]: {
+            status: "done",
+            completed_at: "2026-08-01T00:00:00Z",
+            verified_at: null,
+            note: null,
+            data: { route, prefix },
+          },
+        },
+      };
+      mkdirSync(dirname(checklistPath(stateDir)), { recursive: true });
+      writeFileSync(checklistPath(stateDir), JSON.stringify(file));
+      // The file is a checklist, not a fresh start…
+      expect(readChecklist(stateDir)?.choices, JSON.stringify(legacy)).toEqual(legacy);
+      // …a resumed session finds its model step done and still true…
+      const resumed = engine();
+      const report = await resumed.reconcile();
+      expect(report.verified, JSON.stringify(legacy)).toEqual([LLM_AUTH_STEP_ID]);
+      expect(report.demoted).toEqual([]);
+      // …and a run gives the checks of a checklist that never had the keys.
+      expect((await resumed.runStep(LLM_AUTH_STEP_ID)).checks).toEqual(baseline.checks);
+      // The older values are left as they were: nothing rewrote or dropped them.
+      const choices = readChecklist(stateDir)!.choices;
+      expect(choices["llm_auth_route"]).toEqual(route);
+      expect(choices["llm_model_prefix"]).toEqual(prefix);
+      rmSync(checklistPath(stateDir));
+    }
   });
 });
 

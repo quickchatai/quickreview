@@ -1,30 +1,44 @@
 // The home's setup checklist (src/home/setup.ts) through the home's factory,
 // on a fake pi with fake adapters: what the setup card shows on a machine
 // that is not set up, what each step does when a key, the card or a
-// `home_*` tool runs it, and how the card turns into the home. Then the
-// step's real adapters on their own seams: pi's device login
-// (src/home/devicelogin.ts) over a fake pi runtime, and the repository pick
-// and its config write (src/home/setupadapters.ts) over a fake gh.
-import { readFileSync } from "node:fs";
+// `home_*` tool runs it, and how the card turns into the home. Signed in is
+// read off pi's own model registry (a fake by shape; the inventory over it is
+// the real one), so the providers here are made up: no rule knows a real one.
+// Then the repository pick and its config write (src/home/setupadapters.ts)
+// over a fake gh.
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
+import { AUTOMATIC } from "@quickchatai/pi-quickreview/src/plugin/setup.js";
 import { createHome } from "../extensions/home.js";
 // loaded here so the module transform is not on a test's clock: the config
 // write imports it on first use
 import "../src/onboard/steps/configfill.js";
 import type { RunResult, Runner } from "../src/home/adapters.js";
-import { loginFailure, piDeviceLogin } from "../src/home/devicelogin.js";
-import { known, unknown, type HomeAdapters, type Known, type OpenPull } from "../src/home/ports.js";
+import { LOGIN_POLL_MS } from "../src/home/loginowner.js";
+import { PRICE_REST_MS } from "../src/home/model.js";
 import {
+  known,
+  unknown,
+  type HomeAdapters,
+  type Known,
+  type LoginHold,
+  type OpenPull,
+  type ReviewQuote,
+} from "../src/home/ports.js";
+import {
+  NO_CREDENTIAL,
   PASTE_REPO,
+  SIGN_IN_TITLE,
   parseRepoInput,
-  type DeviceCode,
   type HomeSetupPorts,
-  type LoginOutcome,
   type RepoChoice,
 } from "../src/home/setup.js";
+import { parsePreview } from "../src/home/reviews.js";
 import { renderRepoConfig } from "../src/onboard/steps/repoconfig.js";
 import { repoPickPort } from "../src/home/setupadapters.js";
 import { HOME_SETUP_TOOL_NAMES, HOME_TOOL_NAMES } from "../src/home/toolnames.js";
@@ -35,7 +49,6 @@ import { idleReviews } from "./helpers/fake-reviews.js";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TEMPLATE = readFileSync(join(root, "config.example.toml"), "utf8");
 const NOW = Date.parse("2026-10-26T12:00:00Z");
-const URL = "https://auth.openai.com/codex/device";
 
 function pull(n: number): OpenPull {
   return {
@@ -52,52 +65,124 @@ function pull(n: number): OpenPull {
   };
 }
 
+/** One credential pi has, as its registry says it. */
+interface Cred {
+  /** pi's display name for the provider. */
+  name: string;
+  /** A stored login (the default), a stored API key, or an environment key. */
+  how?: "login" | "key" | "env";
+  /** The environment variable, for `env`. */
+  label?: string;
+}
+
+/** The providers pi's catalog knows, with or without a credential. */
+const CATALOG: Record<string, string> = { north: "North", south: "South", east: "East" };
+const NORTH: Record<string, Cred> = { north: { name: "North" } };
+const SOUTH_ENV: Record<string, Cred> = {
+  south: { name: "South", how: "env", label: "SOUTH_API_KEY" },
+};
+
 interface World {
-  login: Known<readonly string[]>;
+  /** What pi has a credential for, by provider. A test signs in by adding one. */
+  creds: Record<string, Cred>;
+  /** pi's registry: read (the default), throwing, or not handed to the home. */
+  registry: "ok" | "broken" | "absent";
+  /** The login file's stored providers: read only when pi hands no registry. */
+  stored: Known<readonly string[]>;
   user: Known<string | null>;
   repo: Known<string | null>;
   /** What is on PATH, for the first-run checks and gh. */
   path: Set<string>;
   recent: Known<readonly string[]>;
   describe: { ok: true; repo: string; defaultBranch: string | null } | { ok: false; why: string };
+  /** How pi's /login opens; null: this pi gives no way. */
+  menu: "opened" | "prefilled" | null;
+  /** The refresher's pause, when auto-review runs here. */
+  hold?: () => Promise<LoginHold>;
+  /** What a preview of a pull request answers. */
+  quote?: ReviewQuote;
+  /** The refresher's pause, pi's menu and the pause's release, in the order they happened. */
+  log: string[];
 }
 
 /** A machine with nothing set up: pi, git and gh installed, nothing else. */
 function fresh(over: Partial<World> = {}): World {
   return {
-    login: known([]),
+    creds: {},
+    registry: "ok",
+    stored: known([]),
     user: known(null),
     repo: known(null),
     path: new Set(["git", "gh"]),
     recent: known(["acme/widgets", "acme/gadgets"]),
     describe: { ok: true, repo: "acme/widgets", defaultBranch: "trunk" },
+    menu: "opened",
+    log: [],
     ...over,
   };
 }
 
-interface Device {
-  provider: string;
-  onCode(c: DeviceCode): void;
-  finish(o: LoginOutcome): void;
-  signal: AbortSignal;
+/** pi's model registry, by shape, over the world's credentials: read live,
+ * so a credential added to the world is one pi now has. */
+function registry(w: World) {
+  const models = Object.keys(CATALOG).map((provider) => ({
+    provider,
+    id: "large-3",
+    name: "large-3",
+    api: "made-up",
+    reasoning: true,
+    contextWindow: 200_000,
+    cost: { input: 5, output: 15, cacheRead: 0, cacheWrite: 0 },
+  }));
+  return {
+    getAll: () => models as never,
+    getAvailable: () => {
+      if (w.registry === "broken") throw new Error("registry down");
+      return models.filter((m) => w.creds[m.provider] !== undefined) as never;
+    },
+    find: (p: string, id: string) => models.find((m) => m.provider === p && m.id === id) as never,
+    getProviderAuthStatus: (p: string) => {
+      const c = w.creds[p];
+      if (c === undefined) return { configured: false };
+      return c.how === "env"
+        ? { configured: true, source: "environment", ...(c.label ? { label: c.label } : {}) }
+        : { configured: true, source: "stored" };
+    },
+    getProvider: () => undefined,
+    getProviderDisplayName: (p: string) => w.creds[p]?.name ?? CATALOG[p] ?? p,
+    isUsingOAuth: (m: { provider: string }) => (w.creds[m.provider]?.how ?? "login") === "login",
+  };
+}
+
+interface Timer {
+  ms: number;
+  fn: () => void;
+  cancelled: boolean;
 }
 
 interface Setup {
   pi: FakePi;
   w: World;
-  devices: Device[];
+  /** How many times pi's /login was opened. */
+  opens: number[];
+  /** The refresher's pauses: taken, and released. */
+  holds: { taken: number; released: number };
+  timers: Timer[];
   writes: RepoChoice[];
   described: string[];
   selects: Array<{ title: string; options: string[] }>;
   /** What the next dialogs answer. */
   answers: { select?: string; input?: string };
+  /** Let the timers of `ms` that are due run once, then settle. */
+  tick(ms: number): Promise<void>;
   lines(height?: number, width?: number): string[];
   text(height?: number): string;
 }
 
-function adapters(w: World): HomeAdapters {
+function adapters(w: World, holds: Setup["holds"]): HomeAdapters {
+  const hold = w.hold;
   return {
-    login: { providers: async () => w.login },
+    login: { providers: async () => w.stored },
     github: {
       user: async () => w.user,
       openPulls: async () => known([pull(1), pull(2)]),
@@ -105,10 +190,33 @@ function adapters(w: World): HomeAdapters {
     },
     repo: { repo: async () => w.repo },
     clock: { now: () => NOW },
-    reviews: idleReviews(),
+    reviews: {
+      ...idleReviews(),
+      ...(w.quote ? { preview: async () => ({ ok: true as const, quote: w.quote! }) } : {}),
+    },
     autoReview: { status: async () => unknown("not yet") },
     memory: { status: async () => unknown("not yet") },
     spend: { totals: async () => unknown("not yet") },
+    ...(hold
+      ? {
+          loginOwner: {
+            health: async () => known({ refresher: "auto-review" as const }),
+            hold: async () => {
+              const h = await hold();
+              if (!h.ok) return h;
+              holds.taken++;
+              w.log.push("hold");
+              return {
+                ...h,
+                release: () => {
+                  holds.released++;
+                  w.log.push("release");
+                },
+              };
+            },
+          },
+        }
+      : {}),
   };
 }
 
@@ -119,7 +227,7 @@ function host(w: World): PluginHost {
     home: "/home/someone",
     piVersion: "1.4.0",
     agentDir: "/home/someone/.pi/agent",
-    auth: { logins: () => ({}), configured: () => false, refresh: async () => {} },
+    auth: { logins: () => ({}), refresh: async () => {} },
     runner: {
       which: (cmd) => (w.path.has(cmd) ? `/usr/bin/${cmd}` : null),
       run: async () => ({ code: 0, stdout: "", stderr: "" }),
@@ -130,9 +238,11 @@ function host(w: World): PluginHost {
 
 async function openSetup(
   w: World = fresh(),
-  o: { mode?: "tui" | "print"; rows?: number } = {},
+  o: { mode?: "tui" | "print"; rows?: number; agentDir?: string } = {},
 ): Promise<Setup> {
-  const devices: Device[] = [];
+  const opens: number[] = [];
+  const holds = { taken: 0, released: 0 };
+  const timers: Timer[] = [];
   const writes: RepoChoice[] = [];
   const described: string[] = [];
   const selects: Setup["selects"] = [];
@@ -140,9 +250,6 @@ async function openSetup(
   const ports: HomeSetupPorts = {
     firstRun: { host: host(w), range: "^1.4.0" },
     timezone: () => "Europe/Warsaw",
-    deviceLogin: {
-      login: (d) => new Promise<LoginOutcome>((finish) => devices.push({ ...d, finish })),
-    },
     repos: {
       recent: async () => w.recent,
       describe: async (repo) => {
@@ -158,6 +265,9 @@ async function openSetup(
     },
   };
   const pi = fakePi({ mode: o.mode ?? "tui", rows: o.rows ?? 40 });
+  if (w.registry !== "absent") Object.assign(pi.ctx, { modelRegistry: registry(w) });
+  // the route step moves a session with no model onto the route's
+  Object.assign(pi.api, { setModel: async () => true });
   const ui = pi.ctx.ui as unknown as {
     select: (title: string, options: string[]) => Promise<string | undefined>;
     input: () => Promise<string | undefined>;
@@ -168,22 +278,49 @@ async function openSetup(
   };
   ui.input = async () => answers.input;
   await createHome({
-    adapters: adapters(w),
-    model: "openai-codex/gpt-6.1-sol",
+    adapters: adapters(w, holds),
+    model: "",
     tools: "reviewer",
     every: () => () => {},
+    after: (ms, fn) => {
+      const t: Timer = { ms, fn, cancelled: false };
+      timers.push(t);
+      return () => {
+        t.cancelled = true;
+      };
+    },
     setup: ports,
+    loginMenu: {
+      open: () => {
+        if (w.menu !== null) {
+          opens.push(opens.length + 1);
+          w.log.push("open");
+        }
+        return w.menu;
+      },
+    },
+    ...(o.agentDir !== undefined ? { agentDir: o.agentDir } : {}),
   })(pi.api);
   await pi.start();
   const lines = (h = 40, wd = 100): string[] => pi.render(wd, h).lines;
   return {
     pi,
     w,
-    devices,
+    opens,
+    holds,
+    timers,
     writes,
     described,
     selects,
     answers,
+    tick: async (ms) => {
+      for (const t of timers.splice(0)) {
+        if (t.cancelled) continue;
+        if (t.ms === ms) t.fn();
+        else timers.push(t);
+      }
+      await settle();
+    },
     lines,
     text: (h = 40) => flat(lines(h)),
   };
@@ -198,6 +335,11 @@ const flat = (lines: string[]): string =>
 const open = (s: Setup) => s.pi.overlays.filter((x) => !x.closed);
 const row = (s: Setup, label: string): string | undefined =>
   s.lines().find((l) => l.includes(label));
+/** The person sends the chat a message. */
+const say = async (s: Setup, text: string): Promise<void> => {
+  await s.pi.emit("input", { text, source: "interactive" });
+  await settle();
+};
 
 describe("the setup card on a fresh machine", () => {
   it("opens centred at half the width, with the three steps and none done", async () => {
@@ -214,9 +356,19 @@ describe("the setup card on a fresh machine", () => {
     expect(lines).toHaveLength(20);
     for (const l of lines) expect([...l].length).toBe(100);
     expect(s.text()).toMatch(/Welcome to quickreview 0 of 3 done/);
-    for (const step of ["Sign in to OpenAI", "Connect GitHub", "Choose a repository"])
+    for (const step of [SIGN_IN_TITLE, "Connect GitHub", "Choose a repository"])
       expect(row(s, step), step).toBeDefined();
     expect(s.pi.focused()).toBe(false);
+  });
+
+  // MUTATION: title the first step after the chat's provider again — the card
+  // names a provider (or an empty one, with no model pinned) and this fails.
+  it("the first step names no provider: any one pi supports signs the home in", async () => {
+    const s = await openSetup();
+    expect(SIGN_IN_TITLE).toBe("Sign in to a model provider");
+    // "Sign in to": the card's subtitle also starts with "Sign in"
+    expect(row(s, "Sign in to")).toMatch(/Sign in to a model provider\s/);
+    expect(s.text()).not.toMatch(/Sign in to {2}|ChatGPT|device code/i);
   });
 
   it("names the gaps as the setup the home still needs", async () => {
@@ -235,32 +387,32 @@ describe("the setup card on a fresh machine", () => {
 
 describe("a step already true is skipped, with what was found", () => {
   // MUTATION: drop the detect from the home's steps (every step pending) — this fails.
-  it("signed in and connected: only the repository is asked, and no login starts", async () => {
-    const s = await openSetup(fresh({ login: known(["openai-codex"]), user: known("octo") }));
-    expect(row(s, "Sign in to OpenAI")).toMatch(
-      /✓ {2}Sign in to OpenAI\s+ChatGPT · signed in with pi/,
+  it("signed in and connected: only the repository is asked, and no login opens", async () => {
+    const s = await openSetup(fresh({ creds: NORTH, user: known("octo") }));
+    expect(row(s, SIGN_IN_TITLE)).toMatch(
+      /✓ {2}Sign in to a model provider\s+North, signed in with pi/,
     );
     expect(row(s, "Connect GitHub")).toMatch(/✓ {2}Connect GitHub\s+@octo · via gh/);
     expect(row(s, "Choose a repository")).toMatch(/▸ {2}Choose a repository\s+alt\+n choose/);
     expect(s.text()).toMatch(/2 of 3 done/);
-    expect(s.devices).toHaveLength(0);
+    expect(s.opens).toEqual([]);
   });
 
   it("everything found: the home opens on its lists and the card never shows", async () => {
     const s = await openSetup(
-      fresh({ login: known(["openai-codex"]), user: known("octo"), repo: known("acme/widgets") }),
+      fresh({ creds: NORTH, user: known("octo"), repo: known("acme/widgets") }),
     );
     expect(open(s)).toHaveLength(1);
     expect(open(s)[0]!.options).toMatchObject({ anchor: "top-right" });
     expect(s.text()).toMatch(/To review/);
-    expect(s.devices).toHaveLength(0);
+    expect(s.opens).toEqual([]);
     expect(await s.pi.tool("home_setup_next")).toMatch(/setup is done/);
   });
 
   it("a source that can't be read is Unknown, never a gap (invariant 9)", async () => {
     const s = await openSetup(
       fresh({
-        login: known(["openai-codex"]),
+        creds: NORTH,
         user: unknown("gh failed: HTTP 502"),
         repo: known("acme/widgets"),
       }),
@@ -272,11 +424,80 @@ describe("a step already true is skipped, with what was found", () => {
   });
 
   it("an Unknown beside a real gap shows as Unknown on the card", async () => {
-    const s = await openSetup(
-      fresh({ login: known(["openai-codex"]), user: unknown("gh failed: HTTP 502") }),
-    );
+    const s = await openSetup(fresh({ creds: NORTH, user: unknown("gh failed: HTTP 502") }));
     expect(row(s, "Connect GitHub")).toMatch(/\? {2}Connect GitHub/);
     expect(s.text()).toMatch(/Unknown — can't tell: gh failed: HTTP 502\./);
+  });
+});
+
+describe("signed in is what pi's registry says, for any provider", () => {
+  // MUTATION: read the login file's providers instead of pi's inventory in
+  // HomeModel.credentials — a key in the environment is "not signed in" and this fails.
+  it("a provider key in the environment counts, and is named by its variable", async () => {
+    const s = await openSetup(fresh({ creds: SOUTH_ENV, user: known("octo") }));
+    expect(row(s, SIGN_IN_TITLE)).toMatch(
+      /✓ {2}Sign in to a model provider\s+South, SOUTH_API_KEY in the environment/,
+    );
+    expect(s.opens).toEqual([]);
+    const status = JSON.parse(await s.pi.tool("home_status")) as {
+      login: { signed_in: unknown; providers: unknown };
+      setup_needed: unknown;
+    };
+    expect(status.login.signed_in).toBe(true);
+    expect(status.login.providers).toEqual([
+      { provider: "south", name: "South", credential: "SOUTH_API_KEY" },
+    ]);
+    expect(status.setup_needed).toEqual(["repo"]);
+  });
+
+  it("a stored API key and several providers are said in pi's own names", async () => {
+    const key = await openSetup(
+      fresh({ creds: { east: { name: "East", how: "key" } }, user: known("octo") }),
+    );
+    expect(row(key, SIGN_IN_TITLE)).toMatch(/East, an API key in pi/);
+    const two = await openSetup(fresh({ creds: { ...NORTH, ...SOUTH_ENV }, user: known("octo") }));
+    expect(row(two, SIGN_IN_TITLE)).toMatch(/✓ {2}Sign in to a model provider\s+North, South/);
+  });
+
+  // MUTATION: answer `known([])` when the registry throws (extensions/home.ts
+  // credentials) — the login becomes a gap, /login opens by itself, and this fails.
+  it("a registry that cannot be read is unknown: no gap, and nothing to act on (invariant 9)", async () => {
+    const s = await openSetup(
+      fresh({ registry: "broken", user: known("octo"), repo: known("acme/widgets") }),
+    );
+    // the first half: unknown is rendered as unknown, and the home opens
+    expect(open(s)[0]!.options).toMatchObject({ anchor: "top-right" });
+    expect(s.lines().find((l) => l.includes("GitHub"))).toMatch(/\? model login unknown/);
+    const status = JSON.parse(await s.pi.tool("home_status")) as {
+      login: { signed_in: unknown; providers: unknown; unknown_because: string };
+      setup_needed: unknown;
+    };
+    expect(status.login.signed_in).toBeNull();
+    expect(status.login.providers).toBeNull();
+    expect(status.login.unknown_because).toMatch(/registry down/);
+    expect(status.setup_needed).toEqual([]);
+    // the second half: nothing derived from it acts
+    expect(s.opens).toEqual([]);
+    expect(await s.pi.tool("home_sign_in")).toMatch(/^model login unknown .*nothing was opened/);
+    expect(s.opens).toEqual([]);
+  });
+
+  it("an unknown login beside a real gap is never the step alt+n runs", async () => {
+    const s = await openSetup(fresh({ registry: "broken" }));
+    expect(row(s, SIGN_IN_TITLE)).toMatch(/\? {2}Sign in to a model provider\s+unknown/);
+    expect(s.text()).toMatch(/Unknown — can't read pi's model credentials: .*registry down\./);
+    expect(row(s, "Connect GitHub")).toMatch(/▸ {2}Connect GitHub\s+alt\+n check/);
+    await s.pi.key("alt+n");
+    expect(s.opens).toEqual([]);
+    const status = JSON.parse(await s.pi.tool("home_status")) as { setup_needed: unknown };
+    expect(status.setup_needed).toEqual(["github", "repo"]);
+  });
+
+  it("a pi that hands the home no registry is read by its login file", async () => {
+    const s = await openSetup(
+      fresh({ registry: "absent", stored: known(["north"]), user: known("octo") }),
+    );
+    expect(row(s, SIGN_IN_TITLE)).toMatch(/✓ {2}Sign in to a model provider\s+north, signed in/);
   });
 });
 
@@ -288,8 +509,6 @@ describe("the first-run checks are pi, git and gh", () => {
     expect(s.text()).toMatch(
       /Git is not on PATH: every review reads a git repo, then alt\+n checks again\./,
     );
-    // the login waits for git: nothing starts by itself
-    expect(s.devices).toHaveLength(0);
     w.path.add("git");
     await s.pi.key("alt+n");
     expect(s.text()).not.toMatch(/✗ git/);
@@ -301,7 +520,7 @@ describe("the first-run checks are pi, git and gh", () => {
   });
 
   it("gh not installed: what to install, and a re-check", async () => {
-    const w = fresh({ login: known(["openai-codex"]), path: new Set(["git"]) });
+    const w = fresh({ creds: NORTH, path: new Set(["git"]) });
     const s = await openSetup(w);
     expect(s.text()).toMatch(
       /Gh is not installed: get it from https:\/\/cli\.github\.com, then alt\+n checks again\./,
@@ -313,83 +532,269 @@ describe("the first-run checks are pi, git and gh", () => {
   });
 });
 
-describe("Sign in to OpenAI: pi's own device-code login", () => {
-  it("starts by itself, saying the ChatGPT setting first, then shows the URL and the code", async () => {
+describe("Sign in to a model provider: pi's own /login", () => {
+  // MUTATION: drop maybeStartLogin from HomeSetup.sync — nothing opens and this fails.
+  it("opens pi's /login by itself when it is the first thing missing, and says where to sign in", async () => {
     const s = await openSetup();
-    expect(s.devices).toHaveLength(1);
-    expect(s.devices[0]!.provider).toBe("openai-codex");
-    expect(s.text()).toMatch(/asking for a code…/);
-    expect(s.text()).toMatch(/Device-code login must be on first: ChatGPT → Settings → Security\./);
-    s.devices[0]!.onCode({ userCode: "ABCD-1234", verificationUri: URL, expiresInSeconds: 900 });
-    await settle();
-    const text = s.text();
-    expect(text).toMatch(/1 Open https:\/\/auth\.openai\.com\/codex\/device/);
-    expect(text).toMatch(/2 Enter ABCD-1234/);
-    expect(text).toMatch(/Device-code login must be on first: ChatGPT → Settings → Security\./);
-    expect(text).toMatch(/waiting for you to approve…/);
-    // the code is bold, the URL in the accent colour
-    const styled = s.pi.render(100, 40).styled.join("\n");
-    expect(styled).toMatch(/<b><text>ABCD-1234<\/><\/b>/);
-    expect(styled).toMatch(/<accent>https:\/\/auth\.openai\.com\/codex\/device<\/>/);
+    expect(s.opens).toEqual([1]);
+    expect(s.text()).toMatch(
+      /pi's \/login is open: pick a provider there and sign in, or paste an API key\./,
+    );
+    expect(s.text()).toMatch(/waiting for pi to have a credential…/);
+    expect(row(s, SIGN_IN_TITLE)).toMatch(/waiting for you…/);
   });
 
-  it("verifies on approval: the step is done with what pi now holds", async () => {
+  // MUTATION: end the sign-in when the menu opens instead of polling the
+  // inventory (LoginMenu.run) — the step is never done and this fails.
+  it("is done once pi has a credential, for whichever provider the person picked", async () => {
     const s = await openSetup();
-    s.devices[0]!.onCode({ userCode: "ABCD-1234", verificationUri: URL });
-    s.w.login = known(["openai-codex"]);
-    s.devices[0]!.finish({ ok: true });
-    await settle();
-    expect(row(s, "Sign in to OpenAI")).toMatch(
-      /✓ {2}Sign in to OpenAI\s+ChatGPT · signed in with pi/,
+    await s.tick(LOGIN_POLL_MS);
+    // still none: it goes on waiting
+    expect(row(s, SIGN_IN_TITLE)).toMatch(/waiting for you…/);
+    s.w.creds = { east: { name: "East", how: "key" } };
+    await s.tick(LOGIN_POLL_MS);
+    expect(row(s, SIGN_IN_TITLE)).toMatch(
+      /✓ {2}Sign in to a model provider\s+East, an API key in pi/,
     );
-    expect(s.text()).toMatch(/Signed in to OpenAI with pi\./);
+    expect(s.text()).toMatch(/Signed in to East with pi\./);
     expect(s.text()).toMatch(/1 of 3 done/);
+    // nothing is polled after it
+    expect(s.timers.filter((t) => t.ms === LOGIN_POLL_MS && !t.cancelled)).toEqual([]);
   });
 
-  it.each([
-    ["expired", /The code expired before it was approved\. alt\+n gets a new one\./],
-    ["denied", /The sign-in was denied\. alt\+n tries again\./],
-  ] as const)("%s: says so, and alt+n starts a clean new login", async (kind, said) => {
+  // MUTATION: drop the onInput hook in createHome (loginMenu.left) — the card
+  // waits for good after the person left pi's menu, and this fails.
+  it("the person leaves the menu with no credential: says so, and alt+n opens it again", async () => {
     const s = await openSetup();
-    s.devices[0]!.onCode({ userCode: "ABCD-1234", verificationUri: URL });
-    s.devices[0]!.finish({ ok: false, kind, why: kind });
-    await settle();
-    expect(s.text()).toMatch(said);
-    expect(s.text()).not.toMatch(/ABCD-1234/);
-    expect(row(s, "Sign in to OpenAI")).toMatch(/▸ {2}Sign in to OpenAI\s+alt\+n sign in/);
+    await say(s, "what is this repo?");
+    expect(s.text()).toMatch(
+      /pi's \/login closed before pi had a model credential\. alt\+n opens it again\./,
+    );
+    expect(row(s, SIGN_IN_TITLE)).toMatch(/▸ {2}Sign in to a model provider\s+alt\+n sign in/);
+    expect(s.text()).toMatch(/Pi has no model credential yet\./);
+    expect(NO_CREDENTIAL).toBe("pi has no model credential yet");
     await s.pi.key("alt+n");
-    expect(s.devices).toHaveLength(2);
-    s.devices[1]!.onCode({ userCode: "WXYZ-9876", verificationUri: URL });
-    await settle();
-    expect(s.text()).toMatch(/2 Enter WXYZ-9876/);
-    expect(s.text()).not.toMatch(said);
+    expect(s.opens).toEqual([1, 2]);
+    expect(s.text()).not.toMatch(/closed before pi had a model credential/);
   });
 
-  it("a second press while it waits starts no second login", async () => {
+  it("the /login the home itself submits, and an extension's message, are not the person leaving", async () => {
     const s = await openSetup();
-    s.devices[0]!.onCode({ userCode: "ABCD-1234", verificationUri: URL });
+    await say(s, "/login");
+    await s.pi.emit("input", { text: "Setup brief", source: "extension" });
     await settle();
-    expect(await s.pi.tool("home_sign_in")).toBe(`Still waiting: open ${URL} and enter ABCD-1234.`);
-    await s.pi.key("alt+n");
-    expect(s.devices).toHaveLength(1);
+    expect(row(s, SIGN_IN_TITLE)).toMatch(/waiting for you…/);
   });
 
-  it("home_sign_in answers with the URL and the code once pi has them", async () => {
-    const s = await openSetup(fresh(), { mode: "print" });
-    // no terminal: nothing starts by itself
-    expect(s.devices).toHaveLength(0);
-    const answer = s.pi.tool("home_sign_in");
-    await settle();
-    s.devices[0]!.onCode({ userCode: "ABCD-1234", verificationUri: URL });
-    expect(await answer).toMatch(
-      /^Open https:\/\/auth\.openai\.com\/codex\/device and enter the code ABCD-1234\./,
+  it("a login made just before the person's message still counts", async () => {
+    const s = await openSetup();
+    s.w.creds = NORTH;
+    await say(s, "review the first PR");
+    expect(row(s, SIGN_IN_TITLE)).toMatch(
+      /✓ {2}Sign in to a model provider\s+North, signed in with pi/,
     );
   });
 
-  it("the session's end stops a login in flight", async () => {
+  it("a tool's second call while it waits opens no second menu", async () => {
     const s = await openSetup();
+    expect(await s.pi.tool("home_sign_in")).toBe(
+      "Still waiting: pi's /login is open, sign in there.",
+    );
+    expect(await s.pi.tool("home_setup_next")).toBe(
+      "Still waiting: pi's /login is open, sign in there.",
+    );
+    expect(s.opens).toEqual([1]);
+  });
+
+  // The home cannot see pi's menu close: after Esc the sign-in still waits.
+  // MUTATION: drop `again: true` from nextStep in createHome, or make
+  // LoginMenu.reopen return null — alt+n opens nothing and this fails.
+  it("the person's key while it waits puts pi's /login up again, with no second hold and no second poll", async () => {
+    const s = await openSetup(
+      fresh({ hold: async () => ({ ok: true, held: true, release: () => {} }) }),
+    );
+    await s.pi.key("alt+n");
+    expect(s.opens).toEqual([1, 2]);
+    expect(s.w.log).toEqual(["hold", "open", "open"]);
+    expect(s.holds).toEqual({ taken: 1, released: 0 });
+    expect(s.timers.filter((t) => t.ms === LOGIN_POLL_MS && !t.cancelled)).toHaveLength(1);
+    expect(row(s, SIGN_IN_TITLE)).toMatch(/waiting for you…/);
+    // the one wait still ends the sign-in, and lifts the one hold
+    s.w.creds = NORTH;
+    await s.tick(LOGIN_POLL_MS);
+    expect(s.w.log).toEqual(["hold", "open", "open", "release"]);
+    expect(row(s, SIGN_IN_TITLE)).toMatch(/✓ {2}Sign in to a model provider/);
+  });
+
+  it("where pi wires no submit, /login is left on the input line for one Enter", async () => {
+    const s = await openSetup(fresh({ menu: "prefilled" }));
+    expect(s.text()).toMatch(/\/login is on the input line: press Enter to open pi's menu\./);
+    expect(await s.pi.tool("home_sign_in")).toBe(
+      "Still waiting: /login is on the input line, press Enter to open pi's menu.",
+    );
+  });
+
+  it("with no terminal nothing opens: home_sign_in says to type /login", async () => {
+    const s = await openSetup(fresh(), { mode: "print" });
+    expect(s.opens).toEqual([]);
+    expect(await s.pi.tool("home_sign_in")).toMatch(
+      /the sign-in did not finish: .*type \/login to sign in with pi's own menu/,
+    );
+    expect(s.opens).toEqual([]);
+  });
+
+  // MUTATION: open pi's /login before taking the hold, or drop the release
+  // (LoginMenu.run) — the refresher could write over the new login, and this fails.
+  it("holds auto-review's refresher from before the menu opens until the sign-in ends", async () => {
+    const s = await openSetup(
+      fresh({ hold: async () => ({ ok: true, held: true, release: () => {} }) }),
+    );
+    expect(s.w.log).toEqual(["hold", "open"]);
+    await s.tick(LOGIN_POLL_MS);
+    expect(s.holds).toEqual({ taken: 1, released: 0 });
+    s.w.creds = NORTH;
+    await s.tick(LOGIN_POLL_MS);
+    expect(s.w.log).toEqual(["hold", "open", "release"]);
+  });
+
+  it("a refresher that cannot be paused: nothing opens, and the card says why", async () => {
+    const s = await openSetup(
+      fresh({ hold: async () => ({ ok: false, why: "the refresher did not pause" }) }),
+    );
+    expect(s.opens).toEqual([]);
+    expect(s.text()).toMatch(
+      /The sign-in did not start: the refresher did not pause\. alt\+n tries again\./,
+    );
+  });
+
+  it("the session's end stops a sign-in in flight, and lifts its hold", async () => {
+    const s = await openSetup(
+      fresh({ hold: async () => ({ ok: true, held: true, release: () => {} }) }),
+    );
+    expect(s.holds).toEqual({ taken: 1, released: 0 });
     await s.pi.emit("session_shutdown");
-    expect(s.devices[0]!.signal.aborted).toBe(true);
+    await settle();
+    expect(s.holds.released).toBe(1);
+    expect(s.timers.filter((t) => t.ms === LOGIN_POLL_MS && !t.cancelled)).toEqual([]);
+  });
+});
+
+describe("Review model: the optional step, when a quote says providers tie", () => {
+  const dir = mkdtempSync(join(tmpdir(), "home-setup-model-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  const plain: ReviewQuote = {
+    estimateUsd: 1.2,
+    capUsd: 2.4,
+    basis: "measured",
+    model: "north/large-3",
+    key: "k1",
+    lenses: [],
+    files: 1,
+    headSha: "sha1",
+  };
+  const asking: ReviewQuote = { ...plain, ask: true, providers: 2 };
+  const ready = (over: Partial<World> = {}): World =>
+    fresh({
+      creds: { ...NORTH, ...SOUTH_ENV },
+      user: known("octo"),
+      repo: known("acme/widgets"),
+      ...over,
+    });
+  /** The cursor rests on the first pull request: the home prices it. */
+  const priced = async (s: Setup): Promise<void> => s.tick(PRICE_REST_MS);
+
+  // MUTATION: drop the `ask` spread from parsePreview (src/home/reviews.ts) —
+  // no quote ever asks, and this fails.
+  it("the preview's model.ask and its alternatives are the quote's question", () => {
+    const preview = (model: Record<string, unknown>): Record<string, unknown> => ({
+      ok: true,
+      preview: {
+        estimate_usd: 1.2,
+        cap_usd: 2.4,
+        price_basis: "measured",
+        key: "k1",
+        lenses: [],
+        files: 1,
+        model,
+        alternatives: [{ spec: "south/large-3" }],
+      },
+    });
+    expect(parsePreview(preview({ spec: "north/large-3", ask: true }))).toMatchObject({
+      ok: true,
+      quote: { model: "north/large-3", ask: true, providers: 2 },
+    });
+    const settled = parsePreview(preview({ spec: "north/large-3", ask: false }));
+    expect(settled.ok && ("ask" in settled.quote || "providers" in settled.quote)).toBe(false);
+  });
+
+  it("is not on the card or in the way while no quote asks", async () => {
+    const s = await openSetup(ready({ quote: plain }));
+    await priced(s);
+    expect(open(s)[0]!.options).toMatchObject({ anchor: "top-right" });
+    expect(s.text()).not.toMatch(/Review model/);
+  });
+
+  // MUTATION: drop the `onQuote` hook (HomeModel) or `quoted` (HomeSetup) —
+  // the question is never shown and this fails.
+  it("the first quote that asks brings the card back with the step and what reviews would run on", async () => {
+    const s = await openSetup(ready({ quote: asking }), { agentDir: dir });
+    expect(open(s)[0]!.options).toMatchObject({ anchor: "top-right" });
+    await priced(s);
+    expect(open(s)[0]!.options).toMatchObject({ anchor: "center" });
+    expect(row(s, "Review model")).toMatch(/▸ {2}Review model\s+alt\+n choose/);
+    expect(s.text()).toMatch(
+      /2 providers signed in; reviews would run on north\/large-3\. alt\+n picks the provider/,
+    );
+    expect(s.text()).toMatch(/3 of 4 done/);
+    // optional: it is never a gap
+    const status = JSON.parse(await s.pi.tool("home_status")) as { setup_needed: unknown };
+    expect(status.setup_needed).toEqual([]);
+  });
+
+  it("choosing a provider remembers it as the person's stated choice, and the home comes back", async () => {
+    const s = await openSetup(ready({ quote: asking }), { agentDir: dir });
+    await priced(s);
+    s.answers.select = "South    SOUTH_API_KEY";
+    await s.pi.key("alt+n");
+    expect(s.selects.at(-1)).toEqual({
+      title: "QuickReview: which provider do reviews run on?",
+      options: ["North    signed in with pi", "South    SOUTH_API_KEY", AUTOMATIC],
+    });
+    expect(readModelChoice(dir).choice).toMatchObject({
+      provider: "south",
+      model: null,
+      via: "use",
+    });
+    expect(open(s)[0]!.options).toMatchObject({ anchor: "top-right" });
+    expect(s.text()).toMatch(/QuickReview will use South from now on\./);
+  });
+
+  // MUTATION: keep the card up after the list is dismissed (leave `asked` set
+  // in chooseModel) — the optional step holds the home, and this fails.
+  it("skipping is allowed: dismissing the list keeps the order and gives the home back", async () => {
+    const skip = mkdtempSync(join(tmpdir(), "home-setup-skip-"));
+    try {
+      const s = await openSetup(ready({ quote: asking }), { agentDir: skip });
+      await priced(s);
+      await s.pi.key("alt+n");
+      expect(readModelChoice(skip).choice).toBeUndefined();
+      expect(open(s)[0]!.options).toMatchObject({ anchor: "top-right" });
+      expect(s.text()).toMatch(/Reviews run on north\/large-3\./);
+      // it is not asked again in this session
+      await priced(s);
+      expect(open(s)[0]!.options).toMatchObject({ anchor: "top-right" });
+    } finally {
+      rmSync(skip, { recursive: true, force: true });
+    }
+  });
+
+  it("a tool cannot make the choice: home_setup_next says what it is", async () => {
+    const s = await openSetup(ready({ quote: asking }), { agentDir: dir });
+    await priced(s);
+    expect(await s.pi.tool("home_setup_next")).toMatch(
+      /2 providers signed in; reviews would run on north\/large-3\. Choosing is the person's/,
+    );
   });
 });
 
@@ -400,12 +805,12 @@ describe("the session's end, with reads still out", () => {
     const w = fresh();
     let release: (v: Known<string | null>) => void = () => {};
     const held = new Promise<Known<string | null>>((r) => (release = r));
-    const a = adapters(w);
+    const a = adapters(w, { taken: 0, released: 0 });
     a.github = { ...a.github, user: () => held };
     const pi = fakePi({ mode: "tui" });
     await createHome({
       adapters: a,
-      model: "openai-codex/gpt-6.1-sol",
+      model: "",
       tools: "reviewer",
       every: () => () => {},
       setup: { firstRun: { host: host(w), range: "^1.4.0" } },
@@ -437,7 +842,7 @@ describe("the session's end, with reads still out", () => {
 
 describe("Connect GitHub: gh, with a one-key re-check", () => {
   it("signed out: says what to run, and alt+n checks again", async () => {
-    const w = fresh({ login: known(["openai-codex"]) });
+    const w = fresh({ creds: NORTH });
     const s = await openSetup(w);
     expect(row(s, "Connect GitHub")).toMatch(/▸ {2}Connect GitHub\s+alt\+n check/);
     expect(s.text()).toMatch(
@@ -455,7 +860,7 @@ describe("Connect GitHub: gh, with a one-key re-check", () => {
   });
 
   it("home_check_github is the same check", async () => {
-    const w = fresh({ login: known(["openai-codex"]) });
+    const w = fresh({ creds: NORTH });
     const s = await openSetup(w);
     expect(await s.pi.tool("home_check_github")).toMatch(/still signed out: run `gh auth login`/);
     w.user = known("octo");
@@ -464,7 +869,7 @@ describe("Connect GitHub: gh, with a one-key re-check", () => {
 });
 
 describe("Choose a repository", () => {
-  const ready = (): World => fresh({ login: known(["openai-codex"]), user: known("octo") });
+  const ready = (): World => fresh({ creds: NORTH, user: known("octo") });
 
   it("lists the recently pushed repositories, then writes the pick with the silent defaults", async () => {
     const s = await openSetup(ready());
@@ -544,7 +949,7 @@ describe("Choose a repository", () => {
 
 describe("the card's keys", () => {
   it("⏎ on the focused card runs the next step; esc gives the editor back", async () => {
-    const w = fresh({ login: known(["openai-codex"]) });
+    const w = fresh({ creds: NORTH });
     const s = await openSetup(w);
     await s.pi.key("f2");
     expect(s.pi.focused()).toBe(true);
@@ -581,79 +986,6 @@ describe("parseRepoInput", () => {
     "a b/c",
     "https://gitlab.com/a/b",
   ])("refuses %j", (input) => expect(parseRepoInput(input)).toBeNull());
-});
-
-describe("pi's device login (devicelogin.ts)", () => {
-  type Interaction = {
-    signal: AbortSignal;
-    prompt(p: { type: string; options?: Array<{ id: string }> }): Promise<string>;
-    notify(e: Record<string, unknown>): void;
-  };
-  const registry = (
-    login: (provider: string, type: string, i: Interaction) => Promise<unknown>,
-  ) => ({
-    runtime: { login },
-  });
-
-  it("answers the method with the device code and hands the code on", async () => {
-    let picked = "";
-    const codes: DeviceCode[] = [];
-    const port = piDeviceLogin(
-      registry(async (provider, type, i) => {
-        expect([provider, type]).toEqual(["openai-codex", "oauth"]);
-        picked = await i.prompt({
-          type: "select",
-          options: [{ id: "browser" }, { id: "device_code" }],
-        });
-        i.notify({
-          type: "device_code",
-          userCode: "ABCD-1234",
-          verificationUri: URL,
-          expiresInSeconds: 900,
-        });
-        return { type: "oauth" };
-      }),
-    );
-    const r = await port.login({
-      provider: "openai-codex",
-      signal: new AbortController().signal,
-      onCode: (c) => codes.push(c),
-    });
-    expect(r).toEqual({ ok: true });
-    expect(picked).toBe("device_code");
-    expect(codes).toEqual([{ userCode: "ABCD-1234", verificationUri: URL, expiresInSeconds: 900 }]);
-  });
-
-  it("a pi without the runtime is unavailable, with pi's /login named", async () => {
-    const r = await piDeviceLogin({}).login({
-      provider: "openai-codex",
-      signal: new AbortController().signal,
-      onCode: () => {},
-    });
-    expect(r).toMatchObject({ ok: false, kind: "unavailable" });
-    expect(r.ok ? "" : r.why).toMatch(/\/login/);
-  });
-
-  it("another question pi's flow asks is refused, never guessed", async () => {
-    const port = piDeviceLogin(registry(async (_p, _t, i) => i.prompt({ type: "text" })));
-    const r = await port.login({
-      provider: "openai-codex",
-      signal: new AbortController().signal,
-      onCode: () => {},
-    });
-    expect(r).toMatchObject({ ok: false, kind: "failed" });
-  });
-
-  it.each([
-    ["Device flow timed out", false, "expired"],
-    ["OpenAI Codex device auth failed with status 400: access_denied", false, "denied"],
-    ["OpenAI Codex device code login is not enabled for this server.", false, "not_enabled"],
-    ["Login cancelled", false, "cancelled"],
-    ["socket hang up", true, "cancelled"],
-    ["socket hang up", false, "failed"],
-  ] as const)("%s → %s", (msg, aborted, kind) =>
-    expect(loginFailure(new Error(msg), aborted).kind).toBe(kind),
-  );
 });
 
 describe("the repository write (setupadapters.ts)", () => {

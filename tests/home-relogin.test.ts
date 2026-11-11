@@ -1,17 +1,22 @@
 // One login per box, through the home's factory: on a fake pi with
 // a fake login owner (who refreshes the login, whether it expired, and the
-// refresher's pause) and a fake device login. What is pinned:
-//   - an expired login says "login expired" on the login line, with the one
-//     key that signs in again, while auto-review shows "Paused: login";
+// refresher's pause) and a fake of pi's own /login. What is pinned:
+//   - an expired login says "login expired" on the login line, in pi's own
+//     name for the provider, with the one key that signs in again, while
+//     auto-review shows "Paused: login";
 //   - signing in again (alt+l, `l` on the panel, home_relogin) pauses a
-//     running refresher BEFORE pi's device login and lifts the pause after it,
-//     whatever the login's outcome, and auto-review resumes on the new login;
+//     running refresher BEFORE pi's /login opens and lifts the pause after it,
+//     however the sign-in ends, and auto-review resumes on the new login;
+//   - the sign-in is done when a stored login was replaced, for whichever
+//     provider, and ends when the person goes back to the chat;
 //   - pi's own refusal in the chat marks the login expired too;
 //   - auto-review's label ends its pause once the refresher has looked at a
 //     working login after the daemon's last auth failure.
+// The providers are made up: no rule here knows a real one.
 import { describe, expect, it } from "vitest";
 import { createHome } from "../extensions/home.js";
 import { autoReviewLabel } from "../src/home/autoreview.js";
+import { LOGIN_MENU_MAX_MS, LOGIN_POLL_MS, replacedLogin } from "../src/home/loginowner.js";
 import {
   known,
   unknown,
@@ -21,13 +26,11 @@ import {
   type LoginHealth,
   type LoginHold,
 } from "../src/home/ports.js";
-import type { DeviceLoginPort, LoginOutcome } from "../src/home/setup.js";
 import { fakePi, settle, type FakePi } from "./helpers/fake-pi.js";
 import { idleReviews } from "./helpers/fake-reviews.js";
 
 const NOW = Date.parse("2026-10-27T12:00:00Z");
 const ago = (s: number): string => new Date(NOW - s * 1000).toISOString();
-const CODE = { userCode: "ABCD-1234", verificationUri: "https://auth.openai.com/codex/device" };
 
 /** A key's re-login runs on past the key's own settle: let it finish. */
 async function drain(): Promise<void> {
@@ -39,11 +42,14 @@ interface World {
   auto: Known<AutoReviewStatus>;
   /** What the hold answers: paused (held), nothing to pause, or a refusal. */
   hold: "held" | "none" | { why: string };
-  /** How the device login ends, once `approve` is called. */
-  outcome: LoginOutcome;
+  /** The login file's stamps, by provider: a re-login replaces one. */
+  stamps: Known<ReadonlyMap<string, string>>;
+  /** How pi's /login opens; null: this pi gives no way. */
+  menu: "opened" | "prefilled" | null;
+  /** The clock, which a test moves. */
+  now: number;
   /** Everything asked of the outside world, in order. */
   log: string[];
-  approve: () => void;
 }
 
 const EXPIRED: Known<LoginHealth> = known({
@@ -52,29 +58,58 @@ const EXPIRED: Known<LoginHealth> = known({
   checkedAt: NOW - 60_000,
 });
 const PAUSED: Known<AutoReviewStatus> = known({ state: "paused-login", cause: "login expired" });
+const stamps = (o: Record<string, string>): Known<ReadonlyMap<string, string>> =>
+  known(new Map(Object.entries(o)));
 
 function world(over: Partial<World> = {}): World {
   return {
     health: EXPIRED,
     auto: PAUSED,
     hold: "held",
-    outcome: { ok: true },
+    stamps: stamps({ north: "oauth:100", south: "oauth:200" }),
+    menu: "opened",
+    now: NOW,
     log: [],
-    approve: () => {},
     ...over,
+  };
+}
+
+/** pi's model registry, by shape: two providers, both with a stored login. */
+function registry() {
+  const names: Record<string, string> = { north: "North", south: "South" };
+  const models = Object.keys(names).map((provider) => ({
+    provider,
+    id: "large-3",
+    name: "large-3",
+    api: "made-up",
+    reasoning: true,
+    contextWindow: 200_000,
+    cost: { input: 5, output: 15, cacheRead: 0, cacheWrite: 0 },
+  }));
+  return {
+    getAll: () => models as never,
+    getAvailable: () => models as never,
+    find: (p: string, id: string) => models.find((m) => m.provider === p && m.id === id) as never,
+    getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
+    getProvider: () => undefined,
+    getProviderDisplayName: (p: string) => names[p] ?? p,
+    isUsingOAuth: () => true,
   };
 }
 
 function adaptersOver(w: World): HomeAdapters {
   return {
-    login: { providers: async () => known(["openai-codex"]) },
+    login: {
+      providers: async () => unknown("the login file's providers are not read here"),
+      stamps: async () => w.stamps,
+    },
     github: {
       user: async () => known("octo"),
       openPulls: async () => known([]),
       openInBrowser: async () => ({ ok: true }),
     },
     repo: { repo: async () => known("acme/widgets") },
-    clock: { now: () => NOW },
+    clock: { now: () => w.now },
     reviews: idleReviews(),
     autoReview: { status: async () => w.auto },
     memory: { status: async () => known("off") },
@@ -94,38 +129,66 @@ function adaptersOver(w: World): HomeAdapters {
   };
 }
 
-function deviceLoginOver(w: World): DeviceLoginPort {
-  return {
-    login: async ({ onCode }) => {
-      w.log.push("login");
-      onCode(CODE);
-      await new Promise<void>((r) => (w.approve = r));
-      return w.outcome;
-    },
-  };
+interface Home {
+  pi: FakePi;
+  text: () => string;
+  /** Let the sign-in look once more whether it is done. */
+  poll: () => Promise<void>;
+  /** The person sends the chat a message. */
+  say: (text: string) => Promise<void>;
 }
 
-async function home(w: World): Promise<{ pi: FakePi; text: () => string }> {
-  const pi = fakePi({ model: { provider: "openai-codex", id: "gpt-6.1-sol" } });
+async function home(w: World): Promise<Home> {
+  const pi = fakePi({ model: { provider: "north", id: "large-3" } });
+  Object.assign(pi.ctx, { modelRegistry: registry() });
+  Object.assign(pi.api, { setModel: async () => true });
+  const timers: Array<{ ms: number; fn: () => void; cancelled: boolean }> = [];
   await createHome({
     adapters: adaptersOver(w),
-    model: "openai-codex/gpt-6.1-sol",
+    model: "",
     tools: "reviewer",
     every: () => () => {},
-    setup: { deviceLogin: deviceLoginOver(w) },
+    after: (ms, fn) => {
+      const t = { ms, fn, cancelled: false };
+      timers.push(t);
+      return () => {
+        t.cancelled = true;
+      };
+    },
+    loginMenu: {
+      open: () => {
+        if (w.menu !== null) w.log.push("login");
+        return w.menu;
+      },
+    },
   })(pi.api);
   await pi.start();
-  // wide enough that no notice here wraps
-  return { pi, text: () => pi.render(160, 40).lines.join("\n") };
+  return {
+    pi,
+    // wide enough that no notice here wraps
+    text: () => pi.render(160, 40).lines.join("\n"),
+    poll: async () => {
+      for (const t of timers.splice(0)) {
+        if (t.cancelled) continue;
+        if (t.ms === LOGIN_POLL_MS) t.fn();
+        else timers.push(t);
+      }
+      await drain();
+    },
+    say: async (text) => {
+      await pi.emit("input", { text, source: "interactive" });
+      await drain();
+    },
+  };
 }
 
 describe("an expired login", () => {
   // MUTATION: drop the expired branch from the panel's login line — this fails.
   it("says so on the login line, with the key that signs in again; auto-review shows Paused: login", async () => {
     const h = await home(world());
-    expect(h.text()).toMatch(/✗ OpenAI login expired · alt\+l sign in again/);
+    expect(h.text()).toMatch(/✗ North login expired · alt\+l sign in again/);
     expect(h.text()).toMatch(/‖ Auto-review paused · login expired/);
-    expect(h.text()).not.toMatch(/ChatGPT/);
+    expect(h.text()).not.toMatch(/signed in with pi/);
     const status = JSON.parse(await h.pi.tool("home_status")) as {
       login: { expired: unknown; refreshed_by: unknown; signed_in: unknown };
     };
@@ -146,7 +209,7 @@ describe("an expired login", () => {
     const h = await home(
       world({ health: known({ refresher: "home" }), auto: known({ state: "off" }) }),
     );
-    expect(h.text()).toMatch(/✓ OpenAI ChatGPT/);
+    expect(h.text()).toMatch(/✓ North · signed in with pi/);
     expect(h.text()).not.toMatch(/login expired/);
     const status = JSON.parse(await h.pi.tool("home_status")) as { login: unknown };
     expect(status.login).toMatchObject({ expired: false, refreshed_by: "home" });
@@ -166,43 +229,66 @@ describe("an expired login", () => {
 });
 
 describe("signing in again", () => {
-  // MUTATION: run the device login before the hold, or release the pause before the
-  // login ends — the order below fails.
-  it("pauses the refresher, runs pi's device login, lifts the pause, and auto-review resumes", async () => {
+  // MUTATION: open pi's /login before the hold, or release the pause before
+  // the sign-in ends (LoginMenu.run) — the order below fails.
+  it("pauses the refresher, opens pi's /login, lifts the pause once a login was replaced, and auto-review resumes", async () => {
     const w = world();
     const h = await home(w);
     await h.pi.key("alt+l");
     await drain();
     expect(w.log).toEqual(["hold", "login"]);
-    expect(h.text()).toMatch(/OpenAI signing in again…/);
-    expect(h.text()).toMatch(
-      /Open https:\/\/auth\.openai\.com\/codex\/device and enter the code ABCD-1234/,
-    );
-    // the person approves; the refresher re-reads the new login, the daemon resumes
+    expect(h.text()).toMatch(/North signing in again…/);
+    expect(h.text()).toMatch(/Signing in again: pi's \/login is open\./);
+    // nothing replaced yet: the pause holds
+    await h.poll();
+    expect(w.log).toEqual(["hold", "login"]);
+    // the person signs in to the other provider; the refresher re-reads the
+    // new login, the daemon resumes
+    w.stamps = stamps({ north: "oauth:100", south: "oauth:900" });
     w.health = known({ refresher: "auto-review", checkedAt: NOW });
     w.auto = known({ state: "on-live", checkedAt: NOW });
-    w.approve();
-    await drain();
+    await h.poll();
     expect(w.log).toEqual(["hold", "login", "release"]);
-    expect(h.text()).toMatch(/✓ OpenAI ChatGPT/);
+    expect(h.text()).toMatch(/✓ North · signed in with pi/);
     expect(h.text()).toMatch(/● Auto-review on · live/);
     expect(h.text()).toMatch(
-      /Signed in to OpenAI again\. Auto-review's refresher has the new login, and auto-review resumes\./,
+      /Signed in to South again\. Auto-review's refresher has the new login, and auto-review resumes\./,
     );
   });
 
-  it("home_relogin answers with the code; a second press during the sign-in pauses nothing twice", async () => {
+  // The home cannot see pi's menu close: after Esc the sign-in still waits.
+  // MUTATION: drop `again: true` from the alt+l key in createHome, or make
+  // LoginMenu.reopen return null — the key opens nothing and this fails.
+  it("home_relogin answers once pi's menu is open; a second call opens nothing, and the person's key puts /login up again under the one pause", async () => {
     const w = world();
     const h = await home(w);
-    expect(await h.pi.tool("home_relogin")).toMatch(
-      /^Open https:\/\/auth\.openai\.com\/codex\/device and enter the code ABCD-1234\./,
+    expect(await h.pi.tool("home_relogin")).toMatch(/^Signing in again: pi's \/login is open\./);
+    expect(await h.pi.tool("home_relogin")).toBe(
+      "pi's /login is open already: finish the sign-in in pi's menu.",
     );
-    await h.pi.input("l");
-    expect(await h.pi.tool("home_relogin")).toMatch(/^Still waiting: .* ABCD-1234\./);
     expect(w.log).toEqual(["hold", "login"]);
-    w.approve();
+    await h.pi.key("alt+l");
     await drain();
+    expect(w.log).toEqual(["hold", "login", "login"]);
+    expect(h.text()).toMatch(/North signing in again…/);
+    // the one wait still ends the sign-in, and lifts the one pause
+    w.stamps = stamps({ north: "oauth:900", south: "oauth:200" });
+    await h.poll();
+    expect(w.log).toEqual(["hold", "login", "login", "release"]);
+    expect(h.text()).toMatch(/Signed in to North again\./);
+  });
+
+  // The stamps are the real port's shape: type, expiry, a digest of the entry
+  // (tests/home-adapters.test.ts pins that a replaced key changes the digest).
+  it("an API key replaced by another API key ends the sign-in as done", async () => {
+    const w = world({ stamps: stamps({ north: "api_key::0a1b2c3d" }) });
+    const h = await home(w);
+    expect(await h.pi.tool("home_relogin")).toMatch(/^Signing in again: pi's \/login is open\./);
+    w.stamps = stamps({ north: "api_key::9f8e7d6c" });
+    await h.poll();
     expect(w.log).toEqual(["hold", "login", "release"]);
+    expect(h.text()).toMatch(/Signed in to North again\./);
+    expect(h.text()).not.toMatch(/no stored login changed/);
   });
 
   it("stops before pi is asked when the refresher will not pause", async () => {
@@ -214,16 +300,31 @@ describe("signing in again", () => {
     expect(h.text()).toMatch(/login expired · alt\+l sign in again/);
   });
 
-  it("lifts the pause after a device login that did not finish, and says how to try again", async () => {
-    const w = world({ outcome: { ok: false, kind: "expired", why: "the device code timed out" } });
+  // MUTATION: drop the onInput hook in createHome (loginMenu.left) — the
+  // refresher stays paused after the person left pi's menu, and this fails.
+  it("lifts the pause when the person goes back to the chat with no login replaced, and says how to try again", async () => {
+    const w = world();
     const h = await home(w);
     await h.pi.key("alt+l");
     await drain();
-    w.approve();
-    await drain();
+    await h.say("never mind");
     expect(w.log).toEqual(["hold", "login", "release"]);
-    expect(h.text()).toMatch(/The code expired before it was approved\. alt\+l gets a new one\./);
+    expect(h.text()).toMatch(
+      /pi's \/login closed and no stored login changed\. alt\+l opens it again\./,
+    );
     expect(h.text()).toMatch(/login expired · alt\+l sign in again/);
+  });
+
+  // MUTATION: drop the LOGIN_MENU_MAX_MS ceiling from LoginMenu's poll — a
+  // menu left open holds the refresher for good, and this fails.
+  it("a menu left open is not a pause for good: the hold is lifted at the ceiling", async () => {
+    const w = world();
+    const h = await home(w);
+    await h.pi.key("alt+l");
+    await drain();
+    w.now = NOW + LOGIN_MENU_MAX_MS;
+    await h.poll();
+    expect(w.log).toEqual(["hold", "login", "release"]);
   });
 
   it("pauses nothing while auto-review is off: the home's own pi owns the login", async () => {
@@ -235,11 +336,30 @@ describe("signing in again", () => {
     const h = await home(w);
     await h.pi.key("alt+l");
     await drain();
-    w.approve();
-    await drain();
+    w.stamps = stamps({ north: "oauth:900", south: "oauth:200" });
+    await h.poll();
     expect(w.log).toEqual(["hold", "login", "release"]);
-    expect(h.text()).toMatch(/Signed in to OpenAI again\./);
+    expect(h.text()).toMatch(/Signed in to North again\./);
     expect(h.text()).not.toMatch(/refresher has the new login/);
+  });
+
+  it("a pi that gives no way to open its menu: nothing is left paused, and /login is named", async () => {
+    const w = world({ menu: null });
+    const h = await home(w);
+    expect(await h.pi.tool("home_relogin")).toMatch(
+      /^type \/login to sign in again with pi's own menu \(switch auto-review off first/,
+    );
+    expect(w.log).toEqual(["hold", "release"]);
+  });
+
+  it("replacedLogin names the provider whose stored login is new or reads differently", () => {
+    const before = stamps({ north: "oauth:100" });
+    expect(replacedLogin(before, stamps({ north: "oauth:100" }))).toBeNull();
+    expect(replacedLogin(before, stamps({ north: "oauth:500" }))).toBe("north");
+    expect(replacedLogin(before, stamps({ north: "oauth:100", south: "api_key:" }))).toBe("south");
+    // an unreadable file says nothing: never "replaced"
+    expect(replacedLogin(before, unknown("EACCES"))).toBeNull();
+    expect(replacedLogin(null, stamps({ north: "oauth:500" }))).toBeNull();
   });
 });
 
@@ -248,22 +368,22 @@ describe("pi's own word on the login", () => {
   it("a reply refused for the login marks it expired; the next reply that comes back clears it", async () => {
     const w = world({ health: known({ refresher: "home" }), auto: known({ state: "off" }) });
     const h = await home(w);
-    expect(h.text()).toMatch(/✓ OpenAI ChatGPT/);
+    expect(h.text()).toMatch(/✓ North · signed in with pi/);
     await h.pi.emit("message_end", {
       message: {
         role: "assistant",
         stopReason: "error",
-        errorMessage: "OAuth refresh failed for openai-codex",
+        errorMessage: "OAuth refresh failed for north",
       },
     });
-    expect(h.text()).toMatch(/✗ OpenAI login expired · alt\+l sign in again/);
+    expect(h.text()).toMatch(/✗ North login expired · alt\+l sign in again/);
     // another error is not the login's
     await h.pi.emit("message_end", {
       message: { role: "assistant", stopReason: "error", errorMessage: "529 overloaded" },
     });
     expect(h.text()).toMatch(/login expired/);
     await h.pi.emit("message_end", { message: { role: "assistant", stopReason: "stop" } });
-    expect(h.text()).toMatch(/✓ OpenAI ChatGPT/);
+    expect(h.text()).toMatch(/✓ North · signed in with pi/);
   });
 });
 
@@ -310,6 +430,14 @@ describe("auto-review's pause ends with the re-login", () => {
     };
     expect(label(failed)).toBe("paused-login");
     expect(label({ ...failed, login_refresh: refresher({ checked_at: ago(10) }) })).toBe("on-live");
+    // a login with no expiry is written `never`, and that one works too
+    // MUTATION: require a finite expires_at in worksSince — this fails.
+    expect(
+      label({
+        ...failed,
+        login_refresh: refresher({ checked_at: ago(10), expires_at: "never" }),
+      }),
+    ).toBe("on-live");
     // a record from before the failure, a paused one, or a failing one does not
     expect(label({ ...failed, login_refresh: refresher({ checked_at: ago(600) }) })).toBe(
       "paused-login",

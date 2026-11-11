@@ -298,7 +298,7 @@ describe("stage 1 over a file bigger than one case", () => {
       path: "core/state.ts",
       blob: b,
       lens: "pass-scan",
-      tier: "sol-med",
+      tier: "standard",
       effort: "low",
       validator: false,
       sha: SHA1,

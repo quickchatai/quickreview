@@ -19,9 +19,18 @@ import {
   SWEEP_WIDE_FILES_PER_GROUP,
 } from "./heuristics.js";
 import type { LensTuningMap } from "./lenstuning.js";
+import { splitProvider, type ModelRoute } from "./modelroute.js";
 import type { PostingPolicy } from "./postingpolicy.js";
 import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES, SCAN_DEEP_LENSES, SECURITY_FAMILY } from "./passes.js";
-import { PASS_TIER_ORDER, type PassTier } from "./types.js";
+import {
+  ADD_TIER,
+  BASE_TIER,
+  foldTier,
+  LEGACY_TIER_NAMES,
+  PASS_TIER_ORDER,
+  RISK_TIER,
+  type PassTier,
+} from "./types.js";
 
 /** `[github] auth`: whose credential the daemon runs on. `app` (the default)
  * is a GitHub App's installation token; `user` is the person's own GitHub
@@ -717,13 +726,19 @@ export interface ModelPricing {
   output_per_mtok: number;
 }
 
-/** [models] — role models plus the tiered pass-model scheme. */
+/** [models]: the review's model and the tiered pass-model scheme. A model
+ * spec is `[provider/model][:level]`; one with no model part runs on the
+ * run's route (packages/pi-plugin/src/modelroute.ts). */
 export interface ModelsConfig {
-  default: string;
-  conversation: string;
-  /** PassTier → full model spec ("provider/model:thinking"). */
+  /** `[models] model`: the review's pin, "" when the credential decides. A
+   * `:level` on it is the main session's level. Held once: the older keys
+   * `conversation` and `default` fold to it on input (`parseModels`), and
+   * nothing is derived from it at parse time. */
+  model: string;
+  /** PassTier → model spec. A value may be unpinned (`":medium"`): that tier
+   * runs on the route, at that level. */
   tiers: Record<PassTier, string>;
-  /** Passes always run at sol-high, single variant, not raisable. Resolved
+  /** Passes always run at deep, single variant, not raisable. Resolved
    * once: config.toml's list (or the default) with the whole security family
    * joined at parse (`withSecurityFamily`), and a profile's
    * `[lenses.<pass>] risk = true` lenses joined by its overlay
@@ -735,17 +750,19 @@ export interface ModelsConfig {
    * Only the profile's `min_tier` for the validator moves it, and only
    * upward. */
   validate_tier: PassTier;
-  /** Diffs under this many changed lines start at terra-med (heuristics). */
+  /** Diffs under this many changed lines start at light (heuristics). */
   small_diff_lines: number;
-  /** Spend rates keyed by bare model id; consumed by spend accounting. */
+  /** `[models.pricing]`: spend rates keyed by bare model id. The table is
+   * accepted from any config.toml, for good: an older file carries one, and
+   * a file with one loads whether or not anything still reads it. */
   pricing: Record<string, ModelPricing>;
-  /** ONE reasoning-effort setting for the whole review (`""` = off: every
-   * role and tier keeps the level its own spec names). When set, the thinking
-   * suffix of EVERY model spec above — default, conversation and all
-   * three tiers — is replaced: `low` → `:low`, `medium` → `:medium`, `high` →
-   * the model's highest level (`effort_max`). Applied once, at parse time, so
-   * every consumer (sessions, the agents build, the bench) sees the same
-   * specs. */
+  /** ONE reasoning-effort setting for the whole review (`""` = off: the
+   * review's model and every tier keep the level their own spec names). When
+   * set, the thinking suffix of EVERY model spec above — `model` and all
+   * three tiers, pinned or not — is replaced: `low` → `:low`, `medium` →
+   * `:medium`, `high` → the model's highest level (`effort_max`). Applied
+   * once, at parse time, so every consumer (sessions, the agents build, the
+   * bench) sees the same specs. */
   effort: ReviewEffort;
   /** The level `effort = "high"` means — the highest a model accepts. pi
    * 0.87.1 (and 0.99.1, also for gpt-6.1-sol) lists `minimal…high, xhigh, max` for gpt-6-sol (model catalog,
@@ -756,10 +773,10 @@ export interface ModelsConfig {
    * A pinned lens runs at that tier on every PR whatever the diff size — the
    * plan names that tier, the lens is not raisable, and every built variant
    * of it carries that tier's spec. The default is `DEFAULT_PASS_TIERS`
-   * (baseline, sweep, behaviour-delta at sol-high); a config entry replaces
+   * (baseline, sweep, behaviour-delta at deep); a config entry replaces
    * a lens's default pin. Not
    * for pass-validate (its knob is `validate_tier`) nor for a risk pass
-   * (always sol-high). A profile `min_tier` still floors a pin, and the
+   * (always deep). A profile `min_tier` still floors a pin, and the
    * validator never follows a pinned lens's tier. */
   pass_tiers: Record<string, PassTier>;
   /** Per-lens MODEL overrides (`[models.pass_models]`): pass name →
@@ -778,16 +795,57 @@ export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 /** `[models] effort` — `""` leaves every spec as written. */
 export type ReviewEffort = "" | "low" | "medium" | "high";
 
-/** "provider/model:thinking" → its model and its pi thinking level, or a
- * null level when the spec carries no suffix. */
+/** The level each tier runs at when its spec names none: what an unpinned
+ * tier's spec carries, and what `tierSpec` and `stripPins` fall back to. */
+export const TIER_LEVELS: Readonly<Record<PassTier, ThinkingLevel>> = {
+  [BASE_TIER]: "medium",
+  [ADD_TIER]: "medium",
+  [RISK_TIER]: "high",
+};
+
+/** "[provider/model][:thinking]" → its model and its pi thinking level, or a
+ * null level when the spec carries no suffix. The model part may be empty:
+ * `":high"` is no model at `high`, and `""` is neither. */
 export function splitModelSpec(spec: string): { model: string; thinking: string | null } {
-  const m = new RegExp(`^(.+):(${THINKING_LEVELS.join("|")})$`).exec(spec);
+  const m = new RegExp(`^(.*):(${THINKING_LEVELS.join("|")})$`).exec(spec);
   return m ? { model: m[1] as string, thinking: m[2] as string } : { model: spec, thinking: null };
 }
 
-/** Replace (or add) the `:thinking` suffix of one model spec. */
+/** Does the spec name a model? One that does not runs on the run's route. */
+export function isPinned(spec: string): boolean {
+  return splitModelSpec(spec).model !== "";
+}
+
+/** Replace (or add) the `:thinking` suffix of one model spec. An unpinned
+ * spec stays unpinned: `withThinking("", "high")` is `":high"`. */
 export function withThinking(spec: string, level: ThinkingLevel): string {
   return `${splitModelSpec(spec).model}:${level}`;
+}
+
+/**
+ * Is `value` a model spec as a config may write one? The model part, when
+ * there is one, names its provider (`provider/model`; the model id may hold
+ * more slashes and an `@`, as pi's ids do). `bare` says which spec with no
+ * model part is one:
+ *  - `whole`: only the empty string (`[models] model`: nothing is pinned);
+ *  - `any`: every one (a tier: it runs on the route);
+ *  - `level`: one that names a level (a lens override: that level, on the
+ *    model the lens would have run on).
+ */
+export function isModelSpec(value: unknown, bare: "whole" | "any" | "level"): value is string {
+  if (typeof value !== "string") return false;
+  const { model, thinking } = splitModelSpec(value);
+  if (model !== "") return splitProvider(model) !== null;
+  if (bare === "any") return true;
+  return bare === "whole" ? value === "" : thinking !== null;
+}
+
+/** The refusal of a value that is no model spec. `where` names the key:
+ * `[models] model`, `[models.tiers] deep`, `[models.pass_models] pass-x`. */
+export function modelSpecError(where: string, value: unknown): Error {
+  return new Error(
+    `config.toml ${where} must be "provider/model" with an optional ":<thinking level>" (got ${JSON.stringify(value)})`,
+  );
 }
 
 /** The thinking level an effort setting names: `high` is the model's
@@ -807,12 +865,7 @@ export function applyReviewEffort(models: ModelsConfig): ModelsConfig {
   const tiers = Object.fromEntries(
     Object.entries(models.tiers).map(([t, spec]) => [t, withThinking(spec, level)]),
   ) as Record<PassTier, string>;
-  return {
-    ...models,
-    default: withThinking(models.default, level),
-    conversation: withThinking(models.conversation, level),
-    tiers,
-  };
+  return { ...models, model: withThinking(models.model, level), tiers };
 }
 
 export function parseEffort(raw: unknown): ReviewEffort {
@@ -847,15 +900,15 @@ function parseEffortMax(raw: unknown): ThinkingLevel {
  * The shipped per-lens tier pins (measured: high effort on these lenses found
  * more defects with no high-severity loss, for ~18% more cost per PR). The
  * three lenses that read the whole diff line by line run at
- * the `sol-high` tier — gpt-6.1-sol at high effort — on every PR; every other
+ * the `deep` tier — gpt-6.1-sol at high effort — on every PR; every other
  * lens keeps its planned tier. A config's own `[models.pass_tiers]` entry for
- * one of them replaces its pin (e.g. `"pass-baseline" = "sol-med"`), and a
+ * one of them replaces its pin (e.g. `"pass-baseline" = "standard"`), and a
  * profile lowers its thinking with `[lenses.<pass>] effort = "medium"`.
  */
 export const DEFAULT_PASS_TIERS: Readonly<Record<string, PassTier>> = Object.freeze({
-  "pass-baseline": "sol-high",
-  "pass-sweep": "sol-high",
-  "pass-behaviour-delta": "sol-high",
+  "pass-baseline": RISK_TIER,
+  "pass-sweep": RISK_TIER,
+  "pass-behaviour-delta": RISK_TIER,
 });
 
 /** `[engine] lens_pass_deadline_min` when the file does not set it: a
@@ -990,7 +1043,9 @@ function parsePiLensRuntime<T extends { lens_runtime: unknown; engine_wave: unkn
   return pi;
 }
 
-/** Defaults for the tiered [models] knobs — older configs keep parsing. */
+/** Defaults for the tiered [models] knobs — older configs keep parsing. No
+ * tier names a model: each runs on the run's route, at its `TIER_LEVELS`
+ * level, until a config pins one. */
 export const MODELS_TIER_DEFAULTS: Pick<
   ModelsConfig,
   | "tiers"
@@ -1008,12 +1063,12 @@ export const MODELS_TIER_DEFAULTS: Pick<
   effort: "",
   effort_max: "max",
   tiers: {
-    "terra-med": "openai-codex/gpt-6.1-sol:medium",
-    "sol-med": "openai-codex/gpt-6.1-sol:medium",
-    "sol-high": "openai-codex/gpt-6.1-sol:high",
+    [BASE_TIER]: `:${TIER_LEVELS[BASE_TIER]}`,
+    [ADD_TIER]: `:${TIER_LEVELS[ADD_TIER]}`,
+    [RISK_TIER]: `:${TIER_LEVELS[RISK_TIER]}`,
   },
   risk_passes: ["pass-security", "pass-prod-risk", "pass-data-safety"],
-  validate_tier: "sol-high",
+  validate_tier: RISK_TIER,
   small_diff_lines: 150,
   pricing: {},
 };
@@ -1099,7 +1154,7 @@ const KIND_RE = /^[a-z0-9][a-z0-9_-]*(?::[a-z0-9][a-z0-9_-]*)*$/;
 
 export const SCAN_DEFAULTS: ScanConfig = {
   effort: "low",
-  tier: "sol-med",
+  tier: ADD_TIER,
   validator: true,
   exclude: [],
   calibration_units: 3,
@@ -1158,11 +1213,12 @@ export function parseScanTable(
         else fail(key, 'must be "low", "medium" or "high"', v);
         break;
       }
-      case "tier":
-        if (typeof v === "string" && (PASS_TIER_ORDER as readonly string[]).includes(v))
-          out.tier = v as PassTier;
+      case "tier": {
+        const tier = typeof v === "string" ? foldTier(v) : undefined;
+        if (tier !== undefined) out.tier = tier;
         else fail(key, `must be one of ${PASS_TIER_ORDER.join(", ")}`, v);
         break;
+      }
       case "validator":
         if (typeof v === "boolean") out.validator = v;
         else fail(key, "must be true or false", v);
@@ -1372,10 +1428,28 @@ export function req(obj: Record<string, unknown>, key: string): unknown {
   return v;
 }
 
-/** The overseer session is gone: its two knobs are still ACCEPTED so a
- * live config does not break, read by nothing, and named here once at parse. */
+/** What a config.toml's parse says once without refusing the file. The
+ * overseer session is gone: its two knobs are still ACCEPTED so a live
+ * config does not break, read by nothing, and named here. A `[models.tiers]`
+ * key that is no tier is named too: it is left out, never an error, so a
+ * config with a stray key still loads. So is a `[models] model` beside an
+ * older `conversation` that names another model: `model` is the one used.
+ * A folded key on its own is said nowhere: it stays accepted for good. */
 export function configDeprecations(raw: Record<string, any>): string[] {
   const out: string[] = [];
+  const model: unknown = raw.models?.model;
+  const conversation: unknown = raw.models?.conversation;
+  if (typeof model === "string" && typeof conversation === "string" && model !== conversation)
+    out.push(
+      `config.toml [models]: model = ${model} is used; conversation = ${conversation} is the older key`,
+    );
+  const tiers: unknown = raw.models?.tiers;
+  if (typeof tiers === "object" && tiers !== null)
+    for (const key of Object.keys(tiers))
+      if (foldTier(key) === undefined)
+        out.push(
+          `config.toml [models.tiers]: ${JSON.stringify(key)} is not a tier (tiers: ${PASS_TIER_ORDER.join(", ")}; the older names ${Object.keys(LEGACY_TIER_NAMES).join(", ")} are still read)`,
+        );
   if (raw.models?.overseer !== undefined)
     out.push(
       "config.toml [models] overseer is deprecated and ignored: the overseer session was deleted. Remove the key.",
@@ -1404,6 +1478,70 @@ export function withSecurityFamily(passes: readonly string[]): string[] {
   return [...new Set([...passes, ...SECURITY_FAMILY])];
 }
 
+/** A tier value as written, in the ladder's spelling: either spelling of a
+ * tier is that tier. Anything else stays as written, for the check that
+ * names the ladder to refuse. */
+function tierValue<T>(value: T): T | PassTier {
+  return typeof value === "string" ? (foldTier(value) ?? value) : value;
+}
+
+/** `[models.tiers]` as written, keyed by the ladder's names: a key in a
+ * tier's other spelling is that tier's. Both spellings of one tier with
+ * different models is an error (which one runs cannot be told); a key that
+ * is no tier is left out (`configDeprecations` names it). A tier's value is
+ * a model spec whose model part may be empty. */
+function parseTierSpecs(raw: unknown): Partial<Record<PassTier, string>> {
+  const out: Partial<Record<PassTier, string>> = {};
+  if (typeof raw !== "object" || raw === null) return out;
+  /** Tier → the key that set it. */
+  const setBy = new Map<PassTier, string>();
+  for (const [key, spec] of Object.entries(raw as Record<string, unknown>)) {
+    const tier = foldTier(key);
+    if (tier === undefined) continue;
+    if (!isModelSpec(spec, "any")) throw modelSpecError(`[models.tiers] ${key}`, spec);
+    const earlier = setBy.get(tier);
+    if (earlier !== undefined && out[tier] !== spec)
+      throw new Error(
+        `config.toml [models.tiers] sets ${tier} and its older name ${key === tier ? earlier : key} to different models`,
+      );
+    setBy.set(tier, key);
+    out[tier] = spec;
+  }
+  return out;
+}
+
+/** `[models.pass_tiers]` as written, each tier in the ladder's spelling. A
+ * value that is no table is passed on for `validateLensKnobs` to refuse. */
+function parsePassTiers(raw: unknown): Record<string, PassTier> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    return (raw ?? {}) as Record<string, PassTier>;
+  return Object.fromEntries(
+    Object.entries(raw as Record<string, unknown>).map(([pass, tier]) => [pass, tierValue(tier)]),
+  ) as Record<string, PassTier>;
+}
+
+/** `[models] model` as written, or what an older config's keys fold to:
+ * `conversation`, then `default`. "" when the file names none of the three:
+ * nothing is pinned. Only `model` is checked; an older key is taken as it
+ * always was, as written, and a `default` beside either of the other two
+ * is accepted and read by nothing. */
+function parseModelPin(raw: Record<string, any>): string {
+  if (raw.model === undefined) return String(raw.conversation ?? raw.default ?? "");
+  if (!isModelSpec(raw.model, "whole")) throw modelSpecError("[models] model", raw.model);
+  return raw.model;
+}
+
+/** `[models]` as written, or an empty table: a config with no `[models]`
+ * section pins nothing and takes every default. A `models` that is no table
+ * is refused. */
+export function modelsTable(raw: Record<string, any>): Record<string, any> {
+  const models: unknown = raw.models;
+  if (models === undefined) return {};
+  if (typeof models !== "object" || models === null || Array.isArray(models))
+    throw new Error(`config.toml [models] must be a table (got ${JSON.stringify(models)})`);
+  return models as Record<string, any>;
+}
+
 export function parseModels(
   raw: Record<string, any>,
   presetEffort: ReviewEffort = "",
@@ -1412,17 +1550,13 @@ export function parseModels(
     // `[models] effort` set explicitly wins over the preset's level.
     effort: raw.effort !== undefined ? parseEffort(raw.effort) : presetEffort,
     effort_max: parseEffortMax(raw.effort_max),
-    default: String(req(raw, "default")),
-    conversation: String(req(raw, "conversation")),
-    tiers: {
-      ...MODELS_TIER_DEFAULTS.tiers,
-      ...((raw.tiers ?? {}) as Partial<Record<PassTier, string>>),
-    },
+    model: parseModelPin(raw),
+    tiers: { ...MODELS_TIER_DEFAULTS.tiers, ...parseTierSpecs(raw.tiers) },
     risk_passes: withSecurityFamily(parseRiskPasses(raw.risk_passes)),
-    validate_tier: (raw.validate_tier ?? MODELS_TIER_DEFAULTS.validate_tier) as PassTier,
+    validate_tier: tierValue(raw.validate_tier ?? MODELS_TIER_DEFAULTS.validate_tier) as PassTier,
     small_diff_lines: Number(raw.small_diff_lines ?? MODELS_TIER_DEFAULTS.small_diff_lines),
     pricing: (raw.pricing ?? {}) as Record<string, ModelPricing>,
-    pass_tiers: { ...DEFAULT_PASS_TIERS, ...((raw.pass_tiers ?? {}) as Record<string, PassTier>) },
+    pass_tiers: { ...DEFAULT_PASS_TIERS, ...parsePassTiers(raw.pass_tiers) },
     pass_models: { ...((raw.pass_models ?? {}) as Record<string, string>) },
   });
 }
@@ -1476,11 +1610,11 @@ export function validateLensKnobs(cfg: Pick<CoreConfig, "review" | "models">): v
       );
     if (SECURITY_FAMILY.includes(pass))
       throw new Error(
-        `config.toml [models.pass_tiers]: ${pass} is a security-family lens — the family always runs at the risk tier (sol-high), so it takes no pin`,
+        `config.toml [models.pass_tiers]: ${pass} is a security-family lens — the family always runs at the risk tier (${RISK_TIER}), so it takes no pin`,
       );
     if (risk.has(pass))
       throw new Error(
-        `config.toml [models.pass_tiers]: ${pass} is a risk pass (always sol-high) — remove it from [models] risk_passes first`,
+        `config.toml [models.pass_tiers]: ${pass} is a risk pass (always ${RISK_TIER}) — remove it from [models] risk_passes first`,
       );
     if (!(PASS_TIER_ORDER as readonly unknown[]).includes(tier))
       throw new Error(
@@ -1499,18 +1633,60 @@ export function validateLensKnobs(cfg: Pick<CoreConfig, "review" | "models">): v
       );
     if (risk.has(pass) || SECURITY_FAMILY.includes(pass))
       throw new Error(
-        `config.toml [models.pass_models]: ${pass} is a risk pass — it always runs on the sol-high tier's model`,
+        `config.toml [models.pass_models]: ${pass} is a risk pass — it always runs on the ${RISK_TIER} tier's model`,
       );
-    if (typeof model !== "string" || !/^[\w.-]+\/[\w.:-]+$/.test(model))
-      throw new Error(
-        `config.toml [models.pass_models] ${pass}: ${JSON.stringify(model)} is not a "provider/model[:thinking]" spec`,
-      );
+    // A bare `:level` is a spec here too: it is what `stripPins` leaves of
+    // an override that named a level, and this check runs again after it.
+    if (!isModelSpec(model, "level")) throw modelSpecError(`[models.pass_models] ${pass}`, model);
   }
 }
 
-/** Full model spec ("provider/model:thinking") for a pass tier. */
+/** The model spec a pass tier is configured with, as written: it may be
+ * unpinned (`tierSpec` gives the literal one). */
 export function tierModel(cfg: Pick<CoreConfig, "models">, tier: PassTier): string {
   return cfg.models.tiers[tier];
+}
+
+/** The literal spec a tier runs on, for a place with no host to resolve one
+ * (a child pi's `--model`): the tier's own spec when it pins a model, else
+ * the run's route at the tier's level. */
+export function tierSpec(
+  route: Pick<ModelRoute, "spec">,
+  cfg: Pick<CoreConfig, "models">,
+  tier: PassTier,
+): string {
+  const own = cfg.models.tiers[tier];
+  const { model, thinking } = splitModelSpec(own);
+  return model !== "" ? own : `${route.spec}:${thinking ?? TIER_LEVELS[tier]}`;
+}
+
+/**
+ * The config with no model pinned below the review's own: every pinned tier
+ * and every `[models.pass_models]` entry loses its model part and keeps its
+ * level, so the whole review runs on the one model a run names. `[models]
+ * model` is the caller's to set. A tier that named no level takes its
+ * `TIER_LEVELS` one; a lens override that named none is dropped, since
+ * without a model it says nothing (the lens runs at the level it would have
+ * had). `replaced` counts the specs that named a model. Pure.
+ */
+export function stripPins<C extends Pick<CoreConfig, "models">>(
+  cfg: C,
+): { cfg: C; replaced: number } {
+  let replaced = 0;
+  const tiers = { ...cfg.models.tiers };
+  for (const tier of PASS_TIER_ORDER) {
+    const { model, thinking } = splitModelSpec(tiers[tier]);
+    if (model === "") continue;
+    replaced += 1;
+    tiers[tier] = `:${thinking ?? TIER_LEVELS[tier]}`;
+  }
+  const pass_models: Record<string, string> = {};
+  for (const [pass, spec] of Object.entries(cfg.models.pass_models)) {
+    const { model, thinking } = splitModelSpec(spec);
+    if (model !== "") replaced += 1;
+    if (thinking !== null) pass_models[pass] = `:${thinking}`;
+  }
+  return { cfg: { ...cfg, models: { ...cfg.models, tiers, pass_models } }, replaced };
 }
 
 /** `[pi]`: the pinned pi and where its sessions live, and who launches a
@@ -1635,10 +1811,16 @@ export function parseOwnerSection(raw: Record<string, any>): OwnerConfig {
  * preset fills every lever the file does not set itself; an explicit key
  * always wins, so `preset = "max"` + `sweep = false` means exactly that. */
 export function parseReviewSection(raw: Record<string, any>, preset: ReviewPreset): ReviewConfig {
+  const written = (raw.review ?? {}) as Partial<ReviewConfig>;
   return {
     ...REVIEW_DEFAULTS,
     ...REVIEW_PRESETS[preset].levers,
-    ...((raw.review ?? {}) as Partial<ReviewConfig>),
+    ...written,
+    // Either spelling of a tier is that tier; "" (off) and a value that is
+    // no tier stay as written, for `validateReviewSection`.
+    ...(written.sweep_light_tier !== undefined
+      ? { sweep_light_tier: tierValue(written.sweep_light_tier) }
+      : {}),
     preset,
     directives: {
       ...REVIEW_DIRECTIVES_DEFAULTS,
@@ -1790,7 +1972,7 @@ export function parseCoreConfig(
   const cfg: CoreConfig = {
     dry_run: Boolean(req(raw, "dry_run")),
     github,
-    models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
+    models: parseModels(modelsTable(raw), REVIEW_PRESETS[preset].effort),
     engine,
     pi: parsePiSection(raw),
     guards: parseGuardsSection(raw),

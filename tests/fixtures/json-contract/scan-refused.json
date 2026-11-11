@@ -2,6 +2,6 @@
   "schema_version": 1,
   "ok": false,
   "errors": [
-    "the plan changed since that preview (key stale, now fc7f7d7eb3d0161a) — preview again and show the operator the new cost"
+    "the plan changed since that preview (key stale, now 96de57c41fbf5752) — preview again and show the operator the new cost"
   ]
 }

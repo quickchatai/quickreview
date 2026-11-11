@@ -1,6 +1,6 @@
 // PiHost: the model's bash environment, and the host's own contract.
 // The isolation canaries (HOME, tools, dispatcher) live in tests/pi-canary/.
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -140,6 +140,45 @@ describe("PiHost.create and makeSession", () => {
 
   it("refuses a relative agentDir: nothing may default to the operator's home", async () => {
     await expect(PiHost.create({ agentDir: "relative/agent" })).rejects.toThrow(/absolute/);
+  });
+
+  // MUTATION: pass `credentials` to ModelRuntime.create only when the caller
+  // gave one — pi opens its own file store and `auth.json` appears; this fails.
+  // MUTATION: always point pi at the file store (drop the `modelsStore`
+  // option in PiHost.create) — pi creates `models-store.json` and this fails.
+  it("holds a store of its own even when handed none: pi creates no auth.json in the agent dir", async () => {
+    const agentDir = join(dir, "agent");
+    const host = await PiHost.create({ agentDir, authEnv: {} });
+    try {
+      await host.inventory();
+      expect(existsSync(join(agentDir, "auth.json"))).toBe(false);
+      // Nor a model store: with none stored there, the host's offline refresh
+      // reads an empty one in memory, and the agent dir stays as handed over.
+      expect(readdirSync(agentDir)).toEqual([]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  // MUTATION: read process.env in isolatedAuthContext whatever `authEnv` is —
+  // the key the host was not handed is seen and the first expectation fails.
+  it("looks credentials up in the environment it is handed, not the process's", async () => {
+    vi.stubEnv("DEEPSEEK_API_KEY", "not-a-key");
+    try {
+      const bare = await PiHost.create({ agentDir: join(dir, "bare"), authEnv: {} });
+      expect((await bare.inventory()).map((e) => e.provider)).toEqual([]);
+      const handed = await PiHost.create({
+        agentDir: join(dir, "handed"),
+        authEnv: { XAI_API_KEY: "not-a-key" },
+      });
+      expect((await handed.inventory()).map((e) => e.provider)).toEqual(["xai"]);
+      // Handed none, the process's environment is the one read, as before.
+      const own = await PiHost.create({ agentDir: join(dir, "own") });
+      expect((await own.inventory()).map((e) => e.provider)).toContain("deepseek");
+      for (const h of [bare, handed, own]) h.dispose();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("looks a `provider/id` model up on its own runtime and refuses an unknown one", async () => {

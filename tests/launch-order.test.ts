@@ -179,5 +179,8 @@ describe("the plan lists its rows slowest first", () => {
   });
 });
 
-const PRE_LEVER_ROWS = "3391a17b50ef559dd7074be3463df9e65381e9077fbc83b1c823fe28c9831538";
+// The rows name their tier and agent, so this hash follows the tier names: it
+// is the unordered plan's rows with the tiers spelled as the ladder spells
+// them now. The addable list names lenses only and did not move.
+const PRE_LEVER_ROWS = "e09071649fcae5ef94b0abeb2e8448035a04fc3767fc6f4e116115d064961626";
 const PRE_LEVER_ADDABLE = "680ad47a474d04554d20ba13b1238d67a4691d95de56c2b407325201b0f827e1";

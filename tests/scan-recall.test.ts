@@ -200,7 +200,7 @@ const row = (over: Partial<Stage2Row> = {}): Stage2Row =>
   ({
     id: "row-1",
     lens: "pass-duplication",
-    tier: "sol-med",
+    tier: "standard",
     effort: "tier",
     reason: "the two handlers differ",
     units: ["api"],

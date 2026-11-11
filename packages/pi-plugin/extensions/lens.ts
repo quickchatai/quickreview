@@ -21,12 +21,27 @@
 // PiHost over the pi's own agent dir (`PI_CODING_AGENT_DIR`) with a read-only
 // copy of its login, and leaves the HTTP dispatcher to the CLI pi
 // (`ownsProcess` false). The host is built when the first lens is asked for, so
-// a missing login fails that call, never the pi's start-up. This is the one
+// a login it cannot use fails that call, never the pi's start-up. The copy is
+// borrowed like any other (packages/pi-plugin/src/engine/auth.ts
+// `borrowedCredentials`), with nothing to renew it: no login file is an empty
+// store, a login shorter than a round is left out, and the refusal a person
+// sees is the route's (`login-too-short`, or `no-credential`). This is the one
 // extension that may reach packages/pi-plugin/src/engine/pisdk.ts (tests/helpers/engine-fences.ts).
+//
+// A lens whose agent file pins no model runs on the model the session is on
+// when that first lens is asked for: the host is handed the session's model as
+// its route, so a debug round's lenses run where the round it reproduces ran,
+// and the companion's where the companion itself runs. A session whose model
+// pi has no credential for hands over nothing, and the host resolves a route
+// of its own over the same login. A session on a login the borrow left out
+// hands its model over as a stated choice instead: it runs on a key the
+// environment holds for that provider, or the lens is refused, and never
+// moves to another provider on its own.
 //
 // VERIFY-ON-PIN: defineTool's and registerTool's definition shape, as in
 // finding-clusters.ts.
 import { dirname, isAbsolute, join } from "node:path";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import type {
   ExtensionAPI,
@@ -34,7 +49,7 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { agentDirSettings } from "../src/engine/agentdir.js";
-import { applyEnvApiKeys, engineCredentials } from "../src/engine/auth.js";
+import { borrowedCredentials } from "../src/engine/auth.js";
 import { LENS_LEDGER_FILE, LENS_SESSIONS_DIR } from "../src/engine/openable.js";
 import { resolvePassDeadlineMs } from "../src/engine/lens/deadline.js";
 import { loadBuiltAgents, type AgentRegistry } from "../src/engine/lens/registry.js";
@@ -50,9 +65,12 @@ import {
   type LensToolDeps,
 } from "../src/engine/lens/tool.js";
 import { LensWave } from "../src/engine/lens/wave.js";
-import { PiHost } from "../src/engine/pisdk.js";
+import { PiHost, type PiHostOptions } from "../src/engine/pisdk.js";
+import { listPrice } from "../src/modelpick.js";
+import type { ModelRoute, SkippedLogin } from "../src/modelroute.js";
 import { bashGuardConfigFromEnv, createBashGuard } from "./bash-guard.js";
 import { toPiTool } from "./pi-tool.js";
+import { registryInventory, type RouteRegistry } from "./route-registry.js";
 import {
   resolveCacheGroup,
   resolveCacheStagger,
@@ -117,18 +135,76 @@ export function lensRunConfigFromEnv(
   };
 }
 
+/** The route a lens host is handed: the model the pi session is on, with pi's
+ * own object for it (the host's catalog may not hold the id). */
+export interface LensHostRoute {
+  fixed: ModelRoute;
+  model: Model<Api>;
+}
+
+/** Builds the PiHost an interactive pi's lens passes run on. `route` is the
+ * session's model when it has one pi can use; omitted, the host resolves a
+ * route of its own. */
+export type MakeLensHost = (agentDir: string, route?: LensHostRoute) => Promise<PiHost>;
+
+/** What the lens tools read of the pi session they are registered on. */
+export interface LensSession {
+  model: Model<Api> | undefined;
+  modelRegistry: RouteRegistry | undefined;
+}
+
+/**
+ * The session's model as a host's route, or undefined when the session has no
+ * model, pi's registry cannot be read, or pi has no credential for the model's
+ * provider (the host then resolves its own route, or refuses with the reason).
+ * The credential is the one pi's registry reports for the provider: nothing
+ * about it is made up here.
+ */
+export function sessionRoute(session: LensSession): LensHostRoute | undefined {
+  const { model, modelRegistry } = session;
+  if (model === undefined || modelRegistry === undefined) return undefined;
+  let entry: ReturnType<typeof registryInventory>[number] | undefined;
+  try {
+    entry = registryInventory(modelRegistry).find((e) => e.provider === model.provider);
+  } catch {
+    return undefined;
+  }
+  if (entry === undefined) return undefined;
+  return {
+    model,
+    fixed: {
+      provider: model.provider,
+      modelId: model.id,
+      providerName: entry.name,
+      spec: `${model.provider}/${model.id}`,
+      thinking: null,
+      source: "pi-provider",
+      pick: "pinned",
+      piDefaultId: null,
+      custom: !entry.models.some((m) => m.id === model.id),
+      movedFrom: null,
+      credential: entry.credential,
+      priced: listPrice(model) > 0,
+      ask: false,
+      alternatives: [],
+      notices: [],
+    },
+  };
+}
+
 /** The shim's runner: the host and the runner are built by the first pass. */
 function lazyRunner(
   env: Readonly<Record<string, string | undefined>>,
   cwd: () => string,
-  makeHost: (agentDir: string) => Promise<PiHost>,
+  makeHost: MakeLensHost,
   adjust: (config: LensRunConfig) => LensRunConfig,
+  session: () => LensSession,
 ): LensToolDeps["runner"] {
   let built: Promise<LensRunner> | undefined;
   const ensure = (): Promise<LensRunner> => {
     built ??= (async () => {
       const agentDir = requireAgentDir(env);
-      const host = await makeHost(agentDir);
+      const host = await makeHost(agentDir, sessionRoute(session()));
       return createLensRunner(adjust(lensRunConfigFromEnv(env, host, cwd())));
     })();
     // A host that failed to build is not kept: the next ask tries again.
@@ -140,23 +216,56 @@ function lazyRunner(
   return { run: async (request) => (await ensure()).run(request) };
 }
 
+/**
+ * What a lens host's route is built from: the session's model (`session`) and
+ * the logins the host's borrow left out as too short for a round (`skipped`).
+ *
+ *  - Nothing left out: the session's route as it is, or none.
+ *  - No session route: the host resolves its own, told what was left out, so
+ *    with nothing else usable the refusal is `login-too-short`.
+ *  - The session is on a login that was left out: its model is handed over as
+ *    a choice the person stated. It holds like a pin: it runs on a credential
+ *    the host does have for that provider (a key in the environment), and is
+ *    refused as `login-too-short` otherwise. It is never moved elsewhere.
+ *  - The session's own login was kept: its route as it is.
+ */
+export function lensHostRoute(
+  session: LensHostRoute | undefined,
+  skipped: readonly SkippedLogin[],
+): PiHostOptions["route"] {
+  if (skipped.length === 0) return session;
+  if (session === undefined) return { skipped };
+  const { provider, modelId } = session.fixed;
+  if (!skipped.some((l) => l.provider === provider)) return session;
+  return { skipped, choice: { provider, model: modelId, via: "use", no_estimate_ok: [] } };
+}
+
 /** A PiHost over the interactive pi's own agent dir: a read-only copy of its
- * login, pi's dispatcher left alone. */
+ * login, pi's dispatcher left alone. Nothing renews the copy while a round
+ * goes, so a login shorter than one is left out of it and named to the host's
+ * route (`lensHostRoute`). pi looks for a provider key in `env`, by its own
+ * names and in its own order (a stored credential owns its provider).
+ * `route` is the session's model: what a lens that pins no model runs on. */
 async function interactiveHost(
   agentDir: string,
   env: Readonly<Record<string, string | undefined>>,
   homeDir: string | undefined,
+  route: LensHostRoute | undefined,
 ): Promise<PiHost> {
-  const auth = engineCredentials({ srcDir: agentDir, needMs: LOGIN_WINDOW_MS });
+  const borrowed = borrowedCredentials({
+    srcDir: agentDir,
+    needMs: LOGIN_WINDOW_MS,
+    owner: false,
+  });
+  const hostRoute = lensHostRoute(route, borrowed.skipped);
   return PiHost.create({
     agentDir,
     ownsProcess: false,
     ...(homeDir !== undefined ? { homeDir } : {}),
-    credentials: auth.credentials,
+    credentials: borrowed.credentials,
     settings: agentDirSettings(agentDir),
-    configureModels: async (runtime) => {
-      await applyEnvApiKeys(runtime, env);
-    },
+    authEnv: env,
+    ...(hostRoute !== undefined ? { route: hostRoute } : {}),
   });
 }
 
@@ -177,20 +286,39 @@ export interface InteractiveLens {
 export function interactiveLensBoard(
   env: Readonly<Record<string, string | undefined>>,
   cwd: () => string,
-  makeHost: (agentDir: string) => Promise<PiHost>,
+  makeHost: MakeLensHost,
   /** Final say on the runner's config (the debug round adds the reviewer stub,
    * the bash env allowlist and the context pack). */
   adjust: (config: LensRunConfig) => LensRunConfig = (c) => c,
 ): InteractiveLens {
-  const runner = lazyRunner(env, cwd, makeHost, adjust);
+  // The session the tools are registered on, as it is now: its start and each
+  // model the person picks are kept, and the first pass reads them. A wave the
+  // host itself starts (a debug round's command) has no tool call to read it
+  // from, so the events are the source.
+  const session: LensSession = { model: undefined, modelRegistry: undefined };
+  const runner = lazyRunner(env, cwd, makeHost, adjust, () => session);
   const wave = new LensWave();
-  return { factory: createLens({ runner, wave, env, cwd }), runner, wave };
+  const tools = createLens({ runner, wave, env, cwd });
+  const factory: ExtensionFactory = (pi) => {
+    if (typeof pi.on === "function") {
+      pi.on("session_start", (_event, ctx) => {
+        session.model = ctx.model;
+        session.modelRegistry = ctx.modelRegistry;
+      });
+      pi.on("model_select", (event, ctx) => {
+        session.model = event.model;
+        session.modelRegistry = ctx.modelRegistry;
+      });
+    }
+    return tools(pi);
+  };
+  return { factory, runner, wave };
 }
 
 export function interactiveLens(
   env: Readonly<Record<string, string | undefined>>,
   cwd: () => string,
-  makeHost: (agentDir: string) => Promise<PiHost>,
+  makeHost: MakeLensHost,
   /** Where the runner's warnings go (`[lens] …`), one line each: the host's.
    * Omitted: nowhere. */
   warn?: (line: string) => void,
@@ -210,6 +338,6 @@ export function lensWarnTo(
 export function interactiveHostFor(
   env: Readonly<Record<string, string | undefined>>,
   homeDir?: string,
-): (agentDir: string) => Promise<PiHost> {
-  return (dir) => interactiveHost(dir, env, homeDir);
+): MakeLensHost {
+  return (dir, route) => interactiveHost(dir, env, homeDir, route);
 }

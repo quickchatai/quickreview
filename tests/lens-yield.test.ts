@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { LEGACY_TIER_NAMES, PASS_TIER_ORDER } from "@quickchatai/pi-quickreview/src/types.js";
 
 const LY = join(import.meta.dirname, "..", "bench", "aacr");
 
@@ -104,6 +105,39 @@ print(json.dumps(sorted([sorted(ls), real] for ls, real in out)))`,
       [["pass-abstraction"], false],
       [["pass-baseline", "pass-tests"], true],
     ]);
+  });
+});
+
+describe("lens_yield: cost per lens", () => {
+  // A lens result is recorded under its built agent's name, tier suffix and
+  // all, and the table reads cost by bare lens name. A suffix the script does
+  // not strip leaves the cost under a key nothing reads, and the lens shows
+  // $0 where the cost is real.
+  // MUTATION: drop `standard` from TIER's alternation in lens_yield.py (or add
+  // a tier to PASS_TIER_ORDER) — this fails.
+  it("keys a run's cost by lens under every tier of the ladder, in either spelling, and an earlier run's suffix", () => {
+    const names = [...PASS_TIER_ORDER, ...Object.keys(LEGACY_TIER_NAMES)];
+    expect(names).toHaveLength(2 * PASS_TIER_ORDER.length);
+    const d = caseDir([]);
+    const end = (results: unknown[]) =>
+      JSON.stringify({ type: "tool_execution_end", result: { details: { results } } });
+    writeFileSync(
+      join(d, "pi-events.jsonl"),
+      [
+        end(names.map((t) => ({ agent: `pass-baseline--${t}`, usage: { cost: { total: 1 } } }))),
+        end([
+          { agent: "pass-style--sol-low", usage: { cost: 0.25 } },
+          { agent: `pass-style--${PASS_TIER_ORDER[0]}`, usage: { cost: 0.5 } },
+          { agent: "pass-tests", usage: { cost: { total: 2 } } },
+        ]),
+        "",
+      ].join("\n"),
+    );
+    const cost = py(
+      "print(json.dumps(dict(ly.case_cost(__import__('pathlib').Path(sys.argv[1])))))",
+      d,
+    );
+    expect(cost).toEqual({ "pass-baseline": names.length, "pass-style": 0.75, "pass-tests": 2 });
   });
 });
 

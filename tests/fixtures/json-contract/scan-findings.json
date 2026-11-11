@@ -5,6 +5,7 @@
   "validity": {
     "confirmed": 0,
     "likely": 0,
+    "needs-review": 0,
     "doubtful": 0,
     "unknown": 2
   },

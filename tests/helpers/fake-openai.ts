@@ -148,10 +148,25 @@ export async function startFakeOpenAI(): Promise<FakeOpenAI> {
 /** The provider and model id the agent dir's models.json defines. */
 export const FAKE_MODEL = "local/m";
 
+/** The second model `writeFakeProvider` defines when asked for one a route can
+ * land on: it reasons and has a window a review fits in, which the pick rule
+ * (packages/pi-plugin/src/modelpick.ts) requires and `m` does not have. */
+export const FAKE_ROUTE_MODEL = "local/r";
+
 /** Write an agent dir holding the one custom provider, pointed at `baseUrl`.
- * `PiHost` and a `pi` child (PI_CODING_AGENT_DIR) both read this file. */
-export function writeFakeProvider(agentDir: string, baseUrl: string): void {
+ * `PiHost` and a `pi` child (PI_CODING_AGENT_DIR) both read this file.
+ * `routable` adds `FAKE_ROUTE_MODEL` beside `m`, for a test whose sessions
+ * name no model: `m` stays as it is, so what a pinned session sends is
+ * unchanged, and a host with `m` alone is the "no model passes" case.
+ * `apiKey` is the provider's key as models.json spells it (a literal, or a
+ * `\${VARIABLE}` reference); the default is a literal. */
+export function writeFakeProvider(
+  agentDir: string,
+  baseUrl: string,
+  options: { routable?: boolean; apiKey?: string } = {},
+): void {
   mkdirSync(agentDir, { recursive: true });
+  const cost = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 };
   writeFileSync(
     join(agentDir, "models.json"),
     JSON.stringify({
@@ -159,17 +174,30 @@ export function writeFakeProvider(agentDir: string, baseUrl: string): void {
         local: {
           baseUrl,
           api: "openai-completions",
-          apiKey: "not-a-key",
+          apiKey: options.apiKey ?? "not-a-key",
           models: [
             {
               id: "m",
               name: "m",
               reasoning: false,
               input: ["text"],
-              cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+              cost,
               contextWindow: 32000,
               maxTokens: 4000,
             },
+            ...(options.routable === true
+              ? [
+                  {
+                    id: "r",
+                    name: "r",
+                    reasoning: true,
+                    input: ["text"],
+                    cost,
+                    contextWindow: 200000,
+                    maxTokens: 4000,
+                  },
+                ]
+              : []),
           ],
         },
       },

@@ -45,7 +45,10 @@ export interface RoundRow {
   /** Output tokens including reasoning tokens. */
   tokens_out: number | null;
   tokens_cache_read: number | null;
-  /** Daemon-side USD estimate (config pricing); null when a model is unpriced. */
+  /** The round's spend in USD: the worker's reported total, else pi's own
+   * per-call cost summed from the transcripts. Null when it is not known (a
+   * call on a model pi has no price for, or records with no cost object);
+   * spend surfaces count that as unknown, never $0. */
   est_usd: number | null;
   /** The tier `pass-validate` ran at this round — recorded so a later audit
    * can tell which tier judged which finding. Null on rounds started before

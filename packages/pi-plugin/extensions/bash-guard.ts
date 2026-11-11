@@ -1339,7 +1339,9 @@ function checkRootCredentialSpelling(text: string): BashCheck {
  * How a word is judged — after quotes, backslashes and `$'…'` escapes are
  * removed, `~`/`$HOME`/`$XDG_CONFIG_HOME`/`$QCR_INSTALL` expanded and `{a,b}`
  * braces expanded:
- *   · a path COMPONENT that is a secret file's name (`APP_SECRET_NAME_RE`);
+ *   · a path COMPONENT that is a secret file's name (`APP_SECRET_NAME_RE`),
+ *     or the name of the model env's directory (`model-env`), under any
+ *     prefix: the guard does not have to know which secrets dir it is in;
  *   · a spelling of a secrets dir on its own (`/opt/quickreview/secrets`,
  *     `…/qcr/<install>/secrets`, the old `~/.config/quickreview-bot`);
  *   · the word resolved against the cwd (a `cd` earlier in the same command
@@ -1348,8 +1350,8 @@ function checkRootCredentialSpelling(text: string): BashCheck {
  *   · a GLOB that could expand to a secret path (`../secrets/*`,
  *     `/opt/*` + `/s*` + `/*`), or one of whose components could match a
  *     secret file's name with at least half of that name spelled literally
- *     (`app.p*m`, `*.pem`, `openai*key` — but not `*`, `*key` or `*token`,
- *     which would refuse ordinary reads).
+ *     (`app.p*m`, `*.pem`, `openai*key`, `model-e*` — but not `*`, `*key` or
+ *     `*token`, which would refuse ordinary reads).
  * A grep/rg PATTERN and a sed SCRIPT are exempt (the first positional, or the
  * value of `-e`): they read nothing, and a reviewer of code that handles
  * secrets greps for `openai_api_key` as a matter of course.
@@ -1370,11 +1372,17 @@ export interface SecretPathContext {
 export const CONTAINER_SECRETS_DIR = "/opt/quickreview/secrets";
 
 /** The files the secrets dir holds, by their shipped names
- * (deploy/collect-secrets.sh, the src/config.ts defaults). */
+ * (deploy/collect-secrets.sh, the src/config.ts defaults). `model-env` is a
+ * directory, one file per environment variable of a model provider
+ * (src/modelenv.ts): its files have no names to list, since a name is
+ * whatever a provider documents, so the directory's own name is the
+ * component that is refused, for a read and a write alike. A file put there
+ * is a key, or a setting that says where a key is sent. */
 export const APP_SECRET_FILES: readonly string[] = [
   "app.pem",
   "webhook_secret",
   "tunnel_token",
+  "model-env",
   "openai_api_key",
   "openai_embeddings_api_key",
   "slack_bot_token",
@@ -1532,7 +1540,7 @@ const PATTERN_PROGRAM_VALUE_OPTS = new Set([
 
 function secretBlock(word: string, why: string): BashCheck {
   return block(
-    `exec policy: '${word}' ${why} — a review session never reads the App's credentials (app.pem, webhook_secret, tunnel_token, the OpenAI and Slack keys, or the secrets dir); the sanctioned scripts (mint-token.sh, the posting scripts) read them themselves`,
+    `exec policy: '${word}' ${why} — a review session never reads the App's credentials (app.pem, webhook_secret, tunnel_token, the model env and the Slack keys, or the secrets dir); the sanctioned scripts (mint-token.sh, the posting scripts) read them themselves`,
   );
 }
 
@@ -2115,9 +2123,17 @@ export const POLICY_SURFACE_FILES = [
   "CLAUDE.md",
   "CLAUDE.MD",
 ] as const;
-/** Companion-owned policy intents change normally during a round, so they
- * have the write veto without a round hash, like built state/agents bodies. */
-const DYNAMIC_POLICY_FILES = ["qcr-profile-write.json", ".qcr-profile-write.json.tmp"] as const;
+/** Policy files that change normally during a round, so they have the write
+ * veto without a round hash, like built state/agents bodies: the companion's
+ * profile recovery journal, and the remembered model choice in pi's agent dir
+ * (packages/pi-plugin/src/modelchoice.ts), which a person may change while a
+ * round runs. Each with the sibling its atomic write goes through. */
+const DYNAMIC_POLICY_FILES = [
+  "qcr-profile-write.json",
+  ".qcr-profile-write.json.tmp",
+  "qcr-model.json",
+  "qcr-model.json.tmp",
+] as const;
 export const POLICY_SURFACE_DIRS = [
   "scripts",
   "dist",

@@ -92,6 +92,11 @@ function deps(id: string, over: Partial<WorkerDeps> = {}): WorkerDeps {
       hostOptions.push(o);
       const host = await PiHost.create({
         agentDir: o.agentDir,
+        // What decides the worker's model stays the worker's to give: the
+        // borrowed login, the route's inputs, and the environment pi reads.
+        ...(o.credentials ? { credentials: o.credentials } : {}),
+        ...(o.route ? { route: o.route } : {}),
+        ...(o.authEnv ? { authEnv: o.authEnv } : {}),
         settings: {
           compaction: { enabled: false, keepRecentTokens: 300 },
           retry: { enabled: false },

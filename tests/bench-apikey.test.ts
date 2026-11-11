@@ -4,8 +4,12 @@
 //
 //   1. the route is one switch (QCR_BENCH_AUTH), unknown values refused;
 //   2. on it every `openai-codex/` spec becomes `openai/` (the same model on
-//      the public API), from the config a fresh clone has (config.example.toml)
-//      through the levers, into the fingerprint and the BUILT lens agents;
+//      the public API), from a config that pins the benchmark's model (the one
+//      this file writes: the shipped config.example.toml pins none) through
+//      the levers, into the fingerprint and the BUILT lens agents. The rewrite
+//      is the bench's own (src/bench/keyroute.ts, applied by the bench's
+//      `contextFor`): the review core's context does not make it, and no
+//      module outside the bench imports it;
 //   3. no login is read, the keys reach pi by name, and nothing changes on the
 //      login route (every published fingerprint and judge label is stable);
 //   4. a keyed run can never mix with the published login runs: its
@@ -41,6 +45,8 @@ import {
   modelForAuth,
   syncBenchAuth,
 } from "../src/bench/auth.js";
+import * as benchAuth from "../src/bench/auth.js";
+import * as keyroute from "../src/bench/keyroute.js";
 import { codexDriverArgv, codexDriverEnv } from "../src/bench/codex.js";
 import { judgeLabel } from "../src/bench/defectjudge.js";
 import { safeId, type BenchCase } from "../src/bench/aacr.js";
@@ -57,9 +63,36 @@ import {
   identityVars,
   PASS_ADDENDA,
 } from "@quickchatai/pi-quickreview/src/include.js";
+import { contextFrom } from "@quickchatai/pi-quickreview/src/engine/context.js";
+import { isPinned } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { LEGACY_TIER_NAMES } from "@quickchatai/pi-quickreview/src/types.js";
+import { loadConfig } from "../src/config.js";
+import { EXTENSION_DIRS, SRC_DIRS } from "./helpers/source-trees.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE = join(ROOT, "config.example.toml");
+
+/**
+ * A config that pins the benchmark's model, as a benchmark image bakes one:
+ * the shipped example with the review's model and its three tiers named, in
+ * the keys such an image carries (`default` and `conversation`, the older
+ * spellings of `[models] model`). The shipped example itself pins nothing, so
+ * the key route would have no spec to move.
+ */
+const PINNED_TEXT = readFileSync(EXAMPLE, "utf8")
+  .replace(
+    /^# model = "provider\/id"$/m,
+    'default = "openai-codex/gpt-6.1-sol"\nconversation = "openai-codex/gpt-6.1-sol"',
+  )
+  .replace(
+    /^# "(light|standard)" = "provider\/id:medium"$/gm,
+    '"$1" = "openai-codex/gpt-6.1-sol:medium"',
+  )
+  .replace(/^# "deep" = "provider\/id:high"$/m, '"deep" = "openai-codex/gpt-6.1-sol:high"');
+const PINNED_DIR = mkdtempSync(join(tmpdir(), "bench-apikey-config-"));
+const PINNED = join(PINNED_DIR, "config.toml");
+writeFileSync(PINNED, PINNED_TEXT);
+afterAll(() => rmSync(PINNED_DIR, { recursive: true, force: true }));
 
 /** Run `fn` with env vars set, restoring them after. */
 function withEnv<T>(vars: Record<string, string | undefined>, fn: () => T): T {
@@ -239,29 +272,35 @@ describe("no login is read on the key route", () => {
   });
 });
 
-describe("dry config check: a fresh clone's config on the key route", () => {
+describe("dry config check: a pinned config on the key route", () => {
   const saved = process.env.QCR_CONFIG;
-  process.env.QCR_CONFIG = EXAMPLE;
+  process.env.QCR_CONFIG = PINNED;
   afterAll(() => {
     if (saved === undefined) delete process.env.QCR_CONFIG;
     else process.env.QCR_CONFIG = saved;
   });
 
-  it("every model spec of config.example.toml (and of a --config lever) runs as openai/", () => {
+  // The config under test really pins: every line this file rewrote is there.
+  it("the config this file writes pins the review's model and all three tiers", () => {
+    expect(PINNED_TEXT).toMatch(/^default = "openai-codex\//m);
+    expect(PINNED_TEXT).toMatch(/^conversation = "openai-codex\//m);
+    for (const t of Object.values(LEGACY_TIER_NAMES))
+      expect(PINNED_TEXT).toMatch(new RegExp(`^"${t}" = "openai-codex/`, "m"));
+    const { models } = contextFor(ROOT, "").cfg;
+    expect([models.model, ...Object.values(models.tiers)].every(isPinned)).toBe(true);
+  });
+
+  it("every model spec of a pinned config (and of a --config lever) runs as openai/", () => {
     const login = contextFor(ROOT, "").cfg;
     const keyed = withEnv(
       { QCR_BENCH_AUTH: "api-key" },
       () => contextFor(ROOT, "", "models.tiers.sol-med=openai-codex/gpt-6-sol:medium").cfg,
     );
-    const specs = (c: typeof login) => [
-      c.models.default,
-      c.models.conversation,
-      ...Object.values(c.models.tiers),
-    ];
-    // The published route is untouched: the example's own provider.
+    const specs = (c: typeof login) => [c.models.model, ...Object.values(c.models.tiers)];
+    // The published route is untouched: the config's own provider.
     expect(specs(login).every((s) => s.startsWith("openai-codex/"))).toBe(true);
     expect(specs(keyed).every((s) => s.startsWith("openai/"))).toBe(true);
-    expect(keyed.models.tiers["sol-med"]).toBe("openai/gpt-6-sol:medium");
+    expect(keyed.models.tiers["standard"]).toBe("openai/gpt-6-sol:medium");
     // Same model ids and levels — only the provider moved.
     const plain = withEnv({ QCR_BENCH_AUTH: "api-key" }, () => contextFor(ROOT, "").cfg);
     expect(specs(plain).map((s) => s.replace(/^openai\//, ""))).toEqual(
@@ -269,6 +308,54 @@ describe("dry config check: a fresh clone's config on the key route", () => {
     );
     // withAuthModels is the identity on the login route.
     expect(withAuthModels(login, "login")).toBe(login);
+  });
+
+  // MUTATION: put `withAuthModels` back into the core's contextFrom
+  // (packages/pi-plugin/src/engine/context.ts) - a shipped review would rewrite
+  // a pin by the bench's switch, and this fails.
+  it("the review core's own context is not rewritten: the switch is the bench's alone", () => {
+    const core = withEnv(
+      { QCR_BENCH_AUTH: "api-key" },
+      () =>
+        contextFrom(
+          ROOT,
+          { cfg: loadConfig(PINNED), toml: PINNED_TEXT },
+          "",
+          "models.pass_models.pass-baseline=openai-codex/gpt-6-sol",
+        ).cfg,
+    );
+    const specs = [
+      core.models.model,
+      ...Object.values(core.models.tiers),
+      ...Object.values(core.models.pass_models),
+    ];
+    expect(specs.length).toBeGreaterThanOrEqual(5);
+    expect(specs.every((s) => s.startsWith("openai-codex/"))).toBe(true);
+  });
+
+  // MUTATION: return `installContextFor(...)` as it is from the bench's
+  // contextFor (src/bench/runner.ts) - a keyed run keeps the login provider's
+  // specs, and "every model spec of a pinned config ... runs as openai/" above
+  // fails with this one.
+  it("the bench's contextFor is where the rewrite is applied, through the bench's own key route", () => {
+    expect(withAuthModels).toBe(keyroute.withAuthModels);
+    for (const name of ["apiKeyEnv", "benchAuthMode", "benchProvider", "modelForAuth"] as const)
+      expect(benchAuth[name], name).toBe(keyroute[name]);
+    // The route's two key names are its own: no table of the core's is read.
+    expect(keyroute.KEY_ROUTE_PROVIDERS).toEqual({
+      digitalocean: "DIGITALOCEAN_API_KEY",
+      google: "GEMINI_API_KEY",
+    });
+    // A config that pins nothing has nothing to move: a spec with no model
+    // part names no provider.
+    const login = contextFor(ROOT, "").cfg;
+    const unpinned = structuredClone(login);
+    unpinned.models.model = ":high";
+    unpinned.models.tiers["deep"] = "";
+    const keyed = withAuthModels(unpinned, "api-key");
+    expect(keyed.models.model).toBe(":high");
+    expect(keyed.models.tiers["deep"]).toBe("");
+    expect(keyed.models.tiers["standard"]).toMatch(/^openai\//);
   });
 
   it("a per-pass model override (models.pass_models) runs as openai/ too", () => {
@@ -314,7 +401,7 @@ describe("dry config check: a fresh clone's config on the key route", () => {
       { QCR_BENCH_AUTH: "api-key", QCR_BENCH_PROVIDER: "digitalocean" },
       () => contextFor(ROOT, "", overrides).cfg,
     );
-    expect(cfg.models.conversation).toBe(model);
+    expect(cfg.models.model).toBe(model);
     const out = mkdtempSync(join(tmpdir(), "bench-glm-agents-"));
     try {
       buildAgents(join(ROOT, "agents"), out, {
@@ -327,7 +414,7 @@ describe("dry config check: a fresh clone's config on the key route", () => {
       });
       const files = readdirSync(out).filter((f) => f.endsWith(".md"));
       expect(files.length).toBeGreaterThan(10);
-      expect(files).toContain("pass-validate--sol-high.md");
+      expect(files).toContain("pass-validate--deep.md");
       for (const file of files) {
         const spec = /^model:\s*(\S+)/m.exec(readFileSync(join(out, file), "utf8"))?.[1];
         expect(spec, file).toMatch(/^digitalocean\/glm-5\.3-flash:(medium|high)$/);
@@ -403,6 +490,145 @@ describe("dry config check: a fresh clone's config on the key route", () => {
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the key route stays in the bench", () => {
+  /** Every .ts file under `dir`, repo-relative. */
+  const sources = (dir: string): string[] =>
+    readdirSync(join(ROOT, dir), { recursive: true })
+      .map((f) => join(dir, String(f)))
+      .filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts") && !f.includes("node_modules"));
+  /** Does the file import a module named keyroute (statically or by `import()`)? */
+  const importsKeyRoute = (rel: string): boolean =>
+    /(?:\bfrom|\bimport\s*\()\s*["'][^"']*\bkeyroute\.js["']/.test(
+      readFileSync(join(ROOT, rel), "utf8"),
+    );
+
+  // The published package leaves src/bench/ out (tests/cli-install-smoke.test.ts
+  // packs it and runs it), so a shipped module that imported the key route
+  // would not load. This is the same rule on the source tree.
+  // MUTATION: import `withAuthModels` from the bench's keyroute.js in
+  // src/reviewcontext.ts, or move keyroute.ts back under
+  // packages/pi-plugin/src/engine/ and import it from context.ts - this fails.
+  it("no module outside src/bench/ imports it, and the core holds no key route of its own", () => {
+    const all = [...SRC_DIRS, ...EXTENSION_DIRS].flatMap(sources);
+    expect(all.length).toBeGreaterThan(300);
+    const importers = all.filter(importsKeyRoute);
+    // The walk sees an import when there is one: the bench's own.
+    expect(importers).toEqual(expect.arrayContaining(["src/bench/auth.ts", "src/bench/runner.ts"]));
+    expect(importers.filter((f) => !f.startsWith("src/bench/"))).toEqual([]);
+    expect(all.filter((f) => /(^|\/)keyroute\.ts$/.test(f))).toEqual(["src/bench/keyroute.ts"]);
+  });
+});
+
+describe("the open-model preflight's model check (openbench.sh, modelspecs.py)", () => {
+  // The preflight refuses a run where a reviewer model spec would still name
+  // another model. It reads the image's baked config.toml and the run's
+  // levers as text, so it folds a tier's key itself, on both sides: the
+  // reviewer applies a lever under either spelling to a config under either.
+  const openbench = readFileSync(join(ROOT, "bench", "aacr", "openmodels", "openbench.sh"), "utf8");
+  const script = join(ROOT, "bench", "aacr", "openmodels", "modelspecs.py");
+  const model = "digitalocean/glm-5.3-flash";
+  // The run's own levers, as openbench.sh writes them: the model on every role and tier.
+  const written = /^MODEL_CONFIG="([^"\n]+)"$/m.exec(openbench)?.[1];
+  const levers = (written ?? "").replaceAll("$M", model);
+  const tiersOf = (over: string) =>
+    over
+      .split(",")
+      .map((p) => /^models\.tiers\.([^=]+)=/.exec(p)?.[1])
+      .filter((t): t is string => t !== undefined);
+  const check = (config: string, over: string) => {
+    const r = spawnSync("python3", ["-I", script, over, model], {
+      input: config,
+      encoding: "utf8",
+    });
+    return { code: r.status, out: r.stdout.trim() };
+  };
+  const config = (tiers: readonly string[], extra = "") =>
+    [
+      "[models]",
+      'default = "openai-codex/gpt-6.1-sol"',
+      'conversation = "openai-codex/gpt-6.1-sol"',
+      "[models.tiers]",
+      ...tiers.map((t) => `"${t}" = "openai-codex/gpt-6.1-sol:medium"`),
+      extra,
+    ].join("\n");
+  const older = Object.keys(LEGACY_TIER_NAMES);
+  const ladder = Object.values(LEGACY_TIER_NAMES);
+
+  it("openbench.sh hands the check its own levers and the model", () => {
+    expect(written, "MODEL_CONFIG not found in openbench.sh").toBeDefined();
+    expect(tiersOf(levers)).toHaveLength(ladder.length);
+    expect(openbench).toContain('python3 -I "$HERE/modelspecs.py" "$MODEL_CONFIG" "$M"');
+  });
+
+  // MUTATION: key the config's tiers as written in modelspecs.py's `check`
+  // (`f"{TIERS}{k}"` without `fold_key`), or leave the levers' keys unfolded —
+  // a lever under one spelling no longer meets a config under the other, and
+  // this fails.
+  it("passes the run's levers over a config in either tier spelling, and levers in either spelling", () => {
+    const example = PINNED_TEXT;
+    const ok =
+      /^ok {3}every reviewer model spec is digitalocean\/glm-5\.3-flash \(\d+ specs, 0 per-lens pins re-pointed\)$/;
+    // The two sides really differ in spelling, or the case proves nothing.
+    expect(tiersOf(levers).sort()).not.toEqual([...ladder].sort());
+    for (const t of ladder) expect(example).toMatch(new RegExp(`^"${t}" = `, "m"));
+    expect(check(example, levers)).toEqual({ code: 0, out: expect.stringMatching(ok) });
+    expect(check(config(ladder), levers).code).toBe(0);
+    expect(check(config(older), levers).code).toBe(0);
+    const renamed = older.reduce(
+      (over, t) => over.replace(`models.tiers.${t}=`, `models.tiers.${LEGACY_TIER_NAMES[t]}=`),
+      levers,
+    );
+    expect(tiersOf(renamed).sort()).toEqual([...ladder].sort());
+    expect(check(config(older), renamed).code).toBe(0);
+    expect(check(config(ladder), renamed).code).toBe(0);
+  });
+
+  it("still refuses a tier or a per-lens pin the levers leave on another model", () => {
+    const deepLever = levers.split(",").find((p) => /^models\.tiers\.(deep|sol-high)=/.test(p));
+    expect(deepLever).toBeDefined();
+    const withoutDeep = levers
+      .split(",")
+      .filter((p) => p !== deepLever)
+      .join(",");
+    for (const tiers of [ladder, older])
+      expect(check(config(tiers), withoutDeep)).toEqual({
+        code: 1,
+        out: `FAIL not ${model}: models.tiers.deep`,
+      });
+    const pinned = config(
+      ladder,
+      '[models.pass_models]\n"pass-style" = "openai-codex/gpt-6-luna:low"',
+    );
+    expect(check(pinned, levers)).toEqual({
+      code: 1,
+      out: `FAIL not ${model}: models.pass_models.pass-style`,
+    });
+    expect(check(pinned, `${levers},models.pass_models.pass-style=${model}:low`).code).toBe(0);
+  });
+
+  // The script cannot import LEGACY_TIER_NAMES, so its map is a hand-kept copy.
+  // MUTATION: drop "sol-med" from LEGACY_TIERS in modelspecs.py (or add a name
+  // to LEGACY_TIER_NAMES) — this fails.
+  it("folds exactly the tier names the reviewer folds", () => {
+    const r = spawnSync(
+      "python3",
+      [
+        "-c",
+        [
+          "import importlib.util, json, sys",
+          "spec = importlib.util.spec_from_file_location('ms', sys.argv[1])",
+          "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+          "print(json.dumps(m.LEGACY_TIERS))",
+        ].join("\n"),
+        script,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ ...LEGACY_TIER_NAMES });
   });
 });
 

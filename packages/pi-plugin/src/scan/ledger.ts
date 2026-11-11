@@ -31,6 +31,7 @@
 // record of money already spent, and starting over on top of it would pay
 // for the same files twice.
 import type { ScanDepth } from "../reviewconfig.js";
+import { foldTier } from "../types.js";
 import type { StateFs } from "./scanports.js";
 import { coverKey, rangesCover, sameReadingLens, type FileRange, type ScanRate } from "./scan.js";
 
@@ -264,11 +265,18 @@ export function partialRanges(
 /** One case's identity across its rows: the run it ran in and its id there. */
 const caseId = (e: LedgerEntry): string => `${e.run}\0${e.case}`;
 
+/** Do two recorded tier names mean one tier? A row keeps the name it was
+ * written with, so either spelling of a tier is that tier (`foldTier`) and a
+ * measured rate survives a rename; a name that is no tier is only itself. */
+export function sameTier(a: string, b: string): boolean {
+  return (foldTier(a) ?? a) === (foldTier(b) ?? b);
+}
+
 /** Was `e` written at `key`'s settings — its depth too, when the key names one? */
 function atKey(e: LedgerEntry, key: RateKey): boolean {
   return (
     e.lens === key.lens &&
-    e.tier === key.tier &&
+    sameTier(e.tier, key.tier) &&
     e.effort === key.effort &&
     e.validator === key.validator &&
     (key.depth === undefined || depthOf(e) === key.depth)

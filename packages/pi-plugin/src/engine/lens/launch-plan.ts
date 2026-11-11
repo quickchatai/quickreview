@@ -5,6 +5,7 @@
 // tool it planned for; `lens_wave` (tool.ts) is its successor.
 import { readdirSync, realpathSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { foldAgentName } from "../../types.js";
 
 /** Env var naming EXTRA sanctioned task dirs, exactly, separated by the
  * platform path delimiter — the bench's `<case>/tasks` and `<case>/tasks-sweep`
@@ -163,6 +164,30 @@ export function unitKeys(
   ];
 }
 
+/** A row key with its agent's tier suffix in the ladder's spelling: the
+ * agent itself, before an `@<strategy>`, or at the end of a file name
+ * (`03-pass-x--sol-high.md` is `03-pass-x--deep.md`). A key that names no
+ * agent is unchanged. */
+export function foldUnitKey(key: string): string {
+  const md = key.endsWith(".md") ? ".md" : "";
+  const stem = md ? key.slice(0, -md.length) : key;
+  const at = stem.indexOf("@");
+  const agent = at < 0 ? stem : stem.slice(0, at);
+  return `${foldAgentName(agent)}${at < 0 ? "" : stem.slice(at)}${md}`;
+}
+
+/** Does `key` name the unit? A key and a unit that spell one tier
+ * differently are the same row: a sticky session's transcript keeps the
+ * agent names it started with, and a round's task files are named in the
+ * ladder's spelling of the day they were written. */
+export function unitAnswersTo(
+  u: Pick<LaunchUnit, "phase" | "row" | "file" | "agent" | "strategy">,
+  key: string,
+): boolean {
+  const folded = foldUnitKey(key);
+  return unitKeys(u).some((k) => foldUnitKey(k) === folded);
+}
+
 export function stringList(value: unknown): string[] | undefined {
   if (value === undefined) return [];
   if (typeof value === "string") return [value];
@@ -249,18 +274,18 @@ export function planLaunch(
 
     // Every key must hit a row: a typo must never silently drop the prior
     // findings the session meant to assign, nor launch a row it meant to raise.
-    const hits = (key: string) => all.filter((u) => unitKeys(u).includes(key));
+    const hits = (key: string) => all.filter((u) => unitAnswersTo(u, key));
     for (const key of skip)
       if (hits(key).length === 0) return { ok: false, error: `skip: no row answers to "${key}"` };
     for (const [key] of extra)
       if (hits(key).length === 0) return { ok: false, error: `extra: no row answers to "${key}"` };
 
-    const skipped = all.filter((u) => skip.some((k) => unitKeys(u).includes(k)));
+    const skipped = all.filter((u) => skip.some((k) => unitAnswersTo(u, k)));
     const units = all
       .filter((u) => !skipped.includes(u))
       .map((u) => {
         const added = extra
-          .filter(([k]) => unitKeys(u).includes(k))
+          .filter(([k]) => unitAnswersTo(u, k))
           .map(([, v]) => (v as string).trim())
           .filter((v) => v);
         return added.length ? { ...u, task: [u.task, ...added].join("\n\n") } : u;

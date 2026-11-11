@@ -26,25 +26,30 @@ function order(over: Partial<RoundOrder> = {}): RoundOrder {
     round_type: "first",
     lenses: [],
     pass_plan: [
-      { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
+      {
+        lens: "pass-baseline",
+        agent: "pass-baseline--standard",
+        tier: "standard",
+        raisable_to: [],
+      },
       {
         lens: "pass-sweep",
-        agent: "pass-sweep--sol-med",
-        tier: "sol-med",
+        agent: "pass-sweep--standard",
+        tier: "standard",
         raisable_to: [],
         focus: ["src/a.py", "src/b.py"],
       },
       {
         lens: "pass-concurrency",
-        agent: "pass-concurrency--sol-med",
-        tier: "sol-med",
+        agent: "pass-concurrency--standard",
+        tier: "standard",
         raisable_to: [],
         why: "src/cache.go takes a sync.RWMutex",
       },
       {
         lens: "pass-validate",
-        agent: "pass-validate--sol-high",
-        tier: "sol-high",
+        agent: "pass-validate--deep",
+        tier: "deep",
         raisable_to: [],
       },
     ],
@@ -66,8 +71,8 @@ describe("renderPassTasks", () => {
   it("renders a focus path as a code span that stays data — a backtick or newline in the name cannot break out", () => {
     const row = {
       lens: "pass-sweep",
-      agent: "pass-sweep--sol-med",
-      tier: "sol-med",
+      agent: "pass-sweep--standard",
+      tier: "standard",
       raisable_to: [],
       focus: ["src/we`ird.py", "src/two\nlines.py"],
     } as RoundOrder["pass_plan"][number];
@@ -80,9 +85,9 @@ describe("renderPassTasks", () => {
   it("writes one task per DISCOVERY row, in plan order, never the validator", () => {
     const tasks = renderPassTasks(order(), "");
     expect(tasks.map((t) => t.file)).toEqual([
-      "01-pass-baseline--sol-med.md",
-      "02-pass-sweep--sol-med.md",
-      "03-pass-concurrency--sol-med.md",
+      "01-pass-baseline--standard.md",
+      "02-pass-sweep--standard.md",
+      "03-pass-concurrency--standard.md",
     ]);
     expect(tasks.map((t) => t.row)).toEqual([0, 1, 2]);
   });
@@ -134,7 +139,7 @@ describe("renderPassTasks", () => {
     try {
       const tasks = join(dir, "tasks");
       writePassTasks(tasks, order(), "");
-      writeFileSync(join(tasks, "07-pass-stale--sol-med.md"), "an earlier attempt's row");
+      writeFileSync(join(tasks, "07-pass-stale--standard.md"), "an earlier attempt's row");
       const written = writePassTasks(tasks, order(), "");
       expect(readdirSync(tasks).sort()).toEqual(written.map((t) => t.file).sort());
     } finally {
@@ -152,10 +157,10 @@ describe("renderPassTaskNote", () => {
   it("lists each row's file and tells the session to launch with the pointer, not a written-out string", () => {
     const note = renderPassTaskNote(
       order({
-        pass_task_files: [{ row: 0, agent: "pass-baseline--sol-med", path: "/s/tasks/01.md" }],
+        pass_task_files: [{ row: 0, agent: "pass-baseline--standard", path: "/s/tasks/01.md" }],
       }),
     );
-    expect(note).toContain("| 1 | `pass-baseline--sol-med` | `/s/tasks/01.md` |");
+    expect(note).toContain("| 1 | `pass-baseline--standard` | `/s/tasks/01.md` |");
     expect(note).toContain("Do NOT write task strings out");
     expect(note).toContain("an ADDED lens");
     // ONE launch_plan call over the task directory; per-row subagent
@@ -170,26 +175,26 @@ describe("renderPassTaskNote", () => {
 // With no task files the session writes every task string itself: the
 // security rows' context the files would have carried rides the order.
 describe("renderPassTaskNote without task files, beside a security row", () => {
-  const CHAIN = "pass-sec-exploit-chain--sol-high";
+  const CHAIN = "pass-sec-exploit-chain--deep";
   const sec = (): RoundOrder =>
     order({
       pass_plan: [
         {
           lens: "pass-baseline",
-          agent: "pass-baseline--sol-med",
-          tier: "sol-med",
+          agent: "pass-baseline--standard",
+          tier: "standard",
           raisable_to: [],
         },
         {
           lens: "pass-sec-access",
-          agent: "pass-sec-access--sol-high",
-          tier: "sol-high",
+          agent: "pass-sec-access--deep",
+          tier: "deep",
           raisable_to: [],
         },
         {
           lens: "pass-sec-exploit-chain",
           agent: CHAIN,
-          tier: "sol-high",
+          tier: "deep",
           raisable_to: [],
           strategy: "delta",
           required: true,
@@ -197,14 +202,14 @@ describe("renderPassTaskNote without task files, beside a security row", () => {
         {
           lens: "pass-sec-exploit-chain",
           agent: CHAIN,
-          tier: "sol-high",
+          tier: "deep",
           raisable_to: [],
           strategy: "forward",
         },
         {
           lens: "pass-validate",
-          agent: "pass-validate--sol-high",
-          tier: "sol-high",
+          agent: "pass-validate--deep",
+          tier: "deep",
           raisable_to: [],
         },
       ],
@@ -298,13 +303,13 @@ describe("a follow-up round's task files", () => {
   it("the task note asks for each lens's assigned prior findings after the pointer", () => {
     const note = renderPassTaskNote({
       ...followUp(),
-      pass_task_files: [{ row: 0, agent: "pass-baseline--sol-med", path: "/s/tasks/01.md" }],
+      pass_task_files: [{ row: 0, agent: "pass-baseline--standard", path: "/s/tasks/01.md" }],
     });
     expect(note.replaceAll("\n", " ")).toContain(
       "**the prior findings step 1 assigned to that lens**",
     );
     expect(note).toContain("`extra` carries, keyed by the row number");
     expect(note).toContain('`launch_plan({ dirs: ["/s/tasks"] })`');
-    expect(note).toContain("| 1 | `pass-baseline--sol-med` | `/s/tasks/01.md` |");
+    expect(note).toContain("| 1 | `pass-baseline--standard` | `/s/tasks/01.md` |");
   });
 });

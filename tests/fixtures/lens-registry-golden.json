@@ -1,7 +1,7 @@
 {
   "vm": [
     {
-      "name": "pass-abstraction--sol-high",
+      "name": "pass-abstraction--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -10,16 +10,7 @@
       ]
     },
     {
-      "name": "pass-abstraction--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-abstraction--terra-med",
+      "name": "pass-abstraction--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -28,16 +19,7 @@
       ]
     },
     {
-      "name": "pass-ask-human--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-ask-human--sol-med",
+      "name": "pass-abstraction--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -46,16 +28,7 @@
       ]
     },
     {
-      "name": "pass-ask-human--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-backcompat--sol-high",
+      "name": "pass-ask-human--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -64,7 +37,16 @@
       ]
     },
     {
-      "name": "pass-backcompat--sol-med",
+      "name": "pass-ask-human--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-ask-human--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -73,7 +55,16 @@
       ]
     },
     {
-      "name": "pass-backcompat--terra-med",
+      "name": "pass-backcompat--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-backcompat--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -82,70 +73,7 @@
       ]
     },
     {
-      "name": "pass-baseline--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-baseline--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-baseline--terra-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-behaviour-delta--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-behaviour-delta--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-behaviour-delta--terra-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-bounds--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-bounds--sol-med",
+      "name": "pass-backcompat--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -154,16 +82,7 @@
       ]
     },
     {
-      "name": "pass-bounds--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-claims--sol-high",
+      "name": "pass-baseline--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -172,7 +91,70 @@
       ]
     },
     {
-      "name": "pass-claims--sol-med",
+      "name": "pass-baseline--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-baseline--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-bounds--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-bounds--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-bounds--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -181,16 +163,7 @@
       ]
     },
     {
-      "name": "pass-claims--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-concurrency--sol-high",
+      "name": "pass-claims--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -199,7 +172,16 @@
       ]
     },
     {
-      "name": "pass-concurrency--sol-med",
+      "name": "pass-claims--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-claims--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -208,16 +190,7 @@
       ]
     },
     {
-      "name": "pass-concurrency--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-consistency--sol-high",
+      "name": "pass-concurrency--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -226,7 +199,16 @@
       ]
     },
     {
-      "name": "pass-consistency--sol-med",
+      "name": "pass-concurrency--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-concurrency--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -235,16 +217,7 @@
       ]
     },
     {
-      "name": "pass-consistency--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-contracts--sol-high",
+      "name": "pass-consistency--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -253,7 +226,16 @@
       ]
     },
     {
-      "name": "pass-contracts--sol-med",
+      "name": "pass-consistency--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-consistency--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -262,7 +244,16 @@
       ]
     },
     {
-      "name": "pass-contracts--terra-med",
+      "name": "pass-contracts--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-contracts--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -271,25 +262,7 @@
       ]
     },
     {
-      "name": "pass-data-safety--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-deferred--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-deferred--sol-med",
+      "name": "pass-contracts--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -298,16 +271,7 @@
       ]
     },
     {
-      "name": "pass-deferred--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-delivery--sol-high",
+      "name": "pass-data-safety--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -316,7 +280,25 @@
       ]
     },
     {
-      "name": "pass-delivery--sol-med",
+      "name": "pass-deferred--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-deferred--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-deferred--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -325,16 +307,7 @@
       ]
     },
     {
-      "name": "pass-delivery--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-duplication--sol-high",
+      "name": "pass-delivery--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -343,7 +316,16 @@
       ]
     },
     {
-      "name": "pass-duplication--sol-med",
+      "name": "pass-delivery--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-delivery--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -352,16 +334,7 @@
       ]
     },
     {
-      "name": "pass-duplication--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-intent--sol-high",
+      "name": "pass-duplication--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -370,7 +343,16 @@
       ]
     },
     {
-      "name": "pass-intent--sol-med",
+      "name": "pass-duplication--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-duplication--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -379,16 +361,7 @@
       ]
     },
     {
-      "name": "pass-intent--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-lint-conformance--sol-high",
+      "name": "pass-intent--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -397,7 +370,16 @@
       ]
     },
     {
-      "name": "pass-lint-conformance--sol-med",
+      "name": "pass-intent--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-intent--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -406,16 +388,7 @@
       ]
     },
     {
-      "name": "pass-lint-conformance--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-maintainability--sol-high",
+      "name": "pass-lint-conformance--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -424,7 +397,16 @@
       ]
     },
     {
-      "name": "pass-maintainability--sol-med",
+      "name": "pass-lint-conformance--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -433,16 +415,7 @@
       ]
     },
     {
-      "name": "pass-maintainability--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-placement--sol-high",
+      "name": "pass-maintainability--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -451,7 +424,16 @@
       ]
     },
     {
-      "name": "pass-placement--sol-med",
+      "name": "pass-maintainability--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-maintainability--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -460,7 +442,16 @@
       ]
     },
     {
-      "name": "pass-placement--terra-med",
+      "name": "pass-placement--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-placement--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -469,25 +460,7 @@
       ]
     },
     {
-      "name": "pass-prod-risk--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-rollout--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-rollout--sol-med",
+      "name": "pass-placement--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -496,16 +469,7 @@
       ]
     },
     {
-      "name": "pass-rollout--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-roundtrip--sol-high",
+      "name": "pass-prod-risk--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -514,7 +478,25 @@
       ]
     },
     {
-      "name": "pass-roundtrip--sol-med",
+      "name": "pass-rollout--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-rollout--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-rollout--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -523,7 +505,16 @@
       ]
     },
     {
-      "name": "pass-roundtrip--terra-med",
+      "name": "pass-roundtrip--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -532,151 +523,7 @@
       ]
     },
     {
-      "name": "pass-sec-access--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-authn-coverage--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-boundaries--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-exploit-chain--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-iam--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-infra--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-injection--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-llm--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-privesc--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-secrets-data--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-supply-chain--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-toctou--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-tokens--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-variant--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-security--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-simplicity--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-simplicity--sol-med",
+      "name": "pass-roundtrip--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -685,16 +532,7 @@
       ]
     },
     {
-      "name": "pass-simplicity--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-statelessness--sol-high",
+      "name": "pass-sec-access--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -703,7 +541,151 @@
       ]
     },
     {
-      "name": "pass-statelessness--sol-med",
+      "name": "pass-sec-authn-coverage--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-boundaries--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-exploit-chain--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-iam--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-infra--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-injection--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-llm--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-privesc--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-secrets-data--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-supply-chain--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-toctou--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-tokens--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-variant--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-security--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-simplicity--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-simplicity--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-simplicity--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -712,16 +694,7 @@
       ]
     },
     {
-      "name": "pass-statelessness--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-style--sol-high",
+      "name": "pass-statelessness--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -730,7 +703,16 @@
       ]
     },
     {
-      "name": "pass-style--sol-med",
+      "name": "pass-statelessness--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-statelessness--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -739,7 +721,16 @@
       ]
     },
     {
-      "name": "pass-style--terra-med",
+      "name": "pass-style--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-style--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -748,43 +739,7 @@
       ]
     },
     {
-      "name": "pass-sweep--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sweep--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sweep--terra-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-tests--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-tests--sol-med",
+      "name": "pass-style--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -793,16 +748,7 @@
       ]
     },
     {
-      "name": "pass-tests--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-ui--sol-high",
+      "name": "pass-sweep--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -811,7 +757,43 @@
       ]
     },
     {
-      "name": "pass-ui--sol-med",
+      "name": "pass-sweep--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sweep--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-tests--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-tests--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-tests--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -820,7 +802,16 @@
       ]
     },
     {
-      "name": "pass-ui--terra-med",
+      "name": "pass-ui--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-ui--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -829,25 +820,7 @@
       ]
     },
     {
-      "name": "pass-validate--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-widened--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-widened--sol-med",
+      "name": "pass-ui--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -856,8 +829,35 @@
       ]
     },
     {
-      "name": "pass-widened--terra-med",
+      "name": "pass-validate--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-widened--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-widened--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-widened--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
         "bash",
@@ -867,7 +867,7 @@
   ],
   "bench": [
     {
-      "name": "pass-abstraction--sol-high",
+      "name": "pass-abstraction--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -876,16 +876,7 @@
       ]
     },
     {
-      "name": "pass-abstraction--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-abstraction--terra-med",
+      "name": "pass-abstraction--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -894,16 +885,7 @@
       ]
     },
     {
-      "name": "pass-ask-human--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-ask-human--sol-med",
+      "name": "pass-abstraction--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -912,16 +894,7 @@
       ]
     },
     {
-      "name": "pass-ask-human--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-backcompat--sol-high",
+      "name": "pass-ask-human--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -930,7 +903,16 @@
       ]
     },
     {
-      "name": "pass-backcompat--sol-med",
+      "name": "pass-ask-human--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-ask-human--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -939,7 +921,16 @@
       ]
     },
     {
-      "name": "pass-backcompat--terra-med",
+      "name": "pass-backcompat--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-backcompat--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -948,70 +939,7 @@
       ]
     },
     {
-      "name": "pass-baseline--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-baseline--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-baseline--terra-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-behaviour-delta--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-behaviour-delta--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-behaviour-delta--terra-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-bounds--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-bounds--sol-med",
+      "name": "pass-backcompat--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1020,16 +948,7 @@
       ]
     },
     {
-      "name": "pass-bounds--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-claims--sol-high",
+      "name": "pass-baseline--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1038,7 +957,70 @@
       ]
     },
     {
-      "name": "pass-claims--sol-med",
+      "name": "pass-baseline--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-baseline--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-bounds--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-bounds--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-bounds--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1047,16 +1029,7 @@
       ]
     },
     {
-      "name": "pass-claims--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-concurrency--sol-high",
+      "name": "pass-claims--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1065,7 +1038,16 @@
       ]
     },
     {
-      "name": "pass-concurrency--sol-med",
+      "name": "pass-claims--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-claims--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1074,16 +1056,7 @@
       ]
     },
     {
-      "name": "pass-concurrency--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-consistency--sol-high",
+      "name": "pass-concurrency--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1092,7 +1065,16 @@
       ]
     },
     {
-      "name": "pass-consistency--sol-med",
+      "name": "pass-concurrency--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-concurrency--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1101,16 +1083,7 @@
       ]
     },
     {
-      "name": "pass-consistency--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-contracts--sol-high",
+      "name": "pass-consistency--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1119,7 +1092,16 @@
       ]
     },
     {
-      "name": "pass-contracts--sol-med",
+      "name": "pass-consistency--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-consistency--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1128,7 +1110,16 @@
       ]
     },
     {
-      "name": "pass-contracts--terra-med",
+      "name": "pass-contracts--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-contracts--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -1137,25 +1128,7 @@
       ]
     },
     {
-      "name": "pass-data-safety--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-deferred--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-deferred--sol-med",
+      "name": "pass-contracts--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1164,16 +1137,7 @@
       ]
     },
     {
-      "name": "pass-deferred--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-delivery--sol-high",
+      "name": "pass-data-safety--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1182,7 +1146,25 @@
       ]
     },
     {
-      "name": "pass-delivery--sol-med",
+      "name": "pass-deferred--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-deferred--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-deferred--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1191,16 +1173,7 @@
       ]
     },
     {
-      "name": "pass-delivery--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-duplication--sol-high",
+      "name": "pass-delivery--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1209,7 +1182,16 @@
       ]
     },
     {
-      "name": "pass-duplication--sol-med",
+      "name": "pass-delivery--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-delivery--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1218,16 +1200,7 @@
       ]
     },
     {
-      "name": "pass-duplication--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-intent--sol-high",
+      "name": "pass-duplication--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1236,7 +1209,16 @@
       ]
     },
     {
-      "name": "pass-intent--sol-med",
+      "name": "pass-duplication--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-duplication--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1245,16 +1227,7 @@
       ]
     },
     {
-      "name": "pass-intent--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-lint-conformance--sol-high",
+      "name": "pass-intent--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1263,7 +1236,16 @@
       ]
     },
     {
-      "name": "pass-lint-conformance--sol-med",
+      "name": "pass-intent--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-intent--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1272,16 +1254,7 @@
       ]
     },
     {
-      "name": "pass-lint-conformance--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-maintainability--sol-high",
+      "name": "pass-lint-conformance--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1290,7 +1263,16 @@
       ]
     },
     {
-      "name": "pass-maintainability--sol-med",
+      "name": "pass-lint-conformance--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1299,16 +1281,7 @@
       ]
     },
     {
-      "name": "pass-maintainability--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-placement--sol-high",
+      "name": "pass-maintainability--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1317,7 +1290,16 @@
       ]
     },
     {
-      "name": "pass-placement--sol-med",
+      "name": "pass-maintainability--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-maintainability--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1326,7 +1308,16 @@
       ]
     },
     {
-      "name": "pass-placement--terra-med",
+      "name": "pass-placement--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-placement--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -1335,25 +1326,7 @@
       ]
     },
     {
-      "name": "pass-prod-risk--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-rollout--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-rollout--sol-med",
+      "name": "pass-placement--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1362,16 +1335,7 @@
       ]
     },
     {
-      "name": "pass-rollout--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-roundtrip--sol-high",
+      "name": "pass-prod-risk--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1380,7 +1344,25 @@
       ]
     },
     {
-      "name": "pass-roundtrip--sol-med",
+      "name": "pass-rollout--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-rollout--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-rollout--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1389,7 +1371,16 @@
       ]
     },
     {
-      "name": "pass-roundtrip--terra-med",
+      "name": "pass-roundtrip--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -1398,151 +1389,7 @@
       ]
     },
     {
-      "name": "pass-sec-access--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-authn-coverage--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-boundaries--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-exploit-chain--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-iam--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-infra--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-injection--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-llm--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-privesc--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-secrets-data--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-supply-chain--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-toctou--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-tokens--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sec-variant--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-security--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-simplicity--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-simplicity--sol-med",
+      "name": "pass-roundtrip--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1551,16 +1398,7 @@
       ]
     },
     {
-      "name": "pass-simplicity--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-statelessness--sol-high",
+      "name": "pass-sec-access--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1569,7 +1407,151 @@
       ]
     },
     {
-      "name": "pass-statelessness--sol-med",
+      "name": "pass-sec-authn-coverage--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-boundaries--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-exploit-chain--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-iam--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-infra--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-injection--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-llm--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-privesc--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-secrets-data--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-supply-chain--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-toctou--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-tokens--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sec-variant--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-security--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-simplicity--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-simplicity--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-simplicity--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1578,16 +1560,7 @@
       ]
     },
     {
-      "name": "pass-statelessness--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-style--sol-high",
+      "name": "pass-statelessness--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1596,7 +1569,16 @@
       ]
     },
     {
-      "name": "pass-style--sol-med",
+      "name": "pass-statelessness--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-statelessness--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1605,7 +1587,16 @@
       ]
     },
     {
-      "name": "pass-style--terra-med",
+      "name": "pass-style--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-style--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -1614,43 +1605,7 @@
       ]
     },
     {
-      "name": "pass-sweep--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sweep--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-sweep--terra-med",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-tests--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-tests--sol-med",
+      "name": "pass-style--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1659,16 +1614,7 @@
       ]
     },
     {
-      "name": "pass-tests--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-ui--sol-high",
+      "name": "pass-sweep--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1677,7 +1623,43 @@
       ]
     },
     {
-      "name": "pass-ui--sol-med",
+      "name": "pass-sweep--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-sweep--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-tests--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-tests--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-tests--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1686,7 +1668,16 @@
       ]
     },
     {
-      "name": "pass-ui--terra-med",
+      "name": "pass-ui--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-ui--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -1695,25 +1686,7 @@
       ]
     },
     {
-      "name": "pass-validate--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-widened--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "bash",
-        "grep"
-      ]
-    },
-    {
-      "name": "pass-widened--sol-med",
+      "name": "pass-ui--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1722,8 +1695,35 @@
       ]
     },
     {
-      "name": "pass-widened--terra-med",
+      "name": "pass-validate--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-widened--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-widened--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "bash",
+        "grep"
+      ]
+    },
+    {
+      "name": "pass-widened--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
         "bash",
@@ -1733,7 +1733,7 @@
   ],
   "scan": [
     {
-      "name": "pass-abstraction--sol-high",
+      "name": "pass-abstraction--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1743,17 +1743,7 @@
       ]
     },
     {
-      "name": "pass-abstraction--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-abstraction--terra-med",
+      "name": "pass-abstraction--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -1763,17 +1753,7 @@
       ]
     },
     {
-      "name": "pass-ask-human--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-ask-human--sol-med",
+      "name": "pass-abstraction--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1783,17 +1763,7 @@
       ]
     },
     {
-      "name": "pass-ask-human--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-backcompat--sol-high",
+      "name": "pass-ask-human--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1803,7 +1773,17 @@
       ]
     },
     {
-      "name": "pass-backcompat--sol-med",
+      "name": "pass-ask-human--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-ask-human--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1813,17 +1793,7 @@
       ]
     },
     {
-      "name": "pass-backcompat--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-baseline--sol-high",
+      "name": "pass-backcompat--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1833,7 +1803,17 @@
       ]
     },
     {
-      "name": "pass-baseline--sol-med",
+      "name": "pass-backcompat--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-backcompat--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1843,17 +1823,7 @@
       ]
     },
     {
-      "name": "pass-baseline--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-behaviour-delta--sol-high",
+      "name": "pass-baseline--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1863,7 +1833,17 @@
       ]
     },
     {
-      "name": "pass-behaviour-delta--sol-med",
+      "name": "pass-baseline--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-baseline--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1873,17 +1853,7 @@
       ]
     },
     {
-      "name": "pass-behaviour-delta--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-bounds--sol-high",
+      "name": "pass-behaviour-delta--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1893,7 +1863,17 @@
       ]
     },
     {
-      "name": "pass-bounds--sol-med",
+      "name": "pass-behaviour-delta--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-behaviour-delta--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1903,17 +1883,7 @@
       ]
     },
     {
-      "name": "pass-bounds--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-claims--sol-high",
+      "name": "pass-bounds--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1923,7 +1893,17 @@
       ]
     },
     {
-      "name": "pass-claims--sol-med",
+      "name": "pass-bounds--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-bounds--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1933,17 +1913,7 @@
       ]
     },
     {
-      "name": "pass-claims--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-concurrency--sol-high",
+      "name": "pass-claims--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1953,7 +1923,17 @@
       ]
     },
     {
-      "name": "pass-concurrency--sol-med",
+      "name": "pass-claims--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-claims--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1963,17 +1943,7 @@
       ]
     },
     {
-      "name": "pass-concurrency--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-consistency--sol-high",
+      "name": "pass-concurrency--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -1983,7 +1953,17 @@
       ]
     },
     {
-      "name": "pass-consistency--sol-med",
+      "name": "pass-concurrency--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-concurrency--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -1993,17 +1973,7 @@
       ]
     },
     {
-      "name": "pass-consistency--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-contracts--sol-high",
+      "name": "pass-consistency--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2013,7 +1983,17 @@
       ]
     },
     {
-      "name": "pass-contracts--sol-med",
+      "name": "pass-consistency--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-consistency--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2023,7 +2003,17 @@
       ]
     },
     {
-      "name": "pass-contracts--terra-med",
+      "name": "pass-contracts--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-contracts--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -2033,27 +2023,7 @@
       ]
     },
     {
-      "name": "pass-data-safety--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-deferred--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-deferred--sol-med",
+      "name": "pass-contracts--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2063,17 +2033,7 @@
       ]
     },
     {
-      "name": "pass-deferred--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-delivery--sol-high",
+      "name": "pass-data-safety--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2083,7 +2043,27 @@
       ]
     },
     {
-      "name": "pass-delivery--sol-med",
+      "name": "pass-deferred--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-deferred--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-deferred--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2093,17 +2073,7 @@
       ]
     },
     {
-      "name": "pass-delivery--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-duplication--sol-high",
+      "name": "pass-delivery--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2113,7 +2083,17 @@
       ]
     },
     {
-      "name": "pass-duplication--sol-med",
+      "name": "pass-delivery--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-delivery--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2123,17 +2103,7 @@
       ]
     },
     {
-      "name": "pass-duplication--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-intent--sol-high",
+      "name": "pass-duplication--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2143,7 +2113,17 @@
       ]
     },
     {
-      "name": "pass-intent--sol-med",
+      "name": "pass-duplication--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-duplication--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2153,17 +2133,7 @@
       ]
     },
     {
-      "name": "pass-intent--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-lint-conformance--sol-high",
+      "name": "pass-intent--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2173,7 +2143,17 @@
       ]
     },
     {
-      "name": "pass-lint-conformance--sol-med",
+      "name": "pass-intent--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-intent--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2183,17 +2163,7 @@
       ]
     },
     {
-      "name": "pass-lint-conformance--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-maintainability--sol-high",
+      "name": "pass-lint-conformance--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2203,7 +2173,17 @@
       ]
     },
     {
-      "name": "pass-maintainability--sol-med",
+      "name": "pass-lint-conformance--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-lint-conformance--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2213,17 +2193,7 @@
       ]
     },
     {
-      "name": "pass-maintainability--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-placement--sol-high",
+      "name": "pass-maintainability--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2233,7 +2203,17 @@
       ]
     },
     {
-      "name": "pass-placement--sol-med",
+      "name": "pass-maintainability--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-maintainability--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2243,7 +2223,17 @@
       ]
     },
     {
-      "name": "pass-placement--terra-med",
+      "name": "pass-placement--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-placement--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -2253,27 +2243,7 @@
       ]
     },
     {
-      "name": "pass-prod-risk--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-rollout--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-rollout--sol-med",
+      "name": "pass-placement--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2283,17 +2253,7 @@
       ]
     },
     {
-      "name": "pass-rollout--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-roundtrip--sol-high",
+      "name": "pass-prod-risk--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2303,8 +2263,8 @@
       ]
     },
     {
-      "name": "pass-roundtrip--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:medium",
+      "name": "pass-rollout--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
         "grep",
@@ -2313,7 +2273,7 @@
       ]
     },
     {
-      "name": "pass-roundtrip--terra-med",
+      "name": "pass-rollout--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -2323,7 +2283,47 @@
       ]
     },
     {
-      "name": "pass-scan--sol-med",
+      "name": "pass-rollout--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-roundtrip--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-scan--standard",
       "model": "openai-codex/gpt-5.6-sol:low",
       "tools": [
         "read",
@@ -2333,7 +2333,7 @@
       ]
     },
     {
-      "name": "pass-sec-access--sol-high",
+      "name": "pass-sec-access--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2343,7 +2343,7 @@
       ]
     },
     {
-      "name": "pass-sec-authn-coverage--sol-high",
+      "name": "pass-sec-authn-coverage--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2353,7 +2353,7 @@
       ]
     },
     {
-      "name": "pass-sec-boundaries--sol-high",
+      "name": "pass-sec-boundaries--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2363,7 +2363,7 @@
       ]
     },
     {
-      "name": "pass-sec-exploit-chain--sol-high",
+      "name": "pass-sec-exploit-chain--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2373,7 +2373,7 @@
       ]
     },
     {
-      "name": "pass-sec-iam--sol-high",
+      "name": "pass-sec-iam--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2383,7 +2383,7 @@
       ]
     },
     {
-      "name": "pass-sec-infra--sol-high",
+      "name": "pass-sec-infra--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2393,7 +2393,7 @@
       ]
     },
     {
-      "name": "pass-sec-injection--sol-high",
+      "name": "pass-sec-injection--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2403,7 +2403,7 @@
       ]
     },
     {
-      "name": "pass-sec-llm--sol-high",
+      "name": "pass-sec-llm--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2413,7 +2413,7 @@
       ]
     },
     {
-      "name": "pass-sec-privesc--sol-high",
+      "name": "pass-sec-privesc--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2423,7 +2423,7 @@
       ]
     },
     {
-      "name": "pass-sec-secrets-data--sol-high",
+      "name": "pass-sec-secrets-data--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2433,7 +2433,7 @@
       ]
     },
     {
-      "name": "pass-sec-supply-chain--sol-high",
+      "name": "pass-sec-supply-chain--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2443,7 +2443,7 @@
       ]
     },
     {
-      "name": "pass-sec-threat-model--sol-med",
+      "name": "pass-sec-threat-model--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2453,7 +2453,7 @@
       ]
     },
     {
-      "name": "pass-sec-toctou--sol-high",
+      "name": "pass-sec-toctou--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2463,7 +2463,7 @@
       ]
     },
     {
-      "name": "pass-sec-tokens--sol-high",
+      "name": "pass-sec-tokens--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2473,7 +2473,7 @@
       ]
     },
     {
-      "name": "pass-sec-variant--sol-high",
+      "name": "pass-sec-variant--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2483,7 +2483,7 @@
       ]
     },
     {
-      "name": "pass-security--sol-high",
+      "name": "pass-security--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2493,7 +2493,7 @@
       ]
     },
     {
-      "name": "pass-simplicity--sol-high",
+      "name": "pass-simplicity--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2503,17 +2503,7 @@
       ]
     },
     {
-      "name": "pass-simplicity--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-simplicity--terra-med",
+      "name": "pass-simplicity--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -2523,17 +2513,7 @@
       ]
     },
     {
-      "name": "pass-statelessness--sol-high",
-      "model": "openai-codex/gpt-5.6-sol:high",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-statelessness--sol-med",
+      "name": "pass-simplicity--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2543,17 +2523,7 @@
       ]
     },
     {
-      "name": "pass-statelessness--terra-med",
-      "model": "openai-codex/gpt-5.6-terra:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-style--sol-high",
+      "name": "pass-statelessness--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2563,17 +2533,7 @@
       ]
     },
     {
-      "name": "pass-style--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-style--terra-med",
+      "name": "pass-statelessness--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -2583,7 +2543,17 @@
       ]
     },
     {
-      "name": "pass-sweep--sol-high",
+      "name": "pass-statelessness--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-style--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2593,17 +2563,7 @@
       ]
     },
     {
-      "name": "pass-sweep--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-sweep--terra-med",
+      "name": "pass-style--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -2613,7 +2573,17 @@
       ]
     },
     {
-      "name": "pass-tests--sol-high",
+      "name": "pass-style--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sweep--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2623,17 +2593,7 @@
       ]
     },
     {
-      "name": "pass-tests--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-tests--terra-med",
+      "name": "pass-sweep--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -2643,7 +2603,17 @@
       ]
     },
     {
-      "name": "pass-ui--sol-high",
+      "name": "pass-sweep--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-tests--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2653,17 +2623,7 @@
       ]
     },
     {
-      "name": "pass-ui--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-ui--terra-med",
+      "name": "pass-tests--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -2673,7 +2633,17 @@
       ]
     },
     {
-      "name": "pass-validate--sol-high",
+      "name": "pass-tests--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-ui--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2683,17 +2653,7 @@
       ]
     },
     {
-      "name": "pass-validate--sol-med",
-      "model": "openai-codex/gpt-5.6-sol:medium",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ]
-    },
-    {
-      "name": "pass-validate--terra-med",
+      "name": "pass-ui--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
       "tools": [
         "read",
@@ -2703,7 +2663,17 @@
       ]
     },
     {
-      "name": "pass-widened--sol-high",
+      "name": "pass-ui--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-validate--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
         "read",
@@ -2713,7 +2683,17 @@
       ]
     },
     {
-      "name": "pass-widened--sol-med",
+      "name": "pass-validate--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-validate--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
@@ -2723,8 +2703,28 @@
       ]
     },
     {
-      "name": "pass-widened--terra-med",
+      "name": "pass-widened--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-widened--light",
       "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-widened--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",
         "grep",

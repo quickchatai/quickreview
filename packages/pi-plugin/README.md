@@ -33,22 +33,29 @@ knows the command and can tell you the line to type.
   - `--preview` shows the plan and the price without running anything;
     `--stop` stops the review that is running. One review runs per session
     at a time, and ending the session stops it.
+  - `--model MODEL` names the model the whole review runs on, for this run:
+    `provider/id`, an id pi knows, or either with a `:level`, read the way
+    pi's own `--model` reads it. It replaces every tier and lens model your
+    config pins. `/qcr-setup model` keeps a choice instead.
   - After a PR review, your posting rule decides whether it goes to the PR
     as a comment-only review (see Settings).
-- `/qcr-scan [--delta] [--sha REF] [--path DIR] [--preview]` scans the whole
-  repo, or with `--path` one folder of it, for defects, priced first and
-  started only on your yes. It runs in the
+- `/qcr-scan [--delta] [--sha REF] [--path DIR] [--model M] [--preview]` scans
+  the whole repo, or with `--path` one folder of it, for defects, priced first
+  and started only on your yes. A scan runs on one model, the same way a
+  review picks its own (`--model` names it for one run). It runs in the
   background in this pi, like a review: a status line while it runs, the new
   findings as a message when it ends, `/qcr-scan stop` to stop it. Its cases
   are SDK sessions of this pi behind the same read-only bash guard as the
   review's lenses. `/qcr-scan findings`, `status`, `units` and the other
   scan subcommands pass through as typed. The scan sandbox (a container) and
   dismissing a finding are the `qcr` app's (`qcr scan`).
-- `/qcr-setup` checks the pi version, the login, git and GitHub access for
-  PR targets. It then offers to set up this repo's profile (`.qcr/`), No
-  first: on your yes, your agent in the session surveys the repo, reads its
-  review history, interviews you and writes the profile for you to commit.
-  `/qcr-setup profile` starts that straight away. Its checks are steps on a
+- `/qcr-setup` checks the pi version, the model credential, git and GitHub
+  access for PR targets, and shows the model reviews run on and why. It then
+  offers to set up this repo's profile (`.qcr/`), No first: on your yes, your
+  agent in the session surveys the repo, reads its review history, interviews
+  you and writes the profile for you to commit. `/qcr-setup profile` starts
+  that straight away. `/qcr-setup model` picks the provider reviews run on
+  (see Which model). Its checks are steps on a
   setup checklist (`src/setupchecklist.ts`) that the `qcr` app extends with
   its own steps.
 
@@ -78,6 +85,40 @@ project's `.pi/settings.json`), under `quickreview`:
 
 Rules for one repository live in its profile, not here.
 
+## Which model
+
+A review runs on a model this pi has a credential for, on any provider pi
+supports: a login made with `/login`, a stored API key, or a provider key in
+the environment. Nothing names a provider for you.
+
+- With one usable provider, the review runs on it. Its model is the newest
+  version pi's catalog lists for that provider, or pi's own default there
+  when the newest is priced far below it.
+- With several, the provider this pi session is on goes first, then a stored
+  login before an environment key. When two tie, `/qcr-review` asks once which
+  one to use and remembers the answer. With nobody to ask it takes the first
+  and says which model runs and how to change it.
+- `/qcr-setup model` shows the usable providers and picks one, or hands the
+  pick back to QuickReview. The choice is kept in `qcr-model.json` beside
+  pi's logins, the one file the plugin writes there, so the `qcr` CLI on the
+  same pi home runs on the same model.
+- `--model` on `/qcr-review` or `/qcr-scan` names the model for one run, and
+  `[models] model` in a qcr config pins it for every run. `--model` is the
+  whole run's model: it replaces every tier and lens a config pinned.
+- The dollar estimate was measured on one model. On any other, the preview
+  shows no estimate and the review stops at a spend limit ($15, or
+  `--limit`); the first review on such a model asks once. A model pi has no
+  price for has no dollar stop, and its spend shows as unknown.
+- A login whose tokens are shorter than a review runs here, because this pi
+  renews it while the review goes.
+
+The whole rule, the refusals and the price are in
+[docs/llm-setup.md](https://github.com/quickchatai/quickreview/blob/main/docs/llm-setup.md).
+
+A provider that another pi extension registered, or one keyed with
+`pi --api-key`, cannot be borrowed: the review's sessions run in a host of
+their own, which loads no extension and holds no key of your session.
+
 ## Which pi
 
 The package declares `^1.4.0` for pi (`peerDependencies`): pi 1.4.0 and any
@@ -92,11 +133,11 @@ exactly instead; `qcr pi` starts that pinned pi with this plugin preloaded.
 ## What it needs
 
 - pi in the range above.
-- A pi login for the review's models (`/login` in pi). The review borrows
-  it: pi refreshes it when needed, and the review only ever reads a copy.
-  An API key for another provider is not used in its place: with no login
-  for the review's provider, `/qcr-review` stops and names `/login`. The
-  scan borrows it the same way.
+- A model credential in pi, for any provider (`/login` in pi, or a provider
+  key in the environment). The review borrows the login of the provider it
+  runs on and no other: pi renews it when needed, and the review only ever
+  holds a copy that cannot refresh. With no credential at all, `/qcr-review`
+  stops and names `/login`. The scan borrows it the same way.
 - For a PR: the App when a qcr install configures one, else `GITHUB_TOKEN`,
   `GH_TOKEN` or `gh auth login`, in that order.
 - For posting: a qcr config with `dry_run = false`. The shipped defaults keep

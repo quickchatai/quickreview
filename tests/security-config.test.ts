@@ -167,7 +167,7 @@ describe("[models] risk_passes always carries the security family", () => {
     mkdirSync(src, { recursive: true });
     writeFileSync(join(src, "pass-sec-access.md"), "---\nname: pass-sec-access\n---\nbody\n");
     const built = buildAgents(src, join(dir, "out"), { root: dir });
-    expect(built.map((b) => b.name)).toEqual(["pass-sec-access--sol-high"]);
+    expect(built.map((b) => b.name)).toEqual(["pass-sec-access--deep"]);
   });
 
   it("a risk_passes that is not a list of names is refused", () => {
@@ -178,7 +178,7 @@ describe("[models] risk_passes always carries the security family", () => {
 
   it("a [models.pass_tiers] pin or a [models.pass_models] move on a family lens is refused", () => {
     expect(() =>
-      configWith((raw) => (raw.models.pass_tiers = { "pass-sec-access": "terra-med" })),
+      configWith((raw) => (raw.models.pass_tiers = { "pass-sec-access": "light" })),
     ).toThrow(/pass-sec-access is a security-family lens/);
     expect(() =>
       configWith((raw) => (raw.models.pass_models = { "pass-sec-iam": "openai/gpt-x" })),
@@ -186,7 +186,7 @@ describe("[models] risk_passes always carries the security family", () => {
     // and past the parser too (the bench's --config route re-validates)
     const cfg = configWith();
     cfg.models.risk_passes = ["pass-security"];
-    cfg.models.pass_tiers = { ...cfg.models.pass_tiers, "pass-sec-llm": "sol-med" };
+    cfg.models.pass_tiers = { ...cfg.models.pass_tiers, "pass-sec-llm": "standard" };
     expect(() => validateLensKnobs(cfg)).toThrow(/pass-sec-llm is a security-family lens/);
   });
 });
@@ -432,7 +432,7 @@ describe("[lenses.<pass>] plan and risk", () => {
     expect(() =>
       applyProfileOverlays(
         root,
-        under("risky", (raw) => (raw.models.pass_tiers = { "pass-ui": "terra-med" })),
+        under("risky", (raw) => (raw.models.pass_tiers = { "pass-ui": "light" })),
         lookup(),
       ),
     ).toThrow(/\[lenses\.pass-ui\] risk = true, but \[models\.pass_tiers\] pins pass-ui/);

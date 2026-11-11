@@ -1,136 +1,387 @@
-# LLM setup — the two routes
+# Models and credentials
 
-Every review is produced by **pi** sessions (the coding agent the daemon runs
-in tmux) talking to OpenAI models. There are two ways to give those sessions
-credentials, and they differ in the model-string prefix, the money model, and
-one operational step. Pick one before first boot.
+Every review is produced by **pi** sessions, and a review runs on any model
+provider pi supports, on the credential you already have. The shipped config
+names no model. Which provider and model a run uses is its **model route**: it
+is resolved once per run, from pi's own view of the credentials, a pin, or a
+remembered choice, and it is stated before anything is spent.
 
-pi resolves credentials in this order: CLI flag → `auth.json` (the OAuth
-token store) → environment (`OPENAI_API_KEY`). A completed `/login` therefore
-takes precedence over an API key in the environment.
+With one credential there is nothing to choose. With several, a terminal asks
+once and remembers. `qcr model` shows the route, why, and what else is usable.
 
-**The onboarding wizard does all of this for you**:
-it asks the question, points you at the same secrets flow for the key (a key
-pasted into an agent session would land in a transcript, so it never accepts
-one as an argument), performs the five-value prefix rewrite below itself
-(comment-preserving, idempotent and reversible — switching routes later just
-re-runs the step), and, on the OAuth route, guides each of the three logins in
-turn and checks that each container's token landed on that container's
-*persistent* pi-home volume rather than in a writable layer a recreate would
-throw away. This page is the manual path and stays authoritative for what the
-wizard does; drift between the two is a bug.
+The decision and the options it rejected are recorded in
+[ADR 0002](adr/0002-model-route.md).
 
-## Route 1 — ChatGPT OAuth (subscription, the shipped default)
+## Which model a review runs on
 
-The model strings in `config.toml [models]` default to the **`openai-codex/`**
-provider prefix — pi's ChatGPT-OAuth route. No API key is needed for the
-review models.
+The first of these that applies decides:
 
-**The logins, once each:** after a container is up, open a pi session in it and
-log in:
+1. **`--model` on the run.** It is the whole review's model for that run.
+2. **`[models] model`** in `config.toml`: the install's pin.
+3. **A choice you stated**: `qcr model use <provider[/model]>`, or
+   `/qcr-setup model` inside pi. It holds like a pin.
+4. **Your answer to an earlier question**, while that provider still has a
+   usable credential. When it has none, the run says so, goes on down this
+   list, and neither asks again nor overwrites the answer.
+5. **The only provider** pi has a usable credential for.
+6. **Among several providers**, in this order: the provider pi itself is on
+   (its saved default, or the running session's); a stored login before an
+   environment key before an ambient cloud credential; the provider whose
+   picked model is newer (version, then list price); the provider id.
 
-```sh
-docker exec -it <container> pi
-# inside pi:  /login   → follow the browser flow, then quit pi
+Inside the provider, with no model named, the model is picked from pi's
+catalog:
+
+- **Candidates** are the provider's models that reason and have a context
+  window of at least 128k tokens. A variant of another candidate at the same
+  version (a speed tier, a sibling, a dated snapshot) is left out.
+- **The newest version wins.** The version is read from the model id. Ties go
+  to the higher list price, then the larger context window, then pi's own
+  default for the provider.
+- **The guard.** When the newest version's list price is under a quarter of
+  the list price of pi's default model for the provider, pi's default runs
+  instead: a small model with a high version number is not the flagship.
+
+Version numbers are compared as plain numbers, across model families too, on
+an aggregator and between providers. That is deterministic and arbitrary, and
+a stated choice overrides it.
+
+The review's three **tiers** are thinking levels on that model: `light` and
+`standard` at `medium`, `deep` at `high`. pi lowers a level a model cannot
+run.
+
+### When it asks, and when it does not
+
+An interactive surface asks when two or more providers tie in the best
+credential class and nothing is pinned or chosen:
+
+```
+pi can run this review on more than one provider:
+  1) <provider>/<model>    <name>, signed in with pi    measured estimate
+  2) <provider>/<model>    <name>, signed in with pi    no estimate
+Which one? [1]
 ```
 
-**Any OpenAI login works.** pi 1.4's `/login` offers three, and each one
-serves the review models:
+The first row is the one the order would take. The answer is remembered as a
+provider, never a model, so a newer model on that provider is picked up when
+pi's catalog gains it. A stored login beside an environment key, or beside a
+cloud profile that happens to be in the shell, is not a question: the login
+runs and the others are listed as alternatives.
 
-- "Sign in with an account", then **"OpenAI Codex (legacy)"**: the
-  `openai-codex` provider the shipped model strings name;
-- "Sign in with an account", then **"OpenAI"** ("Sign in with ChatGPT"):
-  pi 1.4's newer subscription login, on the `openai` provider;
-- "Sign in with an API key", then **"OpenAI"**: a metered key, also on the
-  `openai` provider (or `OPENAI_API_KEY` in the environment).
+Where it asks: `qcr review` and `qcr scan` on a terminal, `/qcr-review` and
+`/qcr-scan` through pi's own select, the home's optional "Review model" step,
+and a host skill, which shows the choice and runs `qcr model use` with your
+answer. `--preview` and `--json` never ask.
 
-The two providers serve the same model ids, so the model strings keep their
-`openai-codex/` prefix either way: wherever a model reaches pi (the review
-sessions, the lenses, the companion, a takeover or debug round), the
-provider it names is used when its login exists, and otherwise the same model
-runs on the other OpenAI login. An install already logged in as
-"OpenAI Codex (legacy)" runs exactly as before. A bare `qcr` (the home)
-signs in with pi's own `openai-codex` device-code login the first time, and
-the wizard's login checks accept any of the three.
+A run with nobody to ask (the bot, a pipe, CI) takes the order's answer and
+says so in one line, for example:
 
-The OAuth tokens land in `auth.json` under pi's home, which is a **named
-Docker volume** (`pihome`) — so the login survives container restarts and
-image rebuilds. You repeat `/login` only if that volume is deleted or the
-tokens are revoked.
+```
+model: <provider>/<model> (picked among 2 providers pi has credentials for: a stored login comes first). Change it: qcr model use <provider[/model]>, or --model for one run
+```
 
-**Expect up to three of them, and know why.** pi's tokens live in the pi home
-of whichever process logged in, and **they do not transfer between your host
-and a container** — there is no shared credential store. So the daemon
-container needs its own, the local companion container needs its own, and any
-pi you run on the host (including the setup wizard's own session) needs a third.
-Each one is a separate browser flow, each is once-per-volume, and the wizard
-guides them where they happen. If a login "disappears" after a rebuild, the
-cause is almost always a container whose pi home was *not* on a persistent
-volume: the token was written into the writable layer and went with it.
+The line also says when a pin was moved to another provider, when the pick is
+not pi's own default (and how to take pi's), when the guard fired, when a
+login was skipped, and when an ambient credential decided, so a shell's cloud
+profile is named before anything is spent.
 
-**Cost shape:** flat — whatever the ChatGPT plan costs, bounded by the plan's
-usage limits rather than a per-token meter. An actively reviewed repo runs
-many long, tool-heavy sessions per day (each round fans out ~10 read-only
-analysis passes plus a validator over the full diff), which is far beyond
-casual-use budgets: expect to need a high-tier plan, and expect to hit the
-plan's rate/usage ceilings before you hit any daemon-side limit if you choose
-a low one.
+## `qcr model` and `/qcr-setup model`
 
-## Route 2 — API key (metered)
+```
+qcr model [--json]                 which model reviews run on here, and why
+qcr model use <provider[/model]>   run reviews on it from now on
+qcr model reset                    make the choice automatic again
+```
 
-1. Put the key in the secrets dir — the wizard has a slot for it:
+`qcr model` prints the route, why it was chosen, how the model was picked, the
+credential, the tiers' levels, the price basis, the other usable providers,
+and the logins that are not usable here with the reason. With no route it
+prints `model: none` and the refusal, and exits 1. (`qcr review --preview`
+exits 0 there and carries the same refusal: its text, and `preview.refusal`
+in `--json`.) `--json` prints the same as
+one object; the wizard, the scan sandbox and the smoke scripts read it.
 
-   ```sh
-   bash deploy/collect-secrets.sh    # paste it at the openai_api_key prompt
-   ```
+`qcr model use <provider>` remembers a provider and lets the rule pick the
+model. `qcr model use <provider>/<model>` names the model too, parsed the way
+pi parses `--model`. It is the way to run a model the rule does not pick: an
+older one, a provider's small model, or a model of a provider none of whose
+models passes the candidate filter. When `[models] model` is set, the config
+wins and the verb says so.
 
-   It lands as the file `openai_api_key` (0600) in the secrets dir; the
-   container entrypoint exports it as `OPENAI_API_KEY` for every pi process.
+Inside pi, `/qcr-setup model` does the same two writes through pi's own
+select, with a last row that makes the choice automatic again.
 
-2. Change the model strings from the OAuth provider to the direct API
-   provider — the prefix is the route. All of them live in
-   `config.toml [models]`:
+**Where it is remembered:** `qcr-model.json` in the pi agent dir, beside the
+logins it chooses among (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent`). One
+answer therefore serves `qcr review`, `/qcr-review`, the home and, on a single
+box, the bot. The file also holds the models you agreed to run with no
+estimate. It is QuickReview's to write and never a review session's: it is
+part of the policy surface in [docs/exec-boundary.md](exec-boundary.md). pi's
+own default-model setting is never written.
 
-   ```toml
-   [models]
-   default      = "openai/<model>"      # was "openai-codex/<model>"
-   conversation = "openai/<model>"
+## Pinning a model
 
-   [models.tiers]
-   "terra-med" = "openai/<small-model>:medium"
-   "sol-med"   = "openai/<model>:medium"
-   "sol-high"  = "openai/<model>:high"
-   ```
+A model spec is `provider/id` with an optional `:<thinking level>`, in pi's
+own spelling. Every spec you write is a pin.
 
-   The `:suffix` is the reasoning-effort tier; `[models] small_diff_lines`
-   decides which PRs start on the cheaper tier, and `validate_tier` is the
-   validator's floor.
+| Pin | Where | Covers |
+|---|---|---|
+| the whole review | `[models] model = "provider/id"` | the main session and every tier and lens that has no pin of its own |
+| one tier | `[models.tiers] deep = "provider/id:high"` | that tier's lenses |
+| one lens | `[models.pass_models] "pass-x" = "provider/id"` | every variant of that lens |
+| one run | `--model <provider/id>` on `qcr review`, `qcr scan`, `/qcr-review`, `/qcr-scan`; the Action's `model` input | the whole run |
 
-3. If a ChatGPT `/login` was ever completed in the container, its tokens
-   outrank the env key — log out in pi (or clear `auth.json` on the `pihome`
-   volume) when you truly want the metered route.
+- **In the file** an explicit tier or lens entry wins for its tier or lens,
+  and everything unpinned runs on `[models] model`.
+- **`--model` replaces every pinned tier and lens model for that run**, and
+  keeps each one's level. The preview says so when it changed anything.
+  `--config models.model=<spec>` is a config edit for one run and behaves as
+  the file does.
+- **A remembered choice applies only when neither the flag nor the config
+  pins.**
+- **A tier or lens entry may name only a level** (`":low"`): it moves the
+  level and leaves the tier or lens on the review's model.
+- **A model pi's catalog does not list** on a provider pi knows (a
+  deployment name, a model newer than the catalog) is sent as written, and
+  the preview says so. A typo there fails on the first call as "the provider
+  refused the model".
+- **The home's chat and the companion** keep the model pi itself starts on;
+  `[home] model` and `[companion] model` pin one. A session whose model has no
+  credential is moved to the review's route.
+- **A repo profile cannot name a model.** It is read from the reviewed repo
+  and would steer whose credential and money a review spends.
 
-**Cost shape:** metered per token. A review round reads the full diff through
-each selected pass, so a mid-size PR round is typically on the order of
-hundreds of thousands of input tokens and tens of thousands of output tokens;
-a busy repo with sticky per-PR conversations, rechecks and ping-pong can run
-into millions of tokens per day. (For calibration: the laptop-loop predecessor
-this system replaced measured single failure classes in the multi-million-
-output-token range per audit window.) Budget accordingly, prefer a cheaper
-model for the `terra-med` tier, and fill in `[models.pricing]`
-(`input_per_mtok` / `output_per_mtok` per bare model id) so `qcr spend`
-reports real dollars instead of raw token counts.
+**A pin whose provider has no credential** moves to another credentialed
+provider that serves the same model id, as an exact string, when the choice is
+unambiguous: a provider of the same family (the ids share the text before
+their first `-`), then the provider of the remembered choice, then the only
+candidate. The run says so once. Several unrelated candidates are a refusal
+that names them: a pin states an intent, and among providers with other
+billing and other terms the run does not guess.
 
-## Either route: memory embeddings need nothing here
+**Older keys are read for good.** `[models] default` and `conversation` fold
+into `model`, the tier names `terra-med`, `sol-med` and `sol-high` are read as
+`light`, `standard` and `deep`, and `[models.pricing]` is read and ignored. A
+config that names models keeps running on them with nothing to migrate.
 
-The memory engine (OpenViking) embeds every memory entry — and every search
-query — to store and find it. **By default it does that locally**, with a
-small English embedding model served on loopback inside the daemon container
+## Credentials pi reads
+
+There is one inventory, and it is pi's. All of these count:
+
+- a **login** stored by pi's `/login` (a subscription, or a provider's OAuth);
+- an **API key** stored by pi's `/login`;
+- a **provider key in the environment**, under any name pi knows for the
+  provider;
+- a key in pi's `models.json`;
+- an **ambient cloud credential** (a profile or a role the provider's own SDK
+  finds).
+
+Ways to sign in: `qcr login [provider]` (pi's own `/login`, every provider it
+offers), `/login` inside pi, the home's first setup step, and for a container
+the image's `login` mode (`<wrapper> login`).
+
+pi's own order holds. A stored credential owns its provider: a stored login
+that can last the run keeps its provider even when a key for the same provider
+is in the environment, and the key is used when the login cannot last. A login
+file that exists and cannot be read is a refusal, never an empty store.
+
+### When no route resolves
+
+A run refuses before anything is spent, with one of five reasons:
+
+| Refusal | When | What to do |
+|---|---|---|
+| no credential | pi has no model credential | `qcr login` (in pi: `/login`), or set a provider's key in the environment |
+| login too short | the login expires inside the review's budget and nothing here renews it | run the review inside pi (`/qcr-review`), or use another credential |
+| no model | pi has a credential, and none of the provider's models reasons with a 128k window | name one: `qcr model use <provider>/<id>` |
+| pin with no credential | the pinned provider has no credential and the pin cannot move | sign in to that provider, or drop the pin |
+| unknown pin | pi knows no model by that text | `qcr model` lists what is usable |
+
+### Logins that are shorter than a review
+
+Some logins hand out tokens that live for minutes and are renewed as they go
+(GitHub Copilot's, at the pinned pi). A review borrows a login and never
+refreshes it, so such a login runs only where something else renews it during
+the run:
+
+- **inside pi** (`/qcr-review`, `/qcr-scan`): the running pi renews it;
+- **on the bot**, while the daemon's login refresher is healthy
+  (`[login_refresh] enabled`).
+
+`qcr review` and `qcr scan` outside pi, the Action's `pi-auth`, the scan
+sandbox, and the takeover and debug panes have nothing that renews a login.
+There the login is left out before the route is chosen: an environment key for
+the same provider takes over, another provider runs, or the run refuses and
+names what works. A login with under five minutes left is renewed by opening
+pi once.
+
+### Subscription logins and plan limits
+
+A subscription login is a login like any other: no provider is treated
+specially. Two things follow from the plan rather than from QuickReview:
+
+- **Prices are list prices.** On a subscription the preview adds that your
+  plan is not billed per review. The dollar stop still holds, and it bounds
+  plan usage in list-price dollars.
+- **The plan's limits are the ceiling.** A review round fans out about ten
+  read-only passes plus a validator over the whole diff, and an actively
+  reviewed repository runs many such rounds a day. That is far beyond a
+  casual-use allowance: expect to need a high plan tier, and expect the plan's
+  rate and usage limits before any limit of the daemon's. When a provider
+  answers that the account's usage limit is reached, the bot stops taking
+  rounds and says so, because waiting minutes does not cure it.
+
+## Price
+
+The dollar estimate was fitted on recorded reviews of one model. A run has
+one price basis, shown in the preview and as `price_basis` in `--json`:
+
+| Basis | When | What you see, and what holds the run |
+|---|---|---|
+| `measured` | every model the run uses is the measured one, on the API it was measured on (`openai-codex-responses`, the ChatGPT sign-in) | the estimate; the hard stop is twice the estimate |
+| `repo` | the repo's `.git/qcr-review.json` sets its own rates | the estimate at those rates; the same hard stop, except on a model pi has no list price for: no dollar stop there, the time and turn limits hold |
+| `unmeasured` | pi has a list price, and the estimate was not fitted on this model | no estimate; your word once per model; a spend limit |
+| `unpriced` | pi has no list price for the model | no dollar stop; spend shows as unknown, never `$0.00`; the time and turn limits hold |
+| `unknown` | no route resolves | no price; a start refuses |
+
+- **The spend limit on an unmeasured model** is $15, set per repo by
+  `unmeasured_limit_usd` in `.git/qcr-review.json`, or `--limit` on the run.
+  It is counted from the cost pi reports for each call.
+- **Your word, once.** The first review on an unmeasured model asks on a
+  terminal, "Run on `<spec>` with no estimate? It stops at $15." A yes is
+  remembered for that model. `--limit` on the run is the same word (you named
+  the stop), and so is a start with the key of a preview a host skill showed
+  you. With nobody to ask and none of these, the run refuses and says how to
+  start it.
+- **A run names the models that have no estimate.** A measured route with
+  one tier or lens pinned to another model is unmeasured, and the preview,
+  the question and the remembered yes name that other model, not the route's.
+  A different pinned model asks again.
+- **The measured model through another API has no estimate.** The same model
+  on an API key (`openai-responses`), Azure or a gateway is unmeasured: the
+  prompt-cache pack does not apply there, so its token mix was never
+  recorded.
+- **Why no scaled estimate.** The measured token mix depends on the
+  prompt-cache pack, which applies to one API family
+  ([docs/prompt-caching.md](prompt-caching.md)). Scaling by list-price ratios
+  would be a guess shown as an estimate.
+- **`--json`.** Review schema 2 (contract 2) carries `model`, `alternatives`,
+  `tiers`, `price_basis` and a nullable `estimate_usd`. Contract 1 is
+  unchanged on the measured model and refuses, with a message, where it
+  cannot state a price.
+- **The GitHub Action asks nothing and has no spend limit of its own**, on
+  any model. Its only dollar stop is its `limit` input, when that is set; an
+  unmeasured model does not get the $15 limit there
+  ([docs/action.md](action.md)).
+- **The bot has no dollar stop on any model.** A round is held by its
+  deadline and its turn budgets. `qcr status` names the model the bot runs
+  on, and the daemon raises the `model_route_changed` alert when that changes
+  ([docs/architecture/ops.md](architecture/ops.md)).
+- **Spend that is not known** is shown as unknown: `qcr spend`, `qcr today`,
+  the digest and the TUI print the known sum and the number of rounds whose
+  cost is unknown, never a zero.
+
+## The secrets dir's `model-env/`
+
+An install whose model credential is a key keeps it in the secrets dir:
+
+```
+<secrets dir>/model-env/<ENV_NAME>     one file per environment variable
+```
+
+The file's name is the variable, its content the value, mode `0600`. Use the
+name the provider documents: it carries any provider's key, and the further
+variables a provider that needs several is configured with, with no table of
+providers on our side.
+
+- A name is capital letters, digits and `_`. Names that start with `GH_`,
+  `GITHUB_`, `QCR_`, `PI_`, `OPENVIKING_` or `GIT_` are refused: they would
+  configure this system or its tools, not a model provider.
+- `deploy/collect-secrets.sh` asks which variable a key goes in and writes the
+  file. A key pasted into an agent session would land in a transcript, so no
+  step accepts one as an argument.
+- The older single file, `<secrets dir>/openai_api_key`, is still read as
+  `OPENAI_API_KEY`.
+- **Where the values reach:** the process that asks pi for a credential: a
+  bot worker, the preflight, `qcr model`, and a `qcr review` or `qcr scan`
+  run from a shell. The values under `model-env/` are not exported to a
+  shell, they are not in a review worker's session environment, and a review
+  worker's tools never see them. Two exceptions: the image's entrypoint
+  still exports the older `openai_api_key` as `OPENAI_API_KEY`, so the
+  daemon, the tmux server and the login refresher hold that one key; and the
+  operator's takeover and debug panes are a CLI pi whose own process
+  environment carries the model env
+  ([docs/exec-boundary.md](exec-boundary.md)).
+
+The host wrapper and the Action forward a provider's key from the environment
+by name, never by value: [docs/host-wrapper.md](host-wrapper.md),
+[docs/action.md](action.md).
+
+## Where the logins live
+
+A login lives in the pi home of the process that signed in.
+
+- **A laptop or a single box:** your own pi home. Switching auto-review on
+  shares that one login with the stack, and the daemon's refresher keeps it
+  ([docs/onboarding.md](onboarding.md#one-login-per-box)).
+- **A daemon container with a login of its own:** the `pihome` volume, which
+  survives restarts and image updates. Sign in with the image's `login` mode.
+- **The companion:** its own pi home volume. A scan in the Docker sandbox
+  reads that login read-only.
+- **A server:** its own login or key. A login is never copied to it.
+
+If a login "disappears" after a rebuild, the pi home was not on a persistent
+volume.
+
+The wizard's model step (order 30) asks one thing, where the daemon runs:
+does a route resolve? It runs `qcr model --json` there and is green on any
+provider. It asks no route question, rewrites no config and writes no key
+file. The daemon's preflight makes the same check at every boot.
+
+## Provider notes
+
+Short, and only what differs from "sign in and run".
+
+- **A ChatGPT subscription.** pi's sign-in uses a device code where it cannot
+  open a browser (a container, a machine over ssh). Device-code login must be
+  switched on for the account first (ChatGPT → Settings → Security).
+- **Amazon Bedrock.** The credential is ambient (a profile, a role), so the
+  run's first line names it. The pick is made from pi's catalog, not from
+  what your account may run: model access is granted per account and region,
+  and pi's own default there uses a regional inference profile. When the
+  first call is refused for the model, take pi's default:
+  `qcr model use amazon-bedrock/<id>`, with the id `qcr model` prints as pi's
+  own default. The region and the other AWS variables are yours to set; the
+  host wrapper and the Action forward credential names only (the key pair,
+  and `AWS_SESSION_TOKEN` beside it), so name the rest in `QCR_MODEL_ENV`.
+  Neither forwards `AWS_PROFILE` or a token file: the container has no
+  `~/.aws`, so a profile works only where pi runs on the machine itself.
+- **Azure OpenAI.** The id pi sends is a deployment name unless you gave pi a
+  map. Pin your deployment: `[models] model = "azure/<deployment>"` or
+  `qcr model use azure/<deployment>`. It is sent as written.
+- **Google Vertex.** A review host reads nothing under your home directory,
+  so the default application credentials file is not seen there. Point
+  `GOOGLE_APPLICATION_CREDENTIALS` at an absolute path. The host wrapper and
+  the Action mount no such file and do not forward the name.
+- **One key that serves two providers.** Some keys are read by two providers
+  of pi's (a global and a regional endpoint, a plan and its sibling). A
+  terminal asks, and the rows say they share a key; with nobody to ask the
+  run takes one by the order, and a key for the other endpoint then fails on
+  the first call. `qcr model use <provider>` settles it.
+- **A provider from pi's `models.json`.** A model declared there with pi's
+  defaults does not reason and so passes no filter. Name it:
+  `qcr model use <provider>/<id>`.
+
+## Memory embeddings need nothing here
+
+The memory engine (OpenViking) embeds every memory entry, and every search
+query, to store and find it. **By default it does that locally**, with a
+small English embedding model served on loopback inside the memory container
 (`config.toml [openviking] embedding_provider = "local"`, the shipped value;
-the model file is pinned in the image):
-no key, no account, and no memory text ever leaves your machine. Nothing but
-the model call does. Neither route above changes that, and **`openai_api_key`
-is pi's model credential alone — it is never read for embeddings.**
+the model file is pinned in the image): no key, no account, and no memory text
+ever leaves your machine. Nothing but the model call does. **No model
+credential is ever read for embeddings**, whichever provider the review runs
+on.
 
 A hosted embedder is an explicit opt-in, not a fallback and not an upgrade the
 wizard suggests: `embedding_provider = "openai"` (with the model and its
@@ -139,19 +390,22 @@ text to OpenAI, and reads **its own** credential file,
 `<secrets dir>/openai_embeddings_api_key` (`deploy/collect-secrets.sh` has the
 prompt; `embedding_key_file` names it). The onboarding wizard's embeddings
 step (order 38) writes the opt-in for you and refuses to go green without that
-file. Either file can exist without the other.
+file.
 
 Changing the embedder changes the vector space, and an existing store is
-migrated rather than abandoned — see
+migrated rather than abandoned: see
 [docs/memory-embeddings.md](memory-embeddings.md).
 
 ## Quick reference
 
-| | ChatGPT OAuth | API key |
-|---|---|---|
-| Provider prefix in `[models]` | `openai-codex/` (shipped default) | `openai/` |
-| Credential | `/login` once in any pi session | `openai_api_key` file → `OPENAI_API_KEY` |
-| Memory embeddings | local, no key (hosted = separate opt-in + `openai_embeddings_api_key`) | same |
-| Survives restarts via | `pihome` volume (`auth.json`) | secrets dir file |
-| Cost | plan-flat, plan-limited | per-token, effectively unlimited |
-| Spend visibility | plan dashboard only | `qcr spend` with `[models.pricing]` filled |
+| I want to | Do this |
+|---|---|
+| see which model reviews run on | `qcr model` |
+| run reviews on another provider from now on | `qcr model use <provider>` |
+| run one review on another model | `qcr review --model <provider/id>` |
+| pin the install | `[models] model = "provider/id"` in `config.toml` |
+| go back to automatic | `qcr model reset`, and remove `model` from `[models]` |
+| sign in | `qcr login`, or `/login` in pi |
+| give a container a key | `<secrets dir>/model-env/<ENV_NAME>` |
+| raise the stop on an unmeasured model | `--limit <usd>`, or `unmeasured_limit_usd` in `.git/qcr-review.json` |
+| see what the bot runs on | `qcr status` |

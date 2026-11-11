@@ -29,8 +29,21 @@
 //   1. connect, ask for the spec, and verify the payload against the sha256 the
 //      daemon recorded at dispatch;
 //   2. borrow the login: a refresh-blanked copy read once from the agent dir the
-//      login refresher owns, refused when the token would expire inside
-//      this worker's wall-clock cap. The worker never refreshes it;
+//      login refresher owns. A stored login that would expire inside this
+//      worker's wall-clock cap is left out of the copy, never refused: the
+//      worker never refreshes it, so it is not a login this command can run on.
+//      The one exception is the daemon's word that the refresher is renewing
+//      the login now (`login_owner` in the spec): such a login is kept, and
+//      when pi asks for a fresh one the copy re-reads the refresher's file;
+//   2a. resolve the model route, before any session exists: from the spec's
+//      model when the config pins one, else from the remembered choice and
+//      pi's saved provider (both read where the login is read) over what the
+//      borrowed login and the worker's environment hold a credential for. No
+//      route (no credential, the pinned provider's login left out, no model
+//      that passes) ends the command with the login exit code and the reason.
+//      The route that did resolve goes to the daemon in `ready`
+//      (src/ipc/routereport.ts): the daemon asks pi nothing, so this report is
+//      all it knows of the model reviews run on;
 //   3. open the PR's session: resume the newest JSONL under its session dir
 //      under the SAME id (the provider's cache key), or start one at birth;
 //   4. start the planned discovery wave (the engine, rule 9), then send the
@@ -49,20 +62,20 @@
 //
 // Exit codes: 0 the round was served (a verdict may or may not have been
 // written: `done` says), 1 a turn failed (timeout, cap, stream, refused
-// login), 2 bad usage, 3 the handshake or the
-// payload could not be trusted, 4 the login was refused up front, 5 the session
+// login, refused model), 2 bad usage, 3 the handshake or the
+// payload could not be trusted, 4 the login was refused up front (unreadable, or
+// no model route over it), 5 the session
 // could not be opened, 6 the operator aborted the round, 75 the daemon went away, 76 the daemon fenced this
 // worker (a stale generation or an inactive command), 143 terminated.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { EventCostMeter } from "./bench/cost.js";
+import { EventCostMeter } from "@quickchatai/pi-quickreview/src/pricing.js";
 import { CONTEXT_PACK_FILE } from "@quickchatai/pi-quickreview/src/contextpack.js";
 import {
   AuthError,
-  classifyAuthFailure,
-  engineCredentials,
-  type EngineAuth,
+  borrowedCredentials,
+  type BorrowedAuth,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { agentDirSettings } from "@quickchatai/pi-quickreview/src/engine/agentdir.js";
 import { COMMIT_VERDICT_RE } from "./engine/answerguard.js";
@@ -92,8 +105,18 @@ import {
 import {
   PiHost,
   headerId,
+  piSavedProvider,
   type PiHostOptions,
 } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
+import {
+  RouteRefused,
+  refusalText,
+  type ModelRoute,
+  type RouteRefusal,
+  type RouteResult,
+} from "@quickchatai/pi-quickreview/src/modelroute.js";
+import { isPinned } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import type {
   RuntimeSession,
   SessionSpec,
@@ -113,6 +136,7 @@ import {
 import { connectFromEnv, type IpcClient } from "./ipc/client.js";
 import { brokerPermits } from "./ipc/permits.js";
 import { IpcError, type IpcEventKind } from "./ipc/protocol.js";
+import { routeReportOf } from "./ipc/routereport.js";
 import {
   WAKES_ACK_OP,
   WAKES_TAKE_OP,
@@ -131,7 +155,10 @@ import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-co
 import { verifiedPayload } from "./session-command-payload.js";
 import { newestSessionFile } from "./sessionjsonl.js";
 import { WORKER_EXIT_AUTH, WORKER_EXIT_PROVIDER, isProviderTransient } from "./providerfailure.js";
-import { boundedProviderError } from "@quickchatai/pi-quickreview/src/modelerrors.js";
+import {
+  boundedProviderError,
+  providerErrorKind,
+} from "@quickchatai/pi-quickreview/src/modelerrors.js";
 
 export const EXIT = {
   ok: 0,
@@ -234,6 +261,100 @@ export interface WorkerDeps {
   log?: (line: string) => void;
 }
 
+/** What a worker's host is built with to resolve its model: the borrowed
+ * login, and the route's inputs. */
+export interface WorkerRoute {
+  credentials: BorrowedAuth["credentials"];
+  /** `PiHostOptions.route`: the pin, the choice, pi's provider, the logins left out. */
+  route: NonNullable<PiHostOptions["route"]>;
+}
+
+/**
+ * The worker's own sequence for its model, up to the host: borrow the login
+ * by type, and gather what the route is resolved from. Everything is read
+ * from one directory, the one the login is in (`login_dir`, else the agent
+ * dir): the worker derives no path of its own.
+ *
+ *  - The login: every stored key, and every stored login that lasts the
+ *    command's wall clock. The worker renews nothing, so a login that would
+ *    run out is left out before the route is chosen, and is then never
+ *    picked; unless the spec says the bot's refresher is renewing the login
+ *    (`login_owner`), and then one that is still outside pi's own refresh
+ *    window is kept. A login file that is there and cannot be read throws
+ *    (`AuthUnreadable`): an unknown store is never an empty one.
+ *  - The pin: the spec's model when it names one (the config's `[models]
+ *    model`). A spec with no model part pins nothing.
+ *  - The remembered choice (`qcr-model.json`) and pi's saved provider.
+ *
+ * `note` hears why a remembered choice that is there was not used.
+ */
+export function workerRoute(
+  spec: Pick<WorkerSpec, "agent_dir" | "login_dir" | "login_owner" | "model" | "wall_clock_ms">,
+  o: { now?: () => number; note?: (line: string) => void } = {},
+): WorkerRoute {
+  const loginDir = spec.login_dir ?? spec.agent_dir;
+  const borrowed = borrowedCredentials({
+    srcDir: loginDir,
+    needMs: spec.wall_clock_ms,
+    // The daemon's word, and only `true` counts: a spec that does not say
+    // is one where nothing renews the login for this worker.
+    owner: spec.login_owner === true,
+    ...(o.now ? { now: o.now } : {}),
+  });
+  const remembered = readModelChoice(loginDir);
+  if (remembered.notice !== undefined) o.note?.(remembered.notice);
+  const piProvider = piSavedProvider(loginDir);
+  return {
+    credentials: borrowed.credentials,
+    route: {
+      skipped: borrowed.skipped,
+      ...(isPinned(spec.model) ? { pin: { text: spec.model, from: "config" as const } } : {}),
+      ...(remembered.choice !== undefined ? { choice: remembered.choice } : {}),
+      ...(piProvider !== undefined
+        ? { piProvider: { provider: piProvider, from: "pi-settings" as const } }
+        : {}),
+    },
+  };
+}
+
+/** Why the worker has no model, in the words the operator reads. */
+function routeRefusalWords(
+  refusal: RouteRefusal,
+  host: PiHost,
+  spec: WorkerSpec,
+  now: () => number,
+): string {
+  const names = new Map(host.modelRuntime.getProviders().map((p) => [p.id, p.name]));
+  const nameOf = (provider: string): string => names.get(provider) ?? provider;
+  // The borrow reads a login file and knows no provider's display name.
+  const named: RouteRefusal =
+    refusal.code === "login-too-short"
+      ? { ...refusal, logins: refusal.logins.map((l) => ({ ...l, name: nameOf(l.provider) })) }
+      : refusal;
+  return refusalText(named, "app", {
+    agentDir: spec.login_dir ?? spec.agent_dir,
+    needMs: spec.wall_clock_ms,
+    nameOf,
+    now,
+  });
+}
+
+/** How an operator runs the bot on another model, once a provider refused one. */
+const MODEL_REFUSED_REMEDY =
+  "Run on another: qcr model use <provider[/model]>, or pin one with [models] model.";
+
+/** Which provider refused which model, and the remedy: the model the failed
+ * message was asked of when it names one, the route's otherwise. */
+function modelRefusedWords(
+  route: ModelRoute,
+  failed: { provider: string; model: string } | undefined,
+): string {
+  const provider = failed?.provider ?? route.provider;
+  const spec = failed ? `${failed.provider}/${failed.model}` : route.spec;
+  const name = provider === route.provider ? route.providerName : provider;
+  return `${name} refused the model ${spec}. ${MODEL_REFUSED_REMEDY}`;
+}
+
 /** A user turn's closing marker, in the inject bridge's own spelling. */
 function withMarker(text: string, marker: string): string {
   return `${text}${text.endsWith("\n") ? "\n" : "\n\n"}${marker}`;
@@ -283,6 +404,8 @@ class RoundWatch {
   posted = 0;
   /** The provider's error on the newest assistant message, if that is how it ended. */
   lastError: string | undefined;
+  /** The provider and model that message was asked of, when it names both. */
+  lastErrorModel: { provider: string; model: string } | undefined;
   /** The text of the newest assistant message that did not end in a tool call:
    * what the model said last, which is an answer's reply. */
   replyText: string | undefined;
@@ -293,20 +416,32 @@ class RoundWatch {
   hear(event: Record<string, unknown>): void {
     if (event["type"] === "message_end") {
       const message = event["message"] as
-        { role?: unknown; stopReason?: unknown; errorMessage?: unknown } | undefined;
+        | {
+            role?: unknown;
+            stopReason?: unknown;
+            errorMessage?: unknown;
+            provider?: unknown;
+            model?: unknown;
+          }
+        | undefined;
       if (message?.role === "assistant") {
         const full = event["message"] as { content?: unknown; stopReason?: unknown };
         if (full.stopReason !== "toolUse" && full.stopReason !== "error")
           this.replyText = textOf(full.content);
       }
       // Kept whole: the failure is classified before any display cut.
-      if (message?.role === "assistant")
-        this.lastError =
-          message.stopReason === "error"
-            ? typeof message.errorMessage === "string"
-              ? message.errorMessage
-              : "the provider returned an error"
+      if (message?.role === "assistant") {
+        const failed = message.stopReason === "error";
+        this.lastError = failed
+          ? typeof message.errorMessage === "string"
+            ? message.errorMessage
+            : "the provider returned an error"
+          : undefined;
+        this.lastErrorModel =
+          failed && typeof message.provider === "string" && typeof message.model === "string"
+            ? { provider: message.provider, model: message.model }
             : undefined;
+      }
       return;
     }
     const id = event["toolCallId"];
@@ -468,17 +603,11 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     const mayPost =
       answering && spec.may_post === true && operatorMayPost(verified.payload.toString("utf8"));
 
-    // The login: borrowed, blanked, and checked against this worker's own cap.
-    let auth: EngineAuth;
+    // The login: borrowed, blanked, and filtered against this worker's own
+    // cap; with it, what the model route is resolved from.
+    let routing: WorkerRoute;
     try {
-      auth = engineCredentials({
-        srcDir: spec.login_dir ?? spec.agent_dir,
-        needMs: spec.wall_clock_ms,
-        now,
-        // a shared pi home holds the person's other logins too: only the
-        // review's providers are admitted
-        ...(spec.providers !== undefined ? { providers: spec.providers } : {}),
-      });
+      routing = workerRoute(spec, { now, note: (m) => log(`botworker: ${m}`) });
     } catch (e) {
       if (e instanceof AuthError) throw new Stop(EXIT.auth, e.message);
       throw e;
@@ -492,10 +621,11 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     let lensRuns = 0;
     const marker = sessionCommandMarker(spec.command_id, spec.payload_sha256);
     let opened: Opened;
+    let made: PiHost;
     try {
       checkToolUid(env, { what: "the bot worker", instead: "", isolated: true });
       const ids = toolIdsOf(env);
-      host = await (deps.makeHost ?? PiHost.create)({
+      made = await (deps.makeHost ?? PiHost.create)({
         agentDir: spec.agent_dir,
         ownsProcess: true,
         homeDir: homedir(),
@@ -505,13 +635,35 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
           ...(spec.login_dir ? [spec.login_dir] : []),
           ...credentialPaths(env, spec.env),
         ],
-        credentials: auth.credentials,
+        credentials: routing.credentials,
+        route: routing.route,
+        // A provider key reaches pi from the worker's own environment.
+        authEnv: env,
         settings: { retry: BOT_RETRY, ...agentDirSettings(spec.agent_dir) },
       });
+      host = made;
+    } catch (e) {
+      throw new Stop(EXIT.session, `could not open the session: ${errText(e)}`);
+    }
+    // The route, before the first session: the main session and every lens
+    // pass that names no model run on it, and a worker with none says why
+    // once, here, instead of failing each of them.
+    let routed: RouteResult;
+    try {
+      routed = await made.route();
+    } catch (e) {
+      throw new Stop(EXIT.session, `could not resolve the model: ${errText(e)}`);
+    }
+    if (!routed.ok) throw new Stop(EXIT.auth, routeRefusalWords(routed.refusal, made, spec, now));
+    const route = routed.route;
+    log(`botworker: model ${route.spec} (${route.source})`);
+    for (const notice of route.notices) log(`botworker: ${notice}`);
+    checkpoint();
+    try {
       // The lens cap is the daemon's, over every worker: a pass asks the broker.
       const permits = brokerPermits(client, (m) => log(`botworker: ${m}`));
       opened = await openSession(
-        host,
+        made,
         spec,
         env,
         wave,
@@ -526,6 +678,9 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
         answering ? { mayPost } : undefined,
       );
     } catch (e) {
+      // A session whose own spec names a provider with no credential here.
+      if (e instanceof RouteRefused)
+        throw new Stop(EXIT.auth, routeRefusalWords(e.refusal, made, spec, now));
       throw new Stop(EXIT.session, `could not open the session: ${errText(e)}`);
     }
     const { tools, resumed, continuing } = opened;
@@ -547,6 +702,9 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       session_file: opened.file ?? null,
       resumed,
       continued: continuing,
+      // The model this command runs on, as resolved above: the daemon's only
+      // source for it.
+      route: routeReportOf(routed.route),
     });
     beat = setInterval(
       () =>
@@ -565,10 +723,13 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
         ? { capUsd: Math.max(0, spec.cap_usd - live.stats().spentUsd) }
         : {}),
     });
-    // What the round has cost, priced the way the transcript is (src/bench/cost.ts):
-    // the session's assistant messages and the passes its lens tools reported, each
-    // run once, and, at the end, the lens ledger's warm-ups. The daemon's est_usd
-    // takes it in place of measuring the transcript.
+    // What the round has cost, priced the way the transcript is (the core's
+    // pricing.ts): the session's assistant messages and the passes its lens tools
+    // reported, each run once, and, at the end, the lens ledger's warm-ups. The
+    // daemon's est_usd takes it in place of measuring the transcript. A round
+    // with a call pi stamped at zero for its tokens (a model pi has no price
+    // for) has no total: `total_usd` is null, which the daemon keeps nothing of,
+    // so the round's spend is recorded as unknown, never as the priced part.
     const meter = new EventCostMeter();
     live.subscribe(
       (event) => {
@@ -584,7 +745,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     );
     const usage = (): void =>
       report("usage", {
-        total_usd: meter.totalUsd,
+        total_usd: meter.costUsd,
         lens_usd: lensUsd,
         lens_runs: lensRuns,
         turns: live.stats().turns,
@@ -597,8 +758,9 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       // A transient provider failure (the connection, a rate limit, an
       // overload) exits `provider`: the same turn later succeeds, so the daemon
       // requeues it with backoff. Any other ends the command `failed`.
-      // Each is classified on the provider's whole message; the bounded words
-      // the daemon keeps read as the same kind (`boundedProviderError`).
+      // Each is classified on the provider's whole message, by the one ordered
+      // classifier (src/modelerrors.ts); the bounded words the daemon keeps
+      // read as the same kind (`boundedProviderError`).
       if (r.streamError) {
         const lead = `${what}: output stream failed: `;
         throw new Stop(
@@ -608,11 +770,22 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       }
       // A provider failure ends the turn as an assistant message, not as a throw.
       if (watch.lastError !== undefined) {
-        const refused = classifyAuthFailure(watch.lastError);
-        if (refused)
+        // The kind is read before any wording: a rate limit is tried before a
+        // refused login, so a rate-limit text that carries a status number as
+        // a count is still retried.
+        const kind = providerErrorKind(watch.lastError);
+        if (kind === "auth")
           throw new Stop(
             EXIT.failed,
-            `${what}: the provider refused the login: ${refused.message.slice(0, 300)}`,
+            `${what}: the provider refused the login: ${watch.lastError.slice(0, 300)}`,
+          );
+        // The credential was taken and the model refused: this model's
+        // failure, named, and never the login's.
+        if (kind === "model_refused")
+          throw new Stop(
+            EXIT.failed,
+            `${what}: ${modelRefusedWords(route, watch.lastErrorModel)} ` +
+              `The provider said: ${boundedProviderError(watch.lastError)}`,
           );
         const lead = `${what}: the provider failed the turn: `;
         throw new Stop(
@@ -764,7 +937,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       controls: { ...controls.counts },
       compacted,
       turns: live.stats().turns,
-      total_usd: meter.totalUsd,
+      total_usd: meter.costUsd,
       lens_usd: lensUsd,
       elapsed_ms: now() - started,
     });

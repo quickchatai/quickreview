@@ -368,11 +368,11 @@ describe("the decisions-validation plans", () => {
     const base = parseConfig(readFile(resolvePath("tests/fixtures/config.toml"), "utf8"));
     const c = applyConfigOverrides(base, b.config);
     expect(c.models.pass_tiers).toEqual({
-      "pass-baseline": "sol-high",
-      "pass-sweep": "sol-high",
-      "pass-behaviour-delta": "sol-high",
+      "pass-baseline": "deep",
+      "pass-sweep": "deep",
+      "pass-behaviour-delta": "deep",
     });
-    expect(c.models.tiers["sol-high"]).toMatch(/:high$/);
+    expect(c.models.tiers["deep"]).toMatch(/:high$/);
     const { pass_plan } = buildPassPlan(c, [
       {
         filename: "src/a.py",
@@ -386,7 +386,7 @@ describe("the decisions-validation plans", () => {
     for (const r of pass_plan.filter((r) =>
       ["pass-baseline", "pass-sweep", "pass-behaviour-delta"].includes(r.lens),
     ))
-      expect(r.tier, r.lens).toBe("sol-high");
+      expect(r.tier, r.lens).toBe("deep");
   });
   it("uses no held-out set", () => {
     for (const n of ["decisions-validation", "decisions-validation-hi"])

@@ -85,8 +85,8 @@ describe("the one-shot route's fail-closed security lines", () => {
   const CHAIN = "pass-sec-exploit-chain";
   const planRow = (lens: string, strategy?: string): PassPlanEntry => ({
     lens,
-    agent: `${lens}--sol-high`,
-    tier: "sol-high",
+    agent: `${lens}--deep`,
+    tier: "deep",
     raisable_to: [],
     ...(strategy !== undefined ? { strategy: strategy as PassPlanEntry["strategy"] } : {}),
   });
@@ -110,7 +110,7 @@ describe("the one-shot route's fail-closed security lines", () => {
     expect(
       securityRowsNotReturned(
         PLAN,
-        outcome("pass-baseline", "pass-sec-access--sol-high", `${CHAIN}:delta`, "pass-validate"),
+        outcome("pass-baseline", "pass-sec-access--deep", `${CHAIN}:delta`, "pass-validate"),
       ),
     ).toEqual({
       state: "known",

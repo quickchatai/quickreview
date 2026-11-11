@@ -113,6 +113,34 @@ describe("topBar", () => {
     expect(bar).toContain("today $4.12");
   });
 
+  // A round with tokens and no price is never $0 inside the day's sum: the
+  // bar says the count the snapshot carries beside it.
+  // MUTATION: print the day's sum alone in topBar (drop spendText's count) -
+  // this fails.
+  it("says the day's rounds with no known cost beside the sum, and unknown when none has one", () => {
+    const withCount = (today_spend_usd: number, today_unknown_spend_rounds?: number): string =>
+      stripAnsi(
+        topBar(
+          view({
+            snapshot: {
+              ...snapshot,
+              today_spend_usd,
+              ...(today_unknown_spend_rounds !== undefined ? { today_unknown_spend_rounds } : {}),
+            },
+          }),
+          160,
+        ),
+      );
+    expect(withCount(4.12, 2)).toContain("today $4.12 + 2 rounds unknown");
+    expect(withCount(0, 1)).toContain("today unknown (1 round)");
+    expect(withCount(0, 1)).not.toContain("today $0.00");
+    expect(withCount(4.12, 0)).toContain("today $4.12");
+    expect(withCount(4.12, 0)).not.toContain("rounds unknown");
+    // An older daemon's snapshot has no count: unknown, so only the sum is said.
+    expect(withCount(4.12)).toContain("today $4.12");
+    expect(withCount(4.12)).not.toContain("rounds unknown");
+  });
+
   it("distinguishes a live daemon from a failed review pipeline", () => {
     const causes = [
       {
@@ -213,6 +241,17 @@ describe("detailLines", () => {
     // No escalation-worthiness fact: the header carries state and round only.
     expect(lines[1]).toBe("reviewing · round 2");
     expect(lines[2]).toContain("spend $1.30 · head a2e380f · trig");
+    // The PR's rounds with tokens and no price are said beside its sum.
+    const unknown = detailLines({ ...why, unknown_spend_rounds: 1 }, snapshot.prs[0], 80).map(
+      stripAnsi,
+    );
+    expect(unknown[2]).toContain("spend $1.30 + 1 round unknown · head a2e380f");
+    const none = detailLines(
+      { ...why, spend_usd: 0, unknown_spend_rounds: 2 },
+      snapshot.prs[0],
+      80,
+    ).map(stripAnsi);
+    expect(none[2]).toContain("spend unknown (2 rounds) · head a2e380f");
     expect(lines).toContain("F1 [P1/0.9][delivery] tasks.py:88 open");
     expect(lines.find((l) => l.startsWith("▍ROUNDS"))).toContain("r1 RC · r2 …");
     expect(lines.find((l) => l.startsWith("▍THREADS"))).toContain("2 known");
@@ -285,7 +324,7 @@ describe("detailLines", () => {
           finished_at: null,
           spend_usd: null,
           lenses: "pass-baseline,pass-security,pass-validate",
-          validate_tier: "sol-high",
+          validate_tier: "deep",
         },
       ],
     };
@@ -300,7 +339,7 @@ describe("detailLines", () => {
           started_at: "2026-08-27T09:34:54Z",
           deadline_at: "2026-08-27T10:49:54Z",
           lenses: "pass-baseline,pass-security,pass-validate",
-          validate_tier: "sol-high",
+          validate_tier: "deep",
           command_id: "cmd-14",
           command_sha256: "a".repeat(64),
           head_sha: "head-5012",
@@ -369,9 +408,9 @@ describe("detailLines", () => {
       "  parent ACTIVE · fanout-started · signal 1s ago · subagent: pass-security",
     );
     expect(lines).toContain("  ✓ pass-baseline · done in 2m · 7 tools");
-    expect(lines).toContain("  ⟳ pass-validate · running 30s · grep: bearer · sol-high");
+    expect(lines).toContain("  ⟳ pass-validate · running 30s · grep: bearer · deep");
     expect(lines).toContain("  ○ pass-security · pending");
-    expect(lines).toContain("  ✗ pass-validate · failed after 30s · timeout · sol-high");
+    expect(lines).toContain("  ✗ pass-validate · failed after 30s · timeout · deep");
     expect(lines).toContain("  ✓ pass-architecture · done in 1m · 5 tools · added");
     expect(lines).toContain("  ○ final verdict · pending");
     expect(lines).toContain("  last activity 4s ago · pass-security · grep: bearer");
@@ -1323,7 +1362,7 @@ describe("the transcript viewer in the board's pane", () => {
     agents: [
       {
         execution_id: "a",
-        agent: "pass-baseline--sol-high",
+        agent: "pass-baseline--deep",
         status: "completed" as const,
         duration_ms: 1000,
         tool_count: 1,
@@ -1331,7 +1370,7 @@ describe("the transcript viewer in the board's pane", () => {
       },
       {
         execution_id: "b",
-        agent: "pass-security--sol-high",
+        agent: "pass-security--deep",
         status: "running" as const,
         duration_ms: 1000,
         tool_count: 1,
@@ -1339,7 +1378,7 @@ describe("the transcript viewer in the board's pane", () => {
       },
       {
         execution_id: "c",
-        agent: "pass-security--sol-high",
+        agent: "pass-security--deep",
         status: "running" as const,
         duration_ms: 1000,
         tool_count: 1,
@@ -1347,7 +1386,7 @@ describe("the transcript viewer in the board's pane", () => {
       },
       {
         execution_id: "d",
-        agent: "pass-extra--sol-high",
+        agent: "pass-extra--deep",
         status: "completed" as const,
         duration_ms: 1000,
         tool_count: 1,

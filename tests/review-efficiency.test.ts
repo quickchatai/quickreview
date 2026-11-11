@@ -124,23 +124,27 @@ describe("H2 — `[review] sweep_light_tier` (off by default)", () => {
 
   it("off: every sweep row runs at the sweep's pinned tier, as before", () => {
     const plan = buildPassPlan(baseCfg, files).pass_plan.filter((p) => p.lens === SWEEP_PASS);
-    expect(plan.map((p) => p.tier)).toEqual(["sol-high", "sol-high"]);
+    expect(plan.map((p) => p.tier)).toEqual(["deep", "deep"]);
     expect(sweepLightVariants(baseCfg.review)).toEqual([]);
   });
 
   it("on: only the row holding no production code drops to the light tier", () => {
-    const cfg = withReview({ sweep_light_tier: "sol-med" });
+    const cfg = withReview({ sweep_light_tier: "standard" });
     const plan = buildPassPlan(cfg, files).pass_plan.filter((p) => p.lens === SWEEP_PASS);
     const byTier = Object.fromEntries(plan.map((p) => [p.tier, p.focus]));
-    expect(byTier["sol-high"]).toHaveLength(8);
-    expect(byTier["sol-med"]).toEqual(["tests/test_m0.py", "tests/test_m1.py", "tests/test_m2.py"]);
-    const light = plan.find((p) => p.tier === "sol-med")!;
-    expect(light.agent).toBe("pass-sweep--sol-med");
+    expect(byTier["deep"]).toHaveLength(8);
+    expect(byTier["standard"]).toEqual([
+      "tests/test_m0.py",
+      "tests/test_m1.py",
+      "tests/test_m2.py",
+    ]);
+    const light = plan.find((p) => p.tier === "standard")!;
+    expect(light.agent).toBe("pass-sweep--standard");
     expect(light.why).toContain("sweep_light_tier");
   });
 
   it("the light variant escapes the sweep's pin, so it really runs at its own tier", () => {
-    const cfg = withReview({ sweep_light_tier: "sol-med" });
+    const cfg = withReview({ sweep_light_tier: "standard" });
     const models = passTierModels(
       cfg.models.pass_tiers,
       cfg.models.tiers,
@@ -148,19 +152,19 @@ describe("H2 — `[review] sweep_light_tier` (off by default)", () => {
       {},
       sweepLightVariants(cfg.review),
     );
-    expect(models["pass-sweep--sol-med"]).toBeUndefined(); // the build uses the tier's own spec
-    expect(models["pass-sweep--sol-high"]).toBe(cfg.models.tiers["sol-high"]);
-    expect(models["pass-sweep--terra-med"]).toBe(cfg.models.tiers["sol-high"]);
+    expect(models["pass-sweep--standard"]).toBeUndefined(); // the build uses the tier's own spec
+    expect(models["pass-sweep--deep"]).toBe(cfg.models.tiers["deep"]);
+    expect(models["pass-sweep--light"]).toBe(cfg.models.tiers["deep"]);
   });
 
   it("a profile floor on the sweep moves the exempt variant to the floored light tier the plan names", () => {
-    const cfg = withReview({ sweep_light_tier: "terra-med" });
-    cfg.models.pass_tiers = { ...cfg.models.pass_tiers, [SWEEP_PASS]: "sol-high" };
-    cfg.lenses = { [SWEEP_PASS]: { min_tier: "sol-med" } };
+    const cfg = withReview({ sweep_light_tier: "light" });
+    cfg.models.pass_tiers = { ...cfg.models.pass_tiers, [SWEEP_PASS]: "deep" };
+    cfg.lenses = { [SWEEP_PASS]: { min_tier: "standard" } };
     const plan = buildPassPlan(cfg, files).pass_plan.filter((p) => p.lens === SWEEP_PASS);
     const light = plan.find((p) => p.why?.includes("sweep_light_tier"))!;
-    expect(light.agent).toBe("pass-sweep--sol-med");
-    expect(sweepLightVariants(cfg.review, cfg.lenses)).toEqual(["pass-sweep--sol-med"]);
+    expect(light.agent).toBe("pass-sweep--standard");
+    expect(sweepLightVariants(cfg.review, cfg.lenses)).toEqual(["pass-sweep--standard"]);
     const models = passTierModels(
       cfg.models.pass_tiers,
       cfg.models.tiers,
@@ -171,15 +175,15 @@ describe("H2 — `[review] sweep_light_tier` (off by default)", () => {
     );
     // the light row's variant runs at its own (floored) tier, not the pin's
     expect(models[light.agent]).toBeUndefined();
-    expect(models["pass-sweep--sol-high"]).toBe(cfg.models.tiers["sol-high"]);
+    expect(models["pass-sweep--deep"]).toBe(cfg.models.tiers["deep"]);
   });
 
   it("refuses a tier that does not exist, and the bench records the lever", () => {
     expect(() =>
       parseConfig(`${fixture}\n`.replace("[review]\n", '[review]\nsweep_light_tier = "cheap"\n')),
     ).toThrow(/sweep_light_tier/);
-    const cfg = applyConfigOverrides(structuredClone(baseCfg), "review.sweep_light_tier=sol-med");
-    expect(runFingerprint(cfg, "").levers?.sweep_light_tier).toBe("sol-med");
+    const cfg = applyConfigOverrides(structuredClone(baseCfg), "review.sweep_light_tier=standard");
+    expect(runFingerprint(cfg, "").levers?.sweep_light_tier).toBe("standard");
     expect(runFingerprint(baseCfg, "").levers?.sweep_light_tier).toBeUndefined();
   });
 });
@@ -194,8 +198,8 @@ describe("H6 — `[models.pass_models]` (empty by default)", () => {
       {},
       { "pass-duplication": "openai-codex/gpt-6-luna" },
     );
-    expect(models["pass-duplication--sol-med"]).toBe("openai-codex/gpt-6-luna:medium");
-    expect(models["pass-duplication--sol-high"]).toBe("openai-codex/gpt-6-luna:high");
+    expect(models["pass-duplication--standard"]).toBe("openai-codex/gpt-6-luna:medium");
+    expect(models["pass-duplication--deep"]).toBe("openai-codex/gpt-6-luna:high");
     // a spec that names its own level keeps it on every variant
     const own = passTierModels(
       baseCfg.models.pass_tiers,
@@ -205,10 +209,10 @@ describe("H6 — `[models.pass_models]` (empty by default)", () => {
         "pass-duplication": "openai-codex/gpt-6-luna:high",
       },
     );
-    expect(own["pass-duplication--sol-med"]).toBe("openai-codex/gpt-6-luna:high");
+    expect(own["pass-duplication--standard"]).toBe("openai-codex/gpt-6-luna:high");
     // nothing else moves
-    expect(own["pass-baseline--sol-high"]).toBe(baseCfg.models.tiers["sol-high"]);
-    expect(own["pass-maintainability--sol-med"]).toBeUndefined();
+    expect(own["pass-baseline--deep"]).toBe(baseCfg.models.tiers["deep"]);
+    expect(own["pass-maintainability--standard"]).toBeUndefined();
   });
 
   it("never the validator, never a risk pass, never an unknown lens or a malformed spec", () => {
@@ -320,8 +324,8 @@ const prior = (over: Partial<PriorFinding>): PriorFinding =>
 
 const entry = (lens: string, focus?: string[]): PassPlanEntry => ({
   lens,
-  agent: `${lens}--sol-high`,
-  tier: "sol-high",
+  agent: `${lens}--deep`,
+  tier: "deep",
   raisable_to: [],
   ...(focus ? { focus } : {}),
 });

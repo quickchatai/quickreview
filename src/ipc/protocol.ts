@@ -27,7 +27,9 @@ export const MAX_LINE_BYTES = 1024 * 1024;
 export const IPC_ROLES = ["worker", "shim"] as const;
 export type IpcRole = (typeof IPC_ROLES)[number];
 
-/** What the worker reports, in the order a round normally emits them. */
+/** What the worker reports, in the order a round normally emits them. `ready`
+ * also carries the model route the worker resolved (`route`, routereport.ts):
+ * an added field, which a daemon that does not know it ignores. */
 export const IPC_EVENT_KINDS = [
   "ready",
   "accepted",

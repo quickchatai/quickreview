@@ -56,7 +56,7 @@ import { canonicalLensIds } from "@quickchatai/pi-quickreview/src/lensids.js";
 export interface LensOutput {
   /** 0-based index of the lens tool call in the stream. */
   call: number;
-  /** The built agent name, e.g. `pass-baseline--terra-med`. */
+  /** The built agent name, e.g. `pass-baseline--light`. */
   agent: string;
   /** The lens, tier stripped: `pass-baseline`. */
   lens: string;
@@ -65,7 +65,7 @@ export interface LensOutput {
   text: string;
 }
 
-/** `pass-baseline--terra-med` / `baseline` / `Pass-Baseline` → `pass-baseline`. */
+/** `pass-baseline--light` / `baseline` / `Pass-Baseline` → `pass-baseline`. */
 export function normalizeLens(name: string): string {
   const bare = name.trim().toLowerCase().split("--")[0]!.trim();
   if (!bare) return "";

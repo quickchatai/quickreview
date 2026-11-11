@@ -1,29 +1,29 @@
 {
   "plannedLenses": [
-    "pass-baseline--sol-high",
-    "pass-behaviour-delta--sol-high",
-    "pass-sweep--sol-high",
-    "pass-claims--terra-med",
-    "pass-tests--terra-med",
-    "pass-maintainability--terra-med",
-    "pass-duplication--terra-med",
-    "pass-abstraction--terra-med",
-    "pass-consistency--terra-med",
-    "pass-validate--sol-high"
+    "pass-baseline--deep",
+    "pass-behaviour-delta--deep",
+    "pass-sweep--deep",
+    "pass-claims--light",
+    "pass-tests--light",
+    "pass-maintainability--light",
+    "pass-duplication--light",
+    "pass-abstraction--light",
+    "pass-consistency--light",
+    "pass-validate--deep"
   ],
   "passPlan": [
     {
       "lens": "pass-baseline",
-      "agent": "pass-baseline--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-baseline--deep",
+      "tier": "deep",
       "raisable_to": [],
       "why": "every round: the PR against its own claims",
       "required": true
     },
     {
       "lens": "pass-behaviour-delta",
-      "agent": "pass-behaviour-delta--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-behaviour-delta--deep",
+      "tier": "deep",
       "raisable_to": [],
       "why": "base behaviour is at risk in comfy/model.py: removed or replaced guards, conditions, calls, returns or values, or existing code wrapped in a new branch",
       "focus": [
@@ -32,8 +32,8 @@
     },
     {
       "lens": "pass-sweep",
-      "agent": "pass-sweep--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-sweep--deep",
+      "tier": "deep",
       "raisable_to": [],
       "why": "every changed line of 2 changed files, read one by one",
       "focus": [
@@ -43,68 +43,68 @@
     },
     {
       "lens": "pass-claims",
-      "agent": "pass-claims--terra-med",
-      "tier": "terra-med",
+      "agent": "pass-claims--light",
+      "tier": "light",
       "raisable_to": [
-        "pass-claims--sol-med",
-        "pass-claims--sol-high"
+        "pass-claims--standard",
+        "pass-claims--deep"
       ],
       "why": "the PR text claims \"lint rules\""
     },
     {
       "lens": "pass-tests",
-      "agent": "pass-tests--terra-med",
-      "tier": "terra-med",
+      "agent": "pass-tests--light",
+      "tier": "light",
       "raisable_to": [
-        "pass-tests--sol-med",
-        "pass-tests--sol-high"
+        "pass-tests--standard",
+        "pass-tests--deep"
       ],
       "why": "the PR changes code: existing tests are its consumers, and its own tests are claims"
     },
     {
       "lens": "pass-maintainability",
-      "agent": "pass-maintainability--terra-med",
-      "tier": "terra-med",
+      "agent": "pass-maintainability--light",
+      "tier": "light",
       "raisable_to": [
-        "pass-maintainability--sol-med",
-        "pass-maintainability--sol-high"
+        "pass-maintainability--standard",
+        "pass-maintainability--deep"
       ],
       "why": "the change adds 40 lines of non-test code (at least 20)"
     },
     {
       "lens": "pass-duplication",
-      "agent": "pass-duplication--terra-med",
-      "tier": "terra-med",
+      "agent": "pass-duplication--light",
+      "tier": "light",
       "raisable_to": [
-        "pass-duplication--sol-med",
-        "pass-duplication--sol-high"
+        "pass-duplication--standard",
+        "pass-duplication--deep"
       ],
       "why": "the change adds 40 lines of non-test code (at least 20)"
     },
     {
       "lens": "pass-abstraction",
-      "agent": "pass-abstraction--terra-med",
-      "tier": "terra-med",
+      "agent": "pass-abstraction--light",
+      "tier": "light",
       "raisable_to": [
-        "pass-abstraction--sol-med",
-        "pass-abstraction--sol-high"
+        "pass-abstraction--standard",
+        "pass-abstraction--deep"
       ],
       "why": "the change adds 40 lines of non-test code (at least 20)"
     },
     {
       "lens": "pass-consistency",
-      "agent": "pass-consistency--terra-med",
-      "tier": "terra-med",
+      "agent": "pass-consistency--light",
+      "tier": "light",
       "raisable_to": [
-        "pass-consistency--sol-med",
-        "pass-consistency--sol-high"
+        "pass-consistency--standard",
+        "pass-consistency--deep"
       ],
       "why": "the change adds 40 lines of non-test code (at least 20)"
     },
     {
       "lens": "pass-validate",
-      "agent": "pass-validate--sol-high",
-      "tier": "sol-high",
+      "agent": "pass-validate--deep",
+      "tier": "deep",
       "raisable_to": []
     }
   ],

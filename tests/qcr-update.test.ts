@@ -648,6 +648,28 @@ describe("qcr-update — the happy path", () => {
     expect(readFileSync(join(sb.root, "state", "state.db"), "utf8")).toBe("SQLITE-DB");
   });
 
+  // The preflight's model check resolves a route over the credentials a
+  // worker will have. A daemon whose credential is a key file has no login to
+  // show: without its secrets the check fails and every later release is
+  // refused.
+  // MUTATION: drop the secrets mount from the preflight's `docker run` in
+  // deploy/qcr-update.sh — this fails.
+  it("mounts the VM's own secrets read-only into the preflight, where the daemon has them, and still reaches no network", async () => {
+    sb = setup("release");
+    const r = await runUpdater(sb, GOOD);
+    expect(r.code, r.stderr).toBe(0);
+    const argv = readFileSync(join(sb.fake, "preflight.argv"), "utf8").split("\n").filter(Boolean);
+    const volumes = argv.filter((_, i) => argv[i - 1] === "-v");
+    expect(volumes).toContain(`${join(sb.root, "secrets")}:/opt/quickreview/secrets:ro`);
+    // nothing of the VM's is writable to the check but its scratch state
+    expect(volumes.filter((v) => !v.endsWith(":ro"))).toHaveLength(1);
+    expect(argv[argv.indexOf("--network") + 1]).toBe("none");
+    // the config tar still may not carry secrets: they come from the VM alone
+    expect(readFileSync(resolve(root, "deploy/qcr-update.sh"), "utf8")).toContain(
+      "secrets/ never rides the config tar",
+    );
+  });
+
   it("builds the daemon container on the new image with the run spec's mounts, caps, network and env — and the sidecar with no published port", async () => {
     sb = setup("release");
     const r = await runUpdater(sb, GOOD);

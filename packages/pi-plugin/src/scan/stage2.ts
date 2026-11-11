@@ -23,7 +23,7 @@
 //     from stage 1 as well, may be named outright.
 //   * ONLY A DEEP LENS, ONLY A TIER IT IS BUILT AT. A lens that needs a diff
 //     or a PR body (`DIFF_ONLY_LENSES`), a lens the repo's profile switched
-//     off, and a tier below the lens's `min_tier` (or other than `sol-high`
+//     off, and a tier below the lens's `min_tier` (or other than `deep`
 //     for a risk pass) are refused.
 //   * PRICED FROM THE LEDGER (`priceStage2Row`). A row's price is its lines
 //     at a $/kline: this lens measured at these settings when the ledger has
@@ -91,7 +91,7 @@ import type { ThreatModel } from "../threatmodel.js";
 import { globMatcher } from "../glob.js";
 import { isSweepSkipped, isTestFile } from "../heuristics.js";
 import { lensEnabled, flooredTier, type LensTuningMap } from "../lenstuning.js";
-import { PASS_TIER_ORDER, tiersAtOrAbove, type PassTier } from "../types.js";
+import { BASE_TIER, foldTier, RISK_TIER, tiersAtOrAbove, type PassTier } from "../types.js";
 import {
   caseEstimate,
   coverKey,
@@ -115,7 +115,7 @@ import {
   type UnreadableReason,
   underPath,
 } from "./scan.js";
-import { depthOf, measuredRate, rateWhere, type LedgerEntry } from "./ledger.js";
+import { depthOf, measuredRate, rateWhere, sameTier, type LedgerEntry } from "./ledger.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
 
 /** At most this many rows the companion asks for in one proposal (the deep
@@ -138,7 +138,7 @@ export type ScanChainStrategy = (typeof SCAN_CHAIN_STRATEGIES)[number];
 export interface Stage2RowRequest {
   lens: string;
   files: string[];
-  /** Default: the lens's floor over `[scan] tier` (`sol-high` for a risk pass). */
+  /** Default: the lens's floor over `[scan] tier` (`deep` for a risk pass). */
   tier?: string;
   reason: string;
   /** The exploit-chain lens only, and required there: where its search
@@ -267,7 +267,7 @@ function priceFrom(
     (v: boolean, same: boolean) =>
     (e: LedgerEntry): boolean =>
       (same ? e.lens === lens : e.lens !== lens && e.lens !== SCAN_PASS) &&
-      e.tier === tier &&
+      sameTier(e.tier, tier) &&
       e.effort === effort &&
       e.validator === v;
   const lensesOf = (keep: (e: LedgerEntry) => boolean): string =>
@@ -442,9 +442,9 @@ export function lensEffort(lenses: LensTuningMap | undefined, lens: string): str
   return lenses?.[lens]?.effort ?? "tier";
 }
 
-/** A risk pass runs at `sol-high` alone; any other lens, null. */
+/** A risk pass runs at `deep` alone; any other lens, null. */
 function riskTier(riskPasses: readonly string[], lens: string): PassTier | null {
-  return riskPasses.includes(lens) ? "sol-high" : null;
+  return riskPasses.includes(lens) ? RISK_TIER : null;
 }
 
 /** The tiers `lens` may run at in a scan: the ones its build variants exist
@@ -456,7 +456,7 @@ export function lensTiers(
 ): PassTier[] {
   const risk = riskTier(riskPasses, lens);
   if (risk !== null) return [risk];
-  const floor = flooredTier(lenses, lens, PASS_TIER_ORDER[0]);
+  const floor = flooredTier(lenses, lens, BASE_TIER);
   return tiersAtOrAbove(floor);
 }
 
@@ -623,7 +623,7 @@ const cleanPath = (p: string): string =>
     .replace(/^\.?\/+/, "");
 
 /** A row's tier when none is named: the lens's floor over `[scan] tier`
- * (`sol-high` for a risk pass). */
+ * (`deep` for a risk pass). */
 function defaultRowTier(input: Stage2PlanInput, lens: string): PassTier {
   return riskTier(input.riskPasses, lens) ?? flooredTier(input.lenses, lens, input.defaultTier);
 }
@@ -793,10 +793,12 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       return bad(`the reason is ${reason.length} characters — one line, at most ${ROW_REASON_MAX}`);
     const tiers = lensTiers(input.lenses, lens, input.riskPasses);
     let tier: PassTier;
+    // A request may name a tier in either spelling.
+    const asked = typeof req.tier === "string" ? foldTier(req.tier) : undefined;
     if (req.tier === undefined || req.tier === null || req.tier === "") {
       tier = defaultRowTier(input, lens);
-    } else if ((tiers as readonly string[]).includes(req.tier)) {
-      tier = req.tier as PassTier;
+    } else if (asked !== undefined && tiers.includes(asked)) {
+      tier = asked;
     } else {
       return bad(
         `${lens} cannot run at ${JSON.stringify(req.tier)} here — one of: ${tiers.join(", ")}`,

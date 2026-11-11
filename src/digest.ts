@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { sandboxRoot } from "./config.js";
 import { DIGEST_DIR_NAME, digestFiles, zoneDayBounds } from "./eod.js";
+import { spendText } from "@quickchatai/pi-quickreview/src/pricing.js";
 import {
   cancelCauseLabel,
   cancellationTotals,
@@ -83,8 +84,12 @@ export interface DailyUsage {
   rounds: number;
   tokens_in: number;
   tokens_out: number;
-  /** est_usd is the one spend field (legacy spend_usd folded in). */
+  /** est_usd is the one spend field (legacy spend_usd folded in): the sum
+   * over the rounds that have a price. */
   est_usd: number;
+  /** The day's rounds that recorded tokens and no price: `est_usd` counts
+   * none of them, and the line says them beside it. */
+  unknown_spend_rounds: number;
 }
 
 /**
@@ -96,13 +101,22 @@ export interface DailyUsage {
  */
 export function dailyUsage(store: StateStore, date: string): DailyUsage {
   const rounds = store.roundsOn(date);
-  const { spend_usd, tokens_in, tokens_out } = roundUsage(rounds);
-  return { date, rounds: rounds.length, tokens_in, tokens_out, est_usd: spend_usd };
+  const { spend_usd, unknown_spend_rounds, tokens_in, tokens_out } = roundUsage(rounds);
+  return {
+    date,
+    rounds: rounds.length,
+    tokens_in,
+    tokens_out,
+    est_usd: spend_usd,
+    unknown_spend_rounds,
+  };
 }
 
-/** One digest-ready line, e.g. "usage: 3 rounds — 120000 in / 4000 out tokens — est $1.23". */
+/** One digest-ready line, e.g. "usage: 3 rounds — 120000 in / 4000 out tokens
+ * — $1.23 at list prices"; with rounds that have no price, "$1.23 at list
+ * prices + 2 rounds unknown", or "unknown (2 rounds)" when none has one. */
 export function usageSummaryLine(usage: DailyUsage): string {
-  return `usage: ${usage.rounds} rounds — ${usage.tokens_in} in / ${usage.tokens_out} out tokens — est $${usage.est_usd.toFixed(2)}`;
+  return `usage: ${usage.rounds} rounds — ${usage.tokens_in} in / ${usage.tokens_out} out tokens — ${spendText(usage.est_usd, usage.unknown_spend_rounds, "at list prices")}`;
 }
 
 // ---- cancellations ---------------------------------------------------------

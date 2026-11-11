@@ -132,19 +132,19 @@ be reviewed as if they were.
 
 | lens | subagent to call | tier | may raise to | focus / why |
 | --- | --- | --- | --- | --- |
-| pass-baseline | `pass-baseline--sol-high` | sol-high | — (pinned) | because every round: the PR against its own claims |
-| pass-security | `pass-security--sol-high` | sol-high | — (pinned) | because the diff adds lines to the dependency manifest package.json |
-| pass-prod-risk | `pass-prod-risk--sol-high` | sol-high | — (pinned) | because the diff touches .github/workflows/ci.yml |
-| pass-behaviour-delta | `pass-behaviour-delta--sol-high` | sol-high | — (pinned) | files: `src/api/client.ts` |
-| pass-sweep | `pass-sweep--sol-high` | sol-high | — (pinned) | files: `src/api/client.ts`, `.github/workflows/ci.yml`, `package.json`, `src/api/client.test.ts`, `CLAUDE.md` |
-| pass-backcompat | `pass-backcompat--terra-med` | terra-med | `pass-backcompat--sol-med`, `pass-backcompat--sol-high` | because the diff touches src/api/client.ts |
-| pass-claims | `pass-claims--terra-med` | terra-med | `pass-claims--sol-med`, `pass-claims--sol-high` | because the PR text claims "lint rules" |
-| pass-tests | `pass-tests--terra-med` | terra-med | `pass-tests--sol-med`, `pass-tests--sol-high` | because the PR changes code: existing tests are its consumers, and its own tests are claims |
-| pass-maintainability | `pass-maintainability--terra-med` | terra-med | `pass-maintainability--sol-med`, `pass-maintainability--sol-high` | because the change adds 55 lines of non-test code (at least 20) |
-| pass-duplication | `pass-duplication--terra-med` | terra-med | `pass-duplication--sol-med`, `pass-duplication--sol-high` | because the change adds 55 lines of non-test code (at least 20) |
-| pass-abstraction | `pass-abstraction--terra-med` | terra-med | `pass-abstraction--sol-med`, `pass-abstraction--sol-high` | because the change adds 55 lines of non-test code (at least 20) |
-| pass-consistency | `pass-consistency--terra-med` | terra-med | `pass-consistency--sol-med`, `pass-consistency--sol-high` | because the change adds 55 lines of non-test code (at least 20) |
-| pass-validate | `pass-validate--sol-high` | sol-high | — (pinned) |  |
+| pass-baseline | `pass-baseline--deep` | deep | — (pinned) | because every round: the PR against its own claims |
+| pass-security | `pass-security--deep` | deep | — (pinned) | because the diff adds lines to the dependency manifest package.json |
+| pass-prod-risk | `pass-prod-risk--deep` | deep | — (pinned) | because the diff touches .github/workflows/ci.yml |
+| pass-behaviour-delta | `pass-behaviour-delta--deep` | deep | — (pinned) | files: `src/api/client.ts` |
+| pass-sweep | `pass-sweep--deep` | deep | — (pinned) | files: `src/api/client.ts`, `.github/workflows/ci.yml`, `package.json`, `src/api/client.test.ts`, `CLAUDE.md` |
+| pass-backcompat | `pass-backcompat--light` | light | `pass-backcompat--standard`, `pass-backcompat--deep` | because the diff touches src/api/client.ts |
+| pass-claims | `pass-claims--light` | light | `pass-claims--standard`, `pass-claims--deep` | because the PR text claims "lint rules" |
+| pass-tests | `pass-tests--light` | light | `pass-tests--standard`, `pass-tests--deep` | because the PR changes code: existing tests are its consumers, and its own tests are claims |
+| pass-maintainability | `pass-maintainability--light` | light | `pass-maintainability--standard`, `pass-maintainability--deep` | because the change adds 55 lines of non-test code (at least 20) |
+| pass-duplication | `pass-duplication--light` | light | `pass-duplication--standard`, `pass-duplication--deep` | because the change adds 55 lines of non-test code (at least 20) |
+| pass-abstraction | `pass-abstraction--light` | light | `pass-abstraction--standard`, `pass-abstraction--deep` | because the change adds 55 lines of non-test code (at least 20) |
+| pass-consistency | `pass-consistency--light` | light | `pass-consistency--standard`, `pass-consistency--deep` | because the change adds 55 lines of non-test code (at least 20) |
+| pass-validate | `pass-validate--deep` | deep | — (pinned) |  |
 
 THIRD-PARTY SOURCES
 - left-pad 1.3.0 at /deps/left-pad (read-only)
@@ -172,18 +172,18 @@ error, launch every row through `subagent` with its pointer (plus what
 
 | row | subagent | task file |
 | --- | --- | --- |
-| 1 | `pass-baseline--sol-high` | `/bench-out/cases/x/tasks/01-pass-baseline--sol-high.md` |
-| 2 | `pass-security--sol-high` | `/bench-out/cases/x/tasks/02-pass-security--sol-high.md` |
-| 3 | `pass-prod-risk--sol-high` | `/bench-out/cases/x/tasks/03-pass-prod-risk--sol-high.md` |
-| 4 | `pass-behaviour-delta--sol-high` | `/bench-out/cases/x/tasks/04-pass-behaviour-delta--sol-high.md` |
-| 5 | `pass-sweep--sol-high` | `/bench-out/cases/x/tasks/05-pass-sweep--sol-high.md` |
-| 6 | `pass-backcompat--terra-med` | `/bench-out/cases/x/tasks/06-pass-backcompat--terra-med.md` |
-| 7 | `pass-claims--terra-med` | `/bench-out/cases/x/tasks/07-pass-claims--terra-med.md` |
-| 8 | `pass-tests--terra-med` | `/bench-out/cases/x/tasks/08-pass-tests--terra-med.md` |
-| 9 | `pass-maintainability--terra-med` | `/bench-out/cases/x/tasks/09-pass-maintainability--terra-med.md` |
-| 10 | `pass-duplication--terra-med` | `/bench-out/cases/x/tasks/10-pass-duplication--terra-med.md` |
-| 11 | `pass-abstraction--terra-med` | `/bench-out/cases/x/tasks/11-pass-abstraction--terra-med.md` |
-| 12 | `pass-consistency--terra-med` | `/bench-out/cases/x/tasks/12-pass-consistency--terra-med.md` |
+| 1 | `pass-baseline--deep` | `/bench-out/cases/x/tasks/01-pass-baseline--deep.md` |
+| 2 | `pass-security--deep` | `/bench-out/cases/x/tasks/02-pass-security--deep.md` |
+| 3 | `pass-prod-risk--deep` | `/bench-out/cases/x/tasks/03-pass-prod-risk--deep.md` |
+| 4 | `pass-behaviour-delta--deep` | `/bench-out/cases/x/tasks/04-pass-behaviour-delta--deep.md` |
+| 5 | `pass-sweep--deep` | `/bench-out/cases/x/tasks/05-pass-sweep--deep.md` |
+| 6 | `pass-backcompat--light` | `/bench-out/cases/x/tasks/06-pass-backcompat--light.md` |
+| 7 | `pass-claims--light` | `/bench-out/cases/x/tasks/07-pass-claims--light.md` |
+| 8 | `pass-tests--light` | `/bench-out/cases/x/tasks/08-pass-tests--light.md` |
+| 9 | `pass-maintainability--light` | `/bench-out/cases/x/tasks/09-pass-maintainability--light.md` |
+| 10 | `pass-duplication--light` | `/bench-out/cases/x/tasks/10-pass-duplication--light.md` |
+| 11 | `pass-abstraction--light` | `/bench-out/cases/x/tasks/11-pass-abstraction--light.md` |
+| 12 | `pass-consistency--light` | `/bench-out/cases/x/tasks/12-pass-consistency--light.md` |
 
 **Rows with a focus or a reason.** When the plan table has a *focus / why*
 column: a row listing files is ONE launch of that agent with exactly those
@@ -251,8 +251,8 @@ it shows a concrete shape an addable lens exists for (a check that now admits
 more values, work moved onto a queue, a loop over another party's data, a
 release that reaches clients and servers at different times), add that lens in
 the same launch turn. Run it at the plan's default tier: call the
-`<lens>--sol-med` variant, unless it is a risk pass (risk passes exist only as
-`<lens>--sol-high`) or the list above names the variant to run (this repo's
+`<lens>--standard` variant, unless it is a risk pass (risk passes exist only as
+`<lens>--deep`) or the list above names the variant to run (this repo's
 profile floors that lens higher). **Never drop a planned lens.**
 
 **Two lenses exist only to be added — no plan ever selects them.**
@@ -781,9 +781,9 @@ The verdict shape:
   "head_sha": "9513d152197e5336fbc00eb6b891f1ffb25ad62d",
   "summary": "<3-4 plain sentences for Example Owner>",
   "passes": [
-    { "name": "pass-baseline", "tier": "sol-med", "findings": 3 },
-    { "name": "pass-concurrency", "tier": "sol-med", "reason": "added: read-then-write race in claim ownership", "findings": 1 },
-    { "name": "pass-validate", "tier": "sol-med", "findings": 0,
+    { "name": "pass-baseline", "tier": "standard", "findings": 3 },
+    { "name": "pass-concurrency", "tier": "standard", "reason": "added: read-then-write race in claim ownership", "findings": 1 },
+    { "name": "pass-validate", "tier": "standard", "findings": 0,
       "survived": 2, "killed": 1, "downgraded": 0,
       "merged": 1, "folded": 1 }
   ],
@@ -892,7 +892,7 @@ alone: a bare `below-bar` teaches nobody anything.
       "path": "src/api/orders.py",
       "line": 212,
       "lens": "pass-security",
-      "tier": "sol-high",
+      "tier": "deep",
       "severity": "P1",
       "confidence": 0.9,
       "reachability": "routine",
@@ -907,7 +907,7 @@ alone: a bare `below-bar` teaches nobody anything.
       "path": "src/api/orders.py",
       "line": 88,
       "lens": "pass-simplicity",
-      "tier": "sol-med",
+      "tier": "standard",
       "severity": "P2",
       "confidence": 0.6,
       "reachability": "contrived",
@@ -921,7 +921,7 @@ alone: a bare `below-bar` teaches nobody anything.
       "path": "src/api/invoices.py",
       "line": 57,
       "lens": "pass-sec-access",
-      "tier": "sol-high",
+      "tier": "deep",
       "severity": "P1",
       "confidence": 0.5,
       "reachability": "routine",

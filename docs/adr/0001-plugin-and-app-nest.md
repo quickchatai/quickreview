@@ -37,7 +37,9 @@ review. Each doll works without the one outside it, and never the reverse.
   the posting rule is configurable.
 - **Settings:** per-repo rules live in the repo's profile; personal defaults,
   such as the posting rule and the default preset, live in pi's own settings.
-  The plugin reads no app config file.
+  The plugin reads no app config file. (Amended by
+  [ADR 0002](0002-model-route.md): it owns one file of its own, see the
+  second amendment.)
 - **No reviewer memory.** The core's memory port stays empty unless a host
   fills it.
 
@@ -45,7 +47,7 @@ review. Each doll works without the one outside it, and never the reverse.
 
 - **Its own customised pi:** the app runs pi at its exact pin with the plugin
   and the app's extensions loaded. That pi is the **home**: the first-run
-  login flow (pi's device code), the setup checklist, the PR list, the review
+  login flow (pi's own `/login`, for any provider), the setup checklist, the PR list, the review
   buttons and the auto-review switch. A bare `qcr` and Boxes' `start-box` open
   it.
 - **Setup extends the plugin's:** the app's setup is the plugin's checklist
@@ -83,6 +85,25 @@ decisions.
 The nesting holds. A host plugin is the app's, because it needs `qcr`; the
 plugin still knows nothing of hosts, and its skills are the one source's pi
 render.
+
+## Amendment: the plugin owns one file beside pi's logins
+
+[ADR 0002](0002-model-route.md) amends one point of "Settings" above. The
+plugin still reads no app config file, and it now owns one file of its own:
+`qcr-model.json` in pi's agent dir, beside the logins it chooses among. It
+holds the remembered model choice (which provider, and sometimes which model,
+reviews run on for that pi home) and the models the person agreed to run with
+no estimate.
+
+- **Why there and not in pi's settings:** pi's own default-model setting is
+  never written, so a review's choice cannot be read back later as pi's own.
+- **Why there and not in the app's config home:** the plugin must work with
+  no app, and a plain pi user has one directory, pi's.
+- **The nesting holds.** The app reads and writes the same file through the
+  plugin's module (`packages/pi-plugin/src/modelchoice.ts`), so `qcr review`,
+  `/qcr-review` and the daemon on one pi home share one answer, and the
+  plugin never learns the app exists. `/qcr-setup model` shows and changes
+  the choice with no `qcr` bin.
 
 ## Why
 

@@ -18,7 +18,7 @@ export function setupTools(setup: HomeSetup): {
       name: "home_setup_next",
       label: "Home: next setup step",
       description:
-        "Run the next step of the quickreview home's setup checklist (sign in, connect GitHub, choose a repository), as alt+n does. Answers what happened, or that setup is done.",
+        "Run the next step of the quickreview home's setup checklist (sign in to a model provider, connect GitHub, choose a repository), as alt+n does. Answers what happened, or that setup is done. The provider reviews run on, where pi has a credential for several, is the person's to pick in the home: this tool says what the choice is and cannot make it.",
       parameters: NO_PARAMS,
       execute: async () => textResult(await setup.next()),
     },
@@ -26,7 +26,7 @@ export function setupTools(setup: HomeSetup): {
       name: "home_sign_in",
       label: "Home: sign in",
       description:
-        "Start pi's own device-code login for the provider the chat runs on. Answers with the URL and the code to enter once pi has them; the sign-in finishes in the background when the person approves it. Device-code login must be on in ChatGPT → Settings → Security.",
+        "Open pi's own /login for the person, with every model provider pi supports (a login, or an API key). Answers once pi's menu is open; the step finishes in the background when pi has a credential. When pi already has one (a key in the environment counts), it says so.",
       parameters: NO_PARAMS,
       execute: async () => textResult(await setup.signIn()),
     },

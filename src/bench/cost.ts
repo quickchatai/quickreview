@@ -14,24 +14,29 @@
 // the price the export computed from the full case dir (`bench_cost_usd`,
 // null = unpriced), which wins for every arm, as compare.py reads it.
 //
-// The price table and the event-stream meter are core (packages/pi-plugin/src/pricing.ts): a
-// round prices itself with them. This module adds the run-level report.
+// The event-stream meter is core (packages/pi-plugin/src/pricing.ts): a round
+// prices itself with it, from pi's own figures. The hand price table and the
+// case reader over it are the bench's (./pricetable.ts). This module adds the
+// run-level report, and is the one name the bench imports both through. It
+// is not part of the published package: no shipped module imports it.
 import { finiteNumber as num } from "./values.js";
-import { caseCostUsd, ratesFor } from "@quickchatai/pi-quickreview/src/pricing.js";
+import { caseCostUsd, ratesFor } from "./pricetable.js";
 
 export {
-  CODEX_USD_PER_MTOK,
   EventCostMeter,
-  GPT6_SOL_USD_PER_MTOK,
   LENS_LEDGER_FILE,
+  eventLineCostUsd,
+} from "@quickchatai/pi-quickreview/src/pricing.js";
+export {
+  CODEX_USD_PER_MTOK,
+  GPT6_SOL_USD_PER_MTOK,
   SLIM_COST_KEY,
   caseCostUsd,
-  eventLineCostUsd,
   piUsageFromInclusive,
   ratesFor,
   type CaseCost,
   type PricedModel,
-} from "@quickchatai/pi-quickreview/src/pricing.js";
+} from "./pricetable.js";
 
 /** The defect report's dollar figures over a run's case dirs: the per-PR
  * average over the cases that recorded a price, their total, and how many of

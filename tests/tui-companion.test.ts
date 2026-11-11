@@ -203,11 +203,33 @@ describe("companion config", () => {
 describe("CompanionLifecycle argv", () => {
   const { lc } = lifecycle([]);
 
-  it("hands the configured model to the entrypoint as pi's default", () => {
+  // MUTATION: pass QCR_PI_DEFAULT_MODEL whatever `[companion] model` holds —
+  // the shipped companion hands the entrypoint an empty default and this fails.
+  it("hands the entrypoint a default model only when [companion] model pins one", () => {
+    expect(COMPANION_DEFAULTS.model).toBe("");
     const argv = lc.runArgv();
     const envs = argv.filter((_, i) => argv[i - 1] === "--env");
-    expect(envs).toContain(`QCR_PI_DEFAULT_MODEL=${COMPANION_DEFAULTS.model}`);
-    expect(argv.lastIndexOf("--env")).toBeLessThan(argv.lastIndexOf(COMPANION_DEFAULTS.image));
+    expect(envs.filter((e) => e.startsWith("QCR_PI_DEFAULT_MODEL"))).toEqual([]);
+    expect(lc.piArgv()).not.toContain("--model");
+    expect(lc.piArgv()).not.toContain("--thinking");
+    // A level alone pins no model either: it is the level pi is started at.
+    const withModel = (model: string): CompanionLifecycle =>
+      new CompanionLifecycle({ ...CFG, model }, fakeDocker([]).runner, HOST_ENV, noDirs);
+    const level = withModel(":low");
+    expect(level.runArgv().filter((e) => e.startsWith("QCR_PI_DEFAULT_MODEL"))).toEqual([]);
+    expect(level.piArgv()).toEqual(expect.arrayContaining(["--thinking", "low"]));
+    expect(level.piArgv()).not.toContain("--model");
+
+    const pinned = withModel("made-up/large-3:medium");
+    const run = pinned.runArgv();
+    expect(run.filter((_, i) => run[i - 1] === "--env")).toContain(
+      "QCR_PI_DEFAULT_MODEL=made-up/large-3:medium",
+    );
+    expect(run.lastIndexOf("--env")).toBeLessThan(run.lastIndexOf(COMPANION_DEFAULTS.image));
+    const pi = pinned.piArgv();
+    expect(pi[pi.indexOf("--model") + 1]).toBe("made-up/large-3:medium");
+    // the pin sits where the model always sat: after the extensions, before the session dir
+    expect(pi.indexOf("--model")).toBe(pi.indexOf("--session-dir") - 2);
   });
 
   it("mounts pihome, repo, tracker, feed and alerts — and no credential", () => {
@@ -375,7 +397,7 @@ describe("CompanionLifecycle argv", () => {
       "--theme",
       `${app}/extensions/muted-theme.json`,
       // The login route, before the inject bridge: the day-open delivery meets
-      // a model on a login that exists, or the hint says which logins work.
+      // a model that has a credential, or the hint says how to sign in.
       "--extension",
       `${app}/extensions/cli/login-route.ts`,
       // The inject bridge delivers the day-open message.
@@ -399,8 +421,8 @@ describe("CompanionLifecycle argv", () => {
       // `!{cmd}` inline expansion, vendored from pi's examples.
       "--extension",
       `${app}/extensions/inline-bash.ts`,
-      "--model",
-      COMPANION_DEFAULTS.model,
+      // No `--model`: the shipped companion pins none, and pi starts on its
+      // own choice for the login it has.
       "--session-dir",
       `${CONTAINER.piHome}/agent/sessions/companion`,
       "--system-prompt",
@@ -1500,12 +1522,12 @@ describe("lens tools (companion)", () => {
       // skips the file — pin both.
       expect(body).toMatch(new RegExp(`^name: ${file.replace(/\.md$/, "")}$`, "m"));
       expect(body).toMatch(/^description: .+$/m);
-      // ChatGPT OAuth is the only credential in the container: an anthropic/
-      // model or a web tool would be dead weight that can never run.
-      // The :thinking suffix rides the model field.
-      expect(body).toMatch(/^model: openai-codex\/[^\s:]+:(off|minimal|low|medium|high)$/m);
-      expect(body).not.toMatch(/^thinking:/m);
-      expect(body).not.toMatch(/anthropic\//);
+      // An agent names no model: it runs on the model pi itself picks for
+      // whatever credential the companion holds, so a companion signed in to
+      // any provider can run it. The level alone is the agent's own.
+      // MUTATION: put `model: <provider>/<id>:low` back into explore.md - this fails.
+      expect(body).not.toMatch(/^model:/m);
+      expect(body).toMatch(/^thinking: (off|minimal|low|medium|high)$/m);
       expect(body).not.toMatch(/web_search|web_fetch/);
       // Read-only leaves: no write/edit, no bash, and no nested fan-out.
       expect(/^tools: .*(write|edit|bash)/m.test(body)).toBe(false);

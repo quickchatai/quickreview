@@ -34,7 +34,7 @@ const sandbox = join(import.meta.dirname, "..");
 // self-skip; in the source tree a missing fixture throws.
 const HAS_QC = stageFixtureProfile(sandbox, "quickchat");
 
-/** Build the real agents/ seeds; return pass name → its sol-med (or only) body. */
+/** Build the real agents/ seeds; return pass name → its standard (or only) body. */
 function build(addenda: readonly PassAddendum[], ecosystem?: EcosystemName): Map<string, string> {
   const out = mkdtempSync(join(tmpdir(), "qcr-stackneutral-"));
   try {
@@ -44,7 +44,7 @@ function build(addenda: readonly PassAddendum[], ecosystem?: EcosystemName): Map
       addenda,
       ...(ecosystem ? { ecosystem } : {}),
     })) {
-      if (!bodies.has(b.pass) || b.tier === "sol-med")
+      if (!bodies.has(b.pass) || b.tier === "standard")
         bodies.set(b.pass, readFileSync(b.output, "utf8"));
     }
     return bodies;

@@ -15,6 +15,20 @@ describe("scripts/companion-e2e.sh", () => {
     expect(script).toContain("/opt/qcr/node_modules/.bin/pi");
   });
 
+  // A credential may be any provider's login, or a key: the app says whether
+  // pi has a model route, and no file's presence stands in for that.
+  // MUTATION: put `test -f /pi/agent/auth.json` back as the step's probe — this fails.
+  it("asks the app for a model route over the read-only pi home, never for a login file", () => {
+    const code = script
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    expect(code).not.toMatch(/test -[fs] [^\n]*auth\.json/);
+    expect(code).toMatch(/--network none --volume "\$PIHOME_VOLUME:\/pi:ro"/);
+    expect(code).toMatch(/dist\/src\/cli\.js model --json/);
+    expect(code).toMatch(/grep -q '"ok":true'/);
+  });
+
   it("probes the tmux server, not just the tmux binary", () => {
     expect(script).not.toMatch(/tmux -V/);
     expect(script).toMatch(/tmux show-options -s exit-empty/);

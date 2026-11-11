@@ -15,8 +15,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Config } from "../src/config.js";
+import { modelEnvFrom } from "../src/modelenv.js";
 import {
   PiSessionManager,
+  SESSION_ENV_OWN,
   buildPiCommand,
   isSandboxSession,
   prOfSession,
@@ -285,6 +287,35 @@ describe("buildPiCommand", () => {
     ]);
   });
 
+  // MUTATION: pass `--model spec.model` whatever it holds — a session whose
+  // spec names no model starts pi with an empty `--model` and this fails.
+  it("names a model only for a spec that names one: with none pi starts on its own choice", () => {
+    const at = {
+      piBin: "pi",
+      sessionDir: "d",
+      systemPromptPath: "p",
+      extensionPaths: [],
+      sessionName: "s",
+    };
+    const pinned = buildPiCommand({ ...at, model: "made-up/large-3:high" });
+    expect(pinned[pinned.indexOf("--model") + 1]).toBe("made-up/large-3:high");
+    const unpinned = buildPiCommand({ ...at, model: "" });
+    expect(unpinned).toEqual([
+      "pi",
+      "--approve",
+      "--session-dir",
+      "d",
+      "--system-prompt",
+      "p",
+      "--name",
+      "s",
+    ]);
+    // A level with no model is the level alone.
+    const level = buildPiCommand({ ...at, model: ":high" });
+    expect(level).not.toContain("--model");
+    expect(level[level.indexOf("--thinking") + 1]).toBe("high");
+  });
+
   it("carries no update/auto-update flag (version is pinned by config)", () => {
     const argv = buildPiCommand({
       piBin: "pi",
@@ -472,9 +503,53 @@ describe("birth", () => {
     expect(manager().buildEnv("pr-7").QCR_CONFIG).toBeUndefined();
   });
 
-  it("omits the OpenAI key when the secrets dir has none", async () => {
+  it("carries no model variable when the secrets dir has none", async () => {
     rmSync(join(secrets, "openai_api_key"));
+    expect(manager().modelEnv()).toEqual({});
     expect(manager().buildEnv("pr-1").OPENAI_API_KEY).toBeUndefined();
+  });
+
+  // The CLI-pi session env carries the model env of the secrets dir by the
+  // one loader (src/modelenv.ts): every name there, for any provider, where
+  // it carried the one older key.
+  // MUTATION: read only `openai_api_key` in PiSessionManager.modelEnv — the
+  // PROV_ names are missing and this fails.
+  it("carries the loader's names: every model-env variable and the older key file", () => {
+    mkdirSync(join(secrets, "model-env"));
+    writeFileSync(join(secrets, "model-env", "PROV_API_KEY"), "value-one\n");
+    writeFileSync(join(secrets, "model-env", "PROV_REGION"), "eu-north-1\n");
+    const m = manager();
+    expect(m.modelEnv()).toEqual(modelEnvFrom(secrets));
+    expect(m.modelEnv()).toEqual({
+      OPENAI_API_KEY: "sk-app-key",
+      PROV_API_KEY: "value-one",
+      PROV_REGION: "eu-north-1",
+    });
+    const env = m.buildEnv("pr-42");
+    expect(env.PROV_API_KEY).toBe("value-one");
+    expect(env.PROV_REGION).toBe("eu-north-1");
+    expect(env.OPENAI_API_KEY).toBe("sk-app-key");
+    // read from the files at each call, never from this process's environment
+    writeFileSync(join(secrets, "model-env", "LATER_API_KEY"), "value-two");
+    expect(m.buildEnv("pr-42").LATER_API_KEY).toBe("value-two");
+    // a caller that read the model env itself is given exactly that
+    expect(m.buildEnv("pr-42", {}, {}).PROV_API_KEY).toBeUndefined();
+  });
+
+  // MUTATION: spread the model env after PATH and HOME in buildEnv — a file
+  // named HOME moves the session's home and this fails.
+  it("a model variable never replaces a name the session sets for itself", () => {
+    mkdirSync(join(secrets, "model-env"));
+    for (const name of [...SESSION_ENV_OWN, "QCR_SESSION_NAME", "GIT_CONFIG_GLOBAL", "GH_TOKEN"])
+      writeFileSync(join(secrets, "model-env", name), "/evil");
+    const m = manager();
+    expect(Object.keys(m.modelEnv())).toEqual(["OPENAI_API_KEY"]);
+    const env = m.buildEnv("pr-42");
+    expect(env.HOME).toBe(join(root, "pihome"));
+    expect(env.PATH).not.toBe("/evil");
+    expect(env.QCR_SESSION_NAME).toBe("pr-42");
+    expect(env.GIT_CONFIG_GLOBAL).not.toBe("/evil");
+    expect(env.GH_TOKEN).toBeUndefined();
   });
 });
 

@@ -63,10 +63,12 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // quiet: the nudge IS the response, and a wake there would double every
   // missing record into inbox traffic.
   "findings_record_unresolved",
-  // pi sessions failing API calls with token-expired errors — every round in
-  // flight is doomed until someone logs in again, so this
-  // is human-attention grade. Detected passively (packages/pi-plugin/src/authwatch.ts), never by
-  // a smoke call.
+  // The model credential is failing: a provider refused it (an expired or
+  // revoked login, a key it does not accept), so every round in flight is
+  // doomed until someone signs in again or replaces the key. Human-attention
+  // grade. Detected passively (packages/pi-plugin/src/authwatch.ts), never by
+  // a smoke call, and only for the classifier's `auth` kind: a refused model
+  // is not this.
   "pi_auth_expired",
   // The bot login's refresher could not refresh (src/loginrefresh/): the same
   // consequence one step earlier — the token runs out within hours and every
@@ -190,6 +192,13 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // draining (pr null). Every spawn is stopped until a person acts, so it is
   // human-attention grade; it fires once per park / per drain by construction.
   "worker_crash_loop",
+  // StateStore.recordModelRoute: a worker reported that reviews now run on
+  // another model, on another provider than the one the config names, or on a
+  // credential from another origin than the report before it said. Nobody
+  // chose that: a login that ran out leaves an environment key as the route,
+  // and a subscription becomes a metered key without a word otherwise. Raised
+  // on the change only, never on a first report or a repeat of the same route.
+  "model_route_changed",
 ]);
 
 /** The WAKE set, sorted — exported so `tests/anomalies.test.ts` can pin it by
@@ -245,6 +254,11 @@ const DETAIL_KEYED_KINDS: ReadonlySet<string> = new Set([
   // to back after a drain, so two days' wakes can land minutes apart.
   "eod_curation_missing",
   "eod_lessons_not_persisted",
+  // Raised on a change only, and the detail names both ends of it: a route
+  // that changes back within the window is a second fact, and keyed on the
+  // kind alone it would leave the inbox saying reviews run where they no
+  // longer do.
+  "model_route_changed",
 ]);
 
 export function detailKeyedKinds(): string[] {

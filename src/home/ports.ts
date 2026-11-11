@@ -7,7 +7,7 @@
 // (invariant 9): the panel renders it Unknown and the `home_status` tool
 // reports it as null.
 //
-// The home reads pi login, GitHub, the repository, the clock and the reviews
+// The home reads pi's model credentials, GitHub, the repository, the clock and the reviews
 // (the app's detached runs, its per-target review state and the daemon's
 // rounds). Auto-review, memory and spend are typed here so the panel's rows
 // exist from the start; until each has its adapter, the stubs in adapters.ts
@@ -27,14 +27,38 @@ export const known = <T>(value: T): Known<T> => ({ kind: "known", value });
 export const unknown = (why: string): Known<never> => ({ kind: "unknown", why });
 export const PENDING: Pending = { kind: "pending" };
 
-/** The pi login of the pi home the chat runs in. */
-export interface PiLoginPort {
-  /** The providers pi holds a credential for in that home's auth file; an
-   * empty list when it holds none. Provider ids only, never a token. */
-  providers(): Promise<Known<readonly string[]>>;
+/** One provider pi has a usable credential for, as the home shows it. The
+ * home reads these from the running pi's own model registry (its inventory:
+ * extensions/home.ts), so a key in the environment counts as a stored login
+ * does. Never a token or a key. */
+export interface PiCredential {
+  provider: string;
+  /** pi's own name for the provider; its id where pi names none. */
+  name: string;
+  /** Where pi found the credential: a login it stores, a key it holds (a
+   * stored key, one in its models.json, one handed to it), or the
+   * environment (a key variable, or an ambient cloud identity). */
+  from: "login" | "key" | "environment";
+  /** pi's own label for an environment source: the variable's name, or a
+   * phrase for an ambient identity. */
+  label?: string;
 }
 
-/** Who refreshes the box's one OpenAI login, and whether it still works
+/** The login file of the pi home the chat runs in. The home's "signed in" is
+ * pi's registry's, not this file's; the file is what a pi that hands the
+ * home no registry is read by, and what tells a re-login that a stored login
+ * was replaced. */
+export interface PiLoginPort {
+  /** The providers pi stores a credential for in that home's auth file; an
+   * empty list when it holds none. Provider ids only, never a token. */
+  providers(): Promise<Known<readonly string[]>>;
+  /** Each stored credential's type and expiry by provider, as one text per
+   * provider: a login that was replaced reads differently. Never a token.
+   * Absent: this port cannot tell. */
+  stamps?(): Promise<Known<ReadonlyMap<string, string>>>;
+}
+
+/** Who refreshes the box's stored logins, and whether they still work
  * (src/home/loginowner.ts). */
 export interface LoginHealth {
   /** "auto-review": the daemon's refresher holds it (auto-review runs on this
@@ -50,7 +74,7 @@ export interface LoginHealth {
 /** The handover around a re-login: the refresher paused, then released. */
 export type LoginHold = { ok: true; held: boolean; release(): void } | { ok: false; why: string };
 
-/** The box's one login, beside the pi that holds it. */
+/** The box's stored logins, beside the pi that holds them. */
 export interface LoginOwnerPort {
   health(): Promise<Known<LoginHealth>>;
   /** Pause the refresher, when one runs, for a login; release it after. */
@@ -125,11 +149,26 @@ export interface ReviewFinding {
 }
 
 /** The reviewer's preview of one pull request: its plan, its price and the
- * key that starts it over the repo's limit. */
+ * key that starts it over the repo's limit (or with no estimate). */
 export interface ReviewQuote {
-  estimateUsd: number;
-  /** The hard stop; null: none. */
+  /** The estimate; null: the review has none, because its model is not the
+   * one the estimate was measured on (`basis` says which case). */
+  estimateUsd: number | null;
+  /** The dollar stop: twice the estimate, or the spend limit where there is
+   * no estimate; null: none. */
   capUsd: number | null;
+  /** What the price is known from (the preview's `price_basis`): "measured"
+   * or "repo" with an estimate, "unmeasured" (a spend limit holds the run)
+   * or "unpriced" (pi has no price: no dollar stop) without. */
+  basis: "repo" | "measured" | "unpriced" | "unmeasured";
+  /** The model the review runs on, `provider/id`; null when the preview
+   * named none. */
+  model: string | null;
+  /** The preview's `model.ask`: two or more providers tie and nothing was
+   * chosen, so the provider is the person's to pick. Absent: no question. */
+  ask?: true;
+  /** With `ask`: how many providers the review could run on. */
+  providers?: number;
   key: string;
   /** The lens agents the plan runs, the validator among them. */
   lenses: readonly string[];
@@ -140,7 +179,7 @@ export interface ReviewQuote {
 
 /** One lens of a running review, from its live log. */
 export interface LiveLens {
-  /** The lens agent (`pass-security--sol-high`). */
+  /** The lens agent (`pass-security--deep`). */
   agent: string;
   /** running, completed, failed, or another word the log uses. */
   status: string;
@@ -312,10 +351,15 @@ export interface MemoryControl {
   switchOff(): Promise<SwitchResult>;
 }
 
-/** Dollars spent on reviews. */
+/** Dollars spent on reviews: the sum over the reviews that have a price, and
+ * beside each sum how many reviews in it used tokens and have none (their
+ * cost is not known, and the sum counts none of them). A count that is null
+ * or absent is itself unknown, not zero: the sum is then said as it is. */
 export interface SpendTotals {
   today: number;
   month: number;
+  todayUnknown?: number | null;
+  monthUnknown?: number | null;
 }
 
 export interface SpendPort {
@@ -332,7 +376,7 @@ export interface HomeAdapters {
   autoReview: AutoReviewPort;
   memory: MemoryPort;
   spend: SpendPort;
-  /** Who refreshes the login and whether it expired. Absent: the home shows
-   * only which providers it holds. */
+  /** Who refreshes the stored logins and whether one expired. Absent: the
+   * home shows only which providers pi has a credential for. */
   loginOwner?: LoginOwnerPort;
 }

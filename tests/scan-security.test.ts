@@ -256,7 +256,7 @@ function planInput(over: Partial<Stage2PlanInput> = {}): Stage2PlanInput {
     exclude: [],
     budget: { maxFiles: 30, maxLines: 3000 },
     riskPasses: [...SECURITY_FAMILY],
-    defaultTier: "sol-med",
+    defaultTier: "standard",
     covered: () => new Set(),
     price: () => ({
       rate: { usd_per_kline: 1, cases: 1, lines: 1000, cost_usd: 1 },
@@ -444,7 +444,7 @@ describe("a [scan] kinds-filtered stage 1 is its own coverage and reconcile read
       path: "app/a.py",
       blob: "b",
       lens: stage1LensKey(SEC_KINDS),
-      tier: "sol-med",
+      tier: "standard",
       effort: "medium",
       validator: false,
       sha: SHA,
@@ -454,8 +454,8 @@ describe("a [scan] kinds-filtered stage 1 is its own coverage and reconcile read
       case: "app",
       at: "2026-11-02T10:00:00Z",
     };
-    const cfg = { tier: "sol-med", effort: "medium", validator: false, unmeasured_rate_factor: 3 };
-    const price = priceStage2Row([row], cfg, "pass-sec-access", "sol-med", "medium");
+    const cfg = { tier: "standard", effort: "medium", validator: false, unmeasured_rate_factor: 3 };
+    const price = priceStage2Row([row], cfg, "pass-sec-access", "standard", "medium");
     expect(price).toMatchObject({ basis: "extrapolated", from: "pass-scan" });
     expect(price!.rate.usd_per_kline).toBeCloseTo(6);
   });
@@ -713,7 +713,7 @@ describe("a reading settles and covers only what its scope and strategy could re
       path: "big.py",
       blob: "A",
       lens: general,
-      tier: "sol-med",
+      tier: "standard",
       effort: "tier",
       validator: false,
       sha: "s",
@@ -979,8 +979,8 @@ describe("the exploit-chain lens runs per strategy in a scan", () => {
     );
     if (!p.ok) throw new Error(p.errors.join("; "));
     expect(p.rows.map((r) => [r.strategy, r.status, r.tier])).toEqual([
-      ["forward", "covered", "sol-high"],
-      ["backward", "run", "sol-high"],
+      ["forward", "covered", "deep"],
+      ["backward", "run", "deep"],
     ]);
     expect(priced).toEqual([`${CHAIN_PASS}:forward`, `${CHAIN_PASS}:backward`]);
     const prompt = stage2CasePrompt(p.rows[1]!, { root: "/tree", sha: SHA, caseId: "c" });

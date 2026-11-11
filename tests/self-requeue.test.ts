@@ -935,7 +935,7 @@ describe("live-but-stuck recovery", () => {
           verdict: "REQUEST_CHANGES",
           head_sha: "abc123",
           finished_at: clock.toISOString(),
-          passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }],
+          passes: [{ name: "pass-baseline", tier: "standard", findings: 1 }],
         }),
       );
     };
@@ -1066,7 +1066,7 @@ describe("NEEDS_HUMAN requires a finished review", () => {
   it("with executed passes a legacy NEEDS_HUMAN lands tracked (park retired), not requeued", async () => {
     reviewingRound(321);
     const { hooks } = hooksWith();
-    needsHumanFile(321, 1, { passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }] });
+    needsHumanFile(321, 1, { passes: [{ name: "pass-baseline", tier: "standard", findings: 1 }] });
 
     await watcher(hooks).sweep();
 

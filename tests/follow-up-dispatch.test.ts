@@ -241,18 +241,16 @@ describe("follow-up rounds: the delta scope", () => {
       // A 4-line delta is small: the lean plan of that build.
       expect(o.pass_plan).toEqual(leanFollowUpPlan(expected).pass_plan);
       expect(o.pass_plan.some((p) => p.lens === "pass-baseline")).toBe(true);
-      // A 4-line delta would plan its default-tier rows at terra-med on its
-      // own; the PR's size keeps them at sol-med.
+      // A 4-line delta would plan its default-tier rows at light on its
+      // own; the PR's size keeps them at standard.
       const alone = buildPassPlan(baseCfg, deltaPrFiles, undefined);
       const defaultTier = (plan: typeof o.pass_plan) =>
         plan.filter(
           (p) => p.raisable_to.length > 0 && !["pass-sweep", "pass-intent"].includes(p.lens),
         );
       expect(defaultTier(alone.pass_plan).length).toBeGreaterThan(0);
-      expect(new Set(defaultTier(alone.pass_plan).map((p) => p.tier))).toEqual(
-        new Set(["terra-med"]),
-      );
-      expect(new Set(defaultTier(o.pass_plan).map((p) => p.tier))).toEqual(new Set(["sol-med"]));
+      expect(new Set(defaultTier(alone.pass_plan).map((p) => p.tier))).toEqual(new Set(["light"]));
+      expect(new Set(defaultTier(o.pass_plan).map((p) => p.tier))).toEqual(new Set(["standard"]));
       // The round row records the same plan and the follow-up columns.
       const r = lastRound(10);
       expect(JSON.parse(r.pass_plan!)).toEqual(o.pass_plan);
@@ -290,8 +288,8 @@ describe("follow-up rounds: the delta scope", () => {
       config.review.behaviour_delta = true;
       config.review.behaviour_delta_max_groups = 1;
       config.review.sweep_group_lines = 1;
-      config.review.sweep_light_tier = "terra-med";
-      config.models.pass_tiers["pass-sweep"] = "sol-high";
+      config.review.sweep_light_tier = "light";
+      config.models.pass_tiers["pass-sweep"] = "deep";
       const { d, orders } = deps({
         cfg: config,
         delta: okDelta([deltaFile("app/api/views.py"), deltaFile("tests/api.test.py")]),
@@ -364,7 +362,7 @@ describe("follow-up rounds: the delta scope", () => {
       const vi = lensesInOrder.indexOf("pass-validate");
       if (vi >= 0) expect(lensesInOrder.indexOf("pass-data-safety")).toBeLessThan(vi);
       // The carried row takes its launch-order place (`slowestFirst`):
-      // a sol-high risk pass right after the baseline, not spliced in last.
+      // a deep risk pass right after the baseline, not spliced in last.
       expect(lensesInOrder.slice(0, 2)).toEqual(["pass-baseline", "pass-data-safety"]);
       // The diffstat on the round row is the WHOLE PR's.
       expect(lastRound(12)).toMatchObject({ additions: 620, deletions: 70, changed_files: 4 });

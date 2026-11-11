@@ -94,7 +94,8 @@ openviking_queue_concurrency: 2       # ov.conf queue_workers.* (defaults 4/4/8)
 # clean):
 #     openviking_embedding_provider=openai openviking_embedding_model=text-embedding-3-small openviking_embedding_dimension=1536
 # plus the credential in <secrets_src>/<openviking_embedding_key_file> — a
-# SEPARATE file from pi's openai_api_key, so either can be set without the
+# SEPARATE file from pi's model credential (a model-env/ key, the older
+# openai_api_key), so either can be set without the
 # other. The sidecar's entrypoint (docker/memory/entrypoint.sh) renders these into ov.conf `embedding.dense`; ov.conf
 # carries NO `vlm` section either way (extraction, summaries and digest are
 # off — memories are authored, never extracted).
@@ -203,8 +204,10 @@ cloudflared_enabled: true
 # (~/.config/qcr/<install>/secrets). This default — the default
 # install's home — only serves a playbook run by hand.
 secrets_src: "{{ lookup('env', 'HOME') }}/.config/qcr/default/secrets"
-# Expected files there: app_id, app.pem, webhook_secret; openai_api_key
-# optional (pi's API-key route); tunnel_token only when cloudflared_enabled;
+# Expected files there: app_id, app.pem, webhook_secret; optional, a model
+# provider's key for pi as model-env/<ENV_NAME> (one file per environment
+# variable, named as the provider documents; the older openai_api_key is
+# still read); tunnel_token only when cloudflared_enabled;
 # openai_embeddings_api_key only under the hosted-embedder opt-in above.
 
 # Flat Slack token names copied from the controller secrets directory.

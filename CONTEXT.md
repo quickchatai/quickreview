@@ -5,7 +5,8 @@ to it, and reviews the whole codebase without a pull request. Driven by the
 operator's companion; the deterministic half is `src/setup/`. It also names
 the two packages, what a person meets first and the other coding-agent CLIs
 it installs into
-([ADR 0001](docs/adr/0001-plugin-and-app-nest.md)).
+([ADR 0001](docs/adr/0001-plugin-and-app-nest.md)), and the model a run uses
+and what it may cost ([ADR 0002](docs/adr/0002-model-route.md)).
 
 ## Language
 
@@ -148,8 +149,8 @@ Where a `qcr scan start` driver runs by default: a throwaway container from the 
 _Avoid_: scan container (it is one, but the term names the boundary), companion (the companion is the long-lived session)
 
 **Hard stop**:
-The cap a scan run never spends past — the estimate the operator approved (the calibration cap for a calibration run); reaching it aborts what is in flight, and the ledger holds only what finished.
-_Avoid_: budget (that is what the operator gives stage 2's proposal)
+The dollar cap a run never spends past — for a scan, the estimate the operator approved (the calibration cap for a calibration run); for a review, twice its estimate where there is one (a measured model, or the repo's own rates) and the spend limit on an unmeasured model. Reaching it aborts what is in flight, and a scan's ledger holds only what finished. A run on an unpriced model has no hard stop, whatever estimate the repo's own rates give it: pi counts no cost there, so no dollar figure can hold it, and its time and turn limits do.
+_Avoid_: budget (that is what the operator gives stage 2's proposal), estimate (the estimate is what a run is expected to cost; the stop is what holds it)
 
 **Deep-lens suggestion**:
 Stage 1's pointer for stage 2: a lens, the files it should read, and one line on why.
@@ -191,10 +192,6 @@ _Avoid_: client, agent (the reviewer's own sessions are agents too)
 The skills and manifests that let a host run reviews and scans through the app's `qcr`, written once with the plugin's own skills. "Plugin" alone is always the pi package.
 _Avoid_: plugin (alone), extension, integration
 
-**Model route**:
-Which provider and models a review runs on, picked from the credential the person has.
-_Avoid_: provider (a route can name several), model (a route is the whole choice)
-
 **Full review**:
 The review as shipped, on its default plan of lenses, as opposed to the `full` preset, which reviews the whole change again at the highest effort.
 _Avoid_: full (alone, that is the preset), complete review
@@ -202,3 +199,33 @@ _Avoid_: full (alone, that is the preset), complete review
 **Auto-review**:
 The opt-in always-on daemon that reviews new pull requests by polling; reviewing one pull request from the home does not need it.
 _Avoid_: the bot, live mode (dry-run and live are a separate switch)
+
+### The model a run uses
+
+**Model route**:
+The provider and model a run uses, resolved once per run from pi's credentials, a pin, or a remembered choice.
+_Avoid_: login route, twin (the retired switch between two providers), provider (alone: a route names the model too)
+
+**Pin**:
+A model a person named: `--model` for one run, `[models] model`, or a tier or lens entry in the config. A pin is never silently replaced: its model runs, or the run refuses.
+_Avoid_: default model (a pin is stated, a default is not); to pin a memory entry is reviewer memory's word (see Pin proposal)
+
+**Remembered choice**:
+The provider, and sometimes the model, a person picked for reviews on one pi home — the answer to a run's question, or one stated with `qcr model use` — kept beside pi's logins.
+_Avoid_: pin (a pin is in the config or on the command line), saved default (that is pi's own)
+
+**Tier**:
+One of light, standard, deep: a thinking level and, when pinned, a model, that a lens runs at.
+_Avoid_: terra-med, sol-med, sol-high (the older names, read on every input and never written), rung, depth (that is a scan's)
+
+**Measured model**:
+A model the review estimate was fitted on; only a run wholly on it shows the fitted estimate (a repo that sets its own rates gets an estimate at those rates on any model).
+_Avoid_: default model, supported model (every model pi offers is supported)
+
+**Unmeasured**:
+Priced by pi, never fitted: a run on such a model shows no estimate and is held by a spend limit, unless the repo sets its own rates.
+_Avoid_: unsupported, unknown price (the list price is known; what a review costs on it is not)
+
+**Unpriced**:
+pi has no list price for the model: no dollar stop, and the run's spend is recorded as unknown. A repo's own rates still give such a run an estimate; they do not give it a stop.
+_Avoid_: free, $0

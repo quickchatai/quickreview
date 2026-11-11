@@ -32,6 +32,7 @@ import {
   lensIdOf,
   type LensLedgerLine,
 } from "@quickchatai/pi-quickreview/src/lensresult.js";
+import { splitModelSpec } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import {
   normalizeRedirections,
   opensUnmodelledQuoting,
@@ -50,10 +51,15 @@ export interface RoundUsage {
   /** Output tokens INCLUDING reasoning tokens (pi reports them separately). */
   tokens_out: number;
   tokens_cache_read: number;
-  /** Sum of pi's own per-record usage.cost.total (USD) — the primary cost
-   * source, verified live on the VM. Null when no record in the window
-   * carried a cost object. */
+  /** Sum of pi's own per-record usage.cost.total (USD) — the one cost source,
+   * verified live on the VM. Null when the window's cost is not known: no
+   * record in it carried a cost object, or one was unpriced
+   * (`unpriced_calls`). Never a partial sum. */
   cost_usd: number | null;
+  /** Assistant messages and lens children that used tokens at a cost of
+   * exactly 0: pi stamps that on a model it has no price for, so it is not
+   * "free". Absent when there are none; with any, `cost_usd` is null. */
+  unpriced_calls?: number;
   models: Record<string, ModelUsage>;
   /** True when at least one global-store (pass/subagent) file matched. */
   passes_included: boolean;
@@ -196,9 +202,11 @@ export function parseTranscriptLine(
   };
 }
 
-/** A child's model without its `:<thinking>` suffix (the pricing table's key). */
+/** A child's model without its `:<thinking>` suffix.
+ * Only a thinking level is a suffix: a model id may itself hold a colon. */
 function childModel(model: unknown): string {
-  return typeof model === "string" && model ? model.replace(/:[a-z]+$/, "") : UNKNOWN_MODEL;
+  if (typeof model !== "string") return UNKNOWN_MODEL;
+  return splitModelSpec(model).model || UNKNOWN_MODEL;
 }
 
 /** What one lens-ledger line contributes: its run's usage, keyed by its id. */
@@ -215,8 +223,8 @@ function ledgerUsageOf(line: LensLedgerLine): LineUsage {
 
 /** Each child's usage in a lens tool result (`subagent`, `launch_plan`, `lens`,
  * `lens_wave` — the tmux bot's spellings and the engine's), attributed to
- * the child's model without its `:<thinking>` suffix (the pricing table's
- * key). A result's `usage` is the child's sum over its turns — input, output,
+ * the child's model without its `:<thinking>` suffix. A result's `usage` is
+ * the child's sum over its turns — input, output,
  * cacheRead, and `cost` as a NUMBER (the sum of each turn's cost.total); seen in
  * production on `lens` and `lens_wave` results at pi 1.3.0. The older spellings
  * survive only in archived transcripts. */
@@ -267,41 +275,20 @@ function assistantUsage(rec: JsonlRecord, model: string): LineUsage | undefined 
  * so the floating-point sums (which are order-sensitive) come out the same
  * bit for bit however the transcripts are read. */
 export function addLineUsage(acc: RoundUsage, u: LineUsage): void {
-  if (u.cost !== null) acc.cost_usd = (acc.cost_usd ?? 0) + u.cost; // pi's own accounting — primary
-  if (u.tin === 0 && u.tout === 0 && u.cache === 0) return;
+  const tokens = u.tin !== 0 || u.tout !== 0 || u.cache !== 0;
+  // pi stamps a cost of 0 on a call of a model it has no price for: tokens at
+  // exactly 0 are an unpriced call, and a window with one has no dollar
+  // figure at all, whatever its other calls cost.
+  if (tokens && u.cost === 0) acc.unpriced_calls = (acc.unpriced_calls ?? 0) + 1;
+  if (acc.unpriced_calls !== undefined) acc.cost_usd = null;
+  else if (u.cost !== null) acc.cost_usd = (acc.cost_usd ?? 0) + u.cost; // pi's own accounting
+  if (!tokens) return;
   acc.tokens_in += u.tin;
   acc.tokens_out += u.tout;
   acc.tokens_cache_read += u.cache;
   const m = (acc.models[u.model] ??= { in: 0, out: 0 });
   m.in += u.tin;
   m.out += u.tout;
-}
-
-// ---- pricing ---------------------------------------------------------------
-
-export interface ModelPricing {
-  input_per_mtok: number;
-  output_per_mtok: number;
-}
-
-/** USD estimate over per-model token counts. Returns null when any model in
- * play has no price entry — an honest "unknown" beats a silent undercount.
- * Lookup tolerates the provider prefix: "openai-codex/gpt-x" matches either
- * the full key or a bare "gpt-x" pricing entry. */
-export function estimateUsd(
-  models: Record<string, ModelUsage>,
-  pricing: Record<string, ModelPricing>,
-): number | null {
-  let usd = 0;
-  for (const [model, usage] of Object.entries(models)) {
-    const bare = model.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model;
-    const price = pricing[model] ?? pricing[bare];
-    if (!price) return null;
-    usd +=
-      (usage.in / 1_000_000) * price.input_per_mtok +
-      (usage.out / 1_000_000) * price.output_per_mtok;
-  }
-  return usd;
 }
 
 // ---- exec-policy audit -----------------------------------------------------
@@ -454,6 +441,8 @@ const POLICY_SURFACE_FILES = [
   "config.toml",
   "qcr-profile-write.json",
   ".qcr-profile-write.json.tmp",
+  "qcr-model.json",
+  "qcr-model.json.tmp",
   "AGENTS.override.md",
   "AGENTS.MD",
   "AGENTS.md",

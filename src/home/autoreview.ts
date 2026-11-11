@@ -116,7 +116,8 @@ function loginPause(s: Obj, now: number): string | null {
 }
 
 /** The refresher looked after `since` and found a login that works: not
- * paused, no error, a token not yet expired. */
+ * paused, no error, a token not yet expired. The refresher writes `never`
+ * for a login that has no expiry, and that one is not expired. */
 function worksSince(login: Obj, since: unknown, now: number): boolean {
   const at = typeof since === "string" ? Date.parse(since) : NaN;
   const checked = typeof login["checked_at"] === "string" ? Date.parse(login["checked_at"]) : NaN;
@@ -127,8 +128,7 @@ function worksSince(login: Obj, since: unknown, now: number): boolean {
     checked > at &&
     login["paused"] !== true &&
     login["last_error"] === null &&
-    Number.isFinite(expires) &&
-    expires > now
+    (login["expires_at"] === "never" || (Number.isFinite(expires) && expires > now))
   );
 }
 

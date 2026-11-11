@@ -76,9 +76,13 @@ jobs:
         if: github.event_name != 'issue_comment' || steps.pr.outputs.review == 'true'
         with:
           # The model login: the contents of a pi auth.json, as a repository
-          # secret. Or give an API key instead (openai-api-key, anthropic-api-key,
-          # gemini-api-key, digitalocean-api-key).
+          # secret. Or give an API key instead, for any provider: add an `env:`
+          # to this step with the variable the provider documents, for example
+          #   env:
+          #     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           pi-auth: ${{ secrets.QCR_PI_AUTH }}
+          # The model, as pi names it. Default: the provider's newest.
+          # model: provider/model
           # limit: "5"
           # The release image is public and needs no registry login. Only an
           # image that is not public (a private mirror, named by `image`) takes

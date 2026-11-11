@@ -37,6 +37,15 @@ the index before a change that moves code between packages or adds a surface.
   nest.** The plugin (`packages/pi-plugin`) is what plain pi needs to review.
   The app is the managed product around it: the home, setup, auto-review and
   the TUI. Each works without the one outside it.
+- [ADR 0002](docs/adr/0002-model-route.md): **the model route.** A review
+  runs on any provider pi supports, on the credential the person has. The
+  shipped config names no model, and no provider or model name decides
+  anything in product code (`tests/fences-modelnames.test.ts`). The route is
+  resolved once per run where pi is (`packages/pi-plugin/src/modelroute.ts`,
+  from the inventory `packages/pi-plugin/src/engine/pisdk.ts` builds), a spec
+  that names no model means "the run's route", and the tiers are `light`,
+  `standard` and `deep`. Read it before a change that names a model, reads a
+  credential or prices a run.
 
 ## Build, test, typecheck
 

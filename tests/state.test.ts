@@ -6,10 +6,15 @@ import { join } from "node:path";
 import {
   StateStore,
   buildStatusSnapshot,
+  roundUsage,
+  spendIsUnknown,
   writeStatusJson,
   type OpenReviewFailureInput,
+  type RoundRow,
   type StatusSnapshot,
 } from "../src/state.js";
+import { routeChangeText, type RouteReport } from "../src/ipc/routereport.js";
+import { maybeWriteModelRouteAlert, type ModelRouteAlertMemory } from "../src/tui/alerts.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const T0 = new Date("2026-08-13T09:00:00.000Z");
@@ -94,13 +99,13 @@ describe("rounds", () => {
 
   // Which tier held the veto, so a later audit can attribute kills.
   it("records the validator's tier at start, and lets a late stamp fill it in", () => {
-    const id = store.startRound(7, "initial", ["pass-baseline"], 45, { validate_tier: "sol-high" });
-    expect(store.roundsFor(7)[0]!.validate_tier).toBe("sol-high");
+    const id = store.startRound(7, "initial", ["pass-baseline"], 45, { validate_tier: "deep" });
+    expect(store.roundsFor(7)[0]!.validate_tier).toBe("deep");
 
     const bare = store.startRound(8, "initial", [], 45);
     expect(store.roundsFor(8)[0]!.validate_tier).toBeNull();
-    store.setRoundMeta(bare, { validate_tier: "sol-med" });
-    expect(store.roundsFor(8)[0]!.validate_tier).toBe("sol-med");
+    store.setRoundMeta(bare, { validate_tier: "standard" });
+    expect(store.roundsFor(8)[0]!.validate_tier).toBe("standard");
     expect(id).not.toBe(bare);
   });
 
@@ -239,14 +244,56 @@ describe("rounds", () => {
     expect(store.totalSpend()).toBeCloseTo(1.25 + 0.1, 6);
   });
 
+  // Fence 7: unknown spend is never zero. A round with tokens and no price
+  // (pi stamps a model it has no price for at 0, and the round's est_usd is
+  // then NULL; an older row's transcripts carried no cost at all) adds
+  // nothing to the sum and is counted beside it.
+  // MUTATION: restore `r.est_usd ?? 0` without the count in roundUsage (drop
+  // `unknown_spend_rounds`) - this fails.
+  it("a round with tokens and no price is counted as unknown spend, never as $0 in the sum", () => {
+    const priced = store.startRound(7, "initial", [], 45);
+    const unpriced = store.startRound(8, "initial", [], 45);
+    const older = store.startRound(9, "initial", [], 45);
+    const unmeasured = store.startRound(10, "initial", [], 45);
+    store.recordRoundUsage(priced, { tokens_in: 1000, tokens_out: 100, est_usd: 0.4 });
+    store.recordRoundUsage(unpriced, { tokens_in: 5000, tokens_out: 500, est_usd: null });
+    store.recordRoundUsage(older, { tokens_in: 0, tokens_out: 70, est_usd: null });
+    const rows = [priced, unpriced, older, unmeasured].map(
+      (id) => store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(id) as RoundRow,
+    );
+    expect(rows.map(spendIsUnknown)).toEqual([false, true, true, false]);
+    const usage = roundUsage(rows);
+    expect(usage.spend_usd).toBeCloseTo(0.4, 9);
+    expect(usage.unknown_spend_rounds).toBe(2);
+    // The all-time pair agrees with the per-row rule.
+    expect(store.totalSpend()).toBeCloseTo(0.4, 9);
+    expect(store.totalUnknownSpendRounds()).toBe(2);
+    // A round never measured (no tokens recorded) is not claimed either way.
+    expect(roundUsage([rows[3]!])).toMatchObject({ spend_usd: 0, unknown_spend_rounds: 0 });
+    // A recorded price, even one of 0, is a price: only NULL is unknown.
+    expect(spendIsUnknown({ est_usd: 0, tokens_in: 10, tokens_out: 1 })).toBe(false);
+  });
+
+  it("the snapshot carries each sum's unknown-round count beside it", () => {
+    const a = store.startRound(7, "initial", [], 45);
+    const b = store.startRound(8, "initial", [], 45);
+    store.recordRoundUsage(a, { tokens_in: 1000, tokens_out: 100, est_usd: 0.4 });
+    store.recordRoundUsage(b, { tokens_in: 5000, tokens_out: 500, est_usd: null });
+    const snap = buildStatusSnapshot(store, true, undefined, now);
+    expect(snap.total_spend_usd).toBeCloseTo(0.4, 9);
+    expect(snap.total_unknown_spend_rounds).toBe(1);
+    expect(snap.today_unknown_spend_rounds).toBe(1);
+    expect(snap.month_unknown_spend_rounds).toBe(1);
+  });
+
   // Executed-pass telemetry, stored beside (never instead of) the plan.
   it("records executed passes per round, distinct from planned lenses; null/unparseable read as unknown", () => {
     const id = store.startRound(7, "initial", ["pass-baseline", "pass-validate"], 45);
     expect(store.executedPasses(id)).toBeNull(); // unknown until the verdict reports
 
-    store.recordExecutedPasses(id, [{ name: "pass-baseline", tier: "sol-med", findings: 2 }]);
+    store.recordExecutedPasses(id, [{ name: "pass-baseline", tier: "standard", findings: 2 }]);
     expect(store.executedPasses(id)).toEqual([
-      { name: "pass-baseline", tier: "sol-med", findings: 2 },
+      { name: "pass-baseline", tier: "standard", findings: 2 },
     ]);
     expect(store.roundsFor(7)[0]!.lenses).toBe("pass-baseline,pass-validate"); // the plan is untouched
 
@@ -638,6 +685,163 @@ describe("status.json", () => {
     expect(read.digest_headline).toBe("second");
     expect(read.prs.map((p) => p.number)).toEqual([11]);
     expect(readdirSync(dir)).toEqual(["status.json"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The model reviews run on is what the newest worker reported, or unknown.
+//
+// The daemon never asks pi: a worker reports its route and the store keeps
+// the latest (events-table backed). Both "no report" and "a record that cannot
+// be read" are unknown, in the store and in status.json, and a change between
+// two reports is one anomaly.
+// ---------------------------------------------------------------------------
+
+describe("the model route workers report", () => {
+  const A: RouteReport = {
+    spec: "prov-a/model-9",
+    source: "only-credential",
+    pick: "newest",
+    moved_from: null,
+    credential_origin: "stored",
+  };
+  const from = (n = 1) => ({ pr: 7, command_id: `cmd-${n}` });
+  const changes = (s: StateStore = store): string[] =>
+    s
+      .anomalies()
+      .filter((a) => a.kind === "model_route_changed")
+      .map((a) => a.detail);
+
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "qcr-route-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // MUTATION: write `model_route` only when there is a record
+  // (`...(route ? { model_route: route } : {})` in buildStatusSnapshot) — "no
+  // worker has reported yet" becomes a missing key, which a reader takes for a
+  // daemon that reports none, and this fails.
+  it("is unknown until a worker reports one: null in the store and in status.json, never a default", () => {
+    expect(store.modelRoute()).toBeNull();
+    const snap = buildStatusSnapshot(store, true, undefined, now);
+    expect(snap).toHaveProperty("model_route", null);
+    writeStatusJson(dir, snap);
+    const read = JSON.parse(readFileSync(join(dir, "status.json"), "utf8")) as StatusSnapshot;
+    expect(read).toHaveProperty("model_route", null);
+  });
+
+  it("keeps the newest report with when it came, one event per worker", () => {
+    expect(store.recordModelRoute(A, from(1))).toBe("first");
+    clock = new Date(T0.getTime() + 60_000);
+    expect(store.recordModelRoute({ ...A, source: "remembered" }, from(2))).toBe("same");
+    expect(store.modelRoute()).toEqual({ ...A, source: "remembered", at: clock.toISOString() });
+    expect(buildStatusSnapshot(store, true, undefined, now).model_route).toEqual(
+      store.modelRoute(),
+    );
+    expect(store.prEvents(7, ["model_route"]).map((e) => e.payload)).toEqual([
+      { ...A, at: T0.toISOString(), command_id: "cmd-1" },
+      { ...A, source: "remembered", at: clock.toISOString(), command_id: "cmd-2" },
+    ]);
+    expect(changes()).toEqual([]);
+  });
+
+  // MUTATION: raise the anomaly when there is no earlier record too (drop the
+  // `prev === null` return in recordModelRoute) — every boot of a fresh state
+  // alarms on its first worker, and this fails on the first line.
+  it("raises model_route_changed for another model, another move or another origin; never first, never on a repeat", () => {
+    expect(store.recordModelRoute(A, from(1))).toBe("first");
+    expect(changes()).toEqual([]);
+
+    const model = { ...A, spec: "prov-a/model-10" };
+    const moved = { ...model, spec: "prov-c/model-10", moved_from: "prov-a" };
+    const keyed = { ...moved, credential_origin: "env-key" };
+    expect(store.recordModelRoute(model, from(2))).toBe("changed");
+    expect(store.recordModelRoute(model, from(3))).toBe("same");
+    expect(store.recordModelRoute(moved, from(4))).toBe("changed");
+    expect(store.recordModelRoute(keyed, from(5))).toBe("changed");
+    expect(changes()).toEqual([
+      routeChangeText(A, model),
+      routeChangeText(model, moved),
+      routeChangeText(moved, keyed),
+    ]);
+    // It belongs to no PR: the route is the bot's.
+    expect(store.anomalies().every((a) => a.pr === null && a.round_no === null)).toBe(true);
+  });
+
+  // MUTATION: keep the previous report in memory only (never read the events
+  // table in modelRoute()) — a deploy that lost the login mount starts from
+  // "first" and says nothing, and this fails.
+  it("stands across a restart: the next daemon's first worker is held against the last report", () => {
+    const file = join(dir, "state.db");
+    const before = new StateStore(file, now);
+    before.recordModelRoute(A, from(1));
+    before.close();
+
+    const after = new StateStore(file, now);
+    try {
+      expect(after.modelRoute()).toEqual({ ...A, at: T0.toISOString() });
+      const keyed = { ...A, credential_origin: "env-key" };
+      expect(after.recordModelRoute(keyed, from(2))).toBe("changed");
+      expect(changes(after)).toEqual([routeChangeText(A, keyed)]);
+    } finally {
+      after.close();
+    }
+  });
+
+  it("a newest record it cannot read is unknown, and the report after it is a first one", () => {
+    // A row from a build that wrote another shape, read by this one at boot.
+    store.logEvent("model_route", 7, { spec: "", at: T0.toISOString() });
+    expect(store.modelRoute()).toBeNull();
+    expect(buildStatusSnapshot(store, true, undefined, now).model_route).toBeNull();
+    expect(store.recordModelRoute(A, from(2))).toBe("first");
+    expect(changes()).toEqual([]);
+  });
+
+  describe("the TUI's alert for a change (maybeWriteModelRouteAlert)", () => {
+    const at = "2026-08-13T09:00:00.000Z";
+    const alerts = (): string[] => (existsSync(dir) ? readdirSync(dir) : []);
+    const mem = (): ModelRouteAlertMemory => ({ last: undefined });
+
+    // MUTATION: alert on the first route a TUI reads (treat `mem.last ===
+    // undefined` as a change) — every TUI start notifies, and this fails.
+    it("writes one alert when a fresh snapshot's route is not the one before it, in the anomaly's words", () => {
+      const m = mem();
+      const keyed = { ...A, credential_origin: "env-key" };
+      expect(maybeWriteModelRouteAlert(dir, { ...A, at }, true, m, now)).toBeUndefined();
+      expect(maybeWriteModelRouteAlert(dir, { ...A, at, source: "choice" }, true, m, now)).toBe(
+        undefined,
+      );
+      const name = maybeWriteModelRouteAlert(dir, { ...keyed, at }, true, m, now);
+      expect(name).toMatch(/-model-route-changed\.json$/);
+      expect(JSON.parse(readFileSync(join(dir, name!), "utf8"))).toEqual({
+        tier: "alert",
+        cause: "model-route-changed",
+        pr: null,
+        title: "reviews now run on another model or credential",
+        body: routeChangeText(A, keyed),
+        ts: T0.toISOString(),
+      });
+      // The same route again says nothing more.
+      expect(maybeWriteModelRouteAlert(dir, { ...keyed, at }, true, m, now)).toBeUndefined();
+      expect(alerts()).toEqual([name]);
+    });
+
+    // MUTATION: remember an unknown block as the last route (set `mem.last`
+    // before the null check) — the route after an unreadable snapshot is taken
+    // for the first, the change is lost, and this fails.
+    it("an unknown route raises nothing and is not remembered; a stale snapshot is not read", () => {
+      const m = mem();
+      maybeWriteModelRouteAlert(dir, { ...A, at }, true, m, now);
+      for (const unknown of [undefined, null, { spec: 3 }, "prov-a/model-9"])
+        expect(maybeWriteModelRouteAlert(dir, unknown, true, m, now)).toBeUndefined();
+      const keyed = { ...A, credential_origin: "env-key", at };
+      expect(maybeWriteModelRouteAlert(dir, keyed, false, m, now)).toBeUndefined();
+      expect(alerts()).toEqual([]);
+      expect(maybeWriteModelRouteAlert(dir, keyed, true, m, now)).toBeDefined();
+    });
   });
 });
 

@@ -3,9 +3,13 @@
 // (extensions/cli/home.ts) calls `homeOptionsFromEnv(process.env)`.
 //
 //   pi login   the auth file of the pi home the chat runs in: pi's own
-//              agent dir ($PI_CODING_AGENT_DIR, else ~/.pi/agent), read the
-//              way pi reads it, so the login line and the chat cannot
-//              disagree. Provider ids only, never a token.
+//              agent dir ($PI_CODING_AGENT_DIR, else ~/.pi/agent). Whether
+//              the home is signed in is pi's registry's to say (any
+//              provider, a key in the environment too: extensions/home.ts
+//              reads it off the running pi); this file is what a pi that
+//              hands the home no registry is read by, and what tells a
+//              re-login that a stored login was replaced. Provider ids, each
+//              credential's type and expiry, never a token.
 //   GitHub     `gh`: the account, the repository's open PRs, the browser.
 //   repository `[github] repo` of the install's config.toml, read again on
 //              every refresh.
@@ -31,6 +35,7 @@
 // (`homeStackRoot`): a checkout or the image is its own, an app installed by
 // a package manager gets one in its state home, never inside the package.
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
@@ -67,7 +72,8 @@ import {
   type SpendPort,
 } from "./ports.js";
 
-/** The launch hands the child pi its model and tool set in these. */
+/** The launch hands the child pi its tool set, and its model when the config
+ * pins one, in these. */
 export const HOME_MODEL_ENV = "QCR_HOME_MODEL";
 export const HOME_TOOLS_ENV = "QCR_HOME_TOOLS";
 
@@ -103,27 +109,51 @@ const isMissingFile = (err: unknown): boolean =>
   (err as NodeJS.ErrnoException | null)?.code === "ENOENT";
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-/** The providers pi holds a login for in `agentDir`. No auth file is no
- * login; a file that cannot be read or parsed is unknown. */
+/** Eight hex of a sha256 over one stored entry: enough to tell two
+ * credentials apart, far too little to say what either is. */
+const entryDigest = (entry: unknown): string =>
+  createHash("sha256").update(JSON.stringify(entry)).digest("hex").slice(0, 8);
+
+/** The credentials pi stores in `agentDir`'s auth file. No auth file is no
+ * stored credential; a file that cannot be read or parsed is unknown. */
 export function piLoginPort(
   agentDir: string,
   read: (p: string) => string = (p) => readFileSync(p, "utf8"),
 ): PiLoginPort {
+  const path = join(agentDir, "auth.json");
+  /** Each stored credential's stamp by provider: its type, its expiry and a
+   * short one-way digest of the stored entry, so a credential replaced by one
+   * of the same type and expiry (an API key by another) reads differently.
+   * Never a token. */
+  const stored = (): Known<ReadonlyMap<string, string>> => {
+    let raw: string;
+    try {
+      raw = read(path);
+    } catch (err) {
+      return isMissingFile(err)
+        ? known(new Map<string, string>())
+        : unknown(`can't read ${path}: ${message(err)}`);
+    }
+    try {
+      const entries = JSON.parse(raw) as Record<string, unknown>;
+      return known(
+        new Map(
+          Object.entries(loginSummary(raw)).map(([provider, c]): [string, string] => [
+            provider,
+            `${c.type}:${c.expires ?? ""}:${entryDigest(entries[provider])}`,
+          ]),
+        ),
+      );
+    } catch (err) {
+      return unknown(`can't parse ${path}: ${message(err)}`);
+    }
+  };
   return {
     providers: async () => {
-      const path = join(agentDir, "auth.json");
-      let raw: string;
-      try {
-        raw = read(path);
-      } catch (err) {
-        return isMissingFile(err) ? known([]) : unknown(`can't read ${path}: ${message(err)}`);
-      }
-      try {
-        return known(Object.keys(loginSummary(raw)));
-      } catch (err) {
-        return unknown(`can't parse ${path}: ${message(err)}`);
-      }
+      const s = stored();
+      return s.kind === "known" ? known([...s.value.keys()]) : s;
     },
+    stamps: async () => stored(),
   };
 }
 
@@ -384,7 +414,11 @@ export function seedStack(root: string, pkgRoot: string): void {
 /** The home's options from a process's environment: the env shim's one call. */
 export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefined>>): {
   adapters: HomeAdapters;
+  /** The model the launch pinned, `provider/id`; "" when it pinned none. */
   model: string;
+  /** pi's agent dir: the login the chat and the reviews share, and where the
+   * remembered model choice is. */
+  agentDir: string;
   tools: HomeToolSet;
   tune: TunePort;
   advanced: AdvancedPort;
@@ -394,9 +428,11 @@ export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefin
   const root = homeStackRoot(env);
   seedStack(root, sandboxRoot());
   const configPath = (): string => locateConfig({ env }).path;
+  const agentDir = piAgentDir(env);
   return {
+    agentDir,
     adapters: realHomeAdapters({
-      agentDir: piAgentDir(env),
+      agentDir,
       configPath,
       reviews: realReviewsPort(env, { root, runner: stepRunner }),
       root,

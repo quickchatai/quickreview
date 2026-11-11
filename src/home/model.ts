@@ -18,6 +18,7 @@
 // cursor rests on is priced after PRICE_REST_MS, one preview at a time, cached
 // by its head: a preview for a PR the cursor has left gives way to the next.
 import type { HomeToolSet } from "../config.js";
+import type { ProviderInventory } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import { KEEP_IT_HERE, postAnswer } from "@quickchatai/pi-quickreview/src/plugin/messages.js";
 import type { PostingRule } from "@quickchatai/pi-quickreview/src/plugin/settings.js";
 import {
@@ -32,6 +33,7 @@ import {
   type MemoryState,
   type OpenPull,
   type Outcome,
+  type PiCredential,
   type PrReview,
   type ReviewQuote,
   type ReviewRunStatus,
@@ -60,8 +62,10 @@ export interface Notice {
 export type SetupGap = string;
 
 export interface HomeState {
-  /** The providers pi holds a login for, in the chat's pi home. */
-  login: Slot<readonly string[]>;
+  /** The providers pi has a usable credential for: pi's own inventory (a
+   * stored login, a key, the environment). Empty: pi has none. Unknown: pi's
+   * registry could not be read, which is never "none". */
+  login: Slot<readonly PiCredential[]>;
   /** The `gh` account; null when signed out. */
   github: Slot<string | null>;
   /** The configured repository; null when none is chosen. */
@@ -96,9 +100,16 @@ export interface HomeLists {
 
 export interface HomeModelOptions {
   adapters: HomeAdapters;
-  /** The launch's model, `provider/id`: its provider is the one counted until
-   * pi says which model the chat runs on. */
+  /** The model the launch pinned, `provider/id`; "" when it pinned none. Its
+   * provider is the chat's until pi says which model the chat runs on. */
   model: string;
+  /** The running pi's inventory: every provider it has a usable credential
+   * for, or unknown when its registry cannot be read. Undefined (or an
+   * answer of undefined: this pi hands the home no registry) falls back to
+   * the login file's stored providers (the `login` port). */
+  credentials?: () => Known<readonly PiCredential[]> | undefined;
+  /** A review's quote landed (the cursor's rest, or a review's start). */
+  onQuote?: (quote: ReviewQuote) => void;
   tools: HomeToolSet;
   /** Something the panel shows changed. */
   onChange?: () => void;
@@ -122,22 +133,51 @@ export const PRICE_REST_MS = 500;
 /** How often a running review's status is read. */
 export const STATUS_POLL_MS = 2000;
 
-/** "about $1.33, stops at $2.66", or what is not known of it. */
-export function priceWords(est: number | null, cap: number | null): string {
-  if (est === null) return "price unknown";
+/** "about $1.33, stops at $2.66"; on a quote with no estimate, "no estimate,
+ * stops at $15.00" (or "no dollar stop" where pi has no price); "price
+ * unknown" when this home never saw the quote. `quoted` says the quote was
+ * seen: a null estimate is then "none", not "not known". */
+export function priceWords(est: number | null, cap: number | null, quoted = false): string {
+  if (est === null) {
+    if (!quoted) return "price unknown";
+    return `no estimate, ${cap === null ? "no dollar stop" : `stops at ${money(cap)}`}`;
+  }
   return `about ${money(est)}${cap === null ? ", no hard stop" : `, stops at ${money(cap)}`}`;
 }
 
 const noTimer = (): (() => void) => () => {};
 
-/** The provider of a `provider/id` model. */
+/** The provider of a `provider/id` model; "" for no model. */
 export function providerOf(model: string): string {
   return model.split("/")[0] ?? model;
 }
 
-/** The provider as a person names it. */
-export function providerLabel(provider: string): string {
-  return provider === "openai-codex" || provider === "openai" ? "OpenAI" : provider;
+/** One entry of pi's inventory as the home shows it: pi's own name for the
+ * provider, and where pi found the credential. A login is a stored OAuth
+ * login; an environment source keeps pi's own label for it. */
+export function credentialOf(entry: ProviderInventory): PiCredential {
+  const { origin, kind, label } = entry.credential;
+  const from: PiCredential["from"] =
+    origin === "env-key" || origin === "ambient"
+      ? "environment"
+      : origin === "stored" && kind === "oauth"
+        ? "login"
+        : "key";
+  return {
+    provider: entry.provider,
+    name: entry.name,
+    from,
+    ...(from === "environment" && label !== undefined ? { label } : {}),
+  };
+}
+
+/** How pi holds a credential, in the words the login line and the setup
+ * card share: "signed in with pi", "API key", or pi's own label for an
+ * environment source (the variable's name). Never a value. */
+export function credentialHow(c: PiCredential): string {
+  if (c.from === "login") return "signed in with pi";
+  if (c.from === "key") return "API key";
+  return c.label ?? "the environment";
 }
 
 export function pullUrl(repo: string, pr: number): string {
@@ -204,6 +244,9 @@ export class HomeModel {
   selected: number | null = null;
   notice: Notice | null = null;
   readonly tools: HomeToolSet;
+  /** The provider the chat's model runs on; "" while pi has named none and
+   * the launch pinned none. It decides nothing about being signed in (any
+   * provider's credential counts): it is the one the login line names first. */
   private provider: string;
   private inFlight: Promise<string> | null = null;
   private greeted = false;
@@ -254,11 +297,6 @@ export class HomeModel {
     return this.o.adapters.clock.now();
   }
 
-  /** The provider the chat's model runs on: the one login that counts. */
-  chatProvider(): string {
-    return this.provider;
-  }
-
   /** pi chose another model (at start, or the person's /model). */
   setChatModel(provider: string | undefined): void {
     if (provider === undefined || provider === this.provider) return;
@@ -266,11 +304,64 @@ export class HomeModel {
     this.changed();
   }
 
-  /** Signed in for the chat's provider: true, false, or null when the auth
-   * file could not be read. A login under another provider is not one. */
+  /** Signed in: pi has a usable credential for at least one provider (true),
+   * for none (false), or null while that is not known: pi's registry could
+   * not be read, or the read has not landed. Null is never a setup gap. */
   signedIn(): boolean | null {
     const l = this.state.login;
-    return l.kind === "known" ? l.value.includes(this.provider) : null;
+    return l.kind === "known" ? l.value.length > 0 : null;
+  }
+
+  /** The credential the login line names: the chat's provider's when pi has
+   * one, else the first in pi's own order. Null: none, or not known. */
+  credential(): PiCredential | null {
+    const l = this.state.login;
+    if (l.kind !== "known") return null;
+    return l.value.find((c) => c.provider === this.provider) ?? l.value[0] ?? null;
+  }
+
+  /** pi's own name for a provider, from its inventory; the id where the
+   * inventory does not hold it. */
+  nameOf(provider: string): string {
+    const l = this.state.login;
+    const found = l.kind === "known" ? l.value.find((c) => c.provider === provider) : undefined;
+    return found?.name ?? provider;
+  }
+
+  /** Read pi's credentials: its inventory, else (a pi that hands the home
+   * no registry) the login file's stored providers. */
+  private async credentials(): Promise<Known<readonly PiCredential[]>> {
+    const read = this.o.credentials;
+    if (read !== undefined) {
+      const inventory = read();
+      if (inventory !== undefined) return inventory;
+    }
+    const stored = await this.o.adapters.login.providers();
+    return stored.kind === "known"
+      ? known(stored.value.map((p): PiCredential => ({ provider: p, name: p, from: "login" })))
+      : stored;
+  }
+
+  /** Read the credentials alone, between two full reads: what a sign-in in
+   * flight looks at (src/home/loginowner.ts). True, false or null as
+   * `signedIn`. */
+  async readLogin(): Promise<boolean | null> {
+    const login = await safe(() => this.credentials());
+    if (this.disposed) return null;
+    if (!this.held.has("login")) {
+      this.state.login = login;
+      this.changed();
+    }
+    return this.signedIn();
+  }
+
+  /** The route reviews run on changed (a provider was chosen): every quote
+   * was priced for the old one, so each is asked for again. */
+  requote(): void {
+    this.yieldPricing();
+    this.quotes.clear();
+    this.rested();
+    this.changed();
   }
 
   // ---- one login per box (src/home/loginowner.ts) -------------------------
@@ -424,7 +515,7 @@ export class HomeModel {
         this.changed();
       };
     const side = Promise.all([
-      safe(() => a.login.providers()).then(land("login")),
+      safe(() => this.credentials()).then(land("login")),
       safe(() => a.github.user()).then(land("github")),
       safe(() => a.autoReview.status()).then(land("autoReview")),
       safe(() => a.memory.status()).then(land("memory")),
@@ -497,8 +588,11 @@ export class HomeModel {
       return;
     }
     const user = nullable(this.state.github);
+    const credential = this.credential();
     const found = [
-      this.signedIn() ? `your ${providerLabel(this.provider)} login` : null,
+      credential
+        ? `your ${credential.name} ${credential.from === "login" ? "login" : "credential"}`
+        : null,
       user ? `GitHub @${user}` : null,
       repo ? `${repo} from your qcr config` : null,
     ].filter((x): x is string => x !== null);
@@ -572,12 +666,19 @@ export class HomeModel {
 
   // ---- the review button ------------------------------------------------
 
-  /** A PR's price for the model: null until it is quoted. */
+  /** A PR's price for the model: null until it is quoted. A quote with no
+   * estimate carries a null `estimate_usd` beside the basis that says why,
+   * so a null there never reads as "not known". */
   private priceOf(p: OpenPull): Record<string, unknown> | null {
     const q = this.quoteOf(p);
     if (q === null || q.kind === "pending") return null;
     return q.kind === "known"
-      ? { estimate_usd: q.value.estimateUsd, cap_usd: q.value.capUsd }
+      ? {
+          estimate_usd: q.value.estimateUsd,
+          cap_usd: q.value.capUsd,
+          price_basis: q.value.basis,
+          model: q.value.model,
+        }
       : { unknown_because: q.why };
   }
 
@@ -624,6 +725,7 @@ export class HomeModel {
     if (this.pricing?.stop === stop) this.pricing = null;
     if (stop.signal.aborted) return;
     this.quotes.set(p.number, { sha: p.headSha, q: r.ok ? known(r.quote) : unknown(r.why) });
+    if (r.ok) this.o.onQuote?.(r.quote);
     this.changed();
   }
 
@@ -685,6 +787,7 @@ export class HomeModel {
     const pre = await attempt(() => reviews.preview(repo, n));
     this.quotes.set(n, { sha: target.headSha, q: pre.ok ? known(pre.quote) : unknown(pre.why) });
     if (!pre.ok) return fail(`the preview failed: ${pre.why}`);
+    this.o.onQuote?.(pre.quote);
     if (this.stopping.delete(n)) return fail("you stopped it");
     quoteRun(run, pre.quote);
     run.now = "starting the review";
@@ -694,10 +797,12 @@ export class HomeModel {
     run.runId = st.runId;
     run.report = st.report;
     run.now = "fetching the pull request";
-    this.say(`Reviewing #${n} in the background — ${priceWords(run.est, run.cap)}. Keep chatting.`);
+    // The quote was seen: a run with no estimate says so and names its stop.
+    const price = priceWords(run.est, run.cap, true);
+    this.say(`Reviewing #${n} in the background — ${price}. Keep chatting.`);
     if (this.stopping.delete(n)) void this.stopReview(n);
     this.follow(run);
-    return `the review of #${n} started (run ${st.runId}, ${priceWords(run.est, run.cap)}); it writes its report to ${st.report} and posts nothing by itself`;
+    return `the review of #${n} started (run ${st.runId}, ${price}); it writes its report to ${st.report} and posts nothing by itself`;
   }
 
   /** Poll a run's status until it is over. */
@@ -914,7 +1019,17 @@ export class HomeModel {
     return {
       repo: nullable(this.state.repo),
       login: {
-        provider: this.provider,
+        // pi's inventory: every provider it has a usable credential for;
+        // null when that is not known, which is never "none"
+        providers:
+          this.state.login.kind === "known"
+            ? this.state.login.value.map((c) => ({
+                provider: c.provider,
+                name: c.name,
+                credential: credentialHow(c),
+              }))
+            : null,
+        chat_provider: this.provider === "" ? null : this.provider,
         signed_in: this.signedIn(),
         ...(why(this.state.login) ? { unknown_because: why(this.state.login) } : {}),
         ...(this.state.loginHealth ? this.loginOwnerStatus(this.state.loginHealth) : {}),
@@ -945,6 +1060,9 @@ export class HomeModel {
           stage: r.stage,
           estimate_usd: r.est,
           cap_usd: r.cap,
+          // What the quote's price was known from; null when this home never
+          // saw the quote, which is the one case a null estimate is unknown.
+          price_basis: r.basis ?? null,
           lenses: r.lenses.map((x) => ({ name: x.name, state: x.state, tools: x.tools })),
         })),
       ...(why(this.state.pulls) ? { pull_requests_unknown_because: why(this.state.pulls) } : {}),

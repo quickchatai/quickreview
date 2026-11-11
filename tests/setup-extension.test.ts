@@ -303,7 +303,7 @@ describe("the interview's profile tools", () => {
       expect(out).toContain(point);
     expect(out).toMatch(/security — .*\[pass-security, pass-bounds\]/);
     expect(out).toMatch(
-      /critical: enabled = true, min_tier = "sol-high", effort = "high", max_severity = "P0"/,
+      /critical: enabled = true, min_tier = "deep", effort = "high", max_severity = "P0"/,
     );
     expect(out).toMatch(/normal: \(nothing — the shipped behaviour\)/);
   });
@@ -563,14 +563,15 @@ describe("the survey tools", () => {
 describe("the pass-survey agent and the case runner", () => {
   it("the agent file is a read-only leaf at low, named apart from the companion's survey skill", () => {
     expect(COMPANION_AGENTS_DIR).toBe(join(process.cwd(), "docker/companion/agents"));
-    const agent = parseAgentFile(
-      readFileSync(join(COMPANION_AGENTS_DIR, "pass-survey.md"), "utf8"),
-    )!;
+    const text = readFileSync(join(COMPANION_AGENTS_DIR, "pass-survey.md"), "utf8");
+    const agent = parseAgentFile(text)!;
+    // The file names no model (it runs on the route) and keeps its level.
     expect(agent).toMatchObject({
       name: "pass-survey",
       tools: ["read", "grep", "find", "ls"],
-      model: "openai-codex/gpt-6.1-sol:low",
+      model: null,
     });
+    expect(text).toMatch(/^thinking: low$/m);
     expect(agent.systemPrompt).toMatch(/\[convention\]/);
     expect(agent.systemPrompt).toMatch(/NONE/);
     // The companion's candidate-triage skill keeps its own name.
@@ -666,13 +667,15 @@ describe("the pass-survey agent and the case runner", () => {
     ]);
     expect(args).toEqual(
       expect.arrayContaining([
-        "--model",
-        "openai-codex/gpt-6.1-sol:low",
+        "--thinking",
+        "low",
         "--tools",
         "read,grep,find,ls",
         "--append-system-prompt",
       ]),
     );
+    // No route was handed in and the file pins no model: the child pi picks.
+    expect(args).not.toContain("--model");
     expect(args.at(-1)).toBe("Task: SURVEY — do it");
   });
 

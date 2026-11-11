@@ -29,8 +29,8 @@ never as a lecture up front.
 ## What the person needs, and the fast path
 
 Say this near the start, in two or three short lines. They need three things:
-a **model login** (pi's `/login` opens by itself the first time — any working
-OpenAI login is fine), their **GitHub sign-in** (`gh` logged in; on a Boxes VM
+a **model login** (pi's `/login` opens by itself the first time — any model
+login pi offers is fine), their **GitHub sign-in** (`gh` logged in; on a Boxes VM
 it already is), and **one repository**. Setup ends once the defaults are in
 place and verified; the TUI then opens on the board, which lists the
 repository's open pull requests — they pick one there and press `R` to review
@@ -84,12 +84,14 @@ the own-account route: it is skipped there.
 - **Bring-up is slow the first time.** Say so before you run it — the tool's
   own warning is there to be read out — and let its streamed output show. A
   long build is expected, not a hang.
-- **The reviewer needs its own model login.** The review sessions run in the
-  daemon's container, and a login never transfers from this machine into it.
-  Once the stack is up, the LLM auth step's `daemon_login` check names the one
-  command that opens it; ask them to run it in a second terminal, sign in, and
-  tell you — then re-run the LLM auth step. Without it the first review on the
-  board would fail at once.
+- **The reviewer needs a model credential where it runs.** The review sessions
+  run in the daemon's container. Once the stack is up, re-run the model step
+  (`onboard_llm_auth`): its `daemon_model` check asks the daemon's own pi and
+  says which model it runs. If it is red, it names the one command that opens
+  pi's `/login` there (any provider pi offers) and where a provider key goes
+  instead; ask them to do one of the two in a second terminal and tell you,
+  then re-run the step. Without it the first review on the board would fail at
+  once.
 - **The first review and go-live come after setup.** `onboard_proof_round` and
   `onboard_go_live` are marked "after setup": setup finishes without them. Do
   not run them here unless the person asks. Say plainly that the installation

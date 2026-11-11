@@ -20,9 +20,14 @@
 //             login to a refresh that lands in the same moment.
 //   Refresh   every 10 minutes, any OAuth entry that is inside pi's refresh
 //             window plus a margin longer than the longest worker cap is
-//             refreshed through `deps.refresh` (pi-ai's own, pirefresh.ts) and
-//             written back atomically (atomic.ts): borrowers take no lock and
-//             always read a whole file.
+//             refreshed through `deps.refresh` (pi's own flow for that
+//             provider, pirefresh.ts) and written back atomically (atomic.ts):
+//             borrowers take no lock and always read a whole file. EVERY entry
+//             pi has a flow for, whichever provider the reviews run on: the
+//             "pi lock" rule above holds only while no pi on this file ever
+//             has to refresh one itself. An entry pi has no flow for is
+//             skipped with a note in the status file (`skipped`), not failed
+//             every ten minutes; one that never expires is never due.
 //   Failure   one `onFailure` per failure episode (the daemon raises one
 //             `login_refresh_failed` anomaly); a success ends the episode.
 //   Login     the entrypoint's login mode writes `auth.json.pause` and waits for
@@ -37,7 +42,7 @@ import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.js";
 import { acquireLoginLock, removeLegacyLockFile, type LoginLock } from "./lock.js";
-import type { LoginRefreshFileStatus } from "./types.js";
+import type { LoginRefreshFileStatus, LoginRefreshSkip } from "./types.js";
 
 export const AUTH_FILE = "auth.json";
 /** The single-instance lock. Not `${AUTH_FILE}.lock`: that is pi's (lock.ts). */
@@ -68,11 +73,35 @@ export interface OAuthEntry {
   [key: string]: unknown;
 }
 
+/** Refresh one provider's OAuth entry. Throws `NoOAuthFlow` for a provider
+ * that has no flow to refresh with; any other throw is a failed refresh. */
 export type RefreshFn = (
   provider: string,
   credential: OAuthEntry,
   signal: AbortSignal,
 ) => Promise<Omit<OAuthEntry, "type"> & { type?: "oauth" }>;
+
+/** Why an entry with no flow is left alone, as the status file says it. */
+export const NO_OAUTH_FLOW = "pi has no OAuth flow for it";
+
+/** A `RefreshFn`'s word that the provider has no OAuth flow: the entry is
+ * skipped with a note, never counted as a failed refresh. */
+export class NoOAuthFlow extends Error {
+  readonly provider: string;
+  constructor(provider: string) {
+    super(`${provider}: ${NO_OAUTH_FLOW}`);
+    this.name = "NoOAuthFlow";
+    this.provider = provider;
+  }
+}
+
+/** An expiry as the status file says it: the ISO time, or `never` for one that
+ * is no date. pi writes the largest safe integer for a login that does not
+ * expire, and a Date made from it is invalid (`toISOString` throws). */
+export function expiryText(expiresAt: number): string {
+  const date = new Date(expiresAt);
+  return Number.isNaN(date.getTime()) ? "never" : date.toISOString();
+}
 
 export interface RefresherDeps {
   /** pi's agent dir: where auth.json, its lock, pause file and status live. */
@@ -119,6 +148,8 @@ export class LoginRefresher {
   private paused = false;
   private expiresAt: number | null = null;
   private provider: string | null = null;
+  /** The due entries the last look left alone, and why. */
+  private skipped: LoginRefreshSkip[] = [];
   private lastRefresh: string | null = null;
   private lastError: string | null = null;
   private errorSince: string | null = null;
@@ -187,13 +218,14 @@ export class LoginRefresher {
     return {
       pid: process.pid,
       started_at: this.startedAt,
-      expires_at: this.expiresAt === null ? null : new Date(this.expiresAt).toISOString(),
+      expires_at: this.expiresAt === null ? null : expiryText(this.expiresAt),
       provider: this.provider,
       last_refresh: this.lastRefresh,
       last_error: this.lastError,
       error_since: this.errorSince,
       paused: this.paused,
       checked_at: this.checkedAt,
+      skipped: this.skipped,
     };
   }
 
@@ -271,6 +303,7 @@ export class LoginRefresher {
     if (this.unsaved === null && !existsSync(this.auth)) {
       this.expiresAt = null;
       this.provider = null;
+      this.skipped = [];
     }
     if (this.unsaved === null && existsSync(this.auth)) {
       try {
@@ -285,6 +318,9 @@ export class LoginRefresher {
 
     if (parsed) {
       const threshold = this.now() + PI_REFRESH_WINDOW_MS + this.deps.marginMs;
+      const skipped: LoginRefreshSkip[] = [];
+      // Every OAuth entry that is due, whichever provider the reviews run on.
+      // One that never expires is never due.
       for (const [name, entry] of Object.entries(parsed)) {
         if (!isOAuthEntry(entry) || entry.expires > threshold) continue;
         try {
@@ -306,13 +342,23 @@ export class LoginRefresher {
           }
           this.deps.log(`login refresh: refreshed ${name}`);
         } catch (err) {
+          if (err instanceof NoOAuthFlow) {
+            // Nothing to refresh it with: a note, not a failure every check.
+            skipped.push({ provider: name, reason: NO_OAUTH_FLOW });
+            if (!this.skipped.some((s) => s.provider === name))
+              this.deps.log(`login refresh: skipped ${name}: ${NO_OAUTH_FLOW}`);
+            continue;
+          }
           failures.push(`${name}: ${redactError(err)}`);
         }
       }
+      this.skipped = skipped;
       this.expiresAt = null;
       this.provider = null;
+      // The earliest expiry among the logins this refresher keeps alive: one
+      // it skips is named by its note, and its expiry is nobody's to act on.
       for (const [name, entry] of Object.entries(parsed)) {
-        if (!isOAuthEntry(entry)) continue;
+        if (!isOAuthEntry(entry) || skipped.some((s) => s.provider === name)) continue;
         if (this.expiresAt === null || entry.expires < this.expiresAt) {
           this.expiresAt = entry.expires;
           this.provider = name;

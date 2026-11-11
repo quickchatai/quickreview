@@ -26,14 +26,26 @@ import {
   frontmatterName,
   joinFrontmatter,
   splitFrontmatter,
+  passTierModels,
   splitModelSpec,
   tiersForPass,
 } from "@quickchatai/pi-quickreview/src/include.js";
+import { parseAgentFile } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
+import { MODELS_TIER_DEFAULTS, TIER_LEVELS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import type { PassTier } from "@quickchatai/pi-quickreview/src/types.js";
 import { renderMigrationPrecheckDegradedNote } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import { renderNitScopeNote } from "@quickchatai/pi-quickreview/src/templates.js";
 import { loadProfileAddenda } from "@quickchatai/pi-quickreview/src/profiles.js";
 import { homeProfileLookup } from "../src/install.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
+
+/** Three tiers pinned to a model, at the shipped levels: for the cases that
+ * read a `model:` line. The shipped defaults pin none. */
+const PINNED_TIERS: Record<PassTier, string> = {
+  light: "prov/model-a:medium",
+  standard: "prov/model-a:medium",
+  deep: "prov/model-a:high",
+};
 
 /** In-memory fs for the pure expansion tests. */
 function fakeFs(files: Record<string, string>) {
@@ -134,8 +146,8 @@ describe("frontmatter", () => {
   });
 
   it("rewrites the name field and adds/rewrites thinking", () => {
-    expect(applyNameOverride("name: pass-x\nmodel: m\n", "pass-x--sol-med")).toBe(
-      "name: pass-x--sol-med\nmodel: m\n",
+    expect(applyNameOverride("name: pass-x\nmodel: m\n", "pass-x--standard")).toBe(
+      "name: pass-x--standard\nmodel: m\n",
     );
     expect(applyThinkingOverride("name: pass-x\n", "high")).toBe("name: pass-x\nthinking: high\n");
     expect(applyThinkingOverride("thinking: low\n", "medium")).toBe("thinking: medium\n");
@@ -170,26 +182,18 @@ describe("splitModelSpec", () => {
 describe("tiersForPass", () => {
   const risk = ["pass-security", "pass-prod-risk", "pass-data-safety"];
 
-  it("risk passes get only sol-high; others all three", () => {
-    expect(tiersForPass("pass-security", risk, "terra-med")).toEqual(["sol-high"]);
-    expect(tiersForPass("pass-baseline", risk, "terra-med")).toEqual([
-      "terra-med",
-      "sol-med",
-      "sol-high",
-    ]);
+  it("risk passes get only deep; others all three", () => {
+    expect(tiersForPass("pass-security", risk, "light")).toEqual(["deep"]);
+    expect(tiersForPass("pass-baseline", risk, "light")).toEqual(["light", "standard", "deep"]);
   });
 
   // validate_tier is a floor — a profile's `min_tier` for pass-validate can
   // raise the validator above it (dispatch never raises it to match a lens),
   // so every tier at or above it must be buildable.
   it("validate builds every tier at or above its floor", () => {
-    expect(tiersForPass(VALIDATE_PASS, risk, "terra-med")).toEqual([
-      "terra-med",
-      "sol-med",
-      "sol-high",
-    ]);
-    expect(tiersForPass(VALIDATE_PASS, risk, "sol-med")).toEqual(["sol-med", "sol-high"]);
-    expect(tiersForPass(VALIDATE_PASS, risk, "sol-high")).toEqual(["sol-high"]);
+    expect(tiersForPass(VALIDATE_PASS, risk, "light")).toEqual(["light", "standard", "deep"]);
+    expect(tiersForPass(VALIDATE_PASS, risk, "standard")).toEqual(["standard", "deep"]);
+    expect(tiersForPass(VALIDATE_PASS, risk, "deep")).toEqual(["deep"]);
   });
 });
 
@@ -219,14 +223,14 @@ describe("buildAgents", () => {
     const built = buildAgents(join(root, "agents"), out, { root });
 
     expect(built.map((b) => b.name)).toEqual([
-      "pass-alpha--terra-med",
-      "pass-alpha--sol-med",
-      "pass-alpha--sol-high",
-      "pass-beta--terra-med",
-      "pass-beta--sol-med",
-      "pass-beta--sol-high",
+      "pass-alpha--light",
+      "pass-alpha--standard",
+      "pass-alpha--deep",
+      "pass-beta--light",
+      "pass-beta--standard",
+      "pass-beta--deep",
     ]);
-    const alpha = readFileSync(join(out, "pass-alpha--sol-med.md"), "utf8");
+    const alpha = readFileSync(join(out, "pass-alpha--standard.md"), "utf8");
     expect(alpha).toContain("# shared\nrules");
     expect(alpha).not.toContain("{{include:");
     expect(alpha).toContain("# Lens: alpha");
@@ -241,23 +245,113 @@ describe("buildAgents", () => {
 
   it("writes variant name/model/thinking frontmatter, other fields untouched", () => {
     const out = join(root, "state", "agents");
-    buildAgents(join(root, "agents"), out, { root });
-    const alpha = readFileSync(join(out, "pass-alpha--terra-med.md"), "utf8");
+    buildAgents(join(root, "agents"), out, { root, tiers: PINNED_TIERS });
+    const alpha = readFileSync(join(out, "pass-alpha--light.md"), "utf8");
     // `tools:` carries the seed's list — no memory tool, since no lens leaf
     // loads the memory extension — and the seed itself is untouched.
     expect(
       alpha.startsWith(
-        "---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash\nmodel: openai-codex/gpt-6.1-sol:medium\n",
+        "---\nname: pass-alpha--light\ndescription: a\ntools: read, bash\nmodel: prov/model-a:medium\n",
       ),
     ).toBe(true);
     expect(alpha).toContain("thinking: medium\n");
-    const high = readFileSync(join(out, "pass-alpha--sol-high.md"), "utf8");
-    expect(high).toContain("name: pass-alpha--sol-high\n");
-    // The model field carries the whole spec — the native subagent
-    // extension reads only `model:`, and pi's --model accepts the :thinking
-    // suffix. The separate thinking field stays as human documentation.
-    expect(high).toContain("model: openai-codex/gpt-6.1-sol:high\n");
+    const high = readFileSync(join(out, "pass-alpha--deep.md"), "utf8");
+    expect(high).toContain("name: pass-alpha--deep\n");
+    // The model field carries the whole spec: a reader that hands the field
+    // to pi's --model keeps the level, since pi reads the :thinking suffix.
+    // The thinking field says the same level.
+    expect(high).toContain("model: prov/model-a:high\n");
     expect(high).toContain("thinking: high\n");
+  });
+
+  // Fence: an unpinned tier has no model line. A tier whose spec names no
+  // model runs on the run's route, and a `model:` line with no model in it
+  // would be handed to pi as a model by whatever reads the field as written.
+  // MUTATION: write `model: ` for an empty model in buildAgents (call
+  // applyModelOverride(frontmatter, spec) whatever the spec names) — this fails.
+  describe("an unpinned tier has no model line", () => {
+    const modelLines = (text: string): string[] =>
+      text
+        .slice(0, text.indexOf("\n---\n", 4))
+        .split("\n")
+        .filter((l) => /^model:/.test(l));
+    const thinkingOf = (text: string): string | undefined =>
+      /^thinking:[ \t]*(.*)$/m.exec(text.slice(0, text.indexOf("\n---\n", 4)))?.[1];
+
+    it("with no tiers passed (the shipped defaults): no model line, the tier's level as thinking", () => {
+      const out = join(root, "state", "agents");
+      const built = buildAgents(join(root, "agents"), out, { root });
+      expect(built).toHaveLength(6);
+      for (const b of built) {
+        const text = readFileSync(b.output, "utf8");
+        // The seed's own `model:` line is taken out, not left behind.
+        expect(modelLines(text), b.name).toEqual([]);
+        expect(thinkingOf(text), b.name).toBe(TIER_LEVELS[b.tier]);
+        expect(b.model, b.name).toBeNull();
+        expect(b.thinking, b.name).toBe(TIER_LEVELS[b.tier]);
+        // …and the rest of the frontmatter is still there.
+        expect(text.startsWith(`---\nname: ${b.name}\n`), b.name).toBe(true);
+      }
+      expect(readFileSync(join(out, "pass-alpha--light.md"), "utf8")).toContain(
+        "tools: read, bash\n",
+      );
+    });
+
+    it("the registry reads such a file as an agent with no model and its level", () => {
+      const out = join(root, "state", "agents");
+      buildAgents(join(root, "agents"), out, { root });
+      const agent = parseAgentFile(
+        readFileSync(join(out, "pass-alpha--deep.md"), "utf8"),
+        "pass-alpha--deep.md",
+        "built",
+      );
+      expect(agent).toMatchObject({
+        name: "pass-alpha--deep",
+        model: undefined,
+        modelId: undefined,
+        thinking: TIER_LEVELS.deep,
+      });
+    });
+
+    it("a pinned tier beside unpinned ones keeps its model line, and only it", () => {
+      const out = join(root, "state", "agents");
+      buildAgents(join(root, "agents"), out, {
+        root,
+        tiers: { light: ":low", standard: "", deep: "prov/model-a:high" },
+      });
+      const light = readFileSync(join(out, "pass-alpha--light.md"), "utf8");
+      expect(modelLines(light)).toEqual([]);
+      expect(thinkingOf(light)).toBe("low");
+      // A spec that names neither a model nor a level writes neither field.
+      const standard = readFileSync(join(out, "pass-alpha--standard.md"), "utf8");
+      expect(modelLines(standard)).toEqual([]);
+      expect(thinkingOf(standard)).toBeUndefined();
+      const deep = readFileSync(join(out, "pass-alpha--deep.md"), "utf8");
+      expect(modelLines(deep)).toEqual(["model: prov/model-a:high"]);
+      expect(thinkingOf(deep)).toBe("high");
+    });
+
+    // A lens override that names only a level, on a tier that is itself
+    // unpinned: the variant's spec is `:low`, which is a level and no model.
+    it("a level-only lens override on an unpinned tier writes thinking and no model line", () => {
+      const out = join(root, "state", "agents");
+      const tiers = MODELS_TIER_DEFAULTS.tiers;
+      const built = buildAgents(join(root, "agents"), out, {
+        root,
+        tiers,
+        models: passTierModels({}, tiers, {}, { "pass-alpha": ":low" }),
+      });
+      for (const b of built.filter((x) => x.pass === "pass-alpha")) {
+        const text = readFileSync(b.output, "utf8");
+        expect(modelLines(text), b.name).toEqual([]);
+        expect(thinkingOf(text), b.name).toBe("low");
+        expect(b.model, b.name).toBeNull();
+      }
+      // The lens beside it keeps its tier's own level.
+      const beta = readFileSync(join(out, "pass-beta--deep.md"), "utf8");
+      expect(modelLines(beta)).toEqual([]);
+      expect(thinkingOf(beta)).toBe(TIER_LEVELS.deep);
+    });
   });
 
   it("with memory: true, grants every built pass exactly two read-only memory tools", () => {
@@ -323,7 +417,7 @@ describe("buildAgents", () => {
     expect(alpha).not.toContain("## Execution policy (sandbox rule, enforced)");
   });
 
-  it("builds a single sol-high variant for risk passes and validate from its floor up", () => {
+  it("builds a single deep variant for risk passes and validate from its floor up", () => {
     writeFileSync(
       join(root, "agents", "pass-validate.md"),
       `---\nname: pass-validate\nmodel: openai/gpt-5.6-sol\n---\n\n{{include:prompts/pass-common.md}}\n`,
@@ -331,20 +425,21 @@ describe("buildAgents", () => {
     const out = join(root, "state", "agents");
     const built = buildAgents(join(root, "agents"), out, {
       root,
+      tiers: PINNED_TIERS,
       riskPasses: ["pass-alpha"],
-      validateTier: "terra-med",
+      validateTier: "light",
     });
     expect(built.filter((b) => b.pass === "pass-alpha").map((b) => b.name)).toEqual([
-      "pass-alpha--sol-high",
+      "pass-alpha--deep",
     ]);
     expect(built.filter((b) => b.pass === "pass-validate").map((b) => b.name)).toEqual([
-      "pass-validate--terra-med",
-      "pass-validate--sol-med",
-      "pass-validate--sol-high",
+      "pass-validate--light",
+      "pass-validate--standard",
+      "pass-validate--deep",
     ]);
     expect(built.filter((b) => b.pass === "pass-beta")).toHaveLength(3);
-    const validate = readFileSync(join(out, "pass-validate--terra-med.md"), "utf8");
-    expect(validate).toContain("model: openai-codex/gpt-6.1-sol:medium\n");
+    const validate = readFileSync(join(out, "pass-validate--light.md"), "utf8");
+    expect(validate).toContain("model: prov/model-a:medium\n");
     expect(validate).toContain("thinking: medium\n");
   });
 
@@ -353,22 +448,20 @@ describe("buildAgents", () => {
     const built = buildAgents(join(root, "agents"), out, {
       root,
       tiers: {
-        "terra-med": "openai-codex/custom-terra:low",
-        "sol-med": "openai-codex/custom-sol:medium",
-        "sol-high": "openai-codex/custom-sol:high",
+        light: "openai-codex/custom-terra:low",
+        standard: "openai-codex/custom-sol:medium",
+        deep: "openai-codex/custom-sol:high",
       },
-      models: { "pass-beta--sol-high": "openai-codex/override-model" },
+      models: { "pass-beta--deep": "openai-codex/override-model" },
     });
-    expect(readFileSync(join(out, "pass-alpha--terra-med.md"), "utf8")).toContain(
+    expect(readFileSync(join(out, "pass-alpha--light.md"), "utf8")).toContain(
       "model: openai-codex/custom-terra:low\n",
     );
-    expect(readFileSync(join(out, "pass-alpha--terra-med.md"), "utf8")).toContain(
-      "thinking: low\n",
-    );
-    const beta = built.find((b) => b.name === "pass-beta--sol-high");
+    expect(readFileSync(join(out, "pass-alpha--light.md"), "utf8")).toContain("thinking: low\n");
+    const beta = built.find((b) => b.name === "pass-beta--deep");
     expect(beta?.model).toBe("openai-codex/override-model");
     expect(beta?.thinking).toBe(null);
-    expect(readFileSync(join(out, "pass-beta--sol-high.md"), "utf8")).toContain(
+    expect(readFileSync(join(out, "pass-beta--deep.md"), "utf8")).toContain(
       "model: openai-codex/override-model\n",
     );
   });
@@ -383,23 +476,21 @@ describe("buildAgents", () => {
     const out = join(root, "state", "agents");
     const built = buildAgents(join(root, "agents"), out, {
       root,
-      validateTier: "sol-med",
-      models: { "pass-validate--sol-high": "openai-codex/override-validate:high" },
+      tiers: PINNED_TIERS,
+      validateTier: "standard",
+      models: { "pass-validate--deep": "openai-codex/override-validate:high" },
     });
 
     // Floor and above — the tiers dispatch may raise the validator to.
     const validate = built.filter((b) => b.pass === VALIDATE_PASS);
-    expect(validate.map((b) => b.name)).toEqual([
-      "pass-validate--sol-med",
-      "pass-validate--sol-high",
-    ]);
+    expect(validate.map((b) => b.name)).toEqual(["pass-validate--standard", "pass-validate--deep"]);
     // The floor variant takes the tier's spec, split the usual way…
-    const floor = readFileSync(join(out, "pass-validate--sol-med.md"), "utf8");
-    expect(floor).toContain("name: pass-validate--sol-med\n");
-    expect(floor).toContain("model: openai-codex/gpt-6.1-sol:medium\n");
+    const floor = readFileSync(join(out, "pass-validate--standard.md"), "utf8");
+    expect(floor).toContain("name: pass-validate--standard\n");
+    expect(floor).toContain("model: prov/model-a:medium\n");
     expect(floor).toContain("thinking: medium\n");
     // …and the per-variant override wins over it, exactly as for a lens.
-    const high = built.find((b) => b.name === "pass-validate--sol-high")!;
+    const high = built.find((b) => b.name === "pass-validate--deep")!;
     expect(high.model).toBe("openai-codex/override-validate");
     expect(high.thinking).toBe("high");
     expect(readFileSync(high.output, "utf8")).toContain(
@@ -470,7 +561,7 @@ describe("build-time identity variables", () => {
       const built = buildAgents(src, join(dir, "out"), {
         root: dir,
         riskPasses: [],
-        validateTier: "terra-med",
+        validateTier: "light",
         vars: { owner_name: "Ada", repo: "org/app", bot_login: "bot[bot]" },
       });
       const text = readFileSync(built[0]!.output, "utf8");
@@ -490,7 +581,7 @@ describe("build-time identity variables", () => {
       const built = buildAgents(src, join(dir, "out"), {
         root: dir,
         riskPasses: [],
-        validateTier: "terra-med",
+        validateTier: "light",
       });
       expect(readFileSync(built[0]!.output, "utf8")).toContain("Tell the owner.");
     } finally {
@@ -508,7 +599,7 @@ describe("build-time identity variables", () => {
         buildAgents(src, join(dir, "out"), {
           root: dir,
           riskPasses: [],
-          validateTier: "terra-med",
+          validateTier: "light",
         }),
       ).toThrow(/unknown build-time variable/);
     } finally {
@@ -527,7 +618,7 @@ describe("build-time identity variables", () => {
       const built = buildAgents(src, join(dir, "out"), {
         root: dir,
         riskPasses: [],
-        validateTier: "terra-med",
+        validateTier: "light",
         addenda: [{ id: "quoted", scope: "all", text: "\nauthor wrote: {{sneaky}}\n" }],
       });
       expect(readFileSync(built[0]!.output, "utf8")).toContain("author wrote: {{sneaky}}");
@@ -555,9 +646,12 @@ describe("the real seeded content", () => {
       expect(built).toHaveLength(96);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
-        // No lens file names a model: the built variant carries exactly the
-        // configured tier's spec.
-        expect(text).toMatch(/\nmodel: openai-codex\/gpt-6\.1-sol:(medium|high)\n/);
+        // No lens file names a model and the shipped tiers pin none: the
+        // built variant carries no model line, and its tier's level.
+        const front = text.slice(0, text.indexOf("\n---\n", 4));
+        expect(front, b.name).not.toMatch(/^model:/m);
+        expect(front, b.name).toMatch(/^thinking: (medium|high)$/m);
+        expect(front, b.name).toContain(`thinking: ${TIER_LEVELS[b.tier]}`);
         expect(text).not.toContain("{{include:");
         // Identity variables resolve at build time — leaves must see
         // plain text, and no unexpanded {{…}} of any kind may reach a session.
@@ -568,11 +662,11 @@ describe("the real seeded content", () => {
         expect(b.name).toBe(`${b.pass}--${b.tier}`);
       }
       const names = built.map((b) => b.name);
-      expect(names).toContain("pass-validate--sol-high");
-      expect(names).not.toContain("pass-validate--terra-med");
-      expect(names).toContain("pass-security--sol-high");
-      expect(names).not.toContain("pass-security--terra-med");
-      expect(names).not.toContain("pass-security--sol-med");
+      expect(names).toContain("pass-validate--deep");
+      expect(names).not.toContain("pass-validate--light");
+      expect(names).toContain("pass-security--deep");
+      expect(names).not.toContain("pass-security--light");
+      expect(names).not.toContain("pass-security--standard");
       expect(names.filter((n) => n.startsWith("pass-baseline--"))).toHaveLength(3);
     } finally {
       rmSync(out, { recursive: true, force: true });
@@ -589,13 +683,13 @@ describe("stale definition sweep", () => {
     mkdirSync(out, { recursive: true });
     writeFileSync(join(src, "pass-baseline.md"), "---\nname: pass-baseline\n---\nbody");
     writeFileSync(join(out, "pass-baseline.md"), "stale un-tiered build");
-    writeFileSync(join(out, "pass-removed--sol-med.md"), "stale variant of a deleted pass");
+    writeFileSync(join(out, "pass-removed--standard.md"), "stale variant of a deleted pass");
     writeFileSync(join(out, "notes.txt"), "non-md survives");
     const built = buildAgents(src, out);
     const left = readdirSync(out).sort();
     expect(left).toEqual([...built.map((b) => `${b.name}.md`).sort(), "notes.txt"].sort());
     expect(left).not.toContain("pass-baseline.md");
-    expect(left).not.toContain("pass-removed--sol-med.md");
+    expect(left).not.toContain("pass-removed--standard.md");
     rmSync(dir, { recursive: true, force: true });
   });
 });
@@ -891,7 +985,7 @@ describe("the built pass contract", () => {
     for (const [name, text] of bodies) {
       expect(text.includes(header), name).toBe(!name.startsWith(`${VALIDATE_PASS}--`));
     }
-    const lens = bodies.get("pass-baseline--sol-med") as string;
+    const lens = bodies.get("pass-baseline--standard") as string;
     expect(lens).toContain("a `detail:` line after `claim`");
     expect(lens).toContain("the invariant a fix must restore");
     expect(lens).toContain("leads with the general defect or violated invariant");
@@ -934,7 +1028,7 @@ describe("the built pass contract", () => {
       expect(text).not.toContain("Duplicate-fix check");
       expect(text).not.toContain("gh pr list");
     }
-    const baseline = bodies.get("pass-baseline--sol-med") as string;
+    const baseline = bodies.get("pass-baseline--standard") as string;
     // The sibling/template comparison survives in the seed.
     expect(baseline).toContain("**Sibling / template PRs**");
   });
@@ -950,7 +1044,7 @@ describe("the built pass contract", () => {
       ).toBe(isBaseline);
       expect(text.includes("Name what you checked.")).toBe(isBaseline);
     }
-    const baseline = bodies.get("pass-baseline--sol-med") as string;
+    const baseline = bodies.get("pass-baseline--standard") as string;
     expect(baseline).toContain(
       "what shared or global machinery does this code path pass through (middleware, adapters, base classes, signal handlers, settings, decorators), and did I read it?",
     );
@@ -1042,7 +1136,7 @@ describe("the built pass contract", () => {
   // pass-data-safety under the no-exec contract: read the migration, ask the
   // author for the rest.
   it("pass-data-safety reads the migration and asks the author for the rest", () => {
-    const ds = bodies.get("pass-data-safety--sol-high") ?? bodies.get("pass-data-safety--sol-med");
+    const ds = bodies.get("pass-data-safety--deep") ?? bodies.get("pass-data-safety--standard");
     expect(ds).toBeDefined();
     const text = ds as string;
     expect(text).not.toContain("## Data safety: no execution");
@@ -1083,7 +1177,7 @@ describe("the built pass contract", () => {
   it("pass-baseline judges test vacuity by reading, never by running", () => {
     for (const text of bodies.values())
       expect(text).not.toContain("## Baseline: test vacuity is a STATIC read");
-    const baseline = bodies.get("pass-baseline--sol-med") as string;
+    const baseline = bodies.get("pass-baseline--standard") as string;
     expect(baseline).not.toContain("reverted proves nothing");
     expect(baseline).toContain("**exercises the guarded branch**, by\nreading");
     expect(baseline).toContain("is that value still\nproduced when the bug is present?");
@@ -1149,13 +1243,13 @@ describe("pass-intent", () => {
 
   afterEach(() => rmSync(out, { recursive: true, force: true }));
 
-  it("builds at terra-med into the agents output dir like every other pass", () => {
-    expect(bodies.has("pass-intent--terra-med")).toBe(true);
+  it("builds at light into the agents output dir like every other pass", () => {
+    expect(bodies.has("pass-intent--light")).toBe(true);
     // Raisable like any non-risk lens: the higher-tier variants exist too.
-    expect(bodies.has("pass-intent--sol-med")).toBe(true);
-    expect(bodies.has("pass-intent--sol-high")).toBe(true);
-    const text = bodies.get("pass-intent--terra-med")!;
-    expect(text.startsWith("---\nname: pass-intent--terra-med\n")).toBe(true);
+    expect(bodies.has("pass-intent--standard")).toBe(true);
+    expect(bodies.has("pass-intent--deep")).toBe(true);
+    const text = bodies.get("pass-intent--light")!;
+    expect(text.startsWith("---\nname: pass-intent--light\n")).toBe(true);
     // The shared blank-slate contract and the lens addenda reach it.
     expect(text).toContain("You are a **blank-slate review pass**");
     expect(text).toContain("## Execution policy (sandbox rule, enforced)");
@@ -1163,11 +1257,7 @@ describe("pass-intent", () => {
   });
 
   it("is a leaf: no agent-spawning tools in any built variant", () => {
-    for (const name of [
-      "pass-intent--terra-med",
-      "pass-intent--sol-med",
-      "pass-intent--sol-high",
-    ]) {
+    for (const name of ["pass-intent--light", "pass-intent--standard", "pass-intent--deep"]) {
       const text = bodies.get(name)!;
       const tools = /^tools:[ \t]*(.*)$/m.exec(text)?.[1] ?? "";
       for (const t of tools.split(",").map((s) => s.trim().toLowerCase())) {
@@ -1178,7 +1268,7 @@ describe("pass-intent", () => {
   });
 
   it("reads only the PR body and title as intent — tracker and transcripts are forbidden", () => {
-    const text = bodies.get("pass-intent--terra-med")!;
+    const text = bodies.get("pass-intent--light")!;
     expect(text).toContain(
       "The PR title and body are the ONLY intent source this lens judges against",
     );
@@ -1188,14 +1278,14 @@ describe("pass-intent", () => {
   });
 
   it("returns NONE on a thin body rather than manufacturing a finding", () => {
-    const text = bodies.get("pass-intent--terra-med")!;
+    const text = bodies.get("pass-intent--light")!;
     expect(text).toContain("## Thin bodies return NONE");
     expect(text).toContain("return `NONE`");
     expect(text).toContain("**No finding is the correct output for most PRs.**");
   });
 
   it("caps severity — questions and nits, never a blocker", () => {
-    const text = bodies.get("pass-intent--terra-med")!;
+    const text = bodies.get("pass-intent--light")!;
     expect(text).toContain("## Findings are questions and nits — never blockers");
     expect(text).toContain("every finding you return is `P3` or `nit`");
     expect(text).toContain("never `P0`, `P1`, or `P2`");
@@ -1235,17 +1325,17 @@ describe("pass-ask-human", () => {
   afterEach(() => rmSync(out, { recursive: true, force: true }));
 
   it("builds like any other raisable lens, at all three tiers", () => {
-    for (const tier of ["terra-med", "sol-med", "sol-high"]) {
+    for (const tier of ["light", "standard", "deep"]) {
       expect(bodies.has(`pass-ask-human--${tier}`), tier).toBe(true);
     }
-    const text = bodies.get("pass-ask-human--sol-med")!;
-    expect(text.startsWith("---\nname: pass-ask-human--sol-med\n")).toBe(true);
+    const text = bodies.get("pass-ask-human--standard")!;
+    expect(text.startsWith("---\nname: pass-ask-human--standard\n")).toBe(true);
     expect(text).toContain("You are a **blank-slate review pass**");
     expect(text).toContain("## Execution policy (sandbox rule, enforced)");
   });
 
   it("is a leaf: no agent-spawning tools in any built variant (rule 9)", () => {
-    for (const tier of ["terra-med", "sol-med", "sol-high"]) {
+    for (const tier of ["light", "standard", "deep"]) {
       const text = bodies.get(`pass-ask-human--${tier}`)!;
       const tools = /^tools:[ \t]*(.*)$/m.exec(text)?.[1] ?? "";
       for (const t of tools.split(",").map((s) => s.trim().toLowerCase())) {
@@ -1256,7 +1346,7 @@ describe("pass-ask-human", () => {
   });
 
   it("fires only where the answer is outside the repo and the implementer's own context", () => {
-    const text = bodies.get("pass-ask-human--sol-med")!;
+    const text = bodies.get("pass-ask-human--standard")!;
     expect(text).toContain("## The trigger: the answer is NOT in the repo");
     expect(text).toContain("**Ask only what the implementer cannot answer by reading.**");
     expect(text).toContain("outside the implementer's own prompt");
@@ -1268,7 +1358,7 @@ describe("pass-ask-human", () => {
   });
 
   it("carries its own tag and never borrows [check this]", () => {
-    const text = bodies.get("pass-ask-human--sol-med")!;
+    const text = bodies.get("pass-ask-human--standard")!;
     expect(text).toContain("[ask your human] <the question, in one sentence>");
     expect(text).toContain("**It is NOT the `[check this]` tag and never substitutes for one.**");
     // [check this] keeps its single meaning: human-verify, human-resolve-only.
@@ -1276,7 +1366,7 @@ describe("pass-ask-human", () => {
   });
 
   it("blocks only on a NAMED failure — never on uncertainty", () => {
-    const text = bodies.get("pass-ask-human--sol-med")!;
+    const text = bodies.get("pass-ask-human--standard")!;
     expect(text).toContain(
       "a finding that would post\nas a `[blocker]` must state the concrete failure",
     );
@@ -1306,7 +1396,7 @@ describe("pass-ask-human", () => {
   });
 
   it("the addendum demands the tag and returns NONE on an unanchored add", () => {
-    const text = bodies.get("pass-ask-human--sol-med")!;
+    const text = bodies.get("pass-ask-human--standard")!;
     expect(text).toContain(
       "**The trigger is the location of the answer, never the shape of the question.**",
     );
@@ -1353,17 +1443,17 @@ describe("pass-concurrency", () => {
   afterEach(() => rmSync(out, { recursive: true, force: true }));
 
   it("builds like any other raisable lens, at all three tiers", () => {
-    for (const tier of ["terra-med", "sol-med", "sol-high"]) {
+    for (const tier of ["light", "standard", "deep"]) {
       expect(bodies.has(`pass-concurrency--${tier}`), tier).toBe(true);
     }
-    const text = bodies.get("pass-concurrency--sol-med")!;
-    expect(text.startsWith("---\nname: pass-concurrency--sol-med\n")).toBe(true);
+    const text = bodies.get("pass-concurrency--standard")!;
+    expect(text.startsWith("---\nname: pass-concurrency--standard\n")).toBe(true);
     expect(text).toContain("You are a **blank-slate review pass**");
     expect(text).toContain("## Execution policy (sandbox rule, enforced)");
   });
 
   it("is a leaf: no agent-spawning tools in any built variant (rule 9)", () => {
-    for (const tier of ["terra-med", "sol-med", "sol-high"]) {
+    for (const tier of ["light", "standard", "deep"]) {
       const text = bodies.get(`pass-concurrency--${tier}`)!;
       const tools = /^tools:[ \t]*(.*)$/m.exec(text)?.[1] ?? "";
       for (const t of tools.split(",").map((s) => s.trim().toLowerCase())) {
@@ -1374,7 +1464,7 @@ describe("pass-concurrency", () => {
   });
 
   it("every finding carries all four parts, the named lock included", () => {
-    const text = bodies.get("pass-concurrency--sol-med")!;
+    const text = bodies.get("pass-concurrency--standard")!;
     expect(text).toContain("## Every finding has four parts");
     expect(text).toContain("**The name** — what races");
     expect(text).toContain("**The walkthrough** — the interleaving, step by step");
@@ -1387,7 +1477,7 @@ describe("pass-concurrency", () => {
   });
 
   it("carries the self-falsification burden, with the validator still the adversary", () => {
-    const text = bodies.get("pass-concurrency--sol-med")!;
+    const text = bodies.get("pass-concurrency--standard")!;
     expect(text).toContain("## Falsify your own finding before you emit it");
     expect(text).toContain(
       "you must try to kill each candidate yourself, and emit only the survivors",
@@ -1399,7 +1489,7 @@ describe("pass-concurrency", () => {
   });
 
   it("has no severity cap and judges reachability per finding", () => {
-    const text = bodies.get("pass-concurrency--sol-med")!;
+    const text = bodies.get("pass-concurrency--standard")!;
     expect(text).toContain("## Severity is the ordinary scale — this lens can block");
     expect(text).toContain("there is no cap on this\nlens");
     expect(text).toContain("**Reachability is judged PER FINDING, from your risk assessment.**");
@@ -1439,7 +1529,7 @@ describe("pass-concurrency", () => {
   });
 
   it("the trigger demands a named read-then-write and returns NONE without one", () => {
-    const text = bodies.get("pass-concurrency--sol-med")!;
+    const text = bodies.get("pass-concurrency--standard")!;
     expect(text).toContain("name the read-then-write it suspects");
     expect(text).toContain("not merely state a worry");
     expect(text).toContain("say so in one line in your output and return `NONE`");
@@ -1495,7 +1585,7 @@ describe("dropNonPiTools", () => {
       mkdirSync(src, { recursive: true });
       const seed = "---\nname: pass-ui\ntools: read, bash, grep, glob\n---\n\nbody\n";
       writeFileSync(join(src, "pass-ui.md"), seed);
-      const [a] = buildAgents(src, join(dir, "out"), { riskPasses: [], validateTier: "terra-med" });
+      const [a] = buildAgents(src, join(dir, "out"), { riskPasses: [], validateTier: "light" });
       expect(readFileSync(a!.output, "utf8")).toMatch(/^tools: read, bash, grep$/m);
       expect(readFileSync(join(src, "pass-ui.md"), "utf8")).toBe(seed);
     } finally {
@@ -1623,7 +1713,7 @@ describe.skipIf(!HAS_QC_PACK)(
     });
 
     it("migration reversibility is recorded as REJECTED, not merely absent", () => {
-      const text = bodies.get("pass-data-safety--sol-high")!;
+      const text = bodies.get("pass-data-safety--deep")!;
       expect(text).toContain("**Never raise migration reversibility.**");
       expect(text).toContain("RunSQL.noop");
       expect(text).toContain("the rollback unit here is the deployment, not the migration");
@@ -1632,7 +1722,7 @@ describe.skipIf(!HAS_QC_PACK)(
     });
 
     it("the four kept migration sub-rules are all present, and the one-migration rule never blocks", () => {
-      const text = bodies.get("pass-data-safety--sol-high")!;
+      const text = bodies.get("pass-data-safety--deep")!;
       expect(text).toContain("**One migration per PR.**");
       expect(text).toContain("never as a blocker");
       expect(text).toContain("**A migration never imports application code.**");
@@ -1643,14 +1733,14 @@ describe.skipIf(!HAS_QC_PACK)(
     });
 
     it("bulk_create carries its two named exceptions, and a finding must rule them out", () => {
-      const text = bodies.get("pass-baseline--sol-med")!;
+      const text = bodies.get("pass-baseline--standard")!;
       expect(text).toContain("**the code needs the primary keys back**");
       expect(text).toContain("**the set is strictly bounded and small by construction**");
       expect(text).toContain("If either holds there is **no finding**");
     });
 
     it("query efficiency is ONE rule stated in both directions", () => {
-      const text = bodies.get("pass-baseline--sol-med")!;
+      const text = bodies.get("pass-baseline--standard")!;
       expect(text).toContain("**Query efficiency runs in BOTH directions, and it is one rule");
       expect(text).toContain("Use `.count()` / `.exists()`");
       expect(text).toContain("Use `len()`");
@@ -1658,14 +1748,14 @@ describe.skipIf(!HAS_QC_PACK)(
     });
 
     it("parametrize reads as a suggestion, never a demand", () => {
-      const text = bodies.get("pass-baseline--sol-med")!;
+      const text = bodies.get("pass-baseline--standard")!;
       expect(text).toContain("**`parametrize` is a suggestion, never a demand.**");
       expect(text).toContain("Never insist, never block");
       expect(text).not.toContain("must be parametrized");
     });
 
     it("the settled anti-rules stop a lens re-litigating them", () => {
-      const text = bodies.get("pass-baseline--sol-med")!;
+      const text = bodies.get("pass-baseline--standard")!;
       // Global mocks: house style (overrides a reviewer's stated direction).
       expect(text).toContain("**Global mocks are house style — never campaign against them.**");
       // assert_called_once_with survives, with pformat.
@@ -1674,20 +1764,20 @@ describe.skipIf(!HAS_QC_PACK)(
         "**Never ask for `assert_called_once_with` to be removed or replaced**",
       );
       // Nullability: the anti-rule half lives on pass-backcompat.
-      const bc = bodies.get("pass-backcompat--sol-med")!;
+      const bc = bodies.get("pass-backcompat--standard")!;
       expect(bc).toContain("is the required shape, not a modelling defect");
       expect(bc).toContain("**never a blocker**");
     });
 
     it("leftovers stay hygiene: one comment, never a blocker, only inside the diff", () => {
-      const text = bodies.get("pass-baseline--sol-med")!;
+      const text = bodies.get("pass-baseline--standard")!;
       expect(text).toContain("**Raise it once, as a single `[nit]` listing the locations**");
       expect(text).toContain("it is not a `P0`–`P2`");
       expect(text).toContain("inside this diff");
     });
 
     it("config placement names the homes and tells the lens to check the tree first", () => {
-      const text = bodies.get("pass-placement--sol-med")!;
+      const text = bodies.get("pass-placement--standard")!;
       expect(text).toContain("**settings**");
       expect(text).toContain("**`consts.py`**");
       expect(text).toContain(
@@ -1698,7 +1788,7 @@ describe.skipIf(!HAS_QC_PACK)(
     });
 
     it("declared-shape keeps the convention half OUT — that went to memory", () => {
-      const text = bodies.get("pass-baseline--sol-med")!;
+      const text = bodies.get("pass-baseline--standard")!;
       expect(text).toContain("**A declared type that contradicts the body is a defect");
       expect(text).toContain("is an enum, not a magic string");
       expect(text).toContain('Neither of these is "add the missing annotations"');
@@ -1712,7 +1802,7 @@ describe.skipIf(!HAS_QC_PACK)(
     // one of these assertions also pins the protection of the reasoning.
 
     it("a nit must name the change it asks for, and the WHY is explicitly protected", () => {
-      const text = bodies.get("pass-baseline--sol-med")!;
+      const text = bodies.get("pass-baseline--standard")!;
       expect(text).toContain("## A nit ASKS FOR SOMETHING, or it is not a finding (sandbox rule)");
       expect(text).toContain("carries a `request:` line");
       expect(text).toContain("it is a remark, not a finding");
@@ -1725,7 +1815,7 @@ describe.skipIf(!HAS_QC_PACK)(
     });
 
     it("a finding's subject is the code, never the review's own earlier findings", () => {
-      const text = bodies.get("pass-baseline--sol-med")!;
+      const text = bodies.get("pass-baseline--standard")!;
       expect(text).toContain(
         "## Never raise a finding ABOUT one of the review's own earlier findings (sandbox rule)",
       );
@@ -1742,7 +1832,7 @@ describe.skipIf(!HAS_QC_PACK)(
           true,
         );
       }
-      const text = bodies.get("pass-security--sol-high")!;
+      const text = bodies.get("pass-security--deep")!;
       expect(text).toContain("Never put a tag in a finding's `claim` or title");
       expect(text).toContain("An invented tag escapes the machinery keyed on the real ones");
       expect(text).toContain("[check this]");

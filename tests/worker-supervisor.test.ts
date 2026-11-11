@@ -26,7 +26,18 @@ import { CapabilityStore } from "../src/ipc/capability.js";
 import { CONTROL_TEXT_MAX } from "../src/ipc/control.js";
 import { IpcClient } from "../src/ipc/client.js";
 import { PermitBroker } from "../src/ipc/permits.js";
-import { IpcServer, type OpHandler } from "../src/ipc/server.js";
+import {
+  credentialOriginWords,
+  parseRouteRecord,
+  parseRouteReport,
+  routeChangeText,
+  routeReportChanged,
+  routeReportOf,
+  routeSourceWords,
+  ROUTE_REPORT_TEXT_MAX,
+  type RouteReport,
+} from "../src/ipc/routereport.js";
+import { IpcServer, type OpHandler, type RequestContext } from "../src/ipc/server.js";
 import type { WorkerSpec } from "../src/ipc/workerspec.js";
 import { PostingJournal } from "../src/posting-journal.js";
 import { isOperatorWorkerFailure } from "../src/providerfailure.js";
@@ -67,6 +78,8 @@ interface RigOptions {
   buildEnv?: Record<string, string>;
   /** The central lens permit broker, handed to the supervisor. */
   permits?: PermitBroker;
+  /** The built spec's model. Omitted: a pinned one. */
+  model?: string;
 }
 
 let dir: string;
@@ -128,7 +141,7 @@ async function rig(o: RigOptions = {}) {
         agent_dir: join(base, "agent"),
         session_dir: join(base, "sessions"),
         system_prompt_file: join(base, "system.md"),
-        model: "faux/faux-1",
+        model: o.model ?? "faux/faux-1",
         env: { PATH: process.env["PATH"] ?? "/usr/bin", ...o.buildEnv },
         events_file: join(base, "ev.jsonl"),
         stderr_file: join(base, "err.log"),
@@ -242,6 +255,23 @@ describe("the worker's life", () => {
     expect(r.caps.get(row.id)).toBeUndefined();
     expect(readdirSync(join(r.runDir, "workers"))).toEqual([]);
     expect(r.events("worker_exited")[0]).toMatchObject({ outcome: "acked", code: 0 });
+  });
+
+  // A config that pins no model builds a spec whose model is empty (or a
+  // bare level): the supervisor checks every spec it built before it starts a
+  // worker, and that check must let such a spec through as it is.
+  // MUTATION: read `model` as a non-empty string in parseWorkerSpec
+  // (src/ipc/workerspec.ts) — the launch is refused and this fails.
+  it("launches a command whose spec names no model, and hands it over as built", async () => {
+    for (const model of ["", ":high"]) {
+      const r = await rig({ model });
+      const row = r.submit();
+      await r.sup.launch(row.id);
+      await until(finished(r.sup));
+      expect(r.store.getSessionCommand(row.id)!.status, JSON.stringify(model)).toBe("acked");
+      const spec = JSON.parse(r.out(row.id, "spec.json")) as WorkerSpec;
+      expect(spec.model).toBe(model);
+    }
   });
 
   it("launching a worker leaves the socket's dir as the server opened it", async () => {
@@ -1528,5 +1558,214 @@ describe("the recovery fence: abort, then a group SIGKILL", () => {
     plantLease(r.sup.leases, { pid: bystander.pid!, boot_id: "another-container" });
     expect(await r.sup.fence(SESSION)).toBe(true);
     expect(alive(bystander.pid!)).toBe(true);
+  });
+});
+
+// ---- the model route a worker reports ---------------------------------------
+//
+// The daemon asks pi nothing: which model reviews run on is what a worker says
+// in `ready`. The supervisor keeps it through the store: one `model_route`
+// event per worker, the latest for status.json, and one `model_route_changed`
+// anomaly when reviews now run somewhere else than the report before said.
+
+const ROUTE: RouteReport = {
+  spec: "prov-a/model-9",
+  source: "only-credential",
+  pick: "newest",
+  moved_from: null,
+  credential_origin: "stored",
+};
+
+describe("the route report's shape (src/ipc/routereport.ts)", () => {
+  it("is made from the resolved route's own fields", () => {
+    expect(
+      routeReportOf({
+        spec: "prov-a/model-9",
+        source: "config",
+        pick: "pinned",
+        movedFrom: "prov-b",
+        credential: { origin: "env-key" },
+      }),
+    ).toEqual({
+      spec: "prov-a/model-9",
+      source: "config",
+      pick: "pinned",
+      moved_from: "prov-b",
+      credential_origin: "env-key",
+    });
+  });
+
+  it("checks a report: every field one bounded printable line, the move a name or null", () => {
+    expect(parseRouteReport(ROUTE)).toEqual(ROUTE);
+    // What it does not know is left behind; an absent move is no move.
+    const unmoved = {
+      spec: ROUTE.spec,
+      source: ROUTE.source,
+      pick: ROUTE.pick,
+      credential_origin: ROUTE.credential_origin,
+    };
+    expect(parseRouteReport({ ...unmoved, extra: 1 })).toEqual(ROUTE);
+    expect(parseRouteReport({ ...ROUTE, moved_from: "prov-b" })?.moved_from).toBe("prov-b");
+    // A value this build does not know is kept as written.
+    expect(parseRouteReport({ ...ROUTE, source: "a-newer-source" })?.source).toBe("a-newer-source");
+    for (const bad of [
+      undefined,
+      null,
+      "prov-a/model-9",
+      [ROUTE],
+      { ...ROUTE, spec: "" },
+      { ...ROUTE, spec: 7 },
+      { ...ROUTE, source: undefined },
+      { ...ROUTE, pick: null },
+      { ...ROUTE, credential_origin: {} },
+      { ...ROUTE, moved_from: "" },
+      { ...ROUTE, moved_from: 3 },
+      { ...ROUTE, spec: "x".repeat(ROUTE_REPORT_TEXT_MAX + 1) },
+      { ...ROUTE, spec: "prov-a/model\u001b[2J" },
+      { ...ROUTE, credential_origin: "stored\nsecond line" },
+    ])
+      expect(parseRouteReport(bad), JSON.stringify(bad)).toBeNull();
+  });
+
+  it("a kept report carries when it arrived, or is not one", () => {
+    const at = "2026-11-11T10:00:00.000Z";
+    expect(parseRouteRecord({ ...ROUTE, at, command_id: "c" })).toEqual({ ...ROUTE, at });
+    expect(parseRouteRecord(ROUTE)).toBeNull();
+    expect(parseRouteRecord({ ...ROUTE, at: 5 })).toBeNull();
+    expect(parseRouteRecord(null)).toBeNull();
+  });
+
+  // MUTATION: compare `source` too in routeReportChanged — a route the order
+  // picked and the same route a person then chose reads as a change, and this
+  // fails.
+  it("a change is another model, another move or another credential origin, and nothing else", () => {
+    expect(routeReportChanged(ROUTE, { ...ROUTE })).toBe(false);
+    expect(routeReportChanged(ROUTE, { ...ROUTE, source: "choice", pick: "pinned" })).toBe(false);
+    expect(routeReportChanged(ROUTE, { ...ROUTE, spec: "prov-a/model-10" })).toBe(true);
+    expect(routeReportChanged(ROUTE, { ...ROUTE, moved_from: "prov-b" })).toBe(true);
+    expect(routeReportChanged(ROUTE, { ...ROUTE, credential_origin: "env-key" })).toBe(true);
+  });
+
+  it("says where reviews run now, where they ran, the move, and what to do", () => {
+    expect(routeChangeText(ROUTE, { ...ROUTE, credential_origin: "env-key" })).toBe(
+      "reviews now run on prov-a/model-9 (an environment key); they ran on prov-a/model-9 " +
+        "(a login or key stored in pi). Pin it with [models] model, or check the login.",
+    );
+    expect(routeChangeText(ROUTE, { ...ROUTE, spec: "prov-c/model-9", moved_from: "prov-a" })).toBe(
+      "reviews now run on prov-c/model-9 (a login or key stored in pi); they ran on " +
+        "prov-a/model-9 (a login or key stored in pi). The config names prov-a, which has no " +
+        "credential. Pin it with [models] model, or check the login.",
+    );
+  });
+
+  it("words every source and origin a route has, and shows one it does not know as written", () => {
+    for (const source of [
+      "flag",
+      "config",
+      "choice",
+      "remembered",
+      "only-credential",
+      "pi-provider",
+      "credential-order",
+    ])
+      expect(routeSourceWords(source), source).not.toBe(source);
+    for (const origin of ["stored", "runtime", "models-json", "env-key", "ambient"])
+      expect(credentialOriginWords(origin), origin).not.toBe(origin);
+    expect(routeSourceWords("a-newer-source")).toBe("a-newer-source");
+    expect(credentialOriginWords("a-newer-origin")).toBe("a-newer-origin");
+    // A name every object has is not a word for it.
+    expect(routeSourceWords("constructor")).toBe("constructor");
+  });
+});
+
+describe("the worker's route report, kept by the daemon", () => {
+  /** A worker that is up and stays up, and the context its events arrive in. */
+  async function live() {
+    const r = await rig({ mode: "term-ok" });
+    const row = r.submit();
+    const info = await r.sup.launch(row.id);
+    await until(() => r.observed.some((o) => o.kind === "accepted"));
+    const ctx: RequestContext = {
+      commandId: row.id,
+      role: "worker",
+      pr: PR,
+      generation: info.generation,
+      mayPost: false,
+      answer: false,
+      lease: "none",
+      requirePr: () => {},
+    };
+    const ready = (route: unknown, c: RequestContext = ctx): void =>
+      r.sup.onEvent(c, "ready", { session_id: "s", route });
+    return { ...r, row, ctx, ready };
+  }
+
+  it("a ready with no route records nothing: the model is unknown, not assumed", async () => {
+    // The fake worker's own ready carries no route, as an older worker's would.
+    const r = await live();
+    expect(r.events("model_route")).toEqual([]);
+    expect(r.store.modelRoute()).toBeNull();
+    expect(buildStatusSnapshot(r.store, true).model_route).toBeNull();
+  });
+
+  // MUTATION: drop the recordRoute call from the `ready` case of onEvent
+  // (src/workersupervisor.ts) — no report is ever kept, and this fails.
+  it("logs the report as a model_route event and keeps it as the latest", async () => {
+    const r = await live();
+    r.ready(ROUTE);
+    expect(r.events("model_route")).toEqual([
+      { ...ROUTE, at: expect.any(String), command_id: r.row.id },
+    ]);
+    const kept = r.store.modelRoute();
+    expect(kept).toEqual({ ...ROUTE, at: expect.any(String) });
+    expect(buildStatusSnapshot(r.store, true).model_route).toEqual(kept);
+    // The first report is where the record starts: nothing changed.
+    expect(r.store.anomalies()).toEqual([]);
+  });
+
+  // MUTATION: return "same" from recordModelRoute before the comparison
+  // (src/state.ts) — a login that turned into an environment key raises
+  // nothing, and this fails.
+  it("raises model_route_changed once when a report differs from the one before, never on a repeat", async () => {
+    const r = await live();
+    r.ready(ROUTE);
+    r.ready({ ...ROUTE, source: "remembered" });
+    expect(r.store.anomalies()).toEqual([]);
+
+    const keyed = { ...ROUTE, credential_origin: "env-key" };
+    r.ready(keyed);
+    expect(r.store.anomalies().map((a) => [a.kind, a.pr, a.detail])).toEqual([
+      ["model_route_changed", null, routeChangeText(ROUTE, keyed)],
+    ]);
+    expect(r.store.modelRoute()).toMatchObject(keyed);
+
+    r.ready(keyed);
+    expect(r.store.anomalies()).toHaveLength(1);
+    expect(r.events("model_route")).toHaveLength(4);
+  });
+
+  it("a report it cannot read is not kept, and the last one stands", async () => {
+    const r = await live();
+    r.ready(ROUTE);
+    r.ready({ ...ROUTE, spec: "" });
+    r.ready("prov-a/model-9");
+    expect(r.events("model_route")).toHaveLength(1);
+    expect(r.store.modelRoute()).toMatchObject(ROUTE);
+    expect(r.store.anomalies()).toEqual([]);
+  });
+
+  it("takes no report from another generation of the command", async () => {
+    const r = await live();
+    r.ready(ROUTE, { ...r.ctx, generation: r.ctx.generation + 1 });
+    expect(r.events("model_route")).toEqual([]);
+  });
+
+  it("a store that cannot take the report costs the worker nothing", async () => {
+    const r = await live();
+    r.store.recordModelRoute = () => {
+      throw new Error("disk full");
+    };
+    expect(() => r.ready(ROUTE)).not.toThrow();
+    expect(r.sup.isLive(SESSION)).toBe(true);
   });
 });

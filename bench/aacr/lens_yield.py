@@ -46,7 +46,9 @@ import re
 from pathlib import Path
 
 TRAILER = re.compile(r"·\s*lens\s+([^\n]+?)_?\s*$", re.M)
-TIER = re.compile(r"--(terra|sol|luna)[-a-z]*$")
+# The tier suffix of a built agent's name: the ladder's names, and the older
+# suffixes that earlier runs recorded (the tiers' other spelling among them).
+TIER = re.compile(r"--(?:light|standard|deep|(?:terra|sol|luna)[-a-z]*)$")
 
 
 def lenses_of_text(body: str) -> list[str]:

@@ -208,7 +208,7 @@ memory seam). It governs four things:
   collisions itself (which un-muzzles pass-data-safety's withdrawn collision
   class for that round) and the overseer gets an anomaly.
 - **the tier-forcing migration gate** — a `django` round touching
-  `migrations/` starts its raisable passes at sol-med;
+  `migrations/` starts its raisable passes at `standard`;
 - **the round prompt's migration-gate prose** — the MIGRATION GATE paragraph
   and the GATE NOTES render from the ecosystem (`tests/ecosystem.test.ts`
   holds the `django` text to the bytes);
@@ -244,7 +244,7 @@ One table per lens in `profile.toml`, seven optional keys (and `guide`, for
 ```toml
 # <config home>/profiles/<name>/profile.toml
 [lenses.pass-security]
-min_tier = "sol-high"   # terra-med | sol-med | sol-high — a floor, never a pin
+min_tier = "deep"       # light | standard | deep — a floor, never a pin
 effort = "high"         # low | medium | high (high = [models] effort_max)
 max_severity = "P0"     # P0 | P1 | P2 | P3 | nit — the lens's ceiling
 emphasis = "Auth is the product here: treat every token path as hostile input."
@@ -260,6 +260,33 @@ risk = true             # run it at the risk tier, like [models] risk_passes
 guide = "style-guide.md"  # a guide in THIS profile's directory
 ```
 
+### Tiers
+
+A **tier** is what a lens runs at: a thinking level and, when the install pins
+one, a model. There are three, ascending:
+
+| Tier | Thinking level | What runs at it |
+|---|---|---|
+| `light` | `medium` | the raisable lenses of a small, quiet diff (under `[models] small_diff_lines` changed lines, no migration) |
+| `standard` | `medium` | the raisable lenses of every other diff; the tier a `light` lens is raised to; the scan's stage 1 (`[scan] tier`) |
+| `deep` | `high` | the risk passes and every `pass-sec-*` lens, the validator (`[models] validate_tier`), and the three lenses that read every changed line |
+
+- **Unpinned, a tier is a level on the review's one model.** The shipped
+  config names no model, so all three run on the model the review's route
+  resolves ([docs/llm-setup.md](llm-setup.md)), and `light` and `standard`
+  are the same thing. They differ once the install pins a tier to a model of
+  its own in `[models.tiers]`, a smaller model for `light`, say.
+- **A profile names tiers, never models.** `min_tier`, `[scan] tier` and
+  `effort` are the profile's levers. A profile is read from the reviewed
+  repository, and a model named there would decide whose credential and
+  money a review spends, so the model stays the install's: `[models]` in
+  `config.toml`, `qcr model`, or `--model` on one run.
+- **The older names are still read.** The tiers were `terra-med`, `sol-med`
+  and `sol-high`. Wherever a profile or a config writes a tier, either
+  spelling is read, for good, so a `profile.toml` committed with the older
+  names keeps working. Nothing writes them back: plans, agent names and
+  output use `light`, `standard` and `deep`.
+
 **The profile wins** over `config.toml`, its `[review] preset` and the code
 defaults: the resolved tuning (`loadProfileLensTuning`, the whole `extends`
 chain merged — per lens, per key, the nearest profile that sets it wins) is
@@ -272,7 +299,7 @@ consumer reads that one `cfg.lenses`. What each key moves
   plan would pick, so the lens's row, its `raisable_to`, the sweep's rows
   (`[lenses.pass-sweep]`) and the add rule's variant all move with it; the
   prompt names a floored addable lens with its variant. It never lowers — a
-  risk pass stays at `sol-high`, the validator at or above `validate_tier`.
+  risk pass stays at `deep`, the validator at or above `validate_tier`.
   A floored lens never raises the validator (below); only
   `[lenses.pass-validate] min_tier` moves it.
 - **`effort`** — build time, through the per-variant model hook: only that
@@ -304,7 +331,7 @@ consumer reads that one `cfg.lenses`. What each key moves
   default, is the plan as above. The row's reason says the profile planned
   it.
 - **`risk = true`** — overlay time: the lens joins `[models] risk_passes`,
-  so it runs at `sol-high`, one variant, not raisable, launched slowest
+  so it runs at `deep`, one variant, not raisable, launched slowest
   first. It never takes a lens out of `risk_passes`, a `[models.pass_tiers]`
   pin or `pass_models` move on a risk lens is refused, and the validator
   takes no `risk` (its tier is `validate_tier`, floored by its `min_tier`).
@@ -385,7 +412,7 @@ about THIS repo:
 # <config home>/profiles/<name>/profile.toml
 [scan]
 effort = "medium"          # stage 1's pass-scan reasoning: low | medium | high
-tier = "sol-med"           # whose model pass-scan runs on
+tier = "standard"          # the tier pass-scan runs at: light | standard | deep
 validator = false          # the skeptic (ON by default) — false switches it off
 exclude = ["generated/"]   # repo-relative globs never scanned
 depth = "deep"             # standard (the default) | deep — see "The deep scan" below
@@ -557,18 +584,18 @@ line (`ok: false` with `errors` on a refusal). Exit codes: 0 done, 1 refused,
 2 usage, 3 `status --wait` timed out.
 
 ```sh
-qcr scan preview [--sha REF] [--delta] [--path DIR]   # cases and price; prints the start key
-qcr scan start --key K [--sha REF] [--delta] [--path DIR]   # starts EXACTLY that preview
+qcr scan preview [--sha REF] [--delta] [--path DIR] [--model M]   # cases, model and price; prints the start key
+qcr scan start --key K [--sha REF] [--delta] [--path DIR] [--model M]   # starts EXACTLY that preview
 qcr scan status [--wait [--timeout S]]           # --wait blocks until the run ends
 qcr scan stop
 qcr scan findings [--state S] [--lens L] [--unit U] [--severity P] [--validity V] [--doubted|--not-doubted] [--limit N]
 qcr scan matches                                 # the pending match question
 qcr scan match --key K OLD=NEW…                  # its whole answer; unpaired old ones become fixed
 qcr scan suggestions
-qcr scan stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] [--path DIR]
-qcr scan stage2 start --key K [--rows row-1,row-3]
-qcr scan threat-model propose [--sha REF]        # stage 0: what drafting the threat model reads and costs
-qcr scan threat-model start --key K [--sha REF]  # runs it; the draft goes to the state home only
+qcr scan stage2 propose [--rows FILE|-] [--budget USD] [--deep|--standard] [--sha REF] [--path DIR] [--model M]
+qcr scan stage2 start --key K [--rows row-1,row-3] [--model M]
+qcr scan threat-model propose [--sha REF] [--model M]        # stage 0: what drafting the threat model reads and costs
+qcr scan threat-model start --key K [--sha REF] [--model M]  # runs it; the draft goes to the state home only
 qcr scan dismiss FP… --reason TEXT               # the triage dismissal: sticky, with its memory note
 qcr scan units show                              # the saved unit cut and the draft (setup_unit_cut)
 qcr scan units propose [--file F|-]              # store a draft: {units, ignored} from F, or the default proposal
@@ -579,10 +606,29 @@ qcr scan doctor                                  # is this machine ready to scan
 qcr scan rebuild                                 # build [scan] image, stamped — no container touched
 ```
 
+**The scan's model.** A scan runs on one model route, resolved once at the
+preview: the provider the scan's login has a credential for, under `--model`,
+`[models] model` and a remembered choice, by the review's own rule
+([docs/llm-setup.md](llm-setup.md)). The preview names it on a `model:` line,
+and `preview --json` carries the same `model` object a review's preview does
+(`spec`, `provider`, `source`, `pick`, `moved_from`, `ask`, and the
+credential it runs on), with each tier's spec as it will run. Every case is
+handed that route, so a scan never changes model midway. `--model M` is the
+whole scan's model for one run: it replaces every tier and lens model the
+config pins, the preview says so when it changed anything, and a start
+repeats the `--model` its preview was given (the `start` list carries it).
+With several providers signed in, a host scan on a terminal asks once and
+remembers, as a review does; `--json` never asks. Under
+`[scan] sandbox = "docker"` the route is resolved in the scan's image over
+the companion's login, the only login the sandbox reads, and nothing asks:
+`qcr login` on the host does not change that route, `qcr scan login` does.
+A start whose driver resolves another model than the preview showed is
+refused, because the key covers the model.
+
 The approval rules are the tools': `start` takes only the key a `preview`
 printed (`preview --json` gives it as `start`, the arguments to pass on), and
-anything that moved since — the plan, the sha, the price, a setting — is
-refused; the run stops hard at the estimate it showed. `--path DIR` scopes a
+anything that moved since — the plan, the sha, the model, the price, a
+setting — is refused; the run stops hard at the estimate it showed. `--path DIR` scopes a
 preview, its start and a stage 2 proposal to one folder, relative to the repo
 root: stage 1's cases are the cut's units narrowed to the files under it (a
 unit only partly inside keeps its name), the ledger, exclusions and `--delta`
@@ -915,10 +961,10 @@ carries no coverage step (pinned). On the stored round-1 data it would fire on
 ### The lenses that read every changed line run at high effort
 
 `pass-baseline`, `pass-sweep` and `pass-behaviour-delta` run at the
-`sol-high` tier — gpt-6.1-sol at high effort — on every PR, by default
+`deep` tier — the review's model at high effort — on every PR, by default
 (`DEFAULT_PASS_TIERS` in `src/config.ts`, the code default of
 `[models.pass_tiers]`; every other lens keeps its planned tier and its raise
-ladder). The reason is measured: the same 30 PRs at
+ladder). The reason is measured, on gpt-6.1-sol: the same 30 PRs at
 default effort and at high effort for these three lenses gave +6 AACR defects
 (51 → 57 on 18 PRs, +3 medium on the miss set, no high-severity loss) and
 2 more Qodo issues, for +18% cost per PR and +31% time; Martian's unmatched
@@ -928,13 +974,14 @@ comments rose with it (68 → 92), the accepted price (runs `dv1-*` vs
 Because the default is a `[models.pass_tiers]` pin, it reaches every install
 whatever its profile (a profile that does not extend `default` included) and
 the bench without any `--config`. The three lenses are therefore pinned: their
-plan rows name `sol-high` and are not raisable. To lower it:
+plan rows name `deep` and are not raisable. To lower it:
 
 - **per install** — a `[models.pass_tiers]` entry in `config.toml` replaces
-  that lens's default pin (`"pass-baseline" = "sol-med"`);
+  that lens's default pin (`"pass-baseline" = "standard"`);
 - **per repo profile** — `[lenses.<pass>] effort = "medium"` keeps the pin's
-  tier name but gives that lens's variants the lower thinking level (every
-  tier runs the same model, so effort is the lever that matters).
+  tier name but gives that lens's variants the lower thinking level (with no
+  tier pinned to a model of its own, every tier runs the same model, so
+  effort is the lever that matters).
 
 The validator is unaffected: it runs at its own `validate_tier` and never
 follows a pinned lens.
@@ -977,7 +1024,7 @@ command = true          # config.toml only; "@<bot> security"
   control or sink the change touches; a profile `heuristics.toml` probe for
   a family lens; a security fact the daemon read (below); a request; and
   `[lenses.<pass>] plan = "always"`. `off` leaves the requests and `always`.
-- **Every family row runs at the risk tier** (`sol-high`, one variant,
+- **Every family row runs at the risk tier** (`deep`, one variant,
   slowest first) on every profile: `risk_passes` is the configured list
   joined with the family, and a tier pin on a family lens is refused.
 - **A family row is not required**, so a failed one never holds the round
@@ -1009,8 +1056,8 @@ command = true          # config.toml only; "@<bot> security"
   outcome is computed from its hop labels (`packages/pi-plugin/src/secevidence.ts`)
   and a mismatch with what the session recorded is counted
   (`security_outcome_mismatch` in `findings_conformance`). When a family row
-  is planned and the validator runs below `sol-high`, the security
-  candidates are validated in a group of their own at `pass-validate--sol-high`.
+  is planned and the validator runs below `deep`, the security
+  candidates are validated in a group of their own at `pass-validate--deep`.
 - **`fold = true`**: a security candidate the validator could not verify
   posts as a question naming the proof gap (`security-demoted`) instead of
   being doubted; the findings record counts any it still doubted

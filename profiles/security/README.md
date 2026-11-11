@@ -26,7 +26,7 @@ for a one-shot review).
   | `pass-sec-variant` | unfixed siblings of a pattern the change fixes or introduces |
   | `pass-sec-exploit-chain` | two or more hops composed into a goal no single hop reaches |
 
-- **The validator**, at `sol-high` whatever the preset says
+- **The validator**, at `deep` whatever the preset says
   (`[lenses.pass-validate] min_tier`). Every security finding has to survive
   it, and it removes any candidate that is not a security defect.
 
@@ -68,7 +68,7 @@ too.
 - **A threat model** (below) plans the lenses its entries name when the
   change touches them.
 
-Every family lens runs at the risk tier (`sol-high`, one variant, slowest
+Every family lens runs at the risk tier (`deep`, one variant, slowest
 first), as on every profile. A family row that fails is named in the review
 body as "did not complete"; it never reads as clean.
 
@@ -127,7 +127,7 @@ A scan under this profile is a deep security scan:
 
 ## Cost
 
-Every family row runs at `sol-high`. On any PR that changes code or config
+Every family row runs at `deep`. On any PR that changes code or config
 that is at least five lens runs (the four planned always, and the chain's
 `delta`), plus the validator, plus one `compose` run after them when the
 round has security leads — a candidate raised by a family lens or of a

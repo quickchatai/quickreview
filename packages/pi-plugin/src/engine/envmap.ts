@@ -251,9 +251,12 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
     note: "session id that survives the tmux server env",
   },
   QCR_LOGIN_OPEN: {
-    kind: "companion-only",
+    kind: "extension-config",
     readers: ["cli/login-route.ts", "login-route.ts"],
-    note: "submit opens pi's /login by itself (the wizard's first run); else the command is only typed in",
+    note:
+      "submit opens pi's /login by itself (the wizard's first run); none is a pi on a borrowed copy of a login " +
+      "(a takeover, a debug round), which is offered no /login; else the command is only typed in. " +
+      "A CLI pi's alone: an SDK session loads no login route, its host resolves the route",
   },
 
   // ---- OPENVIKING_*: upstream plugin config, read in-process by the vendored extension

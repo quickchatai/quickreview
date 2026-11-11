@@ -199,21 +199,6 @@ describe("the value vocabularies agree on both sides of a handoff", () => {
     }
   });
 
-  it("the auth routes the LLM step can record are the routes the readers test for", async () => {
-    const { parseRouteAnswer } = await import("../src/onboard/steps/llmauth.js");
-    const { authRouteOf } = await import("../src/onboard/choices.js");
-    for (const answer of ["oauth", "api"]) {
-      const route = parseRouteAnswer(answer);
-      expect(route).not.toBeNull();
-      expect(
-        authRouteOf({ [CHOICE_KEYS.authRoute]: route }),
-        `route "${route}" is not an AuthRoute`,
-      ).toBe(route);
-    }
-    // A spelling nothing writes is not a route.
-    expect(authRouteOf({ [CHOICE_KEYS.authRoute]: "api_key" })).toBeNull();
-  });
-
   it("the topologies the topology step can record are the ones its readers test for", async () => {
     const { TOPOLOGY_OPTIONS, topologyRecorded } = await import("../src/onboard/steps/topology.js");
     for (const option of TOPOLOGY_OPTIONS) {
@@ -222,5 +207,47 @@ describe("the value vocabularies agree on both sides of a handoff", () => {
         `topology "${option.id}" is not a Topology`,
       ).toBe(option.id);
     }
+  });
+});
+
+// The model step once asked which of two credential routes to use and recorded
+// the answer, with the provider prefix its config rewrite left. It asks pi
+// instead now, so both keys are retired: a checklist written by the older
+// wizard still carries them, and they must mean nothing.
+describe("the retired model-route keys are neither written nor read", () => {
+  const RETIRED = ["llm_auth_route", "llm_model_prefix"];
+  const choicesSource = readFileSync(join(repoRoot, "src", "onboard", "choices.ts"), "utf8");
+
+  // MUTATION: add `authRoute: "llm_auth_route"` back to CHOICE_KEYS in
+  // src/onboard/choices.ts, or name "llm_model_prefix" in any step under
+  // src/onboard/steps/ — this fails.
+  it("no shared or private key carries a retired name, and no step source spells one", () => {
+    const declared = [...Object.values(CHOICE_KEYS), ...Object.keys(PRIVATE_CHOICE_KEYS)];
+    for (const key of RETIRED) {
+      expect(declared, `"${key}" is declared again as a live choice key`).not.toContain(key);
+      for (const src of sources)
+        expect(
+          src.text.includes(key),
+          `${src.file} names the retired choice key "${key}": an older checklist's value would be read or overwritten`,
+        ).toBe(false);
+    }
+  });
+
+  it("the declaration says what they were, so the tolerance is deliberate", () => {
+    for (const key of RETIRED) expect(choicesSource).toContain(`\`${key}\``);
+    // The value vocabulary and its reader went with the writer: an ignored
+    // choice needs no value check.
+    expect(choicesSource).not.toMatch(/AUTH_ROUTES|authRouteOf|AuthRoute\b/);
+  });
+
+  // MUTATION: drop `model: ["llm_auth"]` from CHOICE_WRITERS, or point the
+  // interview's shape line at another key — this fails.
+  it("the model the step found is the one key it hands on, and the interview reads it", () => {
+    expect(CHOICE_WRITERS.model).toEqual(["llm_auth"]);
+    const writers = (Object.keys(CHOICE_WRITERS) as ChoiceName[]).filter((name) =>
+      CHOICE_WRITERS[name].includes("llm_auth"),
+    );
+    expect(writers).toEqual(["model"]);
+    expect(sourceFor("config_fill").text).toContain("CHOICE_KEYS.model");
   });
 });

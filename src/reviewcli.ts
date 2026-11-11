@@ -4,7 +4,12 @@
 // packages/pi-plugin/src/reviewapi.ts: it previews the price first, runs automatically under the
 // repo's configured limit (otherwise asks), runs the shared one-shot core
 // (packages/pi-plugin/src/oneshot.ts) on the host, stops hard at the price it showed, and returns
-// the findings grouped by severity.
+// the findings grouped by severity. On a model with no measured estimate it
+// shows the spend limit instead of a price and asks once for that model.
+//
+// The JSON is review schema 2. A caller that names contract 1 (`qcr --schema
+// 1`, src/schemaflag.ts) is answered in version 1 while the review's estimate
+// is a number, and refused before anything runs where it is not.
 //
 // Re-review: the state kept per target (packages/pi-plugin/src/reviewstate.ts) makes a second run
 // on an unchanged head free, and a run after a push a delta review over the
@@ -20,12 +25,51 @@
 // The detached run (src/reviewdetach.ts) re-runs this verb in a child; a PR
 // keys its state with its own target key.
 //
+// The model. A review runs on what pi has a credential for
+// (packages/pi-plugin/src/modelroute.ts), and this module is where that is
+// found out for a terminal, once the review has a plan (`routeRun`):
+//
+//   1. the remembered choice and pi's saved provider are read from pi's
+//      agent dir, beside the login;
+//   2. the login is borrowed for this run's window: a login that cannot last
+//      the run is left out, so it is never picked or asked about;
+//   3. one host is built with those and the pin (`--model`, else the
+//      config's `[models] model`), and asked for its route;
+//   4. when two providers tie and a person is at the terminal, they are
+//      asked once, the answer is remembered, and the route is resolved again;
+//   5. the route goes to the review, for the preview, the key and the one
+//      line that names the model; the run's sessions are that same host's.
+//
+// A preview starts nothing, so its host exists for the route alone and is
+// gone before the preview is printed. `--model` is the whole review's model
+// for one run: every tier and lens the config pins to a model of its own
+// runs on it too, and the preview says how many it replaced.
+//
 // Exit codes follow `qcr scan`: 0 done; 1 refused, declined, failed or
 // stopped short (partial); 2 usage.
-import { existsSync, openSync, readFileSync, writeSync } from "node:fs";
+import { mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { CoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  isPinned,
+  splitModelSpec,
+  stripPins,
+  type CoreConfig,
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { borrowedCredentials } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { readModelChoice, writeModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
+import {
+  credentialWords,
+  skippedNotice,
+  type ModelChoice,
+  type ModelRoute,
+  type ProviderInventory,
+  type RouteInput,
+  type RouteResult,
+  type SkippedLogin,
+} from "@quickchatai/pi-quickreview/src/modelroute.js";
+import type { PiHost, PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import type { ReviewRuntimeOptions } from "@quickchatai/pi-quickreview/src/engine/reviewruntime.js";
 import type { Ecosystem } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { ReviewMemoryPort } from "@quickchatai/pi-quickreview/src/memoryport.js";
 import type { ProfilePlace } from "@quickchatai/pi-quickreview/src/profilelookup.js";
@@ -47,22 +91,24 @@ import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import type { EngineRouteRuntime } from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
 import { lazyReviewRuntime } from "@quickchatai/pi-quickreview/src/engine/reviewruntime.js";
 import { markSdkRoute } from "@quickchatai/pi-quickreview/src/engine/livesessions.js";
-import {
-  REVIEW_SCHEMA_VERSION,
-  withSchemaVersion,
-} from "@quickchatai/pi-quickreview/src/contract.js";
+import { reviewForContract } from "@quickchatai/pi-quickreview/src/localreview.js";
+import { priceKnowledge } from "@quickchatai/pi-quickreview/src/measured.js";
 import {
   preview,
   review,
   type ReviewData,
+  type ReviewHostRequest,
+  type ReviewHostRun,
   type ReviewIo,
   type ReviewOptions,
   type ReviewResult,
   type ReviewRoute,
+  type ReviewRouted,
   type ReviewTarget,
 } from "@quickchatai/pi-quickreview/src/reviewapi.js";
 import { reviewHome } from "./reviewhome.js";
 import { parseReviewArgs, REVIEW_USAGE, type ReviewCommand } from "./reviewargs.js";
+import { requestedContract } from "./schemaflag.js";
 
 export { parseReviewArgs, REVIEW_USAGE, type ReviewCommand } from "./reviewargs.js";
 
@@ -72,9 +118,12 @@ export function reviewHelp(): string {
     "",
     "Review code in the terminal, with no daemon. The estimated price is previewed",
     "first; a review under the repo's limit starts at once, above it qcr asks, and",
-    "the run stops hard at the cap shown (twice the estimate). In the GitHub Action",
-    "(QCR_ROUTE=action, or GITHUB_ACTIONS=true) nothing is asked and nothing is",
-    "capped unless --limit is given; then the run stops hard at that limit.",
+    "the run stops hard at the cap shown (twice the estimate). The estimate was",
+    "measured on one model: on any other the preview shows no estimate and the spend",
+    "at which the run stops instead, and qcr asks once for that model before it",
+    "starts. In the GitHub Action (QCR_ROUTE=action, or GITHUB_ACTIONS=true) nothing",
+    "is asked and nothing is capped unless --limit is given; then the run stops hard",
+    "at that limit.",
     "",
     "Targets",
     "  (none), branch    the current branch against its base (default)",
@@ -87,8 +136,9 @@ export function reviewHelp(): string {
     "  --repo OWNER/NAME the repository of a PR number (default: this directory's origin)",
     "  --base REF        the base to review against (default: origin's default branch, main, master)",
     "  --preview         show the plan, the price and the key; start nothing",
-    "  --key K           start over the limit without asking, quoting the key a preview showed",
-    "  --limit USD       the limit for this run, over the repo's own (in the Action: the hard stop)",
+    "  --key K           start without asking (over the limit, or with no estimate), quoting the key a\n                    preview showed",
+    "  --limit USD       the limit for this run, over the repo's own. On the measured model: the estimate\n                    a review may have without asking (the hard stop stays twice the estimate).\n                    On a model with no estimate: the stop itself. In the Action: the hard stop",
+    "  --model MODEL     the model the whole review runs on, for this run: provider/id, an id pi\n                    knows, or either with a :level (as pi's own --model reads it). It replaces\n                    every tier and lens model the config pins; `qcr model use` keeps a choice",
     "  --full            review the whole branch again, ignoring what an earlier review left",
     "  --security        ask for a security review on top of the plan: every lens of the security family\n                    is planned (never one the profile switched off), as /qcr-review --security asks",
     "  --json            one JSON object instead of text (the agent destination)",
@@ -110,6 +160,10 @@ export function reviewHelp(): string {
     "through the mutation gate: with `dry_run = true` in the install's config the review is",
     "recorded under state/dryrun/ and nothing is sent.",
     "",
+    "The review runs on a model pi has a credential for: a login made with `qcr login`, or a",
+    "provider's API key in the environment. The preview names the model and why; with several",
+    "providers `qcr model` shows which one runs and `qcr model use <provider>` changes it.",
+    "",
     "A PR is read with the first GitHub credential found: the App if configured, then a",
     "token handed to the container as a file, then GITHUB_TOKEN/GH_TOKEN, then `gh auth token`",
     "(run `gh auth login` to set that up).",
@@ -123,9 +177,11 @@ export function reviewHelp(): string {
     "when done, the findings JSON; `qcr review stop [RUN_ID]` cancels. Two reviews of the same",
     "target at once are refused. Exit codes: 0 done, 1 refused, 2 usage, 3 wait timeout.",
     "",
-    "The repo's limit and price rates live in `.git/qcr-review.json` (auto_limit_usd,",
-    "usd_base, usd_per_lens, usd_per_kline). Exit codes: 0 done; 1 refused, declined or stopped",
-    "short (partial coverage); 2 usage.",
+    "The repo's limits live in `.git/qcr-review.json`: auto_limit_usd (the estimate a review may",
+    "have without asking) and unmeasured_limit_usd (where a review with no estimate stops). A",
+    "repo that has measured its own reviews sets usd_base, usd_per_lens and usd_per_kline there,",
+    "and gets an estimate at those rates on any model. Exit codes: 0 done; 1 refused, declined",
+    "or stopped short (partial coverage); 2 usage.",
   ].join("\n");
 }
 
@@ -163,8 +219,14 @@ export interface ReviewCliDeps {
   agentDir: string;
   cfg: CoreConfig;
   ecosystem: Ecosystem;
-  /** Hosts the review session (`[engine] runtime`, the SDK). */
-  runtime: Runtime;
+  /** Hosts the review session (`[engine] runtime`, the SDK): a runtime, or
+   * what builds one for the run, handed the model side the route resolved
+   * (the borrowed login, the route, the host it was resolved on). */
+  runtime: Runtime | ((host: ReviewRunHost) => Runtime);
+  /** What the run's model is resolved from (`routeRun`). Absent: the review
+   * says nothing of its model, and its sessions run on what the config pins
+   * and the runtime resolves. */
+  models?: ReviewModelDeps;
   /** Runs the round inside interactive pi (`--debug-pi`, src/engine/debugpi.ts).
    * Absent: there is no terminal for it, and the flag is refused. */
   debugPi?: (spec: RoundSpec) => Promise<OneShotResult>;
@@ -188,6 +250,277 @@ export interface ReviewCliDeps {
   pr?: PrCredentialDeps & Pick<PrFetchRequest, "fetchFn" | "gitBase" | "apiBase">;
   /** Where a warning is said before the run (stderr). */
   warn?: (line: string) => void;
+  /** The host-plugin contract the caller reads (`qcr --schema N`). Absent:
+   * the code's own review schema. */
+  contract?: number;
+}
+
+/** What the run's runtime is handed of the model side: the login the route
+ * borrowed, the route's inputs, and the host the route was resolved on. */
+export type ReviewRunHost = Pick<ReviewRuntimeOptions, "credentials" | "route" | "prebuilt">;
+
+/** What `qcr review` resolves its model from, beside pi's agent dir. */
+export interface ReviewModelDeps {
+  /** Where pi looks for a provider's key: this process's environment, under
+   * the model env of the install's secrets dir. */
+  env: Readonly<Record<string, string | undefined>>;
+  /** Where a host's private agent dir is made, and removed again: the state
+   * home's tmp. */
+  tmpDir: string;
+  /** The install's config file, for a refusal that names a pin in it; null
+   * when the shipped defaults stand in. */
+  configPath: string | null;
+  /** Ask the person which provider runs the review: the question and one row
+   * per provider, the first being the one the order takes. Resolves the row's
+   * index, or null when they gave no answer. Null: nobody to ask. */
+  choose: ((question: string, rows: readonly string[]) => Promise<number | null>) | null;
+  /** The run host's options beside the login and the route: whether it owns
+   * this process, and the home its tool fence keeps out. */
+  host?: Pick<ReviewRuntimeOptions, "ownsProcess" | "homeDir" | "fenceDirs">;
+  /** Runs once on each host's new model runtime: a test registers its
+   * provider here. */
+  configureModels?: PiHostOptions["configureModels"];
+  now?: () => number;
+}
+
+/** One run's model side: what `review()` asks for the route, what the
+ * runtime and the run's isolation are handed after it, and what to release. */
+interface RouteRun {
+  route: () => Promise<ReviewRouted>;
+  host: () => ReviewRunHost;
+  prepareHost: (req: ReviewHostRequest) => ReviewHostRun;
+  close: () => void;
+}
+
+/** The route's result with pi's display names where the borrow could only
+ * give ids: it reads a login file and knows no provider's name. */
+function withNames(
+  result: RouteResult,
+  skipped: readonly SkippedLogin[],
+  nameOf: (provider: string) => string,
+): RouteResult {
+  const rename = (l: SkippedLogin): SkippedLogin => ({ ...l, name: nameOf(l.provider) });
+  if (!result.ok)
+    return result.refusal.code === "login-too-short"
+      ? { ok: false, refusal: { ...result.refusal, logins: result.refusal.logins.map(rename) } }
+      : result;
+  const said = new Map(skipped.map((l) => [skippedNotice(l), skippedNotice(rename(l))]));
+  return {
+    ok: true,
+    route: { ...result.route, notices: result.route.notices.map((n) => said.get(n) ?? n) },
+  };
+}
+
+/** The rows of the provider question: the model each provider would run,
+ * whose credential it is, and what is known of its price before a review
+ * (`measured estimate`, `no estimate` or `no list price`). With no inventory
+ * to read the models from, a row says only what the route knows: that pi has
+ * no list price. */
+export function providerRows(
+  route: ModelRoute,
+  inventory?: readonly ProviderInventory[],
+): string[] {
+  const options = [route, ...route.alternatives];
+  const width = Math.max(...options.map((x) => x.spec.length));
+  return options.map((x) =>
+    [
+      x.spec.padEnd(width),
+      `${x.providerName}, ${credentialWords(x.credential)}`,
+      ...(inventory !== undefined
+        ? [priceKnowledge(x, inventory)]
+        : x.priced
+          ? []
+          : ["no list price"]),
+    ].join("    "),
+  );
+}
+
+/**
+ * The model side of one run (the header's five steps). `route` is what
+ * `review()` asks once it has a plan; nothing is read or built before that.
+ *
+ * `sessions` says the run's sessions are this process's: the host the route
+ * is resolved on is then built over a private agent dir of its own, which the
+ * run goes on to fill and run in, so the model shown is the model run on. A
+ * preview starts nothing and a debug round's pi is a child reading its own
+ * copy of the login: for those the host exists for the route alone.
+ */
+function routeRun(o: {
+  models: ReviewModelDeps;
+  root: string;
+  /** pi's agent dir: the login, the remembered choice and pi's saved provider. */
+  agentDir: string;
+  /** The run's window: what a borrowed login has to outlast. */
+  needMs: number;
+  pin: RouteInput["pin"] | undefined;
+  sessions: boolean;
+  /** A person may be asked which provider (never for a preview or JSON). */
+  ask: boolean;
+  /** Lines for the preview under the model line. */
+  notes: readonly string[];
+  say: (line: string) => void;
+}): RouteRun {
+  const m = o.models;
+  /** What is open now: the host, and for a run's host its agent dir. */
+  let open: { host: PiHost; agentDir?: string; done: () => void } | undefined;
+  let handed: ReviewRunHost = {};
+  const close = (): void => {
+    const was = open;
+    open = undefined;
+    was?.done();
+  };
+
+  const route = async (): Promise<ReviewRouted> => {
+    const remembered = readModelChoice(o.agentDir);
+    if (remembered.notice !== undefined) o.say(`note: ${remembered.notice}`);
+    // Throws when the login file is there and cannot be read: an unknown
+    // store is never taken for an empty one.
+    const borrowed = borrowedCredentials({
+      srcDir: o.agentDir,
+      needMs: o.needMs,
+      // Nothing renews the login for a review at a terminal.
+      owner: false,
+      ...(m.now ? { now: m.now } : {}),
+    });
+    // Loaded here, not at the top: the pi SDK is needed only once a route is asked for.
+    const [{ PiHost: Host, piSavedProvider }, { routeHost, seedHostAgentDir }, sdk] =
+      await Promise.all([
+        import("@quickchatai/pi-quickreview/src/engine/pisdk.js"),
+        import("@quickchatai/pi-quickreview/src/reviewhost.js"),
+        import("@quickchatai/pi-quickreview/src/engine/reviewsdk.js"),
+      ]);
+    const saved = piSavedProvider(o.agentDir);
+    const inputsFor = (choice: ModelChoice | undefined): NonNullable<PiHostOptions["route"]> => ({
+      skipped: borrowed.skipped,
+      ...(o.pin ? { pin: o.pin } : {}),
+      ...(choice ? { choice } : {}),
+      ...(saved !== undefined
+        ? { piProvider: { provider: saved, from: "pi-settings" as const } }
+        : {}),
+    });
+    const configure = m.configureModels ? { configureModels: m.configureModels } : {};
+    /** Build the host for `choice` in place of the one open now. */
+    const build = async (choice: ModelChoice | undefined): Promise<PiHost> => {
+      close();
+      const inputs = inputsFor(choice);
+      handed = { credentials: borrowed.credentials, route: inputs };
+      if (!o.sessions) {
+        const made = await routeHost({
+          srcAgentDir: o.agentDir,
+          tmpDir: m.tmpDir,
+          credentials: borrowed.credentials,
+          authEnv: m.env,
+          route: inputs,
+          ...configure,
+        });
+        open = { host: made.host, done: () => made.dispose() };
+        return made.host;
+      }
+      mkdirSync(m.tmpDir, { recursive: true, mode: 0o700 });
+      const scratch = mkdtempSync(join(m.tmpDir, "review-"));
+      const remove = (): void => rmSync(scratch, { recursive: true, force: true });
+      try {
+        const agentDir = join(scratch, "agent");
+        seedHostAgentDir({ root: o.root, srcAgentDir: o.agentDir, agentDir });
+        const host = await Host.create({
+          ...sdk.reviewHostOptions(
+            {
+              ...m.host,
+              processEnv: m.env,
+              // The login's own home is fenced by name: the choice file is there too.
+              fenceDirs: [o.agentDir, ...(m.host?.fenceDirs ?? [])],
+              credentials: borrowed.credentials,
+              route: inputs,
+            },
+            { agentDir, needMs: o.needMs },
+          ),
+          ...configure,
+        });
+        open = {
+          host,
+          agentDir,
+          done: () => {
+            host.dispose();
+            remove();
+          },
+        };
+        handed = { ...handed, prebuilt: (dir) => (dir === agentDir ? host : undefined) };
+        return host;
+      } catch (e) {
+        remove();
+        throw e;
+      }
+    };
+
+    let choice = remembered.choice;
+    let host = await build(choice);
+    let result = await host.route();
+    // Two providers tie and a person is here: ask once, remember the answer,
+    // and resolve again with it.
+    if (result.ok && result.route.ask && o.ask && m.choose) {
+      const options = [result.route, ...result.route.alternatives];
+      const picked = await m.choose(
+        "pi can run this review on more than one provider:",
+        providerRows(result.route, await host.inventory()),
+      );
+      const answer = picked === null ? undefined : options[picked];
+      if (answer !== undefined) {
+        const written = writeModelChoice(o.agentDir, {
+          provider: answer.provider,
+          model: null,
+          via: "ask",
+        });
+        // A choice that cannot be kept still holds for this run.
+        o.say(
+          written.ok
+            ? `Remembered: ${answer.providerName}. qcr model use <provider> changes it.`
+            : written.error,
+        );
+        choice = {
+          provider: answer.provider,
+          model: null,
+          via: "ask",
+          no_estimate_ok: remembered.noEstimateOk,
+        };
+        host = await build(choice);
+        result = await host.route();
+      }
+    }
+    const names = new Map(host.modelRuntime.getProviders().map((p) => [p.id, p.name]));
+    const nameOf = (provider: string): string => names.get(provider) ?? provider;
+    const inventory = await host.inventory();
+    // A host that runs no session has said all it is for.
+    if (!o.sessions) close();
+    return {
+      result: withNames(result, borrowed.skipped, nameOf),
+      inventory,
+      ...(choice !== undefined ? { prefer: choice.provider } : {}),
+      skipped: borrowed.skipped,
+      surface: "app",
+      facts: {
+        agentDir: o.agentDir,
+        needMs: o.needMs,
+        configPath: m.configPath,
+        nameOf,
+        ...(m.now ? { now: m.now } : {}),
+      },
+      notes: o.notes,
+    };
+  };
+
+  return {
+    route,
+    host: () => handed,
+    prepareHost: (req) => {
+      const agentDir = open?.agentDir;
+      // The run's own host is built: its agent dir is the run's, and the login
+      // stays in the host's memory. Otherwise pi is a child and reads a copy.
+      return agentDir !== undefined
+        ? prepareHostRun({ ...req, agentDir, auth: "injected", keepAgentDir: true })
+        : prepareHostRun(req);
+    },
+    close,
+  };
 }
 
 /** The text of a `--diff` argument: stdin for "-", else the file. */
@@ -256,7 +589,7 @@ export async function runReviewCli(
   const refuse = (code: number, errors: string[]): number => {
     print({
       text: errors.map((e) => `✗ ${e}`).join("\n"),
-      data: withSchemaVersion(REVIEW_SCHEMA_VERSION, { ok: false, errors }) as ReviewData,
+      data: reviewForContract(deps.contract, { ok: false, errors }).data as ReviewData,
       destinations: null,
     });
     return code;
@@ -300,6 +633,53 @@ export async function runReviewCli(
         say("kept as this repo's default: pass --to to choose otherwise");
     }
   }
+  const debug = cmd.debugPi && deps.debugPi !== undefined;
+  // `--model` is the whole review's model for this run: every tier and lens
+  // the config pins to a model of its own loses that model and keeps its
+  // level. The main session names no model either and runs on the route, at
+  // the level the flag names, else the config's; a debug round's pi is a
+  // child that reads the flag's own text.
+  let cfg = deps.cfg;
+  const notes: string[] = [];
+  if (cmd.model !== undefined) {
+    const stripped = stripPins(deps.cfg);
+    const level =
+      splitModelSpec(cmd.model).thinking !== null
+        ? null
+        : splitModelSpec(deps.cfg.models.model).thinking;
+    cfg = {
+      ...stripped.cfg,
+      models: {
+        ...stripped.cfg.models,
+        model: debug ? cmd.model : level !== null ? `:${level}` : "",
+      },
+    };
+    if (stripped.replaced > 0)
+      notes.push(
+        `--model replaces ${stripped.replaced} pinned tier and lens model${stripped.replaced === 1 ? "" : "s"} for this run`,
+      );
+  }
+  const say = deps.warn ?? ((l: string) => console.error(l));
+  const routed =
+    deps.models !== undefined
+      ? routeRun({
+          models: deps.models,
+          root: deps.root,
+          agentDir: deps.agentDir,
+          needMs: deps.timeoutMs,
+          pin:
+            cmd.model !== undefined
+              ? { text: cmd.model, from: "flag" }
+              : isPinned(deps.cfg.models.model)
+                ? { text: deps.cfg.models.model, from: "config" }
+                : undefined,
+          sessions: !cmd.preview && !debug,
+          ask: !cmd.preview && !json,
+          notes,
+          say,
+        })
+      : undefined;
+  const runtime = deps.runtime;
   const opts: ReviewOptions = {
     repoDir: deps.cwd,
     root: deps.root,
@@ -307,14 +687,16 @@ export async function runReviewCli(
     runsDir: deps.runsDir,
     dryrunDir: deps.dryrunDir,
     storeDir,
-    config: deps.cfg,
+    config: cfg,
     ecosystem: deps.ecosystem,
     ...(deps.profileHomes ? { profileHomes: deps.profileHomes } : {}),
     // `qcr review` runs one review per process: its one runtime is that run's,
-    // and what it holds goes with the process.
-    runtime: () => deps.runtime,
-    prepareHost: prepareHostRun,
-    ...(cmd.debugPi && deps.debugPi !== undefined ? { debugRound: deps.debugPi } : {}),
+    // and what it holds goes with the process. It is asked for when the round
+    // starts, after the route: the host the route was resolved on is its host.
+    runtime: () => (typeof runtime === "function" ? runtime(routed?.host() ?? {}) : runtime),
+    ...(routed ? { route: routed.route } : {}),
+    prepareHost: routed ? routed.prepareHost : prepareHostRun,
+    ...(debug ? { debugRound: deps.debugPi! } : {}),
     ...(deps.memory !== undefined ? { memory: deps.memory } : {}),
     destinations,
     ...(cmd.out !== undefined ? { reportFile: resolve(deps.cwd, cmd.out) } : {}),
@@ -329,6 +711,7 @@ export async function runReviewCli(
       ...(cmd.key !== undefined ? { key: cmd.key } : {}),
       timeoutMs: deps.timeoutMs,
     },
+    ...(deps.contract !== undefined ? { contract: deps.contract } : {}),
     ...(deps.pr ? { github: deps.pr } : {}),
   };
   const io: ReviewIo = {
@@ -339,7 +722,13 @@ export async function runReviewCli(
     ...(deps.log ? { log: deps.log } : {}),
   };
   const target = targetOf(cmd, deps);
-  const result = cmd.preview ? await preview(target, opts, io) : await review(target, opts, io);
+  let result: ReviewResult;
+  try {
+    result = cmd.preview ? await preview(target, opts, io) : await review(target, opts, io);
+  } finally {
+    // The route's host and its private agent dir go with the run.
+    routed?.close();
+  }
   print(result);
   return result.exitCode;
 }
@@ -361,7 +750,12 @@ export function containerRunEnv(
  * `[pi] lens_runtime = engine` is
  * the SDK runtime with our lens tools; with `[pi] engine_wave` the runtime
  * carries the board the round starts the planned wave on. */
-export function selectReviewRuntime(cfg: Pick<CoreConfig, "engine" | "pi">): EngineRouteRuntime {
+export function selectReviewRuntime(
+  cfg: Pick<CoreConfig, "engine" | "pi">,
+  /** The model side the route resolved for the run. Omitted: the runtime
+   * reads the login from the run's agent dir and resolves a model itself. */
+  host: ReviewRunHost = {},
+): EngineRouteRuntime {
   // A stop signal that arrives before the host is built already ends the run
   // as an SDK stop.
   markSdkRoute();
@@ -371,6 +765,7 @@ export function selectReviewRuntime(cfg: Pick<CoreConfig, "engine" | "pi">): Eng
     backstop: () => process.exit(BUDGET_EXIT_CODE),
     warn: (line) => console.error(line),
     homeDir: homedir(),
+    ...host,
   });
 }
 
@@ -384,8 +779,12 @@ export async function cmdReview(
     /** The install's memory, from its config; the host injects it (src/cli.ts
      * passes the app's, src/reviewmemory.ts). Absent: no memory. */
     memory?: (configPath: string) => ReviewMemoryPort | null;
+    /** The host-plugin contract the caller reads. Absent: the one this
+     * process's `--schema N` named (src/schemaflag.ts), else the code's own. */
+    contract?: number;
   } = {},
 ): Promise<number> {
+  const contract = io.contract ?? requestedContract();
   // Detached runs for plugins (src/reviewdetach.ts): `start | status | stop`,
   // and the child `start` launches.
   if (rest[0] === "start" || rest[0] === "status" || rest[0] === "stop") {
@@ -398,6 +797,7 @@ export async function cmdReview(
     const container = containerRunEnv(process.env);
     return det.runDetachedVerb(verb, rest.slice(1), json, {
       home: join(stateHome(), "review", "detached"),
+      ...(contract !== undefined ? { contract } : {}),
       out: (l) => console.log(l),
       now: Date.now,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -489,6 +889,9 @@ export async function cmdReview(
           out,
           runsDir: join(claimed.dir, "work"),
           ...(io.memory ? { memory: io.memory } : {}),
+          // The contract the run was started under: a review it cannot state
+          // is refused before it spends anything.
+          ...(claimed.contract !== undefined ? { contract: claimed.contract } : {}),
         });
         return code;
       },
@@ -500,6 +903,9 @@ export async function cmdReview(
     const key = rest[2];
     if (!dir || !key) return 2;
     const det = await import("./reviewdetach.js");
+    // The contract the run was started under (its record): a review that
+    // contract cannot state is refused before it spends anything.
+    const started = det.runContract(dir);
     let code = 1;
     await det.runDetachedChild({
       dir,
@@ -509,6 +915,7 @@ export async function cmdReview(
           out,
           runsDir: join(dir, "work"),
           ...(io.memory ? { memory: io.memory } : {}),
+          ...(started !== undefined ? { contract: started } : {}),
         });
         return code;
       },
@@ -522,7 +929,22 @@ export async function cmdReview(
   const { homedir } = await import("node:os");
   const root = assetRoot();
   // The install's config, or the shipped defaults when it has none.
-  const loaded = loadOneShotConfig({ root, warn: (l) => console.warn(l) });
+  // The wizards' override of the secrets dir is honoured below a configured
+  // one, as `qcr model` honours it: the two verbs read one model env.
+  const loaded = loadOneShotConfig({
+    root,
+    warn: (l) => console.warn(l),
+    secretsOverride: process.env["QC_SECRETS_DIR"],
+  });
+  // The model env of the install's secrets dir, where pi looks for a
+  // provider's key beside this process's own environment (src/modelenv.ts):
+  // the route `qcr model` names is the one this review runs on. It is handed
+  // to pi's credential lookup alone, never to a tool.
+  const { oneShotModelEnv } = await import("./modelenv.js");
+  const { sandboxRoot } = await import("./config.js");
+  const modelEnv = oneShotModelEnv(loaded.cfg.github.secrets_dir, sandboxRoot(), {
+    warn: (l) => console.warn(l),
+  });
   const profileHomes = homeProfilePlaces();
   const { cfg, ecosystem } = contextFrom(root, loaded, loaded.cfg.review.profile, "", {
     homes: profileHomes,
@@ -538,46 +960,43 @@ export async function cmdReview(
     process.env["PI_CODING_AGENT_DIR"]?.trim() ||
     join(process.env["HOME"] || homedir(), ".pi", "agent");
   const route = routeFromEnv(process.env);
-  const startsNothing = rest.some((a) => a === "--preview" || a === "--help" || a === "-h");
-  if (!startsNothing) {
-    if (route === "laptop") {
-      // A person's run needs a credential for every provider the review's
-      // models name; a key for another provider never stands in for one.
-      const { reviewLoginRefusal } = await import("./loginhint.js");
-      const { reviewProviders } = await import("@quickchatai/pi-quickreview/src/modelroute.js");
-      const problem = reviewLoginRefusal({
-        providers: reviewProviders(cfg),
-        agentDir,
-        env: process.env,
-      });
-      if (problem !== null) {
-        const out = io.out ?? ((l: string) => console.log(l));
-        if (json)
-          out(
-            JSON.stringify(
-              withSchemaVersion(REVIEW_SCHEMA_VERSION, { ok: false, errors: [problem] }),
-            ),
-          );
-        else console.error(`✗ ${problem}`);
-        return 1;
-      }
-    } else if (!existsSync(join(agentDir, "auth.json")) && !json)
-      console.error(
-        `note: no pi login at ${agentDir} — run \`qcr login\` first if the review fails`,
-      );
-  }
-  let runtime: Runtime;
-  try {
-    runtime = selectReviewRuntime(cfg);
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    return 1;
-  }
+  // A stop that arrives while the route is being resolved, before any runtime
+  // is built, already ends the run as an SDK stop.
+  markSdkRoute();
   return runReviewCli(rest, json, {
     cwd: process.cwd(),
     readStdin,
     route,
+    // The model: whatever pi has a credential for (the header's five steps).
+    // Nothing is checked here ahead of the review: a run with no usable model
+    // is refused where the route is resolved, in the route's own words.
+    models: {
+      env: { ...process.env, ...modelEnv },
+      tmpDir: join(stateHome(), "tmp"),
+      configPath: loaded.path,
+      choose: interactive
+        ? async (question, rows) => {
+            const rl = createInterface({ input: process.stdin, output: process.stderr });
+            try {
+              const list = rows.map((r, i) => `  ${i + 1}) ${r}`).join("\n");
+              for (;;) {
+                const a = (await rl.question(`${question}\n${list}\nWhich one? [1] `)).trim();
+                if (a === "") return 0;
+                if (/^\d+$/.test(a) && Number(a) >= 1 && Number(a) <= rows.length)
+                  return Number(a) - 1;
+              }
+            } catch {
+              // the terminal went away: the order's own pick runs, unremembered
+              return null;
+            } finally {
+              rl.close();
+            }
+          }
+        : null,
+      host: { homeDir: homedir() },
+    },
     out: io.out ?? ((l) => console.log(l)),
+    ...(contract !== undefined ? { contract } : {}),
     confirm: interactive
       ? async (q) => {
           const rl = createInterface({ input: process.stdin, output: process.stderr });
@@ -613,7 +1032,7 @@ export async function cmdReview(
     agentDir,
     cfg,
     ecosystem,
-    runtime,
+    runtime: (host) => selectReviewRuntime(cfg, host),
     // A round inside interactive pi needs the whole terminal.
     ...(interactive && process.stdout.isTTY
       ? {

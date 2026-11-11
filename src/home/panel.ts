@@ -27,7 +27,8 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { clockOf } from "@quickchatai/pi-quickreview/src/live/lensline.js";
-import { ago, providerLabel, type HomeModel } from "./model.js";
+import { spendText } from "@quickchatai/pi-quickreview/src/pricing.js";
+import { ago, credentialHow, type HomeModel } from "./model.js";
 import type { OpenPull, PrReview, ReviewQuote, Slot } from "./ports.js";
 import { sevOf, shortWhere, whereOf, type Lens, type Run } from "./review.js";
 import { pickUpPhrase, type Ask } from "./switches.js";
@@ -252,7 +253,12 @@ export class HomePanel implements Component {
         ? this.c("dim", "spend checking…")
         : sp.kind === "unknown"
           ? this.c("dim", "spend unknown")
-          : this.c("muted", `${money(sp.value.today)} today · ${money(sp.value.month)} this month`);
+          : this.c(
+              "muted",
+              // Each sum with the reviews it could not count: "$X + N rounds
+              // unknown", or "unknown (N rounds)" when none of them has a price.
+              `${spendText(sp.value.today, sp.value.todayUnknown)} today · ${spendText(sp.value.month, sp.value.monthUnknown)} this month`,
+            );
     return [left, right];
   }
 
@@ -265,7 +271,12 @@ export class HomePanel implements Component {
   }
 
   private loginLine(): [string, string] {
-    const label = providerLabel(this.m.chatProvider());
+    // pi's own name for the provider whose credential the line shows; with
+    // none to name, the line says what it is about
+    const credential = this.m.credential();
+    const others =
+      this.m.state.login.kind === "known" ? Math.max(0, this.m.state.login.value.length - 1) : 0;
+    const label = credential?.name ?? "model login";
     const signed = this.m.signedIn();
     // one login per box: an expired one says so, with the key that signs in again
     const expired = this.m.loginExpired();
@@ -276,12 +287,13 @@ export class HomePanel implements Component {
         : this.host.signingAgain?.()
           ? `${this.c("accent", this.spin())} ${this.c("muted", label)} ${this.c("dim", "signing in again…")}`
           : expired !== null
-            ? `${this.c("error", "✗")} ${this.c("muted", label)} ${this.c("error", expired)}${again ? ` ${this.c("dim", "·")} ${this.c("accent", again)} ${this.c("muted", "sign in again")}` : ""}`
+            ? `${this.c("error", "✗")} ${this.c("muted", credential?.name ?? "model")} ${this.c("error", expired)}${again ? ` ${this.c("dim", "·")} ${this.c("accent", again)} ${this.c("muted", "sign in again")}` : ""}`
             : signed === null
-              ? `${this.c("dim", "?")} ${this.c("muted", label)} unknown`
-              : signed
-                ? `${this.c("success", "✓")} ${this.c("muted", label)} ${label === "OpenAI" ? "ChatGPT" : "signed in"}`
-                : `${this.c("warning", "✗")} ${this.c("muted", label)} ${this.c("warning", "not signed in")}`;
+              ? // pi's registry could not be read: unknown, never "not signed in"
+                `${this.c("dim", "?")} ${this.c("muted", "model login")} unknown`
+              : credential !== null
+                ? `${this.c("success", "✓")} ${this.c("muted", credential.name)} ${this.c("dim", "·")} ${credentialHow(credential)}${others > 0 ? this.c("dim", ` +${others}`) : ""}`
+                : `${this.c("warning", "✗")} ${this.c("muted", "model login")} ${this.c("warning", "not signed in")}`;
     const g = this.m.state.github;
     const gh =
       g.kind === "pending"
@@ -298,15 +310,28 @@ export class HomePanel implements Component {
   }
 
   /** "~$1.33 · stops at $2.66", "price unknown", a spinner while pricing,
-   * or nothing before it is asked for. */
+   * or nothing before it is asked for. A quote with no estimate (its model
+   * is not the measured one) says so and names the stop, never a price:
+   * "no estimate · stops at $15.00", or "no dollar stop" where pi has no
+   * price for the model. */
   private price(q: Slot<ReviewQuote> | null, long: boolean): string {
     if (q === null) return "";
     if (q.kind === "pending") return this.c("dim", `${this.spin()} pricing`);
     if (q.kind === "unknown") return this.c("dim", "price unknown");
     const cap = q.value.capUsd;
+    const est = q.value.estimateUsd;
+    if (est === null)
+      return this.c(
+        "dim",
+        cap === null
+          ? `no estimate${long ? " · no dollar stop" : ""}`
+          : long
+            ? `no estimate · stops at ${money(cap)}`
+            : `stops at ${money(cap)}`,
+      );
     return this.c(
       "dim",
-      `~${money(q.value.estimateUsd)}${long ? (cap === null ? " · no hard stop" : ` · stops at ${money(cap)}`) : ""}`,
+      `~${money(est)}${long ? (cap === null ? " · no hard stop" : ` · stops at ${money(cap)}`) : ""}`,
     );
   }
 
@@ -471,10 +496,14 @@ export class HomePanel implements Component {
     const at = order.indexOf(r.stage);
     const mark = (i: number): string =>
       at > i ? c("success", "✓") : at === i ? c("accent", this.spin()) : c("dim", "○");
+    // A quote the home saw and that had no estimate names the stop; "price
+    // unknown" is only for a run whose quote it never saw.
     const price =
-      r.est === null
-        ? "price unknown"
-        : `~${money(r.est)}${r.cap === null ? "" : `, stops at ${money(r.cap)}`}`;
+      r.est !== null
+        ? `~${money(r.est)}${r.cap === null ? "" : `, stops at ${money(r.cap)}`}`
+        : r.basis === undefined
+          ? "price unknown"
+          : `no estimate, ${r.cap === null ? "no dollar stop" : `stops at ${money(r.cap)}`}`;
     const plan =
       r.lenses.length > 0
         ? `${r.files === undefined ? "" : `${plural(r.files, "file")} → `}${r.lenses.length} lens${r.lenses.length === 1 ? "" : "es"}`

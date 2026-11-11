@@ -381,10 +381,10 @@ describe("cases", () => {
 
 describe("planFinds — TWO finds a round", () => {
   const rows: SelectionRow[] = [
-    { row: 0, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
-    { row: 1, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
+    { row: 0, lens: "pass-baseline", agent: "pass-baseline--standard" },
+    { row: 1, lens: "pass-baseline", agent: "pass-baseline--standard" },
     { row: 2, lens: "pass-sweep", agent: "pass-sweep--sol-low", focus: ["docs/guide.md"] },
-    { row: 3, lens: "pass-validate", agent: "pass-validate--sol-high" },
+    { row: 3, lens: "pass-validate", agent: "pass-validate--deep" },
   ];
 
   it("the cases find first, then ONE lesson find every row, the validator and the addable lenses share", () => {
@@ -517,9 +517,9 @@ function caseText(
 // planner: `selectRound` takes any plan (each row's answer by its `rowKey`).
 describe("selectRound", () => {
   const rows: SelectionRow[] = [
-    { row: 0, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
-    { row: 1, lens: "pass-security", agent: "pass-security--sol-high" },
-    { row: 2, lens: "pass-validate", agent: "pass-validate--sol-high" },
+    { row: 0, lens: "pass-baseline", agent: "pass-baseline--standard" },
+    { row: 1, lens: "pass-security", agent: "pass-security--deep" },
+    { row: 2, lens: "pass-validate", agent: "pass-validate--deep" },
   ];
   const prFiles = ["backend/api/views.py", "docs/guide.md"];
 
@@ -708,8 +708,8 @@ describe("selectRound", () => {
       "pass-data-safety",
     ];
     const five: SelectionRow[] = [
-      ...LENSES.map((lens, i) => ({ row: i, lens, agent: `${lens}--sol-med` })),
-      { row: 5, lens: "pass-validate", agent: "pass-validate--sol-high" },
+      ...LENSES.map((lens, i) => ({ row: i, lens, agent: `${lens}--standard` })),
+      { row: 5, lens: "pass-validate", agent: "pass-validate--deep" },
     ];
     const plan = s9aPlanFinds({ title: "T", rows: five, prFiles });
     const byRow: Record<number, FindOutcome> = {};
@@ -861,7 +861,7 @@ describe("selectRound", () => {
     // judges the whole PR — finds it through its own find and ranks it a path hit.
     const focused: SelectionRow[] = [
       { row: 0, lens: "pass-sweep", agent: "pass-sweep--sol-low", focus: ["backend/api/views.py"] },
-      { row: 1, lens: "pass-validate", agent: "pass-validate--sol-high" },
+      { row: 1, lens: "pass-validate", agent: "pass-validate--deep" },
     ];
     const plan = s9aPlanFinds({ title: "T", rows: focused, prFiles });
     const docsOnly = hit(
@@ -949,13 +949,13 @@ describe("selectRound", () => {
 
 describe("two-find equivalence — over an engine that returns the whole corpus, TWO finds select exactly what per-row finds would", () => {
   const rows: SelectionRow[] = [
-    { row: 0, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
-    { row: 1, lens: "pass-security", agent: "pass-security--sol-high" },
+    { row: 0, lens: "pass-baseline", agent: "pass-baseline--standard" },
+    { row: 1, lens: "pass-security", agent: "pass-security--deep" },
     { row: 2, lens: "pass-sweep", agent: "pass-sweep--sol-low", focus: ["docs/guide.md"] },
     { row: 3, lens: "pass-sweep", agent: "pass-sweep--sol-low", focus: ["backend/api/views.py"] },
-    { row: 4, lens: "pass-ui", agent: "pass-ui--sol-med" },
-    { row: 5, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
-    { row: 6, lens: "pass-validate", agent: "pass-validate--sol-high" },
+    { row: 4, lens: "pass-ui", agent: "pass-ui--standard" },
+    { row: 5, lens: "pass-baseline", agent: "pass-baseline--standard" },
+    { row: 6, lens: "pass-validate", agent: "pass-validate--deep" },
   ];
   const addable = ["pass-concurrency", "pass-data-safety", "pass-ui"];
   const prFiles = [...CORPUS_PR_FILES];

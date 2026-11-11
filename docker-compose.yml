@@ -19,7 +19,9 @@
 #   QCR_CONFIG_HOME   the directory holding your config.toml, mounted read-only
 #   QCR_CONFIG_NAME   the file in it (default config.toml)
 #   QCR_SECRETS_DIR   the secrets dir -- app_id, app.pem, webhook_secret at
-#                     least; optional openai_api_key (pi's API-key route),
+#                     least; optional model keys by pi's env names under
+#                     model-env/ (one file per variable; an older
+#                     openai_api_key file is still read),
 #                     openviking_root_key, openviking_reviewer_key, and
 #                     openai_embeddings_api_key (only under the hosted-embeddings
 #                     opt-in -- memory embeds locally by default)
@@ -170,8 +172,8 @@ services:
       # pi's home: OAuth tokens (auth.json), session JSONLs, models.json --
       # must survive container recreates (sticky sessions + /login tokens).
       - qcr-pihome:/home/qcr/.pi
-      # The OpenAI login, on a single box: the host pi home's agent dir, the
-      # one the home signed in to, so the box has one login (FT-0658). The
+      # The model login, on a single box: the host pi home's agent dir, the
+      # one the home signed in to, so the box has one login. The
       # home's switch-on writes QCR_PI_LOGIN_DIR into the project .env and
       # turns [login_refresh] on: the daemon's refresher then owns that
       # auth.json while auto-review runs, and the home's pi takes it back when

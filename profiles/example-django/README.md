@@ -14,7 +14,7 @@ Authoring rules, scopes and ordering: `docs/profiles.md`.
 
 `profile.toml` selects `ecosystem = "django"`: the daemon runs the
 migration-number collision pre-check (remedy posted as a COMMENT, never a
-blocker), forces the sol-med tier on migration-touching rounds, and renders
+blocker), forces the standard tier on migration-touching rounds, and renders
 the MIGRATION GATE prose into round prompts. A non-Django codebase should say
 `ecosystem = "none"` (or omit the file) — that is a clean off: none of the
 machinery runs and prompts carry no migration-gate prose. Details: the

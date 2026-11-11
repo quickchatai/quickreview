@@ -127,7 +127,6 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/localreview-readonly.test.ts",
   "tests/loginrefresh.test.ts", // flock helper processes and a racing writer process
   "tests/memory-image.test.ts",
-  "tests/onboard-llmauth.test.ts",
   "tests/onboard-streamrunner.test.ts",
   "tests/open-pr.test.ts", // sh -c against a fixture root, a real pi child in a pty
   "tests/openviking-embedder.test.ts",
@@ -171,6 +170,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/review-detached.test.ts",
   "tests/review-post-cli.test.ts",
   "tests/review-pr-target.test.ts",
+  "tests/review-route.test.ts",
   "tests/review-watchdog.test.ts",
   "tests/reviewrender.test.ts",
   "tests/reviewstore.test.ts",

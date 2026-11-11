@@ -94,6 +94,7 @@ import {
 import type { EcosystemName } from "./ecosystem.js";
 import { ALL_PASSES, LENS_FAMILIES, SECURITY_FAMILY } from "./passes.js";
 import { PROFILE_THREAT_MODEL_FILE } from "./threatmodel.js";
+import { RISK_TIER } from "./types.js";
 import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
 import {
@@ -722,7 +723,7 @@ export function securityOnlyLenses(
  *     `cfg.lenses` (`securityOnlyLenses`; `passes` is `ALL_PASSES`);
  *   * each `[lenses.<pass>] risk = true` lens joins `models.risk_passes`. A
  *     `[models.pass_tiers]` pin or a `[models.pass_models]` override on such a
- *     lens is refused: a risk pass always runs at sol-high on its tier's
+ *     lens is refused: a risk pass always runs at deep on its tier's
  *     model, and a profile that asked for both asked for something this
  *     cannot honour.
  * Run after the lens tuning is overlaid (it reads `cfg.lenses`). `explicit`
@@ -748,11 +749,11 @@ export function applyProfileSecurity<
     const where = `[review] profile "${cfg.review.profile}": [lenses.${lens}] risk = true`;
     if (Object.hasOwn(cfg.models.pass_tiers, lens))
       throw new Error(
-        `${where}, but [models.pass_tiers] pins ${lens} — a risk pass always runs at sol-high; remove one of the two`,
+        `${where}, but [models.pass_tiers] pins ${lens} — a risk pass always runs at ${RISK_TIER}; remove one of the two`,
       );
     if (Object.hasOwn(cfg.models.pass_models, lens))
       throw new Error(
-        `${where}, but [models.pass_models] moves ${lens} — a risk pass always runs on the sol-high tier's model; remove one of the two`,
+        `${where}, but [models.pass_models] moves ${lens} — a risk pass always runs on the ${RISK_TIER} tier's model; remove one of the two`,
       );
   }
   return {

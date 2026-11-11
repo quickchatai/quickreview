@@ -26,14 +26,14 @@ Every call is `docker run --rm -i --init` with `--cap-drop ALL` and
 `qcr` or `qcr home`), `tui`, `open`, `login` or `debug` and both ends are
 terminals.
 
-| mount                                        | from                                         |                                                                       |
-| -------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------- |
-| `/repo` (and the working directory under it) | the repository you stand in                  | read-only                                                             |
-| a worktree's common git dir, at its own path | `git rev-parse --git-common-dir`             | read-only                                                             |
-| `/opt/qcr/state`                             | volume `qcr-state`                           | read-write                                                            |
-| `/qcr-login`                                 | volume `qcr-login`                           | read-only (`qcr login` mounts it read-write at pi's agent dir, alone) |
-| `/qcr-config/profiles`                       | `~/.config/qcr/profiles`                     | read-only                                                             |
-| `/run/qcr-in`                                | a per-call dir holding the GitHub token file | read-write                                                            |
+| mount                                        | from                                         |                                                                  |
+| -------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------- |
+| `/repo` (and the working directory under it) | the repository you stand in                  | read-only                                                        |
+| a worktree's common git dir, at its own path | `git rev-parse --git-common-dir`             | read-only                                                        |
+| `/opt/qcr/state`                             | volume `qcr-state`                           | read-write                                                       |
+| `/qcr-login`                                 | volume `qcr-login`                           | read-only (read-write for `qcr model use` and `qcr model reset`) |
+| `/qcr-config/profiles`                       | `~/.config/qcr/profiles`                     | read-only                                                        |
+| `/run/qcr-in`                                | a per-call dir holding the GitHub token file | read-write                                                       |
 
 The home takes a mount list of its own: no `/repo`, the `qcr-login` volume
 read-write at pi's agent dir (its device login lands there, as `qcr login`'s
@@ -146,12 +146,15 @@ review that is not detached (`qcr review …`) is unchanged.
 
 `qcr login` is pi's own `/login`, typed for you in a throwaway container: the
 same script the clone route's `qcr scan login` uses (`loginInPi`,
-`src/scanbox.ts`). It is the only call that mounts the `qcr-login` volume
-read-write (at pi's agent dir); it holds no repo, no state, no profiles and no
-GitHub token. Every other call mounts it read-only at `/qcr-login`, and the
+`src/scanbox.ts`). It mounts the `qcr-login` volume read-write at pi's agent
+dir, as the home does; it holds no repo, no state, no profiles and no
+GitHub token. `qcr model use` and `qcr model reset` mount it read-write at
+`/qcr-login`, to keep the remembered choice beside the login; they start no
+model. Every other call mounts it read-only at `/qcr-login`, and the
 engine takes a refresh-disabled copy of it (`packages/pi-plugin/src/engine/auth.ts`): only a
-login ever refreshes. A headless run with `OPENAI_API_KEY` (or another model
-key) in the environment reads no login at all, and nothing ever starts one.
+login ever refreshes. A headless run with a model API key in the environment
+(see "Model credentials" below) needs no login at all, and nothing ever starts
+one.
 
 The volume outlives every uid. Each call joins a fixed group (gid 4747,
 `--group-add`, `QCR_LOGIN_GID`); when pi exits, `login` moves everything pi
@@ -179,9 +182,46 @@ directory (under `$XDG_RUNTIME_DIR` on Linux, `$TMPDIR` elsewhere), mounts that
 directory and names the file in `QCR_GH_TOKEN_FILE`. The image reads the file
 once and unlinks it (`packages/pi-plugin/src/ghcred.ts`). The token is never in
 `-e`, `--env` or any argument list, and the directory is removed when the call
-ends. Model API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
-`DIGITALOCEAN_API_KEY`) go by name only: docker reads the value from your
-environment.
+ends.
+
+## Model credentials
+
+A model credential in your environment reaches the container by name only: the
+wrapper adds `-e <NAME>` for each name that is set, and docker reads the value
+from your environment, so no key is ever in an argument list. The names:
+
+- **pi's own**, for every built-in provider: the variables pi reads a model
+  credential from (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+  `XAI_API_KEY`, `OPENROUTER_API_KEY`, `AWS_ACCESS_KEY_ID` with
+  `AWS_SECRET_ACCESS_KEY`, and so on). The wrapper cannot ask pi, so the list
+  is the block between `# BEGIN pi model env names` and
+  `# END pi model env names` in the wrapper itself, generated from the pi the
+  image pins (`scripts/model-env-names.mjs`) and held equal to it by
+  `tests/model-env.test.ts`.
+- **the names in `QCR_MODEL_ENV`**, separated by commas: a provider's extra
+  setting, or the key of a provider you added to pi yourself
+  (`QCR_MODEL_ENV=MY_GATEWAY_KEY qcr review`). A name that starts with `GH_`,
+  `GITHUB_`, `QCR_`, `PI_`, `OPENVIKING_` or `GIT_` is refused: those are this
+  program's and git's own, never a model's.
+- `DIGITALOCEAN_API_KEY`, an older spelling kept for the installs that set it
+  (pi has no built-in provider under that name: a `models.json` in the login
+  must define one), and `QCR_DEBUG`.
+
+Two rules sit beside the list, the same in the Action:
+
+- `AWS_SESSION_TOKEN` is forwarded with pi's own names: temporary AWS
+  credentials are the key pair and this token, which pi reads when it makes a
+  request. The region is not a credential: name `AWS_REGION` in
+  `QCR_MODEL_ENV`.
+- A name that points at this machine is never forwarded: a profile name
+  (`*_PROFILE`), a file path (`*_FILE`), or any value that is the absolute
+  path of a file here, such as `GOOGLE_APPLICATION_CREDENTIALS`. The wrapper
+  mounts no `~/.aws` and no such file, so the container would hold the name
+  and nothing it names, and pi would count the provider as credentialed on
+  the name alone. Use a key, or `qcr login`.
+
+Which model a review then runs on is the route's: `qcr model` says it, and
+`qcr review --model <provider/model>` pins it for one run.
 
 ## Verbs
 

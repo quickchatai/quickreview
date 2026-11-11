@@ -391,7 +391,7 @@ export function renderPassPlan(
 
 /** Comma list of lenses the session may additionally run this round. A lens
  * the profile floors above the add rule's own variant carries its
- * variant: `pass-x (run \`pass-x--sol-high\`)`. */
+ * variant: `pass-x (run \`pass-x--deep\`)`. */
 export function renderAddableLenses(
   addable: string[],
   tiers: Readonly<Record<string, string>> = {},

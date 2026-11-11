@@ -506,7 +506,7 @@ describe("the stage 2 plan", () => {
       type("P");
       const text = screen();
       expect(text).toContain("STAGE 2 PLAN");
-      expect(text).toMatch(/\[✓\] row-1 security {2}sol-high {2}billing \(1 files\) {2}\$6\.10/);
+      expect(text).toMatch(/\[✓\] row-1 security {2}deep {2}billing \(1 files\) {2}\$6\.10/);
       expect(text).toMatch(/\[–\] row-3 tests .*over the budget — left out/);
       expect(text).toContain("2/2 row(s) · $10.90 — the hard stop: the run ends there");
       expect(text).toContain("budget $20.00 · $2.40 over it, left out");
@@ -573,7 +573,7 @@ describe("the stage 2 plan", () => {
       ...own,
       id: `floor-${i + 1}`,
       lens: "pass-consistency",
-      tier: "sol-med",
+      tier: "standard",
       reason: `deep floor: pass-consistency over unit${i + 1}`,
       units: [`unit${i + 1}`],
       estimate_usd: 0.5,
@@ -596,7 +596,7 @@ describe("the stage 2 plan", () => {
       const text = screen();
       expect(text).toContain("deep: 1 + 60 floor row(s)");
       expect(text).toMatch(/\[✓\] row-1 security/);
-      expect(text).toMatch(/\[✓\] floor-1 consistency {2}sol-med {2}unit1 \(1 files\)/);
+      expect(text).toMatch(/\[✓\] floor-1 consistency {2}standard {2}unit1 \(1 files\)/);
       expect(text).toContain("61/61 row(s) · $36.10 — the hard stop");
       // Far past the pane's height: the window follows the selection.
       for (let i = 0; i < 50; i++) type("j");

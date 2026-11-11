@@ -139,7 +139,7 @@ export interface GateNoteFacts {
 
 export interface Ecosystem {
   readonly name: EcosystemName;
-  /** The tier-forcing gate (heuristics: forces sol-med and flags the round's
+  /** The tier-forcing gate (heuristics: forces standard and flags the round's
    * `migration_gate`). Pure and total; `none` is constantly false. */
   migrationGate(files: PrFile[]): boolean;
   /**
@@ -162,7 +162,7 @@ export interface Ecosystem {
 
 // ---- Django prose -----------------------------------------------------------
 
-// The migration gate is a data-safety signal: it forces the sol-med tier and
+// The migration gate is a data-safety signal: it forces the standard tier and
 // tells the session the DDL must be judged. It never escalates.
 const GATE_ON =
   "MIGRATION GATE: this PR touches migrations — pass-data-safety must judge the ORM operations and any supplied generated SQL for destructive mutation, concrete rebuild/locking risk, backfill safety, and rolling-deploy ordering. Ordinary Django ORM operations are acceptable and must not be rewritten as handwritten SQL merely for reviewability. Only a concrete migration hazard blocks; missing generated SQL or an unproven database algorithm does not.";

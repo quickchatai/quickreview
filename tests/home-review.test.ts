@@ -45,12 +45,14 @@ function pull(n: number, over: Partial<OpenPull> = {}): OpenPull {
 const quote = (pr: number, over: Partial<ReviewQuote> = {}): ReviewQuote => ({
   estimateUsd: 1.33,
   capUsd: 2.66,
+  basis: "measured",
+  model: "alpha/measured-model",
   key: `key-${pr}`,
   lenses: [
-    "pass-security--sol-high",
-    "pass-tests--sol-high",
-    "pass-data-safety--terra-med",
-    "pass-validate--sol-high",
+    "pass-security--deep",
+    "pass-tests--deep",
+    "pass-data-safety--light",
+    "pass-validate--deep",
   ],
   files: 4,
   headSha: `sha${pr}`,
@@ -84,16 +86,16 @@ const FINDINGS = {
       path: "src/deep/auth/token.ts",
       line: 12,
       title: "the token is logged",
-      lens: "pass-security--sol-high",
+      lens: "pass-security--deep",
     },
     {
       severity: "P2",
       path: "src/db.ts",
       line: 40,
       title: "a migration drops a column",
-      lens: "pass-data-safety--terra-med",
+      lens: "pass-data-safety--light",
     },
-    { severity: "nit", path: null, line: null, title: "naming", lens: "pass-tests--sol-high" },
+    { severity: "nit", path: null, line: null, title: "naming", lens: "pass-tests--deep" },
   ],
   costUsd: 1.11,
   postFile: "/state/review/detached/runs/r1/work/x/out/post.json",
@@ -307,8 +309,67 @@ describe("the price, on rest", () => {
     expect(s.to_review.find((r) => r.number === 3)!.price).toEqual({
       estimate_usd: 1.33,
       cap_usd: 2.66,
+      price_basis: "measured",
+      model: "alpha/measured-model",
     });
     expect(s.to_review.find((r) => r.number === 2)!.price).toBeNull();
+  });
+
+  // Honest-unknown, both halves: a quote with no estimate is not "price
+  // unknown" (the reviewer answered: there is none), and it is never a
+  // number. MUTATION: render `~${money(est ?? 0)}` in HomePanel.price
+  // (src/home/panel.ts) — a model with no estimate reads "~$0.00", and this
+  // fails. MUTATION: drop `price_basis` from HomeModel.priceOf
+  // (src/home/model.ts) — the agent reads a null estimate as "not known",
+  // and this fails.
+  it("a quote with no estimate names the stop, never a price", async () => {
+    const rv = fakeReviewer();
+    rv.previewAnswer = (pr) => ({
+      ok: true,
+      quote: quote(pr, {
+        estimateUsd: null,
+        capUsd: 15,
+        basis: "unmeasured",
+        model: "beta/other-model",
+      }),
+    });
+    const h = await openHome(rv);
+    await h.fire(PRICE_REST_MS);
+    h.rv.answer(3);
+    await settle();
+    expect(details(h.lines())).toMatch(/no estimate · stops at \$15\.00 │/);
+    expect(rowOf(h.lines(), 3)).toMatch(/@dev3 · 3h · stops at \$15\.00/);
+    expect(details(h.lines())).not.toMatch(/~\$|price unknown/);
+    const s = JSON.parse(await h.pi.tool("home_status")) as {
+      to_review: Array<{ number: number; price: unknown }>;
+    };
+    expect(s.to_review.find((r) => r.number === 3)!.price).toEqual({
+      estimate_usd: null,
+      cap_usd: 15,
+      price_basis: "unmeasured",
+      model: "beta/other-model",
+    });
+  });
+
+  it("a quote on a model pi has no price for says there is no dollar stop", async () => {
+    const rv = fakeReviewer();
+    rv.previewAnswer = (pr) => ({
+      ok: true,
+      quote: quote(pr, {
+        estimateUsd: null,
+        capUsd: null,
+        basis: "unpriced",
+        model: "gamma/local-model",
+      }),
+    });
+    const h = await openHome(rv);
+    await h.fire(PRICE_REST_MS);
+    h.rv.answer(3);
+    await settle();
+    expect(details(h.lines())).toMatch(/no estimate · no dollar stop │/);
+    expect(rowOf(h.lines(), 3)).toMatch(/@dev3 · 3h · no estimate/);
+    expect(details(h.lines())).not.toMatch(/\$\d|price unknown/);
+    expect(rowOf(h.lines(), 3)).not.toMatch(/\$/);
   });
 
   it("a preview that fails reads price unknown", async () => {
@@ -385,6 +446,42 @@ describe("the review button", () => {
     expect(rv.starts).toHaveLength(1);
   });
 
+  // MUTATION: call priceWords(run.est, run.cap) without `quoted` in
+  // HomeModel.review (src/home/model.ts) — a started run with no estimate
+  // says "price unknown", and this fails.
+  it("a review with no estimate starts with the preview's key and says its stop", async () => {
+    const rv = fakeReviewer({ instant: true });
+    rv.previewAnswer = (pr) => ({
+      ok: true,
+      quote: quote(pr, {
+        estimateUsd: null,
+        capUsd: 15,
+        basis: "unmeasured",
+        model: "beta/other-model",
+        key: "no-estimate-key",
+      }),
+    });
+    const h = await openHome(rv, { posting: "never" });
+    expect(await h.pi.tool("home_review_pr", { pr: 3 })).toMatch(
+      /the review of #3 started \(run r1, no estimate, stops at \$15\.00\)/,
+    );
+    // the key is the person's go for a model with no estimate, as over the limit
+    expect(rv.starts).toEqual([{ repo: "acme/widgets", pr: 3, key: "no-estimate-key" }]);
+    expect(flat(h.lines())).toMatch(
+      /Reviewing #3 in the background — no estimate, stops at \$15\.00\. Keep chatting\./,
+    );
+    expect(details(h.lines())).toMatch(/0:00 · no estimate, stops at \$15\.00/);
+    const s = JSON.parse(await h.pi.tool("home_status")) as { reviewing: unknown[] };
+    expect(s.reviewing).toEqual([
+      expect.objectContaining({
+        number: 3,
+        estimate_usd: null,
+        cap_usd: 15,
+        price_basis: "unmeasured",
+      }),
+    ]);
+  });
+
   it("⏎ on the focused panel and alt+r while typing both review the selected PR", async () => {
     const rv = fakeReviewer({ instant: true });
     const h = await openHome(rv);
@@ -401,21 +498,21 @@ describe("the review button", () => {
     const h = await reviewing();
     h.rv.statuses.set("r1", [
       running("r1", 3, [
-        lens("pass-security--sol-high", "running", {
+        lens("pass-security--deep", "running", {
           toolCount: 3,
           durationMs: 5_000,
           currentTool: "read",
           currentTarget: "src/x.ts",
           line: "security · read src/x.ts · 3 tools · 0:05",
         }),
-        lens("pass-tests--sol-high", "completed", { toolCount: 7 }),
-        lens("pass-data-safety--terra-med", "failed", { toolCount: 1 }),
+        lens("pass-tests--deep", "completed", { toolCount: 7 }),
+        lens("pass-data-safety--light", "failed", { toolCount: 1 }),
       ]),
       running("r1", 3, [
-        lens("pass-security--sol-high", "completed", { toolCount: 9 }),
-        lens("pass-tests--sol-high", "completed", { toolCount: 7 }),
-        lens("pass-data-safety--terra-med", "failed", { toolCount: 1 }),
-        lens("pass-validate--sol-high", "running"),
+        lens("pass-security--deep", "completed", { toolCount: 9 }),
+        lens("pass-tests--deep", "completed", { toolCount: 7 }),
+        lens("pass-data-safety--light", "failed", { toolCount: 1 }),
+        lens("pass-validate--deep", "running"),
       ]),
     ]);
     let d = details(h.lines());
@@ -533,7 +630,7 @@ describe("runs survive the home", () => {
     rv.registry = [done("r0", 2), running("r1", 3)];
     rv.statuses.set("r1", [
       running("r1", 3, [
-        lens("pass-tests--sol-high", "running", { line: "tests · grep · 1 tool · 0:02" }),
+        lens("pass-tests--deep", "running", { line: "tests · grep · 1 tool · 0:02" }),
       ]),
     ]);
     const asked: string[] = [];

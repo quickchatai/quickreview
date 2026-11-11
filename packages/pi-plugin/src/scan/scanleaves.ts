@@ -1,7 +1,9 @@
 // The scan's leaf runner on the SDK: the `CaseRunner` port
 // (scanports.ts) over the runtime port, the in-process twin of
 // `piCaseRunner` (caserunner.ts). One case is one session on the
-// runtime, with the same pieces the child process gets: the agent file's model,
+// runtime, with the same pieces the child process gets: the agent file's model
+// (or, for a file that names none, the model the runtime's host resolved for
+// the run) and thinking level, its
 // tools and body (appended to pi's own system prompt), bash-guard the one
 // extension, no skill and no context file, a cwd that is first-party ground and
 // never the reviewed checkout, and the allowlisted env. The outcome, the reads
@@ -26,7 +28,7 @@ import { basename, dirname, join } from "node:path";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { bashGuardConfigFromEnv, createBashGuard } from "../../extensions/bash-guard.js";
 import { CASE_STOP_GRACE_MS } from "../casebudget.js";
-import { splitModelSpec } from "../reviewconfig.js";
+import { THINKING_LEVELS, splitModelSpec } from "../reviewconfig.js";
 import { AuthError, SCAN_CASE_AUTH_BUDGET_MS } from "../engine/auth.js";
 import {
   TRANSCRIPT_RUNS_KEPT,
@@ -39,6 +41,7 @@ import {
   type AgentFile,
 } from "./caseread.js";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./scanports.js";
+import { foldAgentName } from "../types.js";
 import { LENS_SESSIONS_DIR } from "../engine/openable.js";
 import type { Runtime, SessionSpec, TurnResult } from "../engine/port.js";
 import type { SessionExtras } from "../engine/sdkruntime.js";
@@ -68,6 +71,8 @@ const LEAF_BASH_ENV_ALLOW: readonly string[] = [
   "all_proxy",
 ];
 
+const THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
+
 /** The per-session pieces the runner hands whoever builds the runtime: the
  * `extras` of `sdkRuntime` (packages/pi-plugin/src/engine/sdkruntime.ts). */
 export type LeafExtras = (spec: SessionSpec) => SessionExtras;
@@ -85,7 +90,8 @@ export interface SdkCaseRunnerOptions {
   env: NodeJS.ProcessEnv;
   /** The user's home: a read's `~` expands against it. */
   home: string;
-  /** The model of an agent that names none. */
+  /** The model of an agent that names none. Omitted: such an agent runs on
+   * the route of the host the runtime is built on. */
   defaultModel?: string;
   /** The runtime this case runs on, built with the case's `extras`. Called once
    * per case: a route that must re-read its login per case builds its host
@@ -95,6 +101,16 @@ export interface SdkCaseRunnerOptions {
   guard?: ExtensionFactory;
   /** Wall clock for a case's turn. Omitted: `LEAF_TURN_TIMEOUT_MS`. */
   timeoutMs?: number;
+}
+
+/** The `thinking:` field of a built agent file's frontmatter, or null. A
+ * variant whose spec names no model carries its level there and nowhere else
+ * (packages/pi-plugin/src/include.ts `applyModelSpec`). */
+export function agentThinking(text: string): string | null {
+  const front = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text.replace(/\r\n/g, "\n"))?.[1];
+  if (front === undefined) return null;
+  const level = /^thinking:[ \t]*["']?([A-Za-z]+)["']?[ \t]*$/m.exec(front)?.[1];
+  return level ?? null;
 }
 
 /** A transcript's path under `dir`, relative and absolute, with its run
@@ -148,17 +164,38 @@ export function sdkCaseRunner(opts: SdkCaseRunnerOptions): CaseRunner {
           reason: `not an agent name: ${JSON.stringify(spec.agent)}`,
           cost_usd: 0,
         };
-      let agent: AgentFile | null;
-      try {
-        agent = parseAgentFile(readFileSync(join(opts.agentsDir, `${spec.agent}.md`), "utf8"));
-      } catch {
-        return { ok: false, reason: `no agent ${spec.agent} in ${opts.agentsDir}`, cost_usd: 0 };
+      // The agent as named, else the one its name folds to: a plan written
+      // under a tier's other spelling still finds the built variant.
+      let agent: AgentFile | null = null;
+      let built: string | null = null;
+      let fileLevel: string | null = null;
+      for (const name of new Set([spec.agent, foldAgentName(spec.agent)])) {
+        try {
+          const text = readFileSync(join(opts.agentsDir, `${name}.md`), "utf8");
+          agent = parseAgentFile(text);
+          fileLevel = agentThinking(text);
+        } catch {
+          continue;
+        }
+        built = name;
+        break;
       }
-      if (agent === null || agent.name !== spec.agent)
-        return { ok: false, reason: `${spec.agent}.md is not an agent file`, cost_usd: 0 };
-      const modelSpec = agent.model ?? opts.defaultModel;
-      if (!modelSpec)
-        return { ok: false, reason: `${spec.agent} names no model and none is set`, cost_usd: 0 };
+      if (built === null)
+        return { ok: false, reason: `no agent ${spec.agent} in ${opts.agentsDir}`, cost_usd: 0 };
+      if (agent === null || agent.name !== built)
+        return { ok: false, reason: `${built}.md is not an agent file`, cost_usd: 0 };
+      // The agent's own spec, else the run's default. Neither, or one that
+      // names only a level, is no model: the session is asked for none and
+      // the runtime's host runs it on its route (a host with no route fails
+      // the session's start with the reason).
+      const named = splitModelSpec(agent.model ?? opts.defaultModel ?? "");
+      const thinking = named.thinking ?? fileLevel;
+      if (thinking !== null && !THINKING_LEVEL_SET.has(thinking))
+        return {
+          ok: false,
+          reason: `${spec.agent} asks for an unknown thinking level "${thinking}"`,
+          cost_usd: 0,
+        };
       if (signal.aborted) return { ok: false, reason: "stopped before it started", cost_usd: 0 };
 
       let tmp: string;
@@ -170,7 +207,6 @@ export function sdkCaseRunner(opts: SdkCaseRunnerOptions): CaseRunner {
       let session: Awaited<ReturnType<Runtime["create"]>> | undefined;
       try {
         const env = leafEnv(opts.env);
-        const { model, thinking } = splitModelSpec(modelSpec);
         const guard = opts.guard ?? createBashGuard(bashGuardConfigFromEnv(env, opts.cwd));
         const extras: LeafExtras = () => ({
           extensions: [guard],
@@ -188,7 +224,7 @@ export function sdkCaseRunner(opts: SdkCaseRunnerOptions): CaseRunner {
         const sessionSpec: SessionSpec = {
           cwd: opts.cwd,
           env,
-          model,
+          model: named.model,
           ...(agent.tools.length > 0 ? { tools: agent.tools } : {}),
           name: spec.id,
           // The case's session JSONL beside its transcript, so the case

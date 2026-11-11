@@ -13,9 +13,23 @@
 //   - ledger-pin's session_before_compact fires at the end of the round;
 //   - a worker that died mid-round is continued, not given the order again;
 //   - the borrowed login carries the disabled refresh token and is never written
-//     back, and a token that would expire inside the worker's cap is refused;
+//     back; a login that would expire inside the worker's cap is left out of it;
+//   - the model route is resolved before any session: from the spec's model
+//     when the config pins one, else over what the login holds, and a worker
+//     with no route exits with the login code and the reason; the route that
+//     resolved is reported to the daemon in `ready`;
+//   - a login shorter than the command is taken only on the daemon's word that
+//     the refresher is renewing it (`login_owner`);
 //   - nothing runs on a payload that is not what the daemon dispatched.
-import { closeSync, readFileSync, readdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -33,18 +47,29 @@ import {
   parseWorkerArgs,
   runBotWorker,
   wakeMarker,
+  workerRoute,
   type WorkerDeps,
 } from "../src/botworker.js";
 import { createCapabilityFd, ipcEnv, runDirOf } from "../src/ipc/capability.js";
-import { isProviderTransient } from "../src/providerfailure.js";
+import {
+  isOperatorWorkerFailure,
+  isProviderTransient,
+  providerFailureKind,
+} from "../src/providerfailure.js";
 import { LIVE_MAIN_FILE, liveRoundDir } from "@quickchatai/pi-quickreview/src/live/events.js";
 import { DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import {
+  MODEL_CHOICE_FILE,
+  writeModelChoice,
+} from "@quickchatai/pi-quickreview/src/modelchoice.js";
+import { parseRouteReport } from "../src/ipc/routereport.js";
 import { parseWorkerSpec, type WorkerSpec } from "../src/ipc/workerspec.js";
 import { TranscriptIndex } from "../src/transcriptindex.js";
 import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
 import { newestSessionFile } from "../src/sessionjsonl.js";
-import { pricedFaux } from "./helpers/priced-faux.js";
+import { ROUTABLE_FAUX_MODEL, pricedFaux, routableFaux } from "./helpers/priced-faux.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 import {
   FakeDaemon,
@@ -121,6 +146,27 @@ afterEach(async () => {
   rmSync(world.dir, { recursive: true, force: true });
 });
 
+/** The worker's host over the faux provider. What decides the worker's model
+ * stays the worker's to give: the borrowed login, the route's inputs, and the
+ * environment pi reads keys from (the worker's own, which holds none here). */
+async function fauxHost(o: PiHostOptions): Promise<PiHost> {
+  const host = await PiHost.create({
+    agentDir: o.agentDir,
+    ...(o.credentials ? { credentials: o.credentials } : {}),
+    ...(o.route ? { route: o.route } : {}),
+    ...(o.authEnv ? { authEnv: o.authEnv } : {}),
+    settings: {
+      compaction: { enabled: false, keepRecentTokens: 300 },
+      retry: { enabled: false },
+    },
+    configureModels: (r) => {
+      r.registerNativeProvider(faux.provider);
+    },
+  });
+  hosts.push(host);
+  return host;
+}
+
 function deps(id: string, over: Partial<WorkerDeps> = {}): WorkerDeps {
   // The capability as the daemon hands it over: an open, unnamed 0600 file. This
   // process stands in for the worker, so the fd is its own.
@@ -134,18 +180,7 @@ function deps(id: string, over: Partial<WorkerDeps> = {}): WorkerDeps {
     connect: () => daemon.connect(id),
     makeHost: async (o) => {
       hostOptions.push(o);
-      const host = await PiHost.create({
-        agentDir: o.agentDir,
-        settings: {
-          compaction: { enabled: false, keepRecentTokens: 300 },
-          retry: { enabled: false },
-        },
-        configureModels: (r) => {
-          r.registerNativeProvider(faux.provider);
-        },
-      });
-      hosts.push(host);
-      return host;
+      return fauxHost(o);
     },
     // Memory off: these cases are not about a server.
     openViking: (c) => ({ ...c, config: { ...c.config, enabled: false } }),
@@ -234,9 +269,8 @@ describe("the spec the daemon answers with", () => {
     expect(() => parseWorkerSpec({ ...good(), login_dir: "login" })).toThrow(/worker spec/);
   });
 
-  // MUTATION: drop providers from parseWorkerSpec — the worker checks every
-  // login of a shared pi home again, and this fails.
-  it("carries the review's providers, a list of names only", () => {
+  // MUTATION: drop providers from parseWorkerSpec — this fails.
+  it("carries the providers the config's pinned models name, a list of names only", () => {
     const spec = { ...good(), providers: ["openai-codex", "anthropic"] };
     expect(parseWorkerSpec(JSON.parse(JSON.stringify(spec))).providers).toEqual([
       "openai-codex",
@@ -244,6 +278,38 @@ describe("the spec the daemon answers with", () => {
     ]);
     expect(() => parseWorkerSpec({ ...good(), providers: "openai" })).toThrow(/worker spec/);
     expect(() => parseWorkerSpec({ ...good(), providers: [""] })).toThrow(/worker spec/);
+    // A config that pins no model names none: the spec carries no list.
+    expect(parseWorkerSpec(JSON.parse(JSON.stringify(good()))).providers).toBeUndefined();
+  });
+
+  // MUTATION: drop login_owner from parseWorkerSpec — the daemon's word never
+  // reaches the worker, and this fails.
+  it("carries whether the refresher is renewing the login: a boolean, absent when the daemon does not say", () => {
+    for (const owner of [true, false])
+      expect(
+        parseWorkerSpec(JSON.parse(JSON.stringify({ ...good(), login_owner: owner }))).login_owner,
+      ).toBe(owner);
+    expect(parseWorkerSpec(JSON.parse(JSON.stringify(good()))).login_owner).toBeUndefined();
+    for (const owner of ["true", 1, null])
+      expect(() => parseWorkerSpec({ ...good(), login_owner: owner }), String(owner)).toThrow(
+        /`login_owner` must be a boolean/,
+      );
+  });
+
+  // A config that pins no model hands the worker a spec with no model part.
+  // MUTATION: read `model` with str() again in parseWorkerSpec (a non-empty
+  // string) — the unpinned spec is `bad_request`, and this fails.
+  it("accepts a model spec that names no model, and still refuses one that is no string", () => {
+    for (const model of ["", ":high", "prov/model-a", "prov/model-a:low"])
+      expect(parseWorkerSpec(JSON.parse(JSON.stringify({ ...good(), model }))).model).toBe(model);
+    for (const model of [undefined, null, 7, ["prov/model-a"]]) {
+      const spec = JSON.parse(JSON.stringify(good())) as Record<string, unknown>;
+      if (model === undefined) delete spec["model"];
+      else spec["model"] = model;
+      expect(() => parseWorkerSpec(spec), JSON.stringify(model)).toThrow(
+        /`model` must be a string/,
+      );
+    }
   });
 
   it("refuses what it cannot trust", () => {
@@ -684,20 +750,35 @@ describe("the borrowed login", () => {
     expect(before).toContain("REAL-REFRESH");
   });
 
-  it("refuses, before anything is opened, a token that would expire inside its wall-clock cap", async () => {
+  // A login this worker cannot use to the end of its command is left out
+  // before the route is chosen. With the review pinned to that provider there
+  // is then no route, and the worker says so before any session exists.
+  // MUTATION: borrow with `owner: true` in workerRoute whatever the spec says
+  // — the short login is kept, the pinned model resolves, and this fails.
+  it("refuses, before any session, a pinned provider whose login would expire inside its wall-clock cap", async () => {
     writeLogin(Date.now() + 10 * 60_000);
-    const { code } = await round("ORDER\n", script([say("never")]), { wall_clock_ms: 30 * 60_000 });
+    const pinned = `openai-codex/${getBuiltinModels("openai-codex")[0]!.id}`;
+    const { code } = await round("ORDER\n", script([say("never")]), {
+      model: pinned,
+      wall_clock_ms: 30 * 60_000,
+    });
     expect(code).toBe(EXIT.auth);
-    expect(hostOptions).toEqual([]);
+    // The host exists (it is what resolves the route); no session does.
+    expect(hostOptions).toHaveLength(1);
+    expect(await hostOptions[0]!.credentials!.read("openai-codex")).toBeUndefined();
+    expect(faux.state.callCount).toBe(0);
     expect(existsSync(world.sessionDir)).toBe(false);
+    expect(daemon.kinds()).not.toContain("ready");
     expect(daemon.of("failed")[0]!.body).toMatchObject({ code: EXIT.auth });
-    expect(String(daemon.of("failed")[0]!.body["reason"])).toMatch(/expires at/);
+    const reason = String(daemon.of("failed")[0]!.body["reason"]);
+    expect(reason).toMatch(/login expires at \d\d:\d\d, inside this review's 30-minute budget/);
+    expect(reason).toMatch(/nothing here renews it/);
     expect(JSON.stringify(daemon.events)).not.toContain("A-TOKEN");
   });
 
-  // MUTATION: drop `providers` from botworker's engineCredentials call — the
-  // person's unused expired login refuses the round, and this fails.
-  it("admits the review's providers only: an expired login nothing uses does not refuse it", async () => {
+  // MUTATION: refuse the command when any stored login is short (the old
+  // whole-login check) — the first round fails, and this fails.
+  it("leaves out a login that cannot last, and runs on what is left", async () => {
     writeFileSync(
       join(world.agentDir, "auth.json"),
       JSON.stringify({
@@ -708,12 +789,262 @@ describe("the borrowed login", () => {
           expires: Date.now() + 3 * 3_600_000,
         },
         anthropic: { type: "oauth", access: "OLD", refresh: "R", expires: Date.now() - 60_000 },
+        groq: { type: "api_key", key: "not-a-key" },
       }),
     );
-    const refused = await round("ORDER\n", script([say("never")]));
-    expect(refused.code).toBe(EXIT.auth);
-    const { code } = await round("ORDER\n", script([say("ok")]), { providers: ["openai-codex"] });
+    const { code } = await round("ORDER\n", script([say("ok")]));
     expect(code).toBe(EXIT.ok);
+    const { credentials, route } = hostOptions[0]!;
+    expect((await credentials!.list()).map((c) => c.providerId).sort()).toEqual([
+      "groq",
+      "openai-codex",
+    ]);
+    // The route is told which login was left out, so a pin on it is refused
+    // as a short login and never as a missing one.
+    expect(route && "skipped" in route && route.skipped?.map((l) => l.provider)).toEqual([
+      "anthropic",
+    ]);
+  });
+
+  // MUTATION: treat a login file that does not parse as no login (catch and
+  // borrow nothing) — the round runs on the faux provider, and this fails.
+  it("refuses a login file it cannot read: an unknown store is never an empty one", async () => {
+    writeFileSync(join(world.agentDir, "auth.json"), "{ not json");
+    const { code } = await round("ORDER\n", script([say("never")]));
+    expect(code).toBe(EXIT.auth);
+    expect(hostOptions).toEqual([]);
+    expect(existsSync(world.sessionDir)).toBe(false);
+    expect(String(daemon.of("failed")[0]!.body["reason"])).toMatch(
+      /could not read pi's credentials at .*auth\.json/,
+    );
+  });
+});
+
+describe("the model route, resolved before the first session", () => {
+  /** A faux provider with a model the pick rule accepts, beside the one the
+   * rig's lens agents name. */
+  const useRoutableFaux = (): void => {
+    faux = routableFaux({ models: [{ id: "faux-1" }] });
+  };
+  /** No stored login: the faux provider is the only credential there is. */
+  const noLogin = (): void => rmSync(join(world.agentDir, "auth.json"));
+
+  // MUTATION: pass no `route` to the host in runBotWorker — the pinned spec's
+  // provider is not what the host resolves, and the route assertion fails.
+  it("a pinned spec is the route's pin: the host is given it, as the config's", async () => {
+    const { code } = await round("ORDER\n", script([say("ok")]));
+    expect(code).toBe(EXIT.ok);
+    const { route } = hostOptions[0]!;
+    expect(route && "pin" in route && route.pin).toEqual({ text: "faux/faux-1", from: "config" });
+    const routed = await hosts[0]!.route();
+    expect(routed).toMatchObject({
+      ok: true,
+      route: { spec: "faux/faux-1", source: "config", pick: "pinned" },
+    });
+  });
+
+  // The daemon asks pi nothing: what it knows of the model a command runs on
+  // is this report.
+  // MUTATION: drop `route` from the `ready` body in runBotWorker — the daemon
+  // is told nothing, and this fails.
+  it("reports the route it resolved in ready: the pinned one, as the config's", async () => {
+    const { code } = await round("ORDER\n", script([say("ok")]));
+    expect(code).toBe(EXIT.ok);
+    const routed = await hosts[0]!.route();
+    if (!routed.ok) throw new Error("the host has no route");
+    const report = daemon.of("ready")[0]!.body["route"];
+    expect(report).toEqual({
+      spec: "faux/faux-1",
+      source: "config",
+      pick: "pinned",
+      moved_from: null,
+      credential_origin: routed.route.credential.origin,
+    });
+    // It is one the daemon's own check takes.
+    expect(parseRouteReport(JSON.parse(JSON.stringify(report)))).toEqual(report);
+    // No value of any credential is in it.
+    expect(JSON.stringify(daemon.of("ready")[0]!.body)).not.toContain("A-TOKEN");
+  });
+
+  it("reports the route the rule picked when the spec names no model", async () => {
+    useRoutableFaux();
+    noLogin();
+    const { code } = await round("ORDER\n", script([say("routed")]), { model: "" });
+    expect(code).toBe(EXIT.ok);
+    const routed = await hosts[0]!.route();
+    if (!routed.ok) throw new Error("the host has no route");
+    expect(daemon.of("ready")[0]!.body["route"]).toEqual({
+      spec: `faux/${ROUTABLE_FAUX_MODEL.id}`,
+      source: "only-credential",
+      pick: routed.route.pick,
+      moved_from: null,
+      credential_origin: routed.route.credential.origin,
+    });
+  });
+
+  // The shipped config pins nothing: the spec's model is empty, and the
+  // worker runs on what the login it reads has a credential for.
+  // MUTATION: skip the route for a spec that names no model and send the
+  // session `model: spec.model` on a host with no route inputs — pi refuses
+  // an empty model, and this fails.
+  it("a spec that names no model runs the round on the route", async () => {
+    useRoutableFaux();
+    noLogin();
+    const lines: string[] = [];
+    const { code } = await round("ORDER\n", script([say("routed")]), { model: "" }, undefined, {
+      log: (l) => lines.push(l),
+    });
+    expect(code).toBe(EXIT.ok);
+    const { route } = hostOptions[0]!;
+    expect(route && "pin" in route).toBe(false);
+    const spec = `faux/${ROUTABLE_FAUX_MODEL.id}`;
+    expect(await hosts[0]!.route()).toMatchObject({
+      ok: true,
+      route: { spec, source: "only-credential" },
+    });
+    // The worker says which model it runs on, once, before the session.
+    expect(lines).toContain(`botworker: model ${spec} (only-credential)`);
+    expect(daemon.of("done")[0]!.body).toMatchObject({ turns: 1 });
+    // The session's own record names the route's model.
+    const file = newestSessionFile(world.sessionDir)!;
+    expect(readFileSync(file, "utf8")).toContain(ROUTABLE_FAUX_MODEL.id);
+  });
+
+  // A bare level is what `[models] effort` makes of an unpinned model.
+  it("a spec that names only a level pins nothing, and the session takes the level", async () => {
+    useRoutableFaux();
+    noLogin();
+    const { code } = await round("ORDER\n", script([say("routed")]), { model: ":high" });
+    expect(code).toBe(EXIT.ok);
+    const { route } = hostOptions[0]!;
+    expect(route && "pin" in route).toBe(false);
+    expect(await hosts[0]!.route()).toMatchObject({
+      ok: true,
+      route: { spec: `faux/${ROUTABLE_FAUX_MODEL.id}` },
+    });
+  });
+
+  // MUTATION: open the session without awaiting host.route() first — the
+  // failure is the session's (`could not open the session`, exit 5), not the
+  // login's, and this fails.
+  it("no route: the worker exits with the login code and the reason, before any session", async () => {
+    // The rig's faux model does not reason, so no model passes the pick rule.
+    noLogin();
+    const { code } = await round("ORDER\n", script([say("never")]), { model: "" });
+    expect(code).toBe(EXIT.auth);
+    expect(faux.state.callCount).toBe(0);
+    expect(existsSync(world.sessionDir)).toBe(false);
+    expect(daemon.kinds()).not.toContain("ready");
+    expect(daemon.of("failed")[0]!.body).toMatchObject({ code: EXIT.auth });
+    expect(String(daemon.of("failed")[0]!.body["reason"])).toMatch(
+      /pi has a credential for .*, but none of (its|their) models passes the review's filter/,
+    );
+  });
+
+  describe("workerRoute: what the worker resolves its model from", () => {
+    const base = () => ({ agent_dir: world.agentDir, wall_clock_ms: 30 * 60_000 });
+
+    it("pins the spec's model only when it names one", () => {
+      const pinOf = (model: string) => {
+        const { route } = workerRoute({ ...base(), model });
+        return "pin" in route ? route.pin : undefined;
+      };
+      expect(pinOf("prov/model-a:high")).toEqual({ text: "prov/model-a:high", from: "config" });
+      expect(pinOf("prov/model-a")).toEqual({ text: "prov/model-a", from: "config" });
+      expect(pinOf("")).toBeUndefined();
+      expect(pinOf(":high")).toBeUndefined();
+    });
+
+    // MUTATION: read the choice file and pi's settings from spec.agent_dir
+    // when a login_dir is given — the shared login's choice is not found, and
+    // this fails.
+    it("reads the remembered choice and pi's saved provider where the login is read", async () => {
+      const loginDir = join(world.dir, "shared-login");
+      mkdirSync(loginDir);
+      writeFileSync(
+        join(loginDir, "auth.json"),
+        JSON.stringify({ groq: { type: "api_key", key: "k" } }),
+      );
+      expect(writeModelChoice(loginDir, { provider: "groq", model: null, via: "use" })).toEqual({
+        ok: true,
+      });
+      writeFileSync(join(loginDir, "settings.json"), JSON.stringify({ defaultProvider: "groq" }));
+      // The agent dir says otherwise; with a login dir it is not asked.
+      writeModelChoice(world.agentDir, { provider: "cerebras", model: null, via: "use" });
+      writeFileSync(
+        join(world.agentDir, "settings.json"),
+        JSON.stringify({ defaultProvider: "cerebras" }),
+      );
+      const shared = workerRoute({ ...base(), login_dir: loginDir, model: "" });
+      expect(shared.route).toMatchObject({
+        skipped: [],
+        choice: { provider: "groq", model: null, via: "use" },
+        piProvider: { provider: "groq", from: "pi-settings" },
+      });
+      expect((await shared.credentials.list()).map((c) => c.providerId)).toEqual(["groq"]);
+      const own = workerRoute({ ...base(), model: "" });
+      expect(own.route).toMatchObject({
+        choice: { provider: "cerebras" },
+        piProvider: { provider: "cerebras", from: "pi-settings" },
+      });
+    });
+
+    it("a choice file it cannot use is said, and is not a refusal", () => {
+      writeFileSync(join(world.agentDir, MODEL_CHOICE_FILE), "{ not json");
+      const notes: string[] = [];
+      const { route } = workerRoute({ ...base(), model: "" }, { note: (l) => notes.push(l) });
+      expect("choice" in route).toBe(false);
+      expect(notes).toHaveLength(1);
+      expect(notes[0]).toMatch(/remembered model choice .* was not used/);
+    });
+
+    // The daemon says the refresher is renewing the login: a login shorter
+    // than the command is then taken, since the copy re-reads the refresher's
+    // file when pi asks for a fresh one. One already inside pi's own refresh
+    // window is not: pi would ask at once, before anything renewed it.
+    // MUTATION: borrow with `owner: false` in workerRoute whatever the spec
+    // says — the short login is left out of a bot whose refresher is healthy,
+    // and this fails.
+    it("takes a login shorter than the wall clock only on the daemon's word that it is renewed", async () => {
+      writeFileSync(
+        join(world.agentDir, "auth.json"),
+        JSON.stringify({
+          short: { type: "oauth", access: "A", refresh: "R", expires: Date.now() + 10 * 60_000 },
+          ending: { type: "oauth", access: "E", refresh: "R", expires: Date.now() + 60_000 },
+          long: { type: "oauth", access: "B", refresh: "R", expires: Date.now() + 2 * 3_600_000 },
+        }),
+      );
+      const kept = async (login_owner?: boolean): Promise<string[]> => {
+        const { credentials } = workerRoute({
+          ...base(),
+          model: "",
+          ...(login_owner !== undefined ? { login_owner } : {}),
+        });
+        return (await credentials.list()).map((c) => c.providerId).sort();
+      };
+      expect(await kept(true)).toEqual(["long", "short"]);
+      expect(await kept(false)).toEqual(["long"]);
+      // A spec that does not say is one where nothing renews the login.
+      expect(await kept()).toEqual(["long"]);
+      const owned = workerRoute({ ...base(), model: "", login_owner: true });
+      expect("skipped" in owned.route && owned.route.skipped?.map((l) => l.provider)).toEqual([
+        "ending",
+      ]);
+    });
+
+    it("leaves out a stored login shorter than the wall clock, and keeps a key", async () => {
+      writeFileSync(
+        join(world.agentDir, "auth.json"),
+        JSON.stringify({
+          short: { type: "oauth", access: "A", refresh: "R", expires: Date.now() + 10 * 60_000 },
+          long: { type: "oauth", access: "B", refresh: "R", expires: Date.now() + 2 * 3_600_000 },
+          keyed: { type: "api_key", key: "k" },
+        }),
+      );
+      const { route, credentials } = workerRoute({ ...base(), model: "" });
+      expect("skipped" in route && route.skipped?.map((l) => l.provider)).toEqual(["short"]);
+      expect((await credentials.list()).map((c) => c.providerId).sort()).toEqual(["keyed", "long"]);
+    });
   });
 });
 
@@ -839,6 +1170,49 @@ describe("a round that fails", () => {
     const reason = String(daemon.of("failed").at(-1)!.body["reason"]);
     expect(reason.length).toBeLessThan(500);
     expect(isProviderTransient(reason)).toBe(true);
+  });
+
+  // MUTATION: test the auth pattern before anything else in botworker's settle
+  // (a pattern of its own, as it once did, instead of the one ordered
+  // classifier) - the rate limit that names "401 errors" ends the command as a
+  // refused login instead of being requeued; this fails.
+  it("a refused credential ends the command as a refused login; a rate limit that carries a status number as a count is still retried", async () => {
+    const refused: Step = fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: "authentication_error: invalid x-api-key",
+    });
+    expect((await round("ORDER\n", script([refused]))).code).toBe(EXIT.failed);
+    const reason = String(daemon.of("failed").at(-1)!.body["reason"]);
+    expect(reason).toContain("the provider refused the login: authentication_error");
+    expect(isOperatorWorkerFailure(reason)).toBe(true);
+
+    const counted: Step = fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: "429 Too Many Requests: rate limit reached after 401 errors",
+    });
+    expect((await round("ORDER\n", script([counted]))).code).toBe(EXIT.provider);
+    expect(String(daemon.of("failed").at(-1)!.body["reason"])).not.toContain("refused the login");
+  });
+
+  // MUTATION: drop the `model_refused` branch from botworker's settle - the
+  // failure reads "the provider failed the turn" and names no model; this fails.
+  // MUTATION: word a refused model as "the provider refused the login" - it
+  // reads as a dead login and holds for the operator as one; this fails.
+  it("a model the provider refused ends the command with the model named, never as a refused login", async () => {
+    const denied: Step = fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: "403 Forbidden: model not available in your region",
+    });
+    expect((await round("ORDER\n", script([denied]))).code).toBe(EXIT.failed);
+    const reason = String(daemon.of("failed").at(-1)!.body["reason"]);
+    expect(reason).toMatch(/refused the model \S+\/\S+\. Run on another: qcr model use /);
+    expect(reason).toContain("[models] model");
+    expect(reason).toContain("The provider said: 403 Forbidden: model not available");
+    expect(reason).not.toContain("refused the login");
+    // The daemon reads it as the PR's own failure: not the login's, not an outage.
+    expect(isOperatorWorkerFailure(reason)).toBe(false);
+    expect(providerFailureKind(reason)).toBeUndefined();
+    expect(isProviderTransient(reason)).toBe(false);
   });
 
   it("a wall-clock cap that runs out is a failed round", async () => {
@@ -967,18 +1341,7 @@ describe("steer, follow-up and abort reach the running session", () => {
     const running = round("ORDER\n", script([say("done")]), {}, "cmd-e", {
       makeHost: async (o) => {
         await gate;
-        const host = await PiHost.create({
-          agentDir: o.agentDir,
-          settings: {
-            compaction: { enabled: false, keepRecentTokens: 300 },
-            retry: { enabled: false },
-          },
-          configureModels: (r) => {
-            r.registerNativeProvider(faux.provider);
-          },
-        });
-        hosts.push(host);
-        return host;
+        return fauxHost(o);
       },
     });
     await until(() => daemon.requests.some((r) => r.op === "worker.spec"), "the handshake");

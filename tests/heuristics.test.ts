@@ -109,27 +109,27 @@ describe("migrationGate", () => {
 describe("passTier", () => {
   const opts = { migrationGate: false, smallDiffLines: 150 };
 
-  it("starts small quiet diffs at terra-med", () => {
-    expect(passTier([fe("src/a.py", 100, 49)], opts)).toBe("terra-med");
-    expect(passTier([], opts)).toBe("terra-med");
+  it("starts small quiet diffs at light", () => {
+    expect(passTier([fe("src/a.py", 100, 49)], opts)).toBe("light");
+    expect(passTier([], opts)).toBe("light");
   });
 
-  it("goes sol-med at exactly smallDiffLines (strict less-than)", () => {
-    expect(passTier([fe("src/a.py", 100, 50)], opts)).toBe("sol-med");
-    expect(passTier([fe("src/a.py", 100, 49), fe("src/b.py", 1, 0)], opts)).toBe("sol-med");
+  it("goes standard at exactly smallDiffLines (strict less-than)", () => {
+    expect(passTier([fe("src/a.py", 100, 50)], opts)).toBe("standard");
+    expect(passTier([fe("src/a.py", 100, 49), fe("src/b.py", 1, 0)], opts)).toBe("standard");
   });
 
-  it("goes sol-med on the migration gate, however small", () => {
-    expect(passTier([fe("src/a.py", 1, 0)], { ...opts, migrationGate: true })).toBe("sol-med");
+  it("goes standard on the migration gate, however small", () => {
+    expect(passTier([fe("src/a.py", 1, 0)], { ...opts, migrationGate: true })).toBe("standard");
   });
 
   it("no longer raises the tier for infra paths (the escalation heuristic is gone)", () => {
-    expect(passTier([fe("infra/main.tf", 1, 0)], opts)).toBe("terra-med");
+    expect(passTier([fe("infra/main.tf", 1, 0)], opts)).toBe("light");
   });
 
   it("counts additions plus deletions across all files, tests included", () => {
-    expect(passTier([fe("tests/test_a.py", 200, 0)], opts)).toBe("sol-med");
-    expect(passTier([fe("src/a.py", 10, 10)], { ...opts, smallDiffLines: 21 })).toBe("terra-med");
+    expect(passTier([fe("tests/test_a.py", 200, 0)], opts)).toBe("standard");
+    expect(passTier([fe("src/a.py", 10, 10)], { ...opts, smallDiffLines: 21 })).toBe("light");
   });
 });
 
@@ -155,7 +155,7 @@ describe("selectLenses", () => {
     expect(selectLenses([f("src/auth/login.py")])).toContain("pass-security");
     expect(selectLenses([f("src/token_store.py")])).toContain("pass-security");
     expect(selectLenses([f("package-lock.json")])).toContain("pass-security");
-    // A deletion-only manifest change adds no dependency — no sol-high pass.
+    // A deletion-only manifest change adds no dependency — no deep pass.
     expect(selectLenses([f("docs/package-lock.json", 0, 40)])).not.toContain("pass-security");
     // A lockfile that ADDS lines with no package.json change still fires.
     expect(selectLenses([f("package-lock.json", 3, 3)])).toContain("pass-security");

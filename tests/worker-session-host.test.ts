@@ -54,7 +54,7 @@ const order: RoundOrder = {
   round_no: 1,
   round_type: "first",
   lenses: ["pass-baseline"],
-  pass_plan: [{ lens: "pass-baseline", agent: "pass-baseline", tier: "sol-med", raisable_to: [] }],
+  pass_plan: [{ lens: "pass-baseline", agent: "pass-baseline", tier: "standard", raisable_to: [] }],
   addable_lenses: [],
   base_ref: "master",
   base_sha: "base123",

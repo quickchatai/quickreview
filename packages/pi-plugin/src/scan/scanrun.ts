@@ -133,6 +133,15 @@
 //     repository or profile model exists (`always`): then the draft is a
 //     revision for a person to adopt, and scans keep reading that model.
 //
+// ONE MODEL PER SCAN. A host that resolves the scan's model hands the route
+// to every verb that plans or starts (`ScanRouted`): the plan shows it, the
+// key covers it (a key shown under one model never starts a run under
+// another), a start with no route is refused in the route's own words, and
+// the run records it (`settings.model`). The runner resolves nothing and
+// hands nothing to a case: the host that resolved the route also builds each
+// case's host, on that one route. A host that names no model (the
+// companion's tools) plans, keys and runs as before.
+//
 // Persistence: `<state home>/scan/run.json` (the current run and a short
 // history), `scan/suggestions.json` (stage 1's deep-lens suggestions, the
 // input to stage 2), `scan/stage2.json` (the latest stage-2 proposal),
@@ -156,6 +165,14 @@ import {
 } from "../threatmodel.js";
 import { higherTier, type PassTier } from "../types.js";
 import type { ScanConfig, ScanDepth } from "../reviewconfig.js";
+import {
+  RouteRefused,
+  routeNoticeLines,
+  type ModelRoute,
+  type ProviderCredential,
+  type RouteResult,
+  type RouteSurface,
+} from "../modelroute.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./scanports.js";
 import {
   FindingsStore,
@@ -353,7 +370,7 @@ export interface ScanSettings {
   /** The profile's per-lens tuning — which deep lenses stage 2 may run, at
    * which tiers and effort. */
   lenses?: LensTuningMap;
-  /** `[models] risk_passes` — built at `sol-high` only. */
+  /** `[models] risk_passes` — built at `deep` only. */
   riskPasses?: readonly string[];
   /** `[security] fold` after the profile: a security candidate the skeptic
    * could not settle is stored `needs-review`. Absent = off. */
@@ -362,6 +379,181 @@ export interface ScanSettings {
    * `loadProfileThreatModel`); absent or null = none. The repository's own,
    * read from the tree at the scan sha, wins over it. */
   profileThreatModel?: string | null;
+}
+
+// ---- the scan's model ------------------------------------------------------------
+
+/**
+ * One scan's model, as its host resolved it before anything was planned
+ * (packages/pi-plugin/src/modelroute.ts `resolveRoute`). A scan has one: the
+ * host resolves it once for a preview and once for the start that quotes the
+ * preview's key, and every case's host is handed that same route, so two
+ * cases of one scan never run on two models. The runner resolves nothing: it
+ * shows the route, keys the plan on it and records it on the run.
+ */
+export interface ScanRouted {
+  /** The route, why there is none, or null: the host could not find out (a
+   * sandbox that did not answer). Unknown is never taken for a route. */
+  result: RouteResult | null;
+  /** Who is speaking: how the lines name the way to change the model. */
+  surface: RouteSurface;
+  /** Why there is no route, in the host's words: it knows the agent dir, the
+   * providers' names and the budget. Omitted: the refusal's plain sentence. */
+  refusal?: string;
+  /** The way to sign in where this answer was read, when it is not the
+   * surface's own: a sandboxed scan reads the companion's login, which
+   * `qcr login` never touches. Omitted: `qcr login`, or pi's `/login`. */
+  login?: string;
+  /** Each tier's spec as it will run on this route: the tier's own when the
+   * config pins it to a model, else the route's at the tier's level. */
+  tiers?: Readonly<Record<PassTier, string>>;
+  /** Lines for the plan under the model line. */
+  notes?: readonly string[];
+}
+
+/** A credential as a plan carries it: what kind it is and where pi found it.
+ * Never a value, and never the label of an environment source. */
+interface ScanModelCredential {
+  kind: ProviderCredential["kind"];
+  origin: ProviderCredential["origin"];
+  subscription: boolean;
+}
+
+/** The route as a plan's `model` object: the review preview's own shape. */
+export interface ScanModel {
+  spec: string;
+  provider: string;
+  id: string;
+  provider_name: string;
+  source: ModelRoute["source"];
+  pick: ModelRoute["pick"];
+  pi_default: string | null;
+  custom: boolean;
+  moved_from: string | null;
+  priced: boolean;
+  ask: boolean;
+  credential: ScanModelCredential;
+}
+
+/** What a plan says of the scan's model. Every field is absent when the host
+ * named no model (a host that runs each case on its own choice). */
+export interface ScanModelView {
+  /** The model every case runs on; null: none resolves, or it is unknown,
+   * and a start is refused. */
+  model?: ScanModel | null;
+  /** The host could not find the model out (a sandbox that did not answer):
+   * `model` is null because nothing was read, not because pi has no
+   * credential. Present, and true, only then. */
+  model_unknown?: true;
+  /** Every other usable provider with the model it would run, best first.
+   * Empty when there is none; absent when the model is unknown, since no
+   * provider was read. */
+  alternatives?: Array<{
+    spec: string;
+    provider: string;
+    provider_name: string;
+    priced: boolean;
+    credential: ScanModelCredential;
+  }>;
+  /** Each tier's spec as it will run. */
+  tiers?: Readonly<Record<PassTier, string>>;
+  /** The model in words: which, why, and how to change it; then the host's
+   * notes. Text for a person, left out of the structured result. */
+  model_lines?: string[];
+}
+
+const credentialOf = (c: ProviderCredential): ScanModelCredential => ({
+  kind: c.kind,
+  origin: c.origin,
+  subscription: c.subscription,
+});
+
+/** What one plan takes from the scan's route. */
+interface PlannedModel {
+  /** The plan's fields about the model. */
+  view: ScanModelView;
+  /** The route's spec, or null: no route was given, or none resolves. */
+  spec: string | null;
+  /** The model's part of a plan key: empty when no route was given, so a
+   * scan whose host names no model keys exactly as before. */
+  key: { model?: string; tiers?: Readonly<Record<PassTier, string>> };
+  /** Why nothing may start: a route was asked for and there is none. */
+  blocker: string | null;
+}
+
+/** Read the host's answer about the model into what a plan shows and keys. */
+function plannedModel(routed: ScanRouted | undefined): PlannedModel {
+  if (routed === undefined) return { view: {}, spec: null, key: {}, blocker: null };
+  const notes = routed.notes ?? [];
+  const r = routed.result;
+  if (r !== null && r.ok) {
+    const route = r.route;
+    const tiers = routed.tiers !== undefined ? { tiers: routed.tiers } : {};
+    return {
+      view: {
+        model: {
+          spec: route.spec,
+          provider: route.provider,
+          id: route.modelId,
+          provider_name: route.providerName,
+          source: route.source,
+          pick: route.pick,
+          pi_default: route.piDefaultId,
+          custom: route.custom,
+          moved_from: route.movedFrom,
+          priced: route.priced,
+          ask: route.ask,
+          credential: credentialOf(route.credential),
+        },
+        alternatives: route.alternatives.map((a) => ({
+          spec: a.spec,
+          provider: a.provider,
+          provider_name: a.providerName,
+          priced: a.priced,
+          credential: credentialOf(a.credential),
+        })),
+        ...tiers,
+        model_lines: [...routeNoticeLines(route, routed.surface), ...notes],
+      },
+      spec: route.spec,
+      key: { model: route.spec, ...tiers },
+      blocker: null,
+    };
+  }
+  // An unknown route: the plan is still shown, and nothing starts. Nothing
+  // was read, so the plan says so and names no provider, not even "none".
+  if (r === null) {
+    const why = routed.refusal ?? "it could not be read";
+    return {
+      view: {
+        model: null,
+        model_unknown: true,
+        model_lines: [`model: unknown (${why})`, ...notes],
+      },
+      spec: null,
+      key: {},
+      blocker: `the scan's model is unknown (${why}): nothing starts until it is known`,
+    };
+  }
+  // No route: the same, in the route's words.
+  const plain = new RouteRefused(r.refusal).message;
+  const login = routed.login ?? (routed.surface === "plugin" ? "/login" : "qcr login");
+  const head = `model: none (${
+    r.refusal.code === "no-credential" ? `no model credential: ${login}` : plain
+  })`;
+  return {
+    view: { model: null, alternatives: [], model_lines: [head, ...notes] },
+    spec: null,
+    key: {},
+    blocker: routed.refusal ?? plain,
+  };
+}
+
+/** A start's refusal when its host named a route and there is none: said in
+ * the route's own words, before anything is planned. */
+function refusedModel(routed: ScanRouted | undefined): Refusal | null {
+  const blocker = plannedModel(routed).blocker;
+  return blocker === null ? null : { ok: false, errors: [blocker] };
 }
 
 export interface ScanPorts {
@@ -479,6 +671,9 @@ export interface ScanRun {
     validate_tier: PassTier | null;
     /** `"deep"` for a deep run; absent = standard. */
     depth?: ScanDepth;
+    /** The model the scan's host resolved for it (`provider/id`): the one
+     * route every case's host was handed. Absent: its host named none. */
+    model?: string;
   };
   cases: ScanCaseState[];
   problems: string[];
@@ -520,7 +715,7 @@ export interface StoredSuggestion extends ScanSuggestion {
 
 // ---- views ---------------------------------------------------------------------
 
-export interface ScanPreview {
+export interface ScanPreview extends ScanModelView {
   key: string;
   mode: ScanMode;
   sha: string;
@@ -732,6 +927,7 @@ type Stage2Planned =
       settings: ScanSettings;
       cut: UnitCut;
       threatModel: ThreatModel | null;
+      model: PlannedModel;
     }
   | Refusal;
 
@@ -995,10 +1191,12 @@ export class ScanRunner {
     delta = false,
     claim = false,
     rawPath?: string | null,
+    routed?: ScanRouted,
   ): Promise<{ ok: true; planned: Planned } | Refusal> {
     const pre = this.prerequisites(ref, claim);
     if (!pre.ok) return pre;
     const { sha, tree, entries, settings } = pre;
+    const model = plannedModel(routed);
     const scoped = scopeOf(rawPath, tree, sha);
     if (!scoped.ok) return scoped;
     const path = scoped.path;
@@ -1068,7 +1266,9 @@ export class ScanRunner {
     const rate = own ?? measuredRate(entries, key);
     const tally = casesFor(entries, key);
     const measured = rate?.cases ?? 0;
-    const blockers: string[] = [];
+    // A scan whose host named a route and found none shows its plan and
+    // starts nothing.
+    const blockers: string[] = model.blocker !== null ? [model.blocker] : [];
     // Calibrated once `calibration_units` priced cases stand behind the rate —
     // or every case there is, on a repo smaller than that.
     const calibrated =
@@ -1140,6 +1340,9 @@ export class ScanRunner {
       validator: cfg.validator,
       validate_tier: cfg.validator ? cfg.tier : null,
       ...(depth === "deep" ? { depth } : {}),
+      // The scan's model: in the key through these settings, so a key shown
+      // under one model never starts a scan under another.
+      ...(model.spec !== null ? { model: model.spec } : {}),
     };
     const threatModel = this.threatModelFor(tree, settings);
     const modelProblem = threatModel?.source === "repo" ? null : this.repoModelProblem(tree);
@@ -1156,6 +1359,8 @@ export class ScanRunner {
           ),
         ]),
         settings: runSettings,
+        // So does a tier the config moved to another model, or level.
+        ...(model.key.tiers !== undefined ? { tiers: model.key.tiers } : {}),
         cap: Math.round(cap * 1e6),
         // Editing the threat model the cases quote re-plans.
         ...modelKey(threatModel),
@@ -1187,10 +1392,13 @@ export class ScanRunner {
       blockers,
       ...modelRef(threatModel),
       ...(modelProblem !== null ? { threat_model_problem: modelProblem } : {}),
+      ...model.view,
     };
     // Stage 0 first, when it is due and this scan would read anything.
     const stage0 =
-      cases.length > 0 && blockers.length === 0 ? this.dueThreatModel(pre, threatModel) : null;
+      cases.length > 0 && blockers.length === 0
+        ? this.dueThreatModel(pre, threatModel, routed)
+        : null;
     if (stage0 !== null) preview.threat_model_stage = stage0;
     return { ok: true, planned: { preview, tree, settings, threatModel } };
   }
@@ -1202,12 +1410,13 @@ export class ScanRunner {
   private dueThreatModel(
     pre: PlanPrerequisites,
     threatModel: ThreatModel | null,
+    routed?: ScanRouted,
   ): ThreatModelPreview | null {
     const mode = pre.settings.scan.threat_model;
     if (mode === "off") return null;
     if (mode === "auto" && threatModel !== null) return null;
     if (mode === "always" && this.draftedAt() === pre.sha) return null;
-    const p = this.planThreatModelFrom(pre);
+    const p = this.planThreatModelFrom(pre, routed);
     return p.preview.blockers.length > 0 ? null : p.preview;
   }
 
@@ -1325,9 +1534,15 @@ export class ScanRunner {
   /** What a scan would read and cost now at `sha` (default the checkout's
    * HEAD), and the key a start must quote. */
   async preview(
-    args: { sha?: string; delta?: boolean; path?: string | null } = {},
+    args: {
+      sha?: string;
+      delta?: boolean;
+      path?: string | null;
+      /** The scan's model, when its host resolved one. */
+      model?: ScanRouted;
+    } = {},
   ): Promise<{ ok: true; preview: ScanPreview } | Refusal> {
-    const p = await this.plan(args.sha, args.delta === true, false, args.path);
+    const p = await this.plan(args.sha, args.delta === true, false, args.path, args.model);
     return p.ok ? { ok: true, preview: p.planned.preview } : p;
   }
 
@@ -1337,6 +1552,9 @@ export class ScanRunner {
     sha?: string;
     delta?: boolean;
     path?: string | null;
+    /** The scan's model, resolved again for this start: the key holds only
+     * when it is the model the preview showed. */
+    model?: ScanRouted;
   }): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const busy = this.refuseBusy();
     if (busy !== null) return busy;
@@ -1348,24 +1566,35 @@ export class ScanRunner {
         ],
       };
     }
+    const noModel = refusedModel(args.model);
+    if (noModel !== null) return noModel;
+    const routed = args.model;
     const key = args.key;
     // Stage 0's key starts stage 0: the key a preview's `threat_model_stage`
     // (or `proposeThreatModel`) handed out. Keys of the two plans never meet
     // (stage 0's carries its stage). Stage 0 reads the whole repository, so
     // a `path` does not scope it.
-    if (this.isThreatModelKey(key, args.sha))
-      return this.startThreatModel({ key, ...(args.sha !== undefined ? { sha: args.sha } : {}) });
+    if (this.isThreatModelKey(key, args.sha, routed))
+      return this.startThreatModel({
+        key,
+        ...(args.sha !== undefined ? { sha: args.sha } : {}),
+        ...(routed !== undefined ? { model: routed } : {}),
+      });
     return this.holdingStart(() =>
-      this.startPlanned(key, args.sha, args.delta === true, args.path),
+      this.startPlanned(key, args.sha, args.delta === true, args.path, routed),
     );
   }
 
   /** Is `key` the key stage 0 plans at `ref` now? Never under
    * `[scan] threat_model = "off"`, and never on a plan that cannot be made. */
-  private isThreatModelKey(key: string, ref: string | undefined): boolean {
+  private isThreatModelKey(
+    key: string,
+    ref: string | undefined,
+    routed: ScanRouted | undefined,
+  ): boolean {
     const s = this.ports.settings();
     if (!s.ok || s.settings.scan.threat_model === "off") return false;
-    const p = this.planThreatModel(ref);
+    const p = this.planThreatModel(ref, false, routed);
     return p.ok && p.preview.key === key;
   }
 
@@ -1475,9 +1704,10 @@ export class ScanRunner {
     sha: string | undefined,
     delta: boolean,
     path: string | null | undefined,
+    routed: ScanRouted | undefined,
   ): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const args = { key, sha };
-    const p = await this.plan(args.sha, delta, true, path);
+    const p = await this.plan(args.sha, delta, true, path, routed);
     if (!p.ok) return p;
     const { preview, tree, settings, threatModel } = p.planned;
     const stage0 = preview.threat_model_stage;
@@ -1542,6 +1772,7 @@ export class ScanRunner {
           validator: preview.settings.validator,
           validate_tier: preview.settings.validate_tier,
           ...(preview.settings.depth ? { depth: preview.settings.depth } : {}),
+          ...(preview.settings.model !== undefined ? { model: preview.settings.model } : {}),
         },
         ...modelRef(threatModel),
       },
@@ -1772,10 +2003,12 @@ export class ScanRunner {
     deep: boolean | undefined,
     claim = false,
     rawPath?: string | null,
+    routed?: ScanRouted,
   ): Promise<Stage2Planned> {
     const pre = this.prerequisites(ref, claim);
     if (!pre.ok) return pre;
     const { sha, tree, entries } = pre;
+    const model = plannedModel(routed);
     const scoped = scopeOf(rawPath, tree, sha);
     if (!scoped.ok) return scoped;
     const path = scoped.path;
@@ -1848,6 +2081,10 @@ export class ScanRunner {
       ...(depth === "deep" ? { depth } : {}),
       // Editing the threat model the security rows quote re-plans.
       ...modelKey(threatModel),
+      // The scan's model, and each tier's spec on it: a proposal shown under
+      // one model never starts under another. Absent when the host named no
+      // model, so such a proposal keys as before.
+      ...model.key,
     });
     const proposal: StoredStage2Proposal = {
       key,
@@ -1864,7 +2101,7 @@ export class ScanRunner {
       floor: plan.floor,
       ...(path !== null ? { path } : {}),
     };
-    return { ok: true, proposal, tree, settings, cut: pre.cut, threatModel };
+    return { ok: true, proposal, tree, settings, cut: pre.cut, threatModel, model };
   }
 
   /**
@@ -1882,7 +2119,10 @@ export class ScanRunner {
     deep?: unknown;
     /** A folder proposal: rows and floor only under it. */
     path?: string | null;
-  }): Promise<{ ok: true; proposal: Stage2Proposal } | Refusal> {
+    /** The scan's model, when its host resolved one. It is part of the key,
+     * never of the stored proposal: a start resolves it again. */
+    model?: ScanRouted;
+  }): Promise<({ ok: true; proposal: Stage2Proposal } & ScanModelView) | Refusal> {
     const rows = args.rows ?? [];
     if (!Array.isArray(rows))
       return { ok: false, errors: ["`rows` must be a list of { lens, files, tier?, reason }"] };
@@ -1922,7 +2162,7 @@ export class ScanRunner {
       }
       budget = args.budget_usd;
     }
-    const p = await this.planStage2(request, budget, args.sha, deep, false, args.path);
+    const p = await this.planStage2(request, budget, args.sha, deep, false, args.path, args.model);
     if (!p.ok) return p;
     try {
       this.ports.state.write(
@@ -1932,7 +2172,7 @@ export class ScanRunner {
     } catch (err) {
       return { ok: false, errors: [`the proposal could not be stored: ${clean(err)}`] };
     }
-    return { ok: true, proposal: p.proposal };
+    return { ok: true, proposal: p.proposal, ...p.model.view };
   }
 
   /**
@@ -1947,11 +2187,17 @@ export class ScanRunner {
     args: {
       key?: unknown;
       rows?: unknown;
+      /** The scan's model, resolved for this start: the key holds only when
+       * it is the model the proposal was made under. */
+      model?: ScanRouted;
     },
     onAccepted?: (run: ScanRun) => void,
   ): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const busy = this.refuseBusy();
     if (busy !== null) return busy;
+    const noModel = refusedModel(args.model);
+    if (noModel !== null) return noModel;
+    const routed = args.model;
     if (typeof args.key !== "string" || args.key === "") {
       return {
         ok: false,
@@ -1974,13 +2220,14 @@ export class ScanRunner {
       keep = args.rows;
     }
     const key = args.key;
-    return this.holdingStart(() => this.startStage2Planned(key, keep, onAccepted));
+    return this.holdingStart(() => this.startStage2Planned(key, keep, onAccepted, routed));
   }
 
   private async startStage2Planned(
     key: string,
     keep: readonly string[] | undefined,
     onAccepted?: (run: ScanRun) => void,
+    routed?: ScanRouted,
   ): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const stored = this.stage2Proposal();
     if (stored.error !== null) return { ok: false, errors: [stored.error] };
@@ -2002,6 +2249,7 @@ export class ScanRunner {
       proposalDepth(stored.proposal) === "deep",
       true,
       stored.proposal.path ?? null,
+      routed,
     );
     if (!p.ok) return p;
     if (p.proposal.key !== key) {
@@ -2089,6 +2337,7 @@ export class ScanRunner {
           validator: cfg.validator,
           validate_tier: cfg.validator ? top : null,
           ...(cfg.depth === "deep" ? { depth: cfg.depth } : {}),
+          ...(p.model.spec !== null ? { model: p.model.spec } : {}),
         },
         ...modelRef(p.threatModel),
         // The approved proposal's folder, as stage 1 records its preview's.
@@ -2212,6 +2461,7 @@ export class ScanRunner {
   private planThreatModel(
     ref: string | undefined,
     claim = false,
+    routed?: ScanRouted,
   ):
     | {
         ok: true;
@@ -2219,22 +2469,28 @@ export class ScanRunner {
         tree: ScanTree;
         settings: ScanSettings;
         existing: ThreatModel | null;
+        model: PlannedModel;
       }
     | Refusal {
     const pre = this.prerequisites(ref, claim);
-    return pre.ok ? this.planThreatModelFrom(pre) : pre;
+    return pre.ok ? this.planThreatModelFrom(pre, routed) : pre;
   }
 
   /** `planThreatModel` over prerequisites already read. */
-  private planThreatModelFrom(pre: PlanPrerequisites): {
+  private planThreatModelFrom(
+    pre: PlanPrerequisites,
+    routed?: ScanRouted,
+  ): {
     ok: true;
     preview: ThreatModelPreview;
     tree: ScanTree;
     settings: ScanSettings;
     existing: ThreatModel | null;
+    model: PlannedModel;
   } {
     const { sha, tree, settings } = pre;
     const cfg = settings.scan;
+    const model = plannedModel(routed);
     const existing = this.ratifiedThreatModel(tree, settings);
     const problem = existing?.source === "repo" ? null : this.repoModelProblem(tree);
     const blockers: string[] = [];
@@ -2287,6 +2543,8 @@ export class ScanRunner {
         // never pays for the same draft twice. A fresh proposal still keys
         // a deliberate re-draft.
         draft: draftKey(this.draftRecordText()),
+        // The scan's model, as stage 1's key carries it.
+        ...model.key,
       }),
       mode: "threat-model",
       sha,
@@ -2296,9 +2554,11 @@ export class ScanRunner {
       cap_usd: cap,
       tier: cfg.tier,
       inventory,
-      blockers,
+      // A stage 0 its own settings rule out says only that; else a route
+      // that was asked for and is not there stops it.
+      blockers: blockers.length === 0 && model.blocker !== null ? [model.blocker] : blockers,
     };
-    return { ok: true, preview, tree, settings, existing };
+    return { ok: true, preview, tree, settings, existing, model };
   }
 
   /**
@@ -2308,10 +2568,15 @@ export class ScanRunner {
    * profile's model already there. Runs nothing, stores nothing.
    */
   async proposeThreatModel(
-    args: { sha?: string } = {},
-  ): Promise<{ ok: true; preview: ThreatModelPreview } | Refusal> {
-    const p = this.planThreatModel(args.sha);
-    return p.ok ? { ok: true, preview: p.preview } : p;
+    args: {
+      sha?: string;
+      /** The scan's model, when its host resolved one: answered beside the
+       * proposal, and part of its key. */
+      model?: ScanRouted;
+    } = {},
+  ): Promise<({ ok: true; preview: ThreatModelPreview } & ScanModelView) | Refusal> {
+    const p = this.planThreatModel(args.sha, false, args.model);
+    return p.ok ? { ok: true, preview: p.preview, ...p.model.view } : p;
   }
 
   /**
@@ -2324,9 +2589,14 @@ export class ScanRunner {
   async startThreatModel(args: {
     key?: unknown;
     sha?: string;
+    /** The scan's model, resolved for this start. */
+    model?: ScanRouted;
   }): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const busy = this.refuseBusy();
     if (busy !== null) return busy;
+    const noModel = refusedModel(args.model);
+    if (noModel !== null) return noModel;
+    const routed = args.model;
     if (typeof args.key !== "string" || args.key === "") {
       return {
         ok: false,
@@ -2337,9 +2607,9 @@ export class ScanRunner {
     }
     const key = args.key;
     return this.holdingStart(async () => {
-      const p = this.planThreatModel(args.sha, true);
+      const p = this.planThreatModel(args.sha, true, routed);
       if (!p.ok) return p;
-      const { preview, tree, settings, existing } = p;
+      const { preview, tree, settings, existing, model } = p;
       if (preview.key !== key) {
         return {
           ok: false,
@@ -2391,6 +2661,7 @@ export class ScanRunner {
             effort: "tier",
             validator: false,
             validate_tier: null,
+            ...(model.spec !== null ? { model: model.spec } : {}),
           },
         },
         [job],
@@ -2559,8 +2830,11 @@ export class ScanRunner {
     };
     // May a case with this estimate start? Within the cap counting what is in
     // flight; a case with no estimate (calibration) only while the cap is not
-    // yet reached. A zero cap is a free run (the runner prices at zero): it admits cases only
-    // while nothing has been spent, and stops on the first real spending.
+    // yet reached. A zero cap is a run whose plan was priced at zero: its estimate was
+    // measured on a model pi has no price for (pi stamps such calls at 0, which
+    // is not free, and every surface says "no dollar stop", pricing.ts
+    // `scanRanUnpriced`). It admits cases only while nothing has been spent,
+    // and stops on the first real spending.
     let unknownSpend = false;
     const within = (extra: number): boolean =>
       !unknownSpend &&

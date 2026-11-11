@@ -109,9 +109,6 @@ export interface StackTransport {
 }
 
 export interface TransportOptions {
-  /** Newly collected secrets need the host provisioning a release skips:
-   * `provision` runs it first. The default is the release alone. */
-  deploymentMode?: "release" | "provision";
   /** Long-running commands (the deploy that stands in for a restart). */
   stream?: StreamRunner;
   /** Health probe budget. */
@@ -250,18 +247,12 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
   const root = rootOf(ctx.adapters);
   const facts = remoteFactsFor(ctx.adapters, ctx.choices);
   // Shipping a changed config is a release of the version already deployed
-  // (the config home rides every release); a host that needs its secrets
-  // provisioned runs `provision` first.
+  // (the config home rides every release).
   const version = recordedReleaseVersion(ctx.choices);
-  const shipLine = (): string => {
-    const release =
-      version === null
-        ? "scripts/deploy.sh release <version>"
-        : deployCommandLine("release", { version });
-    return opts.deploymentMode === "provision"
-      ? `${deployCommandLine("provision")} && ${release}`
-      : release;
-  };
+  const shipLine = (): string =>
+    version === null
+      ? "scripts/deploy.sh release <version>"
+      : deployCommandLine("release", { version });
   const stream = opts.stream ?? nodeStreamRunner;
   const healthTimeoutS = Math.max(
     1,
@@ -602,12 +593,9 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
             "`scripts/deploy.sh release <version>` yourself",
         };
       }
-      let r: { code: number; stdout: string; stderr: string } = { code: 0, stdout: "", stderr: "" };
-      if (opts.deploymentMode === "provision") {
-        r = await stream.run("bash", deployArgv(root, "provision"), (line) => log(line));
-      }
-      if (r.code === 0)
-        r = await stream.run("bash", deployArgv(root, "release", { version }), (line) => log(line));
+      const r = await stream.run("bash", deployArgv(root, "release", { version }), (line) =>
+        log(line),
+      );
       return r.code === 0
         ? {
             name: "daemon-restart",

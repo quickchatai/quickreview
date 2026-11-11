@@ -67,7 +67,7 @@ const cwd = join(base, "work");
 mkdirSync(cwd);
 copyFileSync(join(repo, REVIEWER_STUB), join(cwd, HOST_CONTEXT_STUB));
 const cfg = benchConfig("");
-cfg.models.conversation = FAKE_MODEL;
+cfg.models.model = FAKE_MODEL;
 server.script(Array.from({ length: 12 }, () => ({ text: "ok" })));
 
 const q = (s) => `'${s.replace(/'/g, `'\\''`)}'`;

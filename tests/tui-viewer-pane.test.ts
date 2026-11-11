@@ -67,7 +67,7 @@ const PROGRESS = {
   agents: [
     {
       execution_id: "a",
-      agent: "pass-baseline--sol-high",
+      agent: "pass-baseline--deep",
       status: "completed",
       duration_ms: 1000,
       tool_count: 1,
@@ -76,7 +76,7 @@ const PROGRESS = {
     },
     {
       execution_id: "b",
-      agent: "pass-security--sol-high",
+      agent: "pass-security--deep",
       status: "running",
       duration_ms: 1000,
       tool_count: 1,
@@ -147,7 +147,7 @@ function writeLogs(root: string, pr: number): void {
         id: "t",
         tool: "lens",
         n: 1,
-        results: [{ slot: 0, agent: "pass-security--sol-high", id: "L1" }],
+        results: [{ slot: 0, agent: "pass-security--deep", id: "L1" }],
       }) +
       rows,
   );
@@ -390,7 +390,7 @@ describe("the viewer is not a terminal", () => {
 
       h.streams.type("]");
       await vi.advanceTimersByTimeAsync(5);
-      expect(h.app.view.pi?.viewer).toMatchObject({ stream: "pass-security--sol-high" });
+      expect(h.app.view.pi?.viewer).toMatchObject({ stream: "pass-security--deep" });
       expect(stripAnsi(h.app.view.pi!.lines.join("\n"))).toContain("lens words for #5049");
       h.streams.type("[");
       expect(h.app.view.pi?.viewer?.stream).toBe("main");
@@ -414,7 +414,7 @@ describe("the viewer is not a terminal", () => {
       expect(zone, "the pass-security row is a click target").toBeDefined();
       h.streams.type(`\x1b[<0;${zone!.x1 + 2};${zone!.y1}M`);
       await vi.advanceTimersByTimeAsync(5);
-      expect(h.app.view.pi?.viewer?.stream).toBe("pass-security--sol-high");
+      expect(h.app.view.pi?.viewer?.stream).toBe("pass-security--deep");
       expect(stripAnsi(h.app.view.pi!.lines.join("\n"))).toContain("lens words for #5049");
       expect(h.app.piFocused()).toBe(false); // picking a row does not take the keyboard
 
@@ -424,7 +424,7 @@ describe("the viewer is not a terminal", () => {
       )!;
       h.streams.type(`\x1b[<0;${base.x1 + 2};${base.y1}M`);
       await vi.advanceTimersByTimeAsync(5);
-      expect(h.app.view.pi?.viewer?.stream).toBe("pass-security--sol-high");
+      expect(h.app.view.pi?.viewer?.stream).toBe("pass-security--deep");
       expect(h.app.view.noticeLine ?? "").toMatch(/pass-baseline: no transcript yet/);
     });
   });
@@ -632,7 +632,7 @@ describe("the viewer's input line (worker, answer and idle panes only)", () => {
     await withApp(async (h) => {
       await focused(h, 5049);
       await type(h, "]");
-      expect(h.app.view.pi?.viewer?.stream).toBe("pass-security--sol-high");
+      expect(h.app.view.pi?.viewer?.stream).toBe("pass-security--deep");
       await type(h, "[");
       expect(h.app.view.pi?.viewer?.stream).toBe("main");
       await type(h, "a", "]");

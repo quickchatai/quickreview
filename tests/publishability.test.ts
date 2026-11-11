@@ -128,8 +128,8 @@ const CREDENTIAL_SHAPES: Array<[string, RegExp]> = [
 ];
 const FAKE_CREDENTIAL_FILES = new Set([
   "tests/collect-secrets.test.ts",
+  "tests/onboard-embeddings.test.ts",
   "tests/onboard-githubapp.test.ts",
-  "tests/onboard-llmauth.test.ts",
   "tests/onboard-regressions.test.ts",
   "tests/slack-setup-wizard.test.ts",
   "tests/slack-wire.test.ts",

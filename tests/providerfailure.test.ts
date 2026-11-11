@@ -14,8 +14,11 @@ import {
 } from "../src/providerfailure.js";
 import { modelErrorKind } from "@quickchatai/pi-quickreview/src/engine/roundevents.js";
 import {
+  AUTH_ERROR_RE,
+  MODEL_REFUSED_RE,
   boundedProviderError,
   modelErrorKind as coreModelErrorKind,
+  providerErrorKind,
 } from "@quickchatai/pi-quickreview/src/modelerrors.js";
 
 describe("providerFailureKind", () => {
@@ -48,6 +51,121 @@ describe("providerFailureKind", () => {
   });
 });
 
+// One ordered classifier (packages/pi-plugin/src/modelerrors.ts): a spent
+// usage window, a rate limit, a refused credential, a refused model, an
+// overload, a dropped connection. The texts are the ones the providers' APIs
+// and pi itself give.
+describe("providerErrorKind: one function, tried in order", () => {
+  // MUTATION: add `\\b403\\b` to AUTH_ERROR_RE - a 403 on one model reads
+  // as a refused login (the lens child's 403 raises pi_auth_expired in
+  // tests/authwatch.test.ts) and the model_refused rows here fail.
+  // MUTATION: test AUTH_ERROR_RE before RATE_LIMIT_RE in providerErrorKind - the
+  // rate limit that carries "401 errors" as a count reads as auth; this fails.
+  // MUTATION: add a bare `\\b402\\b` to USAGE_LIMIT_RE - the rate limit that
+  // carries 402 as a count reads as a spent account; this fails.
+  it.each([
+    // a refused credential
+    ["Provided authentication token is expired.", "auth"],
+    ["invalid_grant", "auth"],
+    ["401 Unauthorized", "auth"],
+    ["authentication_error: invalid x-api-key", "auth"],
+    ["API key not valid. Please pass a valid API key.", "auth"],
+    ["OAuth refresh failed for anthropic", "auth"],
+    ["Credential store modify failed for github-copilot", "auth"],
+    ["Incorrect API key provided", "auth"],
+    ["The access token has been revoked", "auth"],
+    ["refresh_token_reused", "auth"],
+    ["HTTP 401", "auth"],
+    ["request failed with status code 401", "auth"],
+    // the credential was taken and the model refused
+    ["AccessDeniedException: You don't have access to the model", "model_refused"],
+    ["403 Forbidden: model not available in your region", "model_refused"],
+    ["DeploymentNotFound", "model_refused"],
+    ["The API deployment for this resource does not exist", "model_refused"],
+    ["The model `some-model-4.5` does not exist or you do not have access to it.", "model_refused"],
+    ["model_not_found", "model_refused"],
+    ["PERMISSION_DENIED: the caller may not use this model", "model_refused"],
+    // a rate limit is read before any status number
+    ["429 Too Many Requests: 403 of 402 requests used in the last minute", "rate_limited"],
+    ["429 Too Many Requests: rate limit reached after 401 errors", "rate_limited"],
+    [
+      "RESOURCE_EXHAUSTED: Quota exceeded for quota metric 'Generate Content API requests per minute'",
+      "rate_limited",
+    ],
+    ["RESOURCE_EXHAUSTED", "rate_limited"],
+    // the account or the plan is spent
+    ["The usage limit has been reached", "usage_limit"],
+    ["insufficient_quota", "usage_limit"],
+    ["Your credit balance is too low to access the API", "usage_limit"],
+    ["402 Payment Required: account blocked", "usage_limit"],
+    ["Insufficient credits", "usage_limit"],
+    // unchanged
+    ["529 Platform overloaded", "overloaded"],
+    ["read ECONNRESET", "transport"],
+    ["500 internal error", "other"],
+  ] as const)("%s is %s", (text, kind) => {
+    expect(providerErrorKind(text)).toBe(kind);
+    expect(providerMessageKind(text)).toBe(kind);
+  });
+
+  it("a status number never decides alone: it counts only beside a word that says it is one", () => {
+    for (const text of ["retried 401 times", "read 401 bytes", "sent 403 tokens", "402"])
+      expect(providerErrorKind(text), text).toBe("other");
+    expect(AUTH_ERROR_RE.test("401")).toBe(false);
+    expect(MODEL_REFUSED_RE.test("403")).toBe(false);
+    expect(providerErrorKind("HTTP 403")).toBe("model_refused");
+    expect(providerErrorKind('{"statusCode":401}')).toBe("auth");
+  });
+
+  it("the engine's counts keep three kinds: every other kind is `other` there", () => {
+    expect(
+      [
+        "The usage limit has been reached",
+        "429 Too Many Requests",
+        "529 Platform overloaded",
+        "401 Unauthorized",
+        "403 Forbidden: model not available in your region",
+        "read ECONNRESET",
+      ].map(coreModelErrorKind),
+    ).toEqual(["usage_limit", "rate_limited", "overloaded", "other", "other", "other"]);
+  });
+});
+
+// What each kind does once the worker has worded it (src/botworker.ts).
+describe("a refused credential and a refused model, as the daemon reads them", () => {
+  const login = "the round: the provider refused the login: 401 Unauthorized";
+  const model =
+    "the round: Faux refused the model faux/faux-1. Run on another: qcr model use " +
+    "<provider[/model]>, or pin one with [models] model. The provider said: " +
+    "403 Forbidden: model not available in your region";
+
+  it("neither is a provider failure a later attempt cures", () => {
+    for (const text of [login, model]) {
+      expect(providerFailureKind(text), text).toBeUndefined();
+      expect(isProviderTransient(text), text).toBe(false);
+    }
+    expect((["auth", "model_refused"] as const).map(isTransientKind)).toEqual([false, false]);
+    expect(isProviderTransientPassError("401 Unauthorized")).toBe(false);
+    expect(isProviderTransientPassError("403 Forbidden: model not available")).toBe(false);
+  });
+
+  // MUTATION: add "refused the model" to OPERATOR_FAILURE in
+  // src/providerfailure.ts - a refused model reads as a refused login's hold;
+  // this fails.
+  it("a refused login is the operator's hold; a refused model is not the login's", () => {
+    expect(isOperatorWorkerFailure(login)).toBe(true);
+    expect(isOperatorWorkerFailure(model)).toBe(false);
+  });
+
+  it("an output stream that failed on either reads as its own kind, never transient", () => {
+    expect(providerFailureKind("the round: output stream failed: 401 Unauthorized")).toBe("auth");
+    expect(providerFailureKind("the round: output stream failed: 403 Forbidden")).toBe(
+      "model_refused",
+    );
+    expect(isProviderTransient("the round: output stream failed: 403 Forbidden")).toBe(false);
+  });
+});
+
 describe("isProviderTransient", () => {
   it("is the connection, a rate limit and an overload; never a usage window, an error or nothing", () => {
     expect(isProviderTransient("x: the provider failed the turn: fetch failed")).toBe(true);
@@ -72,7 +190,7 @@ describe("isProviderTransientPassError", () => {
   });
 
   it("is never a timeout, a spent usage window, another error or nothing", () => {
-    expect(isProviderTransientPassError("pass pass-security--sol-high timed out after 8 min")).toBe(
+    expect(isProviderTransientPassError("pass pass-security--deep timed out after 8 min")).toBe(
       false,
     );
     expect(isProviderTransientPassError("You have hit your usage limit has been reached")).toBe(
@@ -147,6 +265,8 @@ describe("boundedProviderError", () => {
     [`429 Too Many Requests: ${preamble} the usage limit has been reached`, "usage_limit"],
     [`503 ${preamble} 500 internal error`, "overloaded"],
     [`${preamble} 500 internal error`, "other"],
+    [`${preamble} 401 Unauthorized`, "auth"],
+    [`${preamble} 403 Forbidden: model not available in your region`, "model_refused"],
   ] as const)("a long message keeps its kind when cut: %#", (message, kind) => {
     const bounded = boundedProviderError(message);
     expect(bounded.length).toBeLessThanOrEqual(330);

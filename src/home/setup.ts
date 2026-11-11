@@ -5,14 +5,23 @@
 //
 //   pi_version, git   the plugin's own first-run checks: the card shows one
 //                     only while it fails
-//   login             pi's own device-code login for the provider the chat
-//                     runs on (openai-codex): it starts by itself, the card
-//                     shows the URL and the code, and it retries cleanly
+//   login             "Sign in to a model provider": done when pi has a
+//                     usable credential for any provider (its own inventory:
+//                     a stored login, a key, the environment). Its run opens
+//                     pi's own /login, with every provider pi offers, and
+//                     auto-review's refresher paused around it
+//                     (src/home/loginowner.ts LoginMenu); it starts by itself
+//                     when it is the first thing missing
 //   github            `gh` installed and signed in; one key checks again
 //   repo              the repository: one of the person's recently pushed
 //                     ones, or any owner/name or GitHub URL, written to the
 //                     app config's `[github] repo` with the silent defaults
 //                     (timezone, base branch, the owner's name and login)
+//   review_model      optional, and the plugin's own step id: shown once a
+//                     review's quote says two or more providers tie and
+//                     nothing was chosen. Its run asks which provider reviews
+//                     run on and remembers the answer beside pi's logins, as
+//                     `/qcr-setup model` does; dismissing it keeps the order
 //
 // Each step's detect runs first, over what the home has just read (the
 // HomeModel's slots), and a step already true is done with what was found.
@@ -25,6 +34,7 @@
 // card) and by a `home_*` tool alike (src/home/setuptools.ts). The checklist
 // lives in memory: every launch detects afresh.
 import {
+  AUTOMATIC,
   PLUGIN_SETUP_STEPS,
   pluginSetupSteps,
 } from "@quickchatai/pi-quickreview/src/plugin/setup.js";
@@ -36,42 +46,54 @@ import {
   type SetupStep,
   type StepReport,
 } from "@quickchatai/pi-quickreview/src/setupchecklist.js";
-import { providerLabel, type HomeModel, type SetupGap } from "./model.js";
-import type { GithubPort, Known } from "./ports.js";
+import type { LoginMenu, LoginMenuEnd } from "./loginowner.js";
+import { credentialHow, type HomeModel, type SetupGap } from "./model.js";
+import type { GithubPort, Known, PiCredential, ReviewQuote } from "./ports.js";
 
-/** The app's step ids, in their order on the card. */
-export const HOME_STEPS = { login: "login", github: "github", repo: "repo" } as const;
+/** The app's step ids, in their order on the card. The review model's is the
+ * plugin's own: one step, on both checklists. */
+export const HOME_STEPS = {
+  login: "login",
+  github: "github",
+  repo: "repo",
+  model: PLUGIN_SETUP_STEPS.model,
+} as const;
 export type HomeStepId = (typeof HOME_STEPS)[keyof typeof HOME_STEPS];
+/** The steps the card always shows; the review model joins them only while
+ * its question is open. */
 const HOME_STEP_ORDER: readonly HomeStepId[] = [
   HOME_STEPS.login,
   HOME_STEPS.github,
   HOME_STEPS.repo,
 ];
 
+/** The first step's title: any provider pi supports. */
+export const SIGN_IN_TITLE = "Sign in to a model provider";
+/** What the step says while pi has no credential. */
+export const NO_CREDENTIAL = "pi has no model credential yet";
+
 /** The plugin's steps the home runs as its first-run checks: pi and git
  * (gh is the github step's). The plugin's login, GitHub credential and repo
  * profile steps are the home's own steps' business, or Setup's. */
 export const FIRST_RUN_CHECKS: readonly string[] = [PLUGIN_SETUP_STEPS.pi, PLUGIN_SETUP_STEPS.git];
 
-/** What the person types at a device-code page. */
-export interface DeviceCode {
-  userCode: string;
-  verificationUri: string;
-  expiresInSeconds?: number;
-}
-
+/** Why a sign-in did not finish. */
 export type LoginFailureKind =
-  "expired" | "denied" | "cancelled" | "not_enabled" | "unavailable" | "failed";
+  /** The person went back to the chat before pi had a credential. */
+  | "left"
+  /** pi's menu was left open past the home's ceiling. */
+  | "timeout"
+  /** This pi gave the home no way to open its menu. */
+  | "unavailable"
+  /** Auto-review's refresher could not be paused: nothing was opened. */
+  | "failed";
 
-export type LoginOutcome = { ok: true } | { ok: false; kind: LoginFailureKind; why: string };
-
-/** pi's own device-code login (src/home/devicelogin.ts). Never throws. */
-export interface DeviceLoginPort {
-  login(o: {
-    provider: string;
-    signal: AbortSignal;
-    onCode(code: DeviceCode): void;
-  }): Promise<LoginOutcome>;
+/** The remembered model choice, as the home writes it: the plugin's choice
+ * file beside pi's logins (extensions/home.ts). */
+export interface ModelChoicePort {
+  /** Remember `provider` as the person's stated choice; null hands the pick
+   * back to QuickReview. */
+  write(provider: string | null): { ok: true } | { ok: false; why: string };
 }
 
 /** The repository pick and what it writes. */
@@ -108,8 +130,6 @@ export interface HomeSetupPorts {
   repos?: RepoPickPort;
   /** The machine's IANA timezone, or null. */
   timezone?: () => string | null;
-  /** pi's device login. Absent: the extension builds it from pi's session. */
-  deviceLogin?: DeviceLoginPort;
 }
 
 /** pi's dialogs, for the repository pick. */
@@ -137,19 +157,17 @@ export interface SetupView {
   /** First-run checks that fail, in order. */
   checks: Array<{ id: string; title: string; why: string; next: boolean }>;
   steps: SetupStepView[];
-  /** The device login: its code once pi has one, the last failure. */
-  login: { running: boolean; code?: DeviceCode; failure?: { kind: LoginFailureKind; why: string } };
-  /** The provider the login is for, as a person names it. */
-  provider: string;
+  /** The sign-in: how pi's menu was opened while it is, the last failure. */
+  login: {
+    running: boolean;
+    how?: "opened" | "prefilled";
+    failure?: { kind: LoginFailureKind; why: string };
+  };
   done: number;
   total: number;
 }
 
 export const PASTE_REPO = "Paste any repository…";
-
-/** The providers whose login the card runs as pi's device-code flow. Any
- * other provider the chat runs on signs in with pi's own /login. */
-export const DEVICE_LOGIN_PROVIDERS: ReadonlySet<string> = new Set(["openai-codex"]);
 
 /** owner/name from what a person pastes: owner/name, a github.com URL (a PR
  * or file URL too), or a git remote. Null when it is none of those. */
@@ -194,11 +212,24 @@ const refused = (name: string, detail: string): StepReport => ({
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-/** A device login in flight. */
+/** A sign-in in flight. */
 interface Signing {
-  ac: AbortController;
-  code?: DeviceCode;
-  onCode?: (c: DeviceCode) => void;
+  how?: "opened" | "prefilled";
+  onOpen?: (how: "opened" | "prefilled") => void;
+}
+
+/** The review model's question, as a quote asked it. */
+interface ModelAsk {
+  providers: number;
+  /** The model reviews would run on by the order; null when the quote named none. */
+  spec: string | null;
+}
+
+/** One credential as the login step's facts say it. */
+function credentialFact(c: PiCredential): string {
+  if (c.from === "login") return `${c.name}, signed in with pi`;
+  if (c.from === "environment") return `${c.name}, ${c.label ?? "a credential"} in the environment`;
+  return `${c.name}, an API key in pi`;
 }
 
 export interface HomeSetupOptions {
@@ -206,8 +237,12 @@ export interface HomeSetupOptions {
   /** The home's GitHub port: the github step's re-check reads it. */
   github: GithubPort;
   ports: HomeSetupPorts;
-  /** pi's device login, once pi's session exists. */
-  deviceLogin(): DeviceLoginPort | undefined;
+  /** pi's own /login with the refresher held around it: the one the
+   * re-login uses too. */
+  menu: LoginMenu;
+  /** Where the review model's answer is remembered. Absent: the step says
+   * how to choose in a shell. */
+  modelChoice?: ModelChoicePort;
   /** Something the card shows changed. */
   onChange?: () => void;
   /** The card should give way to the home, or the home to the card. */
@@ -223,6 +258,15 @@ export class HomeSetup {
   private readonly unknownWhy = new Map<string, string>();
   private signing: Signing | null = null;
   private failure: { kind: LoginFailureKind; why: string } | null = null;
+  /** The review model's question while it is open. */
+  private asked: ModelAsk | null = null;
+  /** The person answered it (a provider, automatic, or dismissed it): it is
+   * not asked again in this session. */
+  private decided = false;
+  /** What they chose, as the step's found text. */
+  private chosen: string | null = null;
+  /** The model the latest quote said reviews run on. */
+  private reviewSpec: string | null = null;
   private stepping = 0;
   private recentRepos: Promise<Known<readonly string[]>> | null = null;
   private synced = false;
@@ -251,18 +295,29 @@ export class HomeSetup {
 
   // ---- what each step reads ---------------------------------------------
 
-  private loginTitle(): string {
-    return `Sign in to ${providerLabel(this.m.chatProvider())}`;
+  private loginFacts(): Facts {
+    const l = this.m.state.login;
+    if (l.kind === "known") {
+      if (l.value.length === 0) return { missing: NO_CREDENTIAL };
+      if (l.value.length === 1) return { found: credentialFact(l.value[0]!) };
+      const names = l.value.map((c) => c.name).join(", ");
+      return {
+        found: this.reviewSpec !== null ? `${names}; reviews run on ${this.reviewSpec}` : names,
+      };
+    }
+    // pi's registry could not be read: unknown, never "no credential"
+    return {
+      unknown:
+        l.kind === "unknown" ? `can't read pi's model credentials: ${l.why}` : "still reading",
+    };
   }
 
-  private loginFacts(): Facts {
-    const label = providerLabel(this.m.chatProvider());
-    const signed = this.m.signedIn();
-    if (signed === true)
-      return { found: `${label === "OpenAI" ? "ChatGPT" : label} · signed in with pi` };
-    if (signed === false) return { missing: `pi has no ${label} login yet` };
-    const l = this.m.state.login;
-    return { unknown: l.kind === "unknown" ? `can't read pi's login: ${l.why}` : "still reading" };
+  private modelFacts(): Facts {
+    const a = this.asked;
+    if (a === null) return { found: this.chosen ?? "QuickReview picks the provider" };
+    return {
+      missing: `${a.providers} providers signed in; reviews would run on ${a.spec ?? "the first in pi's order"}`,
+    };
   }
 
   private which(cmd: string): string | null | undefined {
@@ -292,11 +347,13 @@ export class HomeSetup {
   }
 
   private facts(id: HomeStepId): Facts {
-    return id === "login"
+    return id === HOME_STEPS.login
       ? this.loginFacts()
-      : id === "github"
+      : id === HOME_STEPS.github
         ? this.githubFacts()
-        : this.repoFacts();
+        : id === HOME_STEPS.repo
+          ? this.repoFacts()
+          : this.modelFacts();
   }
 
   /** detect: the facts, noting an Unknown so it never counts as a gap. */
@@ -314,11 +371,13 @@ export class HomeSetup {
       order: number,
       explain: string,
       run: SetupStep["run"],
+      optional = false,
     ): SetupStep => ({
       id,
       title,
       order,
       explain,
+      ...(optional ? { optional: true } : {}),
       detect: async () => this.detected(id),
       run,
       verify: async () => report(title, this.facts(id)),
@@ -326,9 +385,9 @@ export class HomeSetup {
     return [
       step(
         HOME_STEPS.login,
-        "Sign in",
+        SIGN_IN_TITLE,
         10,
-        "pi's own device-code login, for the provider the chat runs on.",
+        "pi's own /login, with every provider it supports: a login, or an API key. A provider key in the environment counts too.",
         () => this.runLogin(),
       ),
       step(
@@ -345,42 +404,68 @@ export class HomeSetup {
         "The repository the home reviews, written to your qcr config's [github] repo.",
         (ctx) => this.runRepo(ctx.input["repo"]),
       ),
+      step(
+        HOME_STEPS.model,
+        "Review model",
+        13,
+        "The provider reviews run on, while pi has a credential for more than one and nothing was chosen.",
+        (ctx) => this.runModel(ctx.input["provider"]),
+        true,
+      ),
     ];
   }
 
   // ---- the steps' runs --------------------------------------------------
 
+  /** Open pi's /login and wait for pi to have a credential. */
   private async runLogin(): Promise<StepReport> {
-    const provider = this.m.chatProvider();
-    if (!DEVICE_LOGIN_PROVIDERS.has(provider)) {
-      this.failure = {
-        kind: "unavailable",
-        why: `sign in to ${providerLabel(provider)} with pi's own /login`,
-      };
-      return refused("login", this.failure.why);
-    }
-    const port = this.o.deviceLogin();
     const s = this.signing;
-    if (port === undefined || s === null) {
-      this.failure = {
-        kind: "unavailable",
-        why: "this home cannot run pi's device login: type /login to sign in with pi's own menu",
-      };
-      return refused("login", this.failure.why);
-    }
-    const r = await port.login({
-      provider,
-      signal: s.ac.signal,
-      onCode: (code) => {
-        s.code = code;
-        s.onCode?.(code);
+    const end = await this.o.menu.run({
+      done: async () => (await this.m.readLogin()) === true,
+      opened: (how) => {
+        if (s !== null) {
+          s.how = how;
+          s.onOpen?.(how);
+        }
         this.changed();
       },
     });
-    if (r.ok)
-      return { ok: true, checks: [{ name: "login", ok: true, detail: "signed in with pi" }] };
-    this.failure = { kind: r.kind, why: r.why };
-    return refused("login", r.why);
+    if (end.kind === "done")
+      return { ok: true, checks: [{ name: "login", ok: true, detail: "pi has a credential" }] };
+    // a credential that was there all along (a key in the environment)
+    if (end.kind === "no-menu" && (await this.m.readLogin()) === true)
+      return { ok: true, checks: [{ name: "login", ok: true, detail: "pi has a credential" }] };
+    this.failure = loginFailureOf(end);
+    return refused("login", this.failure.why);
+  }
+
+  /** Remember the provider reviews run on; "" hands the pick back. */
+  private async runModel(raw: unknown): Promise<StepReport> {
+    const port = this.o.modelChoice;
+    if (port === undefined)
+      return refused(
+        "model",
+        "this home cannot remember a choice: run `qcr model use <provider>` in a shell",
+      );
+    if (typeof raw !== "string")
+      return refused("model", "which provider? Choosing is the person's, in the home");
+    const provider = raw.trim() === "" ? null : raw.trim();
+    if (provider !== null && !this.hasCredential(provider))
+      return refused("model", `pi has no credential for ${JSON.stringify(provider)}`);
+    const wrote = port.write(provider);
+    if (!wrote.ok) return refused("model", `couldn't remember the choice: ${wrote.why}`);
+    this.asked = null;
+    this.decided = true;
+    this.chosen =
+      provider === null
+        ? "QuickReview picks the provider"
+        : `${this.m.nameOf(provider)} · your choice`;
+    return { ok: true, checks: [{ name: "model", ok: true, detail: this.chosen }] };
+  }
+
+  private hasCredential(provider: string): boolean {
+    const l = this.m.state.login;
+    return l.kind === "known" && l.value.some((c) => c.provider === provider);
   }
 
   private async runGithub(): Promise<StepReport> {
@@ -439,13 +524,28 @@ export class HomeSetup {
     if (this.closed) return;
     this.synced = true;
     if (this.isPending(HOME_STEPS.repo)) void this.recent();
-    const phase = this.phase();
-    if (phase !== this.lastPhase) {
-      this.lastPhase = phase;
-      this.o.onPhase?.(phase);
-    }
+    this.phased();
     this.maybeStartLogin();
     this.changed();
+  }
+
+  /** Tell the host when the card and the home change places. */
+  private phased(): void {
+    const phase = this.phase();
+    if (phase === this.lastPhase) return;
+    this.lastPhase = phase;
+    this.o.onPhase?.(phase);
+  }
+
+  /** A review's quote landed (HomeModel's `onQuote`): the model it would run
+   * on, and the review model's question the first time a quote asks it. */
+  quoted(q: ReviewQuote): void {
+    if (this.closed) return;
+    this.reviewSpec = q.model;
+    if (q.ask !== true || this.decided || this.asked !== null) return;
+    this.asked = { providers: q.providers ?? 2, spec: q.model };
+    // the step was done while nothing was asked: it is verified again, and pending now
+    void this.sync();
   }
 
   private isPending(id: string): boolean {
@@ -462,9 +562,11 @@ export class HomeSetup {
       .map((l) => l.id);
   }
 
-  /** The card while a gap is left, then the home. */
+  /** The card while a gap is left, or while the review model's question is
+   * open (it is optional: answering or dismissing it gives the home back);
+   * then the home. */
   phase(): "setup" | "home" {
-    return this.gaps().length > 0 ? "setup" : "home";
+    return this.gaps().length > 0 || (this.synced && this.asked !== null) ? "setup" : "home";
   }
 
   /** A step is running: the card's spinner turns. */
@@ -472,9 +574,15 @@ export class HomeSetup {
     return this.signing !== null || this.stepping > 0;
   }
 
-  /** The first pending step: what alt+n runs. */
+  /** The first pending step: what alt+n runs. A sign-in whose state could
+   * not be read is never it: an unknown is no gap, and nothing to act on
+   * (invariant 9, both halves). */
   private nextId(): string | undefined {
-    return this.checklist.list().find((l) => l.status === "pending")?.id;
+    return this.checklist
+      .list()
+      .find(
+        (l) => l.status === "pending" && !(l.id === HOME_STEPS.login && this.unknownWhy.has(l.id)),
+      )?.id;
   }
 
   /** Read everything again after a step changed it. A read already in
@@ -490,7 +598,7 @@ export class HomeSetup {
   private maybeStartLogin(): void {
     if (this.autoStarted || this.closed || !(this.o.interactive?.() ?? false)) return;
     const gaps = this.gaps();
-    if (gaps[0] !== HOME_STEPS.login || !DEVICE_LOGIN_PROVIDERS.has(this.m.chatProvider())) return;
+    if (gaps[0] !== HOME_STEPS.login) return;
     this.autoStarted = true;
     void this.signIn();
   }
@@ -506,13 +614,15 @@ export class HomeSetup {
     }
   }
 
-  /** Run the next step (alt+n, ⏎ on the card, `home_setup_next`). */
-  async next(ui?: SetupUi): Promise<string> {
+  /** Run the next step (alt+n, ⏎ on the card, `home_setup_next`). `again`
+   * is the person's own key: see signIn. */
+  async next(ui?: SetupUi, o: { again?: boolean } = {}): Promise<string> {
     const id = this.nextId();
     if (id === undefined) return "setup is done: every step is";
-    if (id === HOME_STEPS.login) return this.signIn();
+    if (id === HOME_STEPS.login) return this.signIn(o);
     if (id === HOME_STEPS.github) return this.checkGithub();
     if (id === HOME_STEPS.repo) return this.chooseRepo(undefined, ui);
+    if (id === HOME_STEPS.model) return this.chooseModel(ui);
     // a first-run check: look again
     const r = await this.step(id);
     if (r.ok) await this.reread();
@@ -520,43 +630,107 @@ export class HomeSetup {
     return r.ok ? `${title}: ok` : `${title}: ${r.failures.join("; ")}`;
   }
 
-  /** pi's device login. The answer comes once the code is shown (or the
-   * login ended): the sign-in itself goes on in the background. */
-  async signIn(): Promise<string> {
+  /** Sign in with pi's own /login. The answer comes once pi's menu is open
+   * (or the sign-in could not start): the sign-in itself goes on in the
+   * background, until pi has a credential or the person leaves the menu.
+   * `again` is the person's own key: pressed while a sign-in waits it puts
+   * pi's /login up again, under the same pause and the same wait, because a
+   * menu closed with Esc is one the home cannot see close. A tool's call does
+   * not, for the menu may be open in front of the person. */
+  async signIn(o: { again?: boolean } = {}): Promise<string> {
     const s = this.signing;
-    if (s !== null)
-      return s.code
-        ? `Still waiting: open ${s.code.verificationUri} and enter ${s.code.userCode}.`
-        : "The sign-in is starting: the code shows in a moment.";
-    if (!this.isPending(HOME_STEPS.login)) {
-      const f = this.loginFacts();
-      return `already signed in: ${"found" in f ? f.found : "done"}`;
+    if (s !== null || this.o.menu.running()) {
+      const again = o.again === true ? this.o.menu.reopen() : null;
+      if (again !== null && s !== null) {
+        s.how = again;
+        this.changed();
+      }
+      return (again ?? s?.how) === "prefilled"
+        ? "Still waiting: /login is on the input line, press Enter to open pi's menu."
+        : "Still waiting: pi's /login is open, sign in there.";
     }
-    const signing: Signing = { ac: new AbortController() };
+    const facts = this.loginFacts();
+    // unknown is not "signed out": no sign-in is opened for a state the home cannot read
+    if ("unknown" in facts)
+      return `model login unknown (${facts.unknown}): nothing was opened. Read it again with home_refresh (alt+u).`;
+    if (!this.isPending(HOME_STEPS.login))
+      return `already signed in: ${"found" in facts ? facts.found : "done"}`;
+    const signing: Signing = {};
     this.signing = signing;
     this.failure = null;
-    this.m.say(`Signing in to ${providerLabel(this.m.chatProvider())} with pi's device code.`);
+    this.changed();
     let answer!: (text: string) => void;
     const answered = new Promise<string>((r) => (answer = r));
-    signing.onCode = (c) =>
-      answer(
-        `Open ${c.verificationUri} and enter the code ${c.userCode}. The home finishes the sign-in once you approve it.`,
-      );
+    signing.onOpen = (how) => {
+      const said =
+        how === "opened"
+          ? "pi's /login is open: pick a provider there and sign in, or paste an API key."
+          : "/login is on the input line: press Enter to open pi's menu, then sign in or paste an API key.";
+      this.m.say(said);
+      answer(`${said} The home finishes the step once pi has a credential.`);
+    };
     void this.checklist.runStep(HOME_STEPS.login).then(async (r) => {
       this.signing = null;
-      const label = providerLabel(this.m.chatProvider());
       if (r.ok) {
         await this.reread();
-        this.m.say(`Signed in to ${label} with pi.`, "ok");
-        answer(`signed in to ${label}`);
+        const name = this.m.credential()?.name ?? "a model provider";
+        this.m.say(`Signed in to ${name} with pi.`, "ok");
+        answer(`signed in to ${name}`);
       } else {
         const f = this.failure;
-        if (f?.kind !== "cancelled") this.m.say(loginFailureText(f, "alt+n"), "warn");
+        if (!this.closed) this.m.say(loginFailureText(f, "alt+n"), "warn");
         answer(`the sign-in did not finish: ${r.failures.join("; ")}`);
       }
       this.changed();
     });
     return answered;
+  }
+
+  /** The review model: ask which provider reviews run on (pi's dialog), and
+   * remember the answer. Dismissing the list keeps the order. */
+  async chooseModel(ui?: SetupUi): Promise<string> {
+    const a = this.asked;
+    if (a === null)
+      return "there is no provider to choose: reviews run on one, or the choice is made (qcr model shows the route)";
+    const l = this.m.state.login;
+    const credentials = l.kind === "known" ? l.value : [];
+    const facts = `${a.providers} providers signed in; reviews would run on ${a.spec ?? "the first in pi's order"}`;
+    if (ui === undefined || credentials.length === 0)
+      return `${facts}. Choosing is the person's: alt+n in the home, or \`qcr model use <provider>\` in a shell.`;
+    const rows = credentials.map((c) => `${c.name}    ${credentialHow(c)}`);
+    const pick = await ui.select("QuickReview: which provider do reviews run on?", [
+      ...rows,
+      AUTOMATIC,
+    ]);
+    if (pick === undefined) {
+      // dismissed: the order stands, and the home comes back
+      this.asked = null;
+      this.decided = true;
+      await this.sync();
+      this.m.say(
+        a.spec !== null
+          ? `Reviews run on ${a.spec}. \`qcr model use <provider>\` in a shell changes it.`
+          : "Reviews run on the provider QuickReview picks.",
+      );
+      return "no provider was chosen: the order stands";
+    }
+    const chosen = credentials[rows.indexOf(pick)];
+    const r = await this.step(HOME_STEPS.model, { provider: chosen?.provider ?? "" });
+    if (!r.ok) {
+      const why = r.failures.join("; ").replace(/^model: /, "");
+      this.m.say(`${why[0]?.toUpperCase() ?? ""}${why.slice(1)}.`, "warn");
+      return why;
+    }
+    // every quote was priced for the route before the choice
+    this.m.requote();
+    await this.sync();
+    this.m.say(
+      chosen !== undefined
+        ? `QuickReview will use ${chosen.name} from now on.`
+        : "QuickReview picks the model again.",
+      "ok",
+    );
+    return r.checks[0]?.detail ?? "the choice is remembered";
   }
 
   /** gh: check again (one key). */
@@ -618,10 +792,10 @@ export class HomeSetup {
     return r.checks[0]?.detail ?? `repository set to ${name}`;
   }
 
-  /** The session ends: a login in flight stops with it. */
+  /** The session ends: nothing lands after it. A sign-in in flight stops
+   * with its menu (the host closes the LoginMenu). */
   close(): void {
     this.closed = true;
-    this.signing?.ac.abort();
   }
 
   /** What the card draws. */
@@ -632,9 +806,10 @@ export class HomeSetup {
     const checks = lines
       .filter((l) => this.checkIds.includes(l.id) && l.status === "pending")
       .map((l) => ({ id: l.id, title: l.title, why: l.note ?? l.explain, next: l.id === next }));
-    const steps = HOME_STEP_ORDER.map((id): SetupStepView => {
+    const shown = this.asked !== null ? [...HOME_STEP_ORDER, HOME_STEPS.model] : HOME_STEP_ORDER;
+    const steps = shown.map((id): SetupStepView => {
       const l = lines.find((x) => x.id === id);
-      const title = id === HOME_STEPS.login ? this.loginTitle() : (l?.title ?? id);
+      const title = l?.title ?? id;
       if (l?.status === "done") {
         const f = this.facts(id);
         return { id, title, state: "done", found: "found" in f ? f.found : "done", next: false };
@@ -654,35 +829,54 @@ export class HomeSetup {
       steps,
       login: {
         running: this.signing !== null,
-        ...(this.signing?.code ? { code: this.signing.code } : {}),
+        ...(this.signing?.how ? { how: this.signing.how } : {}),
         ...(this.failure ? { failure: this.failure } : {}),
       },
-      provider: providerLabel(this.m.chatProvider()),
       done: steps.filter((s) => s.state === "done").length,
       total: steps.length,
     };
   }
 }
 
-/** What a person reads after a device login that did not finish, with the
- * key that tries again. */
+/** Why a sign-in that did not finish did not, from how pi's menu ended. */
+function loginFailureOf(end: Exclude<LoginMenuEnd, { kind: "done" }>): {
+  kind: LoginFailureKind;
+  why: string;
+} {
+  switch (end.kind) {
+    case "left":
+      return { kind: "left", why: "pi's /login closed before pi had a model credential" };
+    case "timeout":
+      return { kind: "timeout", why: "pi's /login was open too long with no credential" };
+    case "busy":
+      return { kind: "failed", why: "another sign-in is in flight" };
+    case "no-hold":
+      return { kind: "failed", why: end.why };
+    case "no-menu":
+      return {
+        kind: "unavailable",
+        why: "this home cannot open pi's /login here: type /login to sign in with pi's own menu",
+      };
+    case "closed":
+      return { kind: "failed", why: "the home has closed" };
+  }
+}
+
+/** What a person reads after a sign-in that did not finish, with the key
+ * that tries again. */
 export function loginFailureText(
   f: { kind: LoginFailureKind; why: string } | null | undefined,
   key: string,
 ): string {
   switch (f?.kind) {
-    case "expired":
-      return `The code expired before it was approved. ${key} gets a new one.`;
-    case "denied":
-      return `The sign-in was denied. ${key} tries again.`;
-    case "not_enabled":
-      return `Device-code login is off for this ChatGPT account: turn it on in ChatGPT → Settings → Security, then ${key} tries again.`;
-    case "cancelled":
-      return `The sign-in stopped. ${key} starts it again.`;
+    case "left":
+      return `pi's /login closed before pi had a model credential. ${key} opens it again.`;
+    case "timeout":
+      return `pi's /login was open a long time with no sign-in. ${key} opens it again.`;
     case "unavailable":
-      return `${f.why}.`;
+      return `${f.why[0]!.toUpperCase()}${f.why.slice(1)}, then ${key} checks again.`;
     case "failed":
-      return `The sign-in failed: ${f.why}. ${key} tries again.`;
+      return `The sign-in did not start: ${f.why}. ${key} tries again.`;
     default:
       return `The sign-in did not finish. ${key} tries again.`;
   }

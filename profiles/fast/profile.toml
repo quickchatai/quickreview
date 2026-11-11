@@ -16,7 +16,7 @@ extends = "default"
 [posting]
 comment_style = "concise"
 
-# The lenses that read every changed line, pinned at sol-high by default
+# The lenses that read every changed line, pinned at deep by default
 # (DEFAULT_PASS_TIERS), and the validator: low thinking.
 [lenses.pass-baseline]
 effort = "low"

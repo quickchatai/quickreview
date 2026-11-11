@@ -11,6 +11,8 @@
 //   qcr review …       a daemonless review (src/reviewcli.ts)
 //   qcr scan …         a scan of the repository (src/scancli.ts)
 //   qcr login [p]      pi's own /login in the pinned pi (src/npmverbs.ts)
+//   qcr model …        which model reviews run on, and how to change it
+//                      (src/modelcli.ts)
 //   qcr pi [args]      the pinned pi with the qcr plugin and /selfimprove
 //   qcr update         the installing package manager updates qcr
 //   qcr plugin …       QuickReview installed into the coding-agent CLIs here
@@ -43,6 +45,7 @@ export const BIN_HELP = [
   "  qcr review [target]     review code here, with no daemon (`qcr review --help`)",
   "  qcr scan <subcommand>   scan the whole repository for findings (`qcr scan` prints its usage)",
   "  qcr login [provider]    log in with pi's own /login, for the review sessions",
+  "  qcr model [use|reset]   which model reviews run on here, and how to change it (`qcr model --help`)",
   "  qcr pi [args]           pi with the qcr plugin (/qcr-review, /qcr-scan, /qcr-setup) and /selfimprove",
   "  qcr update              update qcr with the package manager that installed it",
   "  qcr plugin <subcommand> install QuickReview into your coding-agent CLIs (`qcr plugin --help`)",
@@ -62,7 +65,7 @@ export type BinRoute =
   | { route: "help" }
   | { route: "pi"; args: string[] }
   | {
-      route: "version" | "update" | "login" | "review" | "scan" | "plugin";
+      route: "version" | "update" | "login" | "model" | "review" | "scan" | "plugin";
       args: string[];
       json: boolean;
       /** The host-plugin contract a `--schema N` run asked for. */
@@ -97,6 +100,7 @@ export function binRoute(argv: readonly string[]): BinRoute {
     cmd === "version" ||
     cmd === "update" ||
     cmd === "login" ||
+    cmd === "model" ||
     cmd === "review" ||
     cmd === "scan" ||
     cmd === "plugin"
@@ -204,6 +208,13 @@ async function route(r: BinRoute): Promise<void> {
     case "login": {
       const { cmdLogin, npmVerbDeps } = await import("./npmverbs.js");
       process.exitCode = await cmdLogin(r.args, npmVerbDeps(await packageRoot()));
+      return;
+    }
+    case "model": {
+      // Its own module, which reads the config's review sections and pi's
+      // agent dir and never the state store.
+      const { runModelCli } = await import("./modelcli.js");
+      process.exitCode = await runModelCli(r.args, r.json);
       return;
     }
     case "pi": {
