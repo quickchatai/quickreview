@@ -27,6 +27,13 @@
 // login then (src/workerworld.ts `loginOwnerOf`), so the verb does too, and
 // the answer in the daemon's container is the route its workers run on.
 //
+// Inside a daemon's container (`inDaemonContainer`) the environment pi's
+// credential lookups read is the part of the process's a worker inherits
+// (src/workersupervisor.ts `workerProcessEnv`), with the model env over it: a
+// provider key set only in the container's environment reaches no worker, so
+// it is no route here either. Anywhere else the process's whole environment
+// counts, as it does for `qcr review`.
+//
 // `--json` prints one object, for the wizard, the scan sandbox and the smoke
 // scripts: `{ ok, route, refusal?, choice, config_pin, skipped }`, where `ok`
 // says a route resolves. `use` and `reset` print the same object for the
@@ -85,7 +92,9 @@ export const MODEL_USAGE = [
 ].join("\n");
 
 export interface ModelCliDeps {
-  /** The environment pi's credential lookups read (with the model env over it). */
+  /** The environment pi's credential lookups read (with the model env over
+   * it): the process's own, or inside a daemon's container the part of it a
+   * worker inherits. */
   env: Readonly<Record<string, string | undefined>>;
   /** pi's agent dir: the catalog, and the login unless `loginDir` names it. */
   agentDir: string;
@@ -200,7 +209,7 @@ async function resolve(
     srcAgentDir: deps.agentDir,
     tmpDir: deps.tmpDir,
     credentials: borrowed.credentials,
-    // The model env over the process's own, as a worker's process holds it.
+    // The model env over the environment the verb was handed (`deps.env`).
     authEnv: { ...deps.env, ...modelEnv },
     route: {
       skipped: borrowed.skipped,
@@ -531,6 +540,16 @@ export async function refresherOwnsLogin(o: {
 }
 
 /**
+ * Is this process inside a daemon's container: its environment names the
+ * secrets mount (`QCR_SECRETS_MOUNT`, absolute), which the compose file sets
+ * for the daemon and every `docker exec` into it, and the entrypoint for the
+ * preflight (scripts/install-locator.sh rule 0 reads the same name).
+ */
+export function inDaemonContainer(env: Readonly<Record<string, string | undefined>>): boolean {
+  return (env["QCR_SECRETS_MOUNT"]?.trim() ?? "").startsWith("/");
+}
+
+/**
  * `qcr model` for this process: the install's config and homes, pi's agent
  * dir as pi finds it, and the login where the daemon reads it.
  *
@@ -578,8 +597,15 @@ export async function runModelCli(
     const agentDir = piAgentDir(env);
     // The login the daemon was handed, when that is not its pi's own.
     const loginDir = loginDirOf(env, agentDir);
+    // The whole environment locates the config, the homes and the login. In a
+    // daemon's container the route is resolved over what a worker inherits.
+    let routeEnv: Readonly<Record<string, string | undefined>> = env;
+    if (inDaemonContainer(env)) {
+      const { workerProcessEnv } = await import("./workersupervisor.js");
+      routeEnv = workerProcessEnv(env, {}, {});
+    }
     deps = {
-      env,
+      env: routeEnv,
       agentDir,
       loginDir,
       tmpDir: join(stateHome(env), "tmp"),

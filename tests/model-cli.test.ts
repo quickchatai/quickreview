@@ -46,6 +46,7 @@ import {
 import { CONTAINER_LOGIN_DIR, LOGIN_DIR_ENV } from "../src/loginrefresh/supervisor.js";
 import {
   cmdModel,
+  inDaemonContainer,
   MODEL_USAGE,
   REVIEW_WINDOW_MS,
   refresherOwnsLogin,
@@ -990,6 +991,35 @@ describe("qcr model for a process: which directories its environment names", () 
     expect(await ask({ toml: null })).toBe(false);
     expect(await ask({ loginDir: join(dir, "nowhere") })).toBe(false);
     expect(await ask({ now: NOW + 60 * 60_000 })).toBe(false);
+  });
+
+  // A worker's process inherits an allowlist of the daemon's environment and
+  // the secrets dir's model env (src/workersupervisor.ts `workerProcessEnv`):
+  // a provider key given to the container itself (compose `environment:`,
+  // `docker run -e`) reaches no worker, so it is no route for the daemon.
+  // MUTATION: hand deps the whole `env` in runModelCli whatever
+  // inDaemonContainer says (src/modelcli.ts) - the verb names a route no
+  // worker can run on, the wizard's model step goes green, and this fails.
+  it("in a daemon's container a provider key only in the environment is no route; the same key under model-env/ is", async () => {
+    const secrets = join(dir, "mounted-secrets");
+    const keyed = { [BUILTIN_ENV]: "not-a-key", QC_SECRETS_DIR: secrets };
+    // On a host the process's environment counts, as it does for a review.
+    const host = await asProcess(envOf(keyed));
+    expect(host.route).toMatchObject({ provider: BUILTIN, credential: { label: BUILTIN_ENV } });
+    expect(inDaemonContainer(envOf(keyed))).toBe(false);
+    const inside = envOf({ ...keyed, QCR_SECRETS_MOUNT: secrets });
+    expect(inDaemonContainer(inside)).toBe(true);
+    const none = await asProcess(inside);
+    expect(none.ok).toBe(false);
+    expect(none.refusal?.code).toBe("no-credential");
+    mkdirSync(join(secrets, MODEL_ENV_DIR), { recursive: true });
+    writeFileSync(join(secrets, MODEL_ENV_DIR, BUILTIN_ENV), "value-from-the-secrets-dir\n");
+    const now = await asProcess(inside);
+    expect(now.ok).toBe(true);
+    expect(now.route).toMatchObject({
+      provider: BUILTIN,
+      credential: { origin: "env-key", label: BUILTIN_ENV },
+    });
   });
 
   // The step tells the person where a provider key goes
