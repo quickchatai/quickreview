@@ -305,7 +305,7 @@ function shortLogins(file: string, now: number, needMs: number): SkippedLogin[] 
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    throw new Error(`${file} does not parse: ${msgOf(e)}`);
+    throw new Error(`${file} does not parse: ${msgOf(e)}`, { cause: e });
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
     throw new Error(`${file} is not a JSON object`);
@@ -320,8 +320,7 @@ function shortLogins(file: string, now: number, needMs: number): SkippedLogin[] 
     const expires = cred["expires"];
     // A login with no expiry never runs out.
     const lasts = typeof expires !== "number" || expires >= now + needMs + PI_REFRESH_MARGIN_MS;
-    if (!refreshable && !lasts)
-      short.push({ provider, name: provider, expiresAt: expires as number });
+    if (!refreshable && !lasts) short.push({ provider, name: provider, expiresAt: expires });
   }
   return short;
 }

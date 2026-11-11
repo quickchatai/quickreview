@@ -1601,11 +1601,19 @@ const SECRET_READ_CORPUS = [
 ];
 describe("custom config-home secret reads against source and compiled guard", () => {
   it("refuses each expanded secrets-directory read and keeps public files readable", async () => {
-    const source = await import("@quickchatai/pi-quickreview/extensions/bash-guard.js");
-    const compiled = (await import(
+    const sourceGuard = await import("@quickchatai/pi-quickreview/extensions/bash-guard.js");
+    const compiledGuard = (await import(
       resolve(process.cwd(), "packages/pi-plugin/dist/extensions/bash-guard.js")
-    )) as typeof source;
-    for (const guard of [source, compiled]) {
+    )) as typeof sourceGuard;
+    // The whole-command check runs through the ambient wrapper (this process
+    // as the policy), in source and in its compiled form.
+    const compiledAmbient = (await import(
+      resolve(process.cwd(), "dist/extensions/cli/bash-guard-ambient.js")
+    )) as { checkBashCommand: typeof checkBashCommand };
+    for (const guard of [
+      { ...sourceGuard, checkBashCommand },
+      { ...compiledGuard, checkBashCommand: compiledAmbient.checkBashCommand },
+    ]) {
       const ctx = guard.defaultSecretPathContext(
         { HOME: "/home/op", QCR_CONFIG_HOME: "/srv/custom-config" },
         "/work",
@@ -1653,11 +1661,19 @@ const MODEL_ENV_CORPUS = {
 } as const;
 describe("the model env is not a session's to read or write, in source and compiled guard", () => {
   it("refuses every read and write under it, by the directory's name alone", async () => {
-    const source = await import("@quickchatai/pi-quickreview/extensions/bash-guard.js");
-    const compiled = (await import(
+    const sourceGuard = await import("@quickchatai/pi-quickreview/extensions/bash-guard.js");
+    const compiledGuard = (await import(
       resolve(process.cwd(), "packages/pi-plugin/dist/extensions/bash-guard.js")
-    )) as typeof source;
-    for (const guard of [source, compiled]) {
+    )) as typeof sourceGuard;
+    // The whole-command check runs through the ambient wrapper (this process
+    // as the policy), in source and in its compiled form.
+    const compiledAmbient = (await import(
+      resolve(process.cwd(), "dist/extensions/cli/bash-guard-ambient.js")
+    )) as { checkBashCommand: typeof checkBashCommand };
+    for (const guard of [
+      { ...sourceGuard, checkBashCommand },
+      { ...compiledGuard, checkBashCommand: compiledAmbient.checkBashCommand },
+    ]) {
       // A context that knows no secrets dir but the image's own: the rows
       // under /srv/elsewhere are refused by the name, not by a known dir.
       const ctx = guard.defaultSecretPathContext({ HOME: "/home/qcr" }, "/opt/quickreview/sandbox");

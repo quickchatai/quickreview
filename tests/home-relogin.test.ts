@@ -410,6 +410,14 @@ describe("auto-review's pause ends with the re-login", () => {
     };
     expect(label(failed)).toBe("paused-login");
     expect(label({ ...failed, login_refresh: refresher({ checked_at: ago(10) }) })).toBe("on-live");
+    // a login with no expiry is written `never`, and that one works too
+    // MUTATION: require a finite expires_at in worksSince — this fails.
+    expect(
+      label({
+        ...failed,
+        login_refresh: refresher({ checked_at: ago(10), expires_at: "never" }),
+      }),
+    ).toBe("on-live");
     // a record from before the failure, a paused one, or a failing one does not
     expect(label({ ...failed, login_refresh: refresher({ checked_at: ago(600) }) })).toBe(
       "paused-login",

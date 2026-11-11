@@ -8745,9 +8745,11 @@ export interface StatusSnapshot {
   today_unknown_spend_rounds?: number;
   month_unknown_spend_rounds?: number;
   digest_headline?: string;
-  /** Present while pi sessions are failing API calls with token-expired
-   * errors (packages/pi-plugin/src/authwatch.ts, fresh < 30 min). The TUI raises an alert. */
-  pi_auth_expired?: { last_at: string; hits: number };
+  /** Present while pi sessions are failing API calls because a provider
+   * refuses the login (packages/pi-plugin/src/authwatch.ts, fresh < 30 min).
+   * `provider` names the one the records named, when they named one. The TUI
+   * raises an alert. */
+  pi_auth_expired?: { last_at: string; hits: number; provider?: string };
   /** The supervised OpenViking server: reachable, `/ready`, reported
    * version (drift-checked against the pin), RSS and CPU. Absent in snapshots
    * from a daemon with no supervisor wired — readers must default. */
@@ -8974,7 +8976,7 @@ export function buildStatusSnapshot(
   digestHeadline?: string,
   now: () => Date = () => new Date(),
   maxConcurrentRounds?: number,
-  piAuth?: { last_at: string; hits: number },
+  piAuth?: { last_at: string; hits: number; provider?: string },
   openviking?: OpenVikingStatus,
   threadDecisions?: StatusSnapshot["thread_decisions"],
   roundStageSupervisor?: StatusSnapshot["round_stage_supervisor"],
