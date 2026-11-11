@@ -645,9 +645,10 @@ describe("qcr review --model", () => {
     expect(await runReviewCli(["--model", `${flag}:high`], true, levelled.deps)).toBe(1);
     expect(levelled.specs.map((s) => s.model)).toEqual([""]);
 
-    // without the flag the config's own spec is the session's
+    // without the flag the config's own spec is the session's; its model is
+    // not a measured one, so the run needs the person's word (--limit) to start
     const own = harness({ home, faux: ["faux"], cfg: PINNED, recordOnly: true });
-    expect(await runReviewCli([], true, own.deps)).toBe(1);
+    expect(await runReviewCli(["--limit", "5"], true, own.deps)).toBe(1);
     expect(own.specs.map((s) => s.model)).toEqual([`${FAKE_ROUTE_MODEL}:low`]);
     expect(own.hosts[0]!.route).toMatchObject({
       pin: { text: `${FAKE_ROUTE_MODEL}:low`, from: "config" },

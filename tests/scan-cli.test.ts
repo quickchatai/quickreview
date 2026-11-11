@@ -766,7 +766,8 @@ it("refuses interactive login as structured JSON without invoking the adapter", 
 // list in src/cli.ts's top-level usage — this fails.
 it("qcr's top-level usage names every scan subcommand SCAN_USAGE documents", () => {
   const cli = readFileSync(join(import.meta.dirname, "../src/cli.ts"), "utf8");
-  const listed = /\|scan <([^>]+)>\|/.exec(cli)?.[1]?.split("|") ?? [];
+  // the list may be followed by the verb's flags (`[--model PROVIDER/MODEL]`)
+  const listed = /\|scan <([^>]+)>[^|]*\|/.exec(cli)?.[1]?.split("|") ?? [];
   expect(listed.length).toBeGreaterThan(0);
   const documented = SCAN_USAGE.replace(/^usage: qcr scan /, "")
     .split(" | ")

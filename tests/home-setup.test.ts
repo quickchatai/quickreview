@@ -366,7 +366,8 @@ describe("the setup card on a fresh machine", () => {
   it("the first step names no provider: any one pi supports signs the home in", async () => {
     const s = await openSetup();
     expect(SIGN_IN_TITLE).toBe("Sign in to a model provider");
-    expect(row(s, "Sign in")).toMatch(/Sign in to a model provider\s/);
+    // "Sign in to": the card's subtitle also starts with "Sign in"
+    expect(row(s, "Sign in to")).toMatch(/Sign in to a model provider\s/);
     expect(s.text()).not.toMatch(/Sign in to {2}|ChatGPT|device code/i);
   });
 
