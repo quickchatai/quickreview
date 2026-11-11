@@ -36,7 +36,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { assetRoot } from "../assetroot.js";
 import { homeProfileLookup, loadOneShotConfig, repoScanHome, stateHome } from "../homes.js";
-import { refusalText, type RouteInput } from "../modelroute.js";
+import { refusalText, type ModelChoice, type RouteInput } from "../modelroute.js";
 import { isPinned, splitModelSpec, stripPins, tierSpec, type CoreConfig } from "../reviewconfig.js";
 import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import { scanConfigOf } from "../scan/scanagents.js";
@@ -220,6 +220,10 @@ interface RepoScan extends AssembledScan {
   flag: { model?: string };
   /** The route the latest start resolved, for the cases of its run. */
   caseRoute: ScanCaseRoute | undefined;
+  /** The provider the person picked for the latest plan, when pi's agent dir
+   * would not keep the answer: the start that follows is on it, or its key
+   * is not the plan's. */
+  picked: ModelChoice | undefined;
   log: (line: string) => void;
 }
 
@@ -323,7 +327,16 @@ function buildRepoScan(host: PluginHost, home: string, deps: ScanCommandDeps): R
       }),
     log,
   });
-  repo = { ...assembled, host, units, config, flag, caseRoute: undefined, log };
+  repo = {
+    ...assembled,
+    host,
+    units,
+    config,
+    flag,
+    caseRoute: undefined,
+    picked: undefined,
+    log,
+  };
   return repo;
 }
 
@@ -343,7 +356,9 @@ const startIt = (on: string): string => `${on}${on === "" ? " " : "\n"}Start it?
  * run, and says what `--model` replaced and when stage 1's tier is not on
  * the route at all. A start (`run`) also borrows the login for the route,
  * which refuses a login the host could not renew before anything is paid
- * for, and keeps the route for the cases of its run.
+ * for, and keeps the route for the cases of its run. A provider the person
+ * picked for a plan that pi's agent dir would not keep is kept here for the
+ * start: a plan and its start are one run.
  */
 async function scanRouteOn(
   resolve: NonNullable<PluginHost["auth"]["route"]>,
@@ -366,18 +381,23 @@ async function scanRouteOn(
     notes.push(
       `--model replaces ${loaded.replaced} pinned tier and lens model${loaded.replaced === 1 ? "" : "s"} for this run`,
     );
+  // A plan a person may be asked about is asked afresh. Everything else (a
+  // start, a plan nobody is asked about) is on the answer the last one got.
+  if (o.ask && ui.interactive) engine.picked = undefined;
   const routed = await routeInPi({
     host,
     resolve,
     ui,
     ...(pin !== undefined ? { pin } : {}),
     ask: o.ask,
+    ...(engine.picked !== undefined ? { held: engine.picked } : {}),
     what: "scan",
     // A config that cannot be read starts nothing: the plan refuses for it.
     ...(o.run && cfg !== null ? { run: { needMs: PLUGIN_CASE_MS, cfg } } : {}),
     signal: host.shutdown,
     warn: (line) => ui.notify(line, "warning"),
   });
+  if (routed.unkept !== undefined) engine.picked = routed.unkept;
   if (o.run)
     engine.caseRoute =
       routed.login !== undefined
@@ -623,6 +643,10 @@ async function priceAndStart(
     });
     if (!run.ok) return { ok: false, error: run.errors.join("; ") };
     return { ok: true, run: run.run };
+  } catch (err) {
+    // A login file that is there and cannot be read (the borrow never takes
+    // an unknown store for an empty one) is a refusal like any other.
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
     ui.status(undefined);
   }

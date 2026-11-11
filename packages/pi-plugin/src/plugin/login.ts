@@ -6,7 +6,9 @@
 // pin the run names (`--model`, else the config's `[models] model`) and the
 // choice remembered beside pi's logins (../modelchoice.ts). When two
 // providers tie and a person is there, they are asked once, through pi's own
-// select, and the answer is remembered.
+// select, and the answer is remembered. An answer the agent dir will not
+// keep holds for the run it was given in: the caller is handed it back
+// (`unkept`) and gives it to every later resolve of that run (`held`).
 //
 // Once the route is known the login is borrowed for it, and only for it:
 //   - the host pi is asked to renew each stored login the run is on that
@@ -238,6 +240,10 @@ export interface RunRouted {
   notes: readonly string[];
   /** What the run's host is handed. Absent for a plan, and with no route. */
   login?: RunLogin;
+  /** The answer the person gave here that the agent dir would not keep: the
+   * caller holds it for what follows the question in the same run (a scan's
+   * start after its plan), as `held`. */
+  unkept?: ModelChoice;
 }
 
 /** The part of the session's UI the provider question needs (session.ts
@@ -261,6 +267,9 @@ export async function routeInPi(o: {
   pin?: RouteInput["pin"];
   /** A person may be asked which provider: never for a plan or JSON. */
   ask: boolean;
+  /** The answer an earlier question of this run got that could not be
+   * written (`unkept`): it stands in while the agent dir remembers none. */
+  held?: ModelChoice;
   /** What runs, in the question: "review" or "scan". */
   what: string;
   /** The run the login is borrowed for. Omitted: a plan, which borrows nothing. */
@@ -271,7 +280,8 @@ export async function routeInPi(o: {
   const { agentDir } = o.host;
   const remembered = readModelChoice(agentDir);
   if (remembered.notice !== undefined) o.warn(remembered.notice);
-  let choice = remembered.choice;
+  let choice = remembered.choice ?? o.held;
+  let unkept: ModelChoice | undefined;
   const resolve = (): HostRouted =>
     o.resolve({ ...(o.pin ? { pin: o.pin } : {}), ...(choice ? { choice } : {}) });
   let got = resolve();
@@ -303,6 +313,7 @@ export async function routeInPi(o: {
         via: "ask",
         no_estimate_ok: remembered.noEstimateOk,
       };
+      if (!written.ok) unkept = choice;
       got = resolve();
     }
   }
@@ -311,6 +322,7 @@ export async function routeInPi(o: {
     ...(choice !== undefined ? { prefer: choice.provider } : {}),
     nameOf: got.nameOf,
     notes: got.notes,
+    ...(unkept !== undefined ? { unkept } : {}),
   };
   if (!got.result.ok || o.run === undefined) return { result: got.result, ...base };
   const route = got.result.route;

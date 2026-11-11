@@ -658,6 +658,13 @@ function fakePi2(
 
 const HOUR = 3600_000;
 
+/** Make `agentDir` unable to keep a model choice, whoever runs the suite:
+ * the file a write goes through is a directory there. Reads still find
+ * nothing remembered. */
+function refuseChoiceWrites(agentDir: string): void {
+  mkdirSync(join(agentDir, `${MODEL_CHOICE_FILE}.tmp`), { recursive: true });
+}
+
 // The extension's side of the route: the running pi's own registry, read
 // through the functions every other route uses.
 describe("the route inside a running pi", () => {
@@ -1313,6 +1320,28 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
       "info",
       "model: beta/m-2 (you picked Beta when asked; /qcr-setup model changes it)",
     ]);
+  });
+
+  // MUTATION: leave `choice` as the file read it when the write failed in
+  // routeInPi — the review runs on the order's first provider, and this fails.
+  it("runs on an answer the agent dir would not keep, and says why it was not kept", async () => {
+    const deps = fakeReview();
+    const host = fakeHost({}, { alpha: {}, beta: {} });
+    refuseChoiceWrites(host.agentDir);
+    const ui = fakeUi({ picks: ["beta/m-2     Beta, an API key stored in pi"] });
+    await runReviewCommand("", host, ui, deps);
+    expect(ui.asked).toHaveLength(1);
+    expect(ui.notes).toContainEqual([
+      "warning",
+      expect.stringMatching(/^cannot remember the choice in .+\. Pin it instead: /),
+    ]);
+    expect(ui.notes.map((n) => n[1]).join("\n")).not.toMatch(/will use Beta from now on/);
+    expect(readModelChoice(host.agentDir).choice).toBeUndefined();
+    expect(deps.calls[0]!.routed).toMatchObject({
+      result: { ok: true, route: { spec: "beta/m-2", source: "remembered" } },
+      prefer: "beta",
+    });
+    expect(deps.calls[0]!.runtime?.route).toMatchObject({ fixed: { spec: "beta/m-2" } });
   });
 
   // MUTATION: ask whenever `route.ask` is set in routeInPi, whatever the
@@ -2285,6 +2314,85 @@ describe("/qcr-scan (the plugin's own engine)", () => {
     expect(ui.notes.at(-1)?.[1]).toMatch(
       /your Alpha login expires at \d\d:\d\d, inside this scan's 30-minute budget, and pi did not renew it/,
     );
+  });
+
+  // The borrow never takes a login file it cannot read for an empty one: it
+  // throws, and the guided start is where that surfaces.
+  // MUTATION: drop the catch from priceAndStart — the command rejects with
+  // nobody told, and this fails.
+  it("a login file that cannot be read refuses the guided start, said to the person, and nothing runs", async () => {
+    const host = scanHost();
+    writeFileSync(join(host.agentDir, "auth.json"), "not the object pi writes");
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi();
+    await expect(runScanCommand("", host, ui, { sessions, deps })).resolves.toBeUndefined();
+    expect(sessions.running).toBeNull();
+    expect(deps.agents).toEqual([]);
+    expect(ui.notes.at(-1)?.[0]).toBe("error");
+    expect(ui.notes.at(-1)?.[1]).toMatch(/^could not read pi's credentials at .+auth\.json: /);
+    const waited = await guidedScan(host, fakeUi(), { delta: false }, { sessions, deps });
+    expect(waited).toEqual({
+      ok: false,
+      error: expect.stringMatching(/^could not read pi's credentials at /),
+    });
+  });
+
+  // A plan and its start are one run: the answer to the plan's question
+  // holds for the start even where it could not be written, or the start is
+  // routed on another provider and its key is no longer the plan's.
+  // MUTATION: drop `held` from the routeInPi call in scanRouteOn — the start
+  // resolves on the order's first provider, the runner refuses the key as
+  // changed, and this fails.
+  it("starts on the provider picked for the plan when pi's agent dir would not keep the answer", async () => {
+    const beta = "beta/m-2     Beta, an API key stored in pi";
+    const host = scanHost({}, { alpha: {}, beta: {} });
+    refuseChoiceWrites(host.agentDir);
+    const seen: { route?: () => ScanCaseRoute | undefined } = {};
+    const deps = fakeScan(host, { built: (o) => (seen.route = o.route) });
+    const sessions = new ScanSessions();
+    const ui = fakeUi({ picks: [beta] });
+    await runScanCommand("", host, ui, { sessions, deps });
+    await sessions.idle();
+    // asked once, for the plan; the start asked nothing
+    expect(ui.asked).toHaveLength(1);
+    expect(ui.notes).toContainEqual([
+      "warning",
+      expect.stringMatching(/^cannot remember the choice in /),
+    ]);
+    expect(readModelChoice(host.agentDir).choice).toBeUndefined();
+    expect(ui.notes.filter((n) => n[0] === "error")).toEqual([]);
+    expect(seen.route?.()).toMatchObject({
+      route: { fixed: { spec: "beta/m-2" } },
+      providers: ["beta"],
+    });
+    expect(sessions.engine(host, deps).scan.status().run?.settings.model).toBe("beta/m-2");
+  });
+
+  // The same holds across two commands: `preview`, then the start it names.
+  // (The mutation above fails this one too.)
+  it("a verb's start is on the provider picked for its preview, and the next plan asks again", async () => {
+    const beta = "beta/m-2     Beta, an API key stored in pi";
+    const host = scanHost({}, { alpha: {}, beta: {} });
+    refuseChoiceWrites(host.agentDir);
+    const deps = fakeScan(host);
+    const sessions = new ScanSessions();
+    const ui = fakeUi({ picks: [beta] });
+    await runScanCommand("units propose", host, ui, { sessions, deps });
+    await runScanCommand("units save", host, ui, { sessions, deps });
+    await runScanCommand("preview", host, ui, { sessions, deps });
+    expect(ui.asked).toHaveLength(1);
+    expect(ui.shown.at(-1)).toContain("model: beta/m-2");
+    const start = /\/qcr-scan (start --key \S+ --sha \S+)/.exec(ui.shown.at(-1)!)?.[1];
+    expect(start).toBeDefined();
+    await runScanCommand(start!, host, ui, { sessions, deps });
+    await sessions.idle();
+    expect(ui.asked).toHaveLength(1);
+    expect(ui.shown.join("\n")).not.toMatch(/the plan changed since that preview/);
+    expect(sessions.engine(host, deps).scan.status().run?.settings.model).toBe("beta/m-2");
+    // nothing was kept, so the next plan made for a person asks again
+    await runScanCommand("--preview", host, ui, { sessions, deps });
+    expect(ui.asked).toHaveLength(2);
   });
 
   it("says a review's refusal of a scan", () => {
