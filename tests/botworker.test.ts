@@ -16,7 +16,10 @@
 //     back; a login that would expire inside the worker's cap is left out of it;
 //   - the model route is resolved before any session: from the spec's model
 //     when the config pins one, else over what the login holds, and a worker
-//     with no route exits with the login code and the reason;
+//     with no route exits with the login code and the reason; the route that
+//     resolved is reported to the daemon in `ready`;
+//   - a login shorter than the command is taken only on the daemon's word that
+//     the refresher is renewing it (`login_owner`);
 //   - nothing runs on a payload that is not what the daemon dispatched.
 import {
   closeSync,
@@ -57,6 +60,7 @@ import {
   MODEL_CHOICE_FILE,
   writeModelChoice,
 } from "@quickchatai/pi-quickreview/src/modelchoice.js";
+import { parseRouteReport } from "../src/ipc/routereport.js";
 import { parseWorkerSpec, type WorkerSpec } from "../src/ipc/workerspec.js";
 import { TranscriptIndex } from "../src/transcriptindex.js";
 import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-command.js";
@@ -272,6 +276,20 @@ describe("the spec the daemon answers with", () => {
     expect(() => parseWorkerSpec({ ...good(), providers: [""] })).toThrow(/worker spec/);
     // A config that pins no model names none: the spec carries no list.
     expect(parseWorkerSpec(JSON.parse(JSON.stringify(good()))).providers).toBeUndefined();
+  });
+
+  // MUTATION: drop login_owner from parseWorkerSpec — the daemon's word never
+  // reaches the worker, and this fails.
+  it("carries whether the refresher is renewing the login: a boolean, absent when the daemon does not say", () => {
+    for (const owner of [true, false])
+      expect(
+        parseWorkerSpec(JSON.parse(JSON.stringify({ ...good(), login_owner: owner }))).login_owner,
+      ).toBe(owner);
+    expect(parseWorkerSpec(JSON.parse(JSON.stringify(good()))).login_owner).toBeUndefined();
+    for (const owner of ["true", 1, null])
+      expect(() => parseWorkerSpec({ ...good(), login_owner: owner }), String(owner)).toThrow(
+        /`login_owner` must be a boolean/,
+      );
   });
 
   // A config that pins no model hands the worker a spec with no model part.
@@ -731,8 +749,8 @@ describe("the borrowed login", () => {
   // A login this worker cannot use to the end of its command is left out
   // before the route is chosen. With the review pinned to that provider there
   // is then no route, and the worker says so before any session exists.
-  // MUTATION: borrow with `owner: true` in workerRoute — the short login is
-  // kept, the pinned model resolves, and this fails.
+  // MUTATION: borrow with `owner: true` in workerRoute whatever the spec says
+  // — the short login is kept, the pinned model resolves, and this fails.
   it("refuses, before any session, a pinned provider whose login would expire inside its wall-clock cap", async () => {
     writeLogin(Date.now() + 10 * 60_000);
     const pinned = `openai-codex/${getBuiltinModels("openai-codex")[0]!.id}`;
@@ -818,6 +836,45 @@ describe("the model route, resolved before the first session", () => {
     expect(routed).toMatchObject({
       ok: true,
       route: { spec: "faux/faux-1", source: "config", pick: "pinned" },
+    });
+  });
+
+  // The daemon asks pi nothing: what it knows of the model a command runs on
+  // is this report.
+  // MUTATION: drop `route` from the `ready` body in runBotWorker — the daemon
+  // is told nothing, and this fails.
+  it("reports the route it resolved in ready: the pinned one, as the config's", async () => {
+    const { code } = await round("ORDER\n", script([say("ok")]));
+    expect(code).toBe(EXIT.ok);
+    const routed = await hosts[0]!.route();
+    if (!routed.ok) throw new Error("the host has no route");
+    const report = daemon.of("ready")[0]!.body["route"];
+    expect(report).toEqual({
+      spec: "faux/faux-1",
+      source: "config",
+      pick: "pinned",
+      moved_from: null,
+      credential_origin: routed.route.credential.origin,
+    });
+    // It is one the daemon's own check takes.
+    expect(parseRouteReport(JSON.parse(JSON.stringify(report)))).toEqual(report);
+    // No value of any credential is in it.
+    expect(JSON.stringify(daemon.of("ready")[0]!.body)).not.toContain("A-TOKEN");
+  });
+
+  it("reports the route the rule picked when the spec names no model", async () => {
+    useRoutableFaux();
+    noLogin();
+    const { code } = await round("ORDER\n", script([say("routed")]), { model: "" });
+    expect(code).toBe(EXIT.ok);
+    const routed = await hosts[0]!.route();
+    if (!routed.ok) throw new Error("the host has no route");
+    expect(daemon.of("ready")[0]!.body["route"]).toEqual({
+      spec: `faux/${ROUTABLE_FAUX_MODEL.id}`,
+      source: "only-credential",
+      pick: routed.route.pick,
+      moved_from: null,
+      credential_origin: routed.route.credential.origin,
     });
   });
 
@@ -935,6 +992,40 @@ describe("the model route, resolved before the first session", () => {
       expect("choice" in route).toBe(false);
       expect(notes).toHaveLength(1);
       expect(notes[0]).toMatch(/remembered model choice .* was not used/);
+    });
+
+    // The daemon says the refresher is renewing the login: a login shorter
+    // than the command is then taken, since the copy re-reads the refresher's
+    // file when pi asks for a fresh one. One already inside pi's own refresh
+    // window is not: pi would ask at once, before anything renewed it.
+    // MUTATION: borrow with `owner: false` in workerRoute whatever the spec
+    // says — the short login is left out of a bot whose refresher is healthy,
+    // and this fails.
+    it("takes a login shorter than the wall clock only on the daemon's word that it is renewed", async () => {
+      writeFileSync(
+        join(world.agentDir, "auth.json"),
+        JSON.stringify({
+          short: { type: "oauth", access: "A", refresh: "R", expires: Date.now() + 10 * 60_000 },
+          ending: { type: "oauth", access: "E", refresh: "R", expires: Date.now() + 60_000 },
+          long: { type: "oauth", access: "B", refresh: "R", expires: Date.now() + 2 * 3_600_000 },
+        }),
+      );
+      const kept = async (login_owner?: boolean): Promise<string[]> => {
+        const { credentials } = workerRoute({
+          ...base(),
+          model: "",
+          ...(login_owner !== undefined ? { login_owner } : {}),
+        });
+        return (await credentials.list()).map((c) => c.providerId).sort();
+      };
+      expect(await kept(true)).toEqual(["long", "short"]);
+      expect(await kept(false)).toEqual(["long"]);
+      // A spec that does not say is one where nothing renews the login.
+      expect(await kept()).toEqual(["long"]);
+      const owned = workerRoute({ ...base(), model: "", login_owner: true });
+      expect("skipped" in owned.route && owned.route.skipped?.map((l) => l.provider)).toEqual([
+        "ending",
+      ]);
     });
 
     it("leaves out a stored login shorter than the wall clock, and keeps a key", async () => {

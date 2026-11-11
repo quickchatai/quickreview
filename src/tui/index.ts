@@ -1349,6 +1349,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       maybeWriteMemoryAlert,
       maybeWriteCurationAlert,
       maybeWriteWorkerCrashAlerts,
+      maybeWriteModelRouteAlert,
     } = await import("./alerts.js");
     const piAuthMem = { lastWritten: "" };
     chainOnPoll(app, (a) => {
@@ -1406,6 +1407,23 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
           a.view.snapshot,
           isFreshHealth(a.view.health),
           workerCrashMem,
+        );
+      } catch {
+        // alerting is best-effort; never break the poll loop
+      }
+    });
+
+    // Reviews run on another model, or on a credential from somewhere else,
+    // than the snapshot before said (status.json `model_route`, the workers'
+    // own report): one notification per change, from a fresh snapshot.
+    const modelRouteMem: import("./alerts.js").ModelRouteAlertMemory = { last: undefined };
+    chainOnPoll(app, (a) => {
+      try {
+        maybeWriteModelRouteAlert(
+          full.companion.alerts_dir,
+          a.view.snapshot?.model_route,
+          isFreshHealth(a.view.health),
+          modelRouteMem,
         );
       } catch {
         // alerting is best-effort; never break the poll loop

@@ -12,6 +12,13 @@ import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
 import type { ArchiveStatus } from "./archive/status.js";
 import type { PermitStatus } from "./ipc/permits.js";
+import {
+  parseRouteRecord,
+  routeChangeText,
+  routeReportChanged,
+  type RouteRecord,
+  type RouteReport,
+} from "./ipc/routereport.js";
 import type { LoginRefreshStatus } from "./loginrefresh/types.js";
 import type { DaemonLoadStatus } from "./eventloop.js";
 import type { MemoryIncident, MemoryStatus } from "./memory/health.js";
@@ -7610,6 +7617,49 @@ export class StateStore {
     }
   }
 
+  // ---- the model route workers report -------------------------------------
+
+  /** The newest report, read from the events table once per process: the
+   * daemon is the table's only writer, and every report it takes passes
+   * through `recordModelRoute`. */
+  private routeMemo: RouteRecord | null | undefined;
+
+  /** The route the newest worker reported, with when: the model reviews run
+   * on as far as the daemon knows. Null when no worker has reported one, or
+   * the newest record cannot be read: unknown, never a default. Events-table
+   * backed, so it stands across a daemon restart. */
+  modelRoute(): RouteRecord | null {
+    if (this.routeMemo === undefined)
+      this.routeMemo = parseRouteRecord(this.lastEventPayload("model_route"));
+    return this.routeMemo;
+  }
+
+  /**
+   * Take a worker's route report (the supervisor's, from `ready`): one
+   * `model_route` event per worker, and the report becomes the latest.
+   *
+   * When reviews now run somewhere else than the report before it said
+   * (another model, another provider a pin was moved off, a credential from
+   * another origin; `routeReportChanged`), one `model_route_changed` anomaly
+   * says where they run and where they ran. Never on the first report: with
+   * nothing to compare against, nothing changed. The comparison is against
+   * the stored record, so a change a daemon restart sits between is still
+   * one.
+   */
+  recordModelRoute(
+    report: RouteReport,
+    from: { pr: number; command_id: string },
+  ): "first" | "same" | "changed" {
+    const prev = this.modelRoute();
+    const record: RouteRecord = { ...report, at: this.ts() };
+    this.logEvent("model_route", from.pr, { ...record, command_id: from.command_id });
+    this.routeMemo = record;
+    if (prev === null) return "first";
+    if (!routeReportChanged(prev, report)) return "same";
+    this.logAnomaly("model_route_changed", null, null, routeChangeText(prev, report));
+    return "changed";
+  }
+
   // ---- deferred EOD sweeps ------------------------------------------------
 
   /** The ops days whose EOD sweep a drain held back and that have not fired
@@ -8690,6 +8740,12 @@ export interface StatusSnapshot {
    * `paused`. Absent unless `[login_refresh] enabled`; readers say "not
    * reported". */
   login_refresh?: LoginRefreshStatus;
+  /** The model reviews run on, as the newest worker reported it
+   * (src/ipc/routereport.ts), with when the daemon took the report. `null`:
+   * no worker has reported one. ABSENT: the snapshot is from a daemon that
+   * does not report it. Both mean unknown; a reader never shows a model in
+   * their place, and reads the block through `parseRouteRecord`. */
+  model_route?: RouteRecord | null;
   /** The central lens permit broker (src/ipc/permits.ts): the ceiling,
    * the permits in use and the grants queued, with the split per command.
    * Absent while no daemon broker runs (the tmux bot, a stub daemon) —
@@ -9032,6 +9088,8 @@ export function buildStatusSnapshot(
     ...(archive ? { archive } : {}),
     ...(loginRefresh ? { login_refresh: loginRefresh } : {}),
     ...(permits ? { permits } : {}),
+    // Always written, null included: "no report yet" is a fact of its own.
+    model_route: store.modelRoute(),
     ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
     ...(roundStageSupervisor ? { round_stage_supervisor: roundStageSupervisor } : {}),
     ...(pipeline ? { pipeline } : {}),

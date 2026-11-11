@@ -20,15 +20,21 @@
 //                 (packages/pi-plugin/src/plugin/login.ts `routeInPi`), which
 //                 is how /qcr-review, /qcr-scan and /qcr-setup resolve;
 //   the CLI       `qcr model --json` (src/modelcli.ts), which resolves on a
-//                 private copy of the home's catalog.
-//
-// The leg that is not built yet joins here as it lands: the worker's own
-// sequence.
+//                 private copy of the home's catalog;
+//   the worker    the bot worker's own sequence (src/botworker.ts
+//                 `workerRoute`): the login, the remembered choice and pi's
+//                 saved provider read from the directory the daemon's spec
+//                 names, the pin from the spec's model (the config's
+//                 `[models] model`), and the model env as its process
+//                 environment. What it then reports to the daemon in `ready`
+//                 (src/ipc/routereport.ts) is the CLI's answer over the same
+//                 home, field for field.
 //
 // Five homes, one per thing that decides a route: one provider, several,
 // a remembered answer, the guard (pi's default standing in for a newest
 // version priced far below it), and a model that exists only in the catalog
-// overlay pi stored in the home.
+// overlay pi stored in the home. A sixth holds the bot's two readers of one
+// config pin together: the worker and `qcr model`.
 //
 // Every home is a temp dir; a provider's credential is a key in the home's
 // own files (`models.json`, `auth.json`) or in the secrets dir's model env, so
@@ -42,6 +48,11 @@
 // MUTATION: drop `choice` from what routeInPi asks the host's route for
 // (packages/pi-plugin/src/plugin/login.ts) — the plugin leg forgets the
 // remembered answer, the remembered case differs and this fails.
+//
+// MUTATION: drop `choice` from the route inputs workerRoute returns
+// (src/botworker.ts) — the worker forgets the remembered answer, the bot
+// reviews on another provider than `qcr model` names, the remembered case
+// differs and this fails.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,6 +84,8 @@ import {
   type ModelCliDeps,
   type ModelCliJson,
 } from "../src/modelcli.js";
+import { workerRoute } from "../src/botworker.js";
+import { routeReportOf } from "../src/ipc/routereport.js";
 import { MODEL_ENV_DIR, modelEnvFrom } from "../src/modelenv.js";
 import { FAKE_ROUTE_MODEL, writeFakeProvider } from "./helpers/fake-openai.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
@@ -224,6 +237,26 @@ async function viaCli(models: ModelCliDeps["models"]): Promise<ModelCliJson> {
   return JSON.parse(out[0]!) as ModelCliJson;
 }
 
+/** The worker: its own sequence over the home, as the daemon's spec names it.
+ * The spec's model is the config's `[models] model` (a pin, or a spec with no
+ * model part), the command's wall clock stands for the review's length, and
+ * the model env is the worker's process environment. */
+async function viaWorker(models: ModelCliDeps["models"]): Promise<RouteResult> {
+  const routing = workerRoute({
+    agent_dir: home,
+    model: models.model,
+    wall_clock_ms: REVIEW_WINDOW_MS,
+    login_owner: false,
+  });
+  return (
+    await hostOver({
+      credentials: routing.credentials,
+      route: routing.route,
+      authEnv: modelEnvFrom(secrets),
+    })
+  ).route();
+}
+
 /** A route as JSON carries it: what the CLI's answer is compared in. */
 const plain = (route: ModelRoute): unknown => JSON.parse(JSON.stringify(route));
 
@@ -238,10 +271,15 @@ async function sameOnEveryRoute(models: ModelCliDeps["models"] = UNPINNED): Prom
   expect(cli.config_pin, "the CLI leg").toBeNull();
   expect(cli.ok, "the CLI leg").toBe(true);
   expect(cli.route, "the CLI leg").toEqual(plain(host.route));
+  const worker = await viaWorker(models);
+  expect(worker, "the worker leg").toEqual(host);
+  // What the worker tells the daemon is what `qcr model --json` says here.
+  if (!worker.ok) throw new Error("the worker has no route");
+  expect(routeReportOf(worker.route), "the worker's report").toEqual(routeReportOf(cli.route!));
   return host.route;
 }
 
-describe("one rule on every route: the host, the registry, the plugin and qcr model agree", () => {
+describe("one rule on every route: the host, the registry, the plugin, qcr model and the worker agree", () => {
   it("one provider", async () => {
     withLocal();
     expect(await sameOnEveryRoute()).toMatchObject({
@@ -306,6 +344,35 @@ describe("one rule on every route: the host, the registry, the plugin and qcr mo
     });
     expect(route.modelId).not.toBe(guarded!.pick!.newest!.id);
     expect(route.notices.join("\n")).toContain(guarded!.pick!.newest!.id);
+  });
+
+  // The bot's pin is one text in two places: `[models] model`, which `qcr
+  // model` reads from the config, and the worker spec's `model`, which the
+  // daemon copies from it. The pinned provider is not the one the order would
+  // pick here, so a leg that lost the pin answers with the other.
+  // MUTATION: leave the pin out of the route inputs workerRoute returns for a
+  // spec that names a model (src/botworker.ts) — the worker runs the order's
+  // provider while `qcr model` names the pinned one, and this fails.
+  it("a config pin: the worker runs what qcr model names, with a level or without", async () => {
+    withLocal();
+    modelEnvKey(BUILTIN_ENV);
+    const pinned = `${BUILTIN}/${(getBuiltinModels(BUILTIN) as Model<Api>[])[0]!.id}`;
+    for (const model of [pinned, `${pinned}:high`]) {
+      const models = { ...UNPINNED, model };
+      const cli = await viaCli(models);
+      expect(cli.config_pin, model).toBe(model);
+      expect(cli.route, model).toMatchObject({ spec: pinned, source: "config", pick: "pinned" });
+      const worker = await viaWorker(models);
+      if (!worker.ok) throw new Error(`the worker has no route for ${model}`);
+      expect(plain(worker.route), model).toEqual(cli.route);
+      expect(routeReportOf(worker.route), model).toEqual({
+        spec: pinned,
+        source: "config",
+        pick: "pinned",
+        moved_from: null,
+        credential_origin: "env-key",
+      });
+    }
   });
 
   it("a model that exists only in the catalog overlay pi stored in the home", async () => {

@@ -25,6 +25,7 @@ import {
   type ManifestSummary,
 } from "./archive/manifest.js";
 import { archiveStatusLine, fmtBytes } from "./archive/status.js";
+import { modelRouteLine } from "./ipc/routereport.js";
 import { memoryStatusLine } from "./memory/health.js";
 import {
   cancelCauseLabel,
@@ -482,6 +483,11 @@ export function renderStatus(snapshot: StatusSnapshot): string {
   // The closed-PR archiver, every time — an absent block (older
   // daemon) says so, and a backlog nobody planned yet is UNKNOWN, never 0.
   lines.push(oneLine(archiveStatusLine(snapshot.archive)));
+  // The model reviews run on, every time, as the newest worker reported it.
+  // No report yet, a daemon that reports none and a block this build cannot
+  // read all say `unknown`: the config's pin is not shown in its place, since
+  // a pin is not where a round ran.
+  lines.push(oneLine(modelRouteLine(snapshot.model_route)));
   if (snapshot.draining) {
     lines.push(
       `DRAINING${snapshot.draining_since ? ` since ${snapshot.draining_since}` : ""} — ${drainHolderLine(snapshot)} — ` +

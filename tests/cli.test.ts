@@ -66,9 +66,12 @@ describe("renderStatus", () => {
     );
     // The archiver's line, every time — the same honest-unknown.
     expect(lines[5]).toBe("archive: NOT REPORTED (this daemon predates the archive block)");
-    expect(lines[7]).toMatch(/^PR\s+state\s+stale\s+head\s+title$/);
+    // The model line, every time — a snapshot with no block says unknown,
+    // never a model.
+    expect(lines[6]).toBe("model: unknown (this daemon does not report the model reviews run on)");
+    expect(lines[8]).toMatch(/^PR\s+state\s+stale\s+head\s+title$/);
 
-    const rows = lines.slice(8);
+    const rows = lines.slice(9);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain("#1421");
     expect(rows[0]).toContain("reviewing");
@@ -154,9 +157,64 @@ describe("renderStatus", () => {
     const title = "Fix\x1b[2J\x1b[31m widget\r\nrow\x9b2Kend";
     const out = renderStatus({ ...snapshot, prs: [{ ...snapshot.prs[0]!, title }] });
     const lines = out.split("\n");
-    expect(lines.slice(8)).toHaveLength(1);
+    expect(lines.slice(9)).toHaveLength(1);
     expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
-    expect(lines[8]).toContain("Fix [2J [31m widget row 2Kend");
+    expect(lines[9]).toContain("Fix [2J [31m widget row 2Kend");
+  });
+
+  // The model reviews run on is the newest worker's report (status.json
+  // `model_route`), and every way of not having one reads `unknown`.
+  describe("the model line", () => {
+    const route = {
+      spec: "prov-a/model-9",
+      source: "config",
+      pick: "pinned",
+      moved_from: null,
+      credential_origin: "stored",
+      at: "2026-08-13T17:00:00.000Z",
+    };
+    const modelLine = (model_route: unknown): string =>
+      renderStatus({ ...snapshot, model_route } as StatusSnapshot)
+        .split("\n")
+        .find((l) => l.startsWith("model:"))!;
+
+    it("names the reported model, why it is the one, and when it was reported", () => {
+      expect(modelLine(route)).toBe(
+        "model: prov-a/model-9 (pinned by [models] model); last reported 2026-08-13T17:00:00.000Z",
+      );
+      expect(modelLine({ ...route, source: "only-credential", pick: "newest" })).toBe(
+        "model: prov-a/model-9 (the one provider pi has a credential for); last reported 2026-08-13T17:00:00.000Z",
+      );
+    });
+
+    it("names the move when the run left the provider the config names", () => {
+      expect(modelLine({ ...route, spec: "prov-c/model-9", moved_from: "prov-a" })).toBe(
+        "model: prov-c/model-9 (pinned by [models] model), moved off prov-a, which the config " +
+          "names and which has no credential; last reported 2026-08-13T17:00:00.000Z",
+      );
+    });
+
+    // MUTATION: print the block's `spec` whenever it is a string (skip
+    // parseRouteRecord in modelRouteLine) — a block this build cannot read is
+    // shown as a model, and this fails.
+    it("says unknown, with why, for no report, an older daemon's snapshot and a block it cannot read", () => {
+      expect(modelLine(null)).toBe(
+        "model: unknown (no worker has reported the model it ran on yet)",
+      );
+      expect(modelLine(undefined)).toBe(
+        "model: unknown (this daemon does not report the model reviews run on)",
+      );
+      for (const bad of [{ spec: "prov-a/model-9" }, { ...route, at: 7 }, "prov-a/model-9", 3])
+        expect(modelLine(bad), JSON.stringify(bad)).toBe(
+          "model: unknown (unreadable model_route block)",
+        );
+    });
+
+    it("a source this build does not know is shown as written", () => {
+      expect(modelLine({ ...route, source: "a-newer-source" })).toContain(
+        "model: prov-a/model-9 (a-newer-source)",
+      );
+    });
   });
 
   it("strips control bytes (incl. C1) from a session's pause reason", () => {

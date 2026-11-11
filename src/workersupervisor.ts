@@ -47,6 +47,12 @@
 //     (src/debuground.ts) has no worker process, but its row is still this module's to
 //     write: the debug manager asks for the claim, the start mark and the settlement
 //     (`claimHosted`, `markHostedStarted`, `settleHosted`).
+//   - ROUTE. The daemon asks pi nothing, so which model reviews run on is what a
+//     worker says in `ready` (src/ipc/routereport.ts). The report is logged, the
+//     latest is what status.json shows, and a report that names another model,
+//     another move or another credential origin than the one before it raises
+//     `model_route_changed` (StateStore.recordModelRoute). A `ready` that carries
+//     no readable report records nothing: the model is then unknown, not assumed.
 //   - RESTART. On a daemon restart every leased group is killed and its round is
 //     requeued under the same command id (`recover`), so the fresh worker resumes
 //     the JSONL and continues instead of sending the order again.
@@ -79,6 +85,7 @@ import {
 } from "./ipc/control.js";
 import { type GhReader, ghReadOps } from "./ghread.js";
 import { type PermitBroker, permitOps } from "./ipc/permits.js";
+import { parseRouteReport } from "./ipc/routereport.js";
 import type { EventHandler, OpHandler, RequestContext } from "./ipc/server.js";
 import {
   WAKES_ACK_OP,
@@ -602,6 +609,7 @@ export class WorkerSupervisor {
       case "ready":
         rec.readyAt = t;
         if (typeof b["session_id"] === "string") rec.sessionId = b["session_id"];
+        this.recordRoute(rec, b["route"]);
         break;
       case "accepted":
         if (rec.acceptedAt === undefined) {
@@ -642,6 +650,28 @@ export class WorkerSupervisor {
       this.log(`worker observer failed: ${String(e)}`);
     }
   };
+
+  /** The model a worker says its command runs on (`ready`'s `route`). A report
+   * that is absent or does not check records nothing, and a store that cannot
+   * take it never costs the worker its round. */
+  private recordRoute(rec: LiveWorker, raw: unknown): void {
+    const report = parseRouteReport(raw);
+    if (report === null) {
+      if (raw !== undefined)
+        this.log(`worker ${rec.row.id}: its route report could not be read and was not kept`);
+      return;
+    }
+    try {
+      const outcome = this.deps.store.recordModelRoute(report, {
+        pr: rec.row.pr,
+        command_id: rec.row.id,
+      });
+      if (outcome === "changed")
+        this.log(`workers: reviews now run on ${report.spec} (${report.credential_origin})`);
+    } catch (e) {
+      this.log(`worker ${rec.row.id}: its route report was not recorded: ${String(e)}`);
+    }
+  }
 
   // ---- the single writer of session_commands -------------------------------
 

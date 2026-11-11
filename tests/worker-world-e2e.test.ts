@@ -351,6 +351,24 @@ describe.skipIf(!hasDist)("the production daemon, with workers as its only host"
       expect(command.est_usd).toBeGreaterThan(0);
       expect(round.est_usd).toBeCloseTo(command.est_usd!, 6);
 
+      // The worker told the daemon which model the round ran on, and the daemon kept it: the
+      // config's pin, on the key pi's models.json holds. Nothing else tells the daemon.
+      expect(w.store().modelRoute()).toMatchObject({
+        spec: FAKE_MODEL,
+        source: "config",
+        pick: "pinned",
+        moved_from: null,
+        credential_origin: "models-json",
+      });
+      // One worker, one report, and a first report is no change.
+      expect(w.store().prEvents(PR, ["model_route"])).toHaveLength(1);
+      expect(
+        w
+          .store()
+          .anomalies()
+          .filter((a) => a.kind === "model_route_changed"),
+      ).toEqual([]);
+
       // No pr-<n> tmux session was ever asked for; the only tmux the daemon spoke to was the overseer's.
       expect(w.tmuxCalls.filter((c) => c.some((a) => /^=?pr-\d+$/.test(a)))).toEqual([]);
       // And no inject file was ever written for the PR.

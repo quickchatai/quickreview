@@ -48,6 +48,13 @@ export interface WorkerSpec {
    * `loginDirOf`). Absent: `agent_dir`. The remembered model choice and pi's
    * saved provider are read from the same directory as the login. */
   login_dir?: string;
+  /** Something renews the login while this command runs: the bot's login
+   * refresher, healthy at the moment the daemon built the spec (enabled, its
+   * status fresh, not paused, with no failure standing). The worker then
+   * also takes a stored login shorter than its wall clock, and reads the
+   * renewed one from the login's dir when pi asks for it. Absent or false:
+   * nothing renews it, and a login has to last the whole command. */
+  login_owner?: boolean;
   /** The providers the config's pinned models name (modelroute.ts
    * `reviewProviders`). Omitted: the config pins no model. The worker's
    * borrow does not narrow by it: it takes every login that lasts the
@@ -190,6 +197,10 @@ export function parseWorkerSpec(raw: unknown): WorkerSpec {
   }
   if (raw["lens_dir"] !== undefined) spec.lens_dir = abs(raw, "lens_dir");
   if (raw["login_dir"] !== undefined) spec.login_dir = abs(raw, "login_dir");
+  if (raw["login_owner"] !== undefined) {
+    if (typeof raw["login_owner"] !== "boolean") return bad("`login_owner` must be a boolean");
+    spec.login_owner = raw["login_owner"];
+  }
   if (raw["providers"] !== undefined) {
     const p = raw["providers"];
     if (!Array.isArray(p) || p.some((x) => typeof x !== "string" || x === ""))

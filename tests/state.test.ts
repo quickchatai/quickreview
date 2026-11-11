@@ -10,6 +10,8 @@ import {
   type OpenReviewFailureInput,
   type StatusSnapshot,
 } from "../src/state.js";
+import { routeChangeText, type RouteReport } from "../src/ipc/routereport.js";
+import { maybeWriteModelRouteAlert, type ModelRouteAlertMemory } from "../src/tui/alerts.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const T0 = new Date("2026-08-13T09:00:00.000Z");
@@ -638,6 +640,163 @@ describe("status.json", () => {
     expect(read.digest_headline).toBe("second");
     expect(read.prs.map((p) => p.number)).toEqual([11]);
     expect(readdirSync(dir)).toEqual(["status.json"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The model reviews run on is what the newest worker reported, or unknown.
+//
+// The daemon never asks pi: a worker reports its route and the store keeps
+// the latest (events-table backed). Both "no report" and "a record that cannot
+// be read" are unknown, in the store and in status.json, and a change between
+// two reports is one anomaly.
+// ---------------------------------------------------------------------------
+
+describe("the model route workers report", () => {
+  const A: RouteReport = {
+    spec: "prov-a/model-9",
+    source: "only-credential",
+    pick: "newest",
+    moved_from: null,
+    credential_origin: "stored",
+  };
+  const from = (n = 1) => ({ pr: 7, command_id: `cmd-${n}` });
+  const changes = (s: StateStore = store): string[] =>
+    s
+      .anomalies()
+      .filter((a) => a.kind === "model_route_changed")
+      .map((a) => a.detail);
+
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "qcr-route-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // MUTATION: write `model_route` only when there is a record
+  // (`...(route ? { model_route: route } : {})` in buildStatusSnapshot) — "no
+  // worker has reported yet" becomes a missing key, which a reader takes for a
+  // daemon that reports none, and this fails.
+  it("is unknown until a worker reports one: null in the store and in status.json, never a default", () => {
+    expect(store.modelRoute()).toBeNull();
+    const snap = buildStatusSnapshot(store, true, undefined, now);
+    expect(snap).toHaveProperty("model_route", null);
+    writeStatusJson(dir, snap);
+    const read = JSON.parse(readFileSync(join(dir, "status.json"), "utf8")) as StatusSnapshot;
+    expect(read).toHaveProperty("model_route", null);
+  });
+
+  it("keeps the newest report with when it came, one event per worker", () => {
+    expect(store.recordModelRoute(A, from(1))).toBe("first");
+    clock = new Date(T0.getTime() + 60_000);
+    expect(store.recordModelRoute({ ...A, source: "remembered" }, from(2))).toBe("same");
+    expect(store.modelRoute()).toEqual({ ...A, source: "remembered", at: clock.toISOString() });
+    expect(buildStatusSnapshot(store, true, undefined, now).model_route).toEqual(
+      store.modelRoute(),
+    );
+    expect(store.prEvents(7, ["model_route"]).map((e) => e.payload)).toEqual([
+      { ...A, at: T0.toISOString(), command_id: "cmd-1" },
+      { ...A, source: "remembered", at: clock.toISOString(), command_id: "cmd-2" },
+    ]);
+    expect(changes()).toEqual([]);
+  });
+
+  // MUTATION: raise the anomaly when there is no earlier record too (drop the
+  // `prev === null` return in recordModelRoute) — every boot of a fresh state
+  // alarms on its first worker, and this fails on the first line.
+  it("raises model_route_changed for another model, another move or another origin; never first, never on a repeat", () => {
+    expect(store.recordModelRoute(A, from(1))).toBe("first");
+    expect(changes()).toEqual([]);
+
+    const model = { ...A, spec: "prov-a/model-10" };
+    const moved = { ...model, spec: "prov-c/model-10", moved_from: "prov-a" };
+    const keyed = { ...moved, credential_origin: "env-key" };
+    expect(store.recordModelRoute(model, from(2))).toBe("changed");
+    expect(store.recordModelRoute(model, from(3))).toBe("same");
+    expect(store.recordModelRoute(moved, from(4))).toBe("changed");
+    expect(store.recordModelRoute(keyed, from(5))).toBe("changed");
+    expect(changes()).toEqual([
+      routeChangeText(A, model),
+      routeChangeText(model, moved),
+      routeChangeText(moved, keyed),
+    ]);
+    // It belongs to no PR: the route is the bot's.
+    expect(store.anomalies().every((a) => a.pr === null && a.round_no === null)).toBe(true);
+  });
+
+  // MUTATION: keep the previous report in memory only (never read the events
+  // table in modelRoute()) — a deploy that lost the login mount starts from
+  // "first" and says nothing, and this fails.
+  it("stands across a restart: the next daemon's first worker is held against the last report", () => {
+    const file = join(dir, "state.db");
+    const before = new StateStore(file, now);
+    before.recordModelRoute(A, from(1));
+    before.close();
+
+    const after = new StateStore(file, now);
+    try {
+      expect(after.modelRoute()).toEqual({ ...A, at: T0.toISOString() });
+      const keyed = { ...A, credential_origin: "env-key" };
+      expect(after.recordModelRoute(keyed, from(2))).toBe("changed");
+      expect(changes(after)).toEqual([routeChangeText(A, keyed)]);
+    } finally {
+      after.close();
+    }
+  });
+
+  it("a newest record it cannot read is unknown, and the report after it is a first one", () => {
+    // A row from a build that wrote another shape, read by this one at boot.
+    store.logEvent("model_route", 7, { spec: "", at: T0.toISOString() });
+    expect(store.modelRoute()).toBeNull();
+    expect(buildStatusSnapshot(store, true, undefined, now).model_route).toBeNull();
+    expect(store.recordModelRoute(A, from(2))).toBe("first");
+    expect(changes()).toEqual([]);
+  });
+
+  describe("the TUI's alert for a change (maybeWriteModelRouteAlert)", () => {
+    const at = "2026-08-13T09:00:00.000Z";
+    const alerts = (): string[] => (existsSync(dir) ? readdirSync(dir) : []);
+    const mem = (): ModelRouteAlertMemory => ({ last: undefined });
+
+    // MUTATION: alert on the first route a TUI reads (treat `mem.last ===
+    // undefined` as a change) — every TUI start notifies, and this fails.
+    it("writes one alert when a fresh snapshot's route is not the one before it, in the anomaly's words", () => {
+      const m = mem();
+      const keyed = { ...A, credential_origin: "env-key" };
+      expect(maybeWriteModelRouteAlert(dir, { ...A, at }, true, m, now)).toBeUndefined();
+      expect(maybeWriteModelRouteAlert(dir, { ...A, at, source: "choice" }, true, m, now)).toBe(
+        undefined,
+      );
+      const name = maybeWriteModelRouteAlert(dir, { ...keyed, at }, true, m, now);
+      expect(name).toMatch(/-model-route-changed\.json$/);
+      expect(JSON.parse(readFileSync(join(dir, name!), "utf8"))).toEqual({
+        tier: "alert",
+        cause: "model-route-changed",
+        pr: null,
+        title: "reviews now run on another model or credential",
+        body: routeChangeText(A, keyed),
+        ts: T0.toISOString(),
+      });
+      // The same route again says nothing more.
+      expect(maybeWriteModelRouteAlert(dir, { ...keyed, at }, true, m, now)).toBeUndefined();
+      expect(alerts()).toEqual([name]);
+    });
+
+    // MUTATION: remember an unknown block as the last route (set `mem.last`
+    // before the null check) — the route after an unreadable snapshot is taken
+    // for the first, the change is lost, and this fails.
+    it("an unknown route raises nothing and is not remembered; a stale snapshot is not read", () => {
+      const m = mem();
+      maybeWriteModelRouteAlert(dir, { ...A, at }, true, m, now);
+      for (const unknown of [undefined, null, { spec: 3 }, "prov-a/model-9"])
+        expect(maybeWriteModelRouteAlert(dir, unknown, true, m, now)).toBeUndefined();
+      const keyed = { ...A, credential_origin: "env-key", at };
+      expect(maybeWriteModelRouteAlert(dir, keyed, false, m, now)).toBeUndefined();
+      expect(alerts()).toEqual([]);
+      expect(maybeWriteModelRouteAlert(dir, keyed, true, m, now)).toBeDefined();
+    });
   });
 });
 

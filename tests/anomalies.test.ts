@@ -62,6 +62,7 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
         "memory_write_backlog",
         "migration_collision_comment_withheld",
         "migration_precheck_degraded",
+        "model_route_changed",
         "overdue",
         "pass_plan_mismatch",
         "pi_auth_expired",
@@ -192,7 +193,7 @@ describe("logAnomaly → wake funnel", () => {
     expect(injected).toHaveLength(3);
   });
 
-  it("the detail-keyed kinds are exactly the memory kinds — pinned", () => {
+  it("the detail-keyed kinds are exactly the memory kinds and the route change — pinned", () => {
     // The write backlog is among them: its raiser (the backfill pump) fires
     // on the crossing, every 6 h, and once per tick that gave rows up.
     expect(detailKeyedKinds()).toEqual([
@@ -202,6 +203,8 @@ describe("logAnomaly → wake funnel", () => {
       "memory_down",
       "memory_provision_failed",
       "memory_write_backlog",
+      // Raised on a route change only, and each direction of one is its own fact.
+      "model_route_changed",
     ]);
     for (const kind of detailKeyedKinds()) expect(anomalySeverity(kind), kind).toBe("wake");
   });

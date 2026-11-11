@@ -31,13 +31,19 @@
 //   2. borrow the login: a refresh-blanked copy read once from the agent dir the
 //      login refresher owns. A stored login that would expire inside this
 //      worker's wall-clock cap is left out of the copy, never refused: the
-//      worker never refreshes it, so it is not a login this command can run on;
+//      worker never refreshes it, so it is not a login this command can run on.
+//      The one exception is the daemon's word that the refresher is renewing
+//      the login now (`login_owner` in the spec): such a login is kept, and
+//      when pi asks for a fresh one the copy re-reads the refresher's file;
 //   2a. resolve the model route, before any session exists: from the spec's
 //      model when the config pins one, else from the remembered choice and
 //      pi's saved provider (both read where the login is read) over what the
 //      borrowed login and the worker's environment hold a credential for. No
 //      route (no credential, the pinned provider's login left out, no model
-//      that passes) ends the command with the login exit code and the reason;
+//      that passes) ends the command with the login exit code and the reason.
+//      The route that did resolve goes to the daemon in `ready`
+//      (src/ipc/routereport.ts): the daemon asks pi nothing, so this report is
+//      all it knows of the model reviews run on;
 //   3. open the PR's session: resume the newest JSONL under its session dir
 //      under the SAME id (the provider's cache key), or start one at birth;
 //   4. start the planned discovery wave (the engine, rule 9), then send the
@@ -130,6 +136,7 @@ import {
 import { connectFromEnv, type IpcClient } from "./ipc/client.js";
 import { brokerPermits } from "./ipc/permits.js";
 import { IpcError, type IpcEventKind } from "./ipc/protocol.js";
+import { routeReportOf } from "./ipc/routereport.js";
 import {
   WAKES_ACK_OP,
   WAKES_TAKE_OP,
@@ -266,9 +273,11 @@ export interface WorkerRoute {
  * dir): the worker derives no path of its own.
  *
  *  - The login: every stored key, and every stored login that lasts the
- *    command's wall clock. Nothing renews a login for the worker, so one that
- *    would run out is left out before the route is chosen, and is then never
- *    picked. A login file that is there and cannot be read throws
+ *    command's wall clock. The worker renews nothing, so a login that would
+ *    run out is left out before the route is chosen, and is then never
+ *    picked; unless the spec says the bot's refresher is renewing the login
+ *    (`login_owner`), and then one that is still outside pi's own refresh
+ *    window is kept. A login file that is there and cannot be read throws
  *    (`AuthUnreadable`): an unknown store is never an empty one.
  *  - The pin: the spec's model when it names one (the config's `[models]
  *    model`). A spec with no model part pins nothing.
@@ -277,15 +286,16 @@ export interface WorkerRoute {
  * `note` hears why a remembered choice that is there was not used.
  */
 export function workerRoute(
-  spec: Pick<WorkerSpec, "agent_dir" | "login_dir" | "model" | "wall_clock_ms">,
+  spec: Pick<WorkerSpec, "agent_dir" | "login_dir" | "login_owner" | "model" | "wall_clock_ms">,
   o: { now?: () => number; note?: (line: string) => void } = {},
 ): WorkerRoute {
   const loginDir = spec.login_dir ?? spec.agent_dir;
   const borrowed = borrowedCredentials({
     srcDir: loginDir,
     needMs: spec.wall_clock_ms,
-    // Nothing is told to renew the login for this worker.
-    owner: false,
+    // The daemon's word, and only `true` counts: a spec that does not say
+    // is one where nothing renews the login for this worker.
+    owner: spec.login_owner === true,
     ...(o.now ? { now: o.now } : {}),
   });
   const remembered = readModelChoice(loginDir);
@@ -658,6 +668,9 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       session_file: opened.file ?? null,
       resumed,
       continued: continuing,
+      // The model this command runs on, as resolved above: the daemon's only
+      // source for it.
+      route: routeReportOf(routed.route),
     });
     beat = setInterval(
       () =>
