@@ -15,44 +15,73 @@ reviewers) and [`paper/quickreview.pdf`](paper/quickreview.pdf) (the
 reviewer), and in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md),
 [`docs/THREATS-TO-VALIDITY.md`](docs/THREATS-TO-VALIDITY.md) and
 [`docs/PROMPTS.md`](docs/PROMPTS.md). Every run behind them — reviews,
-verdicts, scores, the charts and tables they produce — will be published
-in the Hugging Face dataset and run archive (not out yet).
+verdicts, scores, the charts and tables they produce — is published in the
+Hugging Face dataset [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench):
+tables of every review and verdict, the run archive in its `archive/` folder
+and the slim re-score bundle in `slim/`. [`recompute/`](recompute/README.md)
+rebuilds each published number from it with no model call.
 
 ## Reproduce
 
 For DigitalOcean Gradient and GLM, see [the setup and run instructions](docs/DIGITALOCEAN.md).
-The Gradient route uses `QCR_BENCH_PROVIDER=digitalocean` for reviews;
-GPT judging uses its separate login or OpenAI credential route.
+The Gradient route uses `QCR_BENCH_PROVIDER=digitalocean` for reviews; which
+provider each judge can use is in "Judges on any provider" below.
 
 Three tiers, cheapest first. Nothing here needs this repo's private history or
 the authors' machines.
 
+**Needs.** Tier 1 and the dataset's own checks (the card's "How to verify"):
+git, Python 3.11 or newer, [uv](https://docs.astral.sh/uv/), zstd (for
+`tar --zstd`) and a Hugging Face login (`uvx hf auth login`). Run `hf` as
+`uvx hf` when Hugging Face's CLI is not installed, and the card's
+`load_dataset` with `uv run --no-project --with datasets python`. About 3 GB
+of disk, no docker, no key. Tiers 2 and 3, and every `bench.sh` or
+`ext/ext.sh` step but the host-only judge routes below: a host where
+`docker info` succeeds (a VM or container whose cgroups are not mounted cannot
+start the daemon), Docker 25 or newer (`bench.sh doctor` checks both), and
+room for the images and the prefetched repositories.
+
 **Tier 1 — re-score and re-chart the published runs: no keys, no docker.**
-Download the **slim re-score bundle** from the run archive — every run dir
-behind the papers' tables, without the multi-gigabyte per-case transcripts —
+Download the **slim re-score bundle** (the dataset's `slim/` folder) — every run dir
+behind the papers' tables, with no session log (the open-model cases and the
+frozen build's cases of the open-model smoke PRs keep their numbers-only
+`pi-events.pruned.jsonl` extract, which the speed table reads) —
 and point the scripts at it:
 
 ```sh
 export QCR_BENCH_RUNS_DIR=/path/to/slim-bundle/runs
+export QCR_CHARTS_OUT=$PWD/charts-out   # keeps the re-drawn charts out of the clone
 bench/aacr/final/score.sh        # every final table (compare.py) and both chart sets (charts.py; needs uv)
 ```
+
+Without `QCR_CHARTS_OUT` the charts are re-drawn over the committed ones in
+`bench/aacr/charts/`, and a re-rendered JPEG differs byte for byte from the
+committed one, so the clone is left with changed files.
 
 `compare.py` and `charts.py` read, per run dir: `run.json`, `judge.txt`,
 `judge/<label>/<instance>.r1.json` (labels `v1-…`/`v2-gpt-6-sol-high` for the
 primary judge, `…-claude-opus-5-5` for the second: `--judge-model
 claude-opus-5-5`), `results/all/metrics_*_*.json` and `results/all/<instance>.json`,
 and `cases/<instance>/case-summary.json`. That is the bundle's whole layout. A
-case's cost comes from its `pi-events.jsonl` when the transcript is there (the
-full archive); in the slim bundle the summary carries `bench_cost_usd` instead
-— the same number, computed from the full transcript by `compare.py`'s own
-`usd_and_minutes` when the bundle was cut (null = unpriced) — so both re-score
-to the same cent. Still keyless and offline once the image exists:
+case's cost comes from its event stream when the case has one (the run
+archive's numbers-only `pi-events.pruned.jsonl`); in the slim bundle the
+summary carries `bench_cost_usd` instead — the same number, computed from the
+full event stream by `compare.py`'s own `usd_and_minutes` when the bundle was
+cut (null = unpriced) — so both re-score to the same cent. Still keyless and offline once the image exists:
 `bench.sh build`, then `bench.sh judge-report` / `results` / `report` (all
-`--network none`).
+`--network none`). With the dataset's tables alone, no bundle and no docker,
+[`verify_claims.py`](recompute/README.md#every-published-number-the-claims-manifest)
+`--data <dataset> --partial` recomputes every published number they hold.
+`--partial` skips, and does not fail, a claim whose source is not under
+`--data` or that needs only Martian's checkout (`--martian`) or Qodo's
+ground-truth file (`--qodo-gt`); it exits 0 when every other claim passes,
+and its result line counts the skipped claims with the flag that would
+include them. Without `--partial` a missing input fails.
 
-**Tier 2 — re-judge the saved reviews.** Take the full run archive (each case
-also carries `comments.json`, `findings-record.json` and `review.md`, what the
-judge reads), `bench.sh build`, `bench.sh prefetch --set <set>` (anonymous
+**Tier 2 — re-judge the saved reviews.** Take the full run archive (the
+judge reads each case's `results/all/<id>.json`, the deleted-line comments in
+`comments.json`, the verdict in `case-summary.json` and the body in
+`review.md`), `bench.sh build`, `bench.sh prefetch --set <set>` (anonymous
 github.com clones into a docker volume), and a model credential:
 
 ```sh
@@ -67,6 +96,9 @@ On your own key the verdicts land under a label of their own
 re-judge never mixes with — or `--resume`s over — the published verdicts.
 AACR-Bench's own metric takes any OpenAI-compatible endpoint the same way:
 `bench.sh eval --judge openai` with `bench/aacr/judge.env` (below).
+
+To judge the published reviews with a judge of your own, without our
+harness, see "Re-judge with your own judge" below.
 
 **Tier 3 — a full re-run.** Build each arm's image (`bench.sh build --arm
 <arm>`), prefetch, review every set with `arm.sh` (`final/run-selection.sh` and
@@ -101,10 +133,139 @@ backend the published runs used — read a keyed re-run as a replication, not a
 copy. Every keyed run records `auth: "api-key"` in its fingerprint and
 `run.json`. Scale: a median of about five minutes per review, 185 PRs for each
 of eight reviewers, plus the external benchmarks — days of wall time and real
-model spend; repeat runs differ by about ±2 found issues per benchmark.
+model spend; repeat runs of one build differed by 1.5–2 found defects per
+10-PR set.
 
-`run.json` `qcr_commit` values name builds in the pre-publication history; the
-public history starts at its first commit.
+The published runs' `qcr_commit` values are remapped to public main commits
+(the dataset card's `runs` table describes `qcr_commit_on_public_main`,
+`qcr_commit_match` and `qcr_commit_dirty`); a run you make records your own
+checkout's commit.
+
+## Re-judge with your own judge
+
+Every QuickReview review behind a published number is in the dataset's
+tables, so any judge can grade it. Write your judge's answers as tables
+shaped like ours (`.parquet` or `.jsonl` in a directory `DIR`, no `judge`
+column), pick a label no published row carries (`LABEL`), and run the scorer
+in [`recompute/`](recompute/README.md#another-judges-verdicts) (`uv run
+--no-project --with pyarrow python <script>`). It prints your judge's numbers
+beside ours on the same reviews: on a sample, both over the PRs your judge
+judged (`--whole-run` counts every PR, so the two are not comparable); each
+script's docstring gives the columns.
+The dataset card's section of the same name says the same per benchmark.
+A worked example ships in the dataset:
+[`second_judges/deepseek-v4.1-flash-1017/`](https://huggingface.co/datasets/quickchatai/quickreview-bench/tree/main/second_judges/deepseek-v4.1-flash-1017)
+holds DeepSeek V4.1 Flash's verdicts on the reviewers of the README's full
+tables in these shapes, the scripts that made them, and the three scoring
+commands with their output (the card's "Second judge").
+
+- **AACR-Bench.** Input: the arm's `reviews` rows (the verdict, the body and
+  the comments `C1`, `C2`, … as the judge read them; `raw_text` as the run's
+  result file holds them). Answer key: the PR's
+  `defects`, and its `exclusions`, which our judge was also shown. Code: diff
+  `prs.merge_base..prs.head_commit`. Our judge's prompt: `judgePrompt()` in
+  `src/bench/defects.ts`; `judge_prompt.py --data D --arm ARM --pr ID`
+  prints the one it received. Output: `defect_verdicts` (and optionally
+  `comment_verdicts`). Score: `score_verdicts.py --data D --verdicts DIR
+  --judge LABEL`; `aacr_bootstrap.py` and `heldout.py --fixed-set` take the
+  same `--verdicts DIR --judge LABEL`. Our judge's own files, re-run on
+  another model (as above): `score_verdicts.py --data D --judge LABEL
+  --from-judgements ARM --runs-dir RUNS --judge-dir NAME`, with `--save DIR`
+  for the other two.
+- **Martian.** Input: QuickReview's `martian_reviews` rows (the frozen build:
+  `final1-martian50`, `quickreview-frozen`), or the archive's
+  `runs/<run>.martian/results/benchmark_data.json`. Answer key:
+  `martian_goldens`. Our judge: Martian's own pipeline at `e616e84` on
+  GPT-6.1 Sol; [`ext/ext_judge.py`](ext/ext_judge.py)'s docstring runs it
+  with no docker. Output: `martian_verdicts` and the per-PR `fp` of
+  `martian_reviews`. Score: `martian_scores.py --data D --verdicts DIR
+  --judge LABEL`, or, on the pipeline's own output, `martian_scores.py
+  --data D --judge LABEL --from-evaluations <dir>/results/<model>/evaluations.json
+  --work final1-martian50 --tool 'final1-martian50|quickreview=quickreview-frozen'`.
+- **Qodo.** Input: `qodo_reviews` of `final1-qodo-pr100` / `quickreview-frozen`
+  or `ext-r6-qodo-pr100` / `quickreview-2026-10-02`, what our judge was sent
+  (`ask()` builds the message and cuts long text). Answer key: `qodo_issues`.
+  Our judge's prompt: `SYSTEM` in [`ext/qodo_judge.py`](ext/qodo_judge.py).
+  Output: `qodo_verdicts`. Score: `qodo_scores.py --data D --verdicts DIR
+  --judge LABEL`, or, on `qodo_judge.py`'s own output, `qodo_scores.py --data
+  D --judge LABEL --from-judgements <dir>/judgements.jsonl --work
+  final1-qodo-pr100 --tool 'final1-qodo-pr100|quickreview=quickreview-frozen'`;
+  either also scores the held-out set, `sets/qodo-heldout31.json`. To run our
+  judge's prompt on your model with no docker, `qodo_judge.py --reviews
+  <dataset>/data/qodo_reviews.parquet --review-key WORK|TOOL` against
+  `ext_judge.py` (below); `--only ID[,ID]` judges those cases of `--set`
+  only, so a smoke test needs no hand-cut set file. The card gives the
+  command.
+- **Copilot 2025.** Input: the arms of `tab:copilot2025` (the card maps each
+  row to its arm) on the PRs of `copilot-2025-upstream`
+  ([`final/copilot19.txt`](final/copilot19.txt)). Judge and output as for
+  AACR-Bench. Score: `score_verdicts.py ... --select
+  arm=copilot-2025-upstream`. Copilot's own text is link-only, and
+  `judge_prompt.py` refuses it; the card says how to restore it.
+- **Elo.** Input: the plan's run directory in the archive and the reviews it
+  pairs. Add your judge under the plan's `judges`, then `elo.py pack` (from
+  bare clones the archive does not ship), `run --judge NAME` and `report`
+  ([`elo/README.md`](elo/README.md)), or refit with
+  `recompute/elo_ratings.py`. Each judgment's `prompt_sha256` checks the
+  prompt: yours must equal ours, or `elo_ratings.py` warns.
+
+To re-run our own judge instead: Tier 2 above for AACR-Bench, and
+[`ext/ext.sh`](ext/ext.sh) with `EXT_JUDGE_MODEL` for Martian and Qodo.
+
+## Judges on any provider
+
+Every judge can run on a model you choose. This is each judge's route, with
+the key always read from a gitignored env file and never typed on a command
+line (a command line lands in the shell history and in `ps`):
+
+| Judge | What it talks to | Another provider |
+|---|---|---|
+| AACR defect judge, `bench.sh judge` (Tier 2) | the ChatGPT login volume; with `QCR_BENCH_AUTH=api-key`, OpenAI's API (`openai.env`), or Anthropic's with `--judge-model anthropic/<model>` (`claude.env`) | OpenAI or Anthropic only; any other model judges the published reviews as in "Re-judge with your own judge" (`judge_prompt.py` prints our judge's prompt) |
+| AACR-Bench's own metric, `bench.sh eval --judge openai` | the OpenAI-compatible endpoint in `judge.env` (`JUDGE_BASE_URL`, `JUDGE_API_KEY`, `JUDGE_MODEL`) | any, through `judge.env` |
+| Martian's steps 2, 2.5 and 3 (the host-only route in [`ext/ext_judge.py`](ext/ext_judge.py)'s docstring) | `MARTIAN_BASE_URL`, `MARTIAN_API_KEY`, `MARTIAN_MODEL`: a Chat Completions endpoint | any Chat Completions endpoint straight, or a Responses API model through `ext_judge.py` |
+| Qodo, [`ext/qodo_judge.py`](ext/qodo_judge.py) `--endpoint` | `ext_judge.py` on loopback (it sends no key of its own) | any Responses API, through `ext_judge.py --upstream` |
+| `ext/ext.sh martian`, `qodo`, `sweprbench` | `ext_judge.py` in a container: the login volume, or OpenAI's API with `QCR_BENCH_AUTH=api-key` (`openai.env`) | OpenAI only (`EXT_JUDGE_MODEL`); another provider takes the host-only routes |
+| Pairwise Elo, `elo/elo.py run --judge NAME` | the plan's `judges`: `gpt`, `opus`, or any name with a `base_url` (Chat Completions) and its key as `key_var` in an `env_file` | any, through the plan ([`elo/README.md`](elo/README.md)) |
+
+`ext_judge.py` is the one bridge. Its `--upstream` must serve the Responses
+API (OpenAI's, the default on the key route, and DigitalOcean's
+`https://inference.do-ai.run/v1/responses` both do), and it forwards with
+`OPENAI_API_KEY` from its environment, whatever the provider. Its `/health`,
+`/stats` and its log's start row (`--probe-temperature`) name the upstream URL (`chatgpt-codex` on
+the login route), so a run records which provider judged. Start it with the
+key loaded from its file:
+
+```sh
+# OpenAI's API: bench/aacr/openai.env holds OPENAI_API_KEY=<key>
+(set -a; . bench/aacr/openai.env; set +a
+ QCR_BENCH_AUTH=api-key exec python3 bench/aacr/ext/ext_judge.py \
+   --port 8765 --model MODEL --effort low --probe-temperature --log judge.jsonl) &
+# another provider: its own key file, handed over as OPENAI_API_KEY, and its Responses URL
+(set -a; . bench/aacr/digitalocean.env; set +a
+ OPENAI_API_KEY="$DIGITALOCEAN_API_KEY" QCR_BENCH_AUTH=api-key exec python3 bench/aacr/ext/ext_judge.py \
+   --port 8765 --model MODEL --effort low --probe-temperature --log judge.jsonl \
+   --upstream https://inference.do-ai.run/v1/responses) &
+```
+
+Then point Martian's steps (`MARTIAN_BASE_URL=http://127.0.0.1:8765/v1`) or
+`qodo_judge.py --endpoint http://127.0.0.1:8765/v1/chat/completions` at it.
+Martian's steps can also skip the bridge and talk to a provider's Chat
+Completions endpoint straight, when its model takes temperature 0 (Martian's
+client sends it); the key is loaded the same way, in a subshell that runs the
+steps (in the Martian checkout, the steps as in `ext_judge.py`'s docstring):
+
+```sh
+(set -a; . /path/to/quickreview/bench/aacr/digitalocean.env; set +a
+ export MARTIAN_API_KEY="$DIGITALOCEAN_API_KEY" MARTIAN_BASE_URL=https://inference.do-ai.run/v1 MARTIAN_MODEL=MODEL
+ python -m code_review_benchmark.step2_extract_comments --tool quickreview &&
+ python -m code_review_benchmark.step2_5_dedup_candidates &&
+ python -m code_review_benchmark.step3_judge_comments --dedup-groups results/MODEL/dedup_groups.json)
+```
+
+One PR is enough for a smoke test: `qodo_judge.py --only ID`, and for Martian
+a `benchmark_data.json` cut to one PR and one tool (the command is in
+`ext_judge.py`'s docstring) or written by `martian_ingest.py --only ID`;
+`ext.sh martian` and `ext.sh qodo` take `--only` too.
 
 ## Results
 
@@ -137,7 +298,7 @@ shipped on gpt-6-sol, graded by two judges from different model families
 Opus 5.5) are in the paper's supporting material. `final/score.sh` draws the
 charts into `charts/` (the final comparison under the plain names; the
 gpt-6-sol study under `-gpt6sol`). This repo ships only the ones the papers
-include; the full set, with the numbers behind them, goes into the Hugging Face dataset and run archive (to be published; not out yet):
+include; the full set, with the numbers behind them, is in the Hugging Face dataset's `figures/` folder:
 
 | Chart                                                       | Shows                                                                                                                                              |
 | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -279,9 +440,13 @@ missed — for every arm alike, so arms stay comparable, but the absolute
 recall on `full` is out of 185 runnable PRs' worth of findability. None of
 the 40 defect-benchmark PRs is affected. Claim improvements on `fresh10`: the other
 30 PRs informed the 2026-09 levers, and in-sample gains shrank by half out of
-sample. Differences under ~2 defects per 10 PRs are noise.
+sample. Repeat runs of one build differed by 1.5–2 found defects per 10-PR
+set, so a smaller difference is noise.
 
 ## Quick start
+
+Needs a host where `docker info` succeeds, with Docker 25 or newer
+("Reproduce", Needs).
 
 ```sh
 bench/aacr/bench.sh doctor                         # docker, image, volumes
@@ -291,7 +456,7 @@ less bench/aacr/runs/first-try/report.md
 ```
 
 `smoke` takes about an hour or two for the 10 PRs (one production round each —
-lens fan-out plus validator; measured live rounds run a median ~13 minutes).
+lens fan-out plus validator).
 
 ## The case sets (`sets/`)
 
@@ -301,7 +466,7 @@ x/1505) by `select_cases.py`, which refuses any other revision:
 
 | Set         | PRs | References | Rule                                                                                                                                                                                                                                                                 |
 | ----------- | --- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `smoke10`   | 10  | 62         | 20–160 changed lines, ≥4 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 17 backups                                                                                                                        |
+| `smoke10`   | 10  | 62         | 20–160 changed lines, ≥4 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 16 backups                                                                                                                        |
 | `holdout10` | 10  | 85         | smoke10's filters, no smoke10 repository, quota Python 1 / TS 2 / JS 2 / Go 1 / Java 2 / Rust 1 / C 1, a short language filled from the smallest remaining PR. The generalisation check: a change is kept only if it holds here too, and nothing is ever tuned on it |
 | `dev10`     | 10  | 106        | a second development set, so changes are not tuned on smoke10 alone: 20–400 changed lines (the small-PR pool is spent), ≥4 references, no smoke10 or holdout10 repository, quota C++ 2 / TS 1 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1                   |
 | `full`      | 196 | 1,505      | every PR the harness scores (4 of the 200 have no positive references and are never scored by it)                                                                                                                                                                    |
@@ -403,8 +568,9 @@ so a bench run picks them up only when its `--config` selects that profile.
   those as body bullets instead (its COMMENT path — red or pending CI — posts
   them inline). The report splits verdicts so this is visible.
 - **Variants.** `all` = every inline comment that would have been posted;
-  `no-nits` drops `[nit]`; `blockers` keeps only `[blocker]`. The references are
-  42% maintainability/readability — a class the validator trims on purpose — so
+  `no-nits` drops `[nit]`; `blockers` keeps only `[blocker]`. By AACR-Bench's own
+  metadata, 42% of the references are maintainability/readability — a class the
+  validator trims on purpose — so
   compare variants, not one headline.
 - **Findings posted in the review body count.** Production sends a finding
   with no valid inline anchor (a deletion-only change, a notebook line) into
@@ -451,7 +617,8 @@ so a bench run picks them up only when its `--config` selects that profile.
   open-code-review v1.3.1 + GPT-5.5: published 234/728 precision, 234/1505
   recall) under the same judge and dataset, next to ours — `--arm ocr` (below)
   does that. The harness's Claude Code arm runs only as `--arm claude`, inside this sandbox (the project's one sanctioned place to run Claude Code, 2026-09-28).
-- **The ground truth is 74% AI-seeded** (GPT-5.2 alone 25%, our model's family),
+- **The ground truth is 74% AI-seeded**, by AACR-Bench's own paper and metadata
+  (GPT-5.2 alone 25%, our model's family),
   and precision counts every comment the annotators did not record as a false
   positive.
 
@@ -613,8 +780,8 @@ bench/aacr/arm.sh --prefix opencode --arm opencode --cases fresh10 --eval 3   # 
 **Why `subtask: false`.** The built-in `review` runs as a subtask; when it
 returns, OpenCode tells the parent session to "continue with your task",
 and the parent — which holds the same prompt, fragment and findings tool —
-reviewed the PR again and re-reported the same findings (first smoke test:
-3 + 2 and 1 + 1 reports of the same issues, a pure precision penalty codex's
+reviewed the PR again and re-reported the same findings (in the first smoke
+test each issue came back twice, a pure precision penalty codex's
 relay-only main thread does not pay). `REVIEW_COMMAND_TEMPLATE` is the
 built-in's text verbatim (checked: the rendered prompt and system prompt are
 identical to the built-in's), so the one session gets exactly the built-in
@@ -783,15 +950,11 @@ on stub and on real output: `tests/bench-pireview.test.ts`.
   `case-summary.json` (status, verdict, findings/actionable, pi's tokens and
   cost, tool calls).
 
-**Smoke test (2026-09-28, 2 PRs of `fresh10`)**: `arm.sh --prefix sm-pireview
+**Smoke test (2026-09-28, two PRs of `fresh10`)**: `arm.sh --prefix sm-pireview
 --arm pireview --cases fresh10:immich-app__immich@966c3f2,google-gemini__gemini-cli@4c150ab
---eval 1` — both `ok`, 2 comments each (all actionable, verdict
-`request_changes`), 0.9 / 0.8 min, ~105k tokens in (65k cached) / 1.5k out,
-$0.11 per PR; every comment carries a repo-relative path and a line range
-(3 of 4 inside the diff's hunks, the 4th on an existing test the change
-breaks); defect judge 4/6 found (67%, 3/5 high, 1/1 medium), 100% of comments
-correct; AACR `all` 0/5 references matched (4 comments, line precision 0.5).
-One pi-review session, no subagents, 14–22 read/grep/find calls per PR.
+--eval 1` — both `ok`, every comment actionable (verdict `request_changes`)
+and carrying a repo-relative path and a line range; one pi-review session per
+PR, no subagents.
 
 ## The PR-Agent arm (`--arm pragent`)
 
@@ -1079,20 +1242,17 @@ bench/aacr/arm.sh --prefix full1 --cases full --eval 3       # review 185 runnab
 bench/aacr/arm.sh --prefix full1 --cases full --eval 3 --resume   # after an interruption: only what is not ok
 ```
 
-**Where the time went** (measured 2026-09-27 over the 513 reviewed cases in
-the runs dir): a review is a median 5.2 min, mean 7.5, p90 10.8, p95 13.5.
-The defect judge is ~1–2 min per 10 PRs. The AACR harness judges ONE PR at a
-time, ~47 s per PR per round per variant with the codex judge — 3 rounds × 3
-variants of `full` is ~22 hours in one process, more than the reviews. The
-old `arm.sh --cases full` ran the whole set in one container at
-`--concurrency 2` (~11.5 h of reviews), then the judge, then that eval:
-**~33 hours**.
+**Where the time went.** A review takes minutes (the final comparison's
+default: a median of 9.5 min per PR). The AACR harness judges ONE PR at a
+time, so 3 rounds × 3 variants of `full` in one process took longer than the
+reviews. The old `arm.sh --cases full` ran the whole set in one container at
+`--concurrency 2`, then the judge, then that eval: **more than a day**.
 
 **What the scheduler does now** (`arm.sh`, QuickReview arm):
 
 - **One queue, one container per case.** Every case of every set and repeat,
   longest PR first (`change_line_count`, so the slow ones do not form the
-  tail). A container per case costs ~1 s (agents build in under a second) and
+  tail). A container per case costs about a second (agents build in less) and
   caps each review on its own (`QCR_BENCH_REVIEW_MEMORY=3g`), so one runaway
   cannot starve the others. `bench.sh review --phase init|case|finish` splits
   the run so that only `init` writes `run.json`.
@@ -1114,9 +1274,8 @@ old `arm.sh --cases full` ran the whole set in one container at
   `concurrency N -> M, reason` and lands in `.slots/concurrency.log`.
   `QCR_BENCH_ADAPTIVE=0` keeps auto at its start value; `--parallel N` and an
   explicit `QCR_BENCH_MAX_PARALLEL=N` are fixed caps (the old behaviour).
-  `QCR_BENCH_REVIEW_MB` 768 is the measured peak: cgroup `memory.peak` of live
-  review containers was 577–788 MB including page cache, ~210 MB anonymous
-  steady (measured 2026-10-02).
+  `QCR_BENCH_REVIEW_MB` 768 is set from the cgroup `memory.peak` of live
+  review containers, page cache included (measured 2026-10-02).
 - **The plan's usage limit stops the machine.** "Codex error: The usage limit
   has been reached" is the login's plan window spent (every refusal on record,
   2026-09-29, each case failing within seconds), not a short 429: a case that
@@ -1140,12 +1299,12 @@ old `arm.sh --cases full` ran the whole set in one container at
   or overload pauses new launches for `QCR_BENCH_RATE_LIMIT_PAUSE` (300 s).
   Whatever is still not ok after that is what `--resume` re-runs.
 
-**Expected on a 16-core, 31 GB host with no swap**: memory is not what binds.
-A review measured ~250 MB anonymous plus ~200 MB page cache, up to ~1 GB with
-six lens children at once; `auto` gives 10 slots with 14+ GB available. At 10
-slots `full` reviews in ~2.3 h (185 × 7.5 min / 10) plus a short tail, the
-defect judge ~10 min, and the 3-round eval ~1.2 h (≈18 judge processes) —
-**~4 hours** instead of ~33. `--eval 1` brings the eval to ~25 min.
+**Expected on a 16-core, 31 GB host with no swap**: memory is not what binds;
+`auto` gives 10 slots with 14+ GB available. At 10 slots `full` reviews in
+about a tenth of the one-container time plus a short tail, and the 3-round
+eval (18 judge processes: 3 variants × 6 shards) runs beside it, so an arm
+takes **hours** instead of more than a day. `--eval 1` cuts the eval to a
+third.
 
 **Risks.** The ONE ChatGPT login is the real limit: earlier arms ran 8–10
 reviews at once (each fanning out to up to 6 lens children) with no
@@ -1156,7 +1315,7 @@ with `--resume`. The eval adds ~18 low-effort judge calls at once while it
 runs.
 
 **Keep the desktop indexer out of the runs dir.** KDE's `baloo_file_extractor`
-was seen at 8 GB RSS indexing the multi-megabyte `pi-events.jsonl` files
+was seen using several GB of memory indexing the multi-megabyte `pi-events.jsonl` files
 under `$QCR_BENCH_RUNS_DIR`. That is memory the reviews could
 use, on a machine without swap. Exclude the directory: System Settings →
 Search → File Search → add it to the excluded folders, or

@@ -185,6 +185,23 @@ function postedText(raw: string): { tag: string | null; text: string } {
   };
 }
 
+/** What the run archive and the dataset put in place of a third-party tool's
+ * review text (bench/aacr/export_runs.py `omitted`): the text is linked, not
+ * redistributed, so it must be restored before a judge reads it. */
+export const OMITTED_TEXT = "[third-party text omitted";
+
+/** Refuse a placeholder as review text: judging it would grade the
+ * placeholder, silently, as the tool's comment. */
+function refuseOmitted(text: string, where: string): void {
+  if (text.includes(OMITTED_TEXT)) {
+    throw new Error(
+      `${where} is a "${OMITTED_TEXT}, sha256:…]" placeholder, not the review's text: restore the ` +
+        "tool's text first (bench/aacr/harvest_upstream.py --fetch, checked against the sha256 prefix); " +
+        "a placeholder is never judged",
+    );
+  }
+}
+
 function readJson(path: string): unknown {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
@@ -198,7 +215,8 @@ function readJson(path: string): unknown {
  * scored `results/all/<id>.json` is the comment list (it already carries the
  * findings a round posted in the body); the verdict and body come from the
  * case dir when the arm has them. A case that produced nothing is an empty
- * review, which misses every defect — never an error.
+ * review, which misses every defect — never an error. A third-party text the
+ * release replaced with its placeholder (OMITTED_TEXT) is refused, never judged.
  */
 export function reviewForJudge(runDir: string, instanceId: string): ReviewForJudge {
   const scored = readJson(join(runDir, "results", "all", `${instanceId}.json`)) as
@@ -213,6 +231,7 @@ export function reviewForJudge(runDir: string, instanceId: string): ReviewForJud
     const r = (row ?? {}) as Record<string, unknown>;
     const raw = typeof r["content"] === "string" ? r["content"] : "";
     if (!raw.trim()) continue;
+    refuseOmitted(raw, `${instanceId}: a comment in results/all`);
     const { tag, text } = postedText(raw);
     const line = typeof r["start_line"] === "number" ? r["start_line"] : null;
     const end = typeof r["end_line"] === "number" ? r["end_line"] : line;
@@ -237,6 +256,7 @@ export function reviewForJudge(runDir: string, instanceId: string): ReviewForJud
     if (typeof r["side"] !== "string" || r["side"].toUpperCase() !== "LEFT") continue;
     const raw = typeof r["body"] === "string" ? r["body"] : "";
     if (!raw.trim()) continue;
+    refuseOmitted(raw, `${instanceId}: a deleted-line comment in comments.json`);
     const line = posInt(r["line"]) ?? null;
     const path = typeof r["path"] === "string" ? r["path"] : null;
     const scoredPath = path === null ? "" : benchPath(path);
@@ -269,6 +289,7 @@ export function reviewForJudge(runDir: string, instanceId: string): ReviewForJud
     { verdict?: unknown } | undefined;
   const bodyPath = join(runDir, "cases", instanceId, "review.md");
   let body: string | null = existsSync(bodyPath) ? readFileSync(bodyPath, "utf8").trim() : null;
+  if (body) refuseOmitted(body, `${instanceId}: review.md`);
   if (body && body.length > MAX_BODY) body = `${body.slice(0, MAX_BODY)}\n[… body truncated]`;
   return {
     verdict: typeof summary?.verdict === "string" ? summary.verdict : null,

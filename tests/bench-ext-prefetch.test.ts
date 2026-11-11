@@ -1,4 +1,4 @@
-// External-benchmark prefetch (bench/aacr/EXTERNAL-BENCHMARKS.md), against
+// External-benchmark prefetch (bench/aacr/ext/ext.sh, `prefetch`), against
 // scratch repos — git is the thing under test, local transport only:
 //
 //   1. a LEAK-PROOF case (SWE-PRBench) gets a store holding exactly two

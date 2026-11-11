@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """SWE-PRBench's "agent model", replayed: QuickReview's finished review served
-on an OpenAI-compatible Chat Completions route (bench/aacr/EXTERNAL-BENCHMARKS.md).
+on an OpenAI-compatible Chat Completions route (`ext.sh sweprbench`).
 
 SWE-PRBench evaluates a model by sending it ONE request per (PR, context
 config): the harness's fixed system prompt and the PR's packed context, and it

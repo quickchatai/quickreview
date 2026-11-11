@@ -22,7 +22,11 @@
                       martian-sources.txt (one gpt-6.1-sol judge for every row).
              (Qodo's own rule is already in data/qodo.json.)
   ideas      what the idea-* figures need beyond data/aacr.json, one entry per
-             figure (ideas_v3_data.py: a builder each, documented there).
+             figure (ideas_v3_data.py: a builder each, documented there). An idea
+             whose source is not published (ideas_v3_data.UNPUBLISHED_SOURCES: the
+             idea-uncredited write-up and hand labels) and is absent is not rebuilt:
+             its committed entry is kept, the run says so and goes on, and
+  not_rebuilt  names each such idea with the sources it lacked.
 """
 import argparse, collections, json, os, sys, time
 
@@ -32,7 +36,7 @@ sys.path.insert(0, AACR)
 sys.path.insert(0, HERE)
 import compare  # noqa: E402
 from refresh import CREDIT, read_specs  # noqa: E402
-from ideas_v3_data import IDEAS  # noqa: E402
+from ideas_v3_data import build_ideas  # noqa: E402
 
 
 def pr_meta(cases):
@@ -113,12 +117,14 @@ def main():
     }
     ctx = argparse.Namespace(runs_dir=a.runs_dir, data_root=os.path.dirname(os.path.abspath(a.runs_dir)),
                              cases=cases, judge_model=a.judge_model, arms=dict(base + extra), aacr=AACR, here=HERE)
-    out["ideas"] = {}
-    for name, build in IDEAS.items():
-        t0 = time.time()
-        out["ideas"][name] = build(ctx)
-        print(f"built {name} in {time.time() - t0:.1f}s")
     path = os.path.join(HERE, "data", "v3.json")
+    try:
+        committed = json.load(open(path)).get("ideas") or {}
+    except (OSError, ValueError):
+        committed = {}
+    out["ideas"], kept = build_ideas(ctx, committed)
+    if kept:  # entries carried over from the committed file, not rebuilt here
+        out["not_rebuilt"] = kept
     json.dump(out, open(path, "w"), indent=1, sort_keys=True)
     for tool, r in out["arms"].items():
         us = [x["usd"] for x in r["per_pr"].values() if x["usd"] is not None]

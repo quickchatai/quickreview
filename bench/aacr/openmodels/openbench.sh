@@ -24,7 +24,7 @@
 #                          its 10 PRs at once). The machine is not the limit — a review
 #                          is ~250–800 MB and nearly idle CPU — DigitalOcean's capacity is.
 #   TIMEOUT_MIN=N          each review's time limit (default 180). The published GPT-6.1 runs used
-#                          75; the open models take 54–66 min on the largest AACR PRs.
+#                          75; GLM-5.3 Flash takes 55–72 min on the largest AACR PRs.
 #   EXT_CACHE / EXT_DATA   the external benchmarks' caches (default: qcr-bench-runs/ beside the main checkout)
 set -euo pipefail
 

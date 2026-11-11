@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 import random
 from itertools import combinations
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 Game = Tuple[str, str, str, float]  # (pr, x, y, score of x)
 
@@ -184,3 +184,63 @@ def agreement(pairs: Sequence[Tuple[str, str]]) -> dict:
     opposite = sum({a, b} == {"A", "B"} for a, b in pairs)
     return {"n": n, "same": same, "opposite": opposite,
             "same_rate": same / n if n else None, "opposite_rate": opposite / n if n else None}
+
+
+# ---- the rated judges --------------------------------------------------------------
+
+DEFAULT_JUDGES = ("gpt", "opus")  # a plan written before `judges` named every judge it rates
+
+
+def rated_judges(plan: dict) -> Tuple[str, ...]:
+    """The judges a plan rates: the names under its `judges`, in that order
+    (gpt and opus for a plan with none). A `<judge>-live` spot check
+    (elo.py live) is never one of them."""
+    names = tuple(plan.get("judges") or ()) or DEFAULT_JUDGES
+    bad = [n for n in names if n.endswith("-live")]
+    if bad:
+        raise SystemExit(f"plan judges {bad}: a -live judge is a spot check, never a rated judge")
+    return names
+
+
+def winner(verdict: dict, category: Optional[str] = None) -> str:
+    return (verdict["categories"][category] if category else verdict["overall"])["winner"]
+
+
+def judge_agreement(finals: Dict[str, Dict[str, dict]], judges: Sequence[str],
+                    categories: Sequence[str]) -> Dict[str, dict]:
+    """How often two rated judges name the same winner, over the units both answered: {verdict: agreement}
+    for a plan with two judges, {"x|y": {verdict: agreement}} for each pair when it has more. A verdict
+    with no unit in common is left out."""
+    out: Dict[str, dict] = {}
+    for x, y in combinations(judges, 2):
+        both = sorted(set(finals[x]) & set(finals[y]))
+        per: Dict[str, dict] = {}
+        for c in (None,) + tuple(categories):
+            ag = agreement([(winner(finals[x][i]["verdict"], c), winner(finals[y][i]["verdict"], c)) for i in both])
+            if ag["n"]:
+                per[c or "overall"] = ag
+        if per:
+            out[f"{x}|{y}"] = per
+    if len(judges) == 2:
+        return out.get(f"{judges[0]}|{judges[1]}", {})
+    return out
+
+
+def pooled_units(finals: Dict[str, Dict[str, dict]], judges: Sequence[str]) -> List[str]:
+    """The units every rated judge answered."""
+    ids = set(finals[judges[0]])
+    for j in judges[1:]:
+        ids &= set(finals[j])
+    return sorted(ids)
+
+
+def pooled_games(finals: Dict[str, Dict[str, dict]], judges: Sequence[str],
+                 category: Optional[str] = None) -> List[Game]:
+    """Every unit every rated judge answered, counted once per judge, in judge order (equal weight)."""
+    score = {"A": 1.0, "B": 0.0, "tie": 0.5}
+    out: List[Game] = []
+    for i in pooled_units(finals, judges):
+        for j in judges:
+            row = finals[j][i]
+            out.append((row["pr"], row["a"], row["b"], score[winner(row["verdict"], category)]))
+    return out

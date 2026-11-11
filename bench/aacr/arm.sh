@@ -38,7 +38,7 @@
 #                     the end of the queue (default 1)
 #   --no-judge        review only
 #   --timeout-min N   each review's time limit (bench.sh --timeout-min; default its 75). A slower
-#                     model than the published runs' needs more — GLM-5.3 Flash takes 54–66 min on
+#                     model than the published runs' needs more — GLM-5.3 Flash takes 55–72 min on
 #                     the largest AACR PRs
 #   --judge-concurrency N   defect-judge sessions at once per run (default 4)
 #   --eval R          also score AACR-Bench's own metric: bench.sh eval --judge codex --rounds R

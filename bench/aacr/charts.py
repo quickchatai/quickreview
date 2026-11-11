@@ -211,15 +211,28 @@ def chart_references(out):
              ("trivial", "Trivial", "#C9CFD8"), ("dubious", "Dubious or wrong", "#DDE2E9"),
              ("duplicate", "Duplicate", "#E9ECF1")]
     n = sum(tally.values())
-    fig, ax = plt.subplots(figsize=(10, 2.3))
-    left = 0
+    fig, ax = plt.subplots(figsize=(10, 2.6))
+    ax.set_xlim(0, 100)
+    ax.set_ylim(-0.62, 0.62)
+    ax.axis("off")
+    renderer = fig.canvas.get_renderer()
+    left, outside = 0, 0
     for key, lab, c in order:
         p = tally[key] / n * 100
         ax.barh(0, p, left=left, color=c, height=0.55, edgecolor=GROUND, linewidth=1.5)
-        ax.text(left + p / 2, 0, f"{lab}\n{p:.0f}%", ha="center", va="center", fontsize=10)
+        t = ax.text(left + p / 2, 0, f"{lab}\n{p:.0f}%", ha="center", va="center", fontsize=10)
+        # A name wider than its segment would run into the next one's: the share stays
+        # inside, the name goes above the segment (alternating below for the next such)
+        # with a tick down to it.
+        (x0, _), (x1, _) = ax.transData.transform([(left, 0), (left + p, 0)])
+        if t.get_window_extent(renderer).width > 0.85 * (x1 - x0):
+            t.set_text(f"{p:.0f}%")
+            up = outside % 2 == 0
+            edge, at = (0.275, 0.34) if up else (-0.275, -0.34)
+            ax.plot([left + p / 2] * 2, [edge, at], color=MUTED, lw=0.8)
+            ax.text(left + p / 2, at, lab, ha="center", va="bottom" if up else "top", fontsize=10)
+            outside += 1
         left += p
-    ax.set_xlim(0, 100)
-    ax.axis("off")
     real = (tally["real-defect"] + tally["real-maintainability"]) / n
     ax.set_title(f"What AACR-Bench's reference comments are — {n} on 30 PRs, agent-checked against the code: "
                  f"{real:.0%} real", fontsize=12)

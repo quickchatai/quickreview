@@ -84,7 +84,7 @@ export interface BenchCase {
   change_line_count: number;
   /** Reference comments in the pinned dataset (the recall denominator). */
   references: number;
-  /** External benchmarks (bench/aacr/EXTERNAL-BENCHMARKS.md): the public repo
+  /** External benchmarks (bench/aacr/ext/ext.sh; the sets from ext/martian_set.py): the public repo
    * the two commits are FETCHED from when it is not `repo` itself — Martian's
    * benchmark forks, which carry PRs whose upstream refs are gone. `repo`
    * stays the reviewed project's name (the prompt and the case id use it). */

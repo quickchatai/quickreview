@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Martian's goldens by the audit's buckets: real goldens found, the share of
 credits on not-real goldens, and the "every blocking golden found" counts —
-the MARTIAN-CRITIQUE.md / EXTERNAL-BENCHMARKS.md §6 columns — for every tool
-in one Martian work dir.
+the columns of the benchmark paper's tab:martianaudit and its section on every
+listed blocking problem — for every tool in one Martian work dir.
 
     python3 bench/aacr/ext/martian_real.py WORK.martian [WORK.martian ...]
 

@@ -389,8 +389,23 @@ copy_source() {
 
 case "$cmd" in
   doctor)
-    docker version --format 'docker {{.Server.Version}}' || die "docker not reachable"
-    docker image inspect "$IMAGE" --format "image $IMAGE {{.Id}} built {{.Created}}" 2>/dev/null || echo "image $IMAGE: not built (arm $ARM)"
+    # Every live step builds and runs containers: a docker CLI whose daemon is not running, or cannot
+    # start (a VM with no cgroups: "Devices cgroup isn't mounted"), fails here, in one line that says
+    # what to do, before any build or run.
+    command -v docker >/dev/null 2>&1 \
+      || die "docker is not installed: install Docker Engine 25+ (https://docs.docker.com/engine/install/), then rerun bench.sh doctor"
+    if ! dver="$(docker info --format '{{.ServerVersion}}' 2>/dev/null)"; then
+      why="$(docker info 2>&1 >/dev/null | grep -m1 -v '^[[:space:]]*$' || true)"
+      die "docker info fails (${why:-no output}): start the Docker daemon (e.g. sudo systemctl start docker) on a host where it can run containers (a VM without cgroups cannot; use another host or VM), then rerun bench.sh doctor"
+    fi
+    # The auth volume's subpath mount (--mount ...,volume-subpath=agent) needs Docker 25+; an older daemon
+    # would fail only at the first run. A version that is not a plain number is left to the run.
+    dmaj="${dver%%.*}"
+    if [[ "$dmaj" =~ ^[0-9]+$ ]] && (( dmaj < 25 )); then
+      die "docker $dver is too old: Docker 25+ is needed for the auth volume's subpath mount; upgrade Docker Engine (https://docs.docker.com/engine/install/), then rerun bench.sh doctor"
+    fi
+    echo "docker $dver"
+    docker image inspect "$IMAGE" --format "image $IMAGE {{.Id}} built {{.Created}}" 2>/dev/null | grep . || echo "image $IMAGE: not built (arm $ARM)"
     docker volume inspect "$REPOS_VOLUME" >/dev/null 2>&1 && echo "repos volume $REPOS_VOLUME: present" || echo "repos volume $REPOS_VOLUME: not created yet"
     if [[ -n "$PROVIDER" ]]; then
       pe="$(provider_env "$PROVIDER")"
@@ -687,6 +702,14 @@ case "$cmd" in
   eval)
     need_image
     d="$(run_dir)"
+    # A run from the release's archive carries a placeholder where a third-party
+    # tool's text was (export_runs.py `omitted`): the harness would score the
+    # placeholder as the tool's comment. Refused, as reviewForJudge refuses it
+    # (grep -r follows no symlink; the run dir's own results/ must not be one).
+    if [[ -d "$d/results/all" && ! -L "$d/results" && ! -L "$d/results/all" ]] \
+      && grep -rqF '[third-party text omitted' "$d/results/all"; then
+      die "$d/results/all holds the release's \"[third-party text omitted, sha256:…]\" placeholders, not the tool's text: restore it (bench/aacr/harvest_upstream.py --fetch) before eval"
+    fi
     rounds="${ROUNDS:-$([[ "$JUDGE" == mock ]] && echo 1 || echo 3)}"
     judge_args
     envs+=(-e "BENCH_ARM=$ARM" -e "QCR_EVAL_SHARDS=$SHARDS")

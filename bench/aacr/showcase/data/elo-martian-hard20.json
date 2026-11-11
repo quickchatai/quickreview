@@ -1,0 +1,426 @@
+{
+ "source": "elo/martian-hard20-all-gpt (refit by bench/aacr/recompute/elo_ratings.py; both judges pooled)",
+ "games": 596,
+ "prs": 20,
+ "agreement_overall": 0.5604026845637584,
+ "rows": [
+  {
+   "run": "ccvq-hard20-sonnet",
+   "label": "Claude Code max, Sonnet 5.5 agents (Opus main)",
+   "elo": 1665.6973495357672,
+   "lo": 1580.5442111013208,
+   "hi": 1794.0565188789708,
+   "w": 136,
+   "t": 0,
+   "l": 58
+  },
+  {
+   "run": "ccvq-hard20-qr-opus55",
+   "label": "QuickReview, Opus 5.5",
+   "elo": 1627.8309689059865,
+   "lo": 1567.1472600632226,
+   "hi": 1725.9184140621667,
+   "w": 119,
+   "t": 0,
+   "l": 69
+  },
+  {
+   "run": "final1-martian50",
+   "label": "QuickReview, GPT-6.1 Sol",
+   "elo": 1566.113155502457,
+   "lo": 1486.0928414315508,
+   "hi": 1661.6878900691322,
+   "w": 100,
+   "t": 0,
+   "l": 88
+  },
+  {
+   "run": "ccvq-hard20-cc-high-opus55",
+   "label": "Claude Code high, Opus 5.5 (1 agent)",
+   "elo": 1518.1701502627325,
+   "lo": 1424.8230824406955,
+   "hi": 1629.4109885892735,
+   "w": 89,
+   "t": 0,
+   "l": 105
+  },
+  {
+   "run": "ccvq-hard20-qr-sonnet55",
+   "label": "QuickReview, Sonnet 5.5",
+   "elo": 1488.9908088984173,
+   "lo": 1415.3384642892986,
+   "hi": 1584.3161527138702,
+   "w": 76,
+   "t": 0,
+   "l": 112
+  },
+  {
+   "run": "dsv41f-mix-martian50",
+   "label": "QuickReview, DeepSeek V4.1 Flash",
+   "elo": 1405.9194866640478,
+   "lo": 1201.0078165692687,
+   "hi": 1555.8425008767501,
+   "w": 29,
+   "t": 0,
+   "l": 53
+  },
+  {
+   "run": "ccvq-hard20-cc-high-sonnet55",
+   "label": "Claude Code high, Sonnet 5.5 (1 agent)",
+   "elo": 1398.426472745909,
+   "lo": 1290.0604281177964,
+   "hi": 1455.9042355451677,
+   "w": 29,
+   "t": 0,
+   "l": 53
+  },
+  {
+   "run": "glm53-full-martian50",
+   "label": "QuickReview, GLM-5.3 Flash",
+   "elo": 1328.851607484683,
+   "lo": 1109.8695481165942,
+   "hi": 1477.425624362629,
+   "w": 18,
+   "t": 0,
+   "l": 58
+  }
+ ],
+ "pairs": [
+  {
+   "upper": "ccvq-hard20-sonnet",
+   "lower": "ccvq-hard20-qr-opus55",
+   "gap": 37.86638062978068,
+   "lo": -33.10611559527433,
+   "hi": 134.76365230226293,
+   "direct": {
+    "w": 22,
+    "t": 0,
+    "l": 16
+   }
+  },
+  {
+   "upper": "ccvq-hard20-sonnet",
+   "lower": "final1-martian50",
+   "gap": 99.58419403331027,
+   "lo": 4.915331287830895,
+   "hi": 207.2093980702257,
+   "direct": {
+    "w": 24,
+    "t": 0,
+    "l": 14
+   }
+  },
+  {
+   "upper": "ccvq-hard20-sonnet",
+   "lower": "ccvq-hard20-cc-high-opus55",
+   "gap": 147.52719927303474,
+   "lo": 63.8874373745457,
+   "hi": 241.4380796576238,
+   "direct": {
+    "w": 27,
+    "t": 0,
+    "l": 11
+   }
+  },
+  {
+   "upper": "ccvq-hard20-sonnet",
+   "lower": "ccvq-hard20-qr-sonnet55",
+   "gap": 176.70654063734992,
+   "lo": 76.17414196470145,
+   "hi": 296.5652497230094,
+   "direct": {
+    "w": 27,
+    "t": 0,
+    "l": 11
+   }
+  },
+  {
+   "upper": "ccvq-hard20-sonnet",
+   "lower": "dsv41f-mix-martian50",
+   "gap": 259.77786287171944,
+   "lo": 57.213975000332766,
+   "hi": 566.5149003903477,
+   "direct": {
+    "w": 14,
+    "t": 0,
+    "l": 2
+   }
+  },
+  {
+   "upper": "ccvq-hard20-sonnet",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
+   "gap": 267.2708767898582,
+   "lo": 154.09130386103107,
+   "hi": 473.7741871711148,
+   "direct": {
+    "w": 8,
+    "t": 0,
+    "l": 2
+   }
+  },
+  {
+   "upper": "ccvq-hard20-sonnet",
+   "lower": "glm53-full-martian50",
+   "gap": 336.84574205108424,
+   "lo": 129.77489143294451,
+   "hi": 664.9210924329632,
+   "direct": {
+    "w": 14,
+    "t": 0,
+    "l": 2
+   }
+  },
+  {
+   "upper": "ccvq-hard20-qr-opus55",
+   "lower": "final1-martian50",
+   "gap": 61.71781340352959,
+   "lo": -3.4578119054970102,
+   "hi": 129.4398194021337,
+   "direct": {
+    "w": 23,
+    "t": 0,
+    "l": 17
+   }
+  },
+  {
+   "upper": "ccvq-hard20-qr-opus55",
+   "lower": "ccvq-hard20-cc-high-opus55",
+   "gap": 109.66081864325406,
+   "lo": 31.310886230861797,
+   "hi": 195.5576417743689,
+   "direct": {
+    "w": 29,
+    "t": 0,
+    "l": 11
+   }
+  },
+  {
+   "upper": "ccvq-hard20-qr-opus55",
+   "lower": "ccvq-hard20-qr-sonnet55",
+   "gap": 138.84016000756924,
+   "lo": 77.49919356814803,
+   "hi": 222.2117314639395,
+   "direct": {
+    "w": 27,
+    "t": 0,
+    "l": 13
+   }
+  },
+  {
+   "upper": "ccvq-hard20-qr-opus55",
+   "lower": "dsv41f-mix-martian50",
+   "gap": 221.91148224193876,
+   "lo": 21.838557170277227,
+   "hi": 520.5010010587237,
+   "direct": {
+    "w": 7,
+    "t": 0,
+    "l": 3
+   }
+  },
+  {
+   "upper": "ccvq-hard20-qr-opus55",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
+   "gap": 229.40449616007754,
+   "lo": 144.8795719946977,
+   "hi": 413.91542013475555,
+   "direct": {
+    "w": 9,
+    "t": 0,
+    "l": 1
+   }
+  },
+  {
+   "upper": "ccvq-hard20-qr-opus55",
+   "lower": "glm53-full-martian50",
+   "gap": 298.97936142130357,
+   "lo": 115.80617753819774,
+   "hi": 605.0180595321001,
+   "direct": {
+    "w": 8,
+    "t": 0,
+    "l": 2
+   }
+  },
+  {
+   "upper": "final1-martian50",
+   "lower": "ccvq-hard20-cc-high-opus55",
+   "gap": 47.94300523972447,
+   "lo": -61.68388823453779,
+   "hi": 156.03353364479858,
+   "direct": {
+    "w": 21,
+    "t": 0,
+    "l": 19
+   }
+  },
+  {
+   "upper": "final1-martian50",
+   "lower": "ccvq-hard20-qr-sonnet55",
+   "gap": 77.12234660403965,
+   "lo": -6.34982918117521,
+   "hi": 177.89771014782036,
+   "direct": {
+    "w": 24,
+    "t": 0,
+    "l": 16
+   }
+  },
+  {
+   "upper": "final1-martian50",
+   "lower": "dsv41f-mix-martian50",
+   "gap": 160.19366883840917,
+   "lo": -46.081738523881086,
+   "hi": 450.81071752070807,
+   "direct": {
+    "w": 9,
+    "t": 0,
+    "l": 1
+   }
+  },
+  {
+   "upper": "final1-martian50",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
+   "gap": 167.68668275654795,
+   "lo": 74.34032043329194,
+   "hi": 341.0407857471728,
+   "direct": {
+    "w": 7,
+    "t": 0,
+    "l": 3
+   }
+  },
+  {
+   "upper": "final1-martian50",
+   "lower": "glm53-full-martian50",
+   "gap": 237.26154801777398,
+   "lo": 22.4287266450915,
+   "hi": 533.8438348503703,
+   "direct": {
+    "w": 8,
+    "t": 0,
+    "l": 2
+   }
+  },
+  {
+   "upper": "ccvq-hard20-cc-high-opus55",
+   "lower": "ccvq-hard20-qr-sonnet55",
+   "gap": 29.179341364315178,
+   "lo": -61.693236157073216,
+   "hi": 140.3663749590578,
+   "direct": {
+    "w": 25,
+    "t": 0,
+    "l": 15
+   }
+  },
+  {
+   "upper": "ccvq-hard20-cc-high-opus55",
+   "lower": "dsv41f-mix-martian50",
+   "gap": 112.2506635986847,
+   "lo": -110.14188233357777,
+   "hi": 418.9157484035777,
+   "direct": {
+    "w": 6,
+    "t": 0,
+    "l": 4
+   }
+  },
+  {
+   "upper": "ccvq-hard20-cc-high-opus55",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
+   "gap": 119.74367751682348,
+   "lo": 7.122671334017468,
+   "hi": 303.5135249238542,
+   "direct": {
+    "w": 10,
+    "t": 0,
+    "l": 6
+   }
+  },
+  {
+   "upper": "ccvq-hard20-cc-high-opus55",
+   "lower": "glm53-full-martian50",
+   "gap": 189.3185427780495,
+   "lo": -26.734225176557175,
+   "hi": 503.6651711656382,
+   "direct": {
+    "w": 7,
+    "t": 0,
+    "l": 3
+   }
+  },
+  {
+   "upper": "ccvq-hard20-qr-sonnet55",
+   "lower": "dsv41f-mix-martian50",
+   "gap": 83.07132223436952,
+   "lo": -117.18682012427689,
+   "hi": 358.0789230138296,
+   "direct": {
+    "w": 8,
+    "t": 0,
+    "l": 2
+   }
+  },
+  {
+   "upper": "ccvq-hard20-qr-sonnet55",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
+   "gap": 90.5643361525083,
+   "lo": -13.018139185662449,
+   "hi": 269.13351134411073,
+   "direct": {
+    "w": 6,
+    "t": 0,
+    "l": 4
+   }
+  },
+  {
+   "upper": "ccvq-hard20-qr-sonnet55",
+   "lower": "glm53-full-martian50",
+   "gap": 160.13920141373433,
+   "lo": -29.354756870556002,
+   "hi": 452.21706859430014,
+   "direct": {
+    "w": 7,
+    "t": 0,
+    "l": 3
+   }
+  },
+  {
+   "upper": "dsv41f-mix-martian50",
+   "lower": "ccvq-hard20-cc-high-sonnet55",
+   "gap": 7.493013918138786,
+   "lo": -200.4083148176842,
+   "hi": 170.75888365968012,
+   "direct": {
+    "w": 10,
+    "t": 0,
+    "l": 6
+   }
+  },
+  {
+   "upper": "dsv41f-mix-martian50",
+   "lower": "glm53-full-martian50",
+   "gap": 77.06787917936481,
+   "lo": -32.849840817206996,
+   "hi": 236.22065624045854,
+   "direct": {
+    "w": 7,
+    "t": 0,
+    "l": 3
+   }
+  },
+  {
+   "upper": "ccvq-hard20-cc-high-sonnet55",
+   "lower": "glm53-full-martian50",
+   "gap": 69.57486526122602,
+   "lo": -94.92993058272782,
+   "hi": 300.00654747982367,
+   "direct": {
+    "w": 7,
+    "t": 0,
+    "l": 3
+   }
+  }
+ ]
+}

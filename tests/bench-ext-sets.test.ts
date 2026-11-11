@@ -1,4 +1,4 @@
-// External-benchmark case sets (bench/aacr/EXTERNAL-BENCHMARKS.md): the
+// External-benchmark case sets (bench/aacr/ext/martian_set.py, sweprbench_set.py): the
 // dataset-pin REGISTRY that lets parseCaseSet accept them without loosening
 // the AACR-Bench v1.0 pin, the new case fields' validation, and the committed
 // sets themselves — including that the SWE-PRBench set's synthetic commit ids

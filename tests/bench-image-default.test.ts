@@ -48,6 +48,26 @@ describe("bench.sh: scoring defaults to the run's recorded image", () => {
     expect(lastRun(t.log)).toContain("qcr-bench:r9 eval fresh10 mock");
   });
 
+  // MUTATION: drop the placeholder grep from bench.sh eval — this fails
+  it("eval refuses a run whose results carry the release's third-party placeholder", () => {
+    const t = tree();
+    const all = join(t.runs, "r3", "results", "all");
+    mkdirSync(all, { recursive: true });
+    writeFileSync(
+      join(all, "o__r@1234567.json"),
+      JSON.stringify({
+        review: { comments: [{ content: "[third-party text omitted, sha256:00; see u]" }] },
+      }),
+    );
+    const r = run(t, {}, "eval", "--run", "r3", "--set", "fresh10", "--judge", "mock");
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("placeholders, not the tool's text");
+    expect(lastRun(t.log)).toBe("");
+    writeFileSync(join(all, "o__r@1234567.json"), JSON.stringify({ review: { comments: [] } }));
+    run(t, {}, "eval", "--run", "r3", "--set", "fresh10", "--judge", "mock");
+    expect(lastRun(t.log)).toContain("qcr-bench:r9 eval fresh10 mock");
+  });
+
   it("an explicit QCR_BENCH_IMAGE still wins", () => {
     const t = tree();
     run(

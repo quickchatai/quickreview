@@ -7,7 +7,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -107,4 +116,77 @@ describe("bench.sh with every knob unset = the published sandbox commands", () =
     it(`${arm} (${r})`, async () => {
       expect(await reviewLine(arm, r, "smoke10", imgVar, img)).toEqual([want(r)]);
     });
+});
+
+describe("bench.sh doctor: a docker that cannot run containers fails plainly", () => {
+  // The stub's `docker info` answers like a daemon that is down; `docker version` (which a
+  // CLI with no daemon still half-answers) is never what doctor trusts.
+  const doctor = (dockerBody: string, path?: string) => {
+    writeFileSync(join(bin, "docker"), `#!/usr/bin/env bash\n${dockerBody}\n`);
+    chmodSync(join(bin, "docker"), 0o755);
+    return run("/bin/bash", [join(ROOT, "bench", "aacr", "bench.sh"), "doctor"], {
+      env: { PATH: path ?? `${bin}:${process.env.PATH}`, HOME: t, QCR_BENCH_RUNS_DIR: runs },
+    }).then(
+      (r) => ({ code: 0, stdout: r.stdout, stderr: r.stderr }),
+      (e: { code: number; stdout: string; stderr: string }) => ({
+        code: e.code,
+        stdout: e.stdout,
+        stderr: e.stderr,
+      }),
+    );
+  };
+
+  // MUTATION: drop the `docker info` check from bench.sh doctor (back to `docker version`) — this fails
+  it("exits 1 with one line naming docker info's error and what to do", async () => {
+    const r = await doctor(
+      `[[ "$1" == info ]] && { echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1; }\nexit 0`,
+    );
+    expect(r.code).toBe(1);
+    const lines = r.stderr.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(
+      /^bench: docker info fails \(Cannot connect to the Docker daemon .*\): start the Docker daemon .* then rerun bench\.sh doctor$/,
+    );
+    expect(r.stdout).not.toContain("volume");
+  });
+
+  it("prints the daemon's version and goes on when docker info answers", async () => {
+    const r = await doctor(`[[ "$1" == info ]] && { echo 29.0.0; exit 0; }\nexit 1`);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout.split("\n")[0]).toBe("docker 29.0.0");
+  });
+
+  // MUTATION: drop the Docker 25+ version check from bench.sh doctor — this fails
+  it("exits 1 with one line when the daemon is older than Docker 25", async () => {
+    const r = await doctor(`[[ "$1" == info ]] && { echo 24.0.7; exit 0; }\nexit 0`);
+    expect(r.code).toBe(1);
+    const lines = r.stderr.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(
+      /^bench: docker 24\.0\.7 is too old: Docker 25\+ is needed for the auth volume's subpath mount; .*rerun bench\.sh doctor$/,
+    );
+    expect(r.stdout).toBe("");
+  });
+
+  it("accepts Docker 25 exactly", async () => {
+    const r = await doctor(`[[ "$1" == info ]] && { echo 25.0.0; exit 0; }\nexit 1`);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout.split("\n")[0]).toBe("docker 25.0.0");
+  });
+
+  // MUTATION: drop the `command -v docker` check from bench.sh doctor — this fails
+  it("says how to install docker when there is none", async () => {
+    // a PATH with the few tools bench.sh needs before doctor, and no docker
+    const tools = join(t, "tools");
+    mkdirSync(tools);
+    for (const tool of ["dirname", "grep", "id"]) {
+      const which = ["/usr/bin", "/bin"].map((d) => join(d, tool)).find((p) => existsSync(p))!;
+      symlinkSync(which, join(tools, tool));
+    }
+    const r = await doctor("exit 0", tools);
+    expect(r.code).toBe(1);
+    expect(r.stderr.trim()).toMatch(
+      /^bench: docker is not installed: install Docker Engine 25\+ .*rerun bench\.sh doctor$/,
+    );
+  });
 });
