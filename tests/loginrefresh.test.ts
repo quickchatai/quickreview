@@ -1344,9 +1344,10 @@ describe("the daemon imports neither pi nor src/engine/", () => {
     expect(daemonReachesEngine(root)).toEqual([]);
   });
 
-  it("the daemon reaches only the supervisor, its types and the lock constant of src/loginrefresh/", () => {
+  it("the daemon reaches only the supervisor, its types, the lock constant and the owner question of src/loginrefresh/", () => {
     expect(daemonReachedLoginRefresh(root, DAEMON_ROOTS)).toEqual([
       "src/loginrefresh/lock.ts",
+      "src/loginrefresh/owner.ts",
       "src/loginrefresh/supervisor.ts",
       "src/loginrefresh/types.ts",
     ]);
