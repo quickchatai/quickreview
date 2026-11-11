@@ -57760,6 +57760,30 @@
   },
   {
    "file": "README.md",
+   "anchor": "1. **Sign in to a model provider, or have a provider key in the",
+   "tokens": [
+    "1"
+   ],
+   "why": "list numbering"
+  },
+  {
+   "file": "README.md",
+   "anchor": "2. **Connect GitHub**",
+   "tokens": [
+    "2"
+   ],
+   "why": "list numbering"
+  },
+  {
+   "file": "README.md",
+   "anchor": "3. **Choose a repository.**",
+   "tokens": [
+    "3"
+   ],
+   "why": "list numbering"
+  },
+  {
+   "file": "README.md",
    "anchor": "trigger and severity cap, is \u00a73.3 of the",
    "tokens": [
     "3.3"

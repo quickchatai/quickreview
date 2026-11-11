@@ -443,10 +443,10 @@ reload step and the move from the old Docker-based Claude Code plugin are in
 - **Presets:** `[review] preset` is `default`, `max` (every model at its
   ceiling) or `low` (about half the cost and time, lower recall).
 - **Cost:** the daemon is one small container; the model spend is per round.
-  On AACR-Bench a review on GPT-6.1 Sol averaged $2.06 per PR at list prices
-  (median $1.87); on Martian's and Qodo's PRs, $2.84 and $2.48. Those figures
-  are that model's; another model costs what its own prices and token use
-  make it. Watch it with `qcr spend` and `qcr today`, time to first verdict
+  On AACR-Bench a review averaged $2.06 per PR at list prices (median
+  $1.87); on Martian's and Qodo's PRs, $2.84 and $2.48. Those figures are
+  GPT-6.1 Sol's; another model costs what its own prices and token use make
+  it. Watch it with `qcr spend` and `qcr today`, time to first verdict
   with `qcr metrics`, and start with the trigger label on a few PRs.
 - **Operating:** `qcr status`, `qcr why <pr>`, `qcr tui`, and
   `docker compose logs -f daemon` on the laptop route.
