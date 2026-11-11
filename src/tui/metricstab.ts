@@ -21,6 +21,7 @@ import type {
   OpsInfo,
   TimelinePayload,
 } from "../metrics.js";
+import { spendText } from "@quickchatai/pi-quickreview/src/pricing.js";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
@@ -552,6 +553,11 @@ export function metricsCards(
         const rounds = daily.map((d) => d.rounds);
         const prs = daily.map((d) => d.prs);
         const spend = daily.map((d) => d.spend_usd);
+        // Rounds with tokens and no price are in no bar: said beside the
+        // chart, so a flat day does not read as a free one.
+        const unknown = daily.reduce((n, d) => n + (d.unknown_spend_rounds ?? 0), 0);
+        const left =
+          unknown > 0 ? ` · ${unknown} round${unknown === 1 ? "" : "s"} unknown` : "";
         const days = daily.map((d) => d.day);
         if (chartH > 0) {
           return [
@@ -559,7 +565,7 @@ export function metricsCards(
             ...columnChart(rounds, w, chartH, ACCENTS.blue),
             dayAxis(days, w),
             "",
-            dim(`spend/day · max ${usd(Math.max(...spend))}`),
+            dim(`spend/day · max ${usd(Math.max(...spend))}${left}`),
             ...columnChart(spend, w, chartH, ACCENTS.yellow),
             dayAxis(days, w),
           ];
@@ -568,7 +574,7 @@ export function metricsCards(
         return [
           `${fit("rounds", 7)}${ACCENTS.blue}${sparkline(rounds, sparkW)}${RESET} ${Math.max(...rounds)}`,
           `${fit("prs", 7)}${ACCENTS.cyan}${sparkline(prs, sparkW)}${RESET} ${Math.max(...prs)}`,
-          `${fit("spend", 7)}${ACCENTS.yellow}${sparkline(spend, sparkW)}${RESET} ${usd(Math.max(...spend))}`,
+          `${fit("spend", 7)}${ACCENTS.yellow}${sparkline(spend, sparkW)}${RESET} ${usd(Math.max(...spend))}${left}`,
         ];
       },
     },
@@ -751,7 +757,7 @@ export function statStrip(win: MetricsWindow, width: number): string {
     `${FG.dim}reviewed${RESET} ${STRONG}${h.prs_reviewed}${DRESET}`,
     `${FG.approve}✓${h.approvals}${RESET} ${FG.request_changes}✗${h.request_changes}${RESET}`,
     `${FG.dim}rounds${RESET} ${STRONG}${h.rounds}${DRESET}`,
-    `${FG.accent}$${h.spend_usd.toFixed(2)}${RESET}`,
+    `${FG.accent}${spendText(h.spend_usd, h.unknown_spend_rounds)}${RESET}`,
     `${h.overruns > 0 ? WARN : FG.dim}overruns ${h.overruns}${RESET}`,
     // The loud cancellations only — a round that stopped dead. The benign
     // redeploy orphan sweep is in the card below, never in the strip: a tile

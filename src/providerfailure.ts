@@ -8,16 +8,22 @@
 // minutes later succeeds. So it is retried with backoff, it never parks a PR,
 // and once the immediate retries are spent it waits on the automatic retry
 // ladder (`retry_wait`) instead of an operator's `u`. A spent usage window is
-// not transient in that sense (no pause of minutes cures it) and a refused
-// login is the operator's to fix.
+// not transient in that sense (no pause of minutes cures it), a refused
+// login is the operator's to fix, and a refused model is that one model's: it
+// counts against its PR like any other failure and says nothing about the
+// login.
 //
 // This module is a daemon module: it never imports the engine
 // (tests/fences-worker-supervisor.test.ts), so the error-message reading is the
-// core's src/modelerrors.ts.
-import { providerErrorKind } from "@quickchatai/pi-quickreview/src/modelerrors.js";
+// core's src/modelerrors.ts: one ordered classifier, and nothing here tests a
+// pattern of its own on a provider's message.
+import {
+  providerErrorKind,
+  type ProviderErrorKind,
+} from "@quickchatai/pi-quickreview/src/modelerrors.js";
 
-export type ProviderFailureKind =
-  "transport" | "rate_limited" | "overloaded" | "usage_limit" | "other";
+/** The classifier's kinds (src/modelerrors.ts), under the daemon's name. */
+export type ProviderFailureKind = ProviderErrorKind;
 
 /** The words botworker.ts puts before the provider's own message: a turn the
  * provider ended with an error, and a turn whose output stream broke. */
@@ -25,7 +31,7 @@ const PROVIDER_FAILURE = /(?:the provider failed the turn|output stream failed):
 
 /** What a worker's failure text says about the provider, or undefined when the
  * text is not a provider failure botworker.ts worded (a refused login, a
- * wall-clock cap, a crash). */
+ * refused model, a wall-clock cap, a crash). */
 export function providerFailureKind(error: string): ProviderFailureKind | undefined {
   const message = PROVIDER_FAILURE.exec(error)?.[1];
   if (message === undefined) return undefined;

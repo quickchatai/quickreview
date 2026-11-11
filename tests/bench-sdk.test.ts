@@ -25,7 +25,7 @@ import {
   mainSessionOf,
   readOpenMeta,
 } from "@quickchatai/pi-quickreview/src/engine/openable.js";
-import { runRound } from "@quickchatai/pi-quickreview/src/engine/round.js";
+import { prepareRound, runRound } from "@quickchatai/pi-quickreview/src/engine/round.js";
 import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
 import { findSession } from "../src/opencli.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
@@ -350,6 +350,105 @@ describe("a bench review round on the SDK with the engine's planned wave", () =>
     expect(
       (benchSdkRuntime({ plannedWave: false }) as { engineLens?: unknown }).engineLens,
     ).toBeUndefined();
+  });
+});
+
+describe("the round's env on the bench's key route", () => {
+  const KEYS = {
+    QCR_BENCH_AUTH: "api-key",
+    OPENAI_API_KEY: "openai-key-value",
+    ANTHROPIC_API_KEY: "anthropic-key-value",
+    GEMINI_API_KEY: "gemini-key-value",
+    DIGITALOCEAN_API_KEY: "digitalocean-key-value",
+  };
+  const saved = Object.fromEntries(Object.keys(KEYS).map((k) => [k, process.env[k]]));
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  // The session's host looks a provider key up in its own process's
+  // environment, by pi's names (tests/review-sdk.test.ts pins that lookup), so
+  // the round has nothing to copy, and what is not in its env cannot reach a tool.
+  // MUTATION: spread `process.env.ANTHROPIC_API_KEY`, or the bench's
+  // `apiKeyEnv()`, into prepareRound's env again - this fails.
+  it("copies no provider key, whatever the process holds and whatever route the bench is on", () => {
+    Object.assign(process.env, KEYS);
+    const cfg = benchConfig("");
+    cfg.models.model = "faux/m";
+    const prep = prepareRound(
+      {
+        root: mkRoot(tmp, `root-${n++}`),
+        agentDir: agentDirWith(),
+        agentScope: "user",
+        tree: mkTree(tmp, `tree-${n++}`),
+        files: FILES,
+        target: TARGET,
+        outDir: join(tmp, `out-${n++}`),
+        cfg,
+        ecosystem: ecosystemFor("none"),
+        timeoutMs: 10 * 60_000,
+      },
+      undefined,
+    );
+    expect(Object.keys(prep.env).filter((k) => /KEY|TOKEN|SECRET|QCR_BENCH/.test(k))).toEqual([]);
+    const text = JSON.stringify(prep.env);
+    for (const value of Object.values(KEYS).filter((v) => v.endsWith("-key-value")))
+      expect(text, value).not.toContain(value);
+    // The env is still the round's: the check is not reading an empty object.
+    expect(prep.env).toMatchObject({ QCR_PR: String(TARGET.number), LANG: "C.UTF-8" });
+  });
+});
+
+describe("a bench case whose login cannot last it", () => {
+  // A bench plan keeps explicit pins, and a case's host borrows the case's
+  // login with nothing to renew it (reviewsdk.ts `reviewHostOptions`): a login
+  // shorter than the case is left out and named to the host's route.
+  // MUTATION: drop the borrow's `skipped` from the route reviewHostOptions
+  // hands the host - the plan's pin is refused as one with no credential (or
+  // moved to another provider), not as a login too short, and this fails.
+  it("a plan pinned to that login's provider is refused as login-too-short, before the model is asked anything", async () => {
+    const agentDir = agentDirWith(["pass-a"]);
+    const expires = Date.now() + 60_000;
+    writeFileSync(
+      join(agentDir, "auth.json"),
+      JSON.stringify({
+        "openai-codex": { type: "oauth", access: "a", refresh: "r", expires },
+      }),
+    );
+    const seen: unknown[] = [];
+    const runtime = benchSdkRuntime({
+      makeHost: fauxHost([() => fauxAssistantMessage("done")], seen),
+      processEnv: {},
+    });
+    const cfg = benchConfig("");
+    cfg.models.model = "openai-codex/any-model";
+    await expect(
+      runRound(
+        {
+          root: mkRoot(tmp, `root-${n++}`),
+          agentDir,
+          agentScope: "user",
+          tree: mkTree(tmp, `tree-${n++}`),
+          files: FILES,
+          target: TARGET,
+          outDir: join(tmp, `out-${n++}`),
+          cfg,
+          ecosystem: ecosystemFor("none"),
+          timeoutMs: 10 * 60_000,
+        },
+        runtime,
+      ),
+    ).rejects.toMatchObject({
+      name: "RouteRefused",
+      refusal: {
+        code: "login-too-short",
+        logins: [{ provider: "openai-codex", name: "openai-codex", expiresAt: expires }],
+      },
+    });
+    expect(seen).toEqual([]);
   });
 });
 

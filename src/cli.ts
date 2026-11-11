@@ -31,9 +31,11 @@ import {
   cancelCauseLabel,
   parseExecutedPasses,
   roundUsage,
+  spendIsUnknown,
   StateStore,
   tallyCancellations,
   type CancellationTally,
+  type RoundRow,
   type StatusSnapshot,
 } from "./state.js";
 import {
@@ -71,6 +73,7 @@ import { operatorCommandWriteScript } from "./tui/unwedge.js";
 import { shellQuote, transportOf } from "./tui/remote.js";
 import { MutationGate } from "@quickchatai/pi-quickreview/src/gate.js";
 import { foldTier } from "@quickchatai/pi-quickreview/src/types.js";
+import { spendText } from "@quickchatai/pi-quickreview/src/pricing.js";
 import { botAccountLogin, isPersonMode } from "@quickchatai/pi-quickreview/src/identity.js";
 import type { GitHubAdapter } from "./github.js";
 import type { OutcomeCapture } from "./outcomes.js";
@@ -471,7 +474,9 @@ export function renderStatus(snapshot: StatusSnapshot): string {
   if (snapshot.run_host?.warning) lines.push(`WARNING: ${oneLine(snapshot.run_host.warning)}`);
   if (snapshot.digest_headline) lines.push(`digest: ${oneLine(snapshot.digest_headline)}`);
   lines.push(
-    `rounds running: ${snapshot.running_rounds}   total spend: $${snapshot.total_spend_usd.toFixed(2)}`,
+    // The sum with the rounds it could not count; a snapshot from an older
+    // daemon carries no count, and the sum is then said as it is.
+    `rounds running: ${snapshot.running_rounds}   total spend: ${spendText(snapshot.total_spend_usd, snapshot.total_unknown_spend_rounds)}`,
   );
   // Whether reviewer memory works, every time — an absent block
   // (older daemon) and an unmeasured one say so, never "healthy".
@@ -573,28 +578,38 @@ function cmdStatus(): void {
   console.log(renderStatus(JSON.parse(readFileSync(path, "utf8")) as StatusSnapshot));
 }
 
+/** `qcr spend`, as its two lines: all time, and `today` (a UTC `YYYY-MM-DD`).
+ * A sum is pi's list prices over the rounds that have one; the rounds that
+ * recorded tokens and no price are said beside it, never inside it as $0. */
+export function spendLines(store: StateStore, today: string): string[] {
+  // est_usd is the one spend field; expired rounds count (`roundUsage`).
+  const todayRounds = store.roundsOn(today);
+  const day = roundUsage(todayRounds);
+  const totals = store.db
+    .prepare(
+      "SELECT COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM rounds",
+    )
+    .get() as { tin: number; tout: number };
+  return [
+    `total spend: ${spendText(store.totalSpend(), store.totalUnknownSpendRounds(), "at list prices")} — ${totals.tin} in / ${totals.tout} out tokens`,
+    `today (${today}): ${spendText(day.spend_usd, day.unknown_spend_rounds)} across ${todayRounds.length} rounds — ${day.tokens_in} in / ${day.tokens_out} out tokens`,
+  ];
+}
+
 function cmdSpend(): void {
   const store = openStore();
   try {
-    const total = store.totalSpend();
-    const today = new Date().toISOString().slice(0, 10);
-    // est_usd is the one spend field; expired rounds count (`roundUsage`).
-    const todayRounds = store.roundsOn(today);
-    const day = roundUsage(todayRounds);
-    const totals = store.db
-      .prepare(
-        "SELECT COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM rounds",
-      )
-      .get() as { tin: number; tout: number };
-    console.log(
-      `total spend: $${total.toFixed(2)} (est) — ${totals.tin} in / ${totals.tout} out tokens`,
-    );
-    console.log(
-      `today (${today}): $${day.spend_usd.toFixed(2)} across ${todayRounds.length} rounds — ${day.tokens_in} in / ${day.tokens_out} out tokens`,
-    );
+    for (const line of spendLines(store, new Date().toISOString().slice(0, 10))) console.log(line);
   } finally {
     store.close();
   }
+}
+
+/** One round's spend as `qcr today` says it: its price, `unknown` when it
+ * recorded tokens and no price, `—` when it was never measured. */
+export function roundSpendWord(r: Pick<RoundRow, "est_usd" | "tokens_in" | "tokens_out">): string {
+  if (r.est_usd !== null) return `$${r.est_usd.toFixed(2)}`;
+  return spendIsUnknown(r) ? "unknown" : "—";
 }
 
 function cmdToday(): void {
@@ -611,7 +626,7 @@ function cmdToday(): void {
       // A cancelled round says why inline — its status alone does not.
       const why = r.status === "cancelled" ? ` cause=${cancelCauseLabel(r.cancel_cause)}` : "";
       console.log(
-        `#${r.pr} round ${r.round_no} (${r.round_type}) [${r.status}]${why} verdict=${r.verdict ?? "—"} spend=$${(r.est_usd ?? 0).toFixed(2)}${tokens} lenses=${r.lenses}`,
+        `#${r.pr} round ${r.round_no} (${r.round_type}) [${r.status}]${why} verdict=${r.verdict ?? "—"} spend=${roundSpendWord(r)}${tokens} lenses=${r.lenses}`,
       );
     }
     console.log(todayCancellationLine(cancellationsOn(store, today)));
@@ -635,7 +650,12 @@ export interface WhyPayload {
   trigger_ts?: string | null;
   stale_recheck?: boolean;
   updated_at?: string;
+  /** The known sum over the PR's rounds. */
   spend_usd: number;
+  /** How many of its rounds recorded tokens and no price: the sum counts none
+   * of them. Absent in a payload from an older `qcr`, where it is unknown,
+   * not zero. */
+  unknown_spend_rounds?: number;
   rounds: Array<{
     round_no: number;
     round_type: string;
@@ -770,8 +790,10 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
   const payload: WhyPayload = {
     pr: n,
     known: pr !== undefined || rounds.length > 0,
-    // Every round's cost, expired ones included.
+    // Every round's cost, expired ones included; the rounds with tokens and
+    // no price are counted beside the sum, never inside it.
     spend_usd: roundUsage(rounds).spend_usd,
+    unknown_spend_rounds: roundUsage(rounds).unknown_spend_rounds,
     rounds: rounds.map((r) => ({
       round_no: r.round_no,
       round_type: r.round_type,
@@ -826,6 +848,7 @@ export function todayJson(
   date: string;
   rounds: unknown[];
   spend_usd: number;
+  unknown_spend_rounds: number;
   tokens_in: number;
   tokens_out: number;
   events: unknown[];
@@ -2281,7 +2304,7 @@ export async function main(rawArgv: string[]): Promise<void> {
     default:
       console.log(
         "usage: qcr <version|model [use <provider[/model]>|reset]|config check [--config-home <dir>]|home|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|takeover <n>|debug-round <n>|release <n>|tui [pr|overseer]|drain <on [--hold]|off>|pause-pr <pr> [--reason <text>]|resume-pr <pr>|review-now <pr> [--security]|github-token sync [--gh <path>] [--secrets-dir <dir>]|message <pr> [--may-post] <text...>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
-          "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--security] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|threat-model propose|threat-model start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
+          "companion <up|down|status|rebuild>|review [start|status|stop|branch|--uncommitted|--diff FILE|-|<PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--model PROVIDER/MODEL] [--security] [--json]|live [RUN_ID|DIR] [--lens ID] [--round N] [--follow] [--json]|open [RUN_ID|DIR|FILE.jsonl|scan[:RUN]|pr N [--round R]] [--lens ID] [--write] [--print]|scan <preview|start|status|stop|findings|matches|match|suggestions|stage2 propose|stage2 start|threat-model propose|threat-model start|dismiss|units show|units propose|units adjust|units save|login|doctor|rebuild> [--model PROVIDER/MODEL]|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
       // A bare `qcr` (or an explicit help) is a usage request; anything else

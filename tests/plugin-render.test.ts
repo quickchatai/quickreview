@@ -31,7 +31,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
-import { supportedContracts } from "@quickchatai/pi-quickreview/src/contract.js";
+import {
+  CONTRACTS,
+  REVIEW_SCHEMA_VERSION,
+  SCAN_SCHEMA_VERSION,
+  VERSION_SCHEMA_VERSION,
+  supportedContracts,
+} from "@quickchatai/pi-quickreview/src/contract.js";
+import { PRICE_BASES } from "@quickchatai/pi-quickreview/src/measured.js";
 import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 import { SECURITY_LENSES } from "@quickchatai/pi-quickreview/src/plugin/args.js";
 import type { ThreatModelPreview } from "@quickchatai/pi-quickreview/src/scan/scanrun.js";
@@ -346,7 +353,7 @@ describe("the bodies", () => {
             /quickreview@\S+ (review|scan|version)\b/.test(c),
         );
         expect(bare, p).toEqual([]);
-        for (const c of runs(body).filter((r) => /--schema 1 scan\b/.test(r)))
+        for (const c of runs(body).filter((r) => /--schema 2 scan\b/.test(r)))
           expect(c, p).toContain("--sandbox host");
         expect(body, p).not.toMatch(
           /qcr-json|docker (run|login|pull)|qcr-setup\.sh|CLAUDE_PLUGIN_ROOT/,
@@ -358,7 +365,7 @@ describe("the bodies", () => {
   // MUTATION: drop the npx fallback from the pick-qcr partial — this fails.
   it.each(HOSTS)("%s: probes the installed qcr first and falls back to the pinned npx", (t) => {
     for (const [p, body] of bodies(t)) {
-      const probe = body.indexOf("qcr --schema 1 version");
+      const probe = body.indexOf("qcr --schema 2 version");
       const npx = body.indexOf("npx -y @quickchatai/quickreview@0.0.0-golden");
       expect(probe, p).toBeGreaterThanOrEqual(0);
       expect(npx, p).toBeGreaterThan(probe);
@@ -387,7 +394,7 @@ describe("the bodies", () => {
   });
 
   // Every call the agent is told to make goes through qcr scan's own parser:
-  // a full `qcr --schema 1 scan …` call; a bare fragment that leads with a
+  // a full `qcr --schema 2 scan …` call; a bare fragment that leads with a
   // scan verb (`status --wait --timeout S`), parsed as `scan <fragment>`;
   // and a bare flag a step names (`--path DIR`, `--limit N`), parsed on the
   // call it adds to, the full call before it. A placeholder (`S`, `N`, a
@@ -457,7 +464,7 @@ describe("the bodies", () => {
         const span = m[0];
         const first = span.replace(/^`+/, "").split(/\s+/)[0]!;
         let argv: string[];
-        if (/--schema 1 scan\b/.test(span)) {
+        if (/--schema 2 scan\b/.test(span)) {
           const w = words(span);
           argv = w.slice(w.indexOf("scan") + 1);
           last = argv;
@@ -480,9 +487,9 @@ describe("the bodies", () => {
     const scan = bodies(t).find(([p]) => /scan/.test(p))![1];
     const at = [
       "no saved unit cut",
-      "`qcr --schema 1 scan units propose --sandbox host`",
+      "`qcr --schema 2 scan units propose --sandbox host`",
       "ask whether to save it",
-      "`qcr --schema 1 scan units save --sandbox host`",
+      "`qcr --schema 2 scan units save --sandbox host`",
       "preview again",
     ].map((s) => scan.indexOf(s));
     expect(
@@ -492,7 +499,7 @@ describe("the bodies", () => {
     expect([...at].sort((a, b) => a - b)).toEqual(at);
     // a draft save refuses is fixed with the adjust ops qcr takes, every one named
     // MUTATION: add an op to ADJUST_OPS in packages/pi-plugin/src/scan/unitcut.ts — this fails.
-    expect(scan).toContain("`qcr --schema 1 scan units adjust --file - --sandbox host`");
+    expect(scan).toContain("`qcr --schema 2 scan units adjust --file - --sandbox host`");
     const named = /a JSON array of ops on stdin \(([^;]+);/.exec(scan)?.[1] ?? "";
     expect([...named.matchAll(/`(\w+)`/g)].map((m) => m[1])).toEqual([...ADJUST_OPS]);
   });
@@ -523,9 +530,9 @@ describe("the bodies", () => {
       "`preview.threat_model_stage`",
       "`cap_usd`",
       "ask for a go for this stage alone",
-      "`qcr --schema 1 scan threat-model start --key <preview.threat_model_stage.key> --sandbox host`",
-      "`qcr --schema 1 scan status --wait --sandbox host`",
-      "`qcr --schema 1 scan preview --sandbox host` again",
+      "`qcr --schema 2 scan threat-model start --key <preview.threat_model_stage.key> --sandbox host`",
+      "`qcr --schema 2 scan status --wait --sandbox host`",
+      "`qcr --schema 2 scan preview --sandbox host` again",
       "\n2. ",
     ].map((s) => scan.indexOf(s));
     expect(
@@ -577,7 +584,7 @@ describe("the bodies", () => {
   // plugins/qcr/templates/setup.md's host body — this fails.
   it.each(HOSTS)("%s: setup checks qcr's contract, then the login", (t) => {
     const setup = bodies(t).find(([p]) => /setup/.test(p))![1];
-    const at = ["qcr --schema 1 version", "auth.json", "`qcr login`"].map((s) => setup.indexOf(s));
+    const at = ["qcr --schema 2 version", "auth.json", "`qcr login`"].map((s) => setup.indexOf(s));
     expect(at.every((i) => i >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
     expect(setup).not.toMatch(/CLAUDE_PLUGIN_ROOT|qcr-setup\.sh/);
@@ -590,7 +597,7 @@ describe("the bodies", () => {
         const asks = body.split("require_escalated").length - 1;
         expect(asks, p).toBe(t === "codex" ? 1 : 0);
         if (t === "codex")
-          expect(body.indexOf("require_escalated"), p).toBeLessThan(body.indexOf("qcr --schema 1"));
+          expect(body.indexOf("require_escalated"), p).toBeLessThan(body.indexOf("qcr --schema 2"));
       }
   });
 
@@ -612,9 +619,46 @@ describe("the bodies", () => {
 });
 
 describe("the contract", () => {
-  // MUTATION: set TEMPLATE_CONTRACT to 2 — this fails.
+  // MUTATION: set TEMPLATE_CONTRACT to 3 — this fails.
   it("the templates' contract is one this qcr prints", () => {
     expect(supportedContracts()).toContain(TEMPLATE_CONTRACT);
+  });
+
+  // One number moves every template at once. The bodies above spell the
+  // calls with the number itself (`qcr --schema 2 …`), so it is pinned here.
+  // MUTATION: set TEMPLATE_CONTRACT back to 1 — the review skill reads
+  // `preview.model`, `preview.price_basis` and a null estimate, which a
+  // contract-1 payload on a model with no measured price never carries (the
+  // call is refused instead), and this fails.
+  it("is contract 2: the code's own review, scan and version families", () => {
+    expect(TEMPLATE_CONTRACT).toBe(2);
+    expect(CONTRACTS[TEMPLATE_CONTRACT]).toEqual({
+      review: REVIEW_SCHEMA_VERSION,
+      scan: SCAN_SCHEMA_VERSION,
+      version: VERSION_SCHEMA_VERSION,
+    });
+  });
+
+  // MUTATION: drop the `unmeasured` bullet from plugins/qcr/templates/review.md's
+  // host body — an agent shows a null estimate as a price (or as $0), and
+  // this fails. MUTATION: tell the agent to pass `--model` for the provider
+  // question — the answer holds for one run, and this fails.
+  it.each(HOSTS)("%s: review reads the model and what the price is known from", (t) => {
+    const review = bodies(t).find(([p]) => /review/.test(p))![1];
+    expect(review).toContain("`preview.model.spec`");
+    expect(review).toContain("`preview.price_basis`");
+    // every basis the preview can carry has its own instruction
+    for (const basis of PRICE_BASES) expect(review, basis).toContain(`\`${basis}\``);
+    expect(review).toMatch(/`unmeasured`: `preview\.estimate_usd` is `null`/);
+    expect(review).toMatch(/Never show a price you worked out yourself/);
+    expect(review).toMatch(/no dollar stop/);
+    // the provider question: the answer is kept, never passed as a one-run flag
+    expect(review).toContain("`preview.model.ask`");
+    expect(review).toContain("`preview.alternatives[].spec`");
+    expect(review).toContain("`qcr model use <provider>`");
+    expect(review).toMatch(/Do not pass `--model` for this/);
+    // the key is the person's go, on a review with no estimate too
+    expect(review).toMatch(/The key starts a review over the limit, and one with no estimate/);
   });
 });
 

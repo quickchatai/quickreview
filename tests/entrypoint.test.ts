@@ -113,7 +113,7 @@ function rig(base = tmpdir()): Rig {
   );
   put(
     join(app, "dist/src/wire.js"),
-    `console.log(JSON.stringify({ ran: "wire", argv: process.argv.slice(2), openai: process.env.OPENAI_API_KEY ?? null }));\n`,
+    `console.log(JSON.stringify({ ran: "wire", argv: process.argv.slice(2), openai: process.env.OPENAI_API_KEY ?? null, names: Object.keys(process.env).sort() }));\n`,
   );
   put(
     join(app, "dist/src/scanbox.js"),
@@ -240,6 +240,35 @@ describe("dispatch", () => {
     const pi = join(r.app, "node_modules/.bin/pi");
     expect(run(r, ["login"]).stdout).toBe(`login:none ${pi}\n`);
     expect(run(r, ["login", "openai-codex"]).stdout).toBe(`login:openai-codex ${pi}\n`);
+  });
+
+  // On a single box the daemon reads the login the stack mounts for it, not
+  // its container's own pi home: a login made by hand here must land there.
+  // MUTATION: drop the PI_CODING_AGENT_DIR export from mode_login — the
+  // login's pi runs on the container's own home and this fails.
+  it("login signs in where the daemon reads its login when the stack hands it one", () => {
+    const r = rig();
+    put(
+      join(r.app, "dist/src/scanbox.js"),
+      `export const loginInPi = () => ["sh", "-c", 'echo "agent:\${PI_CODING_AGENT_DIR:-own}"'];\n`,
+    );
+    const shared = join(r.dir, "shared-login");
+    mkdirSync(shared);
+    chmodSync(shared, 0o700);
+    const out = run(r, ["login"], { QCR_LOGIN_DIR: shared });
+    expect(out.status, out.stderr).toBe(0);
+    expect(out.stdout).toBe(`agent:${shared}\n`);
+    expect(out.stderr).toContain(shared);
+    // the person's own pi home on the host is not re-shared with the login group
+    expect(statSync(shared).mode & 0o777).toBe(0o700);
+    // with none handed over, the container's own pi home, as before
+    expect(run(r, ["login"]).stdout).toBe("agent:own\n");
+    // a relative value names nothing (src/loginrefresh/supervisor.ts loginDirOf)
+    expect(run(r, ["login"], { QCR_LOGIN_DIR: "shared-login" }).stdout).toBe("agent:own\n");
+    // one the caller cannot write is refused with the way that works
+    const gone = run(r, ["login"], { QCR_LOGIN_DIR: join(r.dir, "missing") });
+    expect(gone.status).not.toBe(0);
+    expect(gone.stderr).toContain("qcr login");
   });
 
   it("login runs the script scanbox builds: pi's own /login in a tmux session", () => {
@@ -491,6 +520,34 @@ describe("daemon mode", () => {
     expect(readlinkSync(join(r.home, ".config/qcr/default/secrets"))).toBe(secrets);
   });
 
+  // A model key under secrets/model-env is the daemon's loader's to read
+  // (src/modelenv.ts) and a worker's own process's to hold: an export here
+  // would put it in the tmux server and the login refresher too.
+  // MUTATION: add a loop to mode_daemon that exports every file under
+  // "$secrets/model-env" by its name — PROV_API_KEY is in the daemon's
+  // environment and this fails.
+  it("exports no variable of the secrets dir's model env: the older key file alone, as it always was", () => {
+    const r = rig();
+    const secrets = join(r.dir, "secrets");
+    put(join(secrets, "openai_api_key"), "sk-test\n");
+    put(join(secrets, "model-env", "PROV_API_KEY"), "value-one\n");
+    put(join(secrets, "model-env", "PROV_REGION"), "eu-north-1\n");
+    const out = run(r, ["daemon"], { ...withConfig(r), QCR_SECRETS_MOUNT: secrets });
+    expect(out.status, out.stderr).toBe(0);
+    const ran = JSON.parse(out.stdout) as { openai: string | null; names: string[] };
+    expect(ran.openai).toBe("sk-test");
+    expect(ran.names).not.toContain("PROV_API_KEY");
+    expect(ran.names).not.toContain("PROV_REGION");
+    expect(out.stdout + out.stderr).not.toContain("value-one");
+    // and the script reads that directory nowhere: it names it in comments only
+    const code = read("docker/entrypoint.sh")
+      .split("\n")
+      .filter((l) => !/^\s*#/.test(l))
+      .join("\n");
+    expect(code).not.toContain("model-env");
+    expect(code.match(/^[ \t]*export [A-Z_]*API_KEY\b.*$/gm)).toEqual(["    export OPENAI_API_KEY"]);
+  });
+
   it("starts no OpenViking and builds nothing at boot", () => {
     const text = read("docker/entrypoint.sh");
     expect(text).not.toMatch(/openviking-server|openviking-provision|openviking-reembed/);
@@ -621,6 +678,28 @@ describe("daemon mode: the model's tools run as another uid", () => {
     const out = run(r, ["daemon", "--preflight"], withConfig(r));
     expect(out.status, out.stderr).toBe(0);
     expect(JSON.parse(out.stdout)).toEqual({ ran: "preflight" });
+  });
+
+  // The preflight's model check reads the secrets dir's model env with the
+  // daemon's loader, in a container the daemon mode never set up.
+  // MUTATION: exec the preflight without QCR_SECRETS_MOUNT — this fails.
+  it("`daemon --preflight` is told where the secrets are mounted, as the daemon is", () => {
+    const r = rig();
+    put(
+      join(r.app, "dist/src/preflight.js"),
+      `console.log(JSON.stringify({ mount: process.env.QCR_SECRETS_MOUNT ?? null, openai: process.env.OPENAI_API_KEY ?? null }));\n`,
+    );
+    const secrets = join(r.dir, "secrets");
+    put(join(secrets, "openai_api_key"), "sk-test\n");
+    expect(JSON.parse(run(r, ["daemon", "--preflight"], withConfig(r)).stdout)).toEqual({
+      mount: "/opt/quickreview/secrets",
+      openai: null,
+    });
+    expect(
+      JSON.parse(
+        run(r, ["daemon", "--preflight"], { ...withConfig(r), QCR_SECRETS_MOUNT: secrets }).stdout,
+      ),
+    ).toEqual({ mount: secrets, openai: null });
   });
 });
 
@@ -872,7 +951,7 @@ describe("companion mode", () => {
   it("provisions pi, starts the tmux server, stays alive, and stops promptly on SIGTERM", async () => {
     const r = rig();
     const child = spawn(ENTRYPOINT, ["companion"], {
-      env: { ...r.env, QCR_PI_DEFAULT_MODEL: "openai-codex/gpt-5:high" },
+      env: { ...r.env, QCR_PI_DEFAULT_MODEL: "made-up/large-5:high" },
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";
@@ -894,7 +973,7 @@ describe("companion mode", () => {
       "-builtin:tool-search",
       "-builtin:llama.cpp",
     ]);
-    expect(s.defaultModel).toBe("gpt-5");
+    expect(s.defaultModel).toBe("large-5");
     expect(s.enableSkillCommands).toBe(true);
     expect(readFileSync(join(r.home, ".tmux.conf"), "utf8")).toContain(
       "extended-keys-format csi-u",
@@ -904,39 +983,82 @@ describe("companion mode", () => {
     expect(await exited).toBe(0);
   });
 
-  // MUTATION: drop the twin branch from PI_COMPANION_MERGE — the default stays
-  // openai-codex and the first expectation fails.
+  /** Start the companion mode with `model` as QCR_PI_DEFAULT_MODEL (or unset)
+   * over a pi home seeded with `seed`, and read back the settings it left. */
+  const companionSettings = async (
+    model: string | undefined,
+    seed: { auth?: unknown; settings?: unknown } = {},
+  ): Promise<Record<string, unknown>> => {
+    const r = rig();
+    if (seed.auth !== undefined)
+      put(join(r.home, ".pi/agent/auth.json"), JSON.stringify(seed.auth));
+    if (seed.settings !== undefined)
+      put(join(r.home, ".pi/agent/settings.json"), JSON.stringify(seed.settings));
+    const env = { ...r.env };
+    if (model !== undefined) env["QCR_PI_DEFAULT_MODEL"] = model;
+    const child = spawn(ENTRYPOINT, ["companion"], { env, stdio: ["ignore", "ignore", "pipe"] });
+    const exited = new Promise<number | null>((res) => child.on("exit", (code) => res(code)));
+    const log = join(r.dir, "tmux.log");
+    for (let i = 0; i < 200 && !existsSync(log); i++) await new Promise((r2) => setTimeout(r2, 50));
+    const s = settings(r);
+    child.kill("SIGTERM");
+    await exited;
+    return s;
+  };
+
+  // No twin: the entrypoint holds no credential logic. A pin is written as
+  // pinned whatever the login file holds; which provider can serve it is the
+  // route's to say, inside pi.
+  // MUTATION: restore the twin branch in PI_COMPANION_MERGE (a default on a
+  // provider with no login moves to another that has one) — the first row's
+  // provider is no longer the pinned one and this fails.
   it.each([
-    [
-      "only a Sign in with ChatGPT login",
-      { openai: { type: "oauth", refresh: "r", access: "a", expires: 1 } },
-      "openai",
-    ],
-    ["only an OpenAI API key", { openai: { type: "api_key", key: "sk-test" } }, "openai"],
-    [
-      "both OpenAI logins",
-      { openai: { type: "oauth" }, "openai-codex": { type: "oauth" } },
-      "openai-codex",
-    ],
-    ["no login at all", {}, "openai-codex"],
+    ["a login under another provider", { other: { type: "oauth", refresh: "r", access: "a" } }],
+    ["a stored key under another provider", { other: { type: "api_key", key: "k-test" } }],
+    ["the pinned provider's own login", { "made-up": { type: "oauth" } }],
+    ["no login at all", {}],
+  ])("a pinned model is pi's default as pinned, whatever is logged in: %s", async (_name, auth) => {
+    const s = await companionSettings("made-up/large-3:medium", { auth });
+    expect(s["defaultProvider"]).toBe("made-up");
+    expect(s["defaultModel"]).toBe("large-3");
+    expect(s["defaultThinkingLevel"]).toBe("medium");
+  });
+
+  // MUTATION: split QCR_PI_DEFAULT_MODEL at its last ":" whatever follows —
+  // the id loses ":free" and the second row fails.
+  it.each([
+    ["made-up/large-3:xhigh", "made-up", "large-3", "xhigh"],
+    ["made-up/large-3:free", "made-up", "large-3:free", undefined],
+    ["made-up/vendor/large-3:free:low", "made-up", "vendor/large-3:free", "low"],
+    ["made-up/large-3", "made-up", "large-3", undefined],
   ])(
-    "the default model runs on the OpenAI login that exists: %s",
-    async (_name, auth, provider) => {
-      const r = rig();
-      put(join(r.home, ".pi/agent/auth.json"), JSON.stringify(auth));
-      const child = spawn(ENTRYPOINT, ["companion"], {
-        env: { ...r.env, QCR_PI_DEFAULT_MODEL: "openai-codex/gpt-6.1-sol:medium" },
-        stdio: ["ignore", "ignore", "pipe"],
-      });
-      const exited = new Promise<number | null>((res) => child.on("exit", (code) => res(code)));
-      const log = join(r.dir, "tmux.log");
-      for (let i = 0; i < 200 && !existsSync(log); i++)
-        await new Promise((r2) => setTimeout(r2, 50));
-      const s = settings(r);
+    "the spec is split by the known thinking levels only: %s",
+    async (spec, provider, model, level) => {
+      const s = await companionSettings(spec);
       expect(s["defaultProvider"]).toBe(provider);
-      expect(s["defaultModel"]).toBe("gpt-6.1-sol");
-      child.kill("SIGTERM");
-      await exited;
+      expect(s["defaultModel"]).toBe(model);
+      expect(s["defaultThinkingLevel"]).toBe(level);
+    },
+  );
+
+  // MUTATION: delete cfg.defaultProvider and cfg.defaultModel when
+  // QCR_PI_DEFAULT_MODEL is unset — the stored default is gone and this fails.
+  it.each([
+    ["unset", undefined],
+    ["empty", ""],
+    ["a level and no model", ":high"],
+  ])(
+    "with no pin (%s) nothing is written about a default model and nothing is removed",
+    async (_name, spec) => {
+      const fresh = await companionSettings(spec);
+      for (const k of ["defaultProvider", "defaultModel", "defaultThinkingLevel"])
+        expect(fresh).not.toHaveProperty(k);
+      const kept = await companionSettings(spec, {
+        settings: { defaultProvider: "kept", defaultModel: "kept-1", defaultThinkingLevel: "low" },
+      });
+      expect(kept["defaultProvider"]).toBe("kept");
+      expect(kept["defaultModel"]).toBe("kept-1");
+      expect(kept["defaultThinkingLevel"]).toBe("low");
     },
   );
 

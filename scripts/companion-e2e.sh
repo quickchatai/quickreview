@@ -17,8 +17,9 @@
 #      day-open message inside that container.
 #
 # Requires docker. Does NOT require pi auth: the one step that needs a real
-# `/login` (spawning pi in the container) is reported SKIPPED when
-# <pihome volume>/agent/auth.json is absent.
+# `/login` (spawning pi in the container) is reported SKIPPED when the app
+# finds no model route over the pi home volume (`qcr model --json`, read-only,
+# no network).
 #
 # Nothing here touches the VM, GitHub, or the persistent companion state: a
 # throwaway container, a temp image tag and temp dirs, all removed on exit.
@@ -234,8 +235,11 @@ fi
 
 # --- 7. pi spawn — only when /login has been done -----------------------------
 step "pi session (needs a one-time /login)"
+# Asked of the app over the volume, read-only and with no network: a route is
+# a login for any provider, never the presence of one file.
 if docker volume inspect "$PIHOME_VOLUME" >/dev/null 2>&1 &&
-   docker run --rm --volume "$PIHOME_VOLUME:/pi:ro" --entrypoint sh "$IMAGE" -c 'test -f /pi/agent/auth.json' >/dev/null 2>&1; then
+   docker run --rm --network none --volume "$PIHOME_VOLUME:/pi:ro" --env PI_CODING_AGENT_DIR=/pi/agent \
+     --entrypoint node "$IMAGE" /opt/qcr/dist/src/cli.js model --json 2>/dev/null | tail -n 1 | grep -q '"ok":true'; then
   if docker exec "$CONTAINER" test -x /opt/qcr/node_modules/.bin/pi >/dev/null 2>&1; then
     pass "pi is the image's package-local bin"
   else
@@ -243,7 +247,7 @@ if docker volume inspect "$PIHOME_VOLUME" >/dev/null 2>&1 &&
   fi
   skip "pi turn (auth present, but a real turn spends money — run npm run smoke:companion)"
 else
-  skip "pi spawn — no $PIHOME_VOLUME/agent/auth.json (run /login once inside the companion)"
+  skip "pi spawn — no model route over $PIHOME_VOLUME (run /login once inside the companion)"
 fi
 
 printf '\n=== companion E2E: %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"

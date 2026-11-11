@@ -51,6 +51,7 @@ import {
   dockerDetach,
   buildScanImage,
   effectiveSandbox,
+  loginProblem,
   renderDoctor,
   scanDoctor,
   SCAN_AUTH_COPY_SCRIPT,
@@ -59,16 +60,20 @@ import {
   scanMounts,
   scanRunArgv,
   writeStartedFile,
+  type DoctorRoute,
   type ScanBoxPlan,
 } from "../src/scanbox.js";
 import {
   PI_REFRESH_MARGIN_MS,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
+  scanProviders,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   SCAN_ROUTE_SCRIPT,
   checkoutOf,
+  doctorRouteOf,
+  foregroundMismatch,
   mountedCheckout,
   scanEnv,
   scanTranscriptsDir,
@@ -1199,6 +1204,100 @@ describe("the sandboxed launch", () => {
     expect(calls.some(isDriverRun)).toBe(false);
   });
 
+  // The launch judges the logins the scan's models are on, once a route is
+  // known for the start: another provider's login decides nothing.
+  describe("with the route's providers known", () => {
+    const SHORT = { type: "oauth", expires: SCAN_CASE_AUTH_BUDGET_MS - 1 };
+    const LONG = { type: "oauth", expires: 1e15 };
+
+    // MUTATION: drop the `providers` argument of loginProblem in dockerDetach —
+    // the other provider's short login refuses the launch and this fails.
+    it("another provider's short login does not refuse the launch", async () => {
+      const asked: string[][] = [];
+      const { calls, detach } = setup(
+        [stamped("s1")],
+        {
+          providers: (argv) => {
+            asked.push([...argv]);
+            return ["made-up"];
+          },
+        },
+        { "made-up": LONG, "other-one": SHORT },
+      );
+      const r = await detach(["start", "--key", "K", "--model", "made-up/large-3"]);
+      expect((r as { errors?: string[] }).errors?.[0] ?? "").not.toMatch(/never refreshes/);
+      // It is asked with the start's own arguments, its --model among them.
+      expect(asked).toEqual([["start", "--key", "K", "--model", "made-up/large-3"]]);
+      expect(calls.some(isDriverRun)).toBe(true);
+    });
+
+    it("the route's own short login still refuses, and names that provider", async () => {
+      const { calls, detach } = setup(
+        [stamped("s1")],
+        { providers: async () => ["made-up"] },
+        { "made-up": SHORT, "other-one": LONG },
+      );
+      const r = await detach(["start", "--key", "K"]);
+      expect(r).toMatchObject({ ok: false });
+      const why = (r as { errors: string[] }).errors[0]!;
+      expect(why).toMatch(/made-up access token/);
+      expect(why).toMatch(/never refreshes/);
+      expect(calls.some(isDriverRun)).toBe(false);
+    });
+
+    it("a route on a credential the login file does not hold is not refused for an empty login", async () => {
+      const { calls, detach } = setup([stamped("s1")], { providers: () => ["made-up"] }, {});
+      const r = await detach(["start", "--key", "K"]);
+      expect((r as { errors?: string[] }).errors?.[0] ?? "").not.toMatch(/no pi login/);
+      expect(calls.some(isDriverRun)).toBe(true);
+    });
+
+    it("no route known: the whole login is judged, as before", async () => {
+      const { calls, detach } = setup(
+        [stamped("s1")],
+        { providers: () => undefined },
+        { "made-up": LONG, "other-one": SHORT },
+      );
+      const r = await detach(["start", "--key", "K"]);
+      expect(r).toMatchObject({ ok: false });
+      expect((r as { errors: string[] }).errors[0]).toMatch(/other-one access token/);
+      expect(calls.some(isDriverRun)).toBe(false);
+    });
+  });
+
+  describe("loginProblem and the providers a scan's models are on", () => {
+    const NEED = SCAN_CASE_AUTH_BUDGET_MS + PI_REFRESH_MARGIN_MS;
+    const login = {
+      "made-up": { type: "oauth", expires: 10 * NEED },
+      "other-one": { type: "oauth", expires: NEED - 1 },
+      keyed: { type: "api_key", expires: null },
+    };
+
+    it("judges only the providers it is given", () => {
+      expect(loginProblem(login, 0)).toMatch(/other-one access token/);
+      expect(loginProblem(login, 0, ["made-up"])).toBeNull();
+      expect(loginProblem(login, 0, ["made-up", "keyed"])).toBeNull();
+      expect(loginProblem(login, 0, ["other-one"])).toMatch(/other-one access token/);
+      // A provider the file does not hold has no token to expire.
+      expect(loginProblem(login, 0, ["elsewhere"])).toBeNull();
+      expect(loginProblem({}, 0, ["elsewhere"])).toBeNull();
+      expect(loginProblem({}, 0)).toMatch(/no pi login/);
+    });
+
+    it("the providers are the route's and those of every tier and lens pinned to a model", () => {
+      expect(scanProviders({ provider: "made-up" })).toEqual(["made-up"]);
+      expect(
+        scanProviders(
+          { provider: "made-up" },
+          {
+            tiers: { light: ":low", standard: "made-up/large-3:medium", deep: "other-one/big:high" },
+            pass_models: { "pass-x": "third/one", "pass-y": ":high" },
+          },
+        ).sort(),
+      ).toEqual(["made-up", "other-one", "third"]);
+    });
+  });
+
   it("hands the container the reviewer key alone, in a 0600 file of its own", async () => {
     const keys = join(dir, "keys.env");
     writeFileSync(
@@ -1566,7 +1665,7 @@ describe("qcr scan doctor", () => {
         reviewedRepo: repo,
         gitDirs: () => ({ ok: true, mounts: [] }),
         cut: () => ({ saved: true, problems: [] }),
-        model: "openai-codex/gpt-6.1-sol:medium",
+        route: async () => ROUTE,
         now: () => 0,
         ...over,
       }),
@@ -1574,11 +1673,21 @@ describe("qcr scan doctor", () => {
     };
   }
   const HOUR = 3_600_000;
+  // The scan's route, as the doctor is handed it: a provider nothing in the
+  // product knows by name.
+  const ROUTE: DoctorRoute = {
+    ok: true,
+    model: "made-up/large-3:medium",
+    provider: "made-up",
+    providerName: "Made Up",
+    credential: "signed in with pi",
+    providers: ["made-up"],
+  };
   const all = [
     (a: string[]) => (a[0] === "version" ? { ...OK, stdout: "27.1.0\n" } : undefined),
     (a: string[]) => (a[0] === "image" ? { ...OK, stdout: "s1\n" } : undefined),
     (a: string[]) => (a[0] === "volume" ? { ...OK, stdout: "[]" } : undefined),
-    loginAnswer({ "openai-codex": { type: "oauth", expires: 3 * HOUR + 12 * 60_000 } }),
+    loginAnswer({ "made-up": { type: "oauth", expires: 3 * HOUR + 12 * 60_000 } }),
     (a: string[]) => (a[0] === "run" ? { ...OK, stdout: "OK\n" } : undefined),
   ];
   const probeOf = (calls: string[][]) => calls.find((c) => c[0] === "run" && !isLoginRead(c));
@@ -1599,8 +1708,9 @@ describe("qcr scan doctor", () => {
     // The pi home check reports the login and its remaining life.
     const pihome = r.checks.find((c) => c.check === "pihome")!;
     expect(pihome.detail).toMatch(/companion-pihome/);
-    expect(pihome.detail).toMatch(/openai-codex/);
+    expect(pihome.detail).toMatch(/Made Up/);
     expect(pihome.detail).toMatch(/3h 12m/);
+    expect(pihome.detail).toMatch(/answers on made-up\/large-3:medium/);
     // The login is read over a read-only mount at the source path.
     const read = calls.find(isLoginRead)!;
     expect(read).toContain(
@@ -1630,7 +1740,7 @@ describe("qcr scan doctor", () => {
       "--no-session",
       "--no-extensions",
       "--model",
-      "openai-codex/gpt-6.1-sol:medium",
+      "made-up/large-3:medium",
       "Reply with the single word OK.",
     ]);
     // No probe ever mounts the companion's pi home writable.
@@ -1666,25 +1776,97 @@ describe("qcr scan doctor", () => {
     expect(calls.some((c) => c[0] === "run")).toBe(false);
   });
 
-  it("no login for the stage-1 model's provider fails, and no probe is run", async () => {
-    const { report, calls } = doctor([
-      ...all.slice(0, 3),
-      loginAnswer({ anthropic: { type: "oauth", expires: 1e15 } }),
-      ...all.slice(4),
+  // MUTATION: probe `d.sandbox`'s configured tier spec (or any literal) in
+  // pihomeCheck instead of `route.model` — the probe names another model and
+  // this fails.
+  it("probes the route's model, whatever provider it is on", async () => {
+    const { report, calls } = doctor(
+      [
+        ...all.slice(0, 3),
+        loginAnswer({ "third-party": { type: "api_key", expires: null } }),
+        ...all.slice(4),
+      ],
+      {
+        route: async () => ({
+          ok: true,
+          model: "third-party/small-9:low",
+          provider: "third-party",
+          providerName: "Third Party",
+          credential: "an API key stored in pi",
+          providers: ["third-party"],
+        }),
+      },
+    );
+    const r = await report;
+    const pihome = r.checks.find((c) => c.check === "pihome")!;
+    expect(pihome).toMatchObject({ ok: true });
+    expect(pihome.detail).toMatch(/Third Party a api_key login \(no expiry\)/);
+    const probe = probeOf(calls)!;
+    expect(probe.slice(probe.indexOf("--model"), probe.indexOf("--model") + 2)).toEqual([
+      "--model",
+      "third-party/small-9:low",
     ]);
+  });
+
+  it("no route on the login fails with the route's own words, and no probe is run", async () => {
+    const { report, calls } = doctor(all, {
+      route: async () => ({ ok: false, error: "no model credential: qcr scan login" }),
+    });
     const r = await report;
     expect(r.checks.find((c) => c.check === "pihome")).toMatchObject({
       ok: false,
-      detail: expect.stringMatching(/no openai-codex login/),
+      detail: expect.stringMatching(/no model for a scan on this login: no model credential/),
       fix: "qcr scan login",
     });
     expect(probeOf(calls)).toBeUndefined();
   });
 
+  it("a route that cannot be asked is a failed check, never a throw and never a guess", async () => {
+    const { report, calls } = doctor(all, {
+      route: async () => {
+        throw new Error("auth.json cannot be read");
+      },
+    });
+    const r = await report;
+    expect(r.checks.find((c) => c.check === "pihome")).toMatchObject({
+      ok: false,
+      detail: expect.stringMatching(/auth\.json cannot be read/),
+    });
+    expect(probeOf(calls)).toBeUndefined();
+  });
+
+  // MUTATION: restore the `read.summary[provider] === undefined` refusal in
+  // pihomeCheck — a route on a key outside the login file fails and this fails.
+  it("a route on a credential the login file does not hold is probed, not refused", async () => {
+    const { report, calls } = doctor(
+      [...all.slice(0, 3), loginAnswer({}), ...all.slice(4)],
+      {
+        route: async () => ({ ...ROUTE, credential: "MADE_UP_API_KEY" }) as DoctorRoute,
+      },
+    );
+    const r = await report;
+    const pihome = r.checks.find((c) => c.check === "pihome")!;
+    expect(pihome.ok).toBe(true);
+    expect(pihome.detail).toMatch(/Made Up MADE_UP_API_KEY/);
+    expect(probeOf(calls)).toBeDefined();
+  });
+
+  it("another provider's short login in the same pi home does not fail the check", async () => {
+    const r = await doctor([
+      ...all.slice(0, 3),
+      loginAnswer({
+        "made-up": { type: "oauth", expires: 1e15 },
+        "other-one": { type: "oauth", expires: SCAN_CASE_AUTH_BUDGET_MS - 1 },
+      }),
+      ...all.slice(4),
+    ]).report;
+    expect(r.checks.find((c) => c.check === "pihome")).toMatchObject({ ok: true });
+  });
+
   it("an access token that would not outlive a case fails, saying to let the companion refresh", async () => {
     const r = await doctor([
       ...all.slice(0, 3),
-      loginAnswer({ "openai-codex": { type: "oauth", expires: SCAN_CASE_AUTH_BUDGET_MS - 1 } }),
+      loginAnswer({ "made-up": { type: "oauth", expires: SCAN_CASE_AUTH_BUDGET_MS - 1 } }),
       ...all.slice(4),
     ]).report;
     const pihome = r.checks.find((c) => c.check === "pihome")!;
@@ -1696,7 +1878,7 @@ describe("qcr scan doctor", () => {
   it("a pi that does not answer is not logged in", async () => {
     const r = await doctor([
       ...all.slice(0, 4),
-      (a) => (a[0] === "run" ? fail("No API key found for openai-codex") : undefined),
+      (a) => (a[0] === "run" ? fail("No API key found for made-up") : undefined),
     ]).report;
     expect(r.checks.find((c) => c.check === "pihome")).toMatchObject({
       ok: false,
@@ -1750,9 +1932,105 @@ describe("qcr scan doctor", () => {
       "--no-session",
       "--no-extensions",
       "--model",
-      "openai-codex/gpt-6.1-sol:medium",
+      "made-up/large-3:medium",
       "Reply with the single word OK.",
     ]);
+    expect(r.checks[0]!.detail).toMatch(/made-up\/large-3:medium \(Made Up, signed in with pi\)/);
+  });
+
+  it("with sandbox = host and no route: the check fails with the reason, and pi is not run", async () => {
+    let ran = 0;
+    const r = await doctor([], {
+      sandbox: { ...SANDBOX, sandbox: "host" },
+      route: async () => ({ ok: false, error: "no model credential: qcr login" }),
+      hostPi: async () => {
+        ran += 1;
+        return { ...OK, stdout: "OK" };
+      },
+    }).report;
+    expect(r.checks[0]).toMatchObject({
+      check: "pi",
+      ok: false,
+      detail: expect.stringMatching(/no model for a scan on this machine: no model credential/),
+    });
+    expect(ran).toBe(0);
+  });
+
+  describe("the route the doctor is handed (doctorRouteOf)", () => {
+    const route = {
+      spec: "made-up/large-3",
+      provider: "made-up",
+      providerName: "Made Up",
+      credential: { kind: "oauth", origin: "stored", subscription: false },
+    } as unknown as Extract<
+      NonNullable<Parameters<typeof doctorRouteOf>[0]["result"]>,
+      { ok: true }
+    >["route"];
+
+    // MUTATION: return `route.spec` for every tier in doctorRouteOf — the
+    // probe ignores a tier pinned to a model of its own and this fails.
+    it("is stage 1's spec as it will run, and the providers the scan's models are on", () => {
+      const got = doctorRouteOf(
+        {
+          result: { ok: true, route },
+          surface: "app",
+          tiers: {
+            light: "made-up/large-3:low",
+            standard: "other-one/big:medium",
+            deep: "made-up/large-3:high",
+          },
+        },
+        "standard",
+        { tiers: { light: ":low", standard: "other-one/big:medium", deep: ":high" } },
+      );
+      expect(got).toEqual({
+        ok: true,
+        model: "other-one/big:medium",
+        provider: "made-up",
+        providerName: "Made Up",
+        credential: "signed in with pi",
+        providers: ["made-up", "other-one"],
+      });
+    });
+
+    it("with no tier specs it is the route's own model", () => {
+      expect(doctorRouteOf({ result: { ok: true, route }, surface: "app" }, "standard")).toMatchObject({
+        ok: true,
+        model: "made-up/large-3",
+        providers: ["made-up"],
+      });
+    });
+
+    it("an unknown route and a refused one are their reasons, never a model", () => {
+      expect(
+        doctorRouteOf(
+          { result: null, surface: "app", refusal: "the scan sandbox could not be asked: x" },
+          "standard",
+        ),
+      ).toEqual({ ok: false, error: "the scan sandbox could not be asked: x" });
+      expect(
+        doctorRouteOf(
+          {
+            result: { ok: false, refusal: { code: "no-credential" } },
+            surface: "app",
+            refusal: "no pi login in the companion's pi home",
+          },
+          "standard",
+        ),
+      ).toEqual({ ok: false, error: "no pi login in the companion's pi home" });
+    });
+  });
+
+  it("a foreground start on another model than the sandbox's plan says why and what to do", () => {
+    const cred = { kind: "api_key", origin: "stored", subscription: false } as const;
+    const text = foregroundMismatch(
+      { spec: "made-up/large-3", providerName: "Made Up", credential: cred },
+      { spec: "other-one/big", providerName: "Other One", credential: cred },
+    );
+    expect(text).toMatch(/this machine's pi login, where it runs on made-up\/large-3 \(Made Up/);
+    expect(text).toMatch(/companion's login and runs on other-one\/big \(Other One/);
+    expect(text).toMatch(/without --foreground/);
+    expect(text).toMatch(/--sandbox host/);
   });
 });
 

@@ -51,7 +51,11 @@ import {
   type WorkerDeps,
 } from "../src/botworker.js";
 import { createCapabilityFd, ipcEnv, runDirOf } from "../src/ipc/capability.js";
-import { isProviderTransient } from "../src/providerfailure.js";
+import {
+  isOperatorWorkerFailure,
+  isProviderTransient,
+  providerFailureKind,
+} from "../src/providerfailure.js";
 import { LIVE_MAIN_FILE, liveRoundDir } from "@quickchatai/pi-quickreview/src/live/events.js";
 import { DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
@@ -1166,6 +1170,49 @@ describe("a round that fails", () => {
     const reason = String(daemon.of("failed").at(-1)!.body["reason"]);
     expect(reason.length).toBeLessThan(500);
     expect(isProviderTransient(reason)).toBe(true);
+  });
+
+  // MUTATION: test the auth pattern before anything else in botworker's settle
+  // (a pattern of its own, as it once did, instead of the one ordered
+  // classifier) - the rate limit that names "401 errors" ends the command as a
+  // refused login instead of being requeued; this fails.
+  it("a refused credential ends the command as a refused login; a rate limit that carries a status number as a count is still retried", async () => {
+    const refused: Step = fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: "authentication_error: invalid x-api-key",
+    });
+    expect((await round("ORDER\n", script([refused]))).code).toBe(EXIT.failed);
+    const reason = String(daemon.of("failed").at(-1)!.body["reason"]);
+    expect(reason).toContain("the provider refused the login: authentication_error");
+    expect(isOperatorWorkerFailure(reason)).toBe(true);
+
+    const counted: Step = fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: "429 Too Many Requests: rate limit reached after 401 errors",
+    });
+    expect((await round("ORDER\n", script([counted]))).code).toBe(EXIT.provider);
+    expect(String(daemon.of("failed").at(-1)!.body["reason"])).not.toContain("refused the login");
+  });
+
+  // MUTATION: drop the `model_refused` branch from botworker's settle - the
+  // failure reads "the provider failed the turn" and names no model; this fails.
+  // MUTATION: word a refused model as "the provider refused the login" - it
+  // reads as a dead login and holds for the operator as one; this fails.
+  it("a model the provider refused ends the command with the model named, never as a refused login", async () => {
+    const denied: Step = fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: "403 Forbidden: model not available in your region",
+    });
+    expect((await round("ORDER\n", script([denied]))).code).toBe(EXIT.failed);
+    const reason = String(daemon.of("failed").at(-1)!.body["reason"]);
+    expect(reason).toMatch(/refused the model \S+\/\S+\. Run on another: qcr model use /);
+    expect(reason).toContain("[models] model");
+    expect(reason).toContain("The provider said: 403 Forbidden: model not available");
+    expect(reason).not.toContain("refused the login");
+    // The daemon reads it as the PR's own failure: not the login's, not an outage.
+    expect(isOperatorWorkerFailure(reason)).toBe(false);
+    expect(providerFailureKind(reason)).toBeUndefined();
+    expect(isProviderTransient(reason)).toBe(false);
   });
 
   it("a wall-clock cap that runs out is a failed round", async () => {

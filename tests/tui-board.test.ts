@@ -113,6 +113,34 @@ describe("topBar", () => {
     expect(bar).toContain("today $4.12");
   });
 
+  // A round with tokens and no price is never $0 inside the day's sum: the
+  // bar says the count the snapshot carries beside it.
+  // MUTATION: print the day's sum alone in topBar (drop spendText's count) -
+  // this fails.
+  it("says the day's rounds with no known cost beside the sum, and unknown when none has one", () => {
+    const withCount = (today_spend_usd: number, today_unknown_spend_rounds?: number): string =>
+      stripAnsi(
+        topBar(
+          view({
+            snapshot: {
+              ...snapshot,
+              today_spend_usd,
+              ...(today_unknown_spend_rounds !== undefined ? { today_unknown_spend_rounds } : {}),
+            },
+          }),
+          160,
+        ),
+      );
+    expect(withCount(4.12, 2)).toContain("today $4.12 + 2 rounds unknown");
+    expect(withCount(0, 1)).toContain("today unknown (1 round)");
+    expect(withCount(0, 1)).not.toContain("today $0.00");
+    expect(withCount(4.12, 0)).toContain("today $4.12");
+    expect(withCount(4.12, 0)).not.toContain("rounds unknown");
+    // An older daemon's snapshot has no count: unknown, so only the sum is said.
+    expect(withCount(4.12)).toContain("today $4.12");
+    expect(withCount(4.12)).not.toContain("rounds unknown");
+  });
+
   it("distinguishes a live daemon from a failed review pipeline", () => {
     const causes = [
       {
@@ -213,6 +241,17 @@ describe("detailLines", () => {
     // No escalation-worthiness fact: the header carries state and round only.
     expect(lines[1]).toBe("reviewing · round 2");
     expect(lines[2]).toContain("spend $1.30 · head a2e380f · trig");
+    // The PR's rounds with tokens and no price are said beside its sum.
+    const unknown = detailLines({ ...why, unknown_spend_rounds: 1 }, snapshot.prs[0], 80).map(
+      stripAnsi,
+    );
+    expect(unknown[2]).toContain("spend $1.30 + 1 round unknown · head a2e380f");
+    const none = detailLines(
+      { ...why, spend_usd: 0, unknown_spend_rounds: 2 },
+      snapshot.prs[0],
+      80,
+    ).map(stripAnsi);
+    expect(none[2]).toContain("spend unknown (2 rounds) · head a2e380f");
     expect(lines).toContain("F1 [P1/0.9][delivery] tasks.py:88 open");
     expect(lines.find((l) => l.startsWith("▍ROUNDS"))).toContain("r1 RC · r2 …");
     expect(lines.find((l) => l.startsWith("▍THREADS"))).toContain("2 known");

@@ -10,13 +10,17 @@ at the action's ref) is a public package: the action pulls it anonymously, so
 the repository needs no package access, no `packages: read` permission and no
 registry secret.
 
-1. **Give it a model.** The default models log in through ChatGPT OAuth: copy the
-   contents of a `~/.pi/agent/auth.json` that holds that login into a repository
-   secret (`QCR_PI_AUTH` in the template) and pass it as `pi-auth`. The engine
-   works from a copy with refresh disabled and refuses a login that would expire
-   mid-run, so log in again when the secret ages out. Or pass a model API key
-   (`openai-api-key`, `anthropic-api-key`, `gemini-api-key`,
-   `digitalocean-api-key`) when the config's models are on that provider.
+1. **Give it a model credential.** Any provider pi supports works, and the
+   review runs on that provider's newest model unless the `model` input names
+   one. Either:
+   - **A login.** Copy the contents of a `~/.pi/agent/auth.json` that holds the
+     login into a repository secret (`QCR_PI_AUTH` in the template) and pass it
+     as `pi-auth`. The engine works from a copy with refresh disabled and
+     refuses a login that would expire mid-run, so log in again when the secret
+     ages out.
+   - **An API key.** Put it in the `env:` of the step that uses the Action,
+     under the name the provider documents (see
+     [Any provider's key](#any-providers-key)).
 2. **Copy the workflow.** [`docs/action/qcr-review.yml`](action/qcr-review.yml) to
    `.github/workflows/qcr-review.yml`.
 
@@ -34,6 +38,41 @@ collaborators). Both also work in the every-push mode.
 
 **No cost cap.** Nothing limits a review unless the `limit` input (US dollars) is
 set; then the run stops hard at that limit. Nothing is ever asked.
+
+## Any provider's key
+
+The Action has no input per provider. It forwards to the review, by name only,
+every environment variable pi reads a model credential from, so a key is set
+with the workflow's own `env:` on the step:
+
+```yaml
+- uses: quickchatai/quickreview@v1
+  env:
+    XAI_API_KEY: ${{ secrets.XAI }}
+  with:
+    model: xai/<model id> # optional: the default is the provider's newest
+```
+
+The names are pi's own, one list for every built-in provider
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`,
+`AWS_ACCESS_KEY_ID` with `AWS_SECRET_ACCESS_KEY`, and so on). The list is the
+block between `# BEGIN pi model env names` and `# END pi model env names` in
+[`scripts/action.sh`](../scripts/action.sh), generated from the pi the image
+pins by `scripts/model-env-names.mjs`. Only the name is put on the docker
+command line; docker reads the value from the step's environment.
+
+- **A name that is not in the list** (a provider's extra setting, or the key
+  of a provider you defined in a `models.json`): name it in `QCR_MODEL_ENV`,
+  separated by commas, in the same `env:`. A name that starts with `GH_`,
+  `GITHUB_`, `QCR_`, `PI_`, `OPENVIKING_` or `GIT_` is refused, and so is one
+  with `TOKEN`, `SECRET` or `PASSWORD` in it that is not one of pi's own.
+- **The four key inputs** (`openai-api-key`, `anthropic-api-key`,
+  `gemini-api-key`, `digitalocean-api-key`) are the same route under older
+  names and stay. pi has no built-in provider for `DIGITALOCEAN_API_KEY`: the
+  login given as `pi-auth` must define one in its `models.json`.
+- **`model`** takes what `qcr review --model` takes: `provider/model`, with an
+  optional `:level`. With no `model`, and credentials for more than one
+  provider, the review says which one it picked.
 
 **A private mirror.** An image that is not public, named by the `image` input,
 needs a token that can read it as the `registry-token` input: a token with the
@@ -61,7 +100,8 @@ for `docker login` and for the preflight, and the review never sees it.
    `review <pr> --repo <owner/name> --to pr,terminal`. The container is the
    sandbox: no `docker.sock`, `--cap-drop ALL`, `no-new-privileges`, the model's
    tools under another uid. It gets the checkout read-only, a generated config,
-   the pi login read-only, and `QCR_ROUTE=action`.
+   the pi login read-only, `QCR_ROUTE=action`, and the model credentials of the
+   step's environment by name.
 4. **cleanup.** Removes the staging directory, any docker login included.
 
 **The token never enters the container's environment.** The GitHub token is
@@ -69,7 +109,8 @@ written to a `0600` file in a fresh `0700` directory under `$RUNNER_TEMP`, mount
 at `/run/qcr-in` and named in `QCR_GH_TOKEN_FILE`; the image reads it once and
 unlinks it before any model tool exists. `scripts/action.sh` refuses to
 start docker if the token, an env file, a network or a memory service is in the
-command line.
+command line, or if an environment name with `TOKEN`, `SECRET` or `PASSWORD` in
+it is forwarded that is not one of pi's own model names.
 
 **The generated config.** It is the image's `config.example.toml` with two lines
 changed: `dry_run = false`, because the Action is a live reviewer on the

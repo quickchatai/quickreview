@@ -23,12 +23,16 @@ The card shows three steps. Each is detected first: a step that is already
 true shows as done, with what was found ("@you · via gh", "owner/name · from
 your qcr config"), and is never asked again.
 
-1. **Sign in to OpenAI.** pi's own device-code login for `openai-codex`, the
-   provider the home's chat runs on, on your own pi home, so the chat, the
-   panel and every review use the one login. It starts by itself: open the
-   URL the card shows and enter the code. Device-code login must be on for
-   your ChatGPT account first (ChatGPT → Settings → Security). A code that
-   expires or is denied says so, and `alt+n` starts a clean new one.
+1. **Sign in to a model provider.** Done when pi has a model credential: a
+   login or an API key stored by pi's `/login`, or a provider key already in
+   the environment, for any provider pi supports. With none, the step opens
+   pi's own `/login`, which lists every provider, on your own pi home, so the
+   chat, the panel and every review use the one login. The card says what it
+   found ("<provider>, signed in with pi", "<provider>, <ENV_NAME> in the
+   environment"). A credential state that cannot be read shows as unknown and
+   is never counted as a gap. With several providers signed in, an optional
+   **Review model** step shows which model reviews would run on and lets you
+   choose ([docs/llm-setup.md](llm-setup.md)).
 2. **Connect GitHub.** `gh` installed and signed in. When it is not, the card
    says what to run (`gh auth login`, in a shell), and `alt+n` checks again.
 3. **Choose a repository.** One of your recently pushed repositories, or paste
@@ -47,10 +51,11 @@ only it starts the companion.
 
 ## One login per box
 
-A machine has one OpenAI login: the one the home signed in to, in your own pi
-home (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent`). The home's chat, every
-review you start from it and auto-review all use it, and exactly one process
-refreshes it at a time.
+A machine has one model login: the one the home signed in to, in your own pi
+home (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent`), whichever provider it is
+for. The home's chat, every review you start from it and auto-review all use
+it, and exactly one process refreshes it at a time. The remembered model
+choice (`qcr-model.json`) sits beside it, so they share that too.
 
 - **Auto-review off:** the home's pi refreshes the login itself, by pi's own
   rule (a token with under five minutes left, under pi's own lock on
@@ -72,8 +77,8 @@ refreshes it at a time.
 
 **When the login expires or is revoked,** the home's login line says
 *login expired*, and auto-review shows *Paused: login*. `alt+l` (`l` on the
-focused panel, or the `home_relogin` tool) signs in again with pi's device
-code. While auto-review runs, the home first pauses its refresher, the same
+focused panel, or the `home_relogin` tool) signs in again through pi's own
+`/login`, for any provider. While auto-review runs, the home first pauses its refresher, the same
 handover the image's `login` mode makes, and waits until the refresher says it
 has paused. The refresher keeps its lock but writes nothing until the pause
 ends. When the sign-in ends, however it ends, the pause is lifted, the
@@ -82,8 +87,10 @@ left behind by a home that was killed mid-login is lifted by the refresher
 after 15 minutes. A raw `/login` typed in the home does not pause the
 refresher, so switch auto-review off before you use it.
 
-**A remote server** (the advanced route) signs in with its own device login
-and refreshes its own login. The host's login is never copied there.
+**A remote server** (the advanced route) has a model credential of its own, a
+login made there or a key in its secrets dir, and refreshes its own login. The
+host's login is never copied there.
+
 ## Spend, "Tune to this repo" and Advanced
 
 - **The spend line** shows today's and this month's review cost: the home's
@@ -189,10 +196,11 @@ demotes anything that no longer holds, naming what broke.
 
 Three things, and only three:
 
-1. **a model login** — pi's `/login` opens by itself the first time; any working
-   OpenAI login does (see [The LLM route](#30--the-llm-route)). The reviewer's
-   container needs its own login too, once the stack is up: the LLM step names
-   the one command;
+1. **a model credential** — pi's `/login` opens by itself the first time; any
+   provider pi offers does, and so does a provider key in the environment (see
+   [The model credential](#30--the-model-credential)). A reviewer that does not
+   share this machine's login needs a credential of its own, once the stack is
+   up: the model step names the one command;
 2. **your GitHub sign-in** — `gh` logged in here (already true on a Boxes VM);
 3. **one repository** you can read.
 
@@ -217,7 +225,7 @@ it is answered, exactly one of 33 and 40 is enabled.
 | 10 | preflight | both |
 | 20 | topology — where the reviewer lives | both |
 | 22 | ssh preflight | server |
-| 30 | LLM auth | both |
+| 30 | model credential | both |
 | 33 | GitHub: your own account (the default), or an App | own account |
 | 35 | interview and `config.toml` | both |
 | 36 | escalation (optional, off by default) | both |
@@ -323,48 +331,62 @@ Passwordless sudo matters for the same reason: the deploy installs packages and
 runs Docker as root on that machine, and a sudo password prompt would hang it
 exactly the way an ssh passphrase would.
 
-### 30 — The LLM route
+### 30 — The model credential
 
-Two routes, both fully supported. See [docs/llm-setup.md](llm-setup.md) for the
-cost shapes and the manual equivalents.
+QuickReview runs on whatever model credential pi has: a subscription login, an
+API key stored by `/login`, or a provider key in the environment, for any
+provider pi supports. This step checks one thing: **a model route resolves
+where the daemon runs.** It asks no route question and no key question, it
+rewrites nothing in `config.toml`, and it writes no key file. How a route is
+chosen, how to pin a model and what a review costs on it are in
+[docs/llm-setup.md](llm-setup.md).
 
-**ChatGPT OAuth (subscription).** A stack the home switches on needs none of
-the logins below: it shares the home's own login
-([One login per box](#one-login-per-box)). For the wizard's route, the cost is
-flat, and the catch is stated up front:
-pi's OAuth tokens live in the pi home of whichever process logged in and **do
-not transfer between your host and the containers**. Expect up to three separate
-browser logins — the home's own pi (the first run's sign-in), the daemon
-container, and the companion container. Each is guided where it happens, and each is verified to
-have landed on that container's *persistent* pi-home volume, so a later
-container recreate never silently costs you the login. Any OpenAI login counts
-at each of them — "OpenAI Codex (legacy)", "OpenAI" (Sign in with ChatGPT), or
-an OpenAI API key at `/login` — because every model reaches pi on the OpenAI
-login that exists (see [docs/llm-setup.md](llm-setup.md)). The home's first
-run signs in by itself, when pi has no usable login.
+The step asks the same question, `qcr model --json`, in two places:
 
-**An OpenAI API key.** One paste covers the daemon and its review sessions at
-once: it lands as the `openai_api_key` file in your secrets dir, `0600`, and the
-daemon container's entrypoint exports it as `OPENAI_API_KEY` for every pi
-process in it. It reaches no other process: the companion container is never
-handed the key file, so the companion keeps its own login (its model is on the
-OAuth provider by default), and the home's own pi reads `OPENAI_API_KEY`
-only from its own environment. The wizard then rewrites all six
-model strings in `config.toml` from the `openai-codex/` provider prefix to
-`openai/` — comment-preserving, idempotent, and reversible, so switching routes
-later is just re-running this step. Model strings already pointing at some other
-provider are left alone and reported.
+- **In the daemon's container**, once it runs. This is the answer that counts.
+  `qcr model` reads the secrets dir's `model-env/` itself, and the login the
+  daemon was handed, so the answer is what a review worker sees. Green reads
+  "the daemon's pi runs `<provider>/<model>`", with the credential it runs on,
+  and says so when a pinned model moved to another provider.
+- **On this machine**, the home's pi. On this computer it stands in for a
+  daemon that is not running yet, because the daemon mounts this machine's
+  secrets dir and auto-review reviews on this machine's login
+  ([One login per box](#one-login-per-box)). On the server route it is a note
+  only: no login is ever copied to a server.
+
+When the daemon's pi has no model credential, the step is red and names the
+way in for the login the daemon actually reads:
+
+- **a stack that shares this machine's login:** sign in here, with `/login` in
+  the pi session or `qcr login` in a terminal;
+- **a daemon with a pi home of its own** (the server route, or a stack brought
+  up without the shared login): the one `docker exec` line that runs the
+  image's `login` mode there. That login lands on the container's
+  *persistent* pi-home volume, so a container recreate does not cost it;
+- **a key instead of a login:** a file `model-env/<ENV_NAME>` in the secrets
+  dir, named for the environment variable the provider documents.
+
+A model pinned in `config.toml` to a provider with no credential there is red
+too, with the refusal that says how to sign in or drop the pin. An answer that
+cannot be read is said as that, never as a route.
 
 The wizard does not accept a pasted key through the pi session (the value would
 land in a transcript). It points you at the secrets directory and the exact
 command that writes the file `0600` (`deploy/collect-secrets.sh`, from a clone,
-reads it with hidden input).
+reads it with hidden input and asks which variable the key goes in). A key in
+`model-env/` reaches the daemon's review workers and nothing else: the
+companion container is never handed it and keeps its own login, and the
+home's own pi reads a provider key only from its own environment. The older
+`openai_api_key` file is still read.
 
-**Either route: memory embeddings need nothing here.** The memory engine embeds
-locally by default, inside the memory container, so no memory text leaves the
-machine on either route — and `openai_api_key` is pi's credential alone, never
-read for embeddings. A hosted embedder is a separate, explicit opt-in with its
-own key file: step 38. This step says so as a note, never a blocker.
+What an older wizard recorded here (an auth route, a model prefix) is read
+and ignored, whatever its value.
+
+**Memory embeddings need nothing here.** The memory engine embeds locally by
+default, inside the memory container, so no memory text leaves the machine,
+and no model credential is ever read for embeddings. A hosted embedder is a
+separate, explicit opt-in with its own key file: step 38. This step says so
+as a note, never a blocker.
 
 ### 33 — GitHub: your own account, or a GitHub App
 
@@ -512,7 +534,8 @@ The step says plainly what that means — every memory entry's text, and every
 search query, is sent to OpenAI — writes `config.toml [openviking]
 embedding_provider/model/dimension`, parses the result before writing it, and
 then **stays red until the credential exists as its own file**,
-`<secrets dir>/openai_embeddings_api_key`. Pi's `openai_api_key` is explicitly
+`<secrets dir>/openai_embeddings_api_key`. A model credential of pi's (a
+`model-env/` key, the older `openai_api_key` file, a login) is explicitly
 not it: the two credentials are independent, so either can be set without the
 other. As with every secret, the value never goes through the session — the
 step points you at `bash deploy/collect-secrets.sh`, which has the prompt.

@@ -103,7 +103,17 @@ the environment. Nothing names a provider for you.
   pi's logins, the one file the plugin writes there, so the `qcr` CLI on the
   same pi home runs on the same model.
 - `--model` on `/qcr-review` or `/qcr-scan` names the model for one run, and
-  `[models] model` in a qcr config pins it for every run.
+  `[models] model` in a qcr config pins it for every run. `--model` is the
+  whole run's model: it replaces every tier and lens a config pinned.
+- The dollar estimate was measured on one model. On any other, the preview
+  shows no estimate and the review stops at a spend limit ($15, or
+  `--limit`); the first review on such a model asks once. A model pi has no
+  price for has no dollar stop, and its spend shows as unknown.
+- A login whose tokens are shorter than a review runs here, because this pi
+  renews it while the review goes.
+
+The whole rule, the refusals and the price are in
+[docs/llm-setup.md](https://github.com/quickchatai/quickreview/blob/main/docs/llm-setup.md).
 
 A provider that another pi extension registered, or one keyed with
 `pi --api-key`, cannot be borrowed: the review's sessions run in a host of

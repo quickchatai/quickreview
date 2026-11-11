@@ -397,18 +397,35 @@ export function cancellationOrder(a: CancellationTally, b: CancellationTally): n
   return Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause);
 }
 
+/** Is this round's spend unknown: tokens recorded and no price beside them?
+ * A round on a model pi has no price for is one (its `est_usd` is NULL: pi
+ * stamps such calls at 0, which is not free), and so is an older row whose
+ * transcripts carried no cost object. The word for both is "unknown". A row
+ * with no tokens was never measured and is not counted: nothing says it
+ * spent anything. */
+export function spendIsUnknown(r: Pick<RoundRow, "est_usd" | "tokens_in" | "tokens_out">): boolean {
+  return r.est_usd === null && ((r.tokens_in ?? 0) > 0 || (r.tokens_out ?? 0) > 0);
+}
+
 /** Spend and measured tokens summed over `rounds`. Expired rounds count:
  * they blew a deadline, they did not get a refund — excluding them would
- * erase real token cost (see StateStore.totalSpend). */
+ * erase real token cost (see StateStore.totalSpend).
+ *
+ * `spend_usd` is the KNOWN sum: a round whose spend is unknown
+ * (`spendIsUnknown`) adds nothing to it and is counted in
+ * `unknown_spend_rounds` instead, so a reader never takes a missing price
+ * for $0. Say the two together (`spendText`). */
 export function roundUsage(
   rounds: readonly Pick<RoundRow, "est_usd" | "tokens_in" | "tokens_out">[],
 ): {
   spend_usd: number;
+  unknown_spend_rounds: number;
   tokens_in: number;
   tokens_out: number;
 } {
   return {
     spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
+    unknown_spend_rounds: rounds.filter(spendIsUnknown).length,
     tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
     tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
   };
@@ -4370,6 +4387,20 @@ export class StateStore {
     return (
       this.db.prepare("SELECT COALESCE(SUM(est_usd), 0) AS s FROM rounds").get() as { s: number }
     ).s;
+  }
+
+  /** How many rounds `totalSpend` could not count: tokens recorded and no
+   * price (`spendIsUnknown`, the same rule in SQL). The sum is never said
+   * without it. */
+  totalUnknownSpendRounds(): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM rounds
+            WHERE est_usd IS NULL AND (COALESCE(tokens_in, 0) > 0 OR COALESCE(tokens_out, 0) > 0)`,
+        )
+        .get() as { n: number }
+    ).n;
   }
 
   /**
@@ -8705,6 +8736,14 @@ export interface StatusSnapshot {
    * Absent in snapshots from an older daemon: the home's spend line then
    * reads unknown, never a zero. */
   month_spend_usd?: number;
+  /** Beside each spend sum, how many of its rounds recorded tokens and no
+   * price (`spendIsUnknown`): the sum counts none of them. Absent in
+   * snapshots from an older daemon, where the count is UNKNOWN, not zero: a
+   * reader then says the sum as it is and claims nothing about the rest
+   * (`spendText`), and a reader that publishes the count publishes null. */
+  total_unknown_spend_rounds?: number;
+  today_unknown_spend_rounds?: number;
+  month_unknown_spend_rounds?: number;
   digest_headline?: string;
   /** Present while pi sessions are failing API calls with token-expired
    * errors (packages/pi-plugin/src/authwatch.ts, fresh < 30 min). The TUI raises an alert. */
@@ -9067,10 +9106,21 @@ export function buildStatusSnapshot(
     })),
     running_rounds: store.runningRounds().length,
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
+    // Each sum with the rounds it could not count beside it: a round with
+    // tokens and no price is unknown spend, never $0 inside the sum.
     total_spend_usd: store.totalSpend(),
-    today_spend_usd: roundUsage(store.roundsOn(today)).spend_usd,
-    // roundsOn matches by prefix: the month's `YYYY-MM` is every day of it
-    month_spend_usd: roundUsage(store.roundsOn(today.slice(0, 7))).spend_usd,
+    total_unknown_spend_rounds: store.totalUnknownSpendRounds(),
+    ...(() => {
+      const day = roundUsage(store.roundsOn(today));
+      // roundsOn matches by prefix: the month's `YYYY-MM` is every day of it
+      const month = roundUsage(store.roundsOn(today.slice(0, 7)));
+      return {
+        today_spend_usd: day.spend_usd,
+        today_unknown_spend_rounds: day.unknown_spend_rounds,
+        month_spend_usd: month.spend_usd,
+        month_unknown_spend_rounds: month.unknown_spend_rounds,
+      };
+    })(),
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     ...(piAuth
       ? {

@@ -1,9 +1,11 @@
 // The review context both one-shot routes build before a prompt is rendered:
 // the loaded config with a profile (and `--config` levers) applied, and the
 // ecosystem that profile names. Shared by `qcr review`, the benchmark and the
-// engine; the bench's credential route decides only the model specs. Where
-// the config and the profiles live is the caller's: it hands the loaded
-// config in (src/homes.ts for the CLI, src/reviewcontext.ts for the app).
+// engine. The model specs are the config's own, as written: which provider a
+// spec runs on is the run's route's to say (../modelroute.ts), never this
+// module's. Where the config and the profiles live is the caller's: it hands
+// the loaded config in (src/homes.ts for the CLI, src/reviewcontext.ts for the
+// app).
 
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import { applyProfileOverlays, loadProfileEcosystem, type ProfileLookup } from "../profiles.js";
@@ -20,7 +22,6 @@ import {
   type ReviewPreset,
 } from "../reviewconfig.js";
 import { foldTier } from "../types.js";
-import { benchAuthMode, modelForAuth, type BenchAuthMode } from "./keyroute.js";
 
 /** A loaded config.toml: the parsed config and the text it was parsed from
  * (a `review.preset` lever re-parses the text). */
@@ -284,24 +285,6 @@ export function contextFrom<C extends CoreConfig>(
   // `[posting]` policy) are applied LAST — after the `--config` levers and
   // any preset re-parse — through the one function production overlays with
   // after config.toml: the profile wins.
-  const cfg = withAuthModels(applyProfileOverlays(root, levered, lookup));
+  const cfg = applyProfileOverlays(root, levered, lookup);
   return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, chosen, lookup)) };
-}
-
-/** Every model spec of the config as it runs on the bench's credential route
- * (packages/pi-plugin/src/engine/keyroute.ts): on the API-key route `openai-codex/` → `openai/`, the
- * same model on the public API; on the login route the config unchanged. */
-export function withAuthModels<C extends CoreConfig>(
-  cfg: C,
-  mode: BenchAuthMode = benchAuthMode(),
-): C {
-  if (mode !== "api-key") return cfg;
-  const out = structuredClone(cfg);
-  const m = out.models;
-  m.model = modelForAuth(m.model, mode);
-  for (const k of Object.keys(m.tiers) as (keyof typeof m.tiers)[])
-    m.tiers[k] = modelForAuth(m.tiers[k], mode);
-  for (const pass of Object.keys(m.pass_models))
-    m.pass_models[pass] = modelForAuth(m.pass_models[pass]!, mode);
-  return out;
 }

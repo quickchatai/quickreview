@@ -108,6 +108,28 @@ describe("the breaker over the store", () => {
     expect(b.failure(3, "c", "the worker exited 1").drained).toBe(true);
   });
 
+  // MUTATION: return `{ park: false, drain: false }` for a failure that names
+  // a refused model in breakerEffect (treat it as the provider's own outage) -
+  // the PR never parks and the drain is never fed; this fails.
+  it("a refused model parks its PR with the model named and feeds the drain, like any failure of the PR's own", () => {
+    const store = new StateStore(":memory:");
+    const b = new WorkerBreaker(store);
+    // The worker's words for it (src/botworker.ts): never "the provider failed
+    // the turn", so no status number in the provider's text is read here.
+    const denied =
+      "the round: Faux refused the model faux/faux-1. Run on another: qcr model use " +
+      "<provider[/model]>, or pin one with [models] model. The provider said: " +
+      "403 Forbidden: model not available in your region";
+    expect(b.failure(1, "c0", denied).parked).toBe(false);
+    expect(b.failure(1, "c1", denied)).toMatchObject({ parked: true, newlyParked: true });
+    const gate = b.gate(1);
+    expect(gate).toMatchObject({ ok: false, why: "parked" });
+    expect(gate.ok ? "" : gate.reason).toContain("refused the model faux/faux-1");
+    // Counted at its first occurrence on each PR, as any other failure is.
+    b.failure(2, "c", denied);
+    expect(b.failure(3, "c", denied).drained).toBe(true);
+  });
+
   // MUTATION: make `parks` in `failure` always true — this fails.
   it("a provider network drop never parks a PR: it is the network's, not the PR's", () => {
     const store = new StateStore(":memory:");

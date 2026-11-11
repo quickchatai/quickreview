@@ -72,7 +72,7 @@ import {
   writeStatusJson,
   type OpenPrsSnapshot,
 } from "./state.js";
-import { PiAuthWatch } from "@quickchatai/pi-quickreview/src/authwatch.js";
+import { PiAuthWatch, credentialRefusedText } from "@quickchatai/pi-quickreview/src/authwatch.js";
 import { SessionCommandSupervisor } from "./session-command-supervisor.js";
 import { readRoundProgress } from "./requiredpasses.js";
 import { SingleFlight } from "./singleflight.js";
@@ -1096,9 +1096,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     return automaticRetries.length;
   };
 
-  // Passive pi auth-failure watch: no smoke calls, just the session JSONLs pi
-  // already writes. A detection is a wake-grade anomaly
-  // (10-min dedup via the sink) and a status.json flag the TUI alerts on.
+  // Passive watch for a refused model credential: no smoke calls, just the
+  // session JSONLs pi already writes. Only the classifier's `auth` kind is a
+  // detection (a lens child whose provider refused one model is not): it is a
+  // wake-grade anomaly (10-min dedup via the sink) and a status.json flag the
+  // TUI alerts on.
   const piAuthWatch = deps.piSessionsDir ? new PiAuthWatch(deps.piSessionsDir) : undefined;
   const authWatchTick = (): void => {
     if (!piAuthWatch) return;
@@ -1106,18 +1108,22 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       const hits = piAuthWatch.scan();
       if (hits.length > 0) {
         const files = hits.map((h) => h.file.split("/").pop()).join(", ");
+        const said = credentialRefusedText(hits.flatMap((h) => h.providers));
         store.logAnomaly(
           "pi_auth_expired",
           null,
           null,
-          `pi API auth failures (token expired) in ${hits.length} session file(s): ${files}`,
+          `${said} (${hits.length} session file(s): ${files})`,
           [
-            "PI AUTH EXPIRED — sessions are failing API calls with token-expired errors.",
+            `MODEL CREDENTIAL REFUSED — ${said}`,
             `Fresh hits in: ${files}`,
-            "Every round in flight will wedge until a human re-runs /login in the container (interactive OAuth — the daemon cannot do it).",
+            "The daemon cannot fix it: a login is interactive, and a key is the operator's.",
           ].join("\n"),
         );
-        log(`authwatch: pi token-expired errors in ${hits.length} session file(s)`, files);
+        log(
+          `authwatch: the model credential was refused in ${hits.length} session file(s)`,
+          files,
+        );
         writeStatus();
       }
     } catch (err) {

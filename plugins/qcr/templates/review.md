@@ -50,9 +50,17 @@ Add `--base REF` to name the base and `--repo OWNER/NAME` when the remote is amb
 
 ## Preview, then run
 
-1. Run the target with `--preview`. It starts nothing. `preview.estimate_usd` is the price, `preview.lenses` the plan, `preview.key` the key.
-2. Show the user the estimate and what will be reviewed. Wait for a go.
-3. Run the same command without `--preview`, adding `--key <preview.key>` to start over the limit and `--limit <USD>` if the user named one. A changed branch or plan makes the key stale: the call is refused (`ok: false`); preview again and show the new price.
+1. Run the target with `--preview`. It starts nothing. `preview.lenses` is the plan, `preview.key` the key, `preview.model` the model the review runs on (`preview.model.spec`) and `preview.price_basis` what its price is known from.
+2. Show the user the model, what will be reviewed and the price, as `preview.price_basis` says it:
+   - `measured` or `repo`: `preview.estimate_usd` is the estimate, and the review stops hard at `preview.cap_usd`.
+   - `unmeasured`: `preview.estimate_usd` is `null`. There is no estimate for this model. Say so, and show `preview.cap_usd` as the spend at which the review stops. Never show a price you worked out yourself.
+   - `unpriced`: `preview.estimate_usd` and `preview.cap_usd` are `null`. There is no price for this model and no dollar stop; only the review's time limit holds. Say exactly that.
+   - `unknown` (`preview.model` is `null`): there is no model login, and a start would be refused. Use the setup skill ({{invoke:setup}}) and stop.
+
+   If `preview.model.ask` is `true`, several providers could run the review and nothing has decided between them. Show the user `preview.model.spec` (the one that would run) and each `preview.alternatives[].spec` with its `provider_name`, and ask which they want. Run `qcr model use <provider>` with the chosen entry's `provider` (for the first one too: that keeps the answer, so the question is not asked again), then preview again. That one call takes no `--schema`: it prints a line for the user, not versioned JSON. Do not pass `--model` for this: it holds for one run and the question comes back.
+
+   Wait for a go.
+3. Run the same command without `--preview`, adding `--key <preview.key>` and `--limit <USD>` if the user named one. The key starts a review over the limit, and one with no estimate: it is the user's go, so pass it only after they gave one. A changed branch, plan or model makes the key stale: the call is refused (`ok: false`); preview again and show the new price.
 
 A review can take many minutes. For a long one use the detached form: `qcr --schema {{schema}} review start <target flags> --key K` returns a `run_id`; poll `qcr --schema {{schema}} review status <run_id>` (`--wait --timeout S` waits; a wait that times out also exits 3, with the status payload on stdout) and stop one with `qcr --schema {{schema}} review stop <run_id>`.
 

@@ -48,10 +48,20 @@ import {
   skippedNotice,
   type ModelChoice,
   type ModelRoute,
+  type ProviderInventory,
   type RouteRefusal,
   type RouteResult,
   type SkippedLogin,
 } from "@quickchatai/pi-quickreview/src/modelroute.js";
+import {
+  DEFAULT_REVIEW_SETTINGS,
+  specAsRun,
+} from "@quickchatai/pi-quickreview/src/localreview.js";
+import {
+  MEASURED,
+  priceKnowledge,
+  specsMeasured,
+} from "@quickchatai/pi-quickreview/src/measured.js";
 import {
   isPinned,
   splitModelSpec,
@@ -59,7 +69,7 @@ import {
   type ModelsConfig,
 } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { PASS_TIER_ORDER } from "@quickchatai/pi-quickreview/src/types.js";
-import { modelEnvFrom } from "./modelenv.js";
+import { modelEnvFrom, oneShotSecretsDir } from "./modelenv.js";
 
 /** How long a review may last: the window a borrowed login has to outlive
  * for `qcr review` to use it. */
@@ -121,6 +131,9 @@ interface Resolved {
   choice: ModelChoice | null;
   /** The skipped logins, under pi's display names. */
   skipped: SkippedLogin[];
+  /** The providers pi has a usable credential for, with their models: what
+   * the price words are read from. */
+  inventory: readonly ProviderInventory[];
   /** pi's display name for a provider id, else the id. */
   nameOf: (provider: string) => string;
   /** Is this a provider pi knows at all? */
@@ -200,6 +213,7 @@ async function resolve(
       result: named(result, borrowed.skipped, nameOf),
       choice,
       skipped: borrowed.skipped.map((l) => ({ ...l, name: nameOf(l.provider) })),
+      inventory: await made.host.inventory(),
       nameOf,
       knows: (provider) => names.has(provider),
     };
@@ -272,6 +286,25 @@ function levelsLine(deps: ModelCliDeps): string {
   return `levels: ${each.join(", ")}`;
 }
 
+/** What a review on the route costs to know, in one line: the measured
+ * estimate when every model a review here uses is the measured one (the
+ * tiers the config pins included), else that there is none and
+ * where such a review stops, else that pi has no price at all. A repo's own
+ * rates and limits (`.git/qcr-review.json`) are not this verb's to read: it
+ * answers for the pi home, not for one repository. */
+function priceLine(deps: ModelCliDeps, r: Resolved, route: ModelRoute): string {
+  if (!route.priced) return "price: pi has no list price for this model: no dollar stop";
+  const on = { route, inventory: r.inventory };
+  const specs = [
+    specAsRun(deps.models.model, on, route.thinking),
+    ...PASS_TIER_ORDER.map((tier) => specAsRun(deps.models.tiers[tier], on, TIER_LEVELS[tier])),
+  ];
+  if (specsMeasured(specs, r.inventory))
+    return `price: an estimate before each review (measured on ${MEASURED.model_id}); a review stops at twice it`;
+  const stop = DEFAULT_REVIEW_SETTINGS.unmeasured_limit_usd.toFixed(2);
+  return `price: no estimate for this model; a review stops at $${stop} unless --limit says otherwise`;
+}
+
 /** The answer as a person reads it. */
 function stateLines(deps: ModelCliDeps, r: Resolved): string[] {
   const lines: string[] = [];
@@ -295,7 +328,7 @@ function stateLines(deps: ModelCliDeps, r: Resolved): string[] {
     lines.push(`  note: not in pi's catalog for ${route.providerName}: sent as written`);
   lines.push(`  credential: ${route.providerName}, ${credentialWords(route.credential)}`);
   lines.push(`  ${levelsLine(deps)}`);
-  if (!route.priced) lines.push("  price: pi has no list price for this model");
+  lines.push(`  ${priceLine(deps, r, route)}`);
   if (deps.daemon) lines.push("  bot rounds: no dollar stop (time limits hold)");
   // The logins left out have their own block below.
   const left = new Set(r.skipped.map(skippedNotice));
@@ -314,7 +347,7 @@ function stateLines(deps: ModelCliDeps, r: Resolved): string[] {
           [
             alt.spec,
             `${alt.providerName}, ${credentialWords(alt.credential)}`,
-            ...(alt.priced ? [] : ["no list price"]),
+            priceKnowledge(alt, r.inventory),
             ...(alt.credential.origin === "env-key" && shared(alt.credential.label)
               ? [`same key: ${alt.credential.label}`]
               : []),
@@ -473,13 +506,19 @@ export async function runModelCli(
   }
   let deps: ModelCliDeps;
   try {
-    const [{ assetRoot }, { loadOneShotConfig, stateHome }, { piAgentDir }, { loginDirOf }] =
-      await Promise.all([
-        import("@quickchatai/pi-quickreview/src/assetroot.js"),
-        import("./homes.js"),
-        import("./piagentdir.js"),
-        import("./loginrefresh/supervisor.js"),
-      ]);
+    const [
+      { assetRoot },
+      { loadOneShotConfig, stateHome },
+      { piAgentDir },
+      { loginDirOf },
+      { sandboxRoot },
+    ] = await Promise.all([
+      import("@quickchatai/pi-quickreview/src/assetroot.js"),
+      import("./homes.js"),
+      import("./piagentdir.js"),
+      import("./loginrefresh/supervisor.js"),
+      import("./config.js"),
+    ]);
     // The install's config, or the shipped defaults when it has none.
     const loaded = loadOneShotConfig({
       root: assetRoot(),
@@ -496,7 +535,9 @@ export async function runModelCli(
       tmpDir: join(stateHome(env), "tmp"),
       models: loaded.cfg.models,
       configPath: loaded.path,
-      secretsDir: loaded.cfg.github.secrets_dir || null,
+      // One directory for this verb, `qcr review`, `qcr scan` and the wizard's
+      // model step: a relative one is under the app's root.
+      secretsDir: oneShotSecretsDir(loaded.cfg.github.secrets_dir, sandboxRoot()),
       daemon: loaded.path !== null,
       out,
       err,

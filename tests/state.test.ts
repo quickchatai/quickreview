@@ -6,8 +6,11 @@ import { join } from "node:path";
 import {
   StateStore,
   buildStatusSnapshot,
+  roundUsage,
+  spendIsUnknown,
   writeStatusJson,
   type OpenReviewFailureInput,
+  type RoundRow,
   type StatusSnapshot,
 } from "../src/state.js";
 import { routeChangeText, type RouteReport } from "../src/ipc/routereport.js";
@@ -239,6 +242,48 @@ describe("rounds", () => {
     store.finishRound(b, "APPROVE", 1.25); // estimate superseded by measurement
     store.recordRoundUsage(b, { tokens_in: 1000, tokens_out: 100, est_usd: 0.1 });
     expect(store.totalSpend()).toBeCloseTo(1.25 + 0.1, 6);
+  });
+
+  // Fence 7: unknown spend is never zero. A round with tokens and no price
+  // (pi stamps a model it has no price for at 0, and the round's est_usd is
+  // then NULL; an older row's transcripts carried no cost at all) adds
+  // nothing to the sum and is counted beside it.
+  // MUTATION: restore `r.est_usd ?? 0` without the count in roundUsage (drop
+  // `unknown_spend_rounds`) - this fails.
+  it("a round with tokens and no price is counted as unknown spend, never as $0 in the sum", () => {
+    const priced = store.startRound(7, "initial", [], 45);
+    const unpriced = store.startRound(8, "initial", [], 45);
+    const older = store.startRound(9, "initial", [], 45);
+    const unmeasured = store.startRound(10, "initial", [], 45);
+    store.recordRoundUsage(priced, { tokens_in: 1000, tokens_out: 100, est_usd: 0.4 });
+    store.recordRoundUsage(unpriced, { tokens_in: 5000, tokens_out: 500, est_usd: null });
+    store.recordRoundUsage(older, { tokens_in: 0, tokens_out: 70, est_usd: null });
+    const rows = [priced, unpriced, older, unmeasured].map(
+      (id) => store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(id) as RoundRow,
+    );
+    expect(rows.map(spendIsUnknown)).toEqual([false, true, true, false]);
+    const usage = roundUsage(rows);
+    expect(usage.spend_usd).toBeCloseTo(0.4, 9);
+    expect(usage.unknown_spend_rounds).toBe(2);
+    // The all-time pair agrees with the per-row rule.
+    expect(store.totalSpend()).toBeCloseTo(0.4, 9);
+    expect(store.totalUnknownSpendRounds()).toBe(2);
+    // A round never measured (no tokens recorded) is not claimed either way.
+    expect(roundUsage([rows[3]!])).toMatchObject({ spend_usd: 0, unknown_spend_rounds: 0 });
+    // A recorded price, even one of 0, is a price: only NULL is unknown.
+    expect(spendIsUnknown({ est_usd: 0, tokens_in: 10, tokens_out: 1 })).toBe(false);
+  });
+
+  it("the snapshot carries each sum's unknown-round count beside it", () => {
+    const a = store.startRound(7, "initial", [], 45);
+    const b = store.startRound(8, "initial", [], 45);
+    store.recordRoundUsage(a, { tokens_in: 1000, tokens_out: 100, est_usd: 0.4 });
+    store.recordRoundUsage(b, { tokens_in: 5000, tokens_out: 500, est_usd: null });
+    const snap = buildStatusSnapshot(store, true, undefined, now);
+    expect(snap.total_spend_usd).toBeCloseTo(0.4, 9);
+    expect(snap.total_unknown_spend_rounds).toBe(1);
+    expect(snap.today_unknown_spend_rounds).toBe(1);
+    expect(snap.month_unknown_spend_rounds).toBe(1);
   });
 
   // Executed-pass telemetry, stored beside (never instead of) the plan.

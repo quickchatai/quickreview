@@ -53,10 +53,9 @@ export type { PiRun };
 export {
   applyConfigOverrides,
   OPEN_MAP_KEYS,
-  withAuthModels,
   withPresetInToml,
 } from "@quickchatai/pi-quickreview/src/engine/context.js";
-export { benchConfig, contextFor } from "../reviewcontext.js";
+export { benchConfig } from "../reviewcontext.js";
 import type { Runtime, SessionSpec } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { publishChangedResult } from "./publication.js";
 import {} from "@quickchatai/pi-quickreview/src/reviewrender.js";
@@ -127,6 +126,29 @@ import {
 import { GIT_ISOLATION_ENV, must, run } from "./exec.js";
 import { dropMetricsFiles } from "./report.js";
 import { authFingerprint } from "./auth.js";
+import { withAuthModels } from "./keyroute.js";
+import { contextFor as installContextFor } from "../reviewcontext.js";
+
+export { withAuthModels };
+
+/**
+ * The bench's review context: the install's (src/reviewcontext.ts), with
+ * every model spec as it runs on the bench's credential route (./keyroute.ts
+ * `withAuthModels`). The rewrite is applied here, after the context returns
+ * (after the `--config` levers and the profile overlays, so a lever's spec
+ * moves too), and nowhere a shipped route can reach: `qcr review` and
+ * `qcr open` build their context without it.
+ */
+export function contextFor(
+  root: string,
+  profile: string,
+  overrides = "",
+  /** Where an override's notice goes (`applyConfigOverrides`). */
+  warn?: (line: string) => void,
+): { cfg: Config; ecosystem: Ecosystem } {
+  const ctx = installContextFor(root, profile, overrides, warn);
+  return { ...ctx, cfg: withAuthModels(ctx.cfg) };
+}
 
 export interface RunnerOptions {
   /** The production tree inside the image (`/opt/quickreview/sandbox`) — the

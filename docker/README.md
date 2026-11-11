@@ -93,9 +93,16 @@ embedding model.
   `~/.config/qcr/<install>/secrets`):
   - `app_id`, `app.pem`, `webhook_secret` — the GitHub App credential
     (required; the only credential the system ever uses).
-  - `openai_api_key` — optional; pi's model credential on the API-key route
-    (pi can instead use ChatGPT OAuth: `/login` once inside a session; tokens
-    persist on the pihome volume). Never read for memory embeddings.
+  - `model-env/<ENV_NAME>` — optional; a model provider's API key for pi,
+    one file per environment variable, named as the provider documents. Any
+    provider pi supports works, and the older `openai_api_key` file is still
+    read. pi can instead use a login: sign in once with the image's `login`
+    mode (pi's own `/login`, every provider it offers), or share this
+    machine's login with the stack; the tokens persist on the pihome volume.
+    The daemon's `login` preflight is green when a model route resolves, and
+    `qcr model` says which model that is
+    ([docs/llm-setup.md](../docs/llm-setup.md)). Never read for memory
+    embeddings.
   - `openai_embeddings_api_key` — optional, and only under the hosted-embeddings
     opt-in (`config.toml [openviking] embedding_provider = "openai"`, carried
     into the memory container as `QCR_OPENVIKING_EMBEDDING_*` in the project
@@ -109,7 +116,7 @@ embedding model.
     the wizard's secrets steps write the same files.
 - **Named volumes** (compose creates them): `qcr-state` (`/opt/qcr/state` —
   SQLite, heartbeat, the dry-run record, the onboarding checklist), `qcr-pihome`
-  (`/home/qcr/.pi` — pi OAuth tokens + session JSONLs; sticky conversations
+  (`/home/qcr/.pi` — pi's model login + session JSONLs; sticky conversations
   depend on it surviving a recreate), `qcr-memory` (the memory store) and
   `qcr-ingress` (the tunnel's hostname file), and the daemon's runtime trees
   under the read-only app root, the same set the VM mounts: `qcr-wt`

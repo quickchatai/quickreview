@@ -16,6 +16,15 @@
 //
 // The bin's front door and the image's entry (src/cli.ts `main`) read it here,
 // so `qcr` from npm and the image's wrapper answer alike.
+//
+// A contract fixes one version per payload family, and the review family has
+// two this qcr prints: its own, and the older one by projection
+// (packages/pi-plugin/src/contract.ts). So the verb has to know which
+// contract its caller named. A process is asked for one contract, once, by
+// the flag that leads its arguments: reading the flag records it
+// (`requestedContract`), and the review verbs (src/reviewcli.ts `cmdReview`)
+// stamp and gate their payloads by it. A run with no flag is asked for none
+// and prints the code's own versions.
 import { supportedContracts } from "@quickchatai/pi-quickreview/src/contract.js";
 
 /** The verbs whose `--json` payload leads with a family's schema_version. */
@@ -31,8 +40,31 @@ export type SchemaFlag =
 
 const USAGE = `usage: qcr --schema N ${SCHEMA_VERBS.join("|")} [arguments…]`;
 
-/** Read a leading `--schema N` (or `--schema=N`) off `argv`. */
+/** The contract this process's `--schema N` named; undefined when it had none. */
+let requested: number | undefined;
+
+/** The host-plugin contract this process was asked for (the last `--schema N`
+ * `parseSchemaFlag` accepted), or undefined: the code's own versions. */
+export function requestedContract(): number | undefined {
+  return requested;
+}
+
+/** Forget the recorded contract: for a test that reads more than one argv in
+ * one process. */
+export function forgetRequestedContract(): void {
+  requested = undefined;
+}
+
+/** Read a leading `--schema N` (or `--schema=N`) off `argv`. An accepted
+ * contract is recorded for the process (`requestedContract`); an argv with no
+ * flag, or a refused one, records none. */
 export function parseSchemaFlag(argv: readonly string[]): SchemaFlag {
+  const flag = readSchemaFlag(argv);
+  requested = flag.kind === "ok" ? flag.contract : undefined;
+  return flag;
+}
+
+function readSchemaFlag(argv: readonly string[]): SchemaFlag {
   const first = argv[0];
   if (first === undefined) return { kind: "absent" };
   let value: string | undefined;

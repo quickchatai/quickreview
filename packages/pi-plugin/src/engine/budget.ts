@@ -97,7 +97,11 @@ export class TurnBudget {
     if (this.meter.totalUsd >= this.opts.capUsd) this.trip("cap");
   }
 
-  /** What the turn has spent, as far as the stream has said (0 with no cap). */
+  /** What the turn has spent, as far as the stream has said (0 with no cap).
+   * It is the sum of what pi priced: a call on a model pi has no price for is
+   * stamped at 0, so it never moves this figure and no cap can stop it. That
+   * such a turn's cost is unknown is the round's to say (round.ts
+   * `settleRound`, from the stream's unpriced calls). */
   get spentUsd(): number {
     return this.meter.totalUsd;
   }

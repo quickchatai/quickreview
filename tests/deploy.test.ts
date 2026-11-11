@@ -2465,6 +2465,25 @@ describe("deploy — what the playbook does (provision) and no longer does", () 
     expect(text).toContain('path: "{{ sandbox_root }}/config-home", mode: "0755"');
   });
 
+  // The model env reaches the VM the way every other secret does: copied by
+  // provision, readable by the container user alone, never logged.
+  // MUTATION: delete the "Model env" task from deploy/ansible/playbook.yml —
+  // a key under <secrets>/model-env never reaches the VM and this fails.
+  it("copies the secrets dir's model env, one file per variable, beside the older key file", () => {
+    expect(text).toContain('path: "{{ sandbox_root }}/secrets/model-env", mode: "0700"');
+    const start = at("- name: Model env (optional");
+    const block = text.slice(start, text.indexOf("- name:", start + 1));
+    expect(block).toContain(
+      `loop: "{{ lookup('ansible.builtin.fileglob', secrets_src + '/model-env/*', wantlist=True) }}"`,
+    );
+    expect(block).toContain('dest: "{{ sandbox_root }}/secrets/model-env/{{ item | basename }}"');
+    expect(block).toContain('mode: "0400"');
+    expect(block).toContain('owner: "{{ container_uid }}"');
+    expect(block).toContain("no_log: true");
+    // the older single file still ships where it exists
+    expect(text).toContain('src: "{{ secrets_src }}/openai_api_key"');
+  });
+
   it("parses as YAML and the tracked group_vars carries every knob it uses", () => {
     const groupVars = readFileSync(
       join(root, "deploy", "ansible", "group_vars", "all.yml"),

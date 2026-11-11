@@ -1,12 +1,19 @@
 // The refresher's published state. Its own module, so `src/state.ts` can type
 // the heartbeat block without importing the supervisor.
 
+/** An OAuth entry the refresher left alone, and why. */
+export interface LoginRefreshSkip {
+  provider: string;
+  reason: string;
+}
+
 /** What the refresher writes into its status file (and the daemon folds into
  * status.json `login_refresh`). Never a token. */
 export interface LoginRefreshFileStatus {
   pid: number;
   started_at: string;
-  /** The earliest OAuth expiry in auth.json, ISO; null when there is none (or no login yet). */
+  /** The earliest OAuth expiry in auth.json, ISO, or `never` when no OAuth
+   * entry expires; null when there is none (or no login yet). */
   expires_at: string | null;
   /** The provider that expiry belongs to. */
   provider: string | null;
@@ -20,6 +27,10 @@ export interface LoginRefreshFileStatus {
   paused: boolean;
   /** The last time the refresher looked at the login, ISO. */
   checked_at: string | null;
+  /** The due OAuth entries the last look did not refresh, each with its
+   * reason (a provider with no OAuth flow to refresh it with). Empty when it
+   * skipped none; absent in a file an older refresher wrote. */
+  skipped?: LoginRefreshSkip[];
 }
 
 /** The daemon's view: the supervised process plus the file it publishes. */

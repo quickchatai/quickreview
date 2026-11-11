@@ -32,6 +32,7 @@
 // own host resolves one from the whole borrowed login.
 import type { Api, CredentialStore, Model } from "@earendil-works/pi-ai";
 import { borrowedCredentials, PI_REFRESH_MARGIN_MS, type LoginSummary } from "../engine/auth.js";
+import { priceKnowledge } from "../measured.js";
 import { readModelChoice, writeModelChoice } from "../modelchoice.js";
 import {
   credentialWords,
@@ -77,9 +78,6 @@ export interface HostRouted {
 export interface HostAuth {
   /** The host's stored logins, each with its type and expiry; never a token. */
   logins(): LoginSummary;
-  /** Does pi have any credential for `provider` (a login, a stored key, an
-   * environment key)? */
-  configured(provider: string): boolean;
   /** Ask the host pi to make `provider`'s OAuth token valid for at least
    * `minValidityMs` more: it refreshes it if not. Rejects when it cannot. */
   refresh(provider: string, minValidityMs: number): Promise<void>;
@@ -204,16 +202,25 @@ export function routeProviders(
 // ---- the route of one run --------------------------------------------------------
 
 /** The rows of the provider question, and of /qcr-setup model: the model each
- * provider would run, whose credential it is, and what is not known about its
- * price. The first is the one the order takes. */
-export function providerRows(route: ModelRoute): string[] {
+ * provider would run, whose credential it is, and what is known of its price
+ * before a review (`measured estimate`, `no estimate` or `no list price`).
+ * With no inventory to read the models from, a row says only what the route
+ * knows: that pi has no list price. The first is the one the order takes. */
+export function providerRows(
+  route: ModelRoute,
+  inventory?: readonly ProviderInventory[],
+): string[] {
   const options = [route, ...route.alternatives];
   const width = Math.max(...options.map((x) => x.spec.length));
   return options.map((x) =>
     [
       x.spec.padEnd(width),
       `${x.providerName}, ${credentialWords(x.credential)}`,
-      ...(x.priced ? [] : ["no list price"]),
+      ...(inventory !== undefined
+        ? [priceKnowledge(x, inventory)]
+        : x.priced
+          ? []
+          : ["no list price"]),
     ].join("    "),
   );
 }
@@ -287,7 +294,7 @@ export async function routeInPi(o: {
   let got = resolve();
   if (got.result.ok && got.result.route.ask && o.ask && o.ui.interactive) {
     const options = [got.result.route, ...got.result.route.alternatives];
-    const rows = providerRows(got.result.route);
+    const rows = providerRows(got.result.route, got.inventory);
     const picked = await o.ui.select(
       `QuickReview: which provider runs the ${o.what}?`,
       rows,

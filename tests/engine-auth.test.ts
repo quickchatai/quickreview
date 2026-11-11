@@ -8,9 +8,10 @@
 // pi asks for a refresh, the store takes the owner's newer token from the
 // owner's file instead of making one.
 //
-// `engineCredentials` is the older shape of the route, still exported for the
-// callers that have not moved: a token that would expire inside the run window
-// refuses the run before a session exists, and its `modify` always refuses.
+// Nothing here refuses a run for a login that is too short, and nothing hands
+// a key to pi's runtime: the refusal is the route's (a host is told what was
+// left out), and a key in the environment is found by pi itself. Only the
+// process route (`copyPiAuth`, a file for a pi child) still refuses up front.
 import {
   chmodSync,
   existsSync,
@@ -27,7 +28,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { lineHasAuthError } from "@quickchatai/pi-quickreview/src/authwatch.js";
 import {
-  applyEnvApiKeys,
   AuthError,
   AuthExpiring,
   AuthRefreshRefused,
@@ -40,16 +40,17 @@ import {
   classifyAuthFailure,
   copyPiAuth,
   DISABLED_REFRESH,
-  engineCredentials,
   ENGINE_AUTH_WORDS,
   expiryText,
   keyOnlyCredentials,
   PI_REFRESH_MARGIN_MS,
   scanAuthExpiring,
-  setRuntimeApiKey,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { prepareReviewHost } from "@quickchatai/pi-quickreview/src/reviewhost.js";
-import { interactiveHostFor } from "@quickchatai/pi-quickreview/extensions/lens.js";
+import {
+  interactiveHostFor,
+  type LensHostRoute,
+} from "@quickchatai/pi-quickreview/extensions/lens.js";
 import { loadConfig } from "../src/config.js";
 import * as piauthcopy from "../src/piauthcopy.js";
 import * as scanauth from "../src/scanauth.js";
@@ -92,61 +93,6 @@ function tree(root: string): string[] {
   return readdirSync(root, { recursive: true }).map(String).sort();
 }
 
-describe("engineCredentials: the blanked copy, in memory", () => {
-  it("serves the owner's login with every refresh token blanked, and writes nothing", async () => {
-    const raw = login(10 * HOUR);
-    writeFileSync(join(src, "auth.json"), raw);
-    chmodSync(src, 0o500); // read-only for the whole run: a write would throw
-    chmodSync(join(src, "auth.json"), 0o400);
-    const before = { tree: tree(src), mtime: statSync(join(src, "auth.json")).mtimeMs };
-
-    const a = engineCredentials({ srcDir: src, needMs: HOUR });
-
-    const oauth = await a.credentials.read("anthropic");
-    expect(oauth).toMatchObject({ type: "oauth", access: "sk-ant-oat-ACCESS" });
-    expect((oauth as { refresh: string }).refresh).toBe(DISABLED_REFRESH);
-    expect(await a.credentials.read("openai")).toEqual({ type: "api_key", key: "sk-stored" });
-    expect(await a.credentials.read("nobody")).toBeUndefined();
-    expect(await a.credentials.list()).toEqual([
-      { providerId: "anthropic", type: "oauth" },
-      { providerId: "openai", type: "api_key" },
-    ]);
-    expect(a.provider).toBe("anthropic");
-    expect(a.expiresAt).toBeGreaterThan(Date.now() + 9 * HOUR);
-
-    expect(tree(src)).toEqual(before.tree);
-    expect(statSync(join(src, "auth.json")).mtimeMs).toBe(before.mtime);
-    expect(readFileSync(join(src, "auth.json"), "utf8")).toBe(raw);
-  });
-
-  it("hands out copies: a caller cannot change what the next read sees", async () => {
-    writeFileSync(join(src, "auth.json"), login(10 * HOUR));
-    const { credentials } = engineCredentials({ srcDir: src, needMs: HOUR });
-    ((await credentials.read("openai")) as { key: string }).key = "tampered";
-    expect(await credentials.read("openai")).toEqual({ type: "api_key", key: "sk-stored" });
-  });
-
-  it("refuses every change, typed: modify and delete throw AuthRefreshRefused", async () => {
-    writeFileSync(join(src, "auth.json"), login(10 * HOUR));
-    const { credentials } = engineCredentials({ srcDir: src, needMs: HOUR });
-    await expect(credentials.modify("anthropic", async () => undefined)).rejects.toBeInstanceOf(
-      AuthRefreshRefused,
-    );
-    await expect(credentials.delete("anthropic")).rejects.toMatchObject({
-      code: "refresh-refused",
-    });
-    expect(await credentials.read("anthropic")).toMatchObject({ access: "sk-ant-oat-ACCESS" });
-  });
-
-  it("a login with no OAuth entry never expires", () => {
-    writeFileSync(
-      join(src, "auth.json"),
-      JSON.stringify({ openai: { type: "api_key", key: "k" } }),
-    );
-    expect(engineCredentials({ srcDir: src, needMs: 100 * HOUR }).expiresAt).toBeNull();
-  });
-});
-
 describe("the preflight refuses what the run window would outlive", () => {
   it("checkAuth: the window plus pi's refresh margin must fit inside the token's life", () => {
     const now = () => 1_000_000;
@@ -161,11 +107,16 @@ describe("the preflight refuses what the run window would outlive", () => {
     ).not.toThrow();
   });
 
-  it("an expiring token is refused with the owner's fix, before anything is built", () => {
+  /** The process route's copy into a sandbox dir: the one borrow that still
+   * refuses up front, since a pi child cannot be told what was left out. */
+  const copyLogin = (needMs: number, words = ENGINE_AUTH_WORDS) =>
+    copyPiAuth({ srcDir: src, dstDir: join(dir, "sandbox"), needMs, words });
+
+  it("the process route: an expiring token is refused with the owner's fix, before anything is written", () => {
     writeFileSync(join(src, "auth.json"), login(20 * MIN));
     let err: unknown;
     try {
-      engineCredentials({ srcDir: src, needMs: 30 * MIN });
+      copyLogin(30 * MIN);
     } catch (e) {
       err = e;
     }
@@ -175,55 +126,40 @@ describe("the preflight refuses what the run window would outlive", () => {
     expect((err as Error).message).toContain("never refreshes");
     expect((err as Error).message).toContain("/login");
     expect((err as AuthExpiring).expiresAt).toBeGreaterThan(Date.now());
+    expect(existsSync(join(dir, "sandbox"))).toBe(false);
   });
 
-  // MUTATION: check `whole` instead of the used logins in engineCredentials —
-  // an unused expired login refuses a healthy review, and this fails.
-  it("with the run's providers, only their logins are admitted: an unused expired one does not refuse it", () => {
-    const shared = JSON.stringify({
-      anthropic: { type: "oauth", access: "OLD", refresh: "R", expires: Date.now() - HOUR },
-      openai: { type: "oauth", access: "A", refresh: "R", expires: Date.now() + 10 * HOUR },
-    });
-    writeFileSync(join(src, "auth.json"), shared);
-    expect(() => engineCredentials({ srcDir: src, needMs: 30 * MIN })).toThrow(AuthExpiring);
-    const a = engineCredentials({ srcDir: src, needMs: 30 * MIN, providers: ["openai"] });
-    expect(a.provider).toBe("openai");
-    // openai-codex runs on the openai login when only that one exists
-    expect(
-      engineCredentials({ srcDir: src, needMs: 30 * MIN, providers: ["openai-codex"] }).provider,
-    ).toBe("openai");
-    // a provider the run does use is still checked
-    expect(() =>
-      engineCredentials({ srcDir: src, needMs: 30 * MIN, providers: ["openai", "anthropic"] }),
-    ).toThrow(AuthExpiring);
-  });
-
-  it("a token inside pi's refresh margin of the window's end is refused too", () => {
-    writeFileSync(join(src, "auth.json"), login(30 * MIN + 2 * MIN));
-    expect(() => engineCredentials({ srcDir: src, needMs: 30 * MIN })).toThrow(AuthExpiring);
-    writeFileSync(join(src, "auth.json"), login(30 * MIN + 6 * MIN));
-    expect(() => engineCredentials({ srcDir: src, needMs: 30 * MIN })).not.toThrow();
-  });
-
-  it("no login at all is a typed refusal with code missing", () => {
-    expect(() => engineCredentials({ srcDir: src, needMs: MIN })).toThrow(AuthExpiring);
+  it("the process route: no login at all is a typed refusal with code missing", () => {
+    expect(() => copyLogin(MIN)).toThrow(AuthExpiring);
     try {
-      engineCredentials({ srcDir: src, needMs: MIN });
+      copyLogin(MIN);
     } catch (e) {
       expect(e).toMatchObject({ code: "missing" });
       expect((e as Error).message).toContain(join(src, "auth.json"));
     }
   });
 
-  it("a route may use its own words", () => {
+  it("the process route: a route may use its own words", () => {
     writeFileSync(join(src, "auth.json"), login(MIN));
-    expect(() =>
-      engineCredentials({
-        srcDir: src,
-        needMs: HOUR,
-        words: { ...ENGINE_AUTH_WORDS, expiring: () => "custom words" },
-      }),
-    ).toThrow("custom words");
+    expect(() => copyLogin(HOUR, { ...ENGINE_AUTH_WORDS, expiring: () => "custom words" })).toThrow(
+      "custom words",
+    );
+  });
+
+  // The same three situations on the in-process route are not refusals any
+  // more: `borrowedCredentials` below leaves the login out, or borrows nothing.
+  // MUTATION: check the whole file's earliest expiry in borrowedCredentials and
+  // throw (the retired refusing borrow) - a shared pi home's expired login for a
+  // provider the run never uses refuses a healthy review, and this fails.
+  it("the in-process route refuses none of them: a shared home's expired login costs only itself", async () => {
+    const shared = JSON.stringify({
+      anthropic: { type: "oauth", access: "OLD", refresh: "R", expires: Date.now() - HOUR },
+      openai: { type: "oauth", access: "A", refresh: "R", expires: Date.now() + 10 * HOUR },
+    });
+    writeFileSync(join(src, "auth.json"), shared);
+    const b = borrowedCredentials({ srcDir: src, needMs: 30 * MIN, owner: false });
+    expect(b.skipped.map((l) => l.provider)).toEqual(["anthropic"]);
+    expect((await b.credentials.list()).map((c) => c.providerId)).toEqual(["openai"]);
   });
 });
 
@@ -585,7 +521,7 @@ describe("through a real PiHost on the faux provider", () => {
 
   it("resolves the stored login, writes no auth file, and never calls modify", async () => {
     writeFileSync(join(src, "auth.json"), login(10 * HOUR));
-    const { credentials } = engineCredentials({ srcDir: src, needMs: HOUR });
+    const { credentials } = borrowedCredentials({ srcDir: src, needMs: HOUR, owner: false });
     const modify = vi.spyOn(credentials, "modify");
     const del = vi.spyOn(credentials, "delete");
     rig = await createHostRig({ credentials });
@@ -607,11 +543,13 @@ describe("through a real PiHost on the faux provider", () => {
     // Admitted (as the sandboxes' rule would), then the clock moved on: pi sees
     // less than five minutes left and tries to refresh.
     writeFileSync(join(src, "auth.json"), login(2 * MIN));
-    const { credentials } = engineCredentials({
+    const { credentials, skipped } = borrowedCredentials({
       srcDir: src,
       needMs: MIN,
+      owner: false,
       now: () => Date.now() - 2 * HOUR,
     });
+    expect(skipped).toEqual([]);
     const modify = vi.spyOn(credentials, "modify");
     rig = await createHostRig({ credentials });
 
@@ -712,51 +650,159 @@ describe("through a real PiHost on the faux provider", () => {
     expect(tree(src)).toEqual(before);
   });
 
-  it("the headless key route: setRuntimeApiKey keys the runtime in memory only", async () => {
-    rig = await createHostRig({ credentials: keyOnlyCredentials() });
-    const runtime = rig.host.modelRuntime;
-    await setRuntimeApiKey(runtime, "openai", "sk-headless");
-    expect(await runtime.getAuth("openai")).toMatchObject({ auth: { apiKey: "sk-headless" } });
+  // MUTATION: refuse in interactiveHost when the borrow left a login out, or
+  // when there is no login file (the retired refusing borrow) - no host is
+  // built and this throws.
+  // MUTATION: drop `skipped` from the route interactiveHost hands the host
+  // (lensHostRoute) - the second refusal reads `no-credential` and this fails.
+  it("the interactive lens host is built whatever the login: the refusal is the route's", async () => {
+    // No login file: an empty store, and nothing else to run on.
+    const none = await interactiveHostFor({})(src);
+    try {
+      expect(await none.route()).toEqual({ ok: false, refusal: { code: "no-credential" } });
+    } finally {
+      none.dispose();
+    }
+
+    // A login shorter than a round, with nothing here to renew it.
+    const expires = Date.now() + 20 * MIN;
+    writeFileSync(
+      join(src, "auth.json"),
+      JSON.stringify({ anthropic: { type: "oauth", access: "A", refresh: "R", expires } }),
+    );
+    const short = await interactiveHostFor({})(src);
+    try {
+      expect(await short.route()).toEqual({
+        ok: false,
+        refusal: {
+          code: "login-too-short",
+          logins: [{ provider: "anthropic", name: "anthropic", expiresAt: expires }],
+        },
+      });
+      expect(await short.inventory()).toEqual([]);
+    } finally {
+      short.dispose();
+    }
+    expect(tree(src)).toEqual(["auth.json"]);
+  });
+
+  // A file that does not parse is waited out first (a login being rewritten),
+  // so this one takes the borrow's whole retry.
+  it(
+    "the interactive lens host refuses a login it cannot read, typed, and builds nothing",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      writeFileSync(join(src, "auth.json"), "{ not json");
+      await expect(interactiveHostFor({})(src)).rejects.toMatchObject({
+        code: "unreadable",
+        path: join(src, "auth.json"),
+      });
+    },
+  );
+
+  // MUTATION: hand the host `{ skipped }` alone when the session's own login
+  // was left out (lensHostRoute) - the host resolves a route on the stored key
+  // of another provider, the lenses leave the session's model, and this fails.
+  it("a session on a login left out is not moved to another provider: its lenses are refused as that", async () => {
+    // The session's login is too short for a round; another provider has a key.
+    writeFileSync(join(src, "auth.json"), login(20 * MIN));
+    // pi's own model for the session's provider, from the host's catalog.
+    const probe = await interactiveHostFor({})(src);
+    const model = probe.modelRuntime.getModels("anthropic")[0]!;
+    probe.dispose();
+    const route: LensHostRoute = {
+      model,
+      fixed: {
+        provider: model.provider,
+        modelId: model.id,
+        providerName: model.provider,
+        spec: `${model.provider}/${model.id}`,
+        thinking: null,
+        source: "pi-provider",
+        pick: "pinned",
+        piDefaultId: null,
+        custom: false,
+        movedFrom: null,
+        credential: { kind: "oauth", origin: "stored", subscription: true },
+        priced: true,
+        ask: false,
+        alternatives: [],
+        notices: [],
+      },
+    };
+
+    const host = await interactiveHostFor({})(src, route);
+    try {
+      expect((await host.inventory()).map((e) => e.provider)).toEqual(["openai"]);
+      expect(await host.route()).toMatchObject({
+        ok: false,
+        refusal: { code: "login-too-short", logins: [{ provider: "anthropic" }] },
+      });
+    } finally {
+      host.dispose();
+    }
+
+    // A key in the environment for the session's provider takes over, by pi's
+    // own rule, and the session's model is the route.
+    const keyed = await interactiveHostFor({ ANTHROPIC_API_KEY: "sk-ant-ENV" })(src, route);
+    try {
+      expect(await keyed.route()).toMatchObject({
+        ok: true,
+        route: {
+          provider: "anthropic",
+          modelId: model.id,
+          source: "choice",
+          credential: { origin: "env-key" },
+        },
+      });
+    } finally {
+      keyed.dispose();
+    }
+
+    // A login that lasts the round keeps the session's route as it was handed.
+    writeFileSync(join(src, "auth.json"), login(10 * HOUR));
+    const lasting = await interactiveHostFor({})(src, route);
+    try {
+      expect(await lasting.route()).toEqual({ ok: true, route: route.fixed });
+    } finally {
+      lasting.dispose();
+    }
+  });
+
+  it("a host that holds no login: the empty store refuses every change and no auth file appears", async () => {
+    const store = keyOnlyCredentials();
+    expect(await store.list()).toEqual([]);
+    await expect(store.modify("anthropic", async () => undefined)).rejects.toBeInstanceOf(
+      AuthRefreshRefused,
+    );
+    rig = await createHostRig({ credentials: store, authEnv: { ANTHROPIC_API_KEY: "sk-ant-ENV" } });
+    // The key is pi's to find in the environment the host was handed.
+    expect(await rig.host.modelRuntime.getAuth("anthropic")).toMatchObject({
+      auth: { apiKey: "sk-ant-ENV" },
+    });
     expect(existsSync(join(rig.host.agentDir, "auth.json"))).toBe(false);
   });
 });
 
-describe("the headless key route", () => {
-  function target() {
-    const calls: Array<[string, string]> = [];
-    return {
-      calls,
-      setRuntimeApiKey: async (p: string, k: string) => void calls.push([p, k]),
-    };
-  }
+describe("no key is handed to pi's runtime from here", () => {
+  // What the env table protected is kept by the borrow: a login that cannot
+  // last is left out, so pi falls through to the environment's key on its own
+  // ("a login left out gives its provider to a key in the environment", above).
+  // What the module must not grow back is fenced by the shape of a name: a
+  // table of key variables, something that sets a runtime key, a borrow of the
+  // engine's own that refuses.
+  const RETIRED_SHAPE = /_ENVS$|^applyEnv|RuntimeApiKey|^engine[A-Z]/;
 
-  it("setRuntimeApiKey refuses an empty key", async () => {
-    const t = target();
-    await expect(setRuntimeApiKey(t, "openai", "  ")).rejects.toThrow("empty API key");
-    expect(t.calls).toEqual([]);
-  });
-
-  it("applyEnvApiKeys keys only the providers whose variable is set", async () => {
-    const t = target();
-    const keyed = await applyEnvApiKeys(t, {
-      OPENAI_API_KEY: "sk-o",
-      ANTHROPIC_API_KEY: "",
-      GEMINI_API_KEY: "g-1",
-      UNRELATED: "x",
-    });
-    expect(keyed).toEqual(["openai", "google"]);
-    expect(t.calls).toEqual([
-      ["openai", "sk-o"],
-      ["google", "g-1"],
-    ]);
-  });
-
-  it("applyEnvApiKeys can be narrowed to the run's provider", async () => {
-    const t = target();
-    await applyEnvApiKeys(t, { OPENAI_API_KEY: "sk-o", DIGITALOCEAN_API_KEY: "do" }, [
-      "digitalocean",
-    ]);
-    expect(t.calls).toEqual([["digitalocean", "do"]]);
+  // MUTATION: export a `..._KEY_ENVS` table, an `applyEnv...` or a
+  // `set...RuntimeApiKey` function from engine/auth.ts again - this fails.
+  it("the module exports no env table, no runtime-key setter and no refusing borrow", () => {
+    const names = Object.keys(engineAuth);
+    expect(names.filter((n) => RETIRED_SHAPE.test(n))).toEqual([]);
+    // The check reads the module: what replaced them is there.
+    expect(names).toEqual(expect.arrayContaining(["borrowedCredentials", "keyOnlyCredentials"]));
+    // And the shape bites on each kind of name it is for.
+    for (const name of ["SOME_KEY_ENVS", "applyEnvKeys", "setRuntimeApiKey", "engineLogin"])
+      expect(RETIRED_SHAPE.test(name), name).toBe(true);
   });
 });
 
@@ -778,6 +824,33 @@ describe("typed errors for authwatch", () => {
     ]) {
       expect(classifyAuthFailure(msg)).toBeDefined();
       expect(lineHasAuthError(JSON.stringify({ errorMessage: msg }))).toBe(true);
+    }
+  });
+
+  // MUTATION: give classifyAuthFailure a pattern of its own again (anything
+  // but the one classifier's `auth` kind) - a refused model or a rate limit
+  // that carries "401 errors" is typed as a refused login; this fails.
+  it("is the one classifier's auth kind: a refused model, a rate limit and a spent account are not a refused login", () => {
+    for (const msg of [
+      "authentication_error: invalid x-api-key",
+      "API key not valid. Please pass a valid API key.",
+      "OAuth refresh failed for anthropic",
+      "Credential store modify failed for github-copilot",
+      // A borrowed login that was asked to refresh says so in its own words.
+      new AuthRefreshRefused("modify", "p").message,
+    ]) {
+      expect(classifyAuthFailure(msg), msg).toBeInstanceOf(AuthRejected);
+      expect(lineHasAuthError(JSON.stringify({ errorMessage: msg })), msg).toBe(true);
+    }
+    for (const msg of [
+      "403 Forbidden: model not available in your region",
+      "AccessDeniedException: You don't have access to the model",
+      "429 Too Many Requests: rate limit reached after 401 errors",
+      "402 Payment Required: account blocked",
+      "529 Platform overloaded",
+    ]) {
+      expect(classifyAuthFailure(msg), msg).toBeUndefined();
+      expect(lineHasAuthError(JSON.stringify({ errorMessage: msg })), msg).toBe(false);
     }
   });
 

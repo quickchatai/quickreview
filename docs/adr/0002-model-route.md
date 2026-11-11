@@ -1,6 +1,6 @@
 ---
 status: accepted
-built: no — recorded before the code. The tree still ships a config that names one provider's models, routes between two providers by name, and calls its tiers terra-med, sol-med and sol-high
+built: yes — the shipped config names no model, the route is resolved from pi's inventory at every entry point, the pick rule, the credential filter, the remembered choice, the price bases and the tiers light, standard and deep are in the tree, and the fences under "Consequences" hold them. The record was written before the code
 ---
 
 # The model route: a review runs on the credential the person has

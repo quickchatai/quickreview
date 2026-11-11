@@ -107,7 +107,7 @@ human annotation.**
 | Dimension | open-code-review | quickreviewd |
 |---|---|---|
 | Shape | Stateless CLI; one run is one review | 24/7 daemon; one sticky pi conversation per PR for its whole life |
-| Scope | Any repo, any of about 50 languages, any model provider | One reviewed repo (set at install), one model family (codex) |
+| Scope | Any repo, any of about 50 languages, any model provider | One reviewed repo (set at install), any model provider pi supports |
 | Trigger | Developer, CI job, or IDE | Label or the configured review-team request; webhook plus reconcile poll |
 | Verdict | None; comments only | APPROVE / REQUEST_CHANGES / COMMENT, with a CI hard gate and posting-time guards |
 | Unit of work | A **file group** (LLM clustering) as an isolated sub-agent | A **lens** (concern: data-safety, backcompat, intent…) as a blank-slate leaf over the whole PR |

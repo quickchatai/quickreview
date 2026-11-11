@@ -339,6 +339,43 @@ describe("first-scan calibration, then previews from the ledger", () => {
     expect(next.covered).toBe(5);
   });
 
+  // pi stamps a cost of exactly 0 on every call of a model it has no price
+  // for, so such a scan's cases "cost" 0 and the rate measured on them is 0.
+  // The measured-rate mechanism is left as it is; what is said is not "$0.00".
+  // MUTATION: make unpricedEstimate return false in scanrender.ts (or
+  // scanRanUnpriced in pricing.ts) - the texts say "$0.00" again and this fails.
+  it("a scan on a model pi has no price for says so, never $0.00: the run, its cases and the next preview", async () => {
+    const s = new ScanRunner(ports(runner({ perFile: 0 })));
+    const cal = await runToEnd(s);
+    expect(cal.run.state).toBe("complete");
+    expect(cal.run.spent_usd).toBe(0);
+    const status = renderStatus(s.status());
+    expect(status).toContain("no price for this model: no dollar stop");
+    expect(status).not.toContain("spent $0.00");
+
+    const next = await previewOf(s);
+    expect(next.mode).toBe("stage1");
+    // The mechanism is untouched: a rate of zero, an estimate of zero.
+    expect(next.rate!.usd_per_kline).toBe(0);
+    expect(next.estimate_usd).toBe(0);
+    const text = renderPreview(next);
+    expect(text).toContain("No estimate: no price for this model: no dollar stop");
+    expect(text).not.toContain("Estimate $0.00");
+    expect(text).not.toContain("$0.00/kline");
+    expect(text).not.toContain("stops hard at the estimate");
+  });
+
+  it("a priced scan still says its dollars", async () => {
+    const s = new ScanRunner(ports(runner({ perFile: 0.01 })));
+    await runToEnd(s);
+    const status = renderStatus(s.status());
+    expect(status).toMatch(/spent \$0\.05 of \$/);
+    expect(status).not.toContain("no price for this model");
+    const text = renderPreview(await previewOf(s));
+    expect(text).toMatch(/Estimate \$\d/);
+    expect(text).toContain("The run stops hard at the estimate.");
+  });
+
   it("a runner that prices nothing blocks the estimate rather than calling it free", async () => {
     const s = new ScanRunner(ports(runner({ perFile: null })));
     await runToEnd(s);

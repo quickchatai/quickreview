@@ -7,13 +7,16 @@
 // settings.json), and the round's spec names it (`PI_CODING_AGENT_DIR`). This
 // runtime builds its host on that dir when the first session is asked for:
 //
-//   login        read from the dir's auth.json by engineCredentials: an
-//                in-memory, read-only copy, refused up front when the token would
-//                expire inside the turn. A route that borrowed the login itself
-//                (`credentials`) hands it over instead, and no file is read. A
-//                provider key is looked up by pi, by pi's own names and in pi's
-//                own order (a stored credential owns its provider), in the
-//                spec's env over this process's.
+//   login        borrowed from the dir's auth.json (auth.ts
+//                `borrowedCredentials`): an in-memory, read-only copy, with
+//                nothing here to renew it. A login that would expire inside
+//                the turn is left out and named to the host's route, which
+//                refuses a session on its provider (`login-too-short`); no
+//                login file at all is an empty store. A route that borrowed
+//                the login itself (`credentials`) hands it over instead, and
+//                no file is read. A provider key is looked up by pi, by pi's
+//                own names and in pi's own order (a stored credential owns its
+//                provider), in the spec's env over this process's.
 //   model        a session whose spec names no model runs on the host's route:
 //                the route an earlier step resolved, or the inputs the host
 //                resolves one from (`route`). A route that had to know its
@@ -47,8 +50,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { lensRunConfigFromEnv } from "../../extensions/lens.js";
 import { CONTEXT_PACK_FILE } from "../contextpack.js";
+import type { SkippedLogin } from "../modelroute.js";
 import { agentDirSettings } from "./agentdir.js";
-import { engineCredentials } from "./auth.js";
+import { borrowedCredentials } from "./auth.js";
 import { engineLensTools, type EngineLensTools } from "./lens/engine-tools.js";
 import type { LensRunConfig } from "./lens/runlens.js";
 import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./lens/wave.js";
@@ -103,18 +107,18 @@ export interface ReviewSdkOptions {
   /** The runtime is built by an extension of the running pi (the pi plugin's
    * /review): PiHostOptions.hostPi. Implies `ownsProcess: false`. */
   hostPi?: boolean;
-  /** The stretch at the end of a login's life the run refuses on top of its
-   * time budget (`checkAuth`'s margin). Default pi's own refresh margin. A
-   * host whose pi refreshed the login for this run's whole window just before
-   * it (the plugin's borrowed login) passes 0. */
+  /** The stretch at the end of a login's life a login must last beyond the
+   * run's time budget to be borrowed from the agent dir (`borrowedCredentials`'
+   * margin). Default pi's own refresh margin. */
   authMarginMs?: number;
   /** Paths the tool fence keeps out beside the defaults: where the host's own
    * login lives when no env names it (the plugin's host pi agent dir). */
   fenceDirs?: readonly string[];
   /** The login, borrowed by the route before the run
    * (packages/pi-plugin/src/engine/auth.ts `borrowedCredentials`): the host
-   * holds it in memory, and the run's agent dir has no `auth.json` to read or
-   * check. Omitted: the agent dir's own login file, read and checked here. */
+   * holds it in memory, and the run's agent dir has no `auth.json` to read.
+   * Omitted: the agent dir's own login file, borrowed here with nothing to
+   * renew it. */
   credentials?: PiHostOptions["credentials"];
   /** What decides the model of a session whose spec names none
    * (`PiHostOptions.route`). Omitted: no pin and no choice, so the host
@@ -155,13 +159,29 @@ export function engineLensConfig(host: PiHost, spec: SessionSpec): LensRunConfig
 /** `SessionSpec.env` names this dir: the run's private pi agent dir. */
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 
+/** `route` with the logins a borrow left out named to it. A route resolved
+ * before the run (`fixed`) is used as it is: its login was borrowed by the
+ * step that resolved it, which hands the store over with it. */
+function routeWithSkipped(
+  route: PiHostOptions["route"],
+  skipped: readonly SkippedLogin[],
+): PiHostOptions["route"] {
+  if (skipped.length === 0 || (route !== undefined && "fixed" in route)) return route;
+  return { ...route, skipped: [...(route?.skipped ?? []), ...skipped] };
+}
+
 /**
  * What a review's host is built from, over `agentDir`: the runtime's own
  * options and what the agent dir holds (its settings, and its login unless the
  * route handed one over). `env` is the session's env, which names what the
- * run was given; a host built before any session has none. Throws
- * `AuthExpiring` when the agent dir's login is the one read and it would
- * expire inside `needMs`.
+ * run was given; a host built before any session has none.
+ *
+ * The agent dir's own login is borrowed like any other, and nothing is
+ * refused here: no login file is an empty store, and a login that would
+ * expire inside `needMs` is left out and named to the host's route
+ * (`skipped`), so the refusal a person sees is the route's (`login-too-short`
+ * for a session on that provider, or when nothing else is usable). A file
+ * that is there and cannot be read throws `AuthUnreadable`.
  */
 export function reviewHostOptions(
   options: Pick<
@@ -179,13 +199,17 @@ export function reviewHostOptions(
 ): PiHostOptions {
   const procEnv = options.processEnv ?? process.env;
   const env = o.env ?? {};
-  const credentials =
-    options.credentials ??
-    engineCredentials({
-      srcDir: o.agentDir,
-      needMs: o.needMs,
-      ...(options.authMarginMs !== undefined ? { marginMs: options.authMarginMs } : {}),
-    }).credentials;
+  const { credentials, skipped } =
+    options.credentials !== undefined
+      ? { credentials: options.credentials, skipped: [] }
+      : borrowedCredentials({
+          srcDir: o.agentDir,
+          needMs: o.needMs,
+          // The run's agent dir holds a copy: nothing renews it while the run goes.
+          owner: false,
+          ...(options.authMarginMs !== undefined ? { marginMs: options.authMarginMs } : {}),
+        });
+  const route = routeWithSkipped(options.route, skipped);
   const ids = toolIdsOf(procEnv);
   const hostPi = options.hostPi === true;
   return {
@@ -203,7 +227,7 @@ export function reviewHostOptions(
       ...(options.fenceDirs ?? []),
     ],
     credentials,
-    ...(options.route !== undefined ? { route: options.route } : {}),
+    ...(route !== undefined ? { route } : {}),
     settings: agentDirSettings(o.agentDir),
     // Where pi looks for a provider key: the round's env, which names
     // what the run was given, over this process's, which holds whatever

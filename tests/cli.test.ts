@@ -12,6 +12,8 @@ import {
   parseRelayoutArgs,
   rebuildCompanion,
   renderStatus,
+  roundSpendWord,
+  spendLines,
   todayCancellationLine,
   todayJson,
   whyHeaderLine,
@@ -343,6 +345,105 @@ describe("usage-aware spend reporting", () => {
     } finally {
       store.close();
     }
+  });
+});
+
+// Fence 7: unknown spend is never zero. A round with tokens and no price (a
+// model pi has no price for is stamped at 0, and the round's est_usd is NULL)
+// is counted beside the sum and said as "unknown" on every line `qcr` prints.
+describe("spend where a round's cost is not known", () => {
+  const TODAY = new Date().toISOString().slice(0, 10);
+
+  /** PR 7: one priced round ($0.31) and `unpriced` rounds with tokens and no price. */
+  function storeWith(unpriced: number, priced = true): StateStore {
+    const store = new StateStore(":memory:");
+    if (priced) {
+      const a = store.startRound(7, "initial", [], 45);
+      store.recordRoundUsage(a, { tokens_in: 120_000, tokens_out: 8_000, est_usd: 0.31 });
+    }
+    for (let i = 0; i < unpriced; i++) {
+      const b = store.startRound(7, "re_review", [], 45);
+      store.recordRoundUsage(b, { tokens_in: 50_000, tokens_out: 2_000, est_usd: null });
+    }
+    return store;
+  }
+
+  // MUTATION: restore `r.est_usd ?? 0` without the count in roundUsage - the
+  // lines read "$0.31" alone and this fails.
+  it("qcr spend says the sum at list prices and the rounds it could not count", () => {
+    const store = storeWith(2);
+    try {
+      const [total, today] = spendLines(store, TODAY);
+      expect(total).toBe(
+        "total spend: $0.31 at list prices + 2 rounds unknown — 220000 in / 12000 out tokens",
+      );
+      expect(today).toBe(
+        `today (${TODAY}): $0.31 + 2 rounds unknown across 3 rounds — 220000 in / 12000 out tokens`,
+      );
+      expect(total).not.toContain("(est)");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("qcr spend with nothing priced says unknown, never $0.00", () => {
+    const store = storeWith(1, false);
+    try {
+      const [total, today] = spendLines(store, TODAY);
+      expect(total).toContain("total spend: unknown (1 round) — ");
+      expect(today).toContain(": unknown (1 round) across 1 rounds");
+      expect(`${total}${today}`).not.toContain("$0.00");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("qcr spend with every round priced says the sum alone", () => {
+    const store = storeWith(0);
+    try {
+      const [total, today] = spendLines(store, TODAY);
+      expect(total).toBe("total spend: $0.31 at list prices — 120000 in / 8000 out tokens");
+      expect(today).not.toContain("unknown");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("qcr today says each round's spend: its price, unknown, or never measured", () => {
+    expect(roundSpendWord({ est_usd: 0.31, tokens_in: 10, tokens_out: 1 })).toBe("$0.31");
+    expect(roundSpendWord({ est_usd: null, tokens_in: 10, tokens_out: 1 })).toBe("unknown");
+    expect(roundSpendWord({ est_usd: null, tokens_in: null, tokens_out: null })).toBe("—");
+  });
+
+  it("the JSON payloads carry the count beside the sum", () => {
+    const store = storeWith(2);
+    try {
+      expect(todayJson(store, TODAY)).toMatchObject({ unknown_spend_rounds: 2 });
+      expect(todayJson(store, TODAY).spend_usd).toBeCloseTo(0.31, 6);
+      const why = whyJson(store, 7, "/nonexistent-archive");
+      expect(why.spend_usd).toBeCloseTo(0.31, 6);
+      expect(why.unknown_spend_rounds).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("qcr status says the count the snapshot carries, and the sum alone for a snapshot without one", () => {
+    const line = (s: StatusSnapshot): string =>
+      renderStatus(s)
+        .split("\n")
+        .find((l) => l.startsWith("rounds running:"))!;
+    expect(line({ ...snapshot, total_unknown_spend_rounds: 4 })).toBe(
+      "rounds running: 2   total spend: $3.50 + 4 rounds unknown",
+    );
+    expect(line({ ...snapshot, total_spend_usd: 0, total_unknown_spend_rounds: 1 })).toBe(
+      "rounds running: 2   total spend: unknown (1 round)",
+    );
+    expect(line({ ...snapshot, total_unknown_spend_rounds: 0 })).toBe(
+      "rounds running: 2   total spend: $3.50",
+    );
+    // An older daemon's snapshot has no count: unknown, so nothing is claimed.
+    expect(line(snapshot)).toBe("rounds running: 2   total spend: $3.50");
   });
 });
 

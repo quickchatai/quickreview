@@ -133,7 +133,7 @@ describe("/review: one faux round inside the host pi", () => {
       home: tmp,
       piVersion: "1.4.0",
       agentDir: join(tmp, "host-agent"),
-      auth: { logins: () => ({}), configured: () => true, refresh: async () => {} },
+      auth: { logins: () => ({}), refresh: async () => {} },
       runner: { which: () => null, run: async () => ({ code: 1, stdout: "", stderr: "" }) },
       shutdown: new AbortController().signal,
     };
@@ -303,7 +303,7 @@ describe("/review: live lens activity in the projection, while the lens runs", (
       home: tmp,
       piVersion: "1.4.0",
       agentDir: join(tmp, "live-host-agent"),
-      auth: { logins: () => ({}), configured: () => true, refresh: async () => {} },
+      auth: { logins: () => ({}), refresh: async () => {} },
       runner: { which: () => null, run: async () => ({ code: 1, stdout: "", stderr: "" }) },
       shutdown: new AbortController().signal,
     };

@@ -104,7 +104,9 @@ export interface ReviewProgress {
   startedAt: number;
   /** From the round's start (`ReviewIo.started`). */
   lenses?: number;
-  estimateUsd?: number;
+  /** The estimate; null: the run has none (a model with no measured price). */
+  estimateUsd?: number | null;
+  /** The dollar stop; null: none. */
   capUsd?: number | null;
   /** What each running lens is doing, from the round's live log
    * (`liveLensLines`); empty until a lens has started. */
@@ -118,7 +120,8 @@ const elapsed = (ms: number): string => {
 
 /** The status line for the review in flight: what it reviews, its stage, and
  * what the round's start said (lenses, price, hard stop), with the time
- * since it started. Every status line /qcr-review shows is built here. */
+ * since it started. A run with no estimate says so and names its stop, never
+ * a price. Every status line /qcr-review shows is built here. */
 export function reviewStatusLine(p: ReviewProgress, now: number): string {
   const since = elapsed(now - p.startedAt);
   switch (p.stage) {
@@ -129,10 +132,16 @@ export function reviewStatusLine(p: ReviewProgress, now: number): string {
     case "running": {
       const plan = [
         ...(p.lenses !== undefined ? [`${p.lenses} lens${p.lenses === 1 ? "" : "es"}`] : []),
-        ...(p.estimateUsd !== undefined ? [`about $${p.estimateUsd.toFixed(2)}`] : []),
-        ...(p.capUsd !== undefined && p.capUsd !== null
-          ? [`stops at $${p.capUsd.toFixed(2)}`]
-          : []),
+        ...(p.estimateUsd === undefined
+          ? []
+          : [p.estimateUsd === null ? "no estimate" : `about $${p.estimateUsd.toFixed(2)}`]),
+        ...(p.capUsd === undefined
+          ? []
+          : p.capUsd !== null
+            ? [`stops at $${p.capUsd.toFixed(2)}`]
+            : p.estimateUsd === null
+              ? ["no dollar stop"]
+              : []),
       ];
       const now = p.running?.length
         ? ` · ${p.running[0]}${p.running.length > 1 ? ` (+${p.running.length - 1} more)` : ""}`

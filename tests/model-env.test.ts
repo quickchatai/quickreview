@@ -13,7 +13,26 @@ import {
   MODEL_ENV_REFUSED_PREFIXES,
   modelEnvFrom,
   modelEnvNameProblem,
+  oneShotModelEnv,
+  oneShotSecretsDir,
 } from "../src/modelenv.js";
+import {
+  BEGIN_MARK,
+  BLOCK_FILES,
+  BLOCK_VARIABLE,
+  END_MARK,
+  blockOf,
+  envNamesOf,
+  namesInBlock,
+  piModelEnvNames,
+  providerEnvNames,
+  renderBlock,
+  withBlock,
+} from "../scripts/model-env-names.mjs";
+
+/** The names the installed pi reads a model credential from, by the
+ * generator. Asked once, here, so no test's clock pays for pi's catalog. */
+const PI_NAMES: string[] = await piModelEnvNames();
 
 let secrets: string;
 
@@ -170,6 +189,43 @@ describe("the name rule", () => {
   });
 });
 
+// `qcr model`, `qcr review` and `qcr scan` read one model env: the secrets
+// dir their config located, by the one loader.
+describe("the one-shot verbs' model env", () => {
+  it("is the loader's answer for the directory the config located", () => {
+    variable("PROV_API_KEY", "value-a");
+    expect(oneShotModelEnv(secrets, "/app")).toEqual(modelEnvFrom(secrets));
+    expect(oneShotModelEnv(secrets, "/app")).toEqual({ PROV_API_KEY: "value-a" });
+  });
+
+  it("no directory is no model env, never the working directory's", () => {
+    for (const none of [null, undefined, "", "   "]) {
+      expect(oneShotSecretsDir(none, "/app")).toBeNull();
+      expect(oneShotModelEnv(none, "/app")).toEqual({});
+    }
+  });
+
+  // MUTATION: return a relative directory as it is from oneShotSecretsDir —
+  // the verb reads under wherever it was typed and this fails.
+  it("a relative directory is under the app's root, as the setup wizard's steps resolve it", () => {
+    expect(oneShotSecretsDir("keys", "/app")).toBe("/app/keys");
+    expect(oneShotSecretsDir("/srv/keys", "/app")).toBe("/srv/keys");
+    variable("PROV_API_KEY", "value-a");
+    const parent = join(secrets, "..");
+    const name = secrets.slice(parent.length + 1);
+    expect(oneShotModelEnv(name, parent)).toEqual({ PROV_API_KEY: "value-a" });
+  });
+
+  it("says what it left out through the caller's warn, by name", () => {
+    variable("GH_TOKEN", "the-secret-value");
+    const said: string[] = [];
+    expect(oneShotModelEnv(secrets, "/app", { warn: (l) => said.push(l) })).toEqual({});
+    expect(said).toHaveLength(1);
+    expect(said[0]).toContain("GH_TOKEN");
+    expect(said[0]).not.toContain("the-secret-value");
+  });
+});
+
 describe("no value is ever said", () => {
   // MUTATION: put the file's content into a `warn` line of modelEnvFrom — this fails.
   it("a message names the file and the reason, never what the file holds", () => {
@@ -192,5 +248,169 @@ describe("no value is ever said", () => {
     // A leaf: the daemon reads it without reaching anything else.
     const imports = [...source.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
     expect(imports.sort()).toEqual(["node:fs", "node:path"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The names the host wrapper and the Action forward (scripts/model-env-names.mjs)
+// ---------------------------------------------------------------------------
+
+const repoRoot = join(import.meta.dirname, "..");
+const script = (rel: string): string => readFileSync(join(repoRoot, rel), "utf8");
+
+/** One provider's api-key auth, as pi-ai shapes it, over a made-up rule. */
+function auth(
+  resolve: (ctx: {
+    env: (name: string) => Promise<string | undefined>;
+    fileExists: (path: string) => Promise<boolean>;
+  }) => Promise<unknown>,
+): { name: string; resolve: (input: { ctx: Parameters<typeof resolve>[0] }) => Promise<unknown> } {
+  return { name: "made-up key", resolve: ({ ctx }) => resolve(ctx) };
+}
+
+describe("the env-name blocks are pi's (fence 10)", () => {
+  // The wrapper and the Action cannot ask pi at run time, so each carries the
+  // generator's output for the pinned pi, and this holds the two equal to it.
+  // MUTATION: delete XAI_API_KEY from the block in scripts/qcr-host.sh - this fails.
+  it("both scripts carry exactly the generator's block for the installed pi", () => {
+    expect(BLOCK_FILES).toEqual(["scripts/qcr-host.sh", "scripts/action.sh"]);
+    const want = renderBlock(PI_NAMES);
+    for (const rel of BLOCK_FILES) {
+      const block = blockOf(script(rel));
+      expect(block, `${rel}: run \`node scripts/model-env-names.mjs --write\``).toBe(want);
+      expect(namesInBlock(block!), rel).toEqual(PI_NAMES);
+    }
+  });
+
+  it("the names are many, sorted, distinct, and each one a shell can hold", () => {
+    expect(PI_NAMES.length).toBeGreaterThan(20);
+    expect([...PI_NAMES].sort()).toEqual(PI_NAMES);
+    expect(new Set(PI_NAMES).size).toBe(PI_NAMES.length);
+    for (const name of PI_NAMES) expect(name).toMatch(/^[A-Z][A-Z0-9_]*$/);
+    // None is one of this program's own: the model-env rule refuses these
+    // prefixes, and the wrapper must never forward one as a model's.
+    for (const name of PI_NAMES) expect(modelEnvNameProblem(name), name).toBeNull();
+  });
+
+  // A provider stops asking at its first answer, so one run sees only the
+  // names before it. The walk answers each question in turn.
+  // MUTATION: collect from two runs only (one answering nothing, one
+  // answering everything) in providerEnvNames - SECOND_HALF and LAST are
+  // never asked for and this fails.
+  it("finds the names behind an answer: a pair asked one after the other, a fallback after a miss", async () => {
+    const pair = auth(async (ctx) => {
+      if (await ctx.env("BEARER")) return { auth: {} };
+      // Asked only once the first half was found, and only when BEARER was not.
+      if ((await ctx.env("FIRST_HALF")) && (await ctx.env("SECOND_HALF"))) return { auth: {} };
+      if (!(await ctx.fileExists("/some/file"))) return undefined;
+      return (await ctx.env("LAST")) ? { auth: {} } : undefined;
+    });
+    expect((await providerEnvNames(pair)).sort()).toEqual([
+      "BEARER",
+      "FIRST_HALF",
+      "LAST",
+      "SECOND_HALF",
+    ]);
+  });
+
+  it("a file question is walked and never listed; a resolve that throws has still asked", async () => {
+    const names = await envNamesOf([
+      {
+        auth: {
+          apiKey: auth(async (ctx) => {
+            await ctx.fileExists("~/.made-up/credentials.json");
+            await ctx.env("B_NAME");
+            throw new Error("no such thing");
+          }),
+        },
+      },
+      { auth: { apiKey: auth(async (ctx) => ctx.env("A_NAME")) } },
+      // A provider with no api-key auth (a login only) asks for nothing.
+      { auth: {} },
+    ]);
+    expect(names).toEqual(["A_NAME", "B_NAME"]);
+  });
+
+  it("refuses a name a shell could not hold, instead of writing it into a script", async () => {
+    await expect(
+      envNamesOf([{ auth: { apiKey: auth(async (ctx) => ctx.env("BAD NAME; rm")) } }]),
+    ).rejects.toThrow(/cannot hold/);
+  });
+
+  // The generator's whole world is its recording context.
+  // MUTATION: answer `process.env[name]` from the recording context's env() -
+  // the made-up provider sees this test's variable and this fails.
+  it("reads no environment of its own and no file: a provider sees only what the walk answers", async () => {
+    const seen: Array<string | undefined> = [];
+    process.env["MODEL_ENV_FENCE_PROBE"] = "from-the-process";
+    try {
+      await providerEnvNames(
+        auth(async (ctx) => {
+          seen.push(await ctx.env("MODEL_ENV_FENCE_PROBE"));
+          return undefined;
+        }),
+      );
+    } finally {
+      delete process.env["MODEL_ENV_FENCE_PROBE"];
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen).not.toContain("from-the-process");
+    const source = script("scripts/model-env-names.mjs");
+    expect(source).not.toMatch(/process\.env|\bfetch\(|existsSync|accessSync|homedir/);
+  });
+
+  it("the block is found and replaced whole, and a script with none or two is refused", () => {
+    const block = renderBlock(["A_KEY", "B_KEY"]);
+    expect(block.split("\n")[0]).toBe(BEGIN_MARK);
+    expect(block.split("\n").at(-1)).toBe(END_MARK);
+    expect(block).toContain(`${BLOCK_VARIABLE}='\nA_KEY\nB_KEY\n'`);
+    const text = `#!/bin/sh\nbefore\n${block}\nafter\n`;
+    expect(blockOf(text)).toBe(block);
+    expect(namesInBlock(block)).toEqual(["A_KEY", "B_KEY"]);
+    const next = renderBlock(["C_KEY"]);
+    expect(withBlock(text, next)).toBe(`#!/bin/sh\nbefore\n${next}\nafter\n`);
+    expect(blockOf("no block here\n")).toBeNull();
+    expect(blockOf(`${block}\n${block}\n`)).toBeNull();
+    expect(() => withBlock("no block here\n", next)).toThrow(/no single/);
+  });
+
+  // The block is the only list: neither script keeps a table of provider
+  // names beside it, and both forward the same extras.
+  // MUTATION: put `for key in OPENAI_API_KEY ANTHROPIC_API_KEY` back into
+  // scripts/action.sh's forward loop - this fails.
+  it("both scripts forward the block's names, QCR_MODEL_ENV's, and the two older names, and keep no list of their own", () => {
+    for (const rel of BLOCK_FILES) {
+      const text = script(rel);
+      const outside = text.replace(blockOf(text)!, "");
+      const loop = outside
+        .split("\n")
+        .filter((line) => /^\s*for (name|key) in \$PI_MODEL_ENV_NAMES\b/.test(line));
+      expect(loop, rel).toHaveLength(1);
+      expect(loop[0], rel).toMatch(/\bDIGITALOCEAN_API_KEY\b/);
+      expect(loop[0], rel).toMatch(/\bQCR_DEBUG\b/);
+      expect(outside, rel).toMatch(/QCR_MODEL_ENV/);
+      // No name of the block is spelled anywhere else in the script's code.
+      const code = outside
+        .split("\n")
+        .filter((line) => !/^\s*#/.test(line))
+        .join("\n");
+      for (const name of PI_NAMES)
+        expect(new RegExp(`\\b${name}\\b`).test(code), `${rel} spells ${name}`).toBe(false);
+    }
+  });
+
+  // What QCR_MODEL_ENV may not name is what the secrets dir's model-env may
+  // not: one rule, spelled in sh in two scripts.
+  // MUTATION: drop `GIT_*` from the refused prefixes in scripts/qcr-host.sh -
+  // this fails.
+  it("both scripts refuse, for QCR_MODEL_ENV, exactly the prefixes the model-env loader refuses", () => {
+    const want = MODEL_ENV_REFUSED_PREFIXES.map((p) => `${p}*`).join(" | ");
+    for (const rel of BLOCK_FILES) {
+      const refusals = script(rel)
+        .split("\n")
+        .filter((line) => /is not a model setting and is never forwarded/.test(line));
+      expect(refusals, rel).toHaveLength(1);
+      expect(refusals[0]!.trim().startsWith(`${want})`), rel).toBe(true);
+    }
   });
 });

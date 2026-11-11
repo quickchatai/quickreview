@@ -171,6 +171,9 @@
         - { path: "{{ openviking_home }}", mode: "0700" }
         - { path: "{{ sandbox_root }}/pihome", mode: "0700" }
         - { path: "{{ sandbox_root }}/secrets", mode: "0700" }
+        # The model env: one file per environment variable of a model
+        # provider, read by the daemon's loader and by nothing else.
+        - { path: "{{ sandbox_root }}/secrets/model-env", mode: "0700" }
         # The install's config home as the updater ships it (config.toml +
         # profiles/ from the tar on its stdin), mounted read-only. Created
         # here so the first bind mount has a source.
@@ -186,9 +189,25 @@
       loop: [app_id, app.pem, webhook_secret]
       no_log: true
 
-    # Optional — the deployment uses the ChatGPT-OAuth route: pi auths via
-    # `/login` inside the container; the key file ships only if present.
-    - name: OpenAI API key (optional under the OAuth route)
+    # Optional — a model provider's API key, and the further variables a
+    # provider that needs several is configured with: one file per environment
+    # variable under model-env/, named as the provider documents. A deployment
+    # whose pi signed in with `/login` inside the container ships none. Files
+    # are added and replaced, never removed: a key taken out of the local
+    # secrets dir is removed on the VM by hand.
+    - name: Model env (optional - model provider keys by their environment names)
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ sandbox_root }}/secrets/model-env/{{ item | basename }}"
+        mode: "0400"
+        owner: "{{ container_uid }}"
+        group: "{{ container_uid }}"
+      loop: "{{ lookup('ansible.builtin.fileglob', secrets_src + '/model-env/*', wantlist=True) }}"
+      no_log: true
+
+    # The older single key file, read as OPENAI_API_KEY for as long as it
+    # exists; it ships only if present.
+    - name: Older model key file (optional - still read where it exists)
       ansible.builtin.copy:
         src: "{{ secrets_src }}/openai_api_key"
         dest: "{{ sandbox_root }}/secrets/openai_api_key"

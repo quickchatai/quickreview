@@ -1,6 +1,6 @@
-// One login per box, as the home sees it: who refreshes
-// the OpenAI login the home signed in to, whether it still works, and the
-// re-login that replaces it safely.
+// One login per box, as the home sees it: who refreshes the logins pi stores
+// (any provider's), whether they still work, and the sign-in that adds or
+// replaces one safely.
 //
 //   owner     the daemon's refresher holds the login while auto-review runs
 //             on this machine (its single-instance lock, beside auth.json in
@@ -14,21 +14,26 @@
 //             was refused for the login (extensions/home.ts reads pi's error);
 //             or auto-review is paused on it. The login line then says "login
 //             expired", with one key that signs in again.
-//   re-login  pi's own device login (src/home/devicelogin.ts), with the
-//             entrypoint's handover around it (src/loginrefresh/handover.ts):
-//             a running refresher is paused first, and keeps its lock, so its
-//             refresh can never land on top of the new login; the pause is
-//             lifted after, and the refresher re-reads the new login at once,
-//             so auto-review resumes on it.
+//   sign-in   pi's own /login, with every provider pi offers (LoginMenu):
+//             the setup card's first step and the re-login both open it, with
+//             the entrypoint's handover around it
+//             (src/loginrefresh/handover.ts): a running refresher is paused
+//             first, and keeps its lock, so its refresh can never land on top
+//             of the new login; the pause is lifted after, and the refresher
+//             re-reads the new login at once, so auto-review resumes on it.
+//             The home cannot see pi's menu close. The pause lasts until what
+//             the sign-in was for is true (pi has a credential; a stored
+//             login was replaced), the person sends the chat a message (the
+//             menu is gone then), the session ends, or LOGIN_MENU_MAX_MS.
 //
 // Nothing here reads or prints a token: the refresher's status file carries
 // expiry times and redacted errors only.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PI_AUTH_ERROR_RE } from "@quickchatai/pi-quickreview/src/authwatch.js";
+import { providerErrorKind } from "@quickchatai/pi-quickreview/src/modelerrors.js";
 import { holdRefresher, refresherRuns, type HoldOptions } from "../loginrefresh/handover.js";
 import { STATUS_FILE } from "../loginrefresh/refresher.js";
-import { providerLabel, type HomeModel } from "./model.js";
+import type { HomeModel } from "./model.js";
 import {
   known,
   unknown,
@@ -37,13 +42,6 @@ import {
   type LoginHold,
   type LoginOwnerPort,
 } from "./ports.js";
-import {
-  DEVICE_LOGIN_PROVIDERS,
-  loginFailureText,
-  type DeviceCode,
-  type DeviceLoginPort,
-  type LoginFailureKind,
-} from "./setup.js";
 
 /** What the login line says of a login that no longer works. */
 export const LOGIN_EXPIRED = "login expired";
@@ -54,8 +52,14 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-/** A refresh refused for good: the grant is gone, not a network blip. */
-const REFUSED = /invalid_grant|revoked|refresh_token_(?:reused|expired|invalidated)/i;
+/** A refresh refused for good: the provider refused the credential (the grant
+ * is gone), not a network blip, a rate limit or an outage. The refresher
+ * joins one failure per login with "; ", and each is read by itself by the
+ * one classifier (src/modelerrors.ts), so a rate limit on one login cannot
+ * hide a refused grant on another. */
+function refused(lastError: string): boolean {
+  return lastError.split("; ").some((failure) => providerErrorKind(failure) === "auth");
+}
 
 /** Why the refresher's record (its loginrefresh.status.json) says the login
  * no longer works, or null. Pure. */
@@ -63,15 +67,16 @@ export function expiredWhy(record: unknown, now: number): string | null {
   if (!isObj(record)) return null;
   const err = record["last_error"];
   if (typeof err !== "string" || err === "") return null;
-  if (REFUSED.test(err)) return LOGIN_EXPIRED;
+  if (refused(err)) return LOGIN_EXPIRED;
   const expires = typeof record["expires_at"] === "string" ? Date.parse(record["expires_at"]) : NaN;
   return Number.isFinite(expires) && expires <= now ? LOGIN_EXPIRED : null;
 }
 
 /** An error pi showed in the chat that is the login's (pi-ai's refresh
- * failure, or the provider refusing the token). */
+ * failure, or the provider refusing the credential): the classifier's `auth`
+ * kind. A refused model, a rate limit or a spent usage window is not. */
 export function isLoginError(text: string): boolean {
-  return PI_AUTH_ERROR_RE.test(text) || /OAuth refresh failed/i.test(text);
+  return providerErrorKind(text) === "auth";
 }
 
 export interface HostLoginOwnerOptions extends Pick<HoldOptions, "flockBin" | "waitMs"> {
@@ -119,60 +124,92 @@ export function hostLoginOwner(o: HostLoginOwnerOptions): LoginOwnerPort {
   };
 }
 
-// ---- the re-login -----------------------------------------------------------
+// ---- pi's own /login --------------------------------------------------------
 
-export interface ReloginOptions {
-  model: HomeModel;
-  /** The box's login: the refresher to pause. Absent: nothing is paused. */
+/** How often a sign-in in flight looks whether it is done. */
+export const LOGIN_POLL_MS = 1000;
+/** The longest a sign-in keeps the refresher paused: a menu left open and
+ * forgotten must not hold auto-review's refresher for good. */
+export const LOGIN_MENU_MAX_MS = 15 * 60_000;
+
+/** pi's own /login, as the home opens it: extensions/home.ts builds it over
+ * the login route's submitThroughEditor. */
+export interface LoginMenuPort {
+  /** Open pi's login menu. "opened": it is on screen. "prefilled": `/login`
+   * is on the input line, for one Enter. null: this pi gives the home no way
+   * to open it (no terminal). */
+  open(): "opened" | "prefilled" | null;
+}
+
+/** How a sign-in ended. `held` says a refresher was paused around it. */
+export type LoginMenuEnd =
+  /** What the sign-in was for is true. */
+  | { kind: "done"; held: boolean }
+  /** The person went back to the chat before it was. */
+  | { kind: "left"; held: boolean }
+  /** LOGIN_MENU_MAX_MS passed. */
+  | { kind: "timeout"; held: boolean }
+  /** Another sign-in is in flight: nothing was opened. */
+  | { kind: "busy" }
+  /** This pi gave no way to open its menu: nothing was paused. */
+  | { kind: "no-menu" }
+  /** The refresher could not be paused: nothing was opened. */
+  | { kind: "no-hold"; why: string }
+  /** The session ended. */
+  | { kind: "closed" };
+
+export interface LoginMenuOptions {
+  /** The box's stored logins: the refresher to pause. Absent: nothing is paused. */
   owner: LoginOwnerPort | undefined;
-  /** pi's device login, once pi's session exists. */
-  deviceLogin: () => DeviceLoginPort | undefined;
+  /** pi's menu, once pi's session exists. */
+  menu: () => LoginMenuPort | undefined;
+  /** Run `fn` once after `ms`; the returned function cancels it. */
+  after: (ms: number, fn: () => void) => () => void;
+  now: () => number;
   onChange?: () => void;
 }
 
-interface Signing {
-  ac: AbortController;
-  code?: DeviceCode;
-  onCode?: (code: DeviceCode) => void;
+interface OpenMenu {
+  /** End it; a no-op until the menu is open, and after the first call. */
+  finish: (end: LoginMenuEnd) => void;
+  /** Look once more whether it is done, then end it as left. */
+  leave: () => void;
 }
 
-/** "login expired" → one key, or `home_relogin`: sign in again. */
-export class Relogin {
-  private signing: Signing | null = null;
+/** pi's /login with the refresher held around it: one at a time, for the
+ * setup card's sign-in and the re-login alike. */
+export class LoginMenu {
+  private open: OpenMenu | null = null;
   private closed = false;
 
-  constructor(private readonly o: ReloginOptions) {}
+  constructor(private readonly o: LoginMenuOptions) {}
 
-  /** A re-login in flight: its code once pi has one. */
-  running(): { code?: DeviceCode } | null {
-    return this.signing === null ? null : this.signing.code ? { code: this.signing.code } : {};
+  /** A sign-in is in flight. */
+  running(): boolean {
+    return this.open !== null;
   }
 
-  private changed(): void {
+  /**
+   * Pause the refresher when one runs, open pi's /login, and wait until
+   * `done` answers true, the person leaves, the session ends or the ceiling
+   * passes; then lift the pause. `opened` is told once the menu is up.
+   * Never throws.
+   */
+  async run(w: {
+    done: () => Promise<boolean>;
+    opened?: (how: "opened" | "prefilled") => void;
+  }): Promise<LoginMenuEnd> {
+    if (this.closed) return { kind: "closed" };
+    if (this.open !== null) return { kind: "busy" };
+    const menu = this.o.menu();
+    if (menu === undefined) return { kind: "no-menu" };
+    const mine: OpenMenu = { finish: () => {}, leave: () => {} };
+    this.open = mine;
     this.o.onChange?.();
-  }
-
-  /** Sign in again. The answer comes once the code is shown (or the login
-   * ended): the sign-in goes on in the background. */
-  async start(): Promise<string> {
-    const m = this.o.model;
-    const s = this.signing;
-    if (s !== null)
-      return s.code
-        ? `Still waiting: open ${s.code.verificationUri} and enter ${s.code.userCode}.`
-        : "The sign-in is starting: the code shows in a moment.";
-    if (this.closed) return "the home has closed";
-    const provider = m.chatProvider();
-    const label = providerLabel(provider);
-    const port = DEVICE_LOGIN_PROVIDERS.has(provider) ? this.o.deviceLogin() : undefined;
-    if (port === undefined) {
-      const why = `sign in to ${label} again with pi's own /login (switch auto-review off first, so its refresher does not write over the new login)`;
-      m.say(`${why[0]!.toUpperCase()}${why.slice(1)}.`, "warn");
-      return why;
-    }
-    const signing: Signing = { ac: new AbortController() };
-    this.signing = signing;
-    this.changed();
+    const drop = (): void => {
+      if (this.open === mine) this.open = null;
+      this.o.onChange?.();
+    };
     // the refresher first, when one runs: it keeps its lock and stops writing
     let hold: LoginHold;
     try {
@@ -183,66 +220,206 @@ export class Relogin {
       hold = { ok: false, why: message(err) };
     }
     if (!hold.ok) {
-      this.signing = null;
-      m.say(`Couldn't sign in again: ${hold.why}. Nothing changed.`, "warn");
-      this.changed();
-      return `the sign-in did not start: ${hold.why}`;
+      drop();
+      return { kind: "no-hold", why: hold.why };
     }
-    const release = hold.release;
-    const held = hold.held;
-    if (signing.ac.signal.aborted) {
+    const { held, release } = hold;
+    if (this.closed) {
       release();
-      this.signing = null;
-      return "the home has closed";
+      drop();
+      return { kind: "closed" };
     }
-    m.say(`Signing in to ${label} again with pi's device code.`);
+    let how: "opened" | "prefilled" | null;
+    try {
+      how = menu.open();
+    } catch {
+      how = null;
+    }
+    if (how === null) {
+      release();
+      drop();
+      return { kind: "no-menu" };
+    }
+    const started = this.o.now();
+    let cancel: (() => void) | null = null;
+    let settled = false;
+    let end!: (e: LoginMenuEnd) => void;
+    const ended = new Promise<LoginMenuEnd>((r) => (end = r));
+    mine.finish = (e) => {
+      if (settled) return;
+      settled = true;
+      cancel?.();
+      cancel = null;
+      // the pause is lifted whatever happened: the refresher re-reads the file
+      release();
+      drop();
+      end(e);
+    };
+    const isDone = async (): Promise<boolean> => {
+      try {
+        return await w.done();
+      } catch {
+        return false;
+      }
+    };
+    mine.leave = () => {
+      cancel?.();
+      cancel = null;
+      // a login made just before the message still counts
+      void isDone().then((done) => mine.finish({ kind: done ? "done" : "left", held }));
+    };
+    const poll = (): void => {
+      cancel = this.o.after(LOGIN_POLL_MS, () => {
+        cancel = null;
+        void isDone().then((done) => {
+          if (settled) return;
+          if (done) mine.finish({ kind: "done", held });
+          else if (this.o.now() - started >= LOGIN_MENU_MAX_MS)
+            mine.finish({ kind: "timeout", held });
+          else poll();
+        });
+      });
+    };
+    w.opened?.(how);
+    poll();
+    return ended;
+  }
+
+  /** The person sent the chat a message: pi's menu is gone. */
+  left(): void {
+    this.open?.leave();
+  }
+
+  /** The session ends: a sign-in in flight stops, and its pause is lifted. */
+  close(): void {
+    this.closed = true;
+    this.open?.finish({ kind: "closed" });
+  }
+}
+
+// ---- the re-login -----------------------------------------------------------
+
+export interface ReloginOptions {
+  model: HomeModel;
+  /** pi's /login with the refresher held: the one the setup card uses too. */
+  menu: LoginMenu;
+  /** The login file's stamps: what tells that a stored login was replaced.
+   * Absent: the home cannot tell, and the sign-in ends when the person goes
+   * back to the chat. */
+  stamps?: () => Promise<Known<ReadonlyMap<string, string>>>;
+  /** Auto-review's refresher may run here (the home has a login owner). */
+  shared: boolean;
+  onChange?: () => void;
+}
+
+/** The provider whose stored credential is new or reads differently now;
+ * null when none does, or when either read is unknown. Pure. */
+export function replacedLogin(
+  before: Known<ReadonlyMap<string, string>> | null,
+  after: Known<ReadonlyMap<string, string>> | null,
+): string | null {
+  if (before?.kind !== "known" || after?.kind !== "known") return null;
+  for (const [provider, stamp] of after.value)
+    if (before.value.get(provider) !== stamp) return provider;
+  return null;
+}
+
+/** "login expired" → one key, or `home_relogin`: sign in again, to any
+ * provider, with pi's own /login. */
+export class Relogin {
+  private active = false;
+
+  constructor(private readonly o: ReloginOptions) {}
+
+  /** A re-login is in flight. */
+  running(): boolean {
+    return this.active;
+  }
+
+  private async stamps(): Promise<Known<ReadonlyMap<string, string>> | null> {
+    const read = this.o.stamps;
+    if (read === undefined) return null;
+    try {
+      return await read();
+    } catch (err) {
+      return unknown(message(err));
+    }
+  }
+
+  /** Sign in again. The answer comes once pi's menu is open (or the sign-in
+   * could not start): the sign-in itself goes on in the background. */
+  async start(): Promise<string> {
+    const m = this.o.model;
+    if (this.active || this.o.menu.running())
+      return "pi's /login is open already: finish the sign-in in pi's menu.";
+    this.active = true;
+    this.o.onChange?.();
+    const before = await this.stamps();
+    let replaced: string | null = null;
     let answer!: (text: string) => void;
     const answered = new Promise<string>((r) => (answer = r));
-    signing.onCode = (c) => {
-      m.say(`Open ${c.verificationUri} and enter the code ${c.userCode}.`);
-      answer(
-        `Open ${c.verificationUri} and enter the code ${c.userCode}. The home finishes the sign-in once you approve it.`,
-      );
-    };
-    void (async () => {
-      let outcome: { ok: true } | { ok: false; kind: LoginFailureKind; why: string };
-      try {
-        outcome = await port.login({
-          provider,
-          signal: signing.ac.signal,
-          onCode: (code) => {
-            signing.code = code;
-            signing.onCode?.(code);
-            this.changed();
-          },
-        });
-      } catch (err) {
-        outcome = { ok: false, kind: "failed", why: message(err) };
-      } finally {
-        // the pause is lifted whatever happened: the refresher re-reads the file
-        release();
-        this.signing = null;
-      }
-      if (outcome.ok) {
-        m.signedInAgain();
-        await m.refresh();
-        m.say(
-          `Signed in to ${label} again.${held ? " Auto-review's refresher has the new login, and auto-review resumes." : ""}`,
-          "ok",
-        );
-        answer(`signed in to ${label} again`);
-      } else {
-        if (outcome.kind !== "cancelled") m.say(loginFailureText(outcome, RELOGIN_KEY), "warn");
-        answer(`the sign-in did not finish: ${outcome.why}`);
-      }
-      this.changed();
-    })();
+    void this.o.menu
+      .run({
+        done: async () => {
+          replaced = replacedLogin(before, await this.stamps());
+          return replaced !== null;
+        },
+        opened: (how) => {
+          const said =
+            how === "opened"
+              ? "Signing in again: pi's /login is open."
+              : "Signing in again: /login is on the input line, press Enter to open pi's menu.";
+          m.say(said);
+          answer(
+            `${said} The person picks the provider there; the home sees the new login by itself.`,
+          );
+        },
+      })
+      .then(async (end) => {
+        this.active = false;
+        answer(await this.ended(end, replaced));
+        this.o.onChange?.();
+      });
     return answered;
   }
 
-  /** The session ends: a re-login in flight stops, and its pause is lifted. */
-  close(): void {
-    this.closed = true;
-    this.signing?.ac.abort();
+  /** Say how the sign-in ended; the text is the tool's answer when the menu
+   * never opened. */
+  private async ended(end: LoginMenuEnd, replaced: string | null): Promise<string> {
+    const m = this.o.model;
+    switch (end.kind) {
+      case "done": {
+        m.signedInAgain();
+        await m.refresh();
+        const name = replaced !== null ? m.nameOf(replaced) : "pi";
+        m.say(
+          `Signed in to ${name} again.${end.held ? " Auto-review's refresher has the new login, and auto-review resumes." : ""}`,
+          "ok",
+        );
+        return `signed in to ${name} again`;
+      }
+      case "left":
+      case "timeout": {
+        await m.refresh();
+        const why =
+          this.o.stamps === undefined
+            ? `pi's /login is closed. ${RELOGIN_KEY} opens it again`
+            : `pi's /login closed and no stored login changed. ${RELOGIN_KEY} opens it again`;
+        m.say(`${why}.`, "warn");
+        return `the sign-in did not finish: ${why}`;
+      }
+      case "no-menu": {
+        const why = `type /login to sign in again with pi's own menu${this.o.shared ? " (switch auto-review off first, so its refresher does not write over the new login)" : ""}`;
+        m.say(`${why[0]!.toUpperCase()}${why.slice(1)}.`, "warn");
+        return why;
+      }
+      case "no-hold":
+        m.say(`Couldn't sign in again: ${end.why}. Nothing changed.`, "warn");
+        return `the sign-in did not start: ${end.why}`;
+      case "busy":
+        return "pi's /login is open already: finish the sign-in in pi's menu.";
+      case "closed":
+        return "the home has closed";
+    }
   }
 }

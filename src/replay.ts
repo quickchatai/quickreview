@@ -589,8 +589,8 @@ export class ScratchReplay {
  *
  * `PiSessionManager` is rooted at the SCRATCH root so the session's cwd, inject
  * dir, prompts and session JSONLs are all scratch — but `piHome` stays the real
- * one, because that volume is where the ChatGPT OAuth tokens live and a replay
- * must not cost the login.
+ * one, because that volume is where the model login lives and a replay must
+ * not cost the login.
  */
 export async function nodeReplayIo(opts: {
   cfg: Config;

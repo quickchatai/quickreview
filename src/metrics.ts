@@ -13,12 +13,14 @@
 //
 // Ops-day bucketing goes through eod.ts's Intl helpers (DST-correct; never
 // manual offsets).
+import { spendText } from "@quickchatai/pi-quickreview/src/pricing.js";
 import { zoneDateString } from "./eod.js";
 import { snapshotHeartbeat } from "./heartbeat.js";
 import {
   cancelCauseLabel,
   tableExists,
   roundUsage,
+  spendIsUnknown,
   cancellationTotals,
   tallyCancellations,
   type RoundRow,
@@ -41,7 +43,12 @@ export interface MetricsWindow {
     approvals: number;
     request_changes: number;
     rounds: number;
+    /** The known sum: the live rounds that have a price. */
     spend_usd: number;
+    /** Live rounds that recorded tokens and no price: `spend_usd` counts
+     * none of them. Written only when there are some, so the payload keeps
+     * its shape; a reader says the sum alone when it is absent. */
+    unknown_spend_rounds?: number;
     overruns: number; // finished_at > deadline_at
   };
   // First verdict latency; queue/review medians separately cover all measured live rounds.
@@ -88,7 +95,9 @@ export interface DailyRow {
   day: string; // YYYY-MM-DD in the ops timezone (MetricsOptions.timeZone)
   rounds: number;
   prs: number;
+  /** The known sum; `unknown_spend_rounds` as in the window header. */
   spend_usd: number;
+  unknown_spend_rounds?: number;
   approvals: number;
   request_changes: number;
 }
@@ -499,7 +508,8 @@ export function computeWindow(input: WindowInput): MetricsWindow {
   for (const k of Object.keys(byRoundType)) byRoundType[k] = round2(byRoundType[k]!);
   for (const k of Object.keys(byLens)) byLens[k] = round2(byLens[k]!);
   const perPrValues = [...perPr.values()].map(round2);
-  const spendTotal = round2(roundUsage(live).spend_usd);
+  const liveUsage = roundUsage(live);
+  const spendTotal = round2(liveUsage.spend_usd);
 
   // ---- rounds until resolution (PRs with activity in the window) ----
   const prsInWindow = new Set(rounds.map((r) => r.pr));
@@ -609,6 +619,10 @@ export function computeWindow(input: WindowInput): MetricsWindow {
       request_changes: rounds.filter((r) => r.verdict === "REQUEST_CHANGES").length,
       rounds: rounds.length,
       spend_usd: spendTotal,
+      // A round with tokens and no price is unknown spend, never $0 in the sum.
+      ...(liveUsage.unknown_spend_rounds > 0
+        ? { unknown_spend_rounds: liveUsage.unknown_spend_rounds }
+        : {}),
       overruns,
     },
     ttfv: {
@@ -651,7 +665,7 @@ export function dailyRows(rounds: RoundRow[], now: Date, timeZone: string, days 
     d.setUTCDate(d.getUTCDate() - i);
     wanted.push(d.toISOString().slice(0, 10));
   }
-  const byDay = new Map<string, DailyRow & { prSet: Set<number> }>();
+  const byDay = new Map<string, DailyRow & { prSet: Set<number>; unknown: number }>();
   for (const day of wanted) {
     byDay.set(day, {
       day,
@@ -661,6 +675,7 @@ export function dailyRows(rounds: RoundRow[], now: Date, timeZone: string, days 
       approvals: 0,
       request_changes: 0,
       prSet: new Set(),
+      unknown: 0,
     });
   }
   for (const r of rounds) {
@@ -670,6 +685,7 @@ export function dailyRows(rounds: RoundRow[], now: Date, timeZone: string, days 
     row.rounds++;
     row.prSet.add(r.pr);
     row.spend_usd += r.est_usd ?? 0;
+    if (spendIsUnknown(r)) row.unknown++;
     if (r.verdict === "APPROVE") row.approvals++;
     if (r.verdict === "REQUEST_CHANGES") row.request_changes++;
   }
@@ -680,6 +696,7 @@ export function dailyRows(rounds: RoundRow[], now: Date, timeZone: string, days 
       rounds: row.rounds,
       prs: row.prSet.size,
       spend_usd: round2(row.spend_usd),
+      ...(row.unknown > 0 ? { unknown_spend_rounds: row.unknown } : {}),
       approvals: row.approvals,
       request_changes: row.request_changes,
     };
@@ -908,7 +925,11 @@ export function computeTimeline(store: StateStore, pr: number): TimelinePayload 
     if (r.finished_at) {
       const bits = [
         r.verdict ?? r.status,
-        r.est_usd !== null ? `$${r.est_usd.toFixed(2)}` : null,
+        r.est_usd !== null
+          ? `$${r.est_usd.toFixed(2)}`
+          : spendIsUnknown(r)
+            ? "spend unknown"
+            : null,
         r.duration_s !== null ? `${Math.round(r.duration_s)}s` : null,
       ].filter(Boolean);
       push(
@@ -941,6 +962,27 @@ export function computeTimeline(store: StateStore, pr: number): TimelinePayload 
 }
 
 // ---- human-readable rendering (the non-json CLI fallback) -----------------
+
+/** A row's spend, as far as its rounds have a price. */
+interface SpendRow {
+  spend_usd: number;
+  unknown_spend_rounds?: number;
+}
+
+/** A table's spend cell: the known sum, or `unknown` when rounds ran and none
+ * of them has a price. A sum that left rounds out is completed by
+ * `unknownSpendNote` at the row's end. */
+function spendCell(row: SpendRow, width: number): string {
+  const none = row.spend_usd === 0 && (row.unknown_spend_rounds ?? 0) > 0;
+  return (none ? "unknown" : `$${row.spend_usd.toFixed(2)}`).padEnd(width);
+}
+
+/** After a row whose sum left rounds out: the spend in full (`spendText`). */
+function unknownSpendNote(row: SpendRow): string {
+  return (row.unknown_spend_rounds ?? 0) > 0
+    ? `  · spend ${spendText(row.spend_usd, row.unknown_spend_rounds)}`
+    : "";
+}
 
 const fmtSecs = (s: number | null): string =>
   s === null
@@ -996,7 +1038,7 @@ export function renderMetrics(payload: MetricsPayload): string {
     lines.push(
       `${name.padEnd(8)} ${String(win.header.prs_reviewed).padEnd(4)} ${String(win.header.rounds).padEnd(7)} ` +
         `${String(win.header.approvals).padEnd(5)} ${String(win.header.request_changes).padEnd(4)} ` +
-        `$${win.header.spend_usd.toFixed(2).padEnd(7)} ${win.header.overruns}`,
+        `${spendCell(win.header, 8)} ${win.header.overruns}${unknownSpendNote(win.header)}`,
     );
   }
   lines.push("");
@@ -1028,8 +1070,8 @@ export function renderMetrics(payload: MetricsPayload): string {
   lines.push("day          rounds  PRs  spend   appr  rc");
   for (const d of payload.daily.slice(-14)) {
     lines.push(
-      `${d.day}   ${String(d.rounds).padEnd(7)} ${String(d.prs).padEnd(4)} $${d.spend_usd.toFixed(2).padEnd(6)} ` +
-        `${String(d.approvals).padEnd(5)} ${d.request_changes}`,
+      `${d.day}   ${String(d.rounds).padEnd(7)} ${String(d.prs).padEnd(4)} ${spendCell(d, 7)} ` +
+        `${String(d.approvals).padEnd(5)} ${d.request_changes}${unknownSpendNote(d)}`,
     );
   }
   if (payload.backfill.rounds > 0) {

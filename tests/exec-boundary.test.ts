@@ -1618,3 +1618,62 @@ describe("custom config-home secret reads against source and compiled guard", ()
     }
   });
 });
+
+// The model env (`<secrets dir>/model-env/<NAME>`, src/modelenv.ts) holds a
+// model provider's keys and the settings that say where a key is sent. Its
+// files have no names to list (a name is whatever a provider documents), so
+// the directory's own name is what the guard refuses, under any prefix: a
+// read hands a session the key, a write moves where the daemon's next worker
+// sends it. Like the other secret reads these are not in CORPUS, which the
+// transcript audit replays too and which has no secret rule on purpose.
+// MUTATION: remove "model-env" from APP_SECRET_FILES — every row outside the
+// known secrets dirs passes the guard and this fails.
+const MODEL_ENV_CORPUS = {
+  bash: [
+    // reads
+    "cat /opt/quickreview/secrets/model-env/PROV_API_KEY",
+    "cat /srv/elsewhere/model-env/PROV_API_KEY",
+    "head -c 64 model-env/PROV_API_KEY",
+    "ls /srv/elsewhere/model-env",
+    "cat /srv/elsewhere/model-e*/PROV_API_KEY",
+    "base64 /srv/elsewhere/model-env/PROV_API_KEY",
+    // writes
+    "printf forged > /srv/elsewhere/model-env/PROV_BASE_URL",
+    "cp wt/pr-5/key.txt /srv/elsewhere/model-env/PROV_API_KEY",
+  ],
+  // a file tool's path, for a read tool and a write tool alike
+  paths: [
+    "/opt/quickreview/secrets/model-env/PROV_API_KEY",
+    "/srv/elsewhere/model-env/PROV_BASE_URL",
+    "model-env/PROV_API_KEY",
+    "@/srv/elsewhere/model-env/PROV_API_KEY",
+  ],
+  // what a reviewer of code about the model env still does
+  free: ["grep -rn model-env wt/pr-5", "cat wt/pr-5/docs/model-environment.md"],
+} as const;
+describe("the model env is not a session's to read or write, in source and compiled guard", () => {
+  it("refuses every read and write under it, by the directory's name alone", async () => {
+    const source = await import("@quickchatai/pi-quickreview/extensions/bash-guard.js");
+    const compiled = (await import(
+      resolve(process.cwd(), "packages/pi-plugin/dist/extensions/bash-guard.js")
+    )) as typeof source;
+    for (const guard of [source, compiled]) {
+      // A context that knows no secrets dir but the image's own: the rows
+      // under /srv/elsewhere are refused by the name, not by a known dir.
+      const ctx = guard.defaultSecretPathContext({ HOME: "/home/qcr" }, "/opt/quickreview/sandbox");
+      for (const chain of MODEL_ENV_CORPUS.bash) {
+        expect(guard.checkSecretPaths(chain, ctx).allowed, chain).toBe(false);
+        const full = guard.checkBashCommand(chain);
+        expect(full.allowed, chain).toBe(false);
+        expect(full.reason, chain).toBeTruthy();
+      }
+      for (const path of MODEL_ENV_CORPUS.paths) {
+        const res = guard.checkReadPath(path, ctx);
+        expect(res.allowed, path).toBe(false);
+        expect(res.reason, path).toContain("model env");
+      }
+      for (const chain of MODEL_ENV_CORPUS.free)
+        expect(guard.checkSecretPaths(chain, ctx).allowed, chain).toBe(true);
+    }
+  });
+});

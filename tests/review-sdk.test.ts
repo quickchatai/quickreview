@@ -1,8 +1,9 @@
 // reviewSdkRuntime (packages/pi-plugin/src/engine/reviewsdk.ts): the runtime `qcr review` hosts its
 // main session on under `[engine] runtime = "sdk"`, here over pi-ai's faux
 // provider (the real SDK, no network, no model). What it builds its host from,
-// what it refuses before any host exists, and what the process env carries while
-// a session lives.
+// what it refuses before any host exists, what it leaves to the host's route
+// to refuse (a login too short for the turn), and what the process env carries
+// while a session lives.
 import {
   chmodSync,
   existsSync,
@@ -17,10 +18,10 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import {
-  AuthExpiring,
   DISABLED_REFRESH,
   keyOnlyCredentials,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { RouteRefused, type ModelRoute } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import type { SessionSpec } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import {
@@ -29,6 +30,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
 import { REPO_ROOT } from "./helpers/round-rig.js";
 import { pricedFaux, ROUTABLE_FAUX_MODEL, routableFaux } from "./helpers/priced-faux.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -149,12 +151,100 @@ describe("reviewSdkRuntime", () => {
     expect(seen).toHaveLength(1);
   });
 
-  it("refuses a login that would expire inside the turn, before any host exists", async () => {
-    login(Date.now() + 60_000);
+  // The agent dir's own login is borrowed with nothing to renew it. The three
+  // situations the runtime once refused by itself, at the same seam:
+
+  // MUTATION: refuse in reviewHostOptions when the agent dir's login would
+  // expire inside the turn (the retired refusing borrow) - no host is built and
+  // the first session throws.
+  // MUTATION: drop the borrow's `skipped` from the route reviewHostOptions
+  // hands the host - the session on that provider is refused as a pin with no
+  // credential instead, and this fails.
+  it("a login that would expire inside the turn is left out and named to the route: only a session on it is refused", async () => {
+    const expires = Date.now() + 60_000;
+    login(expires);
+    const skipped = [{ provider: "openai-codex", name: "openai-codex", expiresAt: expires }];
     const seen: PiHostOptions[] = [];
-    const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens });
-    await expect(rt.create(spec())).rejects.toBeInstanceOf(AuthExpiring);
-    expect(seen).toEqual([]);
+    const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens, processEnv: {} });
+
+    // A session on another provider runs: the login left out is not its.
+    const s = await rt.create(spec());
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+    expect(seen).toHaveLength(1);
+    expect(await seen[0]!.credentials!.list()).toEqual([]);
+    expect(seen[0]!.route).toEqual({ skipped });
+
+    // A session on the provider of the login left out is refused, in the
+    // route's own words, and never moved.
+    const refused = await rt
+      .create(
+        spec({
+          model: "openai-codex/any-model",
+          eventsFile: join(dir, "e2.jsonl"),
+          stderrFile: join(dir, "s2"),
+        }),
+      )
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(refused).toBeInstanceOf(RouteRefused);
+    expect((refused as RouteRefused).refusal).toEqual({ code: "login-too-short", logins: skipped });
+  });
+
+  // MUTATION: throw for a missing auth.json in reviewHostOptions (the retired
+  // `missing` refusal) - a run whose only credential is a key in the
+  // environment never starts, and this fails.
+  it("no login file is an empty store, not a refusal: the host is built and nothing is written", async () => {
+    const seen: PiHostOptions[] = [];
+    const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens, processEnv: {} });
+    const s = await rt.create(spec());
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+    expect(await seen[0]!.credentials!.list()).toEqual([]);
+    expect(seen[0]).not.toHaveProperty("route");
+    expect(existsSync(join(agentDir, "auth.json"))).toBe(false);
+  });
+
+  // A file that does not parse is waited out first (a login being rewritten),
+  // so this one takes the borrow's whole retry.
+  it(
+    "a login file that cannot be read is refused, typed, before any host exists",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      writeFileSync(join(agentDir, "auth.json"), "{ not json");
+      const seen: PiHostOptions[] = [];
+      const rt = reviewSdkRuntime({ makeHost: fauxHost(seen), lens: noLens, processEnv: {} });
+      await expect(rt.create(spec())).rejects.toMatchObject({
+        code: "unreadable",
+        path: join(agentDir, "auth.json"),
+      });
+      expect(seen).toEqual([]);
+    },
+  );
+
+  it("the logins left out join the route's own inputs; a route resolved before the run is used as it is", () => {
+    const expires = Date.now() + 60_000;
+    login(expires);
+    const skipped = [{ provider: "openai-codex", name: "openai-codex", expiresAt: expires }];
+    const at = { agentDir, needMs: 20_000 };
+    const pin = { text: "faux/m", from: "flag" as const };
+    expect(reviewHostOptions({ processEnv: {}, route: { pin } }, at).route).toEqual({
+      pin,
+      skipped,
+    });
+    const earlier = [{ provider: "other", name: "Other", expiresAt: 1 }];
+    expect(reviewHostOptions({ processEnv: {}, route: { skipped: earlier } }, at).route).toEqual({
+      skipped: [...earlier, ...skipped],
+    });
+    // A fixed route came with the login its own step borrowed: nothing is added.
+    const fixed = { fixed: { spec: "faux/m" } as ModelRoute };
+    expect(reviewHostOptions({ processEnv: {}, route: fixed }, at).route).toBe(fixed);
+    // A login that lasts the turn leaves the route as it was handed, or absent.
+    login(Date.now() + 3 * 3_600_000);
+    expect(reviewHostOptions({ processEnv: {}, route: { pin } }, at).route).toEqual({ pin });
+    expect(reviewHostOptions({ processEnv: {} }, at)).not.toHaveProperty("route");
   });
 
   it("refuses a spec with no agent dir, or a relative one", async () => {
@@ -208,9 +298,9 @@ describe("reviewSdkRuntime", () => {
     await s.dispose();
   });
 
-  // MUTATION: read the agent dir's auth.json whatever `credentials` says
-  // (reviewHostOptions) — the dir holds none, the run is refused for a
-  // missing login, and this fails.
+  // MUTATION: borrow the agent dir's auth.json whatever `credentials` says
+  // (reviewHostOptions) — the host holds a store of its own, not the one the
+  // route handed over, and this fails.
   it("a login the route borrowed is the host's: the agent dir holds no login file and none is read", async () => {
     const seen: PiHostOptions[] = [];
     const borrowed = keyOnlyCredentials();

@@ -54,7 +54,9 @@ export interface PluginHost {
   home: string;
   /** The running pi's version. */
   piVersion: string;
-  /** The host pi's agent dir: its login, read and never written. */
+  /** The host pi's agent dir. Its login is read and never written; the one
+   * file the plugin writes there is the remembered model choice
+   * (../modelchoice.ts). */
   agentDir: string;
   auth: HostAuth;
   runner: Runner;

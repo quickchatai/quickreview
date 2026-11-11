@@ -17,7 +17,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, parseEscalation, type Config } from "../src/config.js";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
-import { StateStore, type ReviewedHeadRow } from "../src/state.js";
+import { StateStore, roundUsage, type ReviewedHeadRow } from "../src/state.js";
 import { fingerprintRoundIntegrity } from "../src/execboundary.js";
 import { githubCloneDir } from "../src/config.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
@@ -610,8 +610,8 @@ describe("measured round usage", () => {
       },
     });
     writeSessionJsonl(103, [modelLine(), costLine]);
-    // No pricing configured — cost.total alone must carry the estimate.
-    await watcher({ usage: { pricing: {} } }).handleFile(write(103, 1, verdictFile({ pr: 103 })));
+    // cost.total is the one source of the round's dollars.
+    await watcher().handleFile(write(103, 1, verdictFile({ pr: 103 })));
     const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
     expect(round.tokens_in).toBe(500);
     expect(round.tokens_out).toBe(75); // output + reasoning
@@ -619,7 +619,9 @@ describe("measured round usage", () => {
     expect(round.est_usd).toBeCloseTo(0.077, 9);
   });
 
-  it("stores measured tokens and a price-table fallback estimate on the round (no cost fields), ignoring self-reported spend", async () => {
+  // MUTATION: restore a price-table fallback after `reported ?? usage.cost_usd`
+  // in recordRoundUsage - est_usd is a number here and this fails.
+  it("stores measured tokens and NO dollars for a window with no cost fields: no price table stands in, and self-reported spend is ignored", async () => {
     const roundId = reviewingRound(100);
     writeSessionJsonl(100, [
       modelLine(),
@@ -627,18 +629,38 @@ describe("measured round usage", () => {
       jsonlLine(200_000, 100_000),
       "garbage line",
     ]);
-    const w = watcher({
-      usage: {
-        pricing: { "gpt-5.6-sol": { input_per_mtok: 2, output_per_mtok: 8 } },
-      },
-    });
-    await w.handleFile(write(100, 1, verdictFile({ spend_usd: 1.25 })));
+    await watcher().handleFile(write(100, 1, verdictFile({ spend_usd: 1.25 })));
 
     const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
     expect(round.tokens_in).toBe(1_200_000);
     expect(round.tokens_out).toBe(600_000);
-    expect(round.est_usd).toBeCloseTo(1.2 * 2 + 0.6 * 8, 6);
+    expect(round.est_usd).toBeNull();
     expect(round.spend_usd).toBeNull();
+    // Tokens and no price: every spend surface counts the round as unknown.
+    expect(roundUsage([round])).toMatchObject({ spend_usd: 0, unknown_spend_rounds: 1 });
+    expect(store.totalUnknownSpendRounds()).toBe(1);
+  });
+
+  // pi stamps a cost of exactly 0 on a call of a model it has no price for.
+  // MUTATION: sum u.cost in addLineUsage without the unpriced branch - est_usd
+  // is 0.3 (or 0) here and this fails.
+  it("records NULL, never $0 and never the priced part, for a round with a call pi stamped at zero", async () => {
+    const stamped = (input: number, output: number, total: number): string =>
+      JSON.stringify({
+        type: "message",
+        timestamp: new Date().toISOString(),
+        message: { role: "assistant", usage: { input, output, cost: { total } } },
+      });
+    const roundId = reviewingRound(104);
+    writeSessionJsonl(104, [modelLine(), stamped(500, 50, 0.3), stamped(4000, 400, 0)]);
+    await watcher().handleFile(write(104, 1, verdictFile({ pr: 104 })));
+
+    const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+    expect(round.tokens_in).toBe(4500);
+    expect(round.est_usd).toBeNull();
+    expect(roundUsage([round])).toMatchObject({ spend_usd: 0, unknown_spend_rounds: 1 });
+    expect(store.totalSpend()).toBe(0);
+    expect(store.totalUnknownSpendRounds()).toBe(1);
   });
 
   // A worker that closed its report is the round's est_usd; the tokens stay
@@ -670,7 +692,7 @@ describe("measured round usage", () => {
     };
     const estOf = async (pr: number, roundId: number): Promise<number | null> => {
       writeSessionJsonl(pr, [modelLine(), costLine(0.5)]);
-      await watcher({ usage: { pricing: {} } }).handleFile(write(pr, 1, verdictFile({ pr })));
+      await watcher().handleFile(write(pr, 1, verdictFile({ pr })));
       const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
       expect(round.tokens_in).toBe(500); // always the transcripts'
       return round.est_usd as number | null;
@@ -718,10 +740,10 @@ describe("measured round usage", () => {
     });
   });
 
-  it("records est_usd null when the model has no price entry", async () => {
+  it("records est_usd null when no record carried a cost", async () => {
     const roundId = reviewingRound(101);
     writeSessionJsonl(101, [modelLine(), jsonlLine(1000, 100)]);
-    await watcher({ usage: { pricing: {} } }).handleFile(write(101, 1, verdictFile({ pr: 101 })));
+    await watcher().handleFile(write(101, 1, verdictFile({ pr: 101 })));
     const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
     expect(round.tokens_in).toBe(1000);
     expect(round.est_usd).toBeNull();
@@ -1189,15 +1211,19 @@ describe("measured round usage", () => {
    * something puts a number in the column.
    */
   describe("a round that never produced a verdict is measured too", () => {
-    const priced = {
-      pricing: { "gpt-5.6-sol": { input_per_mtok: 2, output_per_mtok: 8 } },
-    };
+    /** An assistant message with pi's own price on it. */
+    const pricedLine = (input: number, output: number, total: number): string =>
+      JSON.stringify({
+        type: "message",
+        timestamp: new Date().toISOString(),
+        message: { role: "assistant", usage: { input, output, cost: { total } } },
+      });
 
     it("measures a MALFORMED round's tokens onto the round row", async () => {
       const roundId = reviewingRound(400);
-      writeSessionJsonl(400, [modelLine(), jsonlLine(1_000_000, 500_000)]);
+      writeSessionJsonl(400, [modelLine(), pricedLine(1_000_000, 500_000, 6)]);
 
-      await watcher({ usage: priced }).handleFile(
+      await watcher().handleFile(
         write(400, 1, verdictFile({ pr: 400, verdict: "APPROVED" as any })),
       );
 
@@ -1205,7 +1231,7 @@ describe("measured round usage", () => {
       expect(round.status).toBe("overdue"); // handleAnomaly terminalized it
       expect(round.tokens_in).toBe(1_000_000);
       expect(round.tokens_out).toBe(500_000);
-      expect(round.est_usd).toBeCloseTo(1 * 2 + 0.5 * 8, 6);
+      expect(round.est_usd).toBeCloseTo(6, 6);
       // …and therefore it reaches the aggregate the manifesto's belief 8 claims.
       expect(store.totalSpend()).toBeGreaterThan(0);
     });
@@ -1216,10 +1242,10 @@ describe("measured round usage", () => {
       // work.
       const roundId = reviewingRound(402);
       stampPosting(402, 1);
-      writeSessionJsonl(402, [modelLine(), jsonlLine(750_000, 250_000)]);
+      writeSessionJsonl(402, [modelLine(), pricedLine(750_000, 250_000, 3.5)]);
 
       expect(
-        await watcher({ postingReceiptGraceS: 0, usage: priced }).handleFile(
+        await watcher({ postingReceiptGraceS: 0 }).handleFile(
           write(402, 1, verdictFile({ pr: 402 })),
         ),
       ).toBe(true);
@@ -1227,12 +1253,12 @@ describe("measured round usage", () => {
       const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
       expect(round.status).toBe("cancelled");
       expect(round.tokens_in).toBe(750_000);
-      expect(round.est_usd).toBeCloseTo(0.75 * 2 + 0.25 * 8, 6);
+      expect(round.est_usd).toBeCloseTo(3.5, 6);
     });
 
     it("measures an OVERDUE round's tokens when the deadline sweep buries it", async () => {
       const roundId = reviewingRound(401);
-      writeSessionJsonl(401, [modelLine(), jsonlLine(300_000, 100_000)]);
+      writeSessionJsonl(401, [modelLine(), pricedLine(300_000, 100_000, 1.4)]);
       const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 10) * 60_000);
       const { hooks } = recordingHooks();
       wireWake(store, hooks);
@@ -1244,7 +1270,7 @@ describe("measured round usage", () => {
         verdictDir: dir,
         now: () => later,
         root: dir,
-        usage: priced,
+        usage: {},
       });
 
       expect(await w.checkDeadlines()).toEqual([401]);
@@ -1252,7 +1278,7 @@ describe("measured round usage", () => {
       const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
       expect(round.status).toBe("overdue");
       expect(round.tokens_in).toBe(300_000);
-      expect(round.est_usd).toBeCloseTo(0.3 * 2 + 0.1 * 8, 6);
+      expect(round.est_usd).toBeCloseTo(1.4, 6);
     });
   });
 });

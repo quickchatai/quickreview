@@ -7,7 +7,7 @@
 // What it holds:
 //   - the CLI tarball carries what the app reads at runtime and nothing of the
 //     repo's tests, bench, docs, state or rulebook files: of src/bench only the
-//     three modules the app imports, and none of the operator-only scripts;
+//     two modules the app imports, and none of the operator-only scripts;
 //   - `qcr version --json` and `qcr review --preview --json` work on the
 //     shipped defaults, with no config and no login;
 //   - nothing is written inside the install: every file the runs keep lands
@@ -196,7 +196,13 @@ describe.skipIf(!BUILT)("the packed CLI (needs `npm run build`)", () => {
     .filter((f) => f.startsWith("!") && f.endsWith("/"))
     .map((f) => f.slice(1));
   // The bench modules the app itself imports; the rest of the bench stays home.
-  const BENCH_KEPT = ["cost", "exec", "values"];
+  // The cost report is not one of them: the app meters a stream with the
+  // core's EventCostMeter, and src/bench/cost.ts imports the bench's hand
+  // price table, which the tarball leaves out.
+  // MUTATION: import EventCostMeter from "./bench/cost.js" in src/botworker.ts
+  // again - the published daemon cannot load it; adding "cost" here to match
+  // is the wrong fix, the import is.
+  const BENCH_KEPT = ["exec", "values"];
   const benchKept = (e: string): boolean =>
     BENCH_KEPT.some(
       (m) => e === `package/src/bench/${m}.ts` || e === `package/dist/src/bench/${m}.js`,

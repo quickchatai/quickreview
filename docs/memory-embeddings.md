@@ -276,10 +276,10 @@ carries its model, so coming back to local needs no rebuild.
 The credential is `<secrets dir>/openai_embeddings_api_key` (the
 `embedding_key_file` knob), collected by `bash deploy/collect-secrets.sh` at
 its own prompt, 0600, and copied to the VM by the playbook if present.
-**`openai_api_key` is pi's model credential and is never read for
-embeddings.** Keeping them in separate files means either can exist without
-the other: leaving the embeddings key unset never unsets pi's credential on
-the API-key route.
+**A model credential of pi's (a key under `model-env/`, the older
+`openai_api_key` file, a login) is never read for embeddings.** Keeping them
+in separate files means either can exist without the other: leaving the
+embeddings key unset never unsets a model credential.
 
 The onboarding wizard's embeddings step (order 38) writes the opt-in and
 stays red until that file exists — and never accepts the value through the

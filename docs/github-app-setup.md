@@ -196,7 +196,8 @@ bash deploy/collect-secrets.sh
 The secrets wizard also asks for the deployment shape (§3): the tunnel shape
 additionally requires `tunnel_token`; the plain-Docker shape does not. On the
 guided path the ingress step decides that instead, and checks the credential
-file the shape you chose needs. `openai_api_key` and the OpenViking memory keys
+file the shape you chose needs. The model credential (a login in pi, or a
+provider key under `model-env/`) and the OpenViking memory keys
 are separate concerns — see [`docs/llm-setup.md`](llm-setup.md) and
 [`docs/onboarding.md`](onboarding.md#60-and-72--memory-in-two-phases).
 

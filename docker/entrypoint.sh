@@ -412,15 +412,15 @@ PI_EXT_MERGE
 # ---- modes -------------------------------------------------------------------
 
 mode_daemon() {
+  local secrets="${QCR_SECRETS_MOUNT:-/opt/quickreview/secrets}"
   # `daemon --preflight`: the updater's check on a scratch copy, run with
   # --network none. It starts nothing (no tmux, no git config, no pi settings):
-  # it reads the mounts and prints one JSON report.
+  # it reads the mounts and prints one JSON report. It is told where the
+  # secrets are mounted, as the daemon is below, because its model check reads
+  # the model env there with the daemon's own loader (src/modelenv.ts).
   if [ "${1:-}" = "--preflight" ]; then
-    exec node "$APP/dist/src/preflight.js"
+    QCR_SECRETS_MOUNT="$secrets" exec node "$APP/dist/src/preflight.js"
   fi
-  # The key a pi OAuth /login does not provide: exported so the tmux server and
-  # every pi process inherit it.
-  local secrets="${QCR_SECRETS_MOUNT:-/opt/quickreview/secrets}"
   export QCR_SECRETS_MOUNT="$secrets"
   # The code resolves secrets through the install locator: an empty (or
   # old-default) config.toml [github].secrets_dir means <config home>/secrets -
@@ -432,6 +432,12 @@ mode_daemon() {
   secrets_home="$xdg/qcr/${QCR_INSTALL:-default}/secrets"
   mkdir -p "$(dirname "$secrets_home")"
   [[ -L "$secrets_home" ]] || ln -sfn "$secrets" "$secrets_home"
+  # The older single key file, exported as it always was: the tmux server and
+  # every pi process inherit it. Nothing else of a model's is exported here.
+  # The keys under secrets/model-env are read by the daemon's loader
+  # (src/modelenv.ts) and handed to a worker's own process alone: an export
+  # would also put every one of them in the tmux server and the login
+  # refresher, and would still not reach the preflight or a `docker exec`.
   if [[ -r "$secrets/openai_api_key" ]]; then
     OPENAI_API_KEY="$(<"$secrets/openai_api_key")"
     export OPENAI_API_KEY
@@ -500,29 +506,24 @@ for (const d of skillDirs) {
 }
 // `/skill:<name>` from pi's own input line.
 cfg.enableSkillCommands = true;
-// The configured model ("provider/model[:thinking]") is pi's default on every start.
-const defMatch = /^([^/:\s]+)\/([^:\s]+)(?::([a-z]+))?$/.exec(process.env.QCR_PI_DEFAULT_MODEL || "");
-if (defMatch) {
-  cfg.defaultProvider = defMatch[1];
-  cfg.defaultModel = defMatch[2];
-  if (defMatch[3]) cfg.defaultThinkingLevel = defMatch[3];
-  // Any OpenAI login serves the model: `openai-codex` (the legacy Codex login)
-  // and `openai` (Sign in with ChatGPT, or an API key) carry the same ids. When
-  // the named provider has no login and its twin has one, the default is the
-  // twin (the rule of packages/pi-plugin/src/modelroute.ts, which the
-  // companion's login-route extension applies again inside pi).
-  const twin = { "openai-codex": "openai", openai: "openai-codex" }[cfg.defaultProvider];
-  if (twin) {
-    let logins = {};
-    try { logins = JSON.parse(fs.readFileSync(path.join(home, ".pi", "agent", "auth.json"), "utf8")); } catch {}
-    const has = (p) => {
-      const c = logins[p];
-      if (c && c.type === "oauth") return true;
-      if (c && c.type === "api_key" && typeof c.key === "string" && c.key.trim() !== "") return true;
-      return p === "openai" && (process.env.OPENAI_API_KEY || "").trim() !== "";
-    };
-    if (!has(cfg.defaultProvider) && has(twin)) cfg.defaultProvider = twin;
-  }
+// A pinned model ("provider/model[:level]", [companion] model) is pi's default
+// on every start. With none pinned nothing is written about a default and
+// nothing is removed: pi starts on a model whose provider has a credential,
+// and the companion's login-route extension applies the route inside pi. No
+// model is resolved here, so a route can never be read back later as "pi's
+// own default".
+// The level is cut off only when it is one pi knows (THINKING_LEVELS,
+// packages/pi-plugin/src/reviewconfig.ts), so an id that holds a ":" stays whole.
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const defSpec = (process.env.QCR_PI_DEFAULT_MODEL || "").trim();
+const defCut = defSpec.lastIndexOf(":");
+const defLevel = defCut >= 0 && THINKING_LEVELS.includes(defSpec.slice(defCut + 1)) ? defSpec.slice(defCut + 1) : "";
+const defNamed = defLevel ? defSpec.slice(0, defCut) : defSpec;
+const defSlash = defNamed.indexOf("/");
+if (defSlash > 0 && defSlash < defNamed.length - 1 && !/\s/.test(defNamed)) {
+  cfg.defaultProvider = defNamed.slice(0, defSlash);
+  cfg.defaultModel = defNamed.slice(defSlash + 1);
+  if (defLevel) cfg.defaultThinkingLevel = defLevel;
 }
 fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n");
 console.log("pi skills registered: " + (cfg.skills.join(", ") || "none"));
@@ -656,6 +657,21 @@ mode_login() {
     const { loginInPi } = await import(process.argv[1] + "/dist/src/scanbox.js");
     process.stdout.write(loginInPi(process.argv[2] || undefined, process.argv[1] + "/node_modules/.bin/pi")[2]);
   ' "$APP" "${1:-}")" || die "login: could not build the pi login command"
+  # Where the daemon reads its login. On a single box that is the login the
+  # stack mounts for it (QCR_LOGIN_DIR, an absolute path; the rule of
+  # src/loginrefresh/supervisor.ts `loginDirOf`), not this container's own pi
+  # home: pi is pointed there for this one session, so a login made by hand
+  # here is the one the daemon runs on. That directory is the person's own pi
+  # home on the host, so it is not re-shared with the login group afterwards.
+  local shared="${QCR_LOGIN_DIR:-}"
+  if [[ "$shared" == /* ]]; then
+    [ -d "$shared" ] && [ -w "$shared" ] ||
+      die "login: the daemon reads its login from $shared (QCR_LOGIN_DIR), which this user cannot write - sign in on the host instead (qcr login)"
+    export PI_CODING_AGENT_DIR="$shared"
+    say "login: signing in where the daemon reads its login: $shared"
+  else
+    shared=""
+  fi
   # The bot's login has ONE refresher (src/loginrefresh/); when this
   # container runs it, it stands down for the login and takes over again after.
   login_handover_begin
@@ -663,7 +679,7 @@ mode_login() {
   # however the session ended, and the refresher is released after that.
   local rc=0
   sh -c "$script" || rc=$?
-  share_login
+  [ -n "$shared" ] || share_login
   login_handover_end
   exit "$rc"
 }

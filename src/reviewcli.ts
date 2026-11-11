@@ -4,7 +4,12 @@
 // packages/pi-plugin/src/reviewapi.ts: it previews the price first, runs automatically under the
 // repo's configured limit (otherwise asks), runs the shared one-shot core
 // (packages/pi-plugin/src/oneshot.ts) on the host, stops hard at the price it showed, and returns
-// the findings grouped by severity.
+// the findings grouped by severity. On a model with no measured estimate it
+// shows the spend limit instead of a price and asks once for that model.
+//
+// The JSON is review schema 2. A caller that names contract 1 (`qcr --schema
+// 1`, src/schemaflag.ts) is answered in version 1 while the review's estimate
+// is a number, and refused before anything runs where it is not.
 //
 // Re-review: the state kept per target (packages/pi-plugin/src/reviewstate.ts) makes a second run
 // on an unchanged head free, and a run after a push a delta review over the
@@ -58,6 +63,7 @@ import {
   skippedNotice,
   type ModelChoice,
   type ModelRoute,
+  type ProviderInventory,
   type RouteInput,
   type RouteResult,
   type SkippedLogin,
@@ -85,10 +91,8 @@ import type { Runtime } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import type { EngineRouteRuntime } from "@quickchatai/pi-quickreview/src/engine/lens/wave.js";
 import { lazyReviewRuntime } from "@quickchatai/pi-quickreview/src/engine/reviewruntime.js";
 import { markSdkRoute } from "@quickchatai/pi-quickreview/src/engine/livesessions.js";
-import {
-  REVIEW_SCHEMA_VERSION,
-  withSchemaVersion,
-} from "@quickchatai/pi-quickreview/src/contract.js";
+import { reviewForContract } from "@quickchatai/pi-quickreview/src/localreview.js";
+import { priceKnowledge } from "@quickchatai/pi-quickreview/src/measured.js";
 import {
   preview,
   review,
@@ -104,6 +108,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/reviewapi.js";
 import { reviewHome } from "./reviewhome.js";
 import { parseReviewArgs, REVIEW_USAGE, type ReviewCommand } from "./reviewargs.js";
+import { requestedContract } from "./schemaflag.js";
 
 export { parseReviewArgs, REVIEW_USAGE, type ReviewCommand } from "./reviewargs.js";
 
@@ -113,9 +118,12 @@ export function reviewHelp(): string {
     "",
     "Review code in the terminal, with no daemon. The estimated price is previewed",
     "first; a review under the repo's limit starts at once, above it qcr asks, and",
-    "the run stops hard at the cap shown (twice the estimate). In the GitHub Action",
-    "(QCR_ROUTE=action, or GITHUB_ACTIONS=true) nothing is asked and nothing is",
-    "capped unless --limit is given; then the run stops hard at that limit.",
+    "the run stops hard at the cap shown (twice the estimate). The estimate was",
+    "measured on one model: on any other the preview shows no estimate and the spend",
+    "at which the run stops instead, and qcr asks once for that model before it",
+    "starts. In the GitHub Action (QCR_ROUTE=action, or GITHUB_ACTIONS=true) nothing",
+    "is asked and nothing is capped unless --limit is given; then the run stops hard",
+    "at that limit.",
     "",
     "Targets",
     "  (none), branch    the current branch against its base (default)",
@@ -128,8 +136,8 @@ export function reviewHelp(): string {
     "  --repo OWNER/NAME the repository of a PR number (default: this directory's origin)",
     "  --base REF        the base to review against (default: origin's default branch, main, master)",
     "  --preview         show the plan, the price and the key; start nothing",
-    "  --key K           start over the limit without asking, quoting the key a preview showed",
-    "  --limit USD       the limit for this run, over the repo's own (in the Action: the hard stop)",
+    "  --key K           start without asking (over the limit, or with no estimate), quoting the key a\n                    preview showed",
+    "  --limit USD       the limit for this run, over the repo's own. On the measured model: the estimate\n                    a review may have without asking (the hard stop stays twice the estimate).\n                    On a model with no estimate: the stop itself. In the Action: the hard stop",
     "  --model MODEL     the model the whole review runs on, for this run: provider/id, an id pi\n                    knows, or either with a :level (as pi's own --model reads it). It replaces\n                    every tier and lens model the config pins; `qcr model use` keeps a choice",
     "  --full            review the whole branch again, ignoring what an earlier review left",
     "  --security        ask for a security review on top of the plan: every lens of the security family\n                    is planned (never one the profile switched off), as /qcr-review --security asks",
@@ -169,9 +177,11 @@ export function reviewHelp(): string {
     "when done, the findings JSON; `qcr review stop [RUN_ID]` cancels. Two reviews of the same",
     "target at once are refused. Exit codes: 0 done, 1 refused, 2 usage, 3 wait timeout.",
     "",
-    "The repo's limit and price rates live in `.git/qcr-review.json` (auto_limit_usd,",
-    "usd_base, usd_per_lens, usd_per_kline). Exit codes: 0 done; 1 refused, declined or stopped",
-    "short (partial coverage); 2 usage.",
+    "The repo's limits live in `.git/qcr-review.json`: auto_limit_usd (the estimate a review may",
+    "have without asking) and unmeasured_limit_usd (where a review with no estimate stops). A",
+    "repo that has measured its own reviews sets usd_base, usd_per_lens and usd_per_kline there,",
+    "and gets an estimate at those rates on any model. Exit codes: 0 done; 1 refused, declined",
+    "or stopped short (partial coverage); 2 usage.",
   ].join("\n");
 }
 
@@ -240,6 +250,9 @@ export interface ReviewCliDeps {
   pr?: PrCredentialDeps & Pick<PrFetchRequest, "fetchFn" | "gitBase" | "apiBase">;
   /** Where a warning is said before the run (stderr). */
   warn?: (line: string) => void;
+  /** The host-plugin contract the caller reads (`qcr --schema N`). Absent:
+   * the code's own review schema. */
+  contract?: number;
 }
 
 /** What the run's runtime is handed of the model side: the login the route
@@ -248,7 +261,8 @@ export type ReviewRunHost = Pick<ReviewRuntimeOptions, "credentials" | "route" |
 
 /** What `qcr review` resolves its model from, beside pi's agent dir. */
 export interface ReviewModelDeps {
-  /** This process's environment: where pi looks for a provider's key. */
+  /** Where pi looks for a provider's key: this process's environment, under
+   * the model env of the install's secrets dir. */
   env: Readonly<Record<string, string | undefined>>;
   /** Where a host's private agent dir is made, and removed again: the state
    * home's tmp. */
@@ -298,15 +312,25 @@ function withNames(
 }
 
 /** The rows of the provider question: the model each provider would run,
- * whose credential it is, and what is not known about its price. */
-export function providerRows(route: ModelRoute): string[] {
+ * whose credential it is, and what is known of its price before a review
+ * (`measured estimate`, `no estimate` or `no list price`). With no inventory
+ * to read the models from, a row says only what the route knows: that pi has
+ * no list price. */
+export function providerRows(
+  route: ModelRoute,
+  inventory?: readonly ProviderInventory[],
+): string[] {
   const options = [route, ...route.alternatives];
   const width = Math.max(...options.map((x) => x.spec.length));
   return options.map((x) =>
     [
       x.spec.padEnd(width),
       `${x.providerName}, ${credentialWords(x.credential)}`,
-      ...(x.priced ? [] : ["no list price"]),
+      ...(inventory !== undefined
+        ? [priceKnowledge(x, inventory)]
+        : x.priced
+          ? []
+          : ["no list price"]),
     ].join("    "),
   );
 }
@@ -437,7 +461,7 @@ function routeRun(o: {
       const options = [result.route, ...result.route.alternatives];
       const picked = await m.choose(
         "pi can run this review on more than one provider:",
-        providerRows(result.route),
+        providerRows(result.route, await host.inventory()),
       );
       const answer = picked === null ? undefined : options[picked];
       if (answer !== undefined) {
@@ -565,7 +589,7 @@ export async function runReviewCli(
   const refuse = (code: number, errors: string[]): number => {
     print({
       text: errors.map((e) => `✗ ${e}`).join("\n"),
-      data: withSchemaVersion(REVIEW_SCHEMA_VERSION, { ok: false, errors }) as ReviewData,
+      data: reviewForContract(deps.contract, { ok: false, errors }).data as ReviewData,
       destinations: null,
     });
     return code;
@@ -687,6 +711,7 @@ export async function runReviewCli(
       ...(cmd.key !== undefined ? { key: cmd.key } : {}),
       timeoutMs: deps.timeoutMs,
     },
+    ...(deps.contract !== undefined ? { contract: deps.contract } : {}),
     ...(deps.pr ? { github: deps.pr } : {}),
   };
   const io: ReviewIo = {
@@ -754,8 +779,12 @@ export async function cmdReview(
     /** The install's memory, from its config; the host injects it (src/cli.ts
      * passes the app's, src/reviewmemory.ts). Absent: no memory. */
     memory?: (configPath: string) => ReviewMemoryPort | null;
+    /** The host-plugin contract the caller reads. Absent: the one this
+     * process's `--schema N` named (src/schemaflag.ts), else the code's own. */
+    contract?: number;
   } = {},
 ): Promise<number> {
+  const contract = io.contract ?? requestedContract();
   // Detached runs for plugins (src/reviewdetach.ts): `start | status | stop`,
   // and the child `start` launches.
   if (rest[0] === "start" || rest[0] === "status" || rest[0] === "stop") {
@@ -768,6 +797,7 @@ export async function cmdReview(
     const container = containerRunEnv(process.env);
     return det.runDetachedVerb(verb, rest.slice(1), json, {
       home: join(stateHome(), "review", "detached"),
+      ...(contract !== undefined ? { contract } : {}),
       out: (l) => console.log(l),
       now: Date.now,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -859,6 +889,9 @@ export async function cmdReview(
           out,
           runsDir: join(claimed.dir, "work"),
           ...(io.memory ? { memory: io.memory } : {}),
+          // The contract the run was started under: a review it cannot state
+          // is refused before it spends anything.
+          ...(claimed.contract !== undefined ? { contract: claimed.contract } : {}),
         });
         return code;
       },
@@ -870,6 +903,9 @@ export async function cmdReview(
     const key = rest[2];
     if (!dir || !key) return 2;
     const det = await import("./reviewdetach.js");
+    // The contract the run was started under (its record): a review that
+    // contract cannot state is refused before it spends anything.
+    const started = det.runContract(dir);
     let code = 1;
     await det.runDetachedChild({
       dir,
@@ -879,6 +915,7 @@ export async function cmdReview(
           out,
           runsDir: join(dir, "work"),
           ...(io.memory ? { memory: io.memory } : {}),
+          ...(started !== undefined ? { contract: started } : {}),
         });
         return code;
       },
@@ -892,7 +929,22 @@ export async function cmdReview(
   const { homedir } = await import("node:os");
   const root = assetRoot();
   // The install's config, or the shipped defaults when it has none.
-  const loaded = loadOneShotConfig({ root, warn: (l) => console.warn(l) });
+  // The wizards' override of the secrets dir is honoured below a configured
+  // one, as `qcr model` honours it: the two verbs read one model env.
+  const loaded = loadOneShotConfig({
+    root,
+    warn: (l) => console.warn(l),
+    secretsOverride: process.env["QC_SECRETS_DIR"],
+  });
+  // The model env of the install's secrets dir, where pi looks for a
+  // provider's key beside this process's own environment (src/modelenv.ts):
+  // the route `qcr model` names is the one this review runs on. It is handed
+  // to pi's credential lookup alone, never to a tool.
+  const { oneShotModelEnv } = await import("./modelenv.js");
+  const { sandboxRoot } = await import("./config.js");
+  const modelEnv = oneShotModelEnv(loaded.cfg.github.secrets_dir, sandboxRoot(), {
+    warn: (l) => console.warn(l),
+  });
   const profileHomes = homeProfilePlaces();
   const { cfg, ecosystem } = contextFrom(root, loaded, loaded.cfg.review.profile, "", {
     homes: profileHomes,
@@ -919,7 +971,7 @@ export async function cmdReview(
     // Nothing is checked here ahead of the review: a run with no usable model
     // is refused where the route is resolved, in the route's own words.
     models: {
-      env: process.env,
+      env: { ...process.env, ...modelEnv },
       tmpDir: join(stateHome(), "tmp"),
       configPath: loaded.path,
       choose: interactive
@@ -944,6 +996,7 @@ export async function cmdReview(
       host: { homeDir: homedir() },
     },
     out: io.out ?? ((l) => console.log(l)),
+    ...(contract !== undefined ? { contract } : {}),
     confirm: interactive
       ? async (q) => {
           const rl = createInterface({ input: process.stdin, output: process.stderr });

@@ -3,6 +3,9 @@
 // and the host-plugin contracts they make up (packages/pi-plugin/src/contract.ts),
 // and the pi pin it runs. `contracts` was added to version 1, so a version-1
 // reader cannot count on it: a qcr from before `--schema` prints none.
+// `schemas.review` is the version the code prints by itself; `contracts` may
+// list an older contract beside it, whose review payloads are printed by
+// projection (`qcr --schema N` is how a caller asks for one).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -21,6 +24,7 @@ export interface VersionInfo {
     /** The stamp `qcr companion rebuild` bakes into the image (BUILD_SHA), null on a bare checkout. */
     build_sha: string | null;
   };
+  /** The schema versions the code prints when no contract is named. */
   schemas: { review: number; scan: number };
   /** The host-plugin contract numbers `qcr --schema N` accepts, ascending. */
   contracts: number[];

@@ -18,7 +18,7 @@
 // A leaf (node:fs and node:path only), so the daemon can read it without
 // reaching anything else.
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 /** The directory under the secrets dir that holds one file per variable. */
 export const MODEL_ENV_DIR = "model-env";
@@ -126,4 +126,32 @@ export function modelEnvFrom(
     if (value !== null) out[LEGACY_MODEL_KEY_ENV] = value;
   }
   return out;
+}
+
+/**
+ * The model environment a one-shot verb (`qcr model`, `qcr review`,
+ * `qcr scan`) hands pi beside the process's own: the secrets dir its config
+ * located (`[github] secrets_dir`, else `$QC_SECRETS_DIR`, else the install's
+ * own), read by the one loader. The three verbs call this, so they name one
+ * route on an install whose only model key is a file. A relative directory is
+ * under `root` (the app's root), as the setup wizard's steps resolve it,
+ * never under wherever the verb was typed. No directory: an empty map.
+ */
+export function oneShotModelEnv(
+  secretsDir: string | null | undefined,
+  root: string,
+  options: ModelEnvOptions = {},
+): Record<string, string> {
+  const dir = oneShotSecretsDir(secretsDir, root);
+  return dir !== null ? modelEnvFrom(dir, options) : {};
+}
+
+/** The directory `oneShotModelEnv` reads, or null when the config names none. */
+export function oneShotSecretsDir(
+  secretsDir: string | null | undefined,
+  root: string,
+): string | null {
+  const dir = (secretsDir ?? "").trim();
+  if (dir === "") return null;
+  return isAbsolute(dir) ? dir : join(root, dir);
 }

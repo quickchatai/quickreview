@@ -42,6 +42,15 @@
 //      `[models.pricing]` is a table a file may carry. Every config.toml
 //      written before `model` existed names its models this way, and so does
 //      every recorded bench plan.
+//   6. the model credential's older spellings: the single key file
+//      `<secrets>/openai_api_key` is still read, as the variable it always
+//      was (modelEnvFrom, src/modelenv.ts; the newer spelling is one file per
+//      variable under `model-env/`), and the two choices an older wizard
+//      recorded for its model step, `llm_auth_route` and `llm_model_prefix`,
+//      load under any value and are read by nothing
+//      (src/onboard/choices.ts). Every install set up before the model step
+//      stopped asking carries the keys in its checklist, and every install
+//      that pasted a key carries the file.
 // Not a fold: regression.ts's Recommendation "ask-owner-legacy" → "ask-owner" —
 // that value is produced and rendered only, never parsed back, so there is no
 // input side to keep.
@@ -54,7 +63,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   authorizeCommand,
@@ -65,6 +74,21 @@ import {
 } from "../src/commands.js";
 import { whyJson } from "../src/cli.js";
 import { parseConfig, TUI_DEFAULTS } from "../src/config.js";
+import {
+  LEGACY_MODEL_KEY_ENV,
+  LEGACY_MODEL_KEY_FILE,
+  MODEL_ENV_DIR,
+  modelEnvFrom,
+} from "../src/modelenv.js";
+import {
+  OnboardingEngine,
+  checklistPath,
+  readChecklist,
+  type ChecklistFile,
+  type OnboardAdapters,
+  type ProcessResult,
+} from "../src/onboard/engine.js";
+import { LLM_AUTH_STEP_ID, MODEL_QUERY, llmAuthStep } from "../src/onboard/steps/llmauth.js";
 import { OriginStore, parseOriginRecord } from "../src/slack/origin.js";
 import { buildStatusSnapshot, foldSlackTier, StateStore } from "../src/state.js";
 import { App } from "../src/tui/app.js";
@@ -1177,6 +1201,155 @@ describe("models: the older keys are read forever", () => {
         expect(built(newer)).toEqual(golden);
       },
     );
+  });
+});
+
+// ---- fold 6: the model credential's older spellings -------------------------
+
+describe("the model credential: the older key file and the older checklist keys are read forever", () => {
+  /** A value that stays in its file. Not shaped like any real key. */
+  const VALUE = "model-key-value-that-stays-in-its-file";
+  /** The node and cli.js the wizard's model step is told to ask this machine's pi with. */
+  const NODE = "/opt/node/bin/node";
+  const CLI = "/opt/qcr/dist/src/cli.js";
+  /** What `qcr model --json` prints for a route (src/modelcli.ts), on a provider no code names. */
+  const ROUTE = JSON.stringify({
+    ok: true,
+    route: {
+      provider: "prov",
+      modelId: "model-1",
+      providerName: "Prov",
+      spec: "prov/model-1",
+      thinking: null,
+      source: "only-credential",
+      pick: "newest",
+      piDefaultId: null,
+      custom: false,
+      movedFrom: null,
+      credential: { kind: "api_key", origin: "env-key", label: "PROV_KEY", subscription: false },
+      priced: true,
+      ask: false,
+      alternatives: [],
+      notices: [],
+    },
+    choice: null,
+    config_pin: null,
+    skipped: [],
+  });
+
+  let root: string;
+  let stateDir: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "qcr-legacy-model-"));
+    stateDir = join(root, "state");
+    mkdirSync(stateDir, { recursive: true });
+    // A scratch home: a path the step derives from $HOME is never the one of
+    // the person running the suite.
+    vi.stubEnv("HOME", join(root, "home"));
+    vi.stubEnv("QC_SECRETS_DIR", undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** This machine's pi answers with a route, and no stack is up. */
+  const adapters = (): OnboardAdapters => ({
+    fetch: (() => {
+      throw new Error("no network in tests");
+    }) as unknown as typeof fetch,
+    runner: {
+      run: async (cmd, args): Promise<ProcessResult> => {
+        if (cmd === NODE && args.join(" ") === [CLI, ...MODEL_QUERY].join(" "))
+          return { code: 0, stdout: `${ROUTE}\n`, stderr: "" };
+        if (cmd !== "docker") return { code: 127, stdout: "", stderr: `${cmd}: command not found` };
+        // docker is there and no stack is up: the listing is empty.
+        if (args[0] === "compose" && args.includes("ps"))
+          return { code: 0, stdout: "[]", stderr: "" };
+        return { code: 1, stdout: "", stderr: `unexpected docker: ${args.join(" ")}` };
+      },
+    },
+    clock: () => new Date("2026-08-30T12:00:00Z"),
+    host: { nodeVersion: "v22.19.0", uid: 1000 },
+    paths: { stateDir, configPath: join(root, "config.toml") },
+  });
+  const engine = (): OnboardingEngine =>
+    new OnboardingEngine([llmAuthStep({ nodePath: NODE, cliPath: CLI })], adapters());
+
+  // MUTATION: drop the LEGACY_MODEL_KEY_FILE read from modelEnvFrom
+  // (src/modelenv.ts) — this fails: an install whose only model credential is
+  // that file has none.
+  it("<secrets>/openai_api_key is still a provider's key, under the variable it always was", () => {
+    const secrets = join(root, "secrets");
+    mkdirSync(secrets, { recursive: true });
+    // The names are spelled out: a rename of either constant is a rename of
+    // what installs have on disk.
+    expect(LEGACY_MODEL_KEY_FILE).toBe("openai_api_key");
+    expect(LEGACY_MODEL_KEY_ENV).toBe("OPENAI_API_KEY");
+    writeFileSync(join(secrets, "openai_api_key"), `${VALUE}\n`);
+    expect(modelEnvFrom(secrets)).toEqual({ OPENAI_API_KEY: VALUE });
+    // Beside the newer spelling both are read…
+    mkdirSync(join(secrets, MODEL_ENV_DIR));
+    writeFileSync(join(secrets, MODEL_ENV_DIR, "PROV_API_KEY"), "another-value\n");
+    expect(modelEnvFrom(secrets)).toEqual({ OPENAI_API_KEY: VALUE, PROV_API_KEY: "another-value" });
+    // …and a file that names the same variable there is the one that counts.
+    writeFileSync(join(secrets, MODEL_ENV_DIR, "OPENAI_API_KEY"), "the-newer-value\n");
+    expect(modelEnvFrom(secrets)["OPENAI_API_KEY"]).toBe("the-newer-value");
+  });
+
+  // MUTATION: read `llm_auth_route` in src/onboard/steps/llmauth.ts and refuse
+  // a value it does not know — a value below demotes the step and this fails.
+  // Drop an unknown choice key when the checklist is read
+  // (packages/pi-plugin/src/setupchecklist.ts) — the "left as it was"
+  // assertion fails.
+  it("a checklist that carries llm_auth_route and llm_model_prefix, under any value, loads and verifies", async () => {
+    const baseline = await engine().runStep(LLM_AUTH_STEP_ID);
+    expect(baseline.failures).toEqual([]);
+    rmSync(checklistPath(stateDir));
+    for (const [route, prefix] of [
+      ["oauth", "openai-codex/"],
+      ["api", "openai/"],
+      ["", ""],
+      ["no-such-route", "no-such-prefix/"],
+      [7, null],
+      [{ nested: true }, ["a"]],
+    ] as const) {
+      const legacy = { llm_auth_route: route, llm_model_prefix: prefix };
+      const file: ChecklistFile = {
+        version: 1,
+        created_at: "2026-08-01T00:00:00Z",
+        updated_at: "2026-08-01T00:00:00Z",
+        completed_at: null,
+        choices: legacy,
+        steps: {
+          [LLM_AUTH_STEP_ID]: {
+            status: "done",
+            completed_at: "2026-08-01T00:00:00Z",
+            verified_at: null,
+            note: null,
+            data: { route, prefix },
+          },
+        },
+      };
+      mkdirSync(dirname(checklistPath(stateDir)), { recursive: true });
+      writeFileSync(checklistPath(stateDir), JSON.stringify(file));
+      // The file is a checklist, not a fresh start…
+      expect(readChecklist(stateDir)?.choices, JSON.stringify(legacy)).toEqual(legacy);
+      // …a resumed session finds its model step done and still true…
+      const resumed = engine();
+      const report = await resumed.reconcile();
+      expect(report.verified, JSON.stringify(legacy)).toEqual([LLM_AUTH_STEP_ID]);
+      expect(report.demoted).toEqual([]);
+      // …and a run gives the checks of a checklist that never had the keys.
+      expect((await resumed.runStep(LLM_AUTH_STEP_ID)).checks).toEqual(baseline.checks);
+      // The older values are left as they were: nothing rewrote or dropped them.
+      const choices = readChecklist(stateDir)!.choices;
+      expect(choices["llm_auth_route"]).toEqual(route);
+      expect(choices["llm_model_prefix"]).toEqual(prefix);
+      rmSync(checklistPath(stateDir));
+    }
   });
 });
 

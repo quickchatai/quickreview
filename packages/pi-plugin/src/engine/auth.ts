@@ -7,8 +7,10 @@
 // copy in which every OAuth entry's refresh token is replaced by a value no
 // OAuth server accepts. A borrower therefore never refreshes, so it can never
 // rotate (and invalidate) the owner's grant, and never writes a file the owner
-// reads. Its price: it cannot outlive the access token, so the login is refused
-// before work starts when the token would expire inside the work window.
+// reads. Its price: it cannot outlive the access token. A token that would
+// expire inside the work window is settled before work starts: an in-process
+// run leaves that login out and tells its route, and a copy for a pi child is
+// refused.
 //
 // One exception, the VM's: after the cutover no pi session lives long enough to
 // refresh the bot's login, so ONE locked refresher in the bot container
@@ -19,7 +21,7 @@
 // copy the file at spawn, blank, and take no lock. Everywhere else the login-refresh rule is as
 // above.
 //
-// Three ways in, one module:
+// Two ways in, one module:
 //   - `borrowedCredentials`: the in-process route. The copy lives in memory as
 //     a CredentialStore for PiHost (packages/pi-plugin/src/engine/pisdk.ts); no
 //     file is written. It is a filter, not a refusal: a login that cannot last
@@ -29,12 +31,13 @@
 //     the owner's login while the run is going (`owner`), a token shorter than
 //     the run is kept, and the store's `modify` (pi calls it only to refresh)
 //     takes the newer token from the owner's file instead of refreshing.
-//     `engineCredentials` is the older shape of the same route, which refuses
-//     the whole run instead: its `modify` always refuses.
 //   - `copyPiAuth`: the process route. The same copy, written 0600 into a
 //     sandbox's own agent dir for a pi child (bench, scan).
-//   - `setRuntimeApiKey` / `applyEnvApiKeys`: the headless key route (bench,
-//     the Action). No login is read at all; the key lives in the runtime only.
+//
+// No key is ever handed to pi's runtime from here. A provider's key is found
+// by pi, by pi's own names and in pi's own order, in the environment the host
+// was given: a stored credential owns its provider, and a key in the
+// environment is the route only where no stored one can be used.
 //
 // The scan sandbox's wiring (it mounts the companion's agent dir read-only and
 // re-takes the copy before every case) is here too: it is this module's copy
@@ -47,9 +50,9 @@ import type {
   CredentialInfo,
   CredentialStore,
 } from "@earendil-works/pi-ai";
-import { PI_AUTH_ERROR_RE } from "../authwatch.js";
 import { CASE_STOP_GRACE_MS } from "../casebudget.js";
-import { routeProvider, type SkippedLogin } from "../modelroute.js";
+import { providerErrorKind } from "../modelerrors.js";
+import type { SkippedLogin } from "../modelroute.js";
 
 /** What a copied OAuth credential carries instead of the real refresh token. */
 export const DISABLED_REFRESH = "bench-refresh-disabled";
@@ -119,7 +122,7 @@ export class AuthUnreadable extends AuthError {
   }
 }
 
-/** A provider rejected the token mid-run (the signature authwatch watches for).
+/** A provider refused the credential mid-run (the kind authwatch watches for).
  * `message` is the provider's own text. */
 export class AuthRejected extends AuthError {
   constructor(message: string) {
@@ -128,9 +131,11 @@ export class AuthRejected extends AuthError {
 }
 
 /** The typed error for a provider's failure text, or undefined when the text is
- * not an auth failure. One signature, shared with authwatch (PI_AUTH_ERROR_RE). */
+ * not a refused credential. The reading is the one classifier's `auth` kind
+ * (src/modelerrors.ts), the same one authwatch reads: a refused model, a rate
+ * limit or a spent usage window is not a refused login. */
 export function classifyAuthFailure(message: string): AuthRejected | undefined {
-  return PI_AUTH_ERROR_RE.test(message) ? new AuthRejected(message) : undefined;
+  return providerErrorKind(message) === "auth" ? new AuthRejected(message) : undefined;
 }
 
 // ---- reading the owner's file ---------------------------------------------------
@@ -398,9 +403,9 @@ class ReadOnlyCredentials implements CredentialStore {
   }
 }
 
-/** The store for the headless key route: no login at all, nothing to refresh,
- * nothing written (pi would otherwise create an empty `auth.json` in the agent
- * dir). Keys arrive through `setRuntimeApiKey`, into the runtime's memory. */
+/** The store of a host that holds no login: nothing to refresh, nothing
+ * written (pi would otherwise create an empty `auth.json` in the agent dir).
+ * Its credentials are the ones pi finds in the environment. */
 export function keyOnlyCredentials(): CredentialStore {
   return new ReadOnlyCredentials({});
 }
@@ -495,52 +500,6 @@ export function borrowedCredentials(o: {
   };
 }
 
-/** The owner's login, read once from `srcDir/auth.json`, blanked and checked. */
-export interface EngineAuth {
-  /** The credential store for `PiHostOptions.credentials`. */
-  credentials: CredentialStore;
-  /** The earliest OAuth expiry, or null when the login has no OAuth entry. */
-  expiresAt: number | null;
-  provider: string | null;
-}
-
-/**
- * Build the engine's credentials from the owner's agent dir `srcDir` (read
- * only: nothing is written there or anywhere). Throws `AuthExpiring` — before
- * any session exists — when there is no login, or when its earliest OAuth token
- * would expire inside the run window `needMs`.
- */
-export function engineCredentials(o: {
-  srcDir: string;
-  needMs: number;
-  now?: () => number;
-  words?: AuthCopyWords;
-  /** The refusal margin on top of `needMs`; default pi's refresh margin. */
-  marginMs?: number;
-  /** Check only the logins these providers run on (each OpenAI one on the
-   * login that exists, modelroute.ts): a shared pi home's login for a
-   * provider the run never uses cannot refuse it. Omitted: every OAuth entry. */
-  providers?: readonly string[];
-}): EngineAuth {
-  const src = join(o.srcDir, "auth.json");
-  const words = o.words ?? ENGINE_AUTH_WORDS;
-  if (!existsSync(src)) throw new AuthExpiring(words.missing(src), { code: "missing" });
-  const parsed = JSON.parse(readOwnerAuth(src)) as AuthData;
-  const whole = blankRefresh(parsed);
-  const { expiresAt, provider } =
-    o.providers === undefined ? whole : blankRefresh(usedLogins(parsed, o.providers));
-  checkAuth({ expiresAt, provider }, { ...o, words });
-  return { credentials: new ReadOnlyCredentials(parsed), expiresAt, provider };
-}
-
-/** The entries of `parsed` that `providers` run on: each provider's own, or
- * its OpenAI twin's when only the twin holds one (borrowLogin's routing). */
-function usedLogins(parsed: AuthData, providers: readonly string[]): AuthData {
-  const held = (q: string): boolean => typeof parsed[q] === "object" && parsed[q] !== null;
-  const used = new Set(providers.map((p) => routeProvider(p, "", { hasCredential: held })));
-  return Object.fromEntries(Object.entries(parsed).filter(([name]) => used.has(name)));
-}
-
 // ---- the process route ----------------------------------------------------------
 
 /**
@@ -550,8 +509,8 @@ function usedLogins(parsed: AuthData, providers: readonly string[]): AuthData {
  * expires inside `needMs`.
  *
  * This is the sandbox copy a pi CHILD reads; it keeps the sandboxes' original
- * admission rule (no refresh margin). The in-process route's `engineCredentials`
- * adds pi's five-minute refresh margin.
+ * admission rule (no refresh margin). The in-process route's
+ * `borrowedCredentials` adds pi's five-minute refresh margin.
  */
 export function copyPiAuth(o: {
   srcDir: string;
@@ -575,51 +534,6 @@ export function copyPiAuth(o: {
   renameSync(tmp, join(o.dstDir, "auth.json"));
   chmodSync(join(o.dstDir, "auth.json"), 0o600);
   return { expiresAt };
-}
-
-// ---- the headless key route -----------------------------------------------------
-
-/** What `setRuntimeApiKey` needs of pi's ModelRuntime, by shape: this module
- * stays outside the SDK (tests/fences-engine S2). */
-export interface RuntimeKeyTarget {
-  setRuntimeApiKey(providerId: string, apiKey: string): Promise<void>;
-}
-
-/** The key variable each provider's headless route reads (bench, the Action). */
-export const RUNTIME_KEY_ENVS: Readonly<Record<string, string>> = {
-  openai: "OPENAI_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
-  google: "GEMINI_API_KEY",
-  digitalocean: "DIGITALOCEAN_API_KEY",
-};
-
-/** Give the runtime an API key for `providerId`, in memory only: pi's runtime
- * overlay never persists it, and no login is read or written. */
-export async function setRuntimeApiKey(
-  runtime: RuntimeKeyTarget,
-  providerId: string,
-  apiKey: string,
-): Promise<void> {
-  if (apiKey.trim() === "") throw new Error(`an empty API key for ${providerId}`);
-  await runtime.setRuntimeApiKey(providerId, apiKey);
-}
-
-/** `setRuntimeApiKey` for every provider whose key variable is set in `env`
- * (default: `providers`' table). Returns the providers it keyed. */
-export async function applyEnvApiKeys(
-  runtime: RuntimeKeyTarget,
-  env: NodeJS.ProcessEnv,
-  providers: readonly string[] = Object.keys(RUNTIME_KEY_ENVS),
-): Promise<string[]> {
-  const keyed: string[] = [];
-  for (const providerId of providers) {
-    const name = RUNTIME_KEY_ENVS[providerId];
-    const value = name ? env[name] : undefined;
-    if (!value || value.trim() === "") continue;
-    await setRuntimeApiKey(runtime, providerId, value);
-    keyed.push(providerId);
-  }
-  return keyed;
 }
 
 // ---- the scan sandbox's login ---------------------------------------------------
@@ -668,16 +582,71 @@ export function scanAuthExpiring(o: {
 
 const SCAN_AUTH_WORDS: AuthCopyWords = { missing: scanAuthMissing, expiring: scanAuthExpiring };
 
-/** Copy the companion's login from `srcDir` into the scan's agent dir
+/** The provider a model spec names (`provider/model[:level]`), or null when
+ * it names none: a spec that pins no model runs on the route's. */
+function specProvider(spec: string): string | null {
+  const at = spec.indexOf("/");
+  return at > 0 ? spec.slice(0, at) : null;
+}
+
+/**
+ * The providers a scan's models are on: the route's, and the provider of
+ * every tier and lens the config pins to a model of its own. These are the
+ * only logins a scan needs to outlive a case; any other login in the pi home
+ * (one the person signed in to for something else) decides nothing.
+ */
+export function scanProviders(
+  route: { provider: string },
+  models?: {
+    tiers?: Readonly<Record<string, string>>;
+    pass_models?: Readonly<Record<string, string>>;
+  },
+): string[] {
+  const out = new Set([route.provider]);
+  for (const spec of [
+    ...Object.values(models?.tiers ?? {}),
+    ...Object.values(models?.pass_models ?? {}),
+  ]) {
+    const provider = specProvider(spec);
+    if (provider !== null) out.add(provider);
+  }
+  return [...out];
+}
+
+/**
+ * Copy the companion's login from `srcDir` into the scan's agent dir
  * `dstDir`, refresh-disabled. Throws `AuthExpiring` when there is none, or
- * when its token would expire inside `needMs`. */
+ * when a token would expire inside `needMs`.
+ *
+ * With `providers` (the providers the scan's models are on), only their
+ * tokens are judged: a login of another provider that is about to expire is
+ * not the scan's to refuse. The copy is still the whole login, so a tier the
+ * config pins to another provider finds its own.
+ */
 export function syncScanAuth(o: {
   srcDir: string;
   dstDir: string;
   needMs: number;
   now?: () => number;
+  providers?: readonly string[];
 }): { expiresAt: number | null } {
-  return copyPiAuth({ ...o, words: SCAN_AUTH_WORDS });
+  const { providers, ...copy } = o;
+  if (providers === undefined) return copyPiAuth({ ...copy, words: SCAN_AUTH_WORDS });
+  const src = join(o.srcDir, "auth.json");
+  if (!existsSync(src)) throw new AuthExpiring(scanAuthMissing(src), { code: "missing" });
+  const judged = authCopyFrom(readOwnerAuth(src), providers);
+  checkAuth(
+    { expiresAt: judged.expiresAt, provider: judged.provider },
+    {
+      needMs: o.needMs,
+      marginMs: 0,
+      words: SCAN_AUTH_WORDS,
+      ...(o.now ? { now: o.now } : {}),
+    },
+  );
+  // The whole login, with no window of its own: what had to be judged was.
+  copyPiAuth({ ...copy, needMs: Number.NEGATIVE_INFINITY, words: SCAN_AUTH_WORDS });
+  return { expiresAt: judged.expiresAt };
 }
 
 /** A case runner over the borrowed login: before each case, the copy is
@@ -691,12 +660,22 @@ export function scanAuthCases<S, O>(
     needMs: number;
     now?: () => number;
     onExpired: (reason: string) => void;
+    /** The providers the scan's models are on, asked per case: the only
+     * logins the copy then judges. Omitted, or answering nothing: all. */
+    providers?: () => readonly string[] | undefined;
   },
 ): CaseRunnerOf<S, O | CaseRefused> {
   return {
     run: async (spec, signal, onCost): Promise<O | CaseRefused> => {
       try {
-        syncScanAuth(o);
+        const providers = o.providers?.();
+        syncScanAuth({
+          srcDir: o.srcDir,
+          dstDir: o.dstDir,
+          needMs: o.needMs,
+          ...(o.now ? { now: o.now } : {}),
+          ...(providers !== undefined ? { providers } : {}),
+        });
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         if (!(err instanceof AuthExpiring)) {
@@ -733,6 +712,8 @@ export function scanCasesForEnv<S, O>(
   env: NodeJS.ProcessEnv,
   onExpired: (reason: string) => void,
   homeDir?: string,
+  /** The providers the scan's models are on (`scanAuthCases`). */
+  providers?: () => readonly string[] | undefined,
 ): CaseRunnerOf<S, O | CaseRefused> {
   const srcDir = env[SCAN_AUTH_SRC_ENV]?.trim();
   if (!srcDir) return inner;
@@ -741,5 +722,11 @@ export function scanCasesForEnv<S, O>(
     env["PI_CODING_AGENT_DIR"]?.trim() || (home ? join(home, ".pi", "agent") : undefined);
   if (!dstDir)
     throw new Error("scan auth: PI_CODING_AGENT_DIR is not set and there is no home to default it");
-  return scanAuthCases(inner, { srcDir, dstDir, needMs: SCAN_CASE_AUTH_BUDGET_MS, onExpired });
+  return scanAuthCases(inner, {
+    srcDir,
+    dstDir,
+    needMs: SCAN_CASE_AUTH_BUDGET_MS,
+    onExpired,
+    ...(providers ? { providers } : {}),
+  });
 }

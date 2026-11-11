@@ -53,6 +53,7 @@ import {
   type ModelCliJson,
 } from "../src/modelcli.js";
 import { MODEL_ENV_DIR } from "../src/modelenv.js";
+import { MEASURED } from "@quickchatai/pi-quickreview/src/measured.js";
 import type { OnboardAdapters } from "../src/onboard/engine.js";
 import { secretsDirFor } from "../src/onboard/steps/ingress.js";
 import { FAKE_ROUTE_MODEL, writeFakeProvider } from "./helpers/fake-openai.js";
@@ -136,6 +137,7 @@ describe("qcr model: the route, and why", () => {
       "  picked: the newest version on local",
       "  credential: local, a key in pi's models.json",
       "  levels: light medium, standard medium, deep high",
+      "  price: no estimate for this model; a review stops at $15.00 unless --limit says otherwise",
       "change it: qcr model use <provider[/model]>    automatic again: qcr model reset    one run: --model <provider/model>",
     ]);
     expect(r.err).toEqual([]);
@@ -160,7 +162,8 @@ describe("qcr model: the route, and why", () => {
     const also = r.out.indexOf("also usable:");
     expect(also).toBeGreaterThan(0);
     expect(r.out[also + 1]).toMatch(
-      new RegExp(`^  ${BUILTIN}/\\S+    ${BUILTIN_NAME}, ${BUILTIN_ENV}$`),
+      // the last column: what is known of its price before a review
+      new RegExp(`^  ${BUILTIN}/\\S+    ${BUILTIN_NAME}, ${BUILTIN_ENV}    no estimate$`),
     );
     expect(r.text).not.toContain("not-a-key");
   });
@@ -223,6 +226,67 @@ describe("qcr model: the route, and why", () => {
     expect(used.text).not.toContain("still pins");
     expect((await run([], { env, models: level })).out[1]).toBe(
       "  why: you chose it (qcr model use)",
+    );
+  });
+
+  /** A pi home whose provider `local` serves one model, as the case prices it. */
+  const withModel = (model: { id: string; api: string; cost: Record<string, number> }): void => {
+    writeFileSync(
+      join(home, "models.json"),
+      JSON.stringify({
+        providers: {
+          local: {
+            baseUrl: NOWHERE,
+            api: model.api,
+            apiKey: "not-a-key",
+            models: [
+              {
+                id: model.id,
+                name: model.id,
+                reasoning: true,
+                input: ["text"],
+                cost: { cacheWrite: 0, ...model.cost },
+                contextWindow: 200000,
+                maxTokens: 4000,
+              },
+            ],
+          },
+        },
+      }),
+    );
+  };
+  const priceOf = (r: Run): string | undefined => r.out.find((l) => l.startsWith("  price:"));
+
+  // MUTATION: return the "no estimate" line from priceLine whatever the
+  // models (src/modelcli.ts) — the measured model is told it has no
+  // estimate, and this fails.
+  it("the price line: an estimate on the measured model, a stop on any other, neither with no list price", {
+    timeout: HEAVY_TIMEOUT_MS,
+  }, async () => {
+    withModel({ id: MEASURED.model_id, api: MEASURED.apis[0], cost: { ...MEASURED.rates } });
+    const measured = await run([]);
+    expect(measured.code).toBe(0);
+    expect(priceOf(measured)).toBe(
+      `  price: an estimate before each review (measured on ${MEASURED.model_id}); a review stops at twice it`,
+    );
+    // the same model with one tier pinned elsewhere is not a measured review
+    const mixed = await run([], {
+      models: { model: "", tiers: { ...UNPINNED.tiers, deep: "elsewhere/other-model:high" } },
+    });
+    expect(priceOf(mixed)).toBe(
+      "  price: no estimate for this model; a review stops at $15.00 unless --limit says otherwise",
+    );
+    // the same id through an API outside the measured family
+    withModel({ id: MEASURED.model_id, api: "openai-completions", cost: { ...MEASURED.rates } });
+    expect(priceOf(await run([]))).toMatch(/^ {2}price: no estimate for this model/);
+    // a model pi has no price for
+    withModel({
+      id: "free-model-1",
+      api: "openai-completions",
+      cost: { input: 0, output: 0, cacheRead: 0 },
+    });
+    expect(priceOf(await run([]))).toBe(
+      "  price: pi has no list price for this model: no dollar stop",
     );
   });
 

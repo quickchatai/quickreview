@@ -39,6 +39,7 @@ import type { PermitBroker } from "./ipc/permits.js";
 import { IpcServer, type EventHandler } from "./ipc/server.js";
 import type { WorkerMode, WorkerSpec } from "./ipc/workerspec.js";
 import type { LoginRefreshFileStatus } from "./loginrefresh/types.js";
+import { modelEnvFrom } from "./modelenv.js";
 import type { OvSessionLifecycle } from "./memory/ovsession.js";
 import { PostingJournal } from "./posting-journal.js";
 import { postingKeyHead } from "./posting-receipt.js";
@@ -62,15 +63,23 @@ import { runtimeOfPr } from "./workerruntime.js";
 import { WorkerSupervisor } from "./workersupervisor.js";
 import { workerUsageHandler } from "./workerusage.js";
 
-/** The names the tmux route's environment carried that a worker's session does not:
- * the model key (a worker borrows the bot's login), the inject bridge's directory and the
- * state database. Nothing else is dropped: a worker round sees what a
- * tmux round saw. */
-export const WORKER_ENV_DROPPED: readonly string[] = [
-  "OPENAI_API_KEY",
-  "QCR_INJECT_DIR",
-  "QCR_STATE_DB",
-];
+/** The names of the tmux route's environment that a worker's session never carries,
+ * whatever the install holds: the inject bridge's directory and the state database. */
+export const WORKER_ENV_DROPPED_FIXED: readonly string[] = ["QCR_INJECT_DIR", "QCR_STATE_DB"];
+
+/**
+ * The names the tmux route's environment carried that a worker's session does not: the
+ * model environment, every name of it, and the fixed two. Derived from the loader's own
+ * names (`modelEnvNames`: the keys of what src/modelenv.ts read for this session), never
+ * from a list of providers, so a key under any name pi reads is dropped the day its file
+ * is put in the secrets dir. A model key belongs to the worker's own process, where pi
+ * looks for it (`WorkerSupervisorDeps.modelEnv`); the session's spec, and with it the
+ * environment the model's tools are given, holds none. Nothing else is dropped: a worker
+ * round sees what a tmux round saw.
+ */
+export function workerEnvDropped(modelEnvNames: readonly string[]): readonly string[] {
+  return [...new Set([...modelEnvNames, ...WORKER_ENV_DROPPED_FIXED])];
+}
 
 /** How often a command a worker's death requeued is handed a fresh worker. */
 export const LAUNCH_PENDING_EVERY_MS = 5_000;
@@ -192,15 +201,19 @@ export interface WorkerWorld {
 }
 
 /** The worker's session environment, built from the tmux manager's: the same names and
- * values a tmux round's pi was given, minus `WORKER_ENV_DROPPED`, plus this PR's identity. */
+ * values a tmux round's pi was given, minus `workerEnvDropped`, plus this PR's identity.
+ * The model environment is read once and handed to the builder, so the names dropped are
+ * exactly the ones it added. */
 export function workerSessionEnv(
-  sessions: Pick<PiSessionManager, "buildEnv">,
+  sessions: Pick<PiSessionManager, "buildEnv" | "modelEnv">,
   session: string,
   extra: Record<string, string>,
 ): Record<string, string> {
+  const model = sessions.modelEnv();
+  const dropped = workerEnvDropped(Object.keys(model));
   const env: Record<string, string> = {};
-  for (const [name, value] of Object.entries(sessions.buildEnv(session, extra))) {
-    if (value === undefined || WORKER_ENV_DROPPED.includes(name)) continue;
+  for (const [name, value] of Object.entries(sessions.buildEnv(session, extra, model))) {
+    if (value === undefined || dropped.includes(name)) continue;
     env[name] = value;
   }
   return env;
@@ -327,13 +340,13 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
     await o.pump();
     await supervisorRef?.launchPending();
   };
-  const modelEnv = (pr: number): Record<string, string> => {
-    const env = workerSessionEnv(sessions, prSessionName(pr), {
+  // A takeover's pane gets the session's names as a worker's session does: the plan is
+  // written to a file, so it holds no model key either.
+  const paneEnv = (pr: number): Record<string, string> =>
+    workerSessionEnv(sessions, prSessionName(pr), {
       QCR_PR: String(pr),
       QCR_WORKTREE: sessions.worktrees.worktreePath(pr),
     });
-    return env;
-  };
 
   const takeover = new TakeoverManager({
     store,
@@ -351,7 +364,7 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
         model: cfg.models.model,
         pr,
         newestSessionFile,
-        env: modelEnv(pr),
+        env: paneEnv(pr),
         systemPromptFile: sessions.promptPath(prSessionName(pr)),
       }),
     launcherMain: dist("ipc", "launcher.js"),
@@ -396,6 +409,11 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
     logDir: join(stateDir, "workers"),
     payloadDir: join(stateDir, "session-commands"),
     buildSpec,
+    // The model environment of the secrets dir, for the worker's own process and nothing
+    // else: this process's environment, the tmux server's and the login refresher's hold
+    // none of it, and no spec does (`workerEnvDropped`). Read at each spawn, so a key
+    // file put there while the daemon runs is the next worker's, as it is `qcr model`'s.
+    modelEnv: () => modelEnvFrom(cfg.github.secrets_dir),
     ...(o.nodeBin ? { nodeBin: o.nodeBin } : {}),
     answer: answerCapsOf(cfg.daemon),
     settled: (s) => answerRef?.onSettled(s),
@@ -495,6 +513,15 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
     operatorControl,
     runtimeOf,
     async start() {
+      // Said once, by name: which model variables a worker's process is given, and which
+      // files of the secrets dir's model env were left out and why. Never a value.
+      const modelNames = Object.keys(
+        modelEnvFrom(cfg.github.secrets_dir, { warn: (line) => log(`workers: ${line}`) }),
+      );
+      if (modelNames.length > 0)
+        log(
+          `workers: a worker's process is given the model env of ${cfg.github.secrets_dir}: ${modelNames.join(", ")}`,
+        );
       await server.start();
       // Whatever a previous daemon left: workers are reaped and their commands requeued before
       // any launch, and an operator's pi is ended and its lease freed once it is gone.

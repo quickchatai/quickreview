@@ -72,8 +72,10 @@ const ERROR_CHARS = 300;
  *     overload) never parks the PR, and feeds the drain only on a repeat;
  *   - a spent usage window never parks the PR either, and feeds the drain
  *     from its first occurrence;
- *   - anything else (a refused login, a provider error, a crash) parks and
- *     drains as counted. */
+ *   - anything else (a refused login, a refused model, a provider error, a
+ *     crash) parks and drains as counted. A refused model is one model's: it
+ *     parks the PR with the model named in its last error, like any failure
+ *     of the PR's own. */
 function breakerEffect(error: string, firstFailure: boolean): { park: boolean; drain: boolean } {
   const kind = providerFailureKind(error);
   if (isTransientKind(kind)) return { park: false, drain: !firstFailure };

@@ -188,7 +188,6 @@ export function firstRunHost(env: Env, piVersion: string): PluginHost {
     agentDir: piAgentDir(env),
     auth: {
       logins: () => ({}),
-      configured: () => false,
       refresh: () => Promise.reject(new Error("the home's first-run checks hold no login")),
     },
     runner: nodeRunner(env),

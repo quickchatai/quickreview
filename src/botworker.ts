@@ -62,7 +62,7 @@
 //
 // Exit codes: 0 the round was served (a verdict may or may not have been
 // written: `done` says), 1 a turn failed (timeout, cap, stream, refused
-// login), 2 bad usage, 3 the handshake or the
+// login, refused model), 2 bad usage, 3 the handshake or the
 // payload could not be trusted, 4 the login was refused up front (unreadable, or
 // no model route over it), 5 the session
 // could not be opened, 6 the operator aborted the round, 75 the daemon went away, 76 the daemon fenced this
@@ -70,12 +70,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { EventCostMeter } from "./bench/cost.js";
+import { EventCostMeter } from "@quickchatai/pi-quickreview/src/pricing.js";
 import { CONTEXT_PACK_FILE } from "@quickchatai/pi-quickreview/src/contextpack.js";
 import {
   AuthError,
   borrowedCredentials,
-  classifyAuthFailure,
   type BorrowedAuth,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { agentDirSettings } from "@quickchatai/pi-quickreview/src/engine/agentdir.js";
@@ -113,6 +112,7 @@ import { readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js"
 import {
   RouteRefused,
   refusalText,
+  type ModelRoute,
   type RouteRefusal,
   type RouteResult,
 } from "@quickchatai/pi-quickreview/src/modelroute.js";
@@ -155,7 +155,10 @@ import { sessionCommandMarker } from "@quickchatai/pi-quickreview/src/session-co
 import { verifiedPayload } from "./session-command-payload.js";
 import { newestSessionFile } from "./sessionjsonl.js";
 import { WORKER_EXIT_AUTH, WORKER_EXIT_PROVIDER, isProviderTransient } from "./providerfailure.js";
-import { boundedProviderError } from "@quickchatai/pi-quickreview/src/modelerrors.js";
+import {
+  boundedProviderError,
+  providerErrorKind,
+} from "@quickchatai/pi-quickreview/src/modelerrors.js";
 
 export const EXIT = {
   ok: 0,
@@ -336,6 +339,22 @@ function routeRefusalWords(
   });
 }
 
+/** How an operator runs the bot on another model, once a provider refused one. */
+const MODEL_REFUSED_REMEDY =
+  "Run on another: qcr model use <provider[/model]>, or pin one with [models] model.";
+
+/** Which provider refused which model, and the remedy: the model the failed
+ * message was asked of when it names one, the route's otherwise. */
+function modelRefusedWords(
+  route: ModelRoute,
+  failed: { provider: string; model: string } | undefined,
+): string {
+  const provider = failed?.provider ?? route.provider;
+  const spec = failed ? `${failed.provider}/${failed.model}` : route.spec;
+  const name = provider === route.provider ? route.providerName : provider;
+  return `${name} refused the model ${spec}. ${MODEL_REFUSED_REMEDY}`;
+}
+
 /** A user turn's closing marker, in the inject bridge's own spelling. */
 function withMarker(text: string, marker: string): string {
   return `${text}${text.endsWith("\n") ? "\n" : "\n\n"}${marker}`;
@@ -385,6 +404,8 @@ class RoundWatch {
   posted = 0;
   /** The provider's error on the newest assistant message, if that is how it ended. */
   lastError: string | undefined;
+  /** The provider and model that message was asked of, when it names both. */
+  lastErrorModel: { provider: string; model: string } | undefined;
   /** The text of the newest assistant message that did not end in a tool call:
    * what the model said last, which is an answer's reply. */
   replyText: string | undefined;
@@ -395,20 +416,32 @@ class RoundWatch {
   hear(event: Record<string, unknown>): void {
     if (event["type"] === "message_end") {
       const message = event["message"] as
-        { role?: unknown; stopReason?: unknown; errorMessage?: unknown } | undefined;
+        | {
+            role?: unknown;
+            stopReason?: unknown;
+            errorMessage?: unknown;
+            provider?: unknown;
+            model?: unknown;
+          }
+        | undefined;
       if (message?.role === "assistant") {
         const full = event["message"] as { content?: unknown; stopReason?: unknown };
         if (full.stopReason !== "toolUse" && full.stopReason !== "error")
           this.replyText = textOf(full.content);
       }
       // Kept whole: the failure is classified before any display cut.
-      if (message?.role === "assistant")
-        this.lastError =
-          message.stopReason === "error"
-            ? typeof message.errorMessage === "string"
-              ? message.errorMessage
-              : "the provider returned an error"
+      if (message?.role === "assistant") {
+        const failed = message.stopReason === "error";
+        this.lastError = failed
+          ? typeof message.errorMessage === "string"
+            ? message.errorMessage
+            : "the provider returned an error"
+          : undefined;
+        this.lastErrorModel =
+          failed && typeof message.provider === "string" && typeof message.model === "string"
+            ? { provider: message.provider, model: message.model }
             : undefined;
+      }
       return;
     }
     const id = event["toolCallId"];
@@ -622,8 +655,9 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       throw new Stop(EXIT.session, `could not resolve the model: ${errText(e)}`);
     }
     if (!routed.ok) throw new Stop(EXIT.auth, routeRefusalWords(routed.refusal, made, spec, now));
-    log(`botworker: model ${routed.route.spec} (${routed.route.source})`);
-    for (const notice of routed.route.notices) log(`botworker: ${notice}`);
+    const route = routed.route;
+    log(`botworker: model ${route.spec} (${route.source})`);
+    for (const notice of route.notices) log(`botworker: ${notice}`);
     checkpoint();
     try {
       // The lens cap is the daemon's, over every worker: a pass asks the broker.
@@ -689,10 +723,13 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
         ? { capUsd: Math.max(0, spec.cap_usd - live.stats().spentUsd) }
         : {}),
     });
-    // What the round has cost, priced the way the transcript is (src/bench/cost.ts):
-    // the session's assistant messages and the passes its lens tools reported, each
-    // run once, and, at the end, the lens ledger's warm-ups. The daemon's est_usd
-    // takes it in place of measuring the transcript.
+    // What the round has cost, priced the way the transcript is (the core's
+    // pricing.ts): the session's assistant messages and the passes its lens tools
+    // reported, each run once, and, at the end, the lens ledger's warm-ups. The
+    // daemon's est_usd takes it in place of measuring the transcript. A round
+    // with a call pi stamped at zero for its tokens (a model pi has no price
+    // for) has no total: `total_usd` is null, which the daemon keeps nothing of,
+    // so the round's spend is recorded as unknown, never as the priced part.
     const meter = new EventCostMeter();
     live.subscribe(
       (event) => {
@@ -708,7 +745,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
     );
     const usage = (): void =>
       report("usage", {
-        total_usd: meter.totalUsd,
+        total_usd: meter.costUsd,
         lens_usd: lensUsd,
         lens_runs: lensRuns,
         turns: live.stats().turns,
@@ -721,8 +758,9 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       // A transient provider failure (the connection, a rate limit, an
       // overload) exits `provider`: the same turn later succeeds, so the daemon
       // requeues it with backoff. Any other ends the command `failed`.
-      // Each is classified on the provider's whole message; the bounded words
-      // the daemon keeps read as the same kind (`boundedProviderError`).
+      // Each is classified on the provider's whole message, by the one ordered
+      // classifier (src/modelerrors.ts); the bounded words the daemon keeps
+      // read as the same kind (`boundedProviderError`).
       if (r.streamError) {
         const lead = `${what}: output stream failed: `;
         throw new Stop(
@@ -732,11 +770,22 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       }
       // A provider failure ends the turn as an assistant message, not as a throw.
       if (watch.lastError !== undefined) {
-        const refused = classifyAuthFailure(watch.lastError);
-        if (refused)
+        // The kind is read before any wording: a rate limit is tried before a
+        // refused login, so a rate-limit text that carries a status number as
+        // a count is still retried.
+        const kind = providerErrorKind(watch.lastError);
+        if (kind === "auth")
           throw new Stop(
             EXIT.failed,
-            `${what}: the provider refused the login: ${refused.message.slice(0, 300)}`,
+            `${what}: the provider refused the login: ${watch.lastError.slice(0, 300)}`,
+          );
+        // The credential was taken and the model refused: this model's
+        // failure, named, and never the login's.
+        if (kind === "model_refused")
+          throw new Stop(
+            EXIT.failed,
+            `${what}: ${modelRefusedWords(route, watch.lastErrorModel)} ` +
+              `The provider said: ${boundedProviderError(watch.lastError)}`,
           );
         const lead = `${what}: the provider failed the turn: `;
         throw new Stop(
@@ -888,7 +937,7 @@ export async function runBotWorker(args: WorkerArgs, deps: WorkerDeps): Promise<
       controls: { ...controls.counts },
       compacted,
       turns: live.stats().turns,
-      total_usd: meter.totalUsd,
+      total_usd: meter.costUsd,
       lens_usd: lensUsd,
       elapsed_ms: now() - started,
     });

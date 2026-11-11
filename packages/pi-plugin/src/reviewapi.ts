@@ -14,6 +14,29 @@
 // `prepareHost`), run the one-shot round, skip what the bot already posted,
 // record the round, render, and post through the one gate when asked.
 //
+// The price. What a review costs is known from one of five things
+// (packages/pi-plugin/src/measured.ts `priceBasis`), and each has its own
+// line, stop and question:
+//
+//   measured, repo   an estimate (the fit, or the repo's own rates); the run
+//                    stops hard at twice it, and asks above the repo's limit.
+//   unmeasured       no estimate; the run stops at a spend limit (`--limit`,
+//                    else the repo's `unmeasured_limit_usd`) and needs the
+//                    person's word once: `--limit` on the run, a yes at a
+//                    terminal or a start with the preview's key, the last two
+//                    remembered beside pi's logins (modelchoice.ts).
+//   unpriced         pi has no price for the model, so it counts no cost and
+//                    no dollar figure can stop the run: the time limit holds.
+//                    The same holds where the repo's rates give an estimate
+//                    on such a model: the estimate is shown, the stop is not.
+//   unknown          no model route resolves: a preview says so, a start is
+//                    refused.
+//
+// The JSON is review schema 2. A caller that reads contract 1 (`contract`)
+// gets the same payload under version 1 while its estimate is a number, and
+// is refused before anything runs where it is not: version 1 has no way to
+// say "no estimate", and a guess is never printed in its place.
+//
 // The model is the host's to resolve, since the host knows where pi's
 // credentials are: `opts.route` answers with the route (or why there is
 // none) once the plan exists, so a target that needs no review asks nothing.
@@ -36,27 +59,33 @@
 // stopped short (partial); 2 usage.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { CoreConfig } from "./reviewconfig.js";
+import { splitModelSpec, type CoreConfig } from "./reviewconfig.js";
 import type { Ecosystem } from "./ecosystem.js";
 import {
   addDiffTree,
   addReviewTree,
   addUncommittedTree,
+  contractOneNoPrice,
   groupFindings,
   loadReviewSettings,
   hardStopFor,
   priceReview,
   removeReviewTree,
   renderGrouped,
+  repoRates,
   originRepo,
   resolveBranch,
   resolveDiff,
   resolveUncommitted,
+  reviewForContract,
   reviewKey,
   runModels,
+  tooShortFor,
   type BranchTarget,
   type RunRoute,
 } from "./localreview.js";
+import { MEASURED, measuredSpec, priceBasis, type PriceBasis } from "./measured.js";
+import { allowNoEstimate, readModelChoice } from "./modelchoice.js";
 import {
   refusalText,
   RouteRefused,
@@ -101,7 +130,7 @@ import { SECURITY_FAMILY } from "./passes.js";
 import { lensEnabled } from "./lenstuning.js";
 import { fetchBotFindings, skipPosted, type PostedFinding } from "./reviewbotfindings.js";
 import { computeDelta, deltaEnabled, renderDeltaRound, type DeltaFound } from "./reviewdelta.js";
-import { REVIEW_SCHEMA_VERSION, withSchemaVersion } from "./contract.js";
+import { reviewVersionFor } from "./contract.js";
 import { ecosystemFor } from "./ecosystem.js";
 import { applyProfileOverlays, loadProfileEcosystem } from "./profiles.js";
 import {
@@ -131,9 +160,10 @@ import type { ReviewTarget } from "./reviewtarget.js";
 export { postSavedReview, SAVED_POST_FILE, type PostOutcome, type SavedPost } from "./savedpost.js";
 export type { ReviewTarget } from "./reviewtarget.js";
 
-/** Who is asking. "laptop" previews the estimate, asks above the limit and
- * stops hard at twice the estimate. "action" never asks and has no cap of its
- * own: only a given limit stops the run. */
+/** Who is asking. "laptop" previews the price, asks above the limit (or, on
+ * a model with no estimate, once) and stops hard at twice the estimate or at
+ * the spend limit. "action" never asks and has no cap of its own: only a
+ * given limit stops the run. */
 export type ReviewRoute = "laptop" | "action";
 
 /** What the host's isolation of one run is given: core's is
@@ -169,10 +199,14 @@ export interface ReviewHostRun {
 
 export interface ReviewLimits {
   route?: ReviewRoute;
-  /** The limit for this run, over the repo's own (`auto_limit_usd`); on the
-   * "action" route it is the hard stop. */
+  /** The limit for this run. With an estimate it is the estimate a review may
+   * have without asking, over the repo's own (`auto_limit_usd`; the hard stop
+   * stays twice the estimate). With none it is the stop itself, over the
+   * repo's `unmeasured_limit_usd`, and naming it is the person's word that
+   * the run may start. On the "action" route it is the hard stop. */
   limitUsd?: number;
-  /** Start over the limit without asking, quoting the key a preview showed. */
+  /** Start without asking (over the limit, or with no estimate), quoting the
+   * key a preview showed. */
   key?: string;
   /** The round's wall clock. */
   timeoutMs: number;
@@ -217,7 +251,9 @@ export interface ReviewOptions {
   repoDir: string;
   /** The asset tree: prompts/, extensions/, agents/ (packages/pi-plugin/src/assetroot.ts). */
   root: string;
-  /** The operator's pi agent dir (its login): only read. */
+  /** The operator's pi agent dir. Its login is only read. The remembered
+   * model choice beside it (modelchoice.ts) is read for the models the person
+   * agreed to run with no estimate, and gains one when they agree here. */
   agentDir: string;
   /** Where each run keeps its throwaway tree and its files. */
   runsDir: string;
@@ -269,6 +305,12 @@ export interface ReviewOptions {
   /** Review the whole target again, ignoring what an earlier review left. */
   full?: boolean;
   limits: ReviewLimits;
+  /** The host-plugin contract the caller reads (`qcr --schema N`,
+   * contract.ts). Absent: the code's own review schema. Contract 1 cannot say
+   * "no estimate": a review it could not state is refused before anything
+   * runs, and a run with no model route is refused in the login's words, a
+   * preview included. */
+  contract?: number;
   /** The GitHub credential sources and where GitHub is (a test seam). */
   github?: PostGithub;
 }
@@ -300,7 +342,9 @@ export interface ReviewStarted {
   /** The round's session name (the live log's key). */
   sessionName: string;
   lenses: readonly string[];
-  estimateUsd: number;
+  /** The estimate; null where the run has none (an unmeasured or unpriced
+   * model). */
+  estimateUsd: number | null;
   /** The hard stop in dollars; null: none. */
   capUsd: number | null;
 }
@@ -332,7 +376,8 @@ export interface ReviewIo {
   signal?: AbortSignal;
 }
 
-/** The versioned JSON object (`qcr review --json`, schemas/review-result.v1.json). */
+/** The versioned JSON object (`qcr review --json`): schemas/review-result.v2.json,
+ * or version 1's projection of it for a caller that reads contract 1. */
 export type ReviewData = Record<string, unknown> & { schema_version: number; ok: boolean };
 
 export interface ReviewResult {
@@ -580,6 +625,11 @@ async function runPipeline(
 ): Promise<ReviewResult> {
   const isPreview = mode === "preview";
   const debug = opts.debugRound !== undefined && !isPreview;
+  // Contract 1 reads an estimate that is always a number.
+  const needsEstimate = reviewVersionFor(opts.contract) === 1;
+  // Whose words a refusal is said in: the host's, once it has resolved a route.
+  let routed: ReviewRouted | null = null;
+  const surfaceOf = (): RouteSurface => routed?.surface ?? "app";
   const warn = io.warn ?? (() => {});
   const progress = io.progress ?? (() => {});
   const repoDir = opts.repoDir;
@@ -607,8 +657,19 @@ async function runPipeline(
         data = { ...data, ok: false, report_error: String(err).slice(0, 200) };
       }
     }
+    // Stamped for the caller's contract. A payload contract 1 cannot carry
+    // never leaves under it: the refusal does, in its place.
+    const stamped = reviewForContract(opts.contract, data, surfaceOf());
+    if (stamped.refused !== null)
+      return {
+        data: stamped.data as ReviewData,
+        markdown: null,
+        text: `✗ ${stamped.refused}`,
+        exitCode: 1,
+        destinations: dests,
+      };
     return {
-      data: withSchemaVersion(REVIEW_SCHEMA_VERSION, data) as ReviewData,
+      data: stamped.data as ReviewData,
       markdown: markdown ?? null,
       text: human,
       exitCode,
@@ -758,11 +819,6 @@ async function runPipeline(
       : `${t.branch} against ${t.base}${kind === "branch" && t.uncommitted ? ", with its uncommitted changes" : ""}`;
   const settings = loadReviewSettings(repoDir);
   const action = (opts.limits.route ?? "laptop") === "action";
-  // The laptop's confirm threshold is the person's limit; the Action has none,
-  // so only a limit given for this run applies, and it is the hard stop.
-  const limit: number | null = action
-    ? (opts.limits.limitUsd ?? null)
-    : (opts.limits.limitUsd ?? settings.auto_limit_usd);
 
   // What an earlier review of this target left (none with `full`, or when it
   // cannot be trusted).
@@ -991,8 +1047,8 @@ async function runPipeline(
   fallback = planned.fallback;
   // The model the run is on: the host's to resolve, now that there is a plan
   // to run. A preview with no route still shows the plan; a start is refused
-  // in the route's own words, before anything is priced or asked.
-  let routed: ReviewRouted | null = null;
+  // in the route's own words, before anything is priced or asked. So is a
+  // preview for a caller on contract 1, which has no way to say "no model".
   if (opts.route !== undefined) {
     const resolveRoute = opts.route;
     let got: ReviewRouted | typeof STOP;
@@ -1007,7 +1063,7 @@ async function runPipeline(
     }
     if (got === STOP || io.signal?.aborted) return stopped();
     routed = got;
-    if (!routed.result.ok && !isPreview)
+    if (!routed.result.ok && (!isPreview || needsEstimate))
       return refuse(1, [refusalText(routed.result.refusal, routed.surface, routed.facts)]);
   }
   const route = routed !== null && routed.result.ok ? routed.result.route : null;
@@ -1025,8 +1081,69 @@ async function runPipeline(
   const models = runModels(cfg, lenses, on);
   const since = scope === "delta" && prev !== null ? lastRound(prev).head_sha : undefined;
   const priceLines = scope === "delta" && delta !== null ? delta.lines : t.lines;
-  const price = priceReview(lenses.length, priceLines, settings);
-  const cap: number | null = action ? limit : hardStopFor(price);
+  // A tier or a lens the config pins to a provider whose login was left out
+  // as too short would fail when its session is opened: the run is refused
+  // before anything starts, and the preview says so.
+  const tooShort = tooShortFor(models.all, on);
+  const pinRefusal =
+    tooShort.length > 0 && routed !== null
+      ? refusalText({ code: "login-too-short", logins: tooShort }, routed.surface, routed.facts)
+      : null;
+  if (pinRefusal !== null && (!isPreview || needsEstimate)) return refuse(1, [pinRefusal]);
+
+  // The price: what it is known from decides the line, the stop and the question.
+  const rates = repoRates(settings);
+  const basis: PriceBasis = priceBasis({
+    route: routed === null ? undefined : route,
+    repoRates: rates !== null,
+    specs: models.all,
+    inventory: routed?.inventory ?? [],
+  });
+  // What the price lines call the model: the route's spec, else the one the
+  // config pins for the main session.
+  const priceSpec = route?.spec ?? splitModelSpec(models.main).model;
+  const named = priceSpec !== "" ? priceSpec : "this model";
+  // pi counts no cost for a model it has no price for, so no dollar figure
+  // can stop a run on one, whatever estimate the repo's own rates give.
+  const noDollarStop = basis === "unpriced" || (route !== null && !route.priced);
+  const price: number | null =
+    basis === "measured" || basis === "repo"
+      ? priceReview(lenses.length, priceLines, rates ?? MEASURED)
+      : null;
+  const given = opts.limits.limitUsd;
+  // `limit`: with an estimate, the estimate a review may have without asking
+  // (the person's, or this run's); with none, the stop itself. The Action has
+  // no limit of its own: only one given for the run applies, as its hard stop.
+  let limit: number | null;
+  let cap: number | null;
+  let auto: boolean;
+  if (basis === "unknown") {
+    limit = null;
+    cap = null;
+    auto = false;
+  } else if (price !== null) {
+    limit = action ? (noDollarStop ? null : (given ?? null)) : (given ?? settings.auto_limit_usd);
+    cap = noDollarStop ? null : action ? limit : hardStopFor(price);
+    auto = action || limit === null || price <= limit;
+  } else if (basis === "unpriced") {
+    limit = null;
+    cap = null;
+    auto = true;
+  } else {
+    limit = action ? (given ?? null) : (given ?? settings.unmeasured_limit_usd);
+    cap = limit;
+    // The person's word, given once: the stop named on this run, or the model
+    // among those they agreed to run with no estimate.
+    auto =
+      action ||
+      given !== undefined ||
+      (priceSpec !== "" && readModelChoice(opts.agentDir).noEstimateOk.includes(priceSpec));
+  }
+  // A limit that can stop nothing is said to be ignored, never silently dropped.
+  const limitIgnored = given !== undefined && noDollarStop && (price === null || action);
+  // Contract 1 cannot say "no estimate": refused here, before anything runs.
+  if (needsEstimate && price === null)
+    return refuse(1, [contractOneNoPrice(priceSpec, measuredSpec(routed?.inventory ?? []))]);
   const key = reviewKey({
     // an uncommitted review is keyed on the edits, so the key moves with them
     headSha: t.uncommitted?.treeSha ?? t.headSha,
@@ -1037,7 +1154,6 @@ async function runPipeline(
     models: models.all,
     ...(since !== undefined ? { since } : {}),
   });
-  const auto = action || price <= limit!;
   const priorCount = scope === "delta" ? openFindings(prev).findings.length : 0;
   const previewData = {
     repo: t.repo,
@@ -1053,21 +1169,41 @@ async function runPipeline(
     ...(since !== undefined ? { since, prior_open: priorCount } : {}),
     ...(fallback !== null ? { fallback_reason: fallback.reason } : {}),
     lenses,
-    // The model, when the host resolved one: null says no route resolves.
-    ...(routed !== null
-      ? {
-          model: route !== null ? modelData(route) : null,
-          alternatives: route !== null ? alternativesData(route) : [],
-          tiers: models.tiers,
-        }
-      : {}),
+    // The model: null says no route resolves, or that the host named none.
+    model: route !== null ? modelData(route) : null,
+    alternatives: route !== null ? alternativesData(route) : [],
+    tiers: models.tiers,
+    // A pinned tier or lens that cannot run here: a start is refused with it.
+    ...(pinRefusal !== null ? { refusal: { code: "login-too-short", text: pinRefusal } } : {}),
+    price_basis: basis,
     estimate_usd: price,
     cap_usd: cap,
     limit_usd: limit,
-    auto,
+    auto: auto && pinRefusal === null,
     key,
     ...(prInfo ? { pr: prInfo.number, credential: prInfo.source } : {}),
   };
+  const minutes = Math.round(opts.limits.timeoutMs / 60_000);
+  const stillHolds = `the ${minutes}-minute limit still holds`;
+  const estimateWords =
+    basis === "repo" ? "estimate, this repo's rates" : `estimate, measured on ${MEASURED.model_id}`;
+  let priceLine: string;
+  if (basis === "unknown") priceLine = "price: unknown until a model credential exists";
+  else if (price !== null)
+    priceLine =
+      `price: ${usd(price)} (${estimateWords}) — ` +
+      (noDollarStop
+        ? `pi has no price for ${named}, so no dollar stop; ${stillHolds}`
+        : cap === null
+          ? "no cap"
+          : `the run stops hard at ${usd(cap)}`) +
+      (action || limit === null ? "" : ` (limit without asking: ${usd(limit)})`);
+  else if (basis === "unpriced")
+    priceLine = `price: pi has no price for ${named} — no dollar stop; ${stillHolds}`;
+  else
+    priceLine =
+      `price: no estimate for ${named} (not measured) — ` +
+      (cap === null ? "no cap" : `the run stops at ${usd(cap)}`);
   const previewText = [
     `Review ${label} (${t.repo})`,
     scope === "delta"
@@ -1077,9 +1213,13 @@ async function runPipeline(
     `  lenses: ${lenses.join(", ")}`,
     // The run's notice about its model: said here, once.
     ...(routed !== null ? modelLines(routed) : []),
-    action
-      ? `  price: ${usd(price)} (estimate) — ${cap === null ? "no cap" : `the run stops hard at ${usd(cap)}`}`
-      : `  price: ${usd(price)} (estimate) — the run stops hard at ${usd(cap!)} (limit without asking: ${usd(limit!)})`,
+    ...(pinRefusal !== null ? [`  ✗ ${pinRefusal}`] : []),
+    `  ${priceLine}`,
+    // A subscription is not billed per review: the dollars are list prices.
+    ...(route !== null && route.credential.subscription && basis !== "unpriced"
+      ? [`  list prices: your ${route.providerName} plan is not billed per review`]
+      : []),
+    ...(limitIgnored ? [`  --limit ignored: pi has no price for ${named}`] : []),
     `  key: ${key}`,
     ...(prInfo ? [`  GitHub credential: ${credentialLabel(prInfo.source)}`] : []),
     ...(custom.customised ? [`  ${customisedNote(custom)}`] : []),
@@ -1087,26 +1227,46 @@ async function runPipeline(
   if (isPreview) return finish(0, previewText.join("\n"), { ok: true, preview: previewData });
   for (const l of previewText) progress(l);
 
-  // Over the limit: the person's yes, or the key a preview showed.
+  // The run starts on the person's say: at once when nothing needs it, else
+  // on the key a preview showed, or a yes at the terminal.
   if (!auto) {
     const asked = opts.limits.key;
+    // No estimate: the question is asked once per model, and a yes (or the
+    // key, which a host sends after the person agreed) is remembered.
+    const remember = (): void => {
+      if (price !== null || priceSpec === "") return;
+      const kept = allowNoEstimate(opts.agentDir, priceSpec);
+      // An answer that cannot be kept still holds for this run.
+      if (!kept.ok) warn(kept.error);
+    };
     if (asked !== undefined) {
       if (asked !== key)
         return refuse(1, [
           `--key ${asked} does not match this review (the branch, plan or price changed): preview again`,
         ]);
+      remember();
     } else if (!io.confirm) {
       return refuse(1, [
-        `the price ${usd(price)} is over the limit ${usd(limit!)} and there is no terminal to ask: ` +
-          `qcr review --key ${key}`,
+        price === null
+          ? `no estimate for ${named} and no terminal to ask: qcr review --key ${key}, or name the stop with --limit`
+          : `the price ${usd(price)} is over the limit ${usd(limit!)} and there is no terminal to ask: ` +
+            `qcr review --key ${key}`,
       ]);
     } else {
       const confirm = io.confirm;
-      const yes = await unlessStopped(io.signal, (o) =>
-        confirm(`Run for ${usd(price)}, over the ${usd(limit!)} limit?`, o),
-      );
+      const question =
+        price === null
+          ? `Run on ${named} with no estimate? It stops at ${usd(cap!)}. (Reviews on this model will not ask again.)`
+          : `Run for ${usd(price)}, over the ${usd(limit!)} limit?`;
+      const yes = await unlessStopped(io.signal, (o) => confirm(question, o));
       if (yes === STOP || io.signal?.aborted) return stopped();
-      if (!yes) return refuse(1, [`declined: ${usd(price)} is over the ${usd(limit!)} limit`]);
+      if (!yes)
+        return refuse(1, [
+          price === null
+            ? `declined: no estimate for ${named}`
+            : `declined: ${usd(price)} is over the ${usd(limit!)} limit`,
+        ]);
+      remember();
     }
   }
   if (io.signal?.aborted) return stopped();
@@ -1259,7 +1419,16 @@ async function runPipeline(
   // its out dir.
   if (io.signal?.aborted) return stopped();
 
-  const spent = shot.costUsd ?? shot.piRun.spentUsd ?? null;
+  // pi stamps a cost of zero on a model it has no price for: what such a run
+  // spent is not known, and a zero is never shown in its place.
+  const spent = noDollarStop ? null : (shot.costUsd ?? shot.piRun.spentUsd ?? null);
+  const spentWords = noDollarStop
+    ? ` (spend unknown: pi has no price for ${named})`
+    : spent === null
+      ? ""
+      : cap !== null
+        ? ` (${usd(spent)} of ${usd(cap)})`
+        : ` (${usd(spent)})`;
   const verdict = typeof shot.outcome?.["verdict"] === "string" ? shot.outcome["verdict"] : null;
   const started = startedLenses(outDir);
   const coverage = {
@@ -1360,7 +1529,7 @@ async function runPipeline(
   };
   const human = [
     "",
-    `Review done${verdict ? `: ${verdict}` : ""}${spent === null ? "" : ` (${usd(spent)} of ${usd(price)})`}`,
+    `Review done${verdict ? `: ${verdict}` : ""}${spentWords}`,
     ...(count > 0 ? body.slice(1) : [scope === "delta" ? "No new findings." : "No findings."]),
     ...renderStillOpen(open),
     ...(recorded.repeats.length

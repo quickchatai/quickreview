@@ -174,10 +174,6 @@ export function hostAuth(ctx: ExtensionCommandContext, agentDir: string): HostAu
         return {};
       }
     },
-    // pi lists a provider's models as available only when it found a
-    // credential where a request will look for one: the test the route's
-    // inventory uses (./route-registry.ts).
-    configured: (provider) => registry.getAvailable().some((m) => m.provider === provider),
     refresh: async (provider, minValidityMs) => {
       // VERIFY-ON-PIN: the registry facade asks for pi's own five minutes of
       // validity only; its model runtime takes a longer minimum and refreshes

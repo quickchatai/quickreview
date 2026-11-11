@@ -1487,6 +1487,29 @@ describe("checkSecretPaths — the App's secret files and dir", () => {
     refused("cat /x/slack_bot_token");
   });
 
+  // The model env's files have no names to list: the directory's name is the
+  // component that is refused, wherever the secrets dir is.
+  // MUTATION: remove "model-env" from APP_SECRET_FILES — this fails.
+  it("refuses the model env by its directory's name, under any prefix, for a read and a write alike", () => {
+    expect(APP_SECRET_FILES).toContain("model-env");
+    refused("cat /opt/quickreview/secrets/model-env/PROV_API_KEY");
+    refused("cat /somewhere/else/model-env/PROV_API_KEY");
+    refused("cat model-env/PROV_API_KEY");
+    refused("ls /somewhere/else/model-env");
+    refused("cat /somewhere/else/model-e*/PROV_API_KEY");
+    refused("cat /somewhere/else/mod{el-env,ules}/PROV_API_KEY");
+    refused("printf forged > /somewhere/else/model-env/PROV_BASE_URL");
+    refused("cp wt/pr-5/key.txt /somewhere/else/model-env/PROV_API_KEY");
+    expect(checkBashCommand("cat /somewhere/else/model-env/PROV_API_KEY").reason).toContain(
+      "model env",
+    );
+    // a pattern is not a path, and a name that only starts the same is not the directory
+    passes("grep -rn model-env wt/pr-5");
+    passes("cat wt/pr-5/docs/model-environment.md");
+    passes("cat wt/pr-5/model_env.py");
+    passes("ls wt/pr-5/mod*");
+  });
+
   it("refuses the encoders, copiers and archivers too (belt over the program check)", () => {
     refused("base64 /opt/quickreview/secrets/app.pem");
     refused("xxd /opt/quickreview/secrets/app.pem");
@@ -1654,8 +1677,17 @@ describe("checkReadPath and the file-tool veto", () => {
     expect(veto("edit", { path: "/opt/quickreview/secrets/app_id" })).toMatchObject({
       block: true,
     });
+    // the model env, for a read tool and a write tool alike
+    expect(veto("read", { path: "/somewhere/else/model-env/PROV_API_KEY" })).toMatchObject({
+      block: true,
+    });
+    expect(
+      veto("write", { path: "/somewhere/else/model-env/PROV_BASE_URL", content: "forged" }),
+    ).toMatchObject({ block: true });
+    expect(veto("ls", { path: "model-env" })).toMatchObject({ block: true });
     expect(veto("read", { path: "wt/pr-5/src/app.ts" })).toBeUndefined();
     expect(veto("grep", { pattern: "openai_api_key", path: "wt/pr-5" })).toBeUndefined();
+    expect(veto("grep", { pattern: "model-env", path: "wt/pr-5" })).toBeUndefined();
   });
 });
 

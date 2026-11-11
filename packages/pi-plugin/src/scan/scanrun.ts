@@ -2830,8 +2830,11 @@ export class ScanRunner {
     };
     // May a case with this estimate start? Within the cap counting what is in
     // flight; a case with no estimate (calibration) only while the cap is not
-    // yet reached. A zero cap is a free run (the runner prices at zero): it admits cases only
-    // while nothing has been spent, and stops on the first real spending.
+    // yet reached. A zero cap is a run whose plan was priced at zero: its estimate was
+    // measured on a model pi has no price for (pi stamps such calls at 0, which
+    // is not free, and every surface says "no dollar stop", pricing.ts
+    // `scanRanUnpriced`). It admits cases only while nothing has been spent,
+    // and stops on the first real spending.
     let unknownSpend = false;
     const within = (extra: number): boolean =>
       !unknownSpend &&

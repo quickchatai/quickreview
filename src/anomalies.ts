@@ -63,10 +63,12 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // quiet: the nudge IS the response, and a wake there would double every
   // missing record into inbox traffic.
   "findings_record_unresolved",
-  // pi sessions failing API calls with token-expired errors — every round in
-  // flight is doomed until someone logs in again, so this
-  // is human-attention grade. Detected passively (packages/pi-plugin/src/authwatch.ts), never by
-  // a smoke call.
+  // The model credential is failing: a provider refused it (an expired or
+  // revoked login, a key it does not accept), so every round in flight is
+  // doomed until someone signs in again or replaces the key. Human-attention
+  // grade. Detected passively (packages/pi-plugin/src/authwatch.ts), never by
+  // a smoke call, and only for the classifier's `auth` kind: a refused model
+  // is not this.
   "pi_auth_expired",
   // The bot login's refresher could not refresh (src/loginrefresh/): the same
   // consequence one step earlier — the token runs out within hours and every

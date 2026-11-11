@@ -27,8 +27,14 @@
 // Signing in again is for a login that expired or was revoked: the login
 // line says "login expired" (src/home/loginowner.ts reads the refresher's
 // record, pi's own error in the chat and auto-review's pause). It is pi's
-// device login, with auto-review's login refresher paused around it when it
-// runs, so the box keeps one login that one process refreshes.
+// own /login, for any provider, with auto-review's login refresher paused
+// around it when it runs, so the box keeps one login that one process
+// refreshes. The setup card's first step opens the same /login the same way.
+//
+// Signed in is pi's to say: the home reads the running pi's own model
+// registry (its inventory), so any provider counts and a key in the
+// environment counts as a stored login does. A registry that cannot be read
+// is unknown: the login line says so, and it is never a setup gap.
 //   tune to this repo alt+t               t                    home_tune,
 //                                                              home_tune_write
 //   advanced          alt+x               x                    home_advanced
@@ -73,24 +79,40 @@ import {
   textResult,
   type QcrTool,
 } from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
-import { readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
+import { registryInventory } from "@quickchatai/pi-quickreview/extensions/route-registry.js";
+import {
+  clearModelChoice,
+  readModelChoice,
+  writeModelChoice,
+} from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import { REVIEW_MESSAGE } from "@quickchatai/pi-quickreview/src/plugin/messages.js";
 import { readQuickReviewSettings } from "@quickchatai/pi-quickreview/src/plugin/settings.js";
 import type { HomeToolSet } from "../src/config.js";
-import { piDeviceLogin } from "../src/home/devicelogin.js";
-import { Relogin, RELOGIN_KEY, isLoginError } from "../src/home/loginowner.js";
+import {
+  LoginMenu,
+  Relogin,
+  RELOGIN_KEY,
+  isLoginError,
+  type LoginMenuPort,
+} from "../src/home/loginowner.js";
 import { HomeAdvanced, type AdvancedAsk, type AdvancedPort } from "../src/home/advanced.js";
 import { advancedTools } from "../src/home/advancedtools.js";
-import { HomeModel } from "../src/home/model.js";
+import { HomeModel, credentialOf } from "../src/home/model.js";
 import { HOME_OVERLAY, HomePanel } from "../src/home/panel.js";
-import type { HomeAdapters } from "../src/home/ports.js";
+import {
+  known,
+  unknown,
+  type HomeAdapters,
+  type Known,
+  type PiCredential,
+} from "../src/home/ports.js";
 import type { Ask } from "../src/home/switches.js";
 import { HomeSetup, type HomeSetupPorts, type SetupUi } from "../src/home/setup.js";
 import { SETUP_OVERLAY, SetupCard } from "../src/home/setupcard.js";
 import { setupTools } from "../src/home/setuptools.js";
 import { HOME_TOOL_NAMES } from "../src/home/toolnames.js";
 import { HomeTune, type TunePort } from "../src/home/tune.js";
-import { registerModelRoute } from "./login-route.js";
+import { LOGIN_COMMAND, registerModelRoute, submitThroughEditor } from "./login-route.js";
 
 type HomeToolName = (typeof HOME_TOOL_NAMES)[number];
 
@@ -110,6 +132,10 @@ export interface HomeOptions {
   after?: (ms: number, fn: () => void) => () => void;
   /** The setup checklist's ports beyond the home's own. */
   setup?: HomeSetupPorts;
+  /** pi's own /login. Omitted: opened through the session's editor (the
+   * login route's submitThroughEditor), with `/login` left on the input
+   * line where pi wired no submit. */
+  loginMenu?: LoginMenuPort;
   /** "Tune to this repo": Setup over a checkout (src/home/tune.ts). */
   tune?: TunePort;
   /** Advanced: the wizard's steps beyond switch-on (src/home/advanced.ts). */
@@ -163,10 +189,26 @@ export function createHome(o: HomeOptions): ExtensionFactory {
         if (session) model.say(`Couldn't read everything again: ${message(err)}`, "warn");
       });
     };
+    // pi's own inventory: every provider it has a usable credential for. A
+    // registry that throws is unknown, never "no credential"; a pi that
+    // hands no registry at all is read by its login file instead (undefined).
+    const credentials = (): Known<readonly PiCredential[]> | undefined => {
+      const ctx = session;
+      if (ctx === undefined) return unknown("pi's session has ended");
+      try {
+        const registry = ctx.modelRegistry as ExtensionContext["modelRegistry"] | null | undefined;
+        if (registry === undefined || registry === null) return undefined;
+        return known(registryInventory(registry).map(credentialOf));
+      } catch (err) {
+        return unknown(`pi's model registry cannot be read: ${message(err)}`);
+      }
+    };
     const model: HomeModel = new HomeModel({
       adapters: o.adapters,
       model: o.model,
       tools: o.tools,
+      credentials,
+      onQuote: (quote) => setup.quoted(quote),
       onChange: redraw,
       after: o.after ?? realAfter,
       ask: async (question, options) => ui?.select(question, options),
@@ -196,23 +238,63 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       if (session?.hasUI) session.ui.notify(text, "warning");
       else model.say(text, "warn");
     };
+    // pi runs /login only from its editor's submit: the login route's
+    // submitThroughEditor reaches it; where pi wired none, /login is left on
+    // the input line for one Enter. Outside the TUI there is no menu to open.
+    const loginMenuPort = (): LoginMenuPort | undefined => {
+      const ctx = session;
+      if (ctx === undefined || ctx.mode !== "tui") return undefined;
+      if (o.loginMenu) return o.loginMenu;
+      return {
+        open: () => {
+          if (submitThroughEditor(ctx.ui, LOGIN_COMMAND)) return "opened";
+          ctx.ui.setEditorText(LOGIN_COMMAND);
+          return "prefilled";
+        },
+      };
+    };
+    // one /login at a time, for the setup card's sign-in and the re-login,
+    // with auto-review's refresher held around it
+    const loginMenu = new LoginMenu({
+      owner: o.adapters.loginOwner,
+      menu: loginMenuPort,
+      after: o.after ?? realAfter,
+      now: () => o.adapters.clock.now(),
+      onChange: redraw,
+    });
+    const choiceDir = o.agentDir;
     const setup: HomeSetup = new HomeSetup({
       model,
       github: o.adapters.github,
       ports: o.setup ?? {},
-      deviceLogin: () => deviceLogin(),
+      menu: loginMenu,
+      // the review model's answer goes where `/qcr-setup model` puts it: the
+      // plugin's choice file beside pi's logins
+      ...(choiceDir !== undefined
+        ? {
+            modelChoice: {
+              write: (provider) => {
+                const wrote =
+                  provider === null
+                    ? clearModelChoice(choiceDir)
+                    : writeModelChoice(choiceDir, { provider, model: null, via: "use" });
+                return wrote.ok ? { ok: true } : { ok: false, why: wrote.error };
+              },
+            },
+          }
+        : {}),
       onChange: redraw,
       onPhase: () => {
         if (session?.mode === "tui") mount(session);
       },
       interactive: () => session?.mode === "tui",
     });
-    const deviceLogin = () =>
-      o.setup?.deviceLogin ?? (session ? piDeviceLogin(session.modelRegistry) : undefined);
+    const stamps = o.adapters.login.stamps;
     const relogin = new Relogin({
       model,
-      owner: o.adapters.loginOwner,
-      deviceLogin,
+      menu: loginMenu,
+      ...(stamps ? { stamps: () => stamps.call(o.adapters.login) } : {}),
+      shared: o.adapters.loginOwner !== undefined,
       onChange: redraw,
     });
     const tune = new HomeTune({
@@ -276,7 +358,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
                 frame: () => frame,
                 ask: () => sessionUi,
                 relogin: () => void relogin.start(),
-                signingAgain: () => relogin.running() !== null,
+                signingAgain: () => relogin.running(),
                 tune: () => void tune.tune(tellAgent),
                 advanced: () => void advanced.open(advancedAsk(session)),
               });
@@ -302,7 +384,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
         // the spinner turns only while a read or a setup step is in flight
         stops.push(
           every(SPIN_MS, () => {
-            if (!model.busy() && !setup.busy() && relogin.running() === null) return;
+            if (!model.busy() && !setup.busy() && !relogin.running()) return;
             frame++;
             redraw();
           }),
@@ -317,10 +399,24 @@ export function createHome(o: HomeOptions): ExtensionFactory {
     // extensions/login-route.ts). No login hint comes with it: signing in is
     // the setup card's step.
     const agentDir = o.agentDir;
-    registerModelRoute(
-      pi,
-      agentDir !== undefined ? { choice: () => readModelChoice(agentDir).choice } : {},
-    );
+    //
+    // The same step tells the home of every prompt. A message the person
+    // sends means pi's /login menu is gone, so a sign-in in flight ends and
+    // its hold on the refresher is lifted. The /login the home itself
+    // submits, and a message an extension sends, are not the person leaving.
+    //
+    // VERIFY-ON-PIN (pi 1.4.0): `input` fires with source "interactive" for a
+    // message the person sends from the editor, which they can reach only
+    // once the login menu has closed; and ctx.modelRegistry lists a
+    // provider's models as available as soon as /login stored its
+    // credential, which is what ends a sign-in as done.
+    registerModelRoute(pi, {
+      ...(agentDir !== undefined ? { choice: () => readModelChoice(agentDir).choice } : {}),
+      onInput: (input) => {
+        if (input.source === "interactive" && input.text.trim() !== LOGIN_COMMAND)
+          loginMenu.left();
+      },
+    });
     // pi's own word on the login: a reply refused for it, or one that came back
     pi.on("message_end", (e) => {
       const m = e.message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
@@ -333,7 +429,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
     pi.on("session_shutdown", () => {
       // the session's timers and its pricing stop; a running review goes on
       model.dispose();
-      relogin.close();
+      loginMenu.close();
       tune.dispose();
       ui = undefined;
       for (const stop of stops.splice(0)) stop();
@@ -375,7 +471,9 @@ export function createHome(o: HomeOptions): ExtensionFactory {
     key("alt+m", "quickreview home: switch memory on or off", (ctx) =>
       model.switchMemory(askOf(ctx)),
     );
-    key(RELOGIN_KEY, "quickreview home: sign in again (an expired login)", () => relogin.start());
+    key(RELOGIN_KEY, "quickreview home: sign in again with pi's /login (an expired login)", () =>
+      relogin.start(),
+    );
     key("alt+t", "quickreview home: tune the review to this repo (Setup)", () =>
       tune.tune(tellAgent),
     );
@@ -447,7 +545,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
         name: "home_review_pr",
         label: "Home review PR",
         description:
-          "Review a pull request with QuickReview in the background: the one given, or the home's selected one. It previews the price, starts the review and returns at once; the home shows its progress and findings, and nothing is posted to GitHub unless the person's posting rule says so.",
+          "Review a pull request with QuickReview in the background: the one given, or the home's selected one. It previews the price (an estimate on the measured model; on any other, no estimate and the spend at which the review stops), starts the review and returns at once; the home shows its progress and findings, and nothing is posted to GitHub unless the person's posting rule says so.",
         parameters: { type: "object", properties: { pr: PR_PARAM }, additionalProperties: false },
         execute: async (_id, p) =>
           textResult(await model.review(typeof p["pr"] === "number" ? p["pr"] : undefined)),
@@ -492,7 +590,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
         name: "home_relogin",
         label: "Home sign in again",
         description:
-          "Sign in again with pi's own device-code login, for the provider the chat runs on, when the login has expired or was revoked (the home's login line says \"login expired\"). When auto-review runs on this machine its login refresher is paused during the sign-in and resumes on the new login. Answers with the URL and the code to enter once pi has them; the sign-in finishes in the background when the person approves it.",
+          "Sign in again with pi's own /login, for any model provider, when a login has expired or was revoked (the home's login line says \"login expired\"). It opens pi's login menu for the person. When auto-review runs on this machine its login refresher is paused during the sign-in and resumes on the new login. Answers once pi's menu is open; the sign-in finishes in the background when the person completes it there.",
         parameters: NO_PARAMS,
         execute: async () => textResult(await relogin.start()),
       },

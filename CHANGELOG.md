@@ -1,5 +1,93 @@
 # Release notes
 
+## Unreleased
+
+QuickReview runs on any model provider pi supports, on the credential you
+already have. The shipped config names no model. With one login or key a
+review runs on it; with several, a terminal asks once and remembers.
+`qcr model` (or `/qcr-setup model` in pi) shows which model runs and why, and
+changes the choice. `--model` picks for one run and overrides every pinned
+tier and lens for that run. The whole of it is in
+[docs/llm-setup.md](docs/llm-setup.md).
+
+### Migration: nothing to do
+
+A config that names models keeps running on them: every spec you wrote is a
+pin. A config pinned to a provider you have no login for runs on another
+provider that serves the same model when there is exactly one, or one of the
+same family, and says so. Before, this worked only between the two OpenAI
+providers.
+
+Three things behave differently on an existing install:
+
+- **Tiers a config left out follow the config's own model.** A config that
+  sets `[models] default` and `conversation` but not all three
+  `[models.tiers]` used to get the missing tiers on
+  `openai-codex/gpt-6.1-sol`. They now run on the config's own model.
+- **`[models] default` names nothing of its own** when `conversation` or
+  `model` is set. `default` and `conversation` are replaced by one optional
+  `model`; both older keys are still read and fold into it.
+- **A stored login keeps its provider.** A stored login that can last the run
+  is used even when a key for the same provider is in the environment, which
+  is pi's own order. The key is used when the login cannot last.
+
+`[models.pricing]` is read and ignored: prices come from pi.
+
+### The tiers are `light`, `standard` and `deep`
+
+`terra-med`, `sol-med` and `sol-high` are read everywhere they were, for
+good: config, profiles, levers, verdict files and stored rows. Output uses
+the new names: agent names, the `lenses` of `--json`, the scan preview's
+`tier`.
+
+**Rolling back:** roll back only to a version that reads both spellings. An
+older release refuses a tier it does not know, and reads a round that carries
+a new name as a required pass that is missing.
+
+### Price
+
+- A model the estimate was not measured on shows no dollar estimate, asks
+  once, and stops at $15 (`unmeasured_limit_usd` in `.git/qcr-review.json`)
+  or at `--limit`.
+- A model pi has no price for has no dollar stop, and its spend shows as
+  unknown, never `$0.00`. `qcr spend`, `qcr today`, the digest and the TUI
+  print the known sum and the number of rounds whose cost is unknown.
+- `--json`: review schema 2 (contract 2) adds `model`, `alternatives`,
+  `tiers`, `price_basis` and a nullable `estimate_usd`. Contract 1 is
+  unchanged on the measured model and refuses, with a message, where it
+  cannot state the price. Installed host skills move to contract 2 with
+  `qcr plugin update`.
+
+### Credentials
+
+- Sign-in surfaces name no provider: the home's first step is "Sign in to a
+  model provider" and opens pi's own `/login`, `qcr login` takes any provider
+  pi offers, and a provider key in the environment counts as signed in.
+- A login whose tokens are shorter than a review (GitHub Copilot) runs inside
+  pi (`/qcr-review`) and on the bot. `qcr review` outside pi says so and
+  names what works.
+- Secrets dir: `model-env/<ENV_NAME>` carries any provider's key, one file
+  per environment variable. `openai_api_key` still works.
+- The host wrapper and the Action forward any provider's key from the
+  environment by name. The Action gains a `model` input.
+- The setup wizard's model step checks one thing, that a model credential
+  works where the daemon runs. It asks no route question and rewrites no
+  config.
+
+### The bot
+
+- The bot reports the model it runs on (`qcr status`) and raises an alert,
+  `model_route_changed`, when that changes: a lost login that turned a
+  subscription into a metered key, a pin that moved to another provider, or a
+  new credential that moved an unpinned bot.
+- A bot round has no dollar stop on any model, as before: its deadline and
+  turn budgets hold it.
+- A provider that accepts the credential and refuses the model is no longer
+  reported as an expired login.
+- The prompt-cache pack applies to the API family it was built for, and a
+  lens on any other API runs without the warm-up
+  ([docs/prompt-caching.md](docs/prompt-caching.md)).
+
 ## 1.4.2
 
 Fewer false pass-plan alerts. The check that holds a round's executed passes

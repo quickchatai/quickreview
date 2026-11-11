@@ -28,11 +28,14 @@ import type { LoginRefreshFileStatus } from "../src/loginrefresh/types.js";
 import {
   LOGIN_OWNER_FRESH_MS,
   LOGIN_STATUS_FILE,
-  WORKER_ENV_DROPPED,
+  WORKER_ENV_DROPPED_FIXED,
   buildWorkerWorld,
   loginOwnerOf,
+  workerEnvDropped,
   workerSessionEnv,
 } from "../src/workerworld.js";
+import { MODEL_ENV_DIR, modelEnvFrom } from "../src/modelenv.js";
+import { workerProcessEnv } from "../src/workersupervisor.js";
 import type { ExecFn } from "../src/tmux.js";
 import { parseWorkerSpec, type WorkerSpec } from "../src/ipc/workerspec.js";
 import { MODELS_TIER_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
@@ -106,8 +109,12 @@ function rig(
   mkdirSync(join(root, "state"), { recursive: true });
   symlinkSync(resolve(SRC, "..", "prompts"), join(root, "prompts"));
   const base = loadConfig(resolve(SRC, "..", "tests/fixtures/config.toml"));
+  // The install's secrets dir is a scratch one: a test puts model variables there.
+  const secrets = join(dir, "secrets");
+  mkdirSync(secrets, { recursive: true });
   const cfg: Config = {
     ...base,
+    github: { ...base.github, secrets_dir: secrets },
     dry_run: true,
     models: { ...base.models, model: "local/m", ...models },
     openviking: { ...base.openviking, enabled: true, ...over },
@@ -149,7 +156,14 @@ function rig(
         deps: { buildSpec: (r: SessionCommandRow, m: "round" | "answer") => WorkerSpec };
       }
     ).deps.buildSpec(row, mode);
-  return { cfg, root, sessions, world, tmuxCalls, specOf };
+  /** The model environment the supervisor gives a worker's own process. */
+  const processModelEnv = (): Readonly<Record<string, string>> =>
+    (
+      world.supervisor as unknown as {
+        deps: { modelEnv?: () => Readonly<Record<string, string>> };
+      }
+    ).deps.modelEnv?.() ?? {};
+  return { cfg, root, secrets, sessions, world, tmuxCalls, specOf, processModelEnv };
 }
 
 describe("the worker world", () => {
@@ -185,8 +199,9 @@ describe("the worker world", () => {
     const spec = r.specOf(command);
 
     const tmuxEnv = r.sessions.buildEnv("pr-7", {});
+    const dropped = workerEnvDropped(Object.keys(r.sessions.modelEnv()));
     for (const [name, value] of Object.entries(tmuxEnv)) {
-      if (value === undefined || WORKER_ENV_DROPPED.includes(name)) continue;
+      if (value === undefined || dropped.includes(name)) continue;
       expect(spec.env[name], name).toBe(value);
     }
     // The pieces the ticket names: the memory identity and the config-scope pins.
@@ -198,7 +213,7 @@ describe("the worker world", () => {
     expect(spec.env["QCR_ROUND_NO"]).toBe(String(roundNo));
     expect(spec.env["QCR_EXPECTED_HEAD"]).toBe(head);
     expect(spec.env["QCR_POSTING_KEY"]).toBe(roundPostingKey(7, roundNo, head));
-    for (const name of WORKER_ENV_DROPPED) expect(spec.env).not.toHaveProperty(name);
+    for (const name of dropped) expect(spec.env).not.toHaveProperty(name);
 
     // The conversation prompt, rendered for this PR; the conversation model.
     expect(spec.model).toBe("local/m");
@@ -356,8 +371,141 @@ describe("the worker world", () => {
     const names = Object.keys(r.sessions.buildEnv("pr-7", {}));
     // Not every drop is present for every config (the model key needs a secret); the list may
     // only name things buildEnv can produce.
-    const producible = new Set([...names, "OPENAI_API_KEY", "QCR_STATE_DB"]);
-    for (const name of WORKER_ENV_DROPPED) expect(producible.has(name), name).toBe(true);
+    const producible = new Set([...names, "QCR_STATE_DB"]);
+    for (const name of WORKER_ENV_DROPPED_FIXED) expect(producible.has(name), name).toBe(true);
     expect(workerSessionEnv(r.sessions, "pr-7", {})).not.toHaveProperty("QCR_INJECT_DIR");
+  });
+});
+
+// Fence 11: a model key reaches a worker's own process and nothing else.
+describe("a model key reaches a worker's process and nothing else", () => {
+  /** Put three model variables and the older key file in the rig's secrets dir. */
+  const seed = (secrets: string): Record<string, string> => {
+    mkdirSync(join(secrets, MODEL_ENV_DIR), { recursive: true });
+    writeFileSync(join(secrets, MODEL_ENV_DIR, "PROV_API_KEY"), "value-one\n");
+    writeFileSync(join(secrets, MODEL_ENV_DIR, "PROV_REGION"), "eu-north-1\n");
+    writeFileSync(join(secrets, MODEL_ENV_DIR, "OTHER_TOKEN"), "value-two\n");
+    writeFileSync(join(secrets, "openai_api_key"), "sk-older\n");
+    return modelEnvFrom(secrets);
+  };
+
+  // MUTATION: leave a loader name out of workerEnvDropped (return only
+  // WORKER_ENV_DROPPED_FIXED) — the spec carries PROV_API_KEY and this fails.
+  it("no loader name is in a worker's spec, whatever the secrets dir holds", () => {
+    const r = rig();
+    const model = seed(r.secrets);
+    expect(Object.keys(model).sort()).toEqual([
+      "OPENAI_API_KEY",
+      "OTHER_TOKEN",
+      "PROV_API_KEY",
+      "PROV_REGION",
+    ]);
+    // the tmux route's env carries them all: the drop is what keeps them out
+    const tmuxEnv = r.sessions.buildEnv("pr-7", {});
+    for (const name of Object.keys(model)) expect(tmuxEnv[name], name).toBe(model[name]);
+    const command = r.world.supervisor.submit({ pr: 7, kind: "wake", round_no: null, payload: "w" });
+    for (const mode of ["round", "answer"] as const) {
+      const spec = r.specOf(command, mode);
+      for (const name of Object.keys(model)) expect(spec.env, name).not.toHaveProperty(name);
+      // and no value of one sits under another name, or anywhere else in the spec
+      const text = JSON.stringify(spec);
+      for (const value of Object.values(model)) expect(text).not.toContain(value);
+    }
+    expect(workerSessionEnv(r.sessions, "pr-7", {})).not.toHaveProperty("PROV_API_KEY");
+  });
+
+  it("the names dropped are the loader's own, plus the fixed two", () => {
+    expect([...workerEnvDropped([])].sort()).toEqual([...WORKER_ENV_DROPPED_FIXED].sort());
+    expect([...workerEnvDropped(["A_KEY", "B_KEY", "QCR_STATE_DB"])].sort()).toEqual(
+      ["A_KEY", "B_KEY", ...WORKER_ENV_DROPPED_FIXED].sort(),
+    );
+  });
+
+  // MUTATION: drop `modelEnv` from the supervisor's deps in buildWorkerWorld —
+  // a worker's pi finds no key and this fails.
+  it("the worker's own process is given the loader's map, read at each spawn", () => {
+    const r = rig();
+    expect(r.processModelEnv()).toEqual({});
+    const model = seed(r.secrets);
+    expect(r.processModelEnv()).toEqual(model);
+    const env = workerProcessEnv({ PATH: "/usr/bin", HOME: "/home/x" }, {}, {}, model);
+    for (const [name, value] of Object.entries(model)) expect(env[name], name).toBe(value);
+  });
+
+  // MUTATION: write the model map after the allowlisted names in
+  // workerProcessEnv — a file named PATH replaces the worker's PATH and this fails.
+  it("a model variable replaces nothing of the worker's own, and a GitHub token under any name is still stripped", () => {
+    const env = workerProcessEnv(
+      { PATH: "/usr/bin", HOME: "/home/x" },
+      { FAKE: "1" },
+      { QCR_IPC_COMMAND_ID: "real", QCR_IPC_CAP_FD: "3" },
+      {
+        PATH: "/evil",
+        HOME: "/evil",
+        FAKE: "evil",
+        QCR_IPC_COMMAND_ID: "evil",
+        GH_TOKEN: "ghs_evil",
+        GITHUB_TOKEN: "ghs_evil",
+        PROV_API_KEY: "value-one",
+      },
+    );
+    expect(env).toEqual({
+      PATH: "/usr/bin",
+      HOME: "/home/x",
+      FAKE: "1",
+      QCR_IPC_COMMAND_ID: "real",
+      QCR_IPC_CAP_FD: "3",
+      PROV_API_KEY: "value-one",
+    });
+  });
+
+  it("the daemon's own environment holds none of it", () => {
+    const before = { ...process.env };
+    const r = rig();
+    const model = seed(r.secrets);
+    const command = r.world.supervisor.submit({ pr: 7, kind: "wake", round_no: null, payload: "w" });
+    r.specOf(command);
+    r.sessions.buildEnv("pr-7", {});
+    expect(r.processModelEnv()).toEqual(model);
+    expect(process.env).toEqual(before);
+    for (const name of ["PROV_API_KEY", "PROV_REGION", "OTHER_TOKEN"])
+      expect(process.env[name], name).toBeUndefined();
+  });
+
+  // The loader has a closed set of readers. Each hands the map to pi's
+  // credential lookup or to a worker's own process; none puts it in this
+  // process's environment, so the tmux server and the login refresher (which
+  // is spawned with this process's environment) never see a model key.
+  // MUTATION: import modelEnvFrom in src/loginrefresh/supervisor.ts and
+  // spread it into the refresher's spawn env — this fails.
+  it("the loader is read by a closed set of modules, and none of them is the refresher or the entry", () => {
+    const IMPORTS_LOADER = /["'](?:\.\.?\/)+modelenv\.js["']/;
+    const readers: string[] = [];
+    const walk = (d: string): void => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith(".ts") && IMPORTS_LOADER.test(readFileSync(p, "utf8")))
+          readers.push(p.slice(SRC.length + 1));
+      }
+    };
+    walk(SRC);
+    expect(readers.sort()).toEqual([
+      "modelcli.ts",
+      "onboard/steps/llmauth.ts",
+      "preflight.ts",
+      "reviewcli.ts",
+      "scancli.ts",
+      "sessions.ts",
+      "workerworld.ts",
+    ]);
+    // and no reader of it assigns into this process's environment
+    for (const file of readers) {
+      const text = readFileSync(join(SRC, file), "utf8");
+      expect(text, file).not.toMatch(/Object\.assign\(\s*process\.env/);
+    }
+    const ASSIGNS_ENV = /process\.env(\.\w+|\[[^\]]+\])\s*=[^=]/;
+    for (const file of ["sessions.ts", "workerworld.ts", "preflight.ts"])
+      expect(readFileSync(join(SRC, file), "utf8"), file).not.toMatch(ASSIGNS_ENV);
   });
 });

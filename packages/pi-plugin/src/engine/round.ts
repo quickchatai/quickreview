@@ -31,11 +31,10 @@ import {
   type Stages,
 } from "./roundevents.js";
 import { CASE_FILES, POLICED_ORIGINALS, type BenchPostingReport } from "./caseout.js";
-import { caseCostUsd } from "../pricing.js";
+import { eventsCost } from "../pricing.js";
 import { lineHasAuthError } from "../authwatch.js";
-import { checkAuth, classifyAuthFailure, type AuthRejected, type EngineAuth } from "./auth.js";
+import { checkAuth, classifyAuthFailure, type AuthRejected } from "./auth.js";
 import type { PiRun, Runtime, RuntimeSession } from "./port.js";
-import { apiKeyEnv } from "./keyroute.js";
 import { GIT_ISOLATION_ENV, GITHUB_TOKEN_ENVS } from "../envstrip.js";
 import { openRoundSink, type RoundLive } from "./livewire.js";
 import type { LiveSink } from "../live/writer.js";
@@ -145,10 +144,11 @@ export interface RoundSpec {
   cfg: CoreConfig;
   ecosystem: Ecosystem;
   timeoutMs: number;
-  /** The login the run will use, as the engine's auth module read it
-   * (packages/pi-plugin/src/engine/auth.ts). Given, the round refuses before it writes anything
-   * when the token would expire inside `timeoutMs` (`AuthExpiring`). */
-  auth?: Pick<EngineAuth, "expiresAt" | "provider">;
+  /** The login the run will use: its earliest OAuth expiry (null: none
+   * expires) and the provider that belongs to. Given, the round refuses
+   * before it writes anything when the token would expire inside `timeoutMs`
+   * (`AuthExpiring`, packages/pi-plugin/src/engine/auth.ts `checkAuth`). */
+  auth?: { expiresAt: number | null; provider: string | null };
   /** pi's spill dir. Omitted: `<outDir>/tmp`, removed when the run ends. A
    * given dir is emptied here (what an earlier attempt left is not this
    * attempt's) and is the caller's to remove. */
@@ -203,7 +203,9 @@ export interface RoundResult {
   usage?: ReturnType<typeof usageFromEvents>;
   modelErrors?: ModelErrors;
   stages?: Stages["phases"];
-  /** pi's own price for the whole round (every lens child included). */
+  /** pi's own price for the whole round (every lens child included). Null
+   * when it is not known: the stream could not be priced, or a call in it ran
+   * on a model pi has no price for (pi stamps those at 0, which is not free). */
   costUsd: number | null;
   /** outcome.json: verdict, passes, summary. */
   outcome?: Record<string, unknown>;
@@ -359,12 +361,9 @@ export function prepareRound(
       QCR_LEDGER_FILE: join(outDir, "ledger.md"),
       QCR_PI_VERSION: cfg.pi.version,
       ...GIT_ISOLATION_ENV,
-      // An `anthropic/` model arm: pi's anthropic provider reads this key.
-      ...(process.env.ANTHROPIC_API_KEY
-        ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
-        : {}),
-      // The API-key route (packages/pi-plugin/src/engine/keyroute.ts); nothing on the login route.
-      ...apiKeyEnv(),
+      // No provider key is copied in: the host looks a key up by pi's own
+      // names in its process's environment (reviewsdk.ts `authEnv`), and what
+      // is not in this env cannot reach the session's tools.
     };
     // No GitHub credential reaches a process whose model runs bash.
     for (const k of GITHUB_TOKEN_ENVS) delete env[k];
@@ -661,11 +660,22 @@ export function settleRound(
     result.warnings.push(`usage unreadable: ${String(err).slice(0, 200)}`);
   }
   // The price of the whole round, lens children included: the case dir's
-  // event stream and lens ledger priced as the bench prices them. A stream
-  // that cannot be priced falls back to what the session's budget metered
-  // (zero when no cap was set, so unpriced).
+  // event stream and lens ledger, summed from pi's own per-call prices. A
+  // round with any call pi stamped at zero for its tokens (a model pi has no
+  // price for) has no dollar figure: its cost is unknown, never the sum of
+  // the calls that had a price, and never $0. A stream that cannot be read
+  // falls back to what the session's budget metered (zero when no cap was
+  // set, which is unknown too).
   try {
-    result.costUsd = caseCostUsd(outDir)?.usd ?? (metered > 0 ? metered : null);
+    const priced = eventsCost(outDir);
+    result.costUsd =
+      priced === null
+        ? metered > 0
+          ? metered
+          : null
+        : priced.unpricedCalls > 0
+          ? null
+          : priced.usd;
   } catch {
     result.costUsd = metered > 0 ? metered : null;
   }

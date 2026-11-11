@@ -114,7 +114,6 @@ function fakeHost(runner: Runner): PluginHost & { head: string } {
     agentDir: join(dir, "agent"),
     auth: {
       logins: () => ({ "openai-codex": { type: "oauth", expires: Date.now() + 10 * 3600_000 } }),
-      configured: () => true,
       refresh: async () => {},
     },
     runner,

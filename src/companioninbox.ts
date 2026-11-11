@@ -66,8 +66,9 @@ export function companionInboxDir(root: string): string {
   return join(root, INBOX_REL_DIR);
 }
 
-/** The anomaly kinds that mean "the bot's model login is failing or about to":
- * the owner has to run /login, so they carry their own class. */
+/** The anomaly kinds that mean "the model credential is failing" or is about
+ * to: the owner has to sign in again or replace the key, so they carry their
+ * own class. */
 const LOGIN_KINDS: ReadonlySet<string> = new Set(["pi_auth_expired", "login_refresh_failed"]);
 
 /** The inbox class an anomaly of this kind is filed under. */

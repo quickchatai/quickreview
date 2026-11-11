@@ -39,8 +39,9 @@ import { dirname, join } from "node:path";
  * different tree that review sessions can never reach. */
 export const OV_REVIEWER_USER = "reviewer";
 
-/** Secrets-mount file name holding the reviewer USER key. Same 0600 discipline
- * as `openai_api_key`, read from the secrets dir and never from process.env. */
+/** Secrets-mount file name holding the reviewer USER key. The secrets dir's
+ * rule holds for it: a 0600 file, read from that dir and never from
+ * process.env. */
 export const OV_REVIEWER_KEY_SECRET = "openviking_reviewer_key";
 
 /** Fallback endpoint when no `[openviking]` block is configured (a hand-rolled

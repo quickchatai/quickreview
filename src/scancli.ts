@@ -36,7 +36,12 @@
 // The driver's route and its cases are joined in one place (`scanRouteJoin`):
 // the port writes what a driver resolved, and the cases' getter reads it.
 // The plan's key covers the route, so a start whose driver resolves another
-// model than the plan showed is refused there. `--model` is also the whole
+// model than the plan showed is refused there. One such start is foreseen: a
+// `--foreground` start typed on the host while `[scan] sandbox = "docker"`
+// drives the scan here, on this machine's login, though its plan was read off
+// the companion's. The port asks the sandbox too and, when the two models
+// differ, says so and names the two ways out (`foregroundMismatch`), where
+// the runner could only have said that the plan changed. `--model` is also the whole
 // scan's model: the config the run reads keeps no tier or lens on a model of
 // its own (src/setup/scanbuild.ts `SCAN_MODEL_ENV`).
 import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
@@ -55,12 +60,20 @@ import {
   renderDoctor,
   writeStartedFile,
   type DoctorReport,
+  type DoctorRoute,
 } from "./scanbox.js";
 import { SCAN_MODEL_ENV, loadScanConfig } from "./setup/scanbuild.js";
 import type { DockerRunner } from "./tui/companion.js";
 import type { ScanRouteAnswer } from "./engine/caserunner-sdk.js";
-import { SCAN_AUTH_SRC_ENV } from "@quickchatai/pi-quickreview/src/engine/auth.js";
-import type { ModelRoute, RouteInput } from "@quickchatai/pi-quickreview/src/modelroute.js";
+import {
+  SCAN_AUTH_SRC_ENV,
+  scanProviders,
+} from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import {
+  credentialWords,
+  type ModelRoute,
+  type RouteInput,
+} from "@quickchatai/pi-quickreview/src/modelroute.js";
 import {
   isPinned,
   splitModelSpec,
@@ -202,6 +215,10 @@ export function readRouteAnswer(
 export interface ScanRouteWorld {
   /** The env the scan is assembled under: its login source, and its `--model`. */
   env: NodeJS.ProcessEnv;
+  /** Where pi looks for a provider's key when the route is resolved in this
+   * process: `env` under the model env of the install's secrets dir.
+   * Omitted: `env`. */
+  authEnv?: NodeJS.ProcessEnv;
   root: string;
   /** The state home: the route host's scratch dir is under it. */
   home: string;
@@ -220,6 +237,7 @@ export interface ScanRouteWorld {
   /** The route in this process (default `scanRoute`, loaded on first use). */
   resolveHere?: (o: {
     env: NodeJS.ProcessEnv;
+    authEnv?: NodeJS.ProcessEnv;
     tmpDir: string;
     pin?: RouteInput["pin"];
     configPath: string | null;
@@ -314,16 +332,96 @@ export function scanRoutePort(w: ScanRouteWorld): NonNullable<ScanCliDeps["route
       w.resolveHere ?? (async (o) => (await import("./engine/caserunner-sdk.js")).scanRoute(o));
     const answer = await resolveHere({
       env: w.env,
+      ...(w.authEnv !== undefined ? { authEnv: w.authEnv } : {}),
       tmpDir: join(w.home, "tmp"),
       ...(pin !== undefined ? { pin } : {}),
       configPath,
       choose: ask.ask ? w.choose : null,
       say,
     });
+    // A driver here, though a plan of this scan is read off the sandbox's
+    // login: the two may run on different models, and the key covers the
+    // plan's. Said before anything is recorded, with what to do.
+    if (ask.run && w.sandbox !== null && answer.result.ok) {
+      const here = answer.result.route;
+      const asked = await askOnLogin(w.sandbox.docker, {
+        sandbox: w.sandbox.config,
+        stamp: w.sandbox.stamp,
+        script: SCAN_ROUTE_SCRIPT,
+        args: [SCANBOX_SCRATCH, pin?.text ?? "", pin?.from ?? "", configPath ?? ""],
+      });
+      const read = asked.ok ? readRouteAnswer(asked.answer) : asked;
+      if (read.ok && read.answer.result.ok) {
+        const there = read.answer.result.route;
+        if (there.spec !== here.spec) throw new Error(foregroundMismatch(here, there));
+      } else {
+        // The sandbox did not say: the start goes on, and a refusal for a
+        // changed plan, if one follows, has its reason on the line above it.
+        say(
+          `note: this start drives the scan here, on this machine's pi login (${here.spec}). ` +
+            "A plan of a sandboxed scan is keyed on the companion's login: if the start is " +
+            "refused as a changed plan, preview and start with --sandbox host.",
+        );
+      }
+    }
     // A driver's route is the one its cases are handed.
     if (ask.run && answer.result.ok) w.resolved.route = answer.result.route;
     return routed(answer, Boolean(w.env[SCAN_AUTH_SRC_ENV]?.trim()));
   };
+}
+
+/**
+ * Why a `--foreground` start on the host is not the scan its plan showed, and
+ * what to do: the plan of a sandboxed scan is made over the companion's
+ * login, a start driven here runs on this machine's, and the two resolve to
+ * different models. Thrown by the port, so the verb refuses before a run is
+ * recorded.
+ */
+export function foregroundMismatch(
+  here: Pick<ModelRoute, "spec" | "providerName" | "credential">,
+  there: Pick<ModelRoute, "spec" | "providerName" | "credential">,
+): string {
+  const words = (r: Pick<ModelRoute, "spec" | "providerName" | "credential">): string =>
+    `${r.spec} (${r.providerName}, ${credentialWords(r.credential)})`;
+  return (
+    `--foreground drives the scan in this process, on this machine's pi login, where it runs on ${words(here)}. ` +
+    `The plan was made for the scan sandbox, which reads the companion's login and runs on ${words(there)}, ` +
+    "and its key covers that model, so this start is not the plan you were shown. " +
+    "Either start it without --foreground (it then runs in the sandbox, as planned), " +
+    "or run it here from the beginning: preview with --sandbox host and start that key with --sandbox host --foreground."
+  );
+}
+
+/**
+ * The route as the scan doctor needs it: the model stage 1 runs on (`tier`'s
+ * spec as it will run, else the route's own), and the providers the scan's
+ * models are on. An unknown route, or none, is its refusal in the host's
+ * words: never a model guessed from the config.
+ */
+export function doctorRouteOf(
+  routed: ScanRouted,
+  tier: string,
+  models?: Parameters<typeof scanProviders>[1],
+): DoctorRoute {
+  const r = routed.result;
+  if (r === null)
+    return { ok: false, error: routed.refusal ?? "the scan's model could not be read" };
+  if (!r.ok) return { ok: false, error: routed.refusal ?? `no model route (${r.refusal.code})` };
+  const tiers: Readonly<Record<string, string>> = routed.tiers ?? {};
+  return {
+    ok: true,
+    model: tiers[tier] ?? r.route.spec,
+    provider: r.route.provider,
+    providerName: r.route.providerName,
+    credential: credentialWords(r.route.credential),
+    providers: scanProviders(r.route, models),
+  };
+}
+
+/** What the sandbox's ports ask of the scan's route. The port is made after
+ * them (it needs their sandbox), so they read it through this record. */
+interface ScanRouting {
+  port?: NonNullable<ScanCliDeps["route"]>;
 }
 
 /**
@@ -561,6 +659,11 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
   if (model !== undefined) env[SCAN_MODEL_ENV] = model;
   else delete env[SCAN_MODEL_ENV];
   const inSandbox = Boolean(env[IN_SANDBOX_ENV]?.trim());
+  // The model env of the install's secrets dir, where pi looks for a
+  // provider's key beside this process's own environment: the route
+  // `qcr model` names is the one a scan driven here runs on. It is handed to
+  // pi's credential lookup alone; a case's own env is still filtered from `env`.
+  const authEnv: NodeJS.ProcessEnv = { ...env, ...(await scanModelEnv(env)) };
   // The route a driver resolves, for the cases it runs.
   const routes = scanRouteJoin();
   const shared = sharedPorts(env);
@@ -580,16 +683,31 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
       return scanSdkCases({
         ...o,
         agentDir: join(home, SCAN_SDK_AGENT_DIR),
+        authEnv,
         // One route per scan: every case's host is handed the driver's.
         route: routes.route,
       });
     },
+    // The child-pi leg (a config the SDK leg cannot read) is handed the same.
+    routes.route,
   );
+  const routing: ScanRouting = {};
   const ports = inSandbox
     ? { detach: detachDriver(env, home), units: engine, sandbox: null }
-    : await sandboxPorts(env, home, engine, settingsOf, picked.sandbox);
+    : await sandboxPorts(env, home, engine, settingsOf, picked.sandbox, routing);
   const { sandbox: routeSandbox, ...sandboxDeps } = ports;
   const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY);
+  const routePort = routes.port({
+    env,
+    authEnv,
+    root: env.QCR_ROOT?.trim() || sandboxRoot(),
+    home,
+    sandbox: routeSandbox,
+    // The choice is remembered beside the login: only where this process
+    // reads the login itself is there anyone to ask.
+    choose: interactive && routeSandbox === null ? chooseOnTerminal : null,
+  });
+  routing.port = routePort;
   return runScanCli(rest, json, {
     scan,
     findings,
@@ -600,15 +718,7 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
     repo: env.QCR_REVIEWED_REPO!,
     out: (line) => console.log(line),
     ...sandboxDeps,
-    route: routes.port({
-      env,
-      root: env.QCR_ROOT?.trim() || sandboxRoot(),
-      home,
-      sandbox: routeSandbox,
-      // The choice is remembered beside the login: only where this process
-      // reads the login itself is there anyone to ask.
-      choose: interactive && routeSandbox === null ? chooseOnTerminal : null,
-    }),
+    route: routePort,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => Date.now(),
     watchStops: (s) => {
@@ -650,6 +760,29 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
   });
 }
 
+/** The model env `qcr scan` reads: the secrets dir of the config a one-shot
+ * run reads, with the wizards' override below a configured one, by the loader
+ * `qcr model` and `qcr review` use. No config to read: none (the plan refuses
+ * for the config on its own). */
+async function scanModelEnv(env: NodeJS.ProcessEnv): Promise<Record<string, string>> {
+  try {
+    const [{ loadOneShotConfig }, { oneShotModelEnv }] = await Promise.all([
+      import("./homes.js"),
+      import("./modelenv.js"),
+    ]);
+    const loaded = loadOneShotConfig({
+      root: env.QCR_ROOT?.trim() || sandboxRoot(),
+      env,
+      secretsOverride: env["QC_SECRETS_DIR"],
+    });
+    return oneShotModelEnv(loaded.cfg.github.secrets_dir, sandboxRoot(), {
+      warn: (line) => console.error(line),
+    });
+  } catch {
+    return {};
+  }
+}
+
 /** The provider question at a terminal: the rows numbered, the first the
  * default. Null when the terminal went away: the order's own pick then runs,
  * unremembered. */
@@ -680,6 +813,8 @@ async function sandboxPorts(
   engine: UnitCutPort,
   settingsOf: () => { scan: { tier: string } } | null,
   sandboxOverride?: "host" | "docker",
+  /** The scan's route port, once the caller has made it. */
+  routing: ScanRouting = {},
 ): Promise<
   Pick<ScanCliDeps, "detach" | "units" | "doctor" | "login" | "rebuild"> & {
     sandbox: ScanRouteWorld["sandbox"];
@@ -724,12 +859,21 @@ async function sandboxPorts(
   });
   const appRoot = env.QCR_ROOT?.trim() || sandboxRoot();
   const reviewedRepo = mountedCheckout(env);
-  // The model stage 1 runs on (the profile may move its tier): the login
-  // the doctor's probe needs.
-  const model = (): string => {
-    const tiers: Record<string, string> = cfg?.models.tiers ?? {};
-    const tier = settingsOf()?.scan.tier ?? cfg?.scan.tier ?? "";
-    return tiers[tier] ?? cfg?.models.model ?? "";
+  // The route a scan here would run on, as a plan asks it: nobody is asked
+  // anything, and nothing is remembered. Unknown when it cannot be asked.
+  const planned = async (pin?: string): Promise<ScanRouted | undefined> => {
+    if (routing.port === undefined) return undefined;
+    try {
+      return await routing.port({ ...(pin !== undefined ? { pin } : {}), run: false, ask: false });
+    } catch {
+      return undefined;
+    }
+  };
+  // The models the scan's config leaves pinned, under `--model` when the env
+  // carries one: the providers beside the route's whose logins a scan needs.
+  const pinnedModels = (): Parameters<typeof scanProviders>[1] => {
+    const loaded = loadScanConfig(appRoot, env);
+    return loaded.ok ? loaded.cfg.models : undefined;
   };
   const detach =
     sandbox.sandbox === "host"
@@ -743,6 +887,15 @@ async function sandboxPorts(
           configSource: () => {
             const located = install.locateConfig({ env });
             return existsSync(located.path) ? located.path : undefined;
+          },
+          // The logins the launch judges: those of the route the driver
+          // inside will resolve (under the same `--model`), asked of the scan
+          // image. Unknown: the whole login is judged.
+          providers: async (argv) => {
+            const result = (await planned(modelFlagOf(argv)))?.result;
+            return result !== undefined && result !== null && result.ok
+              ? scanProviders(result.route, pinnedModels())
+              : undefined;
           },
           // The companion's own memory wiring: its network and key file.
           memory: async () =>
@@ -770,7 +923,18 @@ async function sandboxPorts(
           const st = engine.status();
           return { saved: st.saved !== null, problems: st.cut_file_unreadable ? st.problems : [] };
         },
-        model: model(),
+        // The model the probe asks is the route's, at stage 1's tier (the
+        // profile may move it), read where the scan would run.
+        route: async () => {
+          const routed = await planned();
+          if (routed === undefined)
+            return { ok: false, error: "the scan's model could not be resolved here" };
+          return doctorRouteOf(
+            routed,
+            settingsOf()?.scan.tier ?? cfg?.scan.tier ?? "",
+            pinnedModels(),
+          );
+        },
       }),
     rebuild: () =>
       buildScanImage({

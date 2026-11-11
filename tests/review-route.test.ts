@@ -669,8 +669,14 @@ describe("the models are in the preview key", () => {
   // a start under another --model accepts the old key and this fails.
   it("a start under another --model does not accept the key a preview showed", async () => {
     const home = mkHome();
-    // over the limit, with nobody to ask: only the key starts it
+    // over the limit, with nobody to ask: only the key starts it. The faux
+    // models have no list price, so the estimate is the repo's own: without
+    // one such a run has no limit to be over, and starts without a key.
     const repo = mkRepo(0.0001);
+    writeFileSync(
+      join(repo, ".git", "qcr-review.json"),
+      JSON.stringify({ auto_limit_usd: 0.0001, usd_base: 1 }),
+    );
     const pre = harness({ home, repo, faux: ["alpha", "beta"] });
     expect(await runReviewCli(["--preview"], true, pre.deps)).toBe(0);
     const key = previewOf(pre)["key"] as string;

@@ -4,6 +4,7 @@
 // Each surface names its own next step (`ScanVerbs`); none carries a rule of
 // its own.
 import { usd, findingLocation } from "./presentation.js";
+import { NO_PRICE_NO_STOP, scanRanUnpriced } from "../pricing.js";
 import { FINDING_STATES } from "./findings.js";
 import type {
   FindingsFilter,
@@ -136,8 +137,29 @@ function modelBlock(p: ScanModelView): string[] {
  * older names never shows one. */
 const tierName = (tier: string): string => foldTier(tier) ?? tier;
 
+/** Was this preview's estimate measured on a model pi has no price for? pi
+ * stamps every call of such a model at exactly 0, so the finished cases the
+ * rate stands on cost "nothing" and the estimate, and the stop at it, come
+ * out as zero. That zero is not a price: the preview says there is none. */
+const unpricedEstimate = (p: Pick<ScanPreview, "rate" | "estimate_usd">): boolean =>
+  p.rate !== null && p.rate.cases > 0 && p.rate.usd_per_kline === 0 && (p.estimate_usd ?? 0) === 0;
+
+/** The stop a started run is held to, as its start line says it: the dollar
+ * cap, or that there is none because the plan was priced at pi's zero. */
+const stopWords = (capUsd: number): string =>
+  capUsd > 0 ? `hard stop ${usd(capUsd)}` : NO_PRICE_NO_STOP;
+
+/** One case's cost in a status row: a finished case pi stamped at exactly 0
+ * has no price, which is not "$0.00". */
+const caseCostWords = (c: { status: string; cost_usd: number | null }): string =>
+  c.status === "done" && c.cost_usd === 0 ? "no price" : usd(c.cost_usd);
+
 export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): string {
   const out: string[] = [];
+  // MUTATION: make unpricedEstimate return false - a zero-rate preview says
+  // "Estimate $0.00" again and tests/scan-run.test.ts fails.
+  const noPrice = unpricedEstimate(p);
+  const noPriceWords = `${NO_PRICE_NO_STOP} (pi priced the ${p.rate?.cases ?? 0} finished case(s) an estimate would be measured on at zero, which is not a price).`;
   const deep = p.depth === "deep";
   const head = `${deep ? "(deep) " : ""}${p.path ? `of ${p.path}/ ` : ""}at ${p.sha.slice(0, 12)} — ${p.settings.tier} at ${p.settings.effort} effort, skeptic ${p.settings.validator ? `on (at the lens's tier, ${p.settings.validate_tier}; its cost is in the price)` : "off (findings stay unjudged — validity unknown)"}`;
   // A rate measured at the other depth stands in until this depth is priced.
@@ -150,8 +172,10 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
       `Files whose content changed since, and any not yet read whole: ${p.files} files, ${p.lines} lines in ${p.cases.length} case(s) — ` +
         `${p.covered} already read at this content` +
         owedClause(p.delta) +
-        `. Estimate ${usd(p.estimate_usd)}, measured at ` +
-        `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate. ` +
+        (noPrice
+          ? `. No estimate: ${noPriceWords} `
+          : `. Estimate ${usd(p.estimate_usd)}, measured at ` +
+            `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate. `) +
         "No deep pass runs on a delta.",
     );
   } else if (p.mode === "calibration") {
@@ -165,8 +189,10 @@ export function renderPreview(p: ScanPreview, verbs: ScanVerbs = TOOL_VERBS): st
   } else {
     out.push(
       `STAGE 1 ${head}.`,
-      `Estimate ${usd(p.estimate_usd)} for ${p.cases.length} case(s), ${p.files} files, ${p.lines} lines — measured at ` +
-        `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate.`,
+      noPrice
+        ? `${p.cases.length} case(s), ${p.files} files, ${p.lines} lines. No estimate: ${noPriceWords}`
+        : `Estimate ${usd(p.estimate_usd)} for ${p.cases.length} case(s), ${p.files} files, ${p.lines} lines — measured at ` +
+            `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate.`,
     );
   }
   out.push(...modelBlock(p));
@@ -299,7 +325,10 @@ export function renderThreatModelPreview(
     `THREAT MODEL (stage 0) at ${p.sha.slice(0, 12)} — ${p.tier}, one case: ${p.why}.`,
     p.estimate_usd === null
       ? `No threat-model run has finished here, so there is no estimate: it stops hard at ${usd(p.cap_usd)}.`
-      : `The last one cost ${usd(p.estimate_usd)}; this one stops hard at ${usd(p.cap_usd)}.`,
+      : p.estimate_usd === 0
+        ? // The last run's total is pi's zero stamp, not a price.
+          `What the last one cost is not known (${NO_PRICE_NO_STOP}); this one stops hard at ${usd(p.cap_usd)}, which only a priced model can reach.`
+        : `The last one cost ${usd(p.estimate_usd)}; this one stops hard at ${usd(p.cap_usd)}.`,
     p.existing === null
       ? `It writes a DRAFT to ${THREAT_MODEL_DRAFT_FILE} in the state home — never to the repository. Later scans read it, labelled DRAFT, ` +
           `until a person copies it to ${REPO_THREAT_MODEL_PATH} (or the profile's threat-model.md).`
@@ -334,6 +363,11 @@ export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): stri
     const unpriced = r.unpriced_cases
       ? ` (${r.unpriced_cases} unpriced case(s) counted at their estimate)`
       : "";
+    // A run whose cases pi stamped at zero spent an unknown amount, and no
+    // dollar stop held it: never "spent $0.00 of $0.00".
+    const spent = scanRanUnpriced(r)
+      ? NO_PRICE_NO_STOP
+      : `spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}${unpriced}`;
     if (r.mode === "threat-model") {
       // Stage 0 reads no findings: what it leaves is the draft.
       out.push(
@@ -341,13 +375,12 @@ export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): stri
           (r.threat_model
             ? `DRAFT written to ${THREAT_MODEL_DRAFT_FILE} (sha256 ${r.threat_model.hash.slice(0, 12)}) — read it, then copy it to ${REPO_THREAT_MODEL_PATH}`
             : "no draft written") +
-          `, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}${unpriced}`,
+          `, ${spent}`,
       );
     } else
       out.push(
         `${r.id} (${r.mode === "stage2" ? "stage 2" : r.mode}${r.settings.depth === "deep" ? ", deep" : ""}) at ${r.sha.slice(0, 12)}: ${r.display.toUpperCase()} — ${done}/${r.cases.length} cases, ` +
-          `${findings} finding(s)${tierCounts(r, findings, doubted)}, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}` +
-          unpriced,
+          `${findings} finding(s)${tierCounts(r, findings, doubted)}, ${spent}`,
       );
     // The one model every case of the run was handed, when its host named one.
     if (r.settings.model !== undefined) out.push(`Model: ${r.settings.model}`);
@@ -372,7 +405,7 @@ export function renderStatus(s: ScanStatus, verbs: ScanVerbs = TOOL_VERBS): stri
     if (r.mode === "stage2") {
       for (const c of r.cases.slice(0, 40)) {
         out.push(
-          `  - ${c.id} ${c.lens ?? "?"} at ${c.tier ?? "?"} (${(c.units ?? [c.unit]).join(", ")}): ${c.status}, ${c.findings} finding(s), ${usd(c.cost_usd)}` +
+          `  - ${c.id} ${c.lens ?? "?"} at ${c.tier ?? "?"} (${(c.units ?? [c.unit]).join(", ")}): ${c.status}, ${c.findings} finding(s), ${caseCostWords(c)}` +
             (c.reads !== undefined ? `, ${c.reads} read(s)` : "") +
             (c.unopened?.length ? `, ${c.unopened.length} focus file(s) not opened` : ""),
         );
@@ -814,7 +847,7 @@ export function stage2StartedLine(
       ? `${run.cases.length} row(s) of ${runnable} (${run.cases.map((c) => c.id).join(", ")})`
       : `${run.cases.length} row(s)`;
   return (
-    `Stage 2 ${run.id} started at ${run.sha.slice(0, 12)}: ${count}, hard stop ${usd(run.cap_usd)}. ` +
+    `Stage 2 ${run.id} started at ${run.sha.slice(0, 12)}: ${count}, ${stopWords(run.cap_usd)}. ` +
     `It runs in the background — ${verbs.status} shows progress, ${verbs.stop} stops it.`
   );
 }
@@ -822,7 +855,7 @@ export function stage2StartedLine(
 /** The line a stage-1 start answers. */
 export function startedLine(run: ScanRun, verbs: ScanVerbs = TOOL_VERBS): string {
   return (
-    `Scan ${run.id} (${run.mode}) started${run.path ? ` over ${run.path}/` : ""} at ${run.sha.slice(0, 12)}: ${run.cases.length} case(s), hard stop ${usd(run.cap_usd)}. ` +
+    `Scan ${run.id} (${run.mode}) started${run.path ? ` over ${run.path}/` : ""} at ${run.sha.slice(0, 12)}: ${run.cases.length} case(s), ${stopWords(run.cap_usd)}. ` +
     `It runs in the background — ${verbs.status} shows progress, ${verbs.stop} stops it.`
   );
 }

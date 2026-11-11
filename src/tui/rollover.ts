@@ -21,6 +21,7 @@
 // initial-message flag — is undocumented for 0.84.1; if one turns up it is a
 // drop-in replacement for writeDayOpen().
 import { stripModelDocs } from "@quickchatai/pi-quickreview/src/promptdoc.js";
+import { spendText } from "@quickchatai/pi-quickreview/src/pricing.js";
 import { isNoTmuxServer } from "../tmux.js";
 import {
   existsSync,
@@ -350,7 +351,8 @@ export function snapshotSummary(snap: StatusSnapshot | undefined): string {
   const lines = [
     `${snap.prs.length} tracked PR${snap.prs.length === 1 ? "" : "s"}${states.length > 0 ? ` (${states.join(", ")})` : ""}; ` +
       `${snap.running_rounds} round${snap.running_rounds === 1 ? "" : "s"} running; mode ${snap.dry_run ? "dry-run" : "LIVE"}; ` +
-      `spend $${snap.total_spend_usd.toFixed(2)} total${snap.today_spend_usd !== undefined ? ` / $${snap.today_spend_usd.toFixed(2)} today` : ""}.`,
+      // Each sum with the rounds it could not count beside it, never as $0.
+      `spend ${spendText(snap.total_spend_usd, snap.total_unknown_spend_rounds)} total${snap.today_spend_usd !== undefined ? ` / ${spendText(snap.today_spend_usd, snap.today_unknown_spend_rounds)} today` : ""}.`,
     `Snapshot written ${snap.written_at}.`,
   ];
   const notable = snap.prs

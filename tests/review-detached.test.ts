@@ -17,11 +17,13 @@ import { liveRoundDir } from "@quickchatai/pi-quickreview/src/live/events.js";
 import { createLiveWriter } from "@quickchatai/pi-quickreview/src/live/writer.js";
 import {
   CONTAINER_START_GRACE_MS,
+  DETACHED_USAGE,
   identifyTarget,
   launchDetached,
   runIsAlive,
   driverSignals,
   runDetachedChild,
+  runContract,
   runDetachedVerb,
   type DetachDeps,
 } from "../src/reviewdetach.js";
@@ -251,6 +253,82 @@ describe("status", () => {
   });
 });
 
+describe("the contract a caller names", () => {
+  // What a review printed is kept as it printed it (version 2); each verb
+  // prints for the contract its own caller named (`DetachDeps.contract`).
+  const MEASURED_RESULT = {
+    schema_version: 2,
+    ok: true,
+    preview: { price_basis: "measured", estimate_usd: 1.5, cap_usd: 3, model: { spec: "a/m" } },
+    findings: {},
+  };
+  const UNMEASURED_RESULT = {
+    schema_version: 2,
+    ok: true,
+    preview: { price_basis: "unmeasured", estimate_usd: null, cap_usd: 15, model: { spec: "b/o" } },
+    findings: {},
+  };
+
+  it("with no contract named every verb prints version 2, a null estimate included", async () => {
+    const h = harness();
+    expect(await runDetachedVerb("start", [], true, h.deps)).toBe(0);
+    expect(json(h).schema_version).toBe(2);
+    expect(runContract(join(h.deps.home, "runs", "run1"))).toBeUndefined();
+    finish(h, "run1", 0, UNMEASURED_RESULT);
+    expect(await runDetachedVerb("status", [], true, h.deps)).toBe(0);
+    expect(json(h)).toMatchObject({ schema_version: 2, state: "done", result: UNMEASURED_RESULT });
+  });
+
+  // MUTATION: drop the `contract` spread from the run record in `start`
+  // (src/reviewdetach.ts) — the run's driver does not know its caller reads
+  // contract 1 and spends on a review that caller cannot be told, and this fails.
+  it("a start keeps the contract it was named in the run's record, for the run's driver", async () => {
+    const h = harness({ contract: 1 });
+    expect(await runDetachedVerb("start", [], true, h.deps)).toBe(0);
+    expect(json(h)).toMatchObject({ schema_version: 1, ok: true, run_id: "run1" });
+    expect(runContract(join(h.deps.home, "runs", "run1"))).toBe(1);
+    expect(runContract(join(h.deps.home, "runs", "no-such-run"))).toBeUndefined();
+  });
+
+  it("status restamps a stored result for a reader on contract 1 while its estimate is a number", async () => {
+    const h = harness();
+    await runDetachedVerb("start", [], true, h.deps);
+    finish(h, "run1", 0, MEASURED_RESULT);
+    expect(await runDetachedVerb("status", [], true, { ...h.deps, contract: 1 })).toBe(0);
+    const j = json(h);
+    expect(Object.keys(j)[0]).toBe("schema_version");
+    expect(j).toMatchObject({
+      schema_version: 1,
+      state: "done",
+      result: { ...MEASURED_RESULT, schema_version: 1 },
+    });
+    // and a result an older qcr stored under version 1 reads as version 2 for a reader on 2
+    const old = harness();
+    await runDetachedVerb("start", [], true, old.deps);
+    finish(old, "run1", 0, { ...MEASURED_RESULT, schema_version: 1 });
+    expect(await runDetachedVerb("status", [], true, { ...old.deps, contract: 2 })).toBe(0);
+    expect(json(old)).toMatchObject({ schema_version: 2, result: { schema_version: 2 } });
+  });
+
+  // MUTATION: return the v1 projection for an unmeasured preview (print
+  // `withSchemaVersion(1, data)` from runDetachedVerb's emit) — a null
+  // estimate reaches a contract-1 reader, and this fails.
+  it("a result with no estimate is never printed for contract 1: the status says why, and fails", async () => {
+    const h = harness();
+    await runDetachedVerb("start", [], true, h.deps);
+    finish(h, "run1", 0, UNMEASURED_RESULT);
+    expect(await runDetachedVerb("status", [], true, { ...h.deps, contract: 1 })).toBe(1);
+    const j = json(h);
+    expect(j).toMatchObject({ schema_version: 1, ok: false, run_id: "run1", state: "done" });
+    expect(j.errors).toEqual([
+      "this review would run on b/o, which has no measured price, and contract 1 cannot say so. " +
+        "Update the QuickReview skills (qcr plugin install).",
+    ]);
+    expect(j).not.toHaveProperty("result");
+    expect(JSON.stringify(j)).not.toMatch(/estimate_usd/);
+  });
+});
+
 describe("status: live lens activity", () => {
   /** A finished pass, as the runner returns it. */
   const ran = (id: string, agent: string, exitCode: number, activity: LensActivity): LensRun => ({
@@ -303,7 +381,7 @@ describe("status: live lens activity", () => {
     );
     await waitFor(() => passes.length === 2, "both passes to start");
     const schema = JSON.parse(
-      readFileSync(join(import.meta.dirname, "..", "schemas", "review-result.v1.json"), "utf8"),
+      readFileSync(join(import.meta.dirname, "..", "schemas", "review-result.v2.json"), "utf8"),
     ) as Record<string, unknown>;
     const lenses = async (): Promise<Array<Record<string, unknown>>> => {
       sink.flush();
@@ -507,6 +585,11 @@ describe("identifyTarget", () => {
       expect(identifyTarget([], repo)).toEqual(b);
     }
     expect(identifyTarget([], tmp).ok).toBe(false);
+    // MUTATION: drop `--model` from the flags whose value identifyTarget
+    // skips — a model named `5` is read as pull request 5 and this fails.
+    expect(identifyTarget(["--model", "5"], repo)).toEqual(b);
+    expect(identifyTarget(["12", "--repo", "o/r", "--model", "7"], repo)).toEqual(p);
+    expect(DETACHED_USAGE).toContain("[--model PROVIDER/MODEL]");
   });
 });
 

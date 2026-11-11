@@ -1,0 +1,774 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-result.v2.json",
+  "title": "qcr review --json, version 2",
+  "description": "One JSON object per line from `qcr review` (also `--to json`), `qcr review start`, `status` and `stop`. schema_version leads every payload; ok says whether the call succeeded. Fields beyond those named may appear without a version change; a caller ignores what it does not know and refuses a schema_version it does not know. A failure is {ok:false, errors:[\u2026]}; a review stopped at its cap is {ok:false, partial:true, coverage, \u2026} with the findings written before the stop. Version 2 differs from version 1 in the preview: a review on a model with no measured price has no estimate, so estimate_usd may be null, and the preview names the model it runs on (model, alternatives, tiers) and what its price is known from (price_basis).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "ok"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2,
+      "description": "This schema's version."
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Why the call failed; present when ok is false and no result exists."
+    },
+    "partial": {
+      "type": "boolean",
+      "description": "True when the review stopped at its cap before finishing."
+    },
+    "stopped": {
+      "type": "boolean",
+      "description": "True when the caller stopped the review (the review API's abort signal) before it finished: {ok:false, stopped:true, errors:[\u2026]}. Nothing is recorded or posted; what the round wrote stays in its out dir."
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "planned",
+        "started",
+        "not_reached"
+      ],
+      "properties": {
+        "planned": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "started": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "not_reached": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Which planned lenses had started when a capped review stopped."
+    },
+    "preview": {
+      "$ref": "#/$defs/preview"
+    },
+    "findings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/finding"
+        }
+      },
+      "description": "This round's findings by severity (P0, P1, P2, \u2026 nit, other), worst first."
+    },
+    "still_open": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/still_open"
+      },
+      "description": "Findings from earlier rounds that are still open."
+    },
+    "unchanged": {
+      "type": "boolean",
+      "description": "True when nothing new was reviewed because the branch had not changed."
+    },
+    "head_sha": {
+      "type": "string"
+    },
+    "reviewed_at": {
+      "type": "string"
+    },
+    "repeats_suppressed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "already_posted_skipped": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "verdict": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cost_usd": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "The run's output directory, with the findings record and stage files."
+    },
+    "report": {
+      "type": "string",
+      "description": "Path of the markdown report, when the file destination was asked for."
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "memory": {
+      "type": "object",
+      "required": [
+        "used",
+        "notice"
+      ],
+      "properties": {
+        "used": {
+          "type": "boolean"
+        },
+        "notice": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "customised": {
+      "type": "boolean",
+      "description": "True when a profile (the user's, or the repo's .qcr/ on the base commit) replaced a shipped agent or prompt with different bytes for this review; overrides lists them."
+    },
+    "overrides": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/override"
+      },
+      "description": "The shipped files a profile replaced; empty unless customised."
+    },
+    "post": {
+      "$ref": "#/$defs/post"
+    },
+    "post_ready": {
+      "type": "string",
+      "description": "A finished PR review that was not posted: the file it is kept in, which a host that asks the person later posts through the gate exactly as `--to pr` would have."
+    },
+    "run_id": {
+      "type": "string",
+      "description": "A detached run's id (start, status, stop)."
+    },
+    "state": {
+      "enum": [
+        "running",
+        "done",
+        "failed",
+        "stopped"
+      ],
+      "description": "A detached run's state."
+    },
+    "target": {
+      "type": "string",
+      "description": "What a detached run reviews."
+    },
+    "started_at": {
+      "type": "number",
+      "description": "When a detached run was started, ms since the epoch."
+    },
+    "ended_at": {
+      "type": "number",
+      "description": "When a detached run ended (its exit or its stop), ms since the epoch; absent while it runs."
+    },
+    "elapsed_s": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "progress": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "While a detached run is running: the lenses started so far.",
+      "properties": {
+        "lenses_started": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "live": {
+          "type": "object",
+          "description": "The running round's live log, projected: what the parent and each lens are doing now.",
+          "properties": {
+            "round": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "parent_status": {
+              "enum": [
+                "active",
+                "settled"
+              ]
+            },
+            "last_activity": {
+              "type": "string"
+            },
+            "updated_at": {
+              "type": "string"
+            },
+            "active_tool": {
+              "type": "string"
+            },
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "agent",
+                  "status",
+                  "duration_ms",
+                  "tool_count"
+                ],
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "running",
+                      "completed",
+                      "failed"
+                    ]
+                  },
+                  "duration_ms": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "The lens's time so far; a running lens's counts from its start between updates."
+                  },
+                  "tool_count": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Tool calls the lens has started; a finished lens keeps its final count."
+                  },
+                  "current_tool": {
+                    "type": "string",
+                    "description": "The running (or last) tool, as `<tool>: <args>` or the bare name."
+                  },
+                  "current_target": {
+                    "type": "string",
+                    "description": "While the lens runs: the path its current tool works on, when it names one."
+                  },
+                  "line": {
+                    "type": "string",
+                    "description": "The lens as one line a person reads: `security \u00b7 read src/x.ts \u00b7 7 tools \u00b7 0:41`."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "result": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#"
+        }
+      ],
+      "description": "A finished detached run's last JSON line: the review's own result (null if it printed none)."
+    },
+    "timed_out": {
+      "type": "boolean",
+      "description": "status --wait gave up after --timeout; the run is still going."
+    }
+  },
+  "$defs": {
+    "override": {
+      "type": "object",
+      "required": [
+        "path",
+        "origin",
+        "layer",
+        "sha256",
+        "shipped_sha256",
+        "seed"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The shipped file, relative to the app root (agents/pass-security.md)."
+        },
+        "origin": {
+          "enum": [
+            "user",
+            "repo"
+          ]
+        },
+        "layer": {
+          "type": "string",
+          "description": "The profile whose file won (.qcr for the repo profile)."
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "shipped_sha256": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "boolean",
+          "description": "True when the shipped file is a frozen seed."
+        }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "required": [
+        "repo",
+        "target",
+        "postable",
+        "base",
+        "head_sha",
+        "files",
+        "lines",
+        "scope",
+        "lenses",
+        "model",
+        "alternatives",
+        "tiers",
+        "price_basis",
+        "estimate_usd",
+        "cap_usd",
+        "limit_usd",
+        "auto",
+        "key"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string"
+        },
+        "target": {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "pr",
+                "branch",
+                "uncommitted",
+                "diff"
+              ],
+              "description": "What is reviewed: a pull request, the current branch against its base, the uncommitted working tree, or a unified diff handed in (`--diff`). Only a pr target can be posted."
+            },
+            "uncommitted": {
+              "const": true,
+              "description": "A branch target reviewed together with the working tree's uncommitted edits, as one review. Absent otherwise."
+            }
+          }
+        },
+        "postable": {
+          "type": "boolean",
+          "description": "True when a PR is behind the target, so --to pr applies."
+        },
+        "branch": {
+          "type": "string",
+          "description": "Absent for a diff target."
+        },
+        "base": {
+          "type": "string"
+        },
+        "head_sha": {
+          "type": "string",
+          "description": "The reviewed head; for a diff target a hash of the diff's text."
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scope": {
+          "enum": [
+            "full",
+            "delta"
+          ]
+        },
+        "since": {
+          "type": "string",
+          "description": "Delta rounds: the head the earlier review was of."
+        },
+        "prior_open": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fallback_reason": {
+          "type": "string",
+          "description": "Why a follow-up round is a full review, not a delta."
+        },
+        "lenses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/model"
+            }
+          ],
+          "description": "The model the review runs on and why; null when no model route resolves (a start is refused) or the caller's host named none."
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/alternative"
+          },
+          "description": "The other providers pi has a usable credential for, each with the model it would run, best first. `qcr model use <provider>` picks one."
+        },
+        "tiers": {
+          "type": "object",
+          "required": [
+            "light",
+            "standard",
+            "deep"
+          ],
+          "properties": {
+            "light": {
+              "type": "string"
+            },
+            "standard": {
+              "type": "string"
+            },
+            "deep": {
+              "type": "string"
+            }
+          },
+          "description": "Each tier's model spec as it will run (`provider/id:level`); a tier is a bare `:level` when no route resolves."
+        },
+        "price_basis": {
+          "enum": [
+            "unknown",
+            "repo",
+            "measured",
+            "unpriced",
+            "unmeasured"
+          ],
+          "description": "What the price is known from. measured: every model the run uses is the one the estimate was fitted on. repo: the repo's own rates (.git/qcr-review.json). unmeasured: pi prices the model and no estimate exists, so the run is held by a spend limit (cap_usd). unpriced: pi has no price for the model, so there is no dollar stop. unknown: no model route resolves."
+        },
+        "estimate_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "The estimated cost; null when price_basis is unmeasured, unpriced or unknown."
+        },
+        "cap_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "The hard stop: twice the estimate where there is one, the spend limit on an unmeasured model. Null where there is none: the Action route without --limit, an unpriced model, no model route."
+        },
+        "limit_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "With an estimate: the estimate up to which the review runs without asking. On an unmeasured model: the spend limit (equal to cap_usd). Null where neither applies."
+        },
+        "auto": {
+          "type": "boolean",
+          "description": "True when the review runs without a confirmation. On an unmeasured model that takes the person's word once: --limit on the run, a yes at a terminal, or a start with the key."
+        },
+        "key": {
+          "type": "string",
+          "description": "Quote it with --key to confirm a review over the limit, or one with no estimate. It moves with the branch, the plan, the stop and the models the run is on."
+        },
+        "pr": {
+          "type": "integer"
+        },
+        "credential": {
+          "type": "string"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "path",
+        "line",
+        "severity",
+        "title",
+        "lens"
+      ],
+      "properties": {
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "severity": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "lens": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "still_open": {
+      "type": "object",
+      "required": [
+        "path",
+        "line",
+        "severity",
+        "title",
+        "lens",
+        "head_sha"
+      ],
+      "properties": {
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "severity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "lens": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "head_sha": {
+          "type": "string"
+        }
+      }
+    },
+    "post": {
+      "type": "object",
+      "required": [
+        "ok"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "posted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": "string"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "would_post": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recorded": {
+          "type": "string"
+        }
+      },
+      "description": "What --to pr did. In a dry-run install the review is recorded, not sent."
+    },
+    "credential": {
+      "type": "object",
+      "required": [
+        "kind",
+        "origin",
+        "subscription"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "oauth",
+            "api_key"
+          ]
+        },
+        "origin": {
+          "enum": [
+            "stored",
+            "runtime",
+            "models-json",
+            "env-key",
+            "ambient"
+          ],
+          "description": "Where pi found it: its own login store, a key handed to it for the run, the person's models.json, an environment key, or a cloud identity the environment carries."
+        },
+        "subscription": {
+          "type": "boolean",
+          "description": "A login backed by a provider subscription: list prices are not what the person is billed."
+        }
+      },
+      "description": "Whose credential a provider runs on. Never a value."
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "spec",
+        "provider",
+        "id",
+        "provider_name",
+        "source",
+        "pick",
+        "pi_default",
+        "custom",
+        "moved_from",
+        "priced",
+        "ask",
+        "credential"
+      ],
+      "properties": {
+        "spec": {
+          "type": "string",
+          "description": "`provider/id`, never a level."
+        },
+        "provider": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "provider_name": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "flag",
+            "config",
+            "choice",
+            "remembered",
+            "only-credential",
+            "pi-provider",
+            "credential-order"
+          ],
+          "description": "What decided the route: --model, the config's pin, a stated or remembered choice, the only credential, the provider pi itself is on, or the credential order."
+        },
+        "pick": {
+          "enum": [
+            "pinned",
+            "newest",
+            "pi-default"
+          ]
+        },
+        "pi_default": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "pi's own default on the provider when the pick differs from it."
+        },
+        "custom": {
+          "type": "boolean",
+          "description": "The id is not in pi's catalog and is sent as written."
+        },
+        "moved_from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The provider a pin named, when the run moved off it for want of a credential."
+        },
+        "priced": {
+          "type": "boolean",
+          "description": "pi has a non-zero list price for the model."
+        },
+        "ask": {
+          "type": "boolean",
+          "description": "Two or more providers tie and nothing decided: show the person the alternatives, and keep their answer with `qcr model use <provider>`."
+        },
+        "credential": {
+          "$ref": "#/$defs/credential"
+        }
+      }
+    },
+    "alternative": {
+      "type": "object",
+      "required": [
+        "spec",
+        "provider",
+        "provider_name",
+        "priced",
+        "credential"
+      ],
+      "properties": {
+        "spec": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "provider_name": {
+          "type": "string"
+        },
+        "priced": {
+          "type": "boolean"
+        },
+        "credential": {
+          "$ref": "#/$defs/credential"
+        }
+      }
+    }
+  }
+}

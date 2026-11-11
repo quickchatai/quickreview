@@ -294,8 +294,21 @@ Top level: `written_at`, `heartbeat`, `dry_run`, `prs[]`, `running_rounds`,
 Optional blocks, each absent rather than faked when its source has nothing to
 say — a reader must default rather than assume:
 
-- `pi_auth_expired` — `{ last_at, hits }` while pi sessions are failing with
-  token-expired errors (`packages/pi-plugin/src/authwatch.ts`).
+- `pi_auth_expired` — `{ last_at, hits }` while pi sessions are failing
+  because a provider refused the model credential
+  (`packages/pi-plugin/src/authwatch.ts`). A provider that accepts the
+  credential and refuses the model does not set it.
+- `model_route` — `{ spec, source, pick, moved_from, credential_origin, at }`,
+  the latest route a review worker reported: the model reviews run on, why,
+  the provider a pin was moved off (or `null`), and where pi found the
+  credential (`src/ipc/routereport.ts`). `null` until a worker has reported,
+  and absent from an older daemon's snapshot: both read as unknown, never as
+  a default model.
+- `total_unknown_spend_rounds`, `today_unknown_spend_rounds`,
+  `month_unknown_spend_rounds` — the rounds that recorded tokens and no cost
+  (a model pi has no price for, or an older row with no cost object), beside
+  each spend sum. A reader that finds them absent treats the count as
+  unknown, not zero, and a sum is never read as "everything" without them.
 - `openviking` — the supervised memory server's reachability, version, RSS and
   CPU (unauthenticated: whether the server is UP).
 - `memory` — reviewer-memory health (`MemoryStatus` in
@@ -483,7 +496,7 @@ may be omitted entirely; its defaults constant then supplies the whole block.
 | `[daemon]` | no | `parseConfig` | `src/daemon.ts`, `src/dispatch.ts`, `src/session-command-supervisor.ts` |
 | `[eod]` | no | `parseConfig` | `src/eod.ts`, `src/eodpinwatch.ts` |
 | `[caps]` | no | `parseCaps` | `src/improvements.ts` |
-| `[models]` (+ `.tiers`, `.pricing`) | no | `parseModels` | `packages/pi-plugin/src/include.ts`, `src/dispatch.ts`, `src/usage.ts` |
+| `[models]` (+ `.tiers`, `.pass_tiers`, `.pass_models`) | yes (`MODELS_TIER_DEFAULTS`: no model is named) | `parseModels` (`packages/pi-plugin/src/reviewconfig.ts`) | `packages/pi-plugin/src/include.ts`, `packages/pi-plugin/src/modelroute.ts`, `src/dispatch.ts` |
 | `[pi]` | no | `parseConfig` | `src/sessions.ts` |
 | `[memory]` | yes (`MEMORY_DEFAULTS`) | `parseConfig` | `src/memory/context.ts` |
 | `[openviking]` | yes (`OPENVIKING_DEFAULTS`) | `parseOpenViking` | `src/openviking/` |
@@ -593,15 +606,23 @@ shipped default `["migrations/", "infra/", "ansible/", ".github/workflows/"]`
 — a configured value *replaces* the list, and `.env`-named files are refused
 regardless).
 
-**`[models]`** — `default`, `conversation`, `overseer` (model spec strings,
-all `"openai-codex/gpt-6.1-sol"` in the example), `risk_passes` (string array,
+**`[models]`** — `model` (a model spec, `[provider/id][:level]`; `""` in the
+example, which names no model: the review then runs on the model route, the
+provider pi has a credential for; a value is a pin. The older keys
+`conversation` and `default` fold into it, and `overseer` is accepted and
+ignored), `risk_passes` (string array,
 `["pass-security", "pass-prod-risk", "pass-data-safety"]`; the parsed list
 always gains the fourteen `pass-sec-*` lenses, `withSecurityFamily`), `validate_tier`
 (`PassTier`, `"deep"` — the validator's own tier, floored only by the
 profile's `min_tier` for it and never raised to match a lens; `validatorTier`
 in `src/dispatch.ts`), `small_diff_lines` (number, `150`).
-`[models.tiers]` maps each `PassTier` to a model spec; `[models.pricing]` maps
-a bare model id to `{ input_per_mtok, output_per_mtok }` for spend accounting.
+`[models.tiers]` maps each `PassTier` (`light`, `standard`, `deep`; the older
+`terra-med`, `sol-med`, `sol-high` are read) to a model spec, shipped as
+`":medium"`, `":medium"`, `":high"`: a level on the review's model, with no
+model of its own. `[models.pass_tiers]` pins a lens to a tier and
+`[models.pass_models]` pins a lens to a model spec. `[models.pricing]` is
+accepted from an older file and read by nothing: prices are pi's catalog's,
+and spend is the cost pi reports for each call.
 
 **`[pi]`** — `package` (`"@earendil-works/pi-coding-agent"`), `version`
 (pinned; mirrored in `package.json` and the deploy variables), `session_dir`

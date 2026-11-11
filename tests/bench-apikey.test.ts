@@ -6,7 +6,10 @@
 //   2. on it every `openai-codex/` spec becomes `openai/` (the same model on
 //      the public API), from a config that pins the benchmark's model (the one
 //      this file writes: the shipped config.example.toml pins none) through
-//      the levers, into the fingerprint and the BUILT lens agents;
+//      the levers, into the fingerprint and the BUILT lens agents. The rewrite
+//      is the bench's own (src/bench/keyroute.ts, applied by the bench's
+//      `contextFor`): the review core's context does not make it, and no
+//      module outside the bench imports it;
 //   3. no login is read, the keys reach pi by name, and nothing changes on the
 //      login route (every published fingerprint and judge label is stable);
 //   4. a keyed run can never mix with the published login runs: its
@@ -40,6 +43,8 @@ import {
   modelForAuth,
   syncBenchAuth,
 } from "../src/bench/auth.js";
+import * as benchAuth from "../src/bench/auth.js";
+import * as keyroute from "../src/bench/keyroute.js";
 import { codexDriverArgv, codexDriverEnv } from "../src/bench/codex.js";
 import { judgeLabel } from "../src/bench/defectjudge.js";
 import { safeId, type BenchCase } from "../src/bench/aacr.js";
@@ -56,8 +61,11 @@ import {
   identityVars,
   PASS_ADDENDA,
 } from "@quickchatai/pi-quickreview/src/include.js";
+import { contextFrom } from "@quickchatai/pi-quickreview/src/engine/context.js";
 import { isPinned } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { LEGACY_TIER_NAMES } from "@quickchatai/pi-quickreview/src/types.js";
+import { loadConfig } from "../src/config.js";
+import { EXTENSION_DIRS, SRC_DIRS } from "./helpers/source-trees.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE = join(ROOT, "config.example.toml");
@@ -300,6 +308,54 @@ describe("dry config check: a pinned config on the key route", () => {
     expect(withAuthModels(login, "login")).toBe(login);
   });
 
+  // MUTATION: put `withAuthModels` back into the core's contextFrom
+  // (packages/pi-plugin/src/engine/context.ts) - a shipped review would rewrite
+  // a pin by the bench's switch, and this fails.
+  it("the review core's own context is not rewritten: the switch is the bench's alone", () => {
+    const core = withEnv(
+      { QCR_BENCH_AUTH: "api-key" },
+      () =>
+        contextFrom(
+          ROOT,
+          { cfg: loadConfig(PINNED), toml: PINNED_TEXT },
+          "",
+          "models.pass_models.pass-baseline=openai-codex/gpt-6-sol",
+        ).cfg,
+    );
+    const specs = [
+      core.models.model,
+      ...Object.values(core.models.tiers),
+      ...Object.values(core.models.pass_models),
+    ];
+    expect(specs.length).toBeGreaterThanOrEqual(5);
+    expect(specs.every((s) => s.startsWith("openai-codex/"))).toBe(true);
+  });
+
+  // MUTATION: return `installContextFor(...)` as it is from the bench's
+  // contextFor (src/bench/runner.ts) - a keyed run keeps the login provider's
+  // specs, and "every model spec of a pinned config ... runs as openai/" above
+  // fails with this one.
+  it("the bench's contextFor is where the rewrite is applied, through the bench's own key route", () => {
+    expect(withAuthModels).toBe(keyroute.withAuthModels);
+    for (const name of ["apiKeyEnv", "benchAuthMode", "benchProvider", "modelForAuth"] as const)
+      expect(benchAuth[name], name).toBe(keyroute[name]);
+    // The route's two key names are its own: no table of the core's is read.
+    expect(keyroute.KEY_ROUTE_PROVIDERS).toEqual({
+      digitalocean: "DIGITALOCEAN_API_KEY",
+      google: "GEMINI_API_KEY",
+    });
+    // A config that pins nothing has nothing to move: a spec with no model
+    // part names no provider.
+    const login = contextFor(ROOT, "").cfg;
+    const unpinned = structuredClone(login);
+    unpinned.models.model = ":high";
+    unpinned.models.tiers["deep"] = "";
+    const keyed = withAuthModels(unpinned, "api-key");
+    expect(keyed.models.model).toBe(":high");
+    expect(keyed.models.tiers["deep"]).toBe("");
+    expect(keyed.models.tiers["standard"]).toMatch(/^openai\//);
+  });
+
   it("a per-pass model override (models.pass_models) runs as openai/ too", () => {
     const keyed = withEnv(
       { QCR_BENCH_AUTH: "api-key" },
@@ -432,6 +488,35 @@ describe("dry config check: a pinned config on the key route", () => {
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the key route stays in the bench", () => {
+  /** Every .ts file under `dir`, repo-relative. */
+  const sources = (dir: string): string[] =>
+    readdirSync(join(ROOT, dir), { recursive: true })
+      .map((f) => join(dir, String(f)))
+      .filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts") && !f.includes("node_modules"));
+  /** Does the file import a module named keyroute (statically or by `import()`)? */
+  const importsKeyRoute = (rel: string): boolean =>
+    /(?:\bfrom|\bimport\s*\()\s*["'][^"']*\bkeyroute\.js["']/.test(
+      readFileSync(join(ROOT, rel), "utf8"),
+    );
+
+  // The published package leaves src/bench/ out (tests/cli-install-smoke.test.ts
+  // packs it and runs it), so a shipped module that imported the key route
+  // would not load. This is the same rule on the source tree.
+  // MUTATION: import `withAuthModels` from the bench's keyroute.js in
+  // src/reviewcontext.ts, or move keyroute.ts back under
+  // packages/pi-plugin/src/engine/ and import it from context.ts - this fails.
+  it("no module outside src/bench/ imports it, and the core holds no key route of its own", () => {
+    const all = [...SRC_DIRS, ...EXTENSION_DIRS].flatMap(sources);
+    expect(all.length).toBeGreaterThan(300);
+    const importers = all.filter(importsKeyRoute);
+    // The walk sees an import when there is one: the bench's own.
+    expect(importers).toEqual(expect.arrayContaining(["src/bench/auth.ts", "src/bench/runner.ts"]));
+    expect(importers.filter((f) => !f.startsWith("src/bench/"))).toEqual([]);
+    expect(all.filter((f) => /(^|\/)keyroute\.ts$/.test(f))).toEqual(["src/bench/keyroute.ts"]);
   });
 });
 

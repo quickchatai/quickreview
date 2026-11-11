@@ -150,8 +150,9 @@ same script the clone route's `qcr scan login` uses (`loginInPi`,
 read-write (at pi's agent dir); it holds no repo, no state, no profiles and no
 GitHub token. Every other call mounts it read-only at `/qcr-login`, and the
 engine takes a refresh-disabled copy of it (`packages/pi-plugin/src/engine/auth.ts`): only a
-login ever refreshes. A headless run with `OPENAI_API_KEY` (or another model
-key) in the environment reads no login at all, and nothing ever starts one.
+login ever refreshes. A headless run with a model API key in the environment
+(see "Model credentials" below) needs no login at all, and nothing ever starts
+one.
 
 The volume outlives every uid. Each call joins a fixed group (gid 4747,
 `--group-add`, `QCR_LOGIN_GID`); when pi exits, `login` moves everything pi
@@ -179,9 +180,33 @@ directory (under `$XDG_RUNTIME_DIR` on Linux, `$TMPDIR` elsewhere), mounts that
 directory and names the file in `QCR_GH_TOKEN_FILE`. The image reads the file
 once and unlinks it (`packages/pi-plugin/src/ghcred.ts`). The token is never in
 `-e`, `--env` or any argument list, and the directory is removed when the call
-ends. Model API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
-`DIGITALOCEAN_API_KEY`) go by name only: docker reads the value from your
-environment.
+ends.
+
+## Model credentials
+
+A model credential in your environment reaches the container by name only: the
+wrapper adds `-e <NAME>` for each name that is set, and docker reads the value
+from your environment, so no key is ever in an argument list. The names:
+
+- **pi's own**, for every built-in provider: the variables pi reads a model
+  credential from (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+  `XAI_API_KEY`, `OPENROUTER_API_KEY`, `AWS_ACCESS_KEY_ID` with
+  `AWS_SECRET_ACCESS_KEY`, and so on). The wrapper cannot ask pi, so the list
+  is the block between `# BEGIN pi model env names` and
+  `# END pi model env names` in the wrapper itself, generated from the pi the
+  image pins (`scripts/model-env-names.mjs`) and held equal to it by
+  `tests/model-env.test.ts`.
+- **the names in `QCR_MODEL_ENV`**, separated by commas: a provider's extra
+  setting, or the key of a provider you added to pi yourself
+  (`QCR_MODEL_ENV=MY_GATEWAY_KEY qcr review`). A name that starts with `GH_`,
+  `GITHUB_`, `QCR_`, `PI_`, `OPENVIKING_` or `GIT_` is refused: those are this
+  program's and git's own, never a model's.
+- `DIGITALOCEAN_API_KEY`, an older spelling kept for the installs that set it
+  (pi has no built-in provider under that name: a `models.json` in the login
+  must define one), and `QCR_DEBUG`.
+
+Which model a review then runs on is the route's: `qcr model` says it, and
+`qcr review --model <provider/model>` pins it for one run.
 
 ## Verbs
 

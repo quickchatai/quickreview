@@ -9,15 +9,22 @@
 //     does as its first act, opened by pi's SessionManager and its context rebuilt.
 //     No provider, no model, no round: the same check the rehearsal makes
 //     of the library half;
-//   - the login (auth.json) must be there, readable and either refreshable or
-//     good for the work window; models.json must parse; the IPC socket directory
-//     must be creatable at 0700 and its socket path must fit sockaddr_un;
+//   - a model route must resolve (`login`): pi is asked, in this process and
+//     with no request made, which model a review here would run on, over the
+//     credentials a worker will have: the stored logins and keys of the login
+//     dir, and the model env of the secrets dir (src/modelenv.ts, the loader
+//     the daemon hands its workers' processes). No login file is fine when the
+//     credential is a key. A stored login counts only when it has a refresh
+//     token or is good for the work window; one that has neither is left out
+//     before the route is chosen, as a worker leaves it out. A store or an
+//     inventory that cannot be read fails the check: unknown is never ok;
+//   - models.json must parse; the IPC socket directory must be creatable at
+//     0700 and its socket path must fit sockaddr_un;
 //   - the config home is checked with `qcr config check`'s own function.
-// It prints one JSON object (never a token, never transcript text) and exits
-// non-zero when any check failed, which is what makes the updater rescue.
+// It prints one JSON object (never a token, never a key, never transcript
+// text) and exits non-zero when any check failed, which is what makes the
+// updater rescue.
 import {
-  accessSync,
-  constants,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -30,16 +37,33 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { openSessionContext } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import {
+  openSessionContext,
+  piSavedProvider,
+} from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { checkConfigHome } from "./configcheck.js";
 import { parseConfig, sandboxRoot } from "./config.js";
 import {
+  AuthError,
   DISABLED_REFRESH,
   PI_REFRESH_MARGIN_MS,
-  loginSummary,
+  borrowedCredentials,
+  type BorrowedAuth,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
+import {
+  credentialWords,
+  refusalText,
+  type RouteRefusal,
+  type RouteResult,
+  type SkippedLogin,
+} from "@quickchatai/pi-quickreview/src/modelroute.js";
+import { isPinned } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { routeHost } from "@quickchatai/pi-quickreview/src/reviewhost.js";
 import { ensurePrivateDir, runDirOf, socketPathOf } from "./ipc/capability.js";
-import { locateConfig } from "./install.js";
+import { locateConfig, locateSecrets } from "./install.js";
+import { loginDirOf } from "./loginrefresh/supervisor.js";
+import { modelEnvFrom } from "./modelenv.js";
 import { inspectSessionJsonl } from "./resumecheck.js";
 import { StateStore } from "./state.js";
 
@@ -71,8 +95,22 @@ export interface PreflightOptions {
   sessionsDir?: string;
   /** The config home (config.toml + profiles/), read. */
   configHome: string;
-  /** pi's agent dir: auth.json and models.json, read. */
+  /** pi's agent dir: the catalog (models.json), and the login unless
+   * `loginDir` names it; read. */
   agentDir: string;
+  /** Where the login, the remembered model choice and pi's saved provider are
+   * when that is not `agentDir`: the single box's shared login, as a worker
+   * reads them from its spec's `login_dir`. */
+  loginDir?: string;
+  /** The install's secrets dir: its model env (src/modelenv.ts) is what a
+   * worker's process is given beside the login. Omitted: none. */
+  secretsDir?: string;
+  /** The environment pi's credential lookups read, under the model env.
+   * Omitted: an empty one, so only the login and the secrets dir count. */
+  env?: Readonly<Record<string, string | undefined>>;
+  /** `[models] model` of the config under check: the review's pin when it
+   * names a model. */
+  model?: string;
   /** The app root `qcr config check` resolves generic profiles from. */
   root?: string;
   workWindowMin?: number;
@@ -229,52 +267,209 @@ function resume(opts: PreflightOptions, scratch: string, db: string | null): Pre
   return { name: "resume", ok: true, detail };
 }
 
-function login(opts: PreflightOptions): PreflightCheck {
-  const file = join(opts.agentDir, "auth.json");
-  const fail = (reason: string): PreflightCheck => ({
-    name: "login",
-    ok: false,
-    detail: "login not usable",
-    reason,
-  });
-  if (!existsSync(file)) return fail(`no pi login at ${file}`);
-  try {
-    accessSync(file, constants.R_OK);
-  } catch {
-    return fail(`${file} is not readable by this user (the refresher shares its group)`);
-  }
+/** The login's own store, as the route host takes it. */
+type LoginStore = BorrowedAuth["credentials"];
+
+/** `store` without the providers in `hidden`: pi then sees each of them as it
+ * would be with no stored login, so a key in the model env for the same
+ * provider resolves by pi's own rule. */
+function without(store: LoginStore, hidden: ReadonlySet<string>): LoginStore {
+  if (hidden.size === 0) return store;
+  return {
+    read: async (providerId, options) =>
+      hidden.has(providerId) ? undefined : store.read(providerId, options),
+    list: async (options) =>
+      (await store.list(options)).filter((info) => !hidden.has(info.providerId)),
+    modify: (providerId, fn, options) => store.modify(providerId, fn, options),
+    delete: (providerId, options) => store.delete(providerId, options),
+  };
+}
+
+/**
+ * The stored logins the bot cannot count on after the cutover: an OAuth login
+ * with no refresh token of its own (nothing can renew it) that does not last
+ * the work window plus pi's refresh margin. A login with a refresh token is
+ * the refresher's to renew, whatever its access token's age. No login file is
+ * no login. Throws when the file is there and is not the object pi writes.
+ */
+function shortLogins(file: string, now: number, needMs: number): SkippedLogin[] {
   let raw: string;
   try {
     raw = readFileSync(file, "utf8");
-    JSON.parse(raw);
   } catch (e) {
-    return fail(`${file} does not parse: ${msgOf(e)}`);
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    // A filesystem error names the file itself.
+    throw e;
   }
-  const summary = loginSummary(raw);
-  const providers = Object.keys(summary);
-  if (providers.length === 0) return fail(`${file} holds no provider login`);
-  const parsed = JSON.parse(raw) as Record<string, Record<string, unknown>>;
-  const now = (opts.now ?? Date.now)();
-  const need = (opts.workWindowMin ?? DEFAULT_WORK_WINDOW_MIN) * 60_000;
-  const lacking: string[] = [];
-  for (const p of providers) {
-    const s = summary[p]!;
-    if (s.type !== "oauth") continue;
-    const refresh = parsed[p]?.["refresh"];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`${file} does not parse: ${msgOf(e)}`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    throw new Error(`${file} is not a JSON object`);
+  const short: SkippedLogin[] = [];
+  for (const [provider, entry] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const cred = entry as Record<string, unknown>;
+    if (cred["type"] !== "oauth") continue;
+    const refresh = cred["refresh"];
     const refreshable =
       typeof refresh === "string" && refresh !== "" && refresh !== DISABLED_REFRESH;
-    const lasts = s.expires !== null && s.expires >= now + need + PI_REFRESH_MARGIN_MS;
-    if (!refreshable && !lasts) lacking.push(p);
+    const expires = cred["expires"];
+    // A login with no expiry never runs out.
+    const lasts = typeof expires !== "number" || expires >= now + needMs + PI_REFRESH_MARGIN_MS;
+    if (!refreshable && !lasts)
+      short.push({ provider, name: provider, expiresAt: expires as number });
   }
-  if (lacking.length > 0)
-    return fail(
-      `the ${lacking.join(", ")} login has no refresh token and expires inside the ${Math.round(need / 60_000)}-minute work window`,
+  return short;
+}
+
+/** "a", "a and b", "a, b and c". */
+function listed(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/**
+ * Does a model route resolve for the bot this image will start: the question
+ * `qcr model` asks, over what a worker is handed. Nothing is sent and no
+ * session is started; the host runs over a private agent dir in the scratch.
+ */
+async function login(opts: PreflightOptions, scratch: string): Promise<PreflightCheck> {
+  const loginDir = opts.loginDir ?? opts.agentDir;
+  const now = (opts.now ?? Date.now)();
+  const need = (opts.workWindowMin ?? DEFAULT_WORK_WINDOW_MIN) * 60_000;
+  const fail = (reason: string): PreflightCheck => ({
+    name: "login",
+    ok: false,
+    detail: "no model route",
+    reason,
+  });
+  // The store's own error already says which file and why.
+  const unread = (e: unknown): PreflightCheck =>
+    fail(
+      e instanceof AuthError && e.code === "unreadable"
+        ? msgOf(e)
+        : `could not read pi's credentials: ${msgOf(e)}`,
     );
+
+  let skipped: SkippedLogin[];
+  let borrowed: BorrowedAuth;
+  try {
+    const short = shortLogins(join(loginDir, "auth.json"), now, need);
+    // Which logins count is this check's own rule (`shortLogins`: a refresh
+    // token, or the work window), not a run's: the bot is stopped, and a login
+    // whose access token ran out overnight is renewed by the refresher when it
+    // starts. So the borrow is asked at time zero, where it leaves nothing
+    // out, and the ones that do not count are hidden from the store below.
+    borrowed = borrowedCredentials({
+      srcDir: loginDir,
+      needMs: 0,
+      marginMs: 0,
+      owner: false,
+      now: () => 0,
+      // Nothing rewrites the login while the bot is stopped: no wait.
+      retry: { tries: 1 },
+    });
+    const named = new Set(short.map((l) => l.provider));
+    skipped = [...short, ...borrowed.skipped.filter((l) => !named.has(l.provider))];
+  } catch (e) {
+    return unread(e);
+  }
+  const remembered = readModelChoice(loginDir);
+  const saved = piSavedProvider(loginDir);
+  const modelEnv = opts.secretsDir !== undefined ? modelEnvFrom(opts.secretsDir) : {};
+
+  /** The route, and pi's display name for a provider id. */
+  const resolve = async (): Promise<{
+    result: RouteResult;
+    nameOf: (provider: string) => string;
+  }> => {
+    const made = await routeHost({
+      // The catalog stays in pi's own agent dir wherever the login is.
+      srcAgentDir: opts.agentDir,
+      tmpDir: join(scratch, "route"),
+      credentials: without(borrowed.credentials, new Set(skipped.map((l) => l.provider))),
+      // The model env over the process's own, as a worker's process holds it.
+      authEnv: { ...(opts.env ?? {}), ...modelEnv },
+      route: {
+        skipped,
+        ...(opts.model !== undefined && isPinned(opts.model)
+          ? { pin: { text: opts.model, from: "config" as const } }
+          : {}),
+        ...(remembered.choice !== undefined ? { choice: remembered.choice } : {}),
+        ...(saved !== undefined
+          ? { piProvider: { provider: saved, from: "pi-settings" as const } }
+          : {}),
+      },
+    });
+    try {
+      const result = await made.host.route();
+      const names = new Map(made.host.modelRuntime.getProviders().map((p) => [p.id, p.name]));
+      return { result, nameOf: (provider) => names.get(provider) ?? provider };
+    } finally {
+      made.dispose();
+    }
+  };
+  let resolved: Awaited<ReturnType<typeof resolve>>;
+  try {
+    resolved = await resolve();
+  } catch (e) {
+    // The inventory could not be read: unknown is never ok.
+    return unread(e);
+  }
+  const { result, nameOf } = resolved;
+
+  if (!result.ok)
+    return fail(
+      refusalWords(result.refusal, {
+        loginDir,
+        need,
+        now,
+        configPath: join(opts.configHome, "config.toml"),
+        nameOf,
+      }),
+    );
+  const route = result.route;
+  const left = skipped.map((l) => nameOf(l.provider));
   return {
     name: "login",
     ok: true,
-    detail: `${providers.length} provider(s): ${providers.join(", ")}`,
+    detail:
+      `runs ${route.spec} (${route.providerName}, ${credentialWords(route.credential)})` +
+      (route.movedFrom !== null ? `, moved from ${route.movedFrom}` : "") +
+      (left.length > 0 ? `; left out: the ${listed(left)} login (no refresh token)` : ""),
   };
+}
+
+/** Why there is no route, for the operator who reads the updater's refusal. */
+function refusalWords(
+  refusal: RouteRefusal,
+  o: {
+    loginDir: string;
+    need: number;
+    now: number;
+    configPath: string;
+    nameOf: (provider: string) => string;
+  },
+): string {
+  if (refusal.code === "login-too-short") {
+    const names = refusal.logins.map((l) => o.nameOf(l.provider));
+    const many = names.length > 1;
+    return (
+      `the ${listed(names)} login${many ? "s have" : " has"} no refresh token and ` +
+      `expire${many ? "" : "s"} inside the ${Math.round(o.need / 60_000)}-minute work window`
+    );
+  }
+  return refusalText(refusal, "app", {
+    agentDir: o.loginDir,
+    needMs: o.need,
+    configPath: o.configPath,
+    nameOf: o.nameOf,
+    now: () => o.now,
+  });
 }
 
 function models(opts: PreflightOptions): PreflightCheck {
@@ -332,14 +527,14 @@ function config(opts: PreflightOptions): PreflightCheck {
   };
 }
 
-export function runPreflight(opts: PreflightOptions): PreflightReport {
+export async function runPreflight(opts: PreflightOptions): Promise<PreflightReport> {
   const scratch = mkdtempSync(join(opts.scratchParent ?? tmpdir(), "qcr-preflight-"));
   const checks: PreflightCheck[] = [];
   try {
     const m = migrate(opts, scratch);
     checks.push(m.check);
     checks.push(resume(opts, scratch, m.db));
-    checks.push(login(opts));
+    checks.push(await login(opts, scratch));
     checks.push(models(opts));
     checks.push(socket(opts, scratch));
     checks.push(config(opts));
@@ -350,30 +545,44 @@ export function runPreflight(opts: PreflightOptions): PreflightReport {
 }
 
 /** The entry: options from the environment the image runs with. Prints the
- * report, returns the exit code. */
-export function preflightMain(
+ * report, resolves the exit code.
+ *
+ * The credentials are found where the daemon this image starts will find
+ * them: the login where `QCR_LOGIN_DIR` hands it one, else pi's agent dir;
+ * the secrets dir by the install locator (`QCR_SECRETS_MOUNT` first, which
+ * the entrypoint sets for this check as it does for the daemon), read by the
+ * loader the daemon gives its workers' processes. */
+export async function preflightMain(
   env: NodeJS.ProcessEnv = process.env,
   out: (s: string) => void = (s) => console.log(s),
-): number {
+): Promise<number> {
   const root = sandboxRoot();
   const located = locateConfig({ env });
   const stateDir = join(root, "state");
   let sessionsDir: string | undefined;
+  let model: string | undefined;
+  let configuredSecrets: string | null = null;
   try {
     if (existsSync(located.path)) {
       const cfg = parseConfig(readFileSync(located.path, "utf8"));
       sessionsDir = join(root, cfg.pi.session_dir);
+      model = cfg.models.model;
+      configuredSecrets = cfg.github.secrets_dir;
     }
   } catch {
     /* the config check names it */
   }
   const agentDir =
     env["PI_CODING_AGENT_DIR"]?.trim() || join(env["HOME"]?.trim() || homedir(), ".pi", "agent");
-  const report = runPreflight({
+  const report = await runPreflight({
     stateDir,
     ...(sessionsDir ? { sessionsDir } : {}),
     configHome: dirname(located.path),
     agentDir,
+    loginDir: loginDirOf(env, agentDir),
+    secretsDir: locateSecrets({ configured: configuredSecrets, env }).path,
+    env,
+    ...(model !== undefined ? { model } : {}),
     root,
   });
   out(JSON.stringify(report));
@@ -381,11 +590,11 @@ export function preflightMain(
 }
 
 if (process.argv[1]?.endsWith("preflight.js")) {
-  let code = 1;
-  try {
-    code = preflightMain();
-  } catch (e) {
-    console.log(JSON.stringify({ ok: false, checks: [], error: msgOf(e) }));
-  }
-  process.exit(code);
+  preflightMain().then(
+    (code) => process.exit(code),
+    (e: unknown) => {
+      console.log(JSON.stringify({ ok: false, checks: [], error: msgOf(e) }));
+      process.exit(1);
+    },
+  );
 }

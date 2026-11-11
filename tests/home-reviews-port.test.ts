@@ -162,6 +162,9 @@ describe("preview", () => {
       quote: {
         estimateUsd: 1.33,
         capUsd: 2.66,
+        // a reviewer from before the basis was named: its estimate was the measured one
+        basis: "measured",
+        model: null,
         key: "k-123",
         lenses: ["pass-security--deep", "pass-validate--deep"],
         files: 9,
@@ -169,6 +172,94 @@ describe("preview", () => {
       },
     });
     expect(r.qcrCalls).toEqual([["review", "3", "--repo", "acme/widgets", "--preview", "--json"]]);
+  });
+
+  const previewOf = (preview: Record<string, unknown>) =>
+    reviewsPort(
+      rig({
+        qcr: () => ({ stdout: `${JSON.stringify({ schema_version: 2, ok: true, preview })}\n` }),
+      }).deps,
+    ).preview("acme/widgets", 3);
+  const PLAN = { key: "k-9", lenses: ["pass-x--deep"], files: 2, head_sha: "abc" };
+
+  // MUTATION: put `est === undefined` back among parsePreview's refusals
+  // (src/home/reviews.ts) — a model with no estimate reads "price unknown"
+  // and cannot be reviewed from the home, and this fails.
+  it("reads a version-2 preview: the basis, the model, and a null estimate with its stop", async () => {
+    expect(
+      await previewOf({
+        ...PLAN,
+        model: { spec: "alpha/measured-model" },
+        price_basis: "measured",
+        estimate_usd: 1.5,
+        cap_usd: 3,
+      }),
+    ).toMatchObject({
+      ok: true,
+      quote: { estimateUsd: 1.5, capUsd: 3, basis: "measured", model: "alpha/measured-model" },
+    });
+    expect(
+      await previewOf({
+        ...PLAN,
+        model: { spec: "beta/other-model" },
+        price_basis: "unmeasured",
+        estimate_usd: null,
+        cap_usd: 15,
+      }),
+    ).toMatchObject({
+      ok: true,
+      quote: {
+        estimateUsd: null,
+        capUsd: 15,
+        basis: "unmeasured",
+        model: "beta/other-model",
+        key: "k-9",
+      },
+    });
+    expect(
+      await previewOf({
+        ...PLAN,
+        model: { spec: "gamma/local-model" },
+        price_basis: "unpriced",
+        estimate_usd: null,
+        cap_usd: null,
+      }),
+    ).toMatchObject({ ok: true, quote: { estimateUsd: null, capUsd: null, basis: "unpriced" } });
+    expect(
+      await previewOf({
+        ...PLAN,
+        model: { spec: "beta/other-model" },
+        price_basis: "repo",
+        estimate_usd: 4,
+        cap_usd: 8,
+      }),
+    ).toMatchObject({ ok: true, quote: { estimateUsd: 4, basis: "repo" } });
+  });
+
+  // MUTATION: drop the `(est === undefined) !== …` test from parsePreview —
+  // a null estimate under a basis that has one is taken for a quote, and this fails.
+  it("a preview with no model route, or one that contradicts itself, is no quote", async () => {
+    expect(
+      await previewOf({
+        ...PLAN,
+        model: null,
+        price_basis: "unknown",
+        estimate_usd: null,
+        cap_usd: null,
+      }),
+    ).toEqual({
+      ok: false,
+      why: "no model credential: sign in to a model provider (qcr login), then review again",
+    });
+    // a basis that has an estimate, and none given
+    expect(
+      await previewOf({ ...PLAN, price_basis: "measured", estimate_usd: null, cap_usd: null }),
+    ).toEqual({ ok: false, why: "the reviewer gave no price" });
+    // no estimate and nothing that says why
+    expect(await previewOf({ ...PLAN, estimate_usd: null, cap_usd: 15 })).toEqual({
+      ok: false,
+      why: "the reviewer gave no price",
+    });
   });
 
   it("a refused preview says the reviewer's reason; no JSON at all says what the process said", async () => {

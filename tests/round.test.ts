@@ -29,6 +29,13 @@ import {
 } from "@quickchatai/pi-quickreview/src/engine/round.js";
 import { roundSdkExtras } from "@quickchatai/pi-quickreview/src/engine/roundsdk.js";
 import { sdkRuntime } from "@quickchatai/pi-quickreview/src/engine/sdkruntime.js";
+import {
+  EventCostMeter,
+  eventsCost,
+  isUnpricedUsage,
+  scanRanUnpriced,
+  spendText,
+} from "@quickchatai/pi-quickreview/src/pricing.js";
 import { pricedFaux } from "./helpers/priced-faux.js";
 import {
   FILES,
@@ -254,6 +261,22 @@ describe.each([proc, sdk])("runRound on the $name runtime", (h) => {
     ])
       expect(existsSync(join(outDir, f)), f).toBe(true);
   });
+
+  // pi stamps a cost of exactly 0 on a call of a model it has no price for:
+  // tokens at a cost of zero. That round's cost is unknown, never $0. (On the
+  // process runtime, whose fake pi states the tokens of each message.)
+  // MUTATION: take `priced.usd` whatever `priced.unpricedCalls` says in
+  // settleRound - costUsd is 0 here and this fails.
+  it.runIf(h.name === "proc")(
+    "a round whose model pi has no price for has no cost: null, never $0",
+    async () => {
+      const { result: r, outDir } = await run(h, [{ write: FULL, cost: 0 }]);
+      expect(r.error).toBeUndefined();
+      expect(r.outcome).toMatchObject({ verdict: "REQUEST_CHANGES" });
+      expect(r.costUsd).toBeNull();
+      expect(eventsCost(outDir)).toEqual({ usd: 0, unpricedCalls: 1 });
+    },
+  );
 
   it("sends ONE follow-up on the same session when the findings record is missing", async () => {
     const { result: r, b } = await run(h, [
@@ -540,5 +563,114 @@ describe("runRound and a stop", () => {
     await expect(run).rejects.toMatchObject({ name: "AbortError" });
     expect(prompted()).toBe(0);
     expect(disposed()).toBe(1);
+  });
+});
+
+// ---- what a stream cost, where pi has no price ---------------------------------
+//
+// pi stamps a cost of exactly 0 on every call of a model it has no price for.
+// The meter a round, a turn's cap and the bot worker all price with counts
+// those calls, and a stream with any has no dollar figure.
+describe("the cost meter where pi has no price for the model", () => {
+  const message = (usage: Record<string, unknown>): string =>
+    JSON.stringify({ type: "message_end", message: { role: "assistant", usage } });
+  const lensEnd = (id: string, children: Array<Record<string, unknown>>): string =>
+    JSON.stringify({
+      type: "tool_execution_end",
+      toolName: "subagent",
+      toolCallId: id,
+      result: { details: { results: children.map((usage) => ({ usage })) } },
+    });
+  const lensUpdate = (id: string, children: Array<Record<string, unknown>>): string =>
+    JSON.stringify({
+      type: "tool_execution_update",
+      toolName: "subagent",
+      toolCallId: id,
+      partialResult: { details: { results: children.map((usage) => ({ usage })) } },
+    });
+
+  it("tells an unpriced call (tokens at exactly 0) from a free one and from an unstated one", () => {
+    expect(isUnpricedUsage({ input: 100, output: 10, cost: { total: 0 } })).toBe(true);
+    expect(isUnpricedUsage({ input: 0, output: 0, cacheRead: 900, cost: 0 })).toBe(true);
+    // No tokens: the call never reached the model.
+    expect(isUnpricedUsage({ input: 0, output: 0, cost: { total: 0 } })).toBe(false);
+    // A price, however small.
+    expect(isUnpricedUsage({ input: 100, output: 10, cost: { total: 0.0001 } })).toBe(false);
+    // No cost recorded says nothing either way.
+    expect(isUnpricedUsage({ input: 100, output: 10 })).toBe(false);
+    expect(isUnpricedUsage(null)).toBe(false);
+  });
+
+  // MUTATION: return `this.total` from costUsd whatever `this.unpriced` is -
+  // this fails.
+  it("a stream with an unpriced call has no cost, and still sums what pi did price", () => {
+    const m = new EventCostMeter();
+    m.add(message({ input: 100, output: 10, cost: { total: 0.25 } }));
+    expect(m.costUsd).toBeCloseTo(0.25);
+    expect(m.unpricedCalls).toBe(0);
+    m.add(message({ input: 4000, output: 400, cost: { total: 0 } }));
+    expect(m.unpricedCalls).toBe(1);
+    expect(m.costUsd).toBeNull();
+    // The priced part is what a dollar cap can still be held against.
+    expect(m.totalUsd).toBeCloseTo(0.25);
+  });
+
+  it("counts an unpriced lens child once across its updates and its end", () => {
+    const m = new EventCostMeter();
+    const unpriced = { input: 900, output: 90, cacheRead: 0, cost: 0 };
+    const priced = { input: 900, output: 90, cacheRead: 0, cost: 0.5 };
+    m.add(lensUpdate("t1", [unpriced]));
+    m.add(lensUpdate("t1", [unpriced, priced]));
+    expect(m.unpricedCalls).toBe(1);
+    m.add(lensEnd("t1", [unpriced, priced]));
+    expect(m.unpricedCalls).toBe(1);
+    expect(m.totalUsd).toBeCloseTo(0.5);
+    expect(m.costUsd).toBeNull();
+  });
+
+  it("a priced stream's cost is its sum", () => {
+    const m = new EventCostMeter();
+    m.add(message({ input: 100, output: 10, cost: { total: 0.25 } }));
+    m.add(lensEnd("t1", [{ input: 900, output: 90, cacheRead: 0, cost: 0.5 }]));
+    expect(m.costUsd).toBeCloseTo(0.75);
+  });
+});
+
+describe("how a spend sum is said", () => {
+  // MUTATION: return the sum alone from spendText when the count is above
+  // zero - this fails.
+  it("says the sum, the rounds it could not count, or unknown when nothing was priced", () => {
+    expect(spendText(1.5, 0)).toBe("$1.50");
+    expect(spendText(1.5, 2)).toBe("$1.50 + 2 rounds unknown");
+    expect(spendText(1.5, 1)).toBe("$1.50 + 1 round unknown");
+    expect(spendText(0, 3)).toBe("unknown (3 rounds)");
+    expect(spendText(0, 0)).toBe("$0.00");
+    expect(spendText(1.5, 2, "at list prices")).toBe("$1.50 at list prices + 2 rounds unknown");
+    expect(spendText(1.5, 0, "at list prices")).toBe("$1.50 at list prices");
+  });
+
+  it("claims nothing about a count it was not given: the sum is said as it is", () => {
+    expect(spendText(1.5)).toBe("$1.50");
+    expect(spendText(1.5, null)).toBe("$1.50");
+    expect(spendText(0, undefined)).toBe("$0.00");
+  });
+});
+
+describe("a scan run on a model pi has no price for", () => {
+  const done = (cost_usd: number | null) => ({ status: "done", cost_usd });
+  it("is one that finished cases at exactly 0, or was held to a stop of 0, and counted no dollars", () => {
+    expect(scanRanUnpriced({ cap_usd: 15, spent_usd: 0, cases: [done(0), done(0)] })).toBe(true);
+    expect(
+      scanRanUnpriced({ cap_usd: 0, spent_usd: 0, cases: [{ status: "pending", cost_usd: null }] }),
+    ).toBe(true);
+    // Dollars were counted: priced.
+    expect(scanRanUnpriced({ cap_usd: 15, spent_usd: 0.4, cases: [done(0.4)] })).toBe(false);
+    // Nothing finished yet under a real stop: nothing is known, nothing is claimed.
+    expect(
+      scanRanUnpriced({ cap_usd: 15, spent_usd: 0, cases: [{ status: "running", cost_usd: null }] }),
+    ).toBe(false);
+    // A case with no price at all (null) is the scan's own "unpriced case", not this.
+    expect(scanRanUnpriced({ cap_usd: 15, spent_usd: 0, cases: [done(null)] })).toBe(false);
+    expect(scanRanUnpriced({ cap_usd: 0, spent_usd: 0, cases: [] })).toBe(false);
   });
 });

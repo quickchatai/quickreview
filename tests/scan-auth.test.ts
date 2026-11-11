@@ -96,6 +96,54 @@ describe("the scan's copy of the companion's login", () => {
     expect(() => statSync(join(dst, "auth.json"))).toThrow();
   });
 
+  // With the providers the scan's models are on, only their tokens are
+  // judged; the copy is still the whole login.
+  // MUTATION: pass `providers` on to copyPiAuth in syncScanAuth (a filtered
+  // copy) — the other provider's entry is missing from the copy and this fails.
+  it("judges only the scan's providers, and still copies the whole login", () => {
+    const both = JSON.stringify({
+      "made-up": { type: "oauth", access: "tok-M", refresh: "r1", expires: 10 * HOUR },
+      "other-one": { type: "oauth", access: "tok-O", refresh: "r2", expires: HOUR },
+    });
+    writeFileSync(join(src, "auth.json"), both);
+    // The whole login: the other provider's token is inside the window.
+    expect(() =>
+      syncScanAuth({ srcDir: src, dstDir: dst, needMs: 2 * HOUR, now: () => 0 }),
+    ).toThrow(/other-one/);
+    const r = syncScanAuth({
+      srcDir: src,
+      dstDir: dst,
+      needMs: 2 * HOUR,
+      now: () => 0,
+      providers: ["made-up"],
+    });
+    expect(r.expiresAt).toBe(10 * HOUR);
+    const copy = JSON.parse(readFileSync(join(dst, "auth.json"), "utf8"));
+    expect(Object.keys(copy).sort()).toEqual(["made-up", "other-one"]);
+    expect(copy["made-up"].refresh).toBe(DISABLED_REFRESH);
+    expect(copy["other-one"].refresh).toBe(DISABLED_REFRESH);
+  });
+
+  it("the scan's own provider's short token is still refused, and nothing is written", () => {
+    writeFileSync(
+      join(src, "auth.json"),
+      JSON.stringify({
+        "made-up": { type: "oauth", access: "tok-M", refresh: "r1", expires: HOUR },
+        "other-one": { type: "oauth", access: "tok-O", refresh: "r2", expires: 10 * HOUR },
+      }),
+    );
+    expect(() =>
+      syncScanAuth({
+        srcDir: src,
+        dstDir: dst,
+        needMs: 2 * HOUR,
+        now: () => 0,
+        providers: ["made-up"],
+      }),
+    ).toThrow(/made-up access token/);
+    expect(() => statSync(join(dst, "auth.json"))).toThrow();
+  });
+
   it("is refused when the companion has no login at all", () => {
     expect(() => syncScanAuth({ srcDir: src, dstDir: dst, needMs: HOUR })).toThrow(
       /no pi login.*qcr scan login/,

@@ -1522,12 +1522,12 @@ describe("lens tools (companion)", () => {
       // skips the file — pin both.
       expect(body).toMatch(new RegExp(`^name: ${file.replace(/\.md$/, "")}$`, "m"));
       expect(body).toMatch(/^description: .+$/m);
-      // ChatGPT OAuth is the only credential in the container: an anthropic/
-      // model or a web tool would be dead weight that can never run.
-      // The :thinking suffix rides the model field.
-      expect(body).toMatch(/^model: openai-codex\/[^\s:]+:(off|minimal|low|medium|high)$/m);
-      expect(body).not.toMatch(/^thinking:/m);
-      expect(body).not.toMatch(/anthropic\//);
+      // An agent names no model: it runs on the model pi itself picks for
+      // whatever credential the companion holds, so a companion signed in to
+      // any provider can run it. The level alone is the agent's own.
+      // MUTATION: put `model: <provider>/<id>:low` back into explore.md - this fails.
+      expect(body).not.toMatch(/^model:/m);
+      expect(body).toMatch(/^thinking: (off|minimal|low|medium|high)$/m);
       expect(body).not.toMatch(/web_search|web_fetch/);
       // Read-only leaves: no write/edit, no bash, and no nested fan-out.
       expect(/^tools: .*(write|edit|bash)/m.test(body)).toBe(false);

@@ -3,9 +3,13 @@
 // (extensions/cli/home.ts) calls `homeOptionsFromEnv(process.env)`.
 //
 //   pi login   the auth file of the pi home the chat runs in: pi's own
-//              agent dir ($PI_CODING_AGENT_DIR, else ~/.pi/agent), read the
-//              way pi reads it, so the login line and the chat cannot
-//              disagree. Provider ids only, never a token.
+//              agent dir ($PI_CODING_AGENT_DIR, else ~/.pi/agent). Whether
+//              the home is signed in is pi's registry's to say (any
+//              provider, a key in the environment too: extensions/home.ts
+//              reads it off the running pi); this file is what a pi that
+//              hands the home no registry is read by, and what tells a
+//              re-login that a stored login was replaced. Provider ids, each
+//              credential's type and expiry, never a token.
 //   GitHub     `gh`: the account, the repository's open PRs, the browser.
 //   repository `[github] repo` of the install's config.toml, read again on
 //              every refresh.
@@ -104,27 +108,42 @@ const isMissingFile = (err: unknown): boolean =>
   (err as NodeJS.ErrnoException | null)?.code === "ENOENT";
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-/** The providers pi holds a login for in `agentDir`. No auth file is no
- * login; a file that cannot be read or parsed is unknown. */
+/** The credentials pi stores in `agentDir`'s auth file. No auth file is no
+ * stored credential; a file that cannot be read or parsed is unknown. */
 export function piLoginPort(
   agentDir: string,
   read: (p: string) => string = (p) => readFileSync(p, "utf8"),
 ): PiLoginPort {
+  const path = join(agentDir, "auth.json");
+  /** Each stored credential's type and expiry by provider; never a token. */
+  const stored = (): Known<ReadonlyMap<string, string>> => {
+    let raw: string;
+    try {
+      raw = read(path);
+    } catch (err) {
+      return isMissingFile(err)
+        ? known(new Map<string, string>())
+        : unknown(`can't read ${path}: ${message(err)}`);
+    }
+    try {
+      return known(
+        new Map(
+          Object.entries(loginSummary(raw)).map(([provider, c]): [string, string] => [
+            provider,
+            `${c.type}:${c.expires ?? ""}`,
+          ]),
+        ),
+      );
+    } catch (err) {
+      return unknown(`can't parse ${path}: ${message(err)}`);
+    }
+  };
   return {
     providers: async () => {
-      const path = join(agentDir, "auth.json");
-      let raw: string;
-      try {
-        raw = read(path);
-      } catch (err) {
-        return isMissingFile(err) ? known([]) : unknown(`can't read ${path}: ${message(err)}`);
-      }
-      try {
-        return known(Object.keys(loginSummary(raw)));
-      } catch (err) {
-        return unknown(`can't parse ${path}: ${message(err)}`);
-      }
+      const s = stored();
+      return s.kind === "known" ? known([...s.value.keys()]) : s;
     },
+    stamps: async () => stored(),
   };
 }
 

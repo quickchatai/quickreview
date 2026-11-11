@@ -305,6 +305,10 @@ export function buildReplay(
   reviewedRepo: string,
   env: NodeJS.ProcessEnv,
   concurrency?: number,
+  /** The model a child-pi case with no model of its own is handed, asked per
+   * case (the model the host's pi is on). Omitted, or answering nothing: such
+   * a child runs on pi's own choice for its login. */
+  route?: () => { spec: string; provider: string } | undefined,
 ): ReplayRunner {
   const root = env.QCR_ROOT?.trim() || sandboxRoot();
   const home = stateHome(env);
@@ -329,7 +333,7 @@ export function buildReplay(
     clock,
     source: gitReplaySource({ github, repo, repoRoot: reviewedRepo, stateRoot: home }),
     sides: (req) => replaySides({ root, env, stateRoot: home, state, clock }, req),
-    cases: (agentsDir) => piCaseRunner({ agentsDir, cwd: root }),
+    cases: (agentsDir) => piCaseRunner({ agentsDir, cwd: root, ...(route ? { route } : {}) }),
     ...(concurrency !== undefined ? { concurrency } : {}),
     log: (line) => console.error(line),
   });

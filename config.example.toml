@@ -55,8 +55,10 @@ reviewed_label = "Automatic Review"
 improvement_label = "Bot improvement"
 issue_label = "bot-filed"
 # secrets dir: app_id, app.pem, webhook_secret, tunnel_token (auth = "user": github_token instead
-# of the first three); optional openai_api_key (pi, API-key
-# route) and openai_embeddings_api_key (only with embedding_provider = "openai" in the openviking table)
+# of the first three); optional model-env/<ENV_NAME> files (a model provider's API key for pi, one
+# file per environment variable, under the name the provider documents; the older openai_api_key
+# file is still read) and openai_embeddings_api_key (only with embedding_provider = "openai" in the
+# openviking table)
 # "" (recommended) = the install's config home, $XDG_CONFIG_HOME/qcr/<install>/secrets (the old
 # ~/.config/quickreview-bot is never read — `qcr install migrate` moves it). A path here wins.
 secrets_dir = ""
@@ -229,12 +231,29 @@ issues_per_day = 3
 improvement_pr_deny_prefixes = ["migrations/", "infra/", "ansible/", ".github/workflows/"]
 
 [models]
-# The review's model. Shipped: none is named, and a review runs on a provider
-# pi has a credential for (a login, or a key in the environment), on the newest
-# model that provider offers; `qcr model` shows which, and why. A model spec is
-# "provider/id" with an optional ":<thinking level>", in pi's own spelling.
-# Uncomment to pin one model for the whole review; a ":<level>" on it is the
-# main session's level.
+# Which model a review runs on (docs/llm-setup.md). Nothing here is required.
+#   Unset, the credential decides: a review runs on a provider pi has a
+#   credential for (a login, or a key in the environment), on the newest model
+#   that provider offers. With several providers a terminal asks once and
+#   remembers; `qcr model` shows which model runs, and why.
+#   Every key that names a model is a pin: `model` for the whole review, a
+#   [models.tiers] entry for one tier, a [models.pass_models] entry for one
+#   lens. An entry wins for its tier or lens, and everything unpinned runs on
+#   `model`. `--model` on one run replaces all of them for that run.
+#   The three tiers are thinking levels on the review's model:
+#     light     medium thinking; where a small, quiet diff's lenses start
+#     standard  medium thinking; where every other diff's lenses start, and
+#               the scan's tier
+#     deep      high thinking; the risk passes, the validator and the lenses
+#               that read every changed line
+#   Unpinned, light and standard are the same model at the same level; they
+#   differ once a tier is pinned to a model of its own.
+#   The older names are read wherever a tier or a model is: the tiers
+#   terra-med, sol-med and sol-high, and the keys `default` and `conversation`
+#   (both fold into `model`).
+# A model spec is "provider/id" with an optional ":<thinking level>", in pi's
+# own spelling. Uncomment to pin one model for the whole review; a ":<level>"
+# on it is the main session's level.
 # model = "provider/id"
 # Passes always run at deep — single variant, not raisable (already top).
 # The fourteen security-family lenses (pass-sec-*) always join this list,
@@ -264,6 +283,14 @@ small_diff_lines = 150
 #   [models.pass_tiers]
 #   "pass-sweep" = "deep"
 #   "pass-baseline" = "deep"
+# [models.pass_models] — per-lens model pins: pass name → model spec. Every
+# built variant of that lens runs on that model, at the thinking level it
+# would otherwise have had unless the spec names its own. An entry that names
+# only a level (":low") moves the lens's level and leaves it on the review's
+# model. Empty by default. Not for pass-validate nor for a risk pass. e.g.
+#   [models.pass_models]
+#   "pass-maintainability" = "provider/id:low"
+#   "pass-duplication" = ":low"
 
 [models.tiers]
 # PassTier → model spec. Shipped: no tier names a model, so each runs on the
@@ -279,9 +306,9 @@ small_diff_lines = 150
 # "deep" = "provider/id:high"
 
 [models.pricing]
-# Spend rates keyed by bare model id, USD per million tokens. Consumed by
-# spend accounting; empty entries fall back to unpriced.
-# "gpt-6-sol" = { input_per_mtok = 0.0, output_per_mtok = 0.0 }
+# Read for an older config.toml and used by nothing: prices come from pi's
+# own catalog, and spend is counted from the cost pi reports for each call. A
+# model pi has no price for shows its spend as unknown, never $0.00.
 
 [tui]
 # qcr tui — the operator TUI on the owner's PC, polling the review VM over ssh.
@@ -1063,7 +1090,7 @@ margin_min = 90          # refresh once the token has less than pi's 5 min + thi
 # wins); the rest is the install's. All optional — these are the defaults.
 [scan]
 effort = "low"                 # stage 1's reasoning level: low | medium | high (= [models] effort_max)
-tier = "standard"              # whose model pass-scan runs on ([models.tiers])
+tier = "standard"              # the tier pass-scan runs at ([models.tiers]): light | standard | deep
 validator = true               # the skeptic: judges each finding at its lens's tier — confirmed / likely / doubtful, never dropped (its cost is in the price)
 exclude = []                   # repo-relative globs never scanned, e.g. ["generated/", "*.pb.go"]
 calibration_units = 3          # units the first-scan calibration run reads
@@ -1096,9 +1123,10 @@ threat_model = "off"           # draft a threat model first (stage 0, part of th
 # Unset, it is "host" inside the companion container.
 # "host": a detached process on this machine, running the `pi` on the PATH (its own login).
 #
-# One login: the companion's. Log its pi in once (`qcr scan login` runs pi's OAuth
-# login straight away, in the running companion or over its pi home volume); the
-# companion alone refreshes it.
+# One login: the companion's. Log its pi in once (`qcr scan login` opens pi's own
+# /login straight away, in the running companion or over its pi home volume; any
+# provider pi offers works); the companion alone refreshes it. The scan runs on the
+# model that login decides (`qcr scan preview` names it), unless [models] pins one.
 # A scan reads that login read-only and runs every case on a fresh private copy with
 # the refresh token neutralised, so it never refreshes and never writes anything the
 # companion reads. The price: a scan case cannot outlive the access token — a start

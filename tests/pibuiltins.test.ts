@@ -16,6 +16,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchSettings } from "../src/bench/auth.js";
 import { PI_DISABLED_BUILTINS, PI_TUI_MODE } from "@quickchatai/pi-quickreview/src/pibuiltins.js";
+import { THINKING_LEVELS, splitModelSpec } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const VM_GUARD = "/opt/quickreview/sandbox/extensions/cli/bash-guard.ts";
@@ -35,13 +36,18 @@ afterEach(() => {
 /** Run one entrypoint's merge under a scratch HOME (already seeded); returns
  * the settings.json it leaves behind. The VM merge FATALs on a missing
  * bash-guard, so its path is pointed at a real scratch file. */
-function runMerge(file: string, home: string, bootstrap = ""): Record<string, unknown> {
+function runMerge(
+  file: string,
+  home: string,
+  bootstrap = "",
+  env: Record<string, string> = {},
+): Record<string, unknown> {
   const guard = join(home, "bash-guard.ts");
   writeFileSync(guard, "// stub\n");
   const script = bootstrap + "\n" + heredoc(file).split(VM_GUARD).join(guard);
   execFileSync(process.execPath, ["-"], {
     input: script,
-    env: { PATH: process.env.PATH ?? "", HOME: home, QCR_PI_TRUST_DIR: "/opt/quickreview" },
+    env: { PATH: process.env.PATH ?? "", HOME: home, QCR_PI_TRUST_DIR: "/opt/quickreview", ...env },
     stdio: ["pipe", "pipe", "pipe"],
   });
   return JSON.parse(readFileSync(join(home, ".pi", "agent", "settings.json"), "utf8")) as Record<
@@ -89,6 +95,58 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
       expect(twice["extensions"]).toEqual(ext);
     });
   }
+
+  // The entrypoints split a pinned default model by pi's thinking levels, in
+  // plain JavaScript inside a heredoc: the list there is a copy of the one the
+  // config parser splits by, and a level pi gains must reach both.
+  // MUTATION: delete "xhigh" from the THINKING_LEVELS line in
+  // docker/companion/entrypoint.sh — this fails.
+  for (const file of ["docker/companion/entrypoint.sh", "docker/entrypoint.sh"]) {
+    it(`${file}: the thinking levels it splits a pinned model by are the config parser's`, () => {
+      const text = readFileSync(resolve(root, file), "utf8");
+      const lines = text.match(/^const THINKING_LEVELS = (\[.*\]);$/gm) ?? [];
+      expect(lines, file).toHaveLength(1);
+      const listed = JSON.parse(lines[0]!.replace(/^const THINKING_LEVELS = /, "").replace(/;$/, ""));
+      expect(listed).toEqual([...THINKING_LEVELS]);
+      // no credential logic rides the merge: nothing there moves a default
+      // to another provider
+      expect(text).not.toContain("const twin");
+    });
+  }
+
+  // The companion's own entrypoint runs the split in its settings merge.
+  // MUTATION: write cfg.defaultModel from a spec that names no model (":high")
+  // — the unpinned rows gain a default and this fails.
+  it("docker/companion/entrypoint.sh: a default model is written only for a pin, split as the config parser splits it", () => {
+    const file = "docker/companion/entrypoint.sh";
+    const merged = (spec: string | undefined, seed: Record<string, unknown> = {}) => {
+      const home = mkdtempSync(join(tmpdir(), "qcr-pibuiltins-"));
+      tmps.push(home);
+      mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+      writeFileSync(join(home, ".pi", "agent", "settings.json"), JSON.stringify(seed));
+      return runMerge(file, home, "", spec === undefined ? {} : { QCR_PI_DEFAULT_MODEL: spec });
+    };
+    for (const spec of [
+      "made-up/large-3:medium",
+      "made-up/large-3:xhigh",
+      "made-up/large-3:free",
+      "made-up/vendor/large-3:free:low",
+      "made-up/large-3",
+    ]) {
+      const s = merged(spec);
+      const split = splitModelSpec(spec);
+      const slash = split.model.indexOf("/");
+      expect(s["defaultProvider"], spec).toBe(split.model.slice(0, slash));
+      expect(s["defaultModel"], spec).toBe(split.model.slice(slash + 1));
+      expect(s["defaultThinkingLevel"] ?? null, spec).toBe(split.thinking ?? null);
+    }
+    const kept = { defaultProvider: "kept", defaultModel: "kept-1", defaultThinkingLevel: "low" };
+    for (const none of [undefined, "", ":high", "no-slash"]) {
+      const fresh = merged(none);
+      for (const k of Object.keys(kept)) expect(fresh, String(none)).not.toHaveProperty(k);
+      expect(merged(none, kept)).toMatchObject(kept);
+    }
+  });
 
   it("the bench sandbox's settings carry the same list and no global guard", () => {
     const s = JSON.parse(benchSettings("/r").settings) as { extensions: string[] };

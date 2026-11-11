@@ -54,9 +54,11 @@ import {
 } from "@quickchatai/pi-quickreview/src/reviewdest.js";
 import {
   borrowLogin,
+  providerRows,
   routeProviders,
   type HostAuth,
 } from "@quickchatai/pi-quickreview/src/plugin/login.js";
+import { MEASURED } from "@quickchatai/pi-quickreview/src/measured.js";
 import { DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import type { ReviewRuntimeOptions } from "@quickchatai/pi-quickreview/src/engine/reviewruntime.js";
 import { MODEL_CHOICE_FILE, readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
@@ -744,12 +746,10 @@ describe("the route inside a running pi", () => {
 
   // Availability is the credential test, as in the route's inventory: pi's
   // status can say "not configured" of a provider whose models it lists.
-  // MUTATION: answer `configured` from getProviderAuthStatus(p).configured in
-  // hostAuth — this fails.
-  it("counts a provider as configured when pi lists its models as available", () => {
+  // MUTATION: skip a provider whose getProviderAuthStatus(p).configured is
+  // false in registryInventory — this fails.
+  it("routes on a provider pi lists as available though its status says not configured", () => {
     const { auth } = fakePi2({ alpha: { statusSaysNo: true }, gamma: { source: "none" } });
-    expect(auth.configured("alpha")).toBe(true);
-    expect(auth.configured("gamma")).toBe(false);
     expect(auth.route!({}).result).toMatchObject({ ok: true, route: { provider: "alpha" } });
   });
 });
@@ -1430,6 +1430,75 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
     expect(ui.notes[0]).toEqual(["error", expect.stringMatching(/unknown flag --nope/)]);
   });
 
+  // MUTATION: drop the `priceKnowledge` column from providerRows
+  // (packages/pi-plugin/src/plugin/login.ts) — the question's rows say
+  // nothing of an estimate, and this fails.
+  it("each row of the provider question says what is known of its price", () => {
+    const credential = { kind: "oauth", origin: "stored", subscription: false } as const;
+    const rows = providerRows(
+      {
+        provider: "alpha",
+        modelId: MEASURED.model_id,
+        providerName: "Alpha",
+        spec: `alpha/${MEASURED.model_id}`,
+        thinking: null,
+        source: "credential-order",
+        pick: "newest",
+        piDefaultId: null,
+        custom: false,
+        movedFrom: null,
+        credential,
+        priced: true,
+        ask: true,
+        alternatives: [
+          {
+            provider: "beta",
+            providerName: "Beta",
+            modelId: "other-model",
+            spec: "beta/other-model",
+            credential,
+            priced: true,
+          },
+          {
+            provider: "gamma",
+            providerName: "Gamma",
+            modelId: "local-model",
+            spec: "gamma/local-model",
+            credential,
+            priced: false,
+          },
+        ],
+        notices: [],
+      },
+      [
+        {
+          provider: "alpha",
+          name: "Alpha",
+          credential,
+          models: [
+            {
+              provider: "alpha",
+              id: MEASURED.model_id,
+              api: MEASURED.apis[0],
+              cost: { ...MEASURED.rates },
+            },
+          ],
+        },
+        {
+          provider: "beta",
+          name: "Beta",
+          credential,
+          models: [{ provider: "beta", id: "other-model", api: "x", cost: { input: 4, output: 20 } }],
+        },
+      ],
+    );
+    expect(rows.map((r) => r.split(/\s{4,}/).at(-1))).toEqual([
+      "measured estimate",
+      "no estimate",
+      "no list price",
+    ]);
+  });
+
   // One function builds every status line, so a later stage can enrich it.
   it("builds its status line from the stage, the plan and the time since it started", () => {
     const at = 1_000_000;
@@ -1443,6 +1512,29 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
         at + 79_000,
       ),
     ).toBe("QuickReview: reviewing PR #12 — 9 lenses, about $1.10, stops at $2.20 · 1m 19s");
+    // A run with no estimate says so and names its stop: never a price.
+    // MUTATION: drop the `p.estimateUsd === null` arm from reviewStatusLine
+    // (packages/pi-plugin/src/plugin/review.ts) — `null.toFixed` throws, and this fails.
+    expect(
+      reviewStatusLine(
+        { ...base, stage: "running", lenses: 9, estimateUsd: null, capUsd: 15 },
+        at + 79_000,
+      ),
+    ).toBe("QuickReview: reviewing PR #12 — 9 lenses, no estimate, stops at $15.00 · 1m 19s");
+    // pi has no price for the model: no dollar figure at all
+    expect(
+      reviewStatusLine(
+        { ...base, stage: "running", lenses: 9, estimateUsd: null, capUsd: null },
+        at + 79_000,
+      ),
+    ).toBe("QuickReview: reviewing PR #12 — 9 lenses, no estimate, no dollar stop · 1m 19s");
+    // an estimate with no cap (the Action's route) says only the estimate
+    expect(
+      reviewStatusLine(
+        { ...base, stage: "running", lenses: 9, estimateUsd: 1.1, capUsd: null },
+        at + 79_000,
+      ),
+    ).toBe("QuickReview: reviewing PR #12 — 9 lenses, about $1.10 · 1m 19s");
     expect(reviewStatusLine({ ...base, stage: "asking" }, at + 5_000)).toMatch(/post it\?/);
     // While lenses run, the first one's activity, and how many more are running.
     expect(

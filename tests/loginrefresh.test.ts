@@ -3,6 +3,9 @@
 // pinned:
 //   - it refreshes a token inside pi's window plus the margin, and leaves one
 //     outside alone; the write is atomic, 0660, in the login group;
+//   - it refreshes every OAuth entry pi has a flow for, whichever provider
+//     the reviews run on; an entry pi has no flow for is skipped with a note,
+//     and a login that never expires is never due and reads `never`;
 //   - the single-instance lock is a separate file: a second refresher is
 //     refused at start, and still refused AFTER a refresh replaced auth.json;
 //   - that file is never pi's own lock path (proper-lockfile's
@@ -41,8 +44,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   DISABLED_REFRESH,
+  borrowedCredentials,
   copyPiAuth,
-  engineCredentials,
   readOwnerAuth,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
@@ -52,20 +55,24 @@ import {
   removeLegacyLockFile,
 } from "../src/loginrefresh/lock.js";
 import { holdRefresher, refresherRuns } from "../src/loginrefresh/handover.js";
-import { expiredWhy, hostLoginOwner } from "../src/home/loginowner.js";
+import { expiredWhy, hostLoginOwner, isLoginError } from "../src/home/loginowner.js";
 import {
   AUTH_FILE,
   LEGACY_LOCK_FILE,
   LOCK_FILE,
   LoginRefresher,
+  NO_OAUTH_FLOW,
+  NoOAuthFlow,
   PAUSE_FILE,
   PAUSE_STALE_MS,
   PI_REFRESH_WINDOW_MS,
   STATUS_FILE,
+  expiryText,
   redactError,
   type RefresherDeps,
 } from "../src/loginrefresh/refresher.js";
-import { OAUTH_LOADERS, piOAuthRefresh } from "../src/loginrefresh/pirefresh.js";
+import { piOAuthRefresh } from "../src/loginrefresh/pirefresh.js";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import {
   CONTAINER_LOGIN_DIR,
   LOGIN_STATUS_POLL_MS,
@@ -256,10 +263,13 @@ describe("the refresh", () => {
         "paused",
         "pid",
         "provider",
+        "skipped",
         "started_at",
       ].sort(),
     );
     expect(readStatus(r.dir).provider).toBe("openai-codex");
+    // Nothing was skipped, and the file says so.
+    expect(readStatus(r.dir).skipped).toEqual([]);
   });
 
   it("writes atomically: a new inode, mode 0660, the login group", async () => {
@@ -310,6 +320,113 @@ describe("the refresh", () => {
     expect(existsSync(join(r.dir, AUTH_FILE))).toBe(false);
     expect(readStatus(r.dir)).toMatchObject({ expires_at: null, last_error: null });
     expect(r.failures).toEqual([]);
+  });
+});
+
+describe("every login in the file", () => {
+  /** A login file with several OAuth entries, as pi writes one. */
+  function writeLogins(dir: string, entries: Record<string, number>): void {
+    const logins: Record<string, unknown> = { keyed: { type: "api_key", key: "k" } };
+    for (const [name, expires] of Object.entries(entries))
+      logins[name] = { type: "oauth", access: `${name}-a1`, refresh: `${name}-r1`, expires };
+    writeFileSync(join(dir, AUTH_FILE), JSON.stringify(logins) + "\n", { mode: 0o600 });
+  }
+  const readLogins = (dir: string): Record<string, { access: string; expires: number }> =>
+    JSON.parse(readFileSync(join(dir, AUTH_FILE), "utf8"));
+
+  /** A refresh for any provider but `no-flow`, which has none. */
+  function flows(r: Rig, seen: string[]): RefresherDeps["refresh"] {
+    return async (provider) => {
+      if (provider === "no-flow") throw new NoOAuthFlow(provider);
+      seen.push(provider);
+      return {
+        access: `${provider}-a2`,
+        refresh: `${provider}-r2`,
+        expires: r.clk.now() + 10 * HOUR,
+      };
+    };
+  }
+
+  // MUTATION: refresh only the first due entry (or only one named provider) in
+  // LoginRefresher.check - the second login is left for a pi to refresh under
+  // a lock the refresher does not take; this fails.
+  it("refreshes every OAuth entry that is due, whichever provider the reviews run on", async () => {
+    const r = await rig();
+    writeLogins(r.dir, {
+      "provider-a": r.clk.now() + HOUR,
+      "provider-b": r.clk.now() + HOUR,
+      "provider-c": r.clk.now() + 24 * HOUR, // not due
+    });
+    const seen: string[] = [];
+    await start(r, { refresh: flows(r, seen) });
+    expect(seen.sort()).toEqual(["provider-a", "provider-b"]);
+    const after = readLogins(r.dir);
+    expect(after["provider-a"]!.access).toBe("provider-a-a2");
+    expect(after["provider-b"]!.access).toBe("provider-b-a2");
+    expect(after["provider-c"]!.access).toBe("provider-c-a1");
+    expect(r.failures).toEqual([]);
+  });
+
+  // MUTATION: count NoOAuthFlow as a failure in LoginRefresher.check (drop the
+  // `instanceof NoOAuthFlow` branch) - the entry raises login_refresh_failed
+  // and fails again at every check; this fails.
+  it("skips an entry pi has no OAuth flow for, with a note in the status file and no failure", async () => {
+    const r = await rig();
+    writeLogins(r.dir, { "no-flow": r.clk.now() + HOUR, "provider-a": r.clk.now() + HOUR });
+    const seen: string[] = [];
+    const refresher = await start(r, { refresh: flows(r, seen) });
+    expect(seen).toEqual(["provider-a"]);
+    expect(readStatus(r.dir)).toMatchObject({
+      last_error: null,
+      error_since: null,
+      skipped: [{ provider: "no-flow", reason: "pi has no OAuth flow for it" }],
+    });
+    expect(NO_OAUTH_FLOW).toBe("pi has no OAuth flow for it");
+    expect(readLogins(r.dir)["no-flow"]!.access).toBe("no-flow-a1");
+    expect(r.failures).toEqual([]);
+    // Ten minutes later it is still skipped, still no failure, and said once.
+    r.clk.advance(10 * 60_000);
+    await refresher.tick();
+    expect(readStatus(r.dir).skipped).toEqual([
+      { provider: "no-flow", reason: "pi has no OAuth flow for it" },
+    ]);
+    expect(r.failures).toEqual([]);
+    expect(r.logs.filter((l) => l.includes("skipped no-flow"))).toHaveLength(1);
+    // The entry is gone: so is the note.
+    writeLogins(r.dir, { "provider-a": r.clk.now() + 24 * HOUR });
+    r.clk.advance(10 * 60_000);
+    await refresher.tick();
+    expect(readStatus(r.dir).skipped).toEqual([]);
+  });
+
+  // MUTATION: format the expiry with `new Date(expires).toISOString()` in
+  // LoginRefresher.status - it throws for pi's never-expiring value, the status
+  // file is not written, and this fails.
+  it("a login that never expires is never refreshed, and its expiry reads `never`", async () => {
+    const r = await rig();
+    // pi writes the largest safe integer for a login that does not expire.
+    writeLogins(r.dir, { forever: Number.MAX_SAFE_INTEGER });
+    const seen: string[] = [];
+    const refresher = await start(r, { refresh: flows(r, seen) });
+    r.clk.advance(30 * 24 * HOUR);
+    await refresher.tick();
+    expect(seen).toEqual([]);
+    expect(readStatus(r.dir)).toMatchObject({
+      expires_at: "never",
+      provider: "forever",
+      last_error: null,
+      skipped: [],
+    });
+    expect(expiryText(Number.MAX_SAFE_INTEGER)).toBe("never");
+    expect(expiryText(Date.parse("2026-11-10T09:00:00Z"))).toBe("2026-11-10T09:00:00.000Z");
+    // Beside a login that does expire, the earliest is the one that does.
+    writeLogins(r.dir, { forever: Number.MAX_SAFE_INTEGER, "provider-a": r.clk.now() + 24 * HOUR });
+    r.clk.advance(10 * 60_000);
+    await refresher.tick();
+    expect(readStatus(r.dir)).toMatchObject({
+      expires_at: new Date(readLogins(r.dir)["provider-a"]!.expires).toISOString(),
+      provider: "provider-a",
+    });
   });
 });
 
@@ -484,7 +601,12 @@ describe("borrowers", () => {
       now: r.clk.now,
       words: { missing: () => "missing", expiring: () => "expiring" },
     });
-    const creds = engineCredentials({ srcDir: r.dir, needMs: HOUR, now: r.clk.now });
+    const creds = borrowedCredentials({
+      srcDir: r.dir,
+      needMs: HOUR,
+      now: r.clk.now,
+      owner: true,
+    });
     expect(Date.now() - t0).toBeLessThan(2_000);
     expect(copy.expiresAt).toBe(r.clk.now() + 24 * HOUR);
     const copied = JSON.parse(readFileSync(join(dst, AUTH_FILE), "utf8"));
@@ -726,15 +848,39 @@ describe("the pause", () => {
   });
 });
 
-describe("pi-ai's own refresh (the deep import)", () => {
-  it("every provider id it maps has a loader pi-ai 1.4.0 exports", async () => {
-    const { piAiDir } = await import("../src/loginrefresh/pirefresh.js");
-    const mod = (await import(join(piAiDir(), "dist", "auth", "oauth", "load.js"))) as Record<
-      string,
-      unknown
-    >;
-    for (const loader of Object.values(OAUTH_LOADERS))
-      expect(typeof mod[loader], loader).toBe("function");
+describe("pi-ai's own refresh (its public provider registry)", () => {
+  // The fact about the pinned pi that pirefresh.ts leans on: pi-ai's public
+  // `providers/all` gives every built-in provider, and one with an OAuth login
+  // carries `auth.oauth.refresh`. The list is pi 1.4.0's; pirefresh.ts holds
+  // no copy of it.
+  it("pi-ai 1.4.0 gives an OAuth refresh for nine providers, through its public export", () => {
+    const withFlow = builtinProviders()
+      .filter((p) => typeof p.auth.oauth?.refresh === "function")
+      .map((p) => p.id)
+      .sort();
+    expect(withFlow).toEqual([
+      "anthropic",
+      "github-copilot",
+      "kimi-coding",
+      "meta",
+      "openai",
+      "openai-codex",
+      "openrouter",
+      "radius",
+      "xai",
+    ]);
+  });
+
+  // MUTATION: restore the `OAUTH_LOADERS` name table (its quoted provider ids)
+  // or the file-path import of `dist/auth/oauth/load.js` in
+  // src/loginrefresh/pirefresh.ts - this fails.
+  it("pirefresh.ts names no provider and no file path inside pi-ai", () => {
+    const code = stripComments(
+      readFileSync(join(root, "src", "loginrefresh", "pirefresh.ts"), "utf8"),
+    );
+    expect(code).toContain('from "@earendil-works/pi-ai/providers/all"');
+    expect(code).not.toMatch(/dist\/|createRequire|pathToFileURL/);
+    for (const p of builtinProviders()) expect(code, p.id).not.toContain(`"${p.id}"`);
   });
 
   it("refreshes the codex login through pi-ai against a stubbed token endpoint, and nothing leaves the process", async () => {
@@ -799,14 +945,47 @@ describe("pi-ai's own refresh (the deep import)", () => {
     }
   });
 
-  it("an unknown provider is a failure, not a silent skip", async () => {
-    await expect(
-      piOAuthRefresh(
-        "nope",
-        { type: "oauth", access: "a", refresh: "r", expires: 1 },
-        AbortSignal.timeout(1_000),
-      ),
-    ).rejects.toThrow(/no pi-ai OAuth flow/);
+  // MUTATION: throw a plain Error for a provider with no flow in piOAuthRefresh
+  // - the refresher counts it a failed refresh at every check; this fails.
+  it("a provider pi has no OAuth flow for is NoOAuthFlow: one pi does not know, and one pi signs in by key only", async () => {
+    const keyOnly = builtinProviders().find((p) => p.auth.oauth === undefined)!.id;
+    const realFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      throw new Error("no request is expected");
+    }) as typeof fetch;
+    try {
+      for (const provider of ["nope", keyOnly]) {
+        const refused = piOAuthRefresh(
+          provider,
+          { type: "oauth", access: "a", refresh: "r", expires: 1 },
+          AbortSignal.timeout(1_000),
+        );
+        await expect(refused, provider).rejects.toBeInstanceOf(NoOAuthFlow);
+        await expect(refused, provider).rejects.toThrow(NO_OAUTH_FLOW);
+      }
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(calls).toBe(0);
+  });
+
+  it("the refresher on pi's own flows skips such an entry and raises nothing", async () => {
+    const r = await rig();
+    writeFileSync(
+      join(r.dir, AUTH_FILE),
+      JSON.stringify({
+        "not-a-pi-provider": { type: "oauth", access: "a1", refresh: "r1", expires: 1 },
+      }) + "\n",
+      { mode: 0o600 },
+    );
+    await start(r, { refresh: piOAuthRefresh });
+    expect(readStatus(r.dir)).toMatchObject({
+      last_error: null,
+      skipped: [{ provider: "not-a-pi-provider", reason: NO_OAUTH_FLOW }],
+    });
+    expect(r.failures).toEqual([]);
   });
 });
 
@@ -1361,5 +1540,50 @@ describe("one login per box: the home's re-login", () => {
       "login expired",
     );
     expect(expiredWhy("not a record", now)).toBeNull();
+  });
+
+  // MUTATION: read the refresher's joined failures as one text in `refused`
+  // (src/home/loginowner.ts) - the rate limit on one login is tried first and
+  // hides the refused grant on the other; this fails.
+  // MUTATION: test a pattern of its own there (any "revoked", any status
+  // number) instead of the classifier's auth kind - a refused model or a rate
+  // limit that names "401 errors" reads as a login that is gone; this fails.
+  it("a refused grant is the one classifier's auth kind, read for each login's failure by itself", () => {
+    const now = Date.parse("2026-11-10T12:00:00Z");
+    const later = new Date(now + HOUR).toISOString();
+    const why = (last_error: string): string | null =>
+      expiredWhy({ last_error, expires_at: later }, now);
+    expect(why("login-a: 429 Too Many Requests; login-b: invalid_grant")).toBe("login expired");
+    expect(why("login-a: refresh_token_reused")).toBe("login expired");
+    expect(why("login-a: the token has been revoked")).toBe("login expired");
+    for (const err of [
+      "login-a: 403 Forbidden",
+      "login-a: 429 Too Many Requests: rate limit reached after 401 errors",
+      "login-a: fetch failed",
+      "login-a: token refresh failed (500)",
+      "auth.json is unreadable: Unexpected end of JSON input",
+    ])
+      expect(why(err), err).toBeNull();
+    // A login that never expires is not past its expiry.
+    expect(expiredWhy({ last_error: "login-a: 500", expires_at: "never" }, now)).toBeNull();
+  });
+
+  // MUTATION: test a pattern of its own in isLoginError (src/home/loginowner.ts)
+  // - a model the provider refused marks the home's login expired; this fails.
+  it("pi's own word on the login is the classifier's auth kind, and nothing else", () => {
+    for (const text of [
+      "OAuth refresh failed for some-provider",
+      "Provided authentication token is expired.",
+      "401 Unauthorized",
+      "authentication_error: invalid x-api-key",
+    ])
+      expect(isLoginError(text), text).toBe(true);
+    for (const text of [
+      "529 overloaded",
+      "403 Forbidden: model not available in your region",
+      "429 Too Many Requests: rate limit reached after 401 errors",
+      "The usage limit has been reached",
+    ])
+      expect(isLoginError(text), text).toBe(false);
   });
 });

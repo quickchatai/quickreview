@@ -1,7 +1,9 @@
 // The cost estimator (priceReview in packages/pi-plugin/src/localreview.ts) against what reviews
 // actually cost. The table is read from disk, not produced by a run: the final1
 // bench runs' per-case usage priced at the model's list prices
-// (tests/fixtures/review-cost/recorded.json).
+// (tests/fixtures/review-cost/recorded.json). The fitted rates are data about
+// that one measurement (packages/pi-plugin/src/measured.ts `MEASURED`): the
+// review's settings hold no rate of their own, only the two limits.
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -12,15 +14,17 @@ import {
   HARD_STOP_FACTOR,
   hardStopFor,
   priceReview,
-  type ReviewSettings,
+  repoRates,
+  type ReviewRates,
 } from "@quickchatai/pi-quickreview/src/localreview.js";
+import { MEASURED } from "@quickchatai/pi-quickreview/src/measured.js";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const table = JSON.parse(
   readFileSync(resolve(dir, "fixtures", "review-cost", "recorded.json"), "utf8"),
 ) as { rows: Array<[string, number, number, number]> };
 const rows = table.rows.map(([name, lenses, lines, cost]) => ({ name, lenses, lines, cost }));
-const S = DEFAULT_REVIEW_SETTINGS;
+const S: ReviewRates = MEASURED;
 
 const median = (a: number[]): number => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)]!;
 const quantile = (a: number[], q: number): number =>
@@ -60,8 +64,7 @@ describe("priceReview against recorded costs", () => {
 
 describe("priceReview's shape", () => {
   it("is a base, a fixed cost per lens and one diff term", () => {
-    const s: ReviewSettings = {
-      auto_limit_usd: 2,
+    const s: ReviewRates = {
       usd_base: 1,
       usd_per_lens: 0.5,
       usd_per_kline: 2,
@@ -74,7 +77,7 @@ describe("priceReview's shape", () => {
   });
 
   it("rounds up to the cent and never quotes zero", () => {
-    const s: ReviewSettings = { auto_limit_usd: 2, usd_base: 0, usd_per_lens: 0, usd_per_kline: 1 };
+    const s: ReviewRates = { usd_base: 0, usd_per_lens: 0, usd_per_kline: 1 };
     expect(priceReview(0, 1, s)).toBe(0.01);
     expect(priceReview(0, 1001, s)).toBe(1.01);
   });
@@ -83,5 +86,26 @@ describe("priceReview's shape", () => {
     expect(HARD_STOP_FACTOR).toBe(2);
     expect(hardStopFor(1.23)).toBe(2.46);
     expect(hardStopFor(0.01)).toBe(0.02);
+  });
+});
+
+describe("the review's settings", () => {
+  // MUTATION: put `usd_base: 0.1` back into DEFAULT_REVIEW_SETTINGS
+  // (packages/pi-plugin/src/localreview.ts) - every repo then "sets its own
+  // rates", every model gets an estimate, and this fails.
+  it("the defaults are the two limits and no rate", () => {
+    expect(DEFAULT_REVIEW_SETTINGS).toEqual({ auto_limit_usd: 2, unmeasured_limit_usd: 15 });
+    expect(repoRates(DEFAULT_REVIEW_SETTINGS)).toBeNull();
+  });
+
+  it("a repo that sets any rate prices with its own, and the measured ones fill the rest", () => {
+    expect(repoRates({ ...DEFAULT_REVIEW_SETTINGS, usd_per_lens: 0.5 })).toEqual({
+      usd_base: MEASURED.usd_base,
+      usd_per_lens: 0.5,
+      usd_per_kline: MEASURED.usd_per_kline,
+    });
+    expect(
+      repoRates({ ...DEFAULT_REVIEW_SETTINGS, usd_base: 1, usd_per_lens: 2, usd_per_kline: 3 }),
+    ).toEqual({ usd_base: 1, usd_per_lens: 2, usd_per_kline: 3 });
   });
 });

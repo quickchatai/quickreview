@@ -107,11 +107,16 @@ fi
 if "$QCR" companion status 2>&1 | grep -q running; then pass "qcr companion status: running"; else fail "qcr companion status: running"; fi
 
 # --- 3. pi auth --------------------------------------------------------------
-step "pi auth (one-time /login)"
-if docker exec "$CONTAINER" sh -c 'test -f "$HOME/.pi/agent/auth.json"' >/dev/null 2>&1; then
-  pass "auth.json persisted on volume $PIHOME"
+# Asked of the app in the container, never read off a file: a credential may
+# be a login on the volume or a key pi finds elsewhere, for any provider, and
+# `qcr model --json` says whether pi can run a model on it (and which).
+step "pi auth (a model route)"
+route_json="$(docker exec "$CONTAINER" node /opt/qcr/dist/src/cli.js model --json 2>/dev/null | tail -n 1)" || true
+if printf '%s' "$route_json" | grep -q '"ok":true'; then
+  route_spec="$(printf '%s' "$route_json" | grep -o '"spec":"[^"]*"' | head -n 1 | cut -d'"' -f4)" || true
+  pass "pi has a model route on volume $PIHOME: ${route_spec:-unnamed}"
 else
-  skip "auth.json absent — run: docker exec -it $CONTAINER tmux attach -t $SESSION, then /login"
+  skip "no model route in the companion's pi — run: docker exec -it $CONTAINER tmux attach -t $SESSION, then /login"
 fi
 
 # --- 4. full ssh through the agent, no key in the container; memory reachable --

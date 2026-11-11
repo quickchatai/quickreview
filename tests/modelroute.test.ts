@@ -7,20 +7,15 @@
 // in the cases that hold the answers the two-provider twin gave.
 import { describe, expect, it } from "vitest";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import * as modelroute from "@quickchatai/pi-quickreview/src/modelroute.js";
 import {
   RouteRefused,
   credentialClass,
   expiryClock,
-  modelIdOf,
   moveToCredentialed,
-  providersInAuthJson,
   resolvePin,
   resolveRoute,
-  routeModelSpec,
-  routeModelSpecForLogin,
-  routeProvider,
   splitProvider,
-  twinProvider,
   type CatalogModel,
   type CredentialOrigin,
   type ModelChoice,
@@ -587,89 +582,38 @@ describe("what a refusal and an expiry say", () => {
   });
 });
 
-const has = (...providers: string[]) => ({ hasCredential: (p: string) => providers.includes(p) });
-
-describe("the twin (until its last caller moves): routeProvider", () => {
-  it("the OpenAI providers are each other's twin, and nothing else has one", () => {
-    expect(twinProvider("openai-codex")).toBe("openai");
-    expect(twinProvider("openai")).toBe("openai-codex");
-    expect(twinProvider("anthropic")).toBeUndefined();
-  });
-
-  // MUTATION: return the twin whenever it has a credential — the first case fails.
-  it("the named provider wins when its login exists", () => {
-    expect(routeProvider("openai-codex", "gpt-6.1-sol", has("openai-codex", "openai"))).toBe(
-      "openai-codex",
-    );
-    expect(routeProvider("openai", "gpt-6.1-sol", has("openai", "openai-codex"))).toBe("openai");
-  });
-
-  it("an OpenAI model with no login of its own runs on the twin's", () => {
-    expect(routeProvider("openai-codex", "gpt-6.1-sol", has("openai"))).toBe("openai");
-    expect(routeProvider("openai", "gpt-6.1-sol", has("openai-codex"))).toBe("openai-codex");
-  });
-
-  it("stays put when the twin has no login either, or does not serve the model", () => {
-    expect(routeProvider("openai-codex", "gpt-6.1-sol", has())).toBe("openai-codex");
-    expect(
-      routeProvider("openai-codex", "codex-only", {
-        hasCredential: (p) => p === "openai",
-        hasModel: (_p, id) => id !== "codex-only",
-      }),
-    ).toBe("openai-codex");
-  });
-
-  // The twin knows one pair and nothing else. The rule that replaces it
-  // (`moveToCredentialed`, above) moves any provider, by family or to a sole
-  // candidate.
-  it("the twin itself knows no other pair", () => {
-    expect(routeProvider("anthropic", "x", has("openai", "openai-codex"))).toBe("anthropic");
-  });
-});
-
-describe("the twin: routeModelSpec", () => {
-  it("keeps the thinking suffix and everything after the provider", () => {
-    expect(routeModelSpec("openai-codex/gpt-6.1-sol:medium", has("openai"))).toBe(
-      "openai/gpt-6.1-sol:medium",
-    );
-    expect(routeModelSpec("openai-codex/gpt-6.1-sol:medium", has("openai-codex"))).toBe(
-      "openai-codex/gpt-6.1-sol:medium",
-    );
-    expect(routeModelSpec("gpt-6.1-sol", has("openai"))).toBe("gpt-6.1-sol");
-  });
-
+describe("a spec's provider", () => {
   it("takes a spec apart at its first slash", () => {
-    expect(splitProvider("openrouter/openai/gpt-x")).toEqual({
-      provider: "openrouter",
-      rest: "openai/gpt-x",
+    expect(splitProvider("alpha/alpha-5.1:high")).toEqual({
+      provider: "alpha",
+      rest: "alpha-5.1:high",
     });
-    expect(splitProvider("/x")).toBeNull();
-    expect(modelIdOf("gpt-6.1-sol:high")).toBe("gpt-6.1-sol");
+    expect(splitProvider("gateway/alpha/alpha-5.1")).toEqual({
+      provider: "gateway",
+      rest: "alpha/alpha-5.1",
+    });
+    for (const bare of ["alpha-5.1", "/x", "x/", ""]) expect(splitProvider(bare), bare).toBeNull();
   });
 });
 
-describe("the twin: providersInAuthJson", () => {
-  it("an oauth entry and a non-empty api key count; anything else does not", () => {
-    const raw = JSON.stringify({
-      "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: 1 },
-      openai: { type: "api_key", key: "sk-x" },
-      anthropic: { type: "api_key", key: "  " },
-      broken: "x",
-    });
-    expect([...providersInAuthJson(raw)].sort()).toEqual(["openai", "openai-codex"]);
-  });
+describe("the two-provider twin is gone", () => {
+  // The rule that replaced it (`moveToCredentialed`, above) names no provider:
+  // the pair's answers are pinned there and in resolveModel's cases below.
+  // What the module must not grow back is fenced by the shape of a name, not
+  // by the names it once had: a table of providers, a twin, a reader of a
+  // login file.
+  const RETIRED_SHAPE = /[tT]win|AuthJson|ForLogin|^[A-Z0-9_]*PROVIDERS$/;
 
-  it("OPENAI_API_KEY counts for openai; an unreadable login holds nothing", () => {
-    expect([...providersInAuthJson(null, { OPENAI_API_KEY: "sk-x" })]).toEqual(["openai"]);
-    expect([...providersInAuthJson("not json")]).toEqual([]);
-  });
-
-  it("routes a spec over a login file", () => {
-    const chatgpt = JSON.stringify({ openai: { type: "oauth", expires: 1 } });
-    expect(routeModelSpecForLogin("openai-codex/gpt-6.1-sol", chatgpt)).toBe("openai/gpt-6.1-sol");
-    expect(routeModelSpecForLogin("openai-codex/gpt-6.1-sol", null)).toBe(
-      "openai-codex/gpt-6.1-sol",
-    );
+  // MUTATION: export a `twin...` function, a `..._PROVIDERS` table or a
+  // `...ForLogin` reader from modelroute.ts again - this fails.
+  it("the module exports no provider table, no twin and no login-file reader", () => {
+    const names = Object.keys(modelroute);
+    expect(names.filter((n) => RETIRED_SHAPE.test(n))).toEqual([]);
+    // The check reads the module: the names the rule is made of are there.
+    expect(names).toEqual(expect.arrayContaining(["moveToCredentialed", "resolveRoute"]));
+    // And the shape bites on each kind of name it is for.
+    for (const name of ["theTwinOf", "VENDOR_PROVIDERS", "specForLogin", "idsInAuthJson"])
+      expect(RETIRED_SHAPE.test(name), name).toBe(true);
   });
 });
 

@@ -37,9 +37,12 @@ export interface Run {
   started: number;
   ended?: number;
   /** The quoted estimate and hard stop; null when this home did not see the
-   * quote (a run re-attached after a restart). */
+   * quote (a run re-attached after a restart), or when the quote had none. */
   est: number | null;
   cap: number | null;
+  /** What the quote's price was known from; absent when this home did not
+   * see the quote. With it, a null `est` is "no estimate", not "unknown". */
+  basis?: ReviewQuote["basis"];
   /** What it cost: null until the result says. */
   spent: number | null;
   /** Files in the plan, from the quote. */
@@ -92,6 +95,7 @@ export function plannedRun(pr: number, now: number): Run {
 export function quoteRun(run: Run, q: ReviewQuote): void {
   run.est = q.estimateUsd;
   run.cap = q.capUsd;
+  run.basis = q.basis;
   run.files = q.files;
   run.lenses = q.lenses
     .filter((l) => !isValidator(l))

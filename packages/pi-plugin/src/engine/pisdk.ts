@@ -573,8 +573,9 @@ export interface HostSessionSpec {
    * Omitted: in memory. */
   persist?: { sessionFile: string } | { sessionDir: string } | { resumeFile: string };
   /** The id of an in-memory session. Omitted: a fresh unique one. Sessions given
-   * the SAME id share the provider's cache routing (pi derives the cache key and
-   * the routing headers from it) and the provider-side resources held for it:
+   * the SAME id share the provider's cache routing, where it has one (pi hands
+   * the id to the API, which derives its cache key and routing headers from it
+   * when it has them), and the provider-side resources held for it:
    * disposing any one of them closes the transports of all (pi's
    * cleanupSessionResources(id)). Only a caller that disposes the whole set
    * together (a lens cache group) may share one. With `persist.sessionDir`
@@ -743,8 +744,9 @@ function sessionManagerFor(spec: HostSessionSpec): SessionManager {
       persist.sessionDir,
       spec.sessionId !== undefined ? { id: spec.sessionId } : undefined,
     );
-  // VERIFY-ON-PIN (pi 1.3.0, re-read at 1.4.0): inMemory({id}) sets the session id the provider
-  // keys its cache on (prompt_cache_key, session-id, x-client-request-id).
+  // VERIFY-ON-PIN (pi 1.3.0, re-read at 1.4.0): inMemory({id}) sets the session id pi hands the
+  // API, which keys the provider's cache routing on it, where it has one (the
+  // Responses APIs: prompt_cache_key, session-id, x-client-request-id).
   return SessionManager.inMemory(spec.cwd, { id: spec.sessionId ?? randomUUID() });
 }
 

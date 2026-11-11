@@ -147,7 +147,8 @@ than ten times its cost (about $4 per PR). Only Claude Code's max mode (Opus
 5.5 directing Sonnet 5.5 agents, about $20 per PR) ranks higher, by a margin
 inside the intervals.
 
-**Other models.** QuickReview's models are configurable. On AACR-Bench
+**Other models.** QuickReview runs on any model provider pi supports, on the
+credential you already have. On AACR-Bench
 it holds most of its recall on cheap open models, and it falls apart on a
 weak one:
 
@@ -225,7 +226,7 @@ automated code reviewer*](bench/aacr/paper/quickreview.pdf).
 [`bench/aacr/README.md`](bench/aacr/README.md#reproduce) shows how to
 re-score the runs with no keys, re-judge them, or re-run the benchmark on
 your own keys; the run archive will be published separately. Costs are list
-prices; on a ChatGPT plan they are quota, not a bill. The charts are drawn
+prices; on a subscription plan they are quota, not a bill. The charts are drawn
 by `bench/aacr/showcase/readme_charts.py`.
 
 ## Why this exists
@@ -284,9 +285,18 @@ Slack concierge, a local companion session, opt-in escalation notes, and the
 
 ## Quickstart
 
-You need **Docker** with Compose v2, a model login, and either `gh` signed in
-to your own GitHub account or **a GitHub account that can create an App** on
-the repository to review. On Windows, run everything inside **WSL2**.
+You need **Docker** with Compose v2, a model credential, and either `gh`
+signed in to your own GitHub account or **a GitHub account that can create an
+App** on the repository to review. On Windows, run everything inside **WSL2**.
+
+1. **Sign in to a model provider, or have a provider key in the
+   environment.** Any provider pi supports works: a subscription login, an
+   API key stored by pi's `/login`, or a key under the name the provider
+   documents. The review runs on the credential you have.
+2. **Connect GitHub**: `gh` signed in, or a GitHub App.
+3. **Choose a repository.**
+
+The home, below, walks the three steps and skips what is already done.
 
 There is a second route that needs no App: `[github] auth = "user"` runs the
 reviewer on **your own GitHub account**. Use it on one box where `gh` is
@@ -310,8 +320,9 @@ qcr                  # the home: sign in, connect GitHub, choose a repository
 A bare `qcr` opens the **home**: QuickReview's own pi, with the plugin loaded
 and a panel of your repository's open pull requests. On a first run the panel
 is a short setup checklist, and anything already set up is found and skipped:
-sign in to OpenAI with pi's device code (device-code login must be on in
-ChatGPT → Settings → Security), check that `gh` is signed in, and choose a
+sign in to a model provider with pi's own `/login` (a provider key already in
+the environment counts, and the step is then found done), check that `gh` is
+signed in, and choose a
 repository from your recently pushed ones or paste any `owner/name` or URL.
 `alt+n` runs the next step. The home then lists the pull requests, "To review"
 and "Reviewed". `qcr tui` opens the admin TUI, and only it starts the
@@ -320,6 +331,18 @@ its login is kept in the `qcr-login` volume, its config and sessions in the
 `qcr-state` volume, and its `gh` uses the token the wrapper finds on this
 machine (`GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`). The always-on daemon, a GitHub App, webhooks and a server over ssh
 are the setup wizard's steps: [docs/onboarding.md](docs/onboarding.md).
+
+### Which model it runs on
+
+The shipped config names no model. With one model credential, a review runs
+on that provider, on its newest model that reasons. With several, a terminal
+asks once and remembers, and a run with nobody to ask picks one and says, in
+one line, which model runs, why, and how to change it. `qcr model` shows the
+model and what else is usable, `qcr model use <provider[/model]>` changes it,
+`--model` picks for one run, and `[models] model` in `config.toml` pins it.
+The estimate was measured on one model: on any other a review shows no dollar
+estimate and stops at a spend limit instead. All of it is in
+[docs/llm-setup.md](docs/llm-setup.md).
 
 ### Where the reviewer lives
 
@@ -353,7 +376,8 @@ not blocked, but only 22.19+ is supported):
 ```sh
 npm i -g @quickchatai/quickreview
 
-qcr login              # pi's own /login, for the review's models
+qcr login              # pi's own /login: any provider pi offers
+qcr model              # which model reviews run on, why, and what else is usable
 qcr review             # review this branch against its base, with no daemon
 qcr review 123         # review a pull request (or pass its URL)
 qcr pi                 # pi with the plugin (/qcr-review /qcr-scan /qcr-setup) and /selfimprove
@@ -408,8 +432,10 @@ reload step and the move from the old Docker-based Claude Code plugin are in
 - **Presets:** `[review] preset` is `default`, `max` (every model at its
   ceiling) or `low` (about half the cost and time, lower recall).
 - **Cost:** the daemon is one small container; the model spend is per round.
-  On AACR-Bench a review averaged $2.06 per PR at list prices (median
-  $1.87); on Martian's and Qodo's PRs, $2.84 and $2.48. Watch it with `qcr spend` and `qcr today`, time to first verdict
+  On AACR-Bench a review on GPT-6.1 Sol averaged $2.06 per PR at list prices
+  (median $1.87); on Martian's and Qodo's PRs, $2.84 and $2.48. Those figures
+  are that model's; another model costs what its own prices and token use
+  make it. Watch it with `qcr spend` and `qcr today`, time to first verdict
   with `qcr metrics`, and start with the trigger label on a few PRs.
 - **Operating:** `qcr status`, `qcr why <pr>`, `qcr tui`, and
   `docker compose logs -f daemon` on the laptop route.
@@ -426,7 +452,7 @@ never the same system ([MANIFESTO.md](MANIFESTO.md)).
 - [docs/architecture/README.md](docs/architecture/README.md) — the process map, the review lifecycle, the sessions, the data model, the safety seams
 - [docs/onboarding.md](docs/onboarding.md) — the guided setup, step by step
 - [docs/github-app-setup.md](docs/github-app-setup.md) — the GitHub App, and how to register it by hand
-- [docs/llm-setup.md](docs/llm-setup.md) — the two LLM credential routes
+- [docs/llm-setup.md](docs/llm-setup.md) — models and credentials: which model a review runs on, how to pin one, what it costs
 - [docker/README.md](docker/README.md) — the compose stack, ingress shapes, version pin
 - [deploy/ansible/README.md](deploy/ansible/README.md) — the server route
 - [docs/host-wrapper.md](docs/host-wrapper.md) — the `qcr` host wrapper

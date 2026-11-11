@@ -10,7 +10,7 @@
 # The setup wizard writes app_id / app.pem / webhook_secret itself, from
 # the GitHub App manifest exchange, and mints the OpenViking keys — so on the
 # guided path you only reach for this script for the values it points you at
-# (the OpenAI key, a tunnel token, an ngrok authtoken, the hosted-embeddings
+# (a model API key, a tunnel token, an ngrok authtoken, the hosted-embeddings
 # key under that opt-in). It writes the same file
 # names with the same validation and the same 0600 mode; the two paths must
 # stay in step. See docs/onboarding.md.
@@ -122,15 +122,20 @@ choose_shape() {
 overview() {
   local s; s="$(shape)"
   bold "quickreview secrets — $DIR  (deployment shape: ${s:-unset})"
-  for f in app_id app.pem webhook_secret tunnel_token openai_api_key openai_embeddings_api_key openviking_root_key openviking_reviewer_key; do
+  for f in app_id app.pem webhook_secret tunnel_token openai_embeddings_api_key openviking_root_key openviking_reviewer_key; do
     printf '  %-24s %s\n' "$f" "$(status_of "$f")"
   done
+  printf '  %-24s %s\n' "model-env/" "$(model_env_status)"
+  if [[ -s "$DIR/openai_api_key" ]]; then
+    printf '  %-24s %s\n' "openai_api_key" "$(status_of openai_api_key) — the older key file, still read as OPENAI_API_KEY"
+  fi
   if [[ "$s" == "docker" ]]; then
     info "tunnel_token is NOT required under the docker shape (own ingress)"
   else
     info "tunnel_token is required under the tunnel shape"
   fi
-  info "openai_api_key is OPTIONAL (pi's model credential on the API-key route; ChatGPT-OAuth route: pi /login instead)"
+  info "model-env/<NAME> is OPTIONAL: a model provider's API key, one file per environment variable,"
+  info "under the name the provider documents. Skip it when pi is signed in with /login instead."
   info "openai_embeddings_api_key is OPTIONAL and SEPARATE: memory embeds LOCALLY by default and nothing"
   info "but the model call leaves the machine. Only a hosted-embeddings opt-in (config.toml [openviking]"
   info "embedding_provider = \"openai\") reads it — pi's key is never used for embeddings."
@@ -175,6 +180,81 @@ prompt_hidden() { # file  label  validator-fn
   done
 }
 
+# The model env (src/modelenv.ts): <secrets dir>/model-env/<NAME>, one file per
+# environment variable of a model provider. Names only here, never a value.
+model_env_names() {
+  local f
+  [[ -d "$DIR/model-env" ]] || return 0
+  for f in "$DIR/model-env"/*; do
+    [[ -s "$f" ]] && printf '%s\n' "${f##*/}"
+  done
+  return 0
+}
+
+model_env_status() {
+  local names
+  names="$(model_env_names | tr '\n' ' ')"
+  if [[ -n "$names" ]]; then printf 'present: %s' "${names% }"; else printf 'none (optional)'; fi
+}
+
+# The same rule as modelEnvNameProblem (src/modelenv.ts): an environment
+# variable's name, and none of the families this system and its tools read for
+# themselves. tests/collect-secrets.test.ts runs this function against the
+# TypeScript rule's table.
+v_model_env_name() { # name
+  local LC_ALL=C
+  [[ "$1" =~ ^[A-Z][A-Z0-9_]*$ ]] || { echo "    not an environment variable's name (capital letters, digits and _)" >&2; return 1; }
+  case "$1" in
+    GH_*|GITHUB_*|QCR_*|PI_*|OPENVIKING_*|GIT_*) echo "    names starting with ${1%%_*}_ are not model variables" >&2; return 1 ;;
+  esac
+}
+
+# A model key, asked for by the variable it goes in: the wizard knows no
+# provider, so the name is the one the provider documents and the value is
+# whatever that provider issues (no prefix to check). An older openai_api_key
+# file is recognised and left as it is: the daemon still reads it.
+prompt_model_key() {
+  local name value
+  if [[ $FORCE -eq 0 ]]; then
+    if [[ -s "$DIR/openai_api_key" ]]; then
+      info "openai_api_key is present — kept and still read as OPENAI_API_KEY (new keys go under model-env/)"
+      return 0
+    fi
+    if [[ -n "$(model_env_names)" ]]; then
+      info "model-env/ holds $(model_env_status | sed 's/^present: //') — kept (re-run with --force to add or replace one)"
+      return 0
+    fi
+  fi
+  bold "a model API key (optional): which environment variable does it go in? (the one your provider documents)"
+  info "skip it when pi is signed in with /login; it is saved as model-env/<NAME>"
+  info "NOT used for memory embeddings — those run locally unless you opt into a hosted embedder below"
+  while true; do
+    read -r -p "  the variable's name (empty to skip): " name || name=""
+    if [[ -z "$name" ]]; then
+      info "skipped the model API key"
+      return 0
+    fi
+    v_model_env_name "$name" && break
+    bad "that name cannot be used — try again (or Enter to skip)"
+  done
+  while true; do
+    read -r -s -p "  paste the value of $name (input hidden, Enter to submit; empty to skip): " value || value=""
+    echo
+    if [[ -z "$value" ]]; then
+      info "skipped the model API key"
+      return 0
+    fi
+    if printf '%s' "$value" | v_model_value; then
+      mkdir -p "$DIR/model-env"
+      chmod 700 "$DIR/model-env"
+      printf '%s' "$value" | save "model-env/$name"
+      ok "model-env/$name saved"
+      return 0
+    fi
+    bad "that doesn't look right — try again (or Enter to skip)"
+  done
+}
+
 # ---- validators (read candidate on stdin, exit 0/1, print reason on stderr) --
 v_app_id()   { grep -qE '^[0-9]{1,12}$' || { echo "    app_id must be a number (GitHub App settings → App ID)" >&2; return 1; }; }
 v_secret()   { local v; v="$(cat)"; [[ ${#v} -ge 8 ]] || { echo "    suspiciously short (<8 chars)" >&2; return 1; }; }
@@ -184,6 +264,8 @@ v_token()    { local v; v="$(cat)"; [[ ${#v} -ge 60 && "$v" != *" "* ]] || { ech
 # runs this function against the TypeScript validator's table. The whitespace
 # list is ECMAScript whitespace, matched as exact strings regardless of locale.
 v_openai()   { local v c; v="$(cat)"; for c in $'\t' $'\n' $'\v' $'\f' $'\r' ' ' $'\xc2\xa0' $'\xe1\x9a\x80' $'\xe2\x80\x80' $'\xe2\x80\x81' $'\xe2\x80\x82' $'\xe2\x80\x83' $'\xe2\x80\x84' $'\xe2\x80\x85' $'\xe2\x80\x86' $'\xe2\x80\x87' $'\xe2\x80\x88' $'\xe2\x80\x89' $'\xe2\x80\x8a' $'\xe2\x80\xa8' $'\xe2\x80\xa9' $'\xe2\x80\xaf' $'\xe2\x81\x9f' $'\xe3\x80\x80' $'\xef\xbb\xbf'; do if [[ "$v" == *"$c"* ]]; then v=""; break; fi; done; [[ "$v" == sk-?* ]] || { echo "    OpenAI keys start with sk- and contain no spaces" >&2; return 1; }; }
+# A model key has no shape this wizard may assume: one unbroken string.
+v_model_value() { local v; v="$(cat)"; [[ "$v" != *[[:space:]]* ]] || { echo "    expected one unbroken string" >&2; return 1; }; }
 # OpenViking keys have no documented prefix — length and "one unbroken string"
 # is everything we can honestly assert about them.
 v_nonempty() { local v; v="$(cat)"; [[ ${#v} -ge 16 && "$v" != *" "* ]] || { echo "    expected one unbroken string of at least 16 characters" >&2; return 1; }; }
@@ -232,11 +314,7 @@ if [[ "$(shape)" == "tunnel" ]]; then
   fi
 fi
 
-if want openai_api_key; then
-  bold "openai_api_key — OPTIONAL: pi's model credential on the API-key route (skip under ChatGPT OAuth)"
-  info "NOT used for memory embeddings — those run locally unless you opt into a hosted embedder below"
-  prompt_hidden openai_api_key "the OpenAI API key" v_openai
-fi
+prompt_model_key
 
 # The HOSTED embeddings credential, its OWN file. The shipped
 # default embeds memory locally (nothing but the model call leaves), so this

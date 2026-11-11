@@ -84,18 +84,89 @@ describe("the spend line, through the home", () => {
             { at: EARLIER, usd: 2 },
             { at: LAST_MONTH, usd: 9 },
           ]),
-        async () => known({ today: 0.75, month: 1.25 }),
+        async () => known({ today: 0.75, month: 1.25, todayUnknown: 0, monthUnknown: 0 }),
       ),
     );
     expect(h.text()).toContain("$1.75 today · $4.25 this month");
-    expect((await h.status())["spend"]).toEqual({ today: 1.75, month: 4.25 });
+    expect((await h.status())["spend"]).toEqual({
+      today: 1.75,
+      month: 4.25,
+      todayUnknown: 0,
+      monthUnknown: 0,
+    });
+  });
+
+  // A review whose cost is not known (a model pi has no price for) is never
+  // $0 inside the sum: both halves count theirs, and the line says them.
+  // MUTATION: skip a null cost in spendPort's loop as it skips a non-finite
+  // one - the home's own unknown reviews vanish and this fails.
+  it("says the reviews with no known cost beside each sum, from both halves", async () => {
+    const h = await openHome(
+      sources(
+        async () =>
+          known([
+            { at: TODAY, usd: 1 },
+            { at: TODAY, usd: null },
+            { at: EARLIER, usd: null },
+            { at: LAST_MONTH, usd: null },
+          ]),
+        async () => known({ today: 0.75, month: 1.25, todayUnknown: 1, monthUnknown: 3 }),
+      ),
+    );
+    expect(h.text()).toContain(
+      "$1.75 + 2 rounds unknown today · $2.25 + 5 rounds unknown this month",
+    );
+    expect((await h.status())["spend"]).toEqual({
+      today: 1.75,
+      month: 2.25,
+      todayUnknown: 2,
+      monthUnknown: 5,
+    });
+  });
+
+  it("a day on which nothing has a price reads unknown, never $0.00", async () => {
+    const h = await openHome(
+      sources(
+        async () => known([{ at: TODAY, usd: null }]),
+        async () => known({ today: 0, month: 0, todayUnknown: 0, monthUnknown: 0 }),
+      ),
+    );
+    expect(h.text()).toContain("unknown (1 round) today · unknown (1 round) this month");
+    expect(h.text()).not.toMatch(/\$0\.00 today/);
+  });
+
+  // Invariant 9, second half: an older daemon's snapshot has no count. That
+  // is an unknown count, not a zero, and the home's own half is not passed
+  // off as the whole: the sum is said as it is, and the published field is
+  // null, never absent and never a number.
+  // MUTATION: treat a null count as 0 in spendPort's `plus` - the line says
+  // "+ 1 round unknown" and the status says 1, and this fails.
+  it("an unknown count from auto-review leaves the total count unknown: the sum alone, and null in the status", async () => {
+    const h = await openHome(
+      sources(
+        async () =>
+          known([
+            { at: TODAY, usd: 1 },
+            { at: TODAY, usd: null },
+          ]),
+        async () => known({ today: 0.75, month: 1.25, todayUnknown: null, monthUnknown: null }),
+      ),
+    );
+    expect(h.text()).toContain("$1.75 today · $2.25 this month");
+    expect(h.text()).not.toContain("rounds unknown");
+    expect((await h.status())["spend"]).toEqual({
+      today: 1.75,
+      month: 2.25,
+      todayUnknown: null,
+      monthUnknown: null,
+    });
   });
 
   it("a machine where nothing was reviewed yet spends $0.00, said as a measured zero", async () => {
     const h = await openHome(
       sources(
         async () => known([]),
-        async () => known({ today: 0, month: 0 }),
+        async () => known({ today: 0, month: 0, todayUnknown: 0, monthUnknown: 0 }),
       ),
     );
     expect(h.text()).toContain("$0.00 today · $0.00 this month");
@@ -110,7 +181,9 @@ describe("the spend line, through the home", () => {
       sources(
         async () => (broken === "home" ? unknown("the registry is unreadable") : known([])),
         async () =>
-          broken === "auto" ? unknown("Docker did not answer") : known({ today: 2, month: 3 }),
+          broken === "auto"
+            ? unknown("Docker did not answer")
+            : known({ today: 2, month: 3, todayUnknown: 0, monthUnknown: 0 }),
       ),
     );
     expect(h.text()).toContain("spend unknown");
@@ -124,7 +197,7 @@ describe("the spend line, through the home", () => {
         async () => {
           throw new Error("boom");
         },
-        async () => known({ today: 0, month: 0 }),
+        async () => known({ today: 0, month: 0, todayUnknown: 0, monthUnknown: 0 }),
       ),
     );
     expect(h.text()).toContain("spend unknown");
@@ -179,14 +252,20 @@ describe("the home's runs", () => {
     run(home, "a", { started: TODAY - 60_000, ended: TODAY, exit: 0, cost: 1.1 });
     run(home, "b", { started: EARLIER, ended: EARLIER + 1000, exit: 1, cost: 0.4 }); // failed, still spent
     run(home, "c", { started: NOW - 1000 }); // running: its cost is not in yet
-    run(home, "d", { started: TODAY, ended: TODAY + 1000, exit: 0, cost: null }); // says no cost
+    // Finished, and its result names no cost: not free, unknown.
+    run(home, "d", { started: TODAY, ended: TODAY + 1000, exit: 0, cost: null });
+    // Failed with no cost named: nothing says a review ran, so nothing to add.
+    run(home, "e", { started: TODAY, ended: TODAY + 2000, exit: 1, cost: null });
     const costs = await registryCosts(home, { now: () => NOW, alive: () => true })();
-    expect(costs).toEqual(
-      known([
-        { at: EARLIER + 1000, usd: 0.4 },
-        { at: TODAY, usd: 1.1 },
-      ]),
-    );
+    expect(costs.kind).toBe("known");
+    if (costs.kind !== "known") return;
+    // MUTATION: skip a finished run whose result names no cost in
+    // registryCosts - run d drops out and this fails.
+    expect([...costs.value].sort((a, b) => a.at - b.at)).toEqual([
+      { at: EARLIER + 1000, usd: 0.4 },
+      { at: TODAY, usd: 1.1 },
+      { at: TODAY + 1000, usd: null },
+    ]);
   });
 
   it("a registry with no runs yet is a known nothing", async () => {
@@ -203,8 +282,23 @@ const snap = (o: Record<string, unknown>): string =>
 
 describe("auto-review's recorded costs", () => {
   it("are the snapshot's day and month", () => {
+    expect(
+      snapshotSpend(
+        snap({
+          today_spend_usd: 0.5,
+          month_spend_usd: 7,
+          today_unknown_spend_rounds: 1,
+          month_unknown_spend_rounds: 4,
+        }),
+        NOW,
+      ),
+    ).toEqual(known({ today: 0.5, month: 7, todayUnknown: 1, monthUnknown: 4 }));
+  });
+
+  // MUTATION: default a missing month_unknown_spend_rounds to 0 — this fails.
+  it("an older daemon's snapshot, with no unknown-round counts, has unknown counts: null, never zero", () => {
     expect(snapshotSpend(snap({ today_spend_usd: 0.5, month_spend_usd: 7 }), NOW)).toEqual(
-      known({ today: 0.5, month: 7 }),
+      known({ today: 0.5, month: 7, todayUnknown: null, monthUnknown: null }),
     );
   });
 
@@ -217,16 +311,22 @@ describe("auto-review's recorded costs", () => {
   it("a snapshot from an earlier day adds nothing today; from an earlier month, nothing at all", () => {
     expect(
       snapshotSpend(
-        snap({ written_at: "2026-10-20T10:00:00Z", today_spend_usd: 4, month_spend_usd: 6 }),
+        snap({
+          written_at: "2026-10-20T10:00:00Z",
+          today_spend_usd: 4,
+          month_spend_usd: 6,
+          today_unknown_spend_rounds: 2,
+          month_unknown_spend_rounds: 3,
+        }),
         NOW,
       ),
-    ).toEqual(known({ today: 0, month: 6 }));
+    ).toEqual(known({ today: 0, month: 6, todayUnknown: 0, monthUnknown: 3 }));
     expect(
       snapshotSpend(
         snap({ written_at: "2026-09-29T10:00:00Z", today_spend_usd: 4, month_spend_usd: 6 }),
         NOW,
       ),
-    ).toEqual(known({ today: 0, month: 0 }));
+    ).toEqual(known({ today: 0, month: 0, todayUnknown: 0, monthUnknown: 0 }));
   });
 
   it("unreadable text is unknown", () => {
@@ -267,10 +367,15 @@ describe("auto-review's costs on this machine's stack", () => {
   it("are read from the running daemon's status", async () => {
     const d = docker({
       running: true,
-      status: snap({ today_spend_usd: 0.25, month_spend_usd: 3.5 }),
+      status: snap({
+        today_spend_usd: 0.25,
+        month_spend_usd: 3.5,
+        today_unknown_spend_rounds: 0,
+        month_unknown_spend_rounds: 2,
+      }),
     });
     expect(await composeAutoSpend({ root: "/app", runner: d })(NOW)).toEqual(
-      known({ today: 0.25, month: 3.5 }),
+      known({ today: 0.25, month: 3.5, todayUnknown: 0, monthUnknown: 2 }),
     );
     expect(d.calls.some((c) => c.includes("exec -T daemon cat /opt/qcr/state/status.json"))).toBe(
       true,
@@ -284,12 +389,11 @@ describe("auto-review's costs on this machine's stack", () => {
   });
 
   it("a stack never brought up, or no Docker at all, recorded nothing", async () => {
-    expect(await composeAutoSpend({ root: "/app", runner: docker({}) })(NOW)).toEqual(
-      known({ today: 0, month: 0 }),
-    );
+    const nothing = known({ today: 0, month: 0, todayUnknown: 0, monthUnknown: 0 });
+    expect(await composeAutoSpend({ root: "/app", runner: docker({}) })(NOW)).toEqual(nothing);
     expect(
       await composeAutoSpend({ root: "/app", runner: docker({ missing: true }) })(NOW),
-    ).toEqual(known({ today: 0, month: 0 }));
+    ).toEqual(nothing);
   });
 
   it("Docker that does not answer is unknown", async () => {

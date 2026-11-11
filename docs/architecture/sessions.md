@@ -77,9 +77,15 @@ in order:
 `buildPiCommand` (`src/sessions.ts`) produces:
 
 ```
-pi --approve --model <spec> --session-dir <dir> --system-prompt <path>
+pi --approve [--model <spec>] --session-dir <dir> --system-prompt <path>
    [--theme <path>] (--extension <path>)... --name <session>
 ```
+
+`--model` is passed only for a spec that names a model. A spec that names
+none starts pi on its own choice (its saved default, or the model the session
+last ran on), and one that names only a level passes `--thinking`. Such a
+session keeps that model while it has a credential, and the login-route
+extension moves it to the review's model route only when it has none.
 
 `--approve` pre-trusts project-local `.pi/` resources, so a session never
 stalls on pi's interactive "trust this folder?" prompt. `--session-dir` is
@@ -578,11 +584,22 @@ under an old name.
   every tier it could raise to must exist on disk;
 - every other pass builds all three.
 
-`[models.tiers]` maps each tier to a full model spec, `provider/model:thinking`.
-The whole spec goes into the built `model:` field: pi's `--model` accepts the
-`:thinking` suffix, and the lens runner reads only that one field.
-`thinking:` is rewritten as well, so the built file stays accurate for a human
-reader, but the runner ignores it. `splitModelSpec` is the parser.
+A tier's spec is `[provider/model][:thinking]`, and the model part may be
+empty: that is what the shipped config holds (`":medium"`, `":medium"`,
+`":high"`), and it means "the run's model route".
+
+- **A tier that names no model** builds a file with **no `model:` line** and a
+  `thinking:` line. The daemon builds agent files before any pi exists and
+  cannot name a model; the lens runner asks its host for the route once per
+  run and runs the lens on it, at the file's `thinking:` level.
+- **A tier pinned in `[models.tiers]`** (or a lens pinned in
+  `[models.pass_models]`) puts the whole spec into the built `model:` field:
+  pi's `--model` accepts the `:thinking` suffix, and `thinking:` is rewritten
+  as well, so the file stays accurate for a human reader.
+
+`splitModelSpec` is the parser and `isPinned` the test. How the route is
+resolved, and where, is [docs/llm-setup.md](../llm-setup.md) and
+[ADR 0002](../adr/0002-model-route.md).
 
 ## The lens tool
 

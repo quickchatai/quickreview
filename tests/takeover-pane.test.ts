@@ -195,6 +195,39 @@ describe("the takeover's login is a refresh-blanked borrowed copy", () => {
     expect(readFileSync(join(borrow, "models.json"), "utf8")).toBe('{"own":true}');
   });
 
+  // A route resolved in the pane must be the owner's: the remembered choice
+  // lives beside the login, and the catalog pi learned since its build beside
+  // pi's own files.
+  // MUTATION: drop MODEL_CHOICE_FILE from LOGIN_FILES in src/takeoverpi.ts —
+  // the pane's pi has no remembered choice and this fails.
+  it("copies the remembered model choice from beside the login and the learned catalog from the agent dir", () => {
+    const login = ownerAgent();
+    writeFileSync(join(login, "qcr-model.json"), '{"choice":"the-owners"}');
+    writeFileSync(join(login, "models-store.json"), '{"from":"login-dir"}');
+    const agent = join(dir, "own-agent");
+    mkdirSync(agent);
+    writeFileSync(join(agent, "models-store.json"), '{"from":"agent-dir"}');
+    writeFileSync(join(agent, "qcr-model.json"), '{"choice":"not-this-one"}');
+    const borrow = join(dir, "borrow");
+    prepareBorrowedAgent({
+      agent_dir: agent,
+      login_dir: login,
+      borrow_dir: borrow,
+      idle_ms: 60_000,
+    });
+    expect(readFileSync(join(borrow, "qcr-model.json"), "utf8")).toBe('{"choice":"the-owners"}');
+    expect(readFileSync(join(borrow, "models-store.json"), "utf8")).toBe('{"from":"agent-dir"}');
+    for (const name of ["qcr-model.json", "models-store.json"])
+      expect(statSync(join(borrow, name)).mode & 0o777).toBe(0o600);
+    // the owner's files are as they were
+    expect(readFileSync(join(login, "qcr-model.json"), "utf8")).toBe('{"choice":"the-owners"}');
+    // with no shared login dir, both come from the one agent dir
+    const single = join(dir, "borrow-2");
+    prepareBorrowedAgent({ agent_dir: login, borrow_dir: single, idle_ms: 60_000 });
+    expect(readFileSync(join(single, "qcr-model.json"), "utf8")).toBe('{"choice":"the-owners"}');
+    expect(readFileSync(join(single, "models-store.json"), "utf8")).toBe('{"from":"login-dir"}');
+  });
+
   it("is refused, with no pi, when the token would expire inside the lease's window", async () => {
     ownerAgent(10 * 60_000);
     const lines: string[] = [];

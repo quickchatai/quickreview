@@ -299,6 +299,16 @@ until runtime, was re-parsed as the empty string and allowed.
   The audit classifies these as `policy_surface_write`. Like built
   `state/agents/**`, this companion-owned file changes during normal work,
   so layer 4 does not hash it; the located profile outputs remain watched.
+- **The remembered model choice is policy too.** `qcr-model.json`, in pi's
+  agent dir beside the logins (`packages/pi-plugin/src/modelchoice.ts`),
+  decides which provider and model a review runs on, and so whose credential
+  and money it spends. It is written by `qcr model`, `/qcr-setup model` and
+  the answer to a run's question, never by a session: the reviewer cannot
+  write that basename or its `qcr-model.json.tmp` sibling, by path or by
+  name, through file tools or shell redirections. A person may change it
+  while a round runs, so, like the journal, it is vetoed and not hashed by
+  layer 4. Its default home is also under `.pi/`, which the surface already
+  refuses, and the login source dirs are fenced from the file tools.
 - **Layer 4 watches the policy surface.** The same fingerprint dispatch takes
   and verdicts re-checks hashes `config.toml` and the seven directories,
   recursively by content, so `T=config.toml; cat p > $T` — the one spelling no
@@ -517,7 +527,8 @@ compiled `dist/` guard.
   refusal or a detection.
 - **The App's credentials are readable by the session.** Same uid, so
   nothing revokes the read. `checkSecretPaths` refuses the obvious SPELLINGS — a command or a file-tool path that names
-  `app.pem`, `webhook_secret`, `tunnel_token`, the OpenAI/Slack key files or a
+  `app.pem`, `webhook_secret`, `tunnel_token`, the model key files (the
+  `model-env` directory, the older `openai_api_key`), the Slack key files or a
   secrets dir, including globs, quoting and `../secrets` from the sandbox root
   — but it is a belt: `d=/opt/quickreview/sec; cat ${d}rets/app_id` and
   `grep -r 'PRIVATE KEY' /opt/quickreview` still read them. A review body
@@ -528,6 +539,24 @@ compiled `dist/` guard.
   host the session named, the one outbound channel this policy otherwise
   leaves closed. The floor for the read is the same as for G5: a uid split or a
   mount the session cannot read, a deploy change.
+- **A model key reaches the engine's process, and no tool.** The values under
+  `<secrets dir>/model-env/` (and the older `openai_api_key`) have one loader
+  (`src/modelenv.ts`) and are never exported to a shell. The daemon hands
+  them to a review worker's own process environment, where pi's provider
+  client reads them; the worker's session spec never holds one
+  (`WORKER_ENV_DROPPED` is derived from the loader's names), and the model's
+  bash runs under an environment built from that spec, so a tool call does
+  not see a model key. The daemon's own environment, the tmux server and the
+  login refresher hold none. This matters for one name in particular: pi
+  reads a Copilot token from `COPILOT_GITHUB_TOKEN`, which is a GitHub token
+  under a name the loader's prefix rule lets through, and it must stay out of
+  a tool's reach like the rest. Two limits, stated: the operator's takeover
+  and debug panes are a CLI pi whose own process environment carries the
+  model env, as it always carried the older key; and a credential *file*
+  that an environment variable names (a cloud provider's key file, a web
+  identity token) gets no tool fence of its own. In the image the tool uid
+  cannot read the secrets mount; on a laptop the model's bash runs as the
+  person and can read what they can.
 - **Layer 4 detects; it does not prevent.** The write lands, the round
   completes, the anomaly follows. It bounds the damage to one round. Its window
   is round start → round measurement, so a write made and reverted inside that

@@ -19,9 +19,13 @@
 // The provider ids and the model ids are pi's own, read from the installed
 // catalog: the fence names none.
 //
-// The allowlist is the files that fail today, each with why and what clears
-// it, held by SET EQUALITY: a file that starts to fail is not on it, and a
-// file that was cleaned is still on it; either fails. It only shrinks.
+// The allowlist is the files that keep a name, each with why, held by SET
+// EQUALITY: a file that starts to fail is not on it, and a file that was
+// cleaned is still on it; either fails. It is final: the measured model's id
+// (data, in the one file that holds it) and the memory embedder's own vendor
+// name. The embedder's config and engine (src/config.ts, src/openviking/)
+// name that vendor too, in shapes this fence does not match; the day one of
+// them does, it joins the list with that reason and nothing else does.
 //
 // Comments are not code, and what is one is TypeScript's own answer: a `//`
 // that ends a regex (`/^prefix\//`) or sits in a string starts none, so a
@@ -211,24 +215,11 @@ function modelNameOffenders(root: string): Record<string, string[]> {
   return out;
 }
 
-/** Why each file that fails today is let through, and what clears it. */
+/** The files that carry a name and keep it, each with why. A name anywhere
+ * else in the walked code is fixed there, never added here. */
 const ALLOWLIST: Readonly<Record<string, string>> = {
-  "docker/companion/entrypoint.sh":
-    "the inline twin: which of two OpenAI logins exists picks the companion's default model. It goes when the entrypoints stop resolving a model.",
-  "docker/entrypoint.sh":
-    "the same inline twin, for the bot's own pi. It goes when the entrypoints stop resolving a model.",
-  "packages/pi-plugin/src/engine/auth.ts":
-    "RUNTIME_KEY_ENVS, a hand table of which variable keys which provider. It goes when pi's own inventory is the only one.",
-  "packages/pi-plugin/src/engine/keyroute.ts":
-    "the bench's key route rewrites one provider's specs to another's. It leaves the walk when the file moves to the bench harness.",
-  "packages/pi-plugin/src/modelroute.ts":
-    "the two-provider twin, still exported for the routes that have not moved to resolveRoute. It goes with its last caller.",
-  "packages/pi-plugin/src/pricing.ts":
-    "the hand price table and the measured model's ids. The table leaves the core for the bench harness, and the measured id moves to the data it was measured on.",
-  "src/home/model.ts":
-    "the home's login card knows two OpenAI providers by name. It goes when signed in means any credential pi has.",
-  "src/loginrefresh/pirefresh.ts":
-    "OAUTH_LOADERS, a name table of OAuth refreshers. It goes when the refresher takes them from pi's provider registry.",
+  "packages/pi-plugin/src/measured.ts":
+    "the measured model's id: the estimate was fitted on one model, and that fact is data. Nothing compares against it outside this file's own reader.",
   "src/onboard/steps/embeddings.ts":
     "the hosted embedder is one vendor's: the name is the embedder's own wire value, not a review model. It stays.",
 };
@@ -324,8 +315,8 @@ describe("no model or provider name decides anything", () => {
   // extensions/login-route.ts — this fails. Remove the last name from a file
   // that is on the allowlist and leave its entry — this fails too. Strip
   // comments by pattern again (a line comment at any `//` not after a quote or
-  // a colon) — the key route's literal sits after a regex that ends in `\//`,
-  // the file reads clean and its entry fails.
+  // a colon) — a literal after a regex that ends in `\//` reads clean, and the
+  // shapes case above (the `replace` row) fails.
   it(
     "holds on the tree: exactly the allowlisted files carry a name",
     { timeout: HEAVY_TIMEOUT_MS },

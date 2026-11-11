@@ -100,6 +100,11 @@ export interface ScanSdkCasesOptions {
   /** The driver's env: names the login source (`QCR_SCAN_AUTH_SRC`, else
    * `PI_CODING_AGENT_DIR`, else the home's pi agent dir) and feeds the leaf env. */
   env: NodeJS.ProcessEnv;
+  /** Where pi looks for a provider's key, when that is more than `env`: the
+   * driver's env under the model env of the install's secrets dir
+   * (src/modelenv.ts). It reaches pi's credential lookup alone: the leaf env
+   * is still filtered from `env`. Omitted: `env`. */
+  authEnv?: NodeJS.ProcessEnv;
   /** A private, absolute directory for the host's own files (models list). Never
    * the operator's pi home. */
   agentDir: string;
@@ -168,6 +173,9 @@ export interface ScanRouteOptions {
   /** The driver's env: names the login source (`scanAuthSource`) and is where
    * pi looks for a provider's key. */
   env: NodeJS.ProcessEnv;
+  /** Where pi looks for a provider's key, when that is more than `env` (the
+   * model env of the install's secrets dir over it). Omitted: `env`. */
+  authEnv?: NodeJS.ProcessEnv;
   /** Where the route host's private agent dir is made and removed again. */
   tmpDir: string;
   /** `--model`, else the config's `[models] model` when it names a model. */
@@ -291,7 +299,7 @@ export async function scanRoute(o: ScanRouteOptions): Promise<ScanRouteAnswer> {
       srcAgentDir: src,
       tmpDir: o.tmpDir,
       credentials: borrowed.credentials,
-      authEnv: o.env,
+      authEnv: o.authEnv ?? o.env,
       route: {
         skipped: borrowed.skipped,
         ...(o.pin ? { pin: o.pin } : {}),
@@ -432,7 +440,7 @@ export function scanSdkCases(o: ScanSdkCasesOptions): CaseRunner {
       const hostOptions: CaseHostOptions = {
         agentDir: o.agentDir,
         credentials: borrowed.credentials,
-        authEnv: o.env,
+        authEnv: o.authEnv ?? o.env,
         ...(route !== undefined ? { route: caseHostRoute(route) } : {}),
       };
       const host = await (o.makeHost

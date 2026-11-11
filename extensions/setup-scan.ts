@@ -45,7 +45,7 @@ import {
 } from "@quickchatai/pi-quickreview/extensions/pi-tool.js";
 import { sandboxRoot } from "../src/config.js";
 import { homeProfileLookup, stateHome } from "../src/install.js";
-import { scanCasesForEnv } from "@quickchatai/pi-quickreview/src/engine/auth.js";
+import { scanCasesForEnv, scanProviders } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { CaseRunner, SetupEngine } from "../src/setup/engine.js";
 import type { FindingsStore } from "../src/setup/findings.js";
@@ -535,6 +535,13 @@ export function buildScan(
    * driver). Omitted — the companion's pi — a scan on `[engine] runtime = sdk`
    * refuses its cases. */
   sdkLeaves?: SdkLeaves,
+  /** The model a child-pi case with no model of its own is handed, asked per
+   * case: the route its host resolved (scancli's driver), or the model the
+   * host's pi is on (the companion). Omitted, or answering nothing: such a
+   * child runs on pi's own choice for its login. In the scan container it
+   * also names the logins a case must outlive: its provider's, and those of
+   * the tiers and lenses the config pins to a model of their own. */
+  route?: () => { spec: string; provider: string } | undefined,
 ): {
   scan: ScanRunner;
   findings: FindingsStore;
@@ -544,6 +551,14 @@ export function buildScan(
 } {
   const root = env.QCR_ROOT?.trim() || sandboxRoot();
   const home = stateHome(env);
+  // The providers the scan's models are on, once a route is known: the only
+  // logins the per-case copy judges. No route: every login, as before.
+  const providers = (): readonly string[] | undefined => {
+    const r = route?.();
+    if (r === undefined) return undefined;
+    const loaded = loadScanConfig(root, env);
+    return scanProviders(r, loaded.ok ? loaded.cfg.models : undefined);
+  };
   // Assigned below: the triage reads the runner's runs, the runner closes
   // the triage's tickets at every run's end.
   let triage: ScanTriage | null = null;
@@ -559,7 +574,7 @@ export function buildScan(
     cases: ({ agentsDir, transcriptDir, stop }) =>
       scanCasesForEnv(
         scanLeafRunner(
-          piCaseRunner({ agentsDir, cwd: root, transcriptDir }),
+          piCaseRunner({ agentsDir, cwd: root, transcriptDir, ...(route ? { route } : {}) }),
           root,
           env,
           sdkLeaves &&
@@ -567,6 +582,8 @@ export function buildScan(
         ),
         env,
         stop,
+        undefined,
+        providers,
       ),
     closeFixedTickets: async () => (triage ? triage.closeFixed() : { closed: [], problems: [] }),
     lease,

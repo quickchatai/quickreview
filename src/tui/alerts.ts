@@ -25,7 +25,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { AUTH_FLAG_FRESH_MS } from "@quickchatai/pi-quickreview/src/authwatch.js";
+import {
+  AUTH_FLAG_FRESH_MS,
+  credentialRefusedText,
+} from "@quickchatai/pi-quickreview/src/authwatch.js";
 import { zoneDateString } from "../eod.js";
 import {
   parseRouteRecord,
@@ -473,7 +476,7 @@ function publishAlert(alertsDir: string, name: string, record: unknown): void {
   renameSync(tmp, join(alertsDir, name));
 }
 
-// ---- daemon-detected pi auth failures → the same alert pipeline ----------
+// ---- a model credential the daemon saw refused → the same alert pipeline ----
 
 export interface PiAuthAlertMemory {
   /** `last_at` of the snapshot flag the last written file covered. */
@@ -490,7 +493,7 @@ export interface PiAuthAlertMemory {
  */
 export function maybeWritePiAuthAlert(
   alertsDir: string,
-  flag: { last_at: string; hits: number } | undefined,
+  flag: { last_at: string; hits: number; provider?: string } | undefined,
   mem: PiAuthAlertMemory,
   now: () => Date = () => new Date(),
 ): string | undefined {
@@ -503,8 +506,9 @@ export function maybeWritePiAuthAlert(
     tier: "alert",
     cause: "pi-auth-expired",
     pr: null,
-    title: "pi auth: API rejecting tokens as expired",
-    body: `The daemon is seeing token-expired API errors in pi session logs (${flag.hits} hit(s), latest ${flag.last_at}). Reviews will wedge until /login is re-run in the container.`,
+    title: "model credential refused",
+    // The anomaly's own sentence; a flag that names no provider guesses none.
+    body: `${credentialRefusedText(flag.provider ? [flag.provider] : [])} (${flag.hits} hit(s) in pi session logs, latest ${flag.last_at})`,
     ts: now().toISOString(),
   });
   mem.lastWritten = flag.last_at;

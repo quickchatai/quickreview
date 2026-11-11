@@ -16,6 +16,17 @@ describe("scripts/smoke-companion.sh", () => {
     expect(src).toMatch(/trap .*EXIT/);
     expect(src).toMatch(/rc=\$\?/);
   });
+  // MUTATION: put `test -f "$HOME/.pi/agent/auth.json"` back as the pi auth
+  // step's probe — this fails.
+  it("asks the app in the container for a model route, never for a login file", () => {
+    const code = src
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    expect(code).not.toMatch(/test -[fs] [^\n]*auth\.json/);
+    expect(code).toMatch(/docker exec "\$CONTAINER" node \/opt\/qcr\/dist\/src\/cli\.js model --json/);
+    expect(code).toMatch(/grep -q '"ok":true'/);
+  });
   it("maps the container layout to its root through the TUI resolver, not a copy", () => {
     expect(src).toContain("rootForLayout");
     expect(src).not.toContain('release) VM_ROOT="/opt/qcr"');

@@ -1215,9 +1215,57 @@ describe("the scan's route, resolved where the login is (scanRoutePort)", () => 
       "",
     ]);
     expect(w.world.resolved.route).toBeUndefined();
-    await w.port({ run: true, ask: false });
+    // A driver resolves its route in its own process, on its own login (the
+    // world's resolver answers auto/one, the image box/model).
+    await expect(w.port({ run: true, ask: false })).rejects.toThrow(/on this machine's pi login/);
     expect(w.here).toHaveLength(1);
-    expect(w.docker.filter((c) => c[0] === "run")).toHaveLength(1);
+  });
+
+  // `start --foreground` typed on the host under [scan] sandbox = "docker":
+  // the plan was read off the companion's login, the driver runs on this
+  // machine's. The runner could only say "the plan changed".
+  // MUTATION: drop the sandbox ask from a driver's route in scanRoutePort —
+  // the start goes on to the runner's bare "the plan changed" and this fails.
+  it("a driver here on another model than the sandbox's plan is refused with the reason and the two ways out", async () => {
+    const there: ScanRouteAnswer = { result: { ok: true, route: routeOn("box/model") } };
+    const w = world({
+      image: () => ({ ok: true, stdout: `${JSON.stringify(there)}\n`, stderr: "", code: 0 }),
+    });
+    const refused = w.port({ run: true, ask: false });
+    await expect(refused).rejects.toThrow(/runs on auto\/one \(AUTO, /);
+    await expect(refused).rejects.toThrow(/companion's login and runs on box\/model \(BOX, /);
+    await expect(refused).rejects.toThrow(/without --foreground/);
+    await expect(refused).rejects.toThrow(/--sandbox host/);
+    // Nothing is kept for cases that will not run.
+    expect(w.world.resolved.route).toBeUndefined();
+  });
+
+  it("a driver here on the model the sandbox would run goes on, and its route is kept", async () => {
+    const same: ScanRouteAnswer = { result: { ok: true, route: routeOn("auto/one") } };
+    const w = world({
+      image: () => ({ ok: true, stdout: `${JSON.stringify(same)}\n`, stderr: "", code: 0 }),
+    });
+    const r = await w.port({ run: true, ask: false });
+    expect(r.result).toEqual(same.result);
+    expect(w.world.resolved.route).toEqual(routeOn("auto/one"));
+    expect(w.said).toEqual([]);
+  });
+
+  it("a sandbox that cannot be asked does not stop a driver here: it says what a refusal would mean", async () => {
+    const w = world({ image: () => ({ ok: false, stdout: "", stderr: "boom", code: 1 }) });
+    const r = await w.port({ run: true, ask: false });
+    expect(r.result).toEqual({ ok: true, route: routeOn("auto/one") });
+    expect(w.world.resolved.route).toEqual(routeOn("auto/one"));
+    expect(w.said).toHaveLength(1);
+    expect(w.said[0]).toMatch(/this machine's pi login \(auto\/one\)/);
+    expect(w.said[0]).toMatch(/--sandbox host/);
+  });
+
+  it("a driver with no sandbox to plan in (a host scan, or inside the container) asks nobody else", async () => {
+    const w = world({});
+    await w.port({ run: true, ask: false });
+    expect(w.docker).toEqual([]);
+    expect(w.said).toEqual([]);
   });
 
   // `qcr login` signs this machine's pi in, which a sandboxed scan never

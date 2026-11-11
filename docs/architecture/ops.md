@@ -11,7 +11,8 @@ walkthroughs already exist and are not repeated here — this page links them:
   each step asks, what it writes, what to do when one goes red.
 - [../github-app-setup.md](../github-app-setup.md) — registering the App by
   hand, permission and event tables, where each value lands.
-- [../llm-setup.md](../llm-setup.md) — the two model-credential routes.
+- [../llm-setup.md](../llm-setup.md) — models and credentials: which model a
+  review runs on, how to pin one, the credentials pi reads.
 - [../../docker/README.md](../../docker/README.md) — the compose
   stack: the daemon and memory images, ingress shapes, version pin.
 - [../../deploy/ansible/README.md](../../deploy/ansible/README.md) — the
@@ -143,7 +144,7 @@ Registered in `defaultSteps()` (`src/onboard/steps/index.ts`), executed in
 | 10 | `preflight` | `preflight.ts` | Node ≥ 22.19 (older noted, not refused), Docker and Compose present, the release image noted as pullable (it is public; an unreachable tag comes with its likely cause, and a private mirror with its login), the operator's uid captured (later written as `QCR_UID`, the containers' user, so they can read the secrets the operator owns) |
 | 20 | `topology` | `topology.ts` | Where the reviewer lives. Both answers first-class; switching later demands an explicit confirmation phrase and tears nothing down behind the operator |
 | 22 | `ssh_preflight` | `ssh.ts` | *(vm only, and first on that route)* the alias resolves, an agent holds the key, `ansible-playbook` is on this machine, remote sudo is passwordless — all under `BatchMode=yes` |
-| 30 | `llm_auth` | `llmauth.ts` | The model-credential route, and the whole installation made consistent with it (including rewriting model prefixes for the API-key route). No credential value ever reaches an argv or a tool result |
+| 30 | `llm_auth` | `llmauth.ts` | A model route resolves where the daemon runs: the step asks `qcr model --json` in the daemon's container and on this machine and reads the answer. It names no provider, asks no route or key question, rewrites no config and writes no key file. No credential value ever reaches an argv or a tool result |
 | 35 | `config_fill` | `configfill.ts` | The interview → a comment-preserving patch of `config.toml`. `QUESTIONS` is what a human must answer; `DERIVABLES` is the closed set the step computes instead of asking |
 | 36 | `escalation` | `escalation.ts` | The optional escalation feature: targets and triggers, or left off. Enforces the same completeness rules `parseEscalation` enforces at load |
 | 38 | `embeddings` | `embeddings.ts` | Which embedder memory uses; local is the default and needs no key. Refuses a config that disagrees with what the boot will render |
@@ -166,7 +167,10 @@ had to ask for before the App existed.
 ### The choice vocabulary
 
 `src/onboard/choices.ts` declares every key one step hands another, plus the
-value vocabularies (`Topology`, `IngressChoice`, `AuthRoute`, `MemoryChoice`).
+value vocabularies (`Topology`, `IngressChoice`, `GithubAuth`, `MemoryChoice`).
+Two keys an older wizard recorded, `llm_auth_route` and `llm_model_prefix`,
+are retired: a checklist that still holds them loads, and nothing reads them,
+whatever their value.
 Two rules, enforced by `tests/onboard-choices.test.ts`:
 
 - no step carries its own string literal for a shared key — every read and
@@ -219,8 +223,9 @@ companion's `openviking-keys.env` is kept out of it, in
 | `webhook_secret` | HMAC secret for `POST /webhook` | yes |
 | `tunnel_token` | connector token for a named Cloudflare tunnel | only under that ingress shape |
 | `ngrok_authtoken` | ngrok client credential (read by the sidecar wrapper) | only under that shape |
-| `openai_api_key` | pi's model credential on the API-key route | optional |
-| `openai_embeddings_api_key` | the hosted-embeddings opt-in's own key | optional, and never pi's key |
+| `model-env/<ENV_NAME>` | a model provider's key for pi, or another variable the provider needs: one file per environment variable, named as the provider documents (`src/modelenv.ts`) | optional: a login in pi's home is the other route |
+| `openai_api_key` | the older single key file, still read as `OPENAI_API_KEY` | optional |
+| `openai_embeddings_api_key` | the hosted-embeddings opt-in's own key | optional, and never a model credential |
 | `openviking_root_key` | the memory server's own credential | for confined memory |
 | `openviking_reviewer_key` | the one user key the daemon and review sessions hold | for confined memory |
 | `deploy_shape` | `tunnel` or `docker`, remembered by the wizard | written by the wizard |
@@ -229,7 +234,12 @@ Two collection paths write the same names with the same validation and mode:
 `deploy/collect-secrets.sh` (interactive, hidden input, never echoes a value)
 and the wizard's App step, which receives `app_id` / `app.pem` /
 `webhook_secret` directly from the manifest exchange so no credential passes
-through a clipboard. The **companion's** memory user key deliberately does not
+through a clipboard. The model env has one loader, `modelEnvFrom`
+(`src/modelenv.ts`), and nothing exports it to a shell: the daemon hands the
+map to its review workers' own process environment, and the preflight and
+`qcr model` hand it to the route host they ask. A name must be an environment
+variable's (`^[A-Z][A-Z0-9_]*$`) and may not start with `GH_`, `GITHUB_`,
+`QCR_`, `PI_`, `OPENVIKING_` or `GIT_`. The **companion's** memory user key deliberately does not
 live here: the whole secrets dir is mounted into the container review sessions
 run in, so `memory.ts` relocates the operator key file out of it rather than
 writing a key somewhere sessions could read.
@@ -373,6 +383,22 @@ that unit is the one running it.
 The script performs no remote operation beyond ansible and ssh, and it never
 bumps a pin for you.
 
+### Rolling back across the tier rename
+
+The pass tiers are `light`, `standard` and `deep`. They were `terra-med`,
+`sol-med` and `sol-high`, and every input still reads the older names: config,
+profiles, levers, verdict files, stored rows and the agent names a long-lived
+session still calls. Nothing writes them.
+
+**Roll back only to a version that reads both spellings.** A release from
+before the fold builds its tier-suffix pattern from its own names alone and
+refuses a tier it does not know in config and profiles. After a rollback to
+one, a round, a session or a stored row that carries a new name reads there
+as a required pass that is missing, and a `config.toml` or a profile that
+names a new tier does not load. The updater drains before it swaps images, so
+no round is in flight across an update; what crosses it is the stored rows and
+each sticky PR session's transcript, which is why the reader has to know both.
+
 ## The drain valve
 
 Draining stops review work so a container can be recreated without orphaning a
@@ -435,10 +461,33 @@ significant transition, `buildStatusSnapshot` + `writeStatusJson`
 (`src/state.ts`) write `state/status.json` atomically. `StatusSnapshot` is the
 one published operational surface: mode, tracked PRs with their current round
 and any pause, running rounds, spend, digest headline, drain state and holder,
-memory-engine health, provider/auth health, the round-stage supervisor, the
+memory-engine health, provider/auth health, the model reviews run on
+(`model_route`), the round-stage supervisor, the
 pipeline block, and `heartbeat`. Optional fields are genuinely optional — a
 snapshot from an older daemon simply lacks them, and every reader must default
 rather than invent a value.
+
+**The model reviews run on.** The daemon never resolves a model: it hands a
+worker the config's pin, possibly none, and the worker resolves the route
+where pi is and reports it in its `ready` message, before its first session
+(`src/ipc/routereport.ts`). The daemon logs a `model_route` event per worker
+and keeps the latest report in `status.json`:
+`model_route: { spec, source, pick, moved_from, credential_origin, at } | null`.
+`null` (no worker has reported yet) and a snapshot with no such key (an older
+daemon) both read as unknown, never as a default. `qcr status` prints it as
+its `model:` line, with the move when a pinned model ran on another provider.
+
+One anomaly, **`model_route_changed`**, is raised when a report's `spec`,
+`moved_from` or `credential_origin` differs from the report before it, never
+on the first (`StateStore.recordModelRoute`). Its text says where reviews run
+now, where they ran, and the move when there is one, and ends "Pin it with
+[models] model, or check the login." It is how an operator learns that a lost
+login turned a subscription into a metered key, that a pin moved to another
+provider, or that a new credential moved an unpinned bot. A bot round has no
+dollar stop on any model; its deadline and turn budgets hold it, so this line
+and this alert are what say which model the money goes to. The TUI's alerts
+show the anomaly. How a route is chosen is
+[docs/llm-setup.md](../llm-setup.md).
 
 **Metrics.** `src/metrics.ts` is pure aggregation over the daemon's SQLite: no
 GitHub calls, no mutations, no gate. `computeMetrics` renders three windows (7
@@ -457,8 +506,13 @@ returns nulls when either is missing.
 **Spend.** `src/usage.ts` measures a round from the pi session JSONLs rather
 than trusting a verdict file's self-reported figure (models copy the template's
 example number). It sums per-model input/output tokens from assistant messages
-inside the round window, attributes them via `model_change` records, and prices
-them with `estimateUsd`. Subagent transcripts land in pi's global store with no
+inside the round window, attributes them via `model_change` records, and takes
+the cost pi stamped on each call: prices are pi's catalog's, and no table of
+ours prices a product path. A call with tokens and a cost of exactly zero is an
+unpriced call, and a round with one records its spend as unknown, never as
+`$0.00`: every surface that prints a sum (`qcr status`, `qcr spend`,
+`qcr today`, the digest, the board) prints the known sum and the number of
+rounds whose cost is unknown. Subagent transcripts land in pi's global store with no
 marker we control, so they are matched by file mtime inside the round window —
 best-effort, and surfaced as `passes_included` rather than silently folded in.
 Everything is pure logic over injectable reads: a malformed line or unreadable
@@ -519,7 +573,8 @@ cheap.
 | Command | What it does |
 |---|---|
 | `onboard` | the guided setup, and a diagnostic on a finished install |
-| `status` | render `status.json` — mode, PRs, rounds, spend, reviewer-memory health, drain and holds |
+| `status` | render `status.json` — mode, PRs, rounds, spend, the model reviews run on, reviewer-memory health, drain and holds |
+| `model [use <provider[/model]> \| reset] [--json]` | which model reviews run on here and why; remember a choice, or make it automatic again (`src/modelcli.ts`; needs no state database) |
 | `spend`, `today` | spend totals and the current ops day |
 | `why <pr> [--json]` | the decision trail for one PR from the state store and its archive |
 | `metrics [--pr <n>] [--json]` | `src/metrics.ts` payloads, rendered or raw |

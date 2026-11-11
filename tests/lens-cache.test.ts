@@ -7,16 +7,26 @@
 // Pinned: a group shares one session id and its payload key; one pass finishing
 // never ends a sibling's stream (the lifetime test); the warm-up takes no
 // permit, comes before the group and is released after 30 s; a pack-less group
-// staggers; sessions are created a gap apart.
+// staggers; sessions are created a gap apart; and the pack is for one API
+// family (PACK_FIRST_APIS): a group whose model speaks another API gets no
+// warm-up, no wait and no rewrite.
+//
+// The passes run on a faux provider whose model says it speaks an API of that
+// family (`family`), as a codex model does; `outside` is one that does not.
+// pi-ai's faux provider answers by provider, whatever API its model names, so
+// the name decides nothing but what the runner reads off it.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fauxAssistantMessage,
+  fauxProvider,
+  type FauxProviderHandle,
   type SimpleStreamOptions,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
+import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import {
@@ -25,6 +35,8 @@ import {
   settledWithin,
 } from "@quickchatai/pi-quickreview/src/engine/lens/cache-run.js";
 import {
+  PACK_FIRST_APIS,
+  isPackFirstApi,
   leafCache,
   packFirstPayload,
 } from "@quickchatai/pi-quickreview/src/engine/lens/leaf-cache.js";
@@ -33,7 +45,10 @@ import {
   createLensRunner,
   type LensRunConfig,
 } from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
+import { PiHost } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { parseLedger } from "@quickchatai/pi-quickreview/src/lensresult.js";
+import { MEASURED } from "@quickchatai/pi-quickreview/src/measured.js";
+import { routableFaux } from "./helpers/priced-faux.js";
 import {
   FakeTransport,
   createHostRig,
@@ -47,6 +62,10 @@ useOfflineGuard();
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 let rig: HostRig;
+/** The provider the passes run on: its model speaks an API of the pack-first family. */
+let family: FauxProviderHandle;
+/** A provider whose model speaks an API outside the family. */
+let outside: FauxProviderHandle;
 let dir: string;
 let sessions: AgentSession[];
 let createdAt: number[];
@@ -55,16 +74,31 @@ const onUnhandled = (reason: unknown): void => {
   unhandled.push(reason);
 };
 
-const agentFile = (name: string, tools: string): string =>
-  `---\nname: ${name}\ndescription: ${name} lens\nmodel: faux/faux-1\ntools: ${tools}\n---\nYou are ${name}. Report findings.\n`;
+const FAMILY_MODEL = "faux-family/faux-1";
+const OUTSIDE_MODEL = "faux-outside/faux-1";
+
+/** A built agent file. `model` null: an unpinned tier's, with no `model:` line. */
+const agentFile = (name: string, tools: string, model: string | null = FAMILY_MODEL): string =>
+  `---\nname: ${name}\ndescription: ${name} lens\n${model === null ? "" : `model: ${model}\n`}tools: ${tools}\n---\nYou are ${name}. Report findings.\n`;
 
 beforeEach(async () => {
-  rig = await createHostRig();
+  family = fauxProvider({ api: "openai-codex-responses", provider: "faux-family" });
+  outside = fauxProvider({ api: "anthropic-messages", provider: "faux-outside" });
+  rig = await createHostRig({
+    configureModels: (runtime) => {
+      runtime.registerNativeProvider(family.provider);
+      runtime.registerNativeProvider(outside.provider);
+    },
+  });
   dir = mkdtempSync(join(tmpdir(), "lens-cache-"));
   mkdirSync(join(dir, "agents"));
   writeFileSync(join(dir, "agents", "pass-a.md"), agentFile("pass-a", "read, bash"));
   writeFileSync(join(dir, "agents", "pass-b.md"), agentFile("pass-b", "read, bash"));
   writeFileSync(join(dir, "agents", "pass-c.md"), agentFile("pass-c", "read, bash"));
+  for (const name of ["pass-x", "pass-y", "pass-z"])
+    writeFileSync(join(dir, "agents", `${name}.md`), agentFile(name, "read, bash", OUTSIDE_MODEL));
+  for (const name of ["pass-free", "pass-free-b"])
+    writeFileSync(join(dir, "agents", `${name}.md`), agentFile(name, "read, bash", null));
   sessions = [];
   createdAt = [];
   unhandled = [];
@@ -171,8 +205,11 @@ function codexLike(
   };
 }
 
-const respondWith = (n: number, reply: ReturnType<typeof codexLike>): void =>
-  rig.faux.setResponses(Array.from({ length: n }, () => reply));
+const respondWith = (
+  n: number,
+  reply: ReturnType<typeof codexLike>,
+  on: FauxProviderHandle = family,
+): void => on.setResponses(Array.from({ length: n }, () => reply));
 
 describe("leafCache (the extension)", () => {
   it("rewrites pack-first and sets the cache key to the group's; fail-open on anything else", () => {
@@ -300,7 +337,7 @@ describe("[cache groups] lifetime: dispose is group-scoped", () => {
       let releaseB!: () => void;
       const gateB = new Promise<void>((r) => (releaseB = r));
       const seen: Seen[] = [];
-      rig.faux.setResponses([
+      family.setResponses([
         codexLike(seen, transport, async (_s, o) => {
           await new Promise<void>((resolve) => {
             if (!o?.signal || o.signal.aborted) return resolve();
@@ -444,7 +481,7 @@ describe("[cache groups] the warm-up", () => {
 
   it("a warm-up that fails costs the group nothing: its passes run, the failure is on the ledger", async () => {
     const seen: Seen[] = [];
-    rig.faux.setResponses([
+    family.setResponses([
       () => {
         throw new Error("provider down");
       },
@@ -457,6 +494,26 @@ describe("[cache groups] the warm-up", () => {
     expect(run.result.exitCode).toBe(0);
     const warm = ledger().find((l) => l.kind === "warmup");
     expect(warm).toMatchObject({ exitCode: 1, stopReason: "error" });
+  });
+
+  // The warm-up is a session with tools, so it carries the guard like any pass.
+  // MUTATION: drop config.bashGuard from the warm-up's extensions in warmUp
+  // (runlens.ts) - this fails.
+  it("the warm-up's session carries the bash guard first, as every pass's does", async () => {
+    const marked = guard();
+    respondWith(2, codexLike([], new FakeTransport()));
+    const runner = createLensRunner(
+      config({
+        bashGuard: marked,
+        cache: { size: 2, staggerMs: 0, pack: PACK, warmupWaitMs: 5_000 },
+      }),
+    );
+    expect((await runner.run({ agent: "pass-a", task: "go" })).result.exitCode).toBe(0);
+    await waitFor(() => ledger().some((l) => l.kind === "warmup"), 4000, "the warm-up's line");
+    const made = vi.mocked(rig.host.makeSession).mock.calls.map(([spec]) => spec);
+    // the pass and its group's warm-up
+    expect(made).toHaveLength(2);
+    for (const spec of made) expect(spec.extensions?.[0]).toBe(marked);
   });
 
   it("a caller's abort while the group warms ends the pass without waiting out the warm-up", async () => {
@@ -547,6 +604,143 @@ describe("[cache groups] the warm-up", () => {
 
   it("settledWithin counts a rejected promise as settled", async () => {
     expect(await settledWithin(Promise.reject(new Error("boom")), 10_000)).toBe(true);
+  });
+});
+
+describe("[pack-first family] the pack is for its API family only", () => {
+  const packedCache = { size: 3, staggerMs: 0, pack: PACK, warmupWaitMs: 5_000 };
+  const isWarmup = (s: Seen): boolean => s.task.includes(WARMUP_REPLY_TASK);
+  const hasPack = (s: Seen): boolean => JSON.stringify(s.payload).includes("PR CONTEXT PACK");
+
+  // The outside provider answers with the request shape the rewrite matches,
+  // so a hook attached to it by mistake would show in the payload.
+  // MUTATION: make isPackFirstApi (leaf-cache.ts) return true for every api -
+  // the anthropic-messages group gets a warm-up and this fails.
+  it("a group whose model speaks another API gets no warm-up, no wait and no rewrite; it staggers, on one shared id", async () => {
+    const seen: Seen[] = [];
+    respondWith(4, codexLike(seen, new FakeTransport()), outside);
+    const warnings: string[] = [];
+    const runner = createLensRunner(
+      config({ cache: { ...packedCache, staggerMs: 200 }, warn: (m) => warnings.push(m) }),
+    );
+    const t0 = Date.now();
+    const runs = await Promise.all(
+      ["pass-x", "pass-y", "pass-z"].map((agent) => runner.run({ agent, task: agent })),
+    );
+    expect(runs.map((r) => r.result.errorMessage)).toEqual([undefined, undefined, undefined]);
+    // Three lens requests and three sessions, and nothing else: no warm-up.
+    expect(seen).toHaveLength(3);
+    expect(seen.filter(isWarmup)).toEqual([]);
+    expect(sessions).toHaveLength(3);
+    expect(ledger().filter((l) => l.kind === "warmup")).toHaveLength(0);
+    // No rewrite hook: the pack is in no request, the lens text is where pi
+    // put it, and no request was called unexpected.
+    expect(seen.filter(hasPack)).toEqual([]);
+    for (const s of seen) expect(s.payload["instructions"]).toContain("Report findings.");
+    expect(warnings.filter((w) => /request shape|warm-up/.test(w))).toEqual([]);
+    // The path of a round with no pack: later passes start after the stagger.
+    for (const s of seen.slice(1)) expect(s.at - t0).toBeGreaterThanOrEqual(190);
+    // The shared id stays, on every API.
+    expect(new Set(seen.map((s) => s.sessionId)).size).toBe(1);
+  });
+
+  // MUTATION: keep one answer per runner in packedOn (runlens.ts) instead of
+  // one per model - the second model's group takes the first one's answer,
+  // gets a warm-up, and this fails.
+  it("in one round, the family's group is packed and the other group is not", async () => {
+    const inFamily: Seen[] = [];
+    const outFamily: Seen[] = [];
+    respondWith(3, codexLike(inFamily, new FakeTransport()));
+    respondWith(3, codexLike(outFamily, new FakeTransport()), outside);
+    const runner = createLensRunner(config({ cache: { ...packedCache, size: 2 } }));
+    const runs = await Promise.all(
+      ["pass-a", "pass-x", "pass-b", "pass-y"].map((agent) => runner.run({ agent, task: agent })),
+    );
+    expect(runs.map((r) => r.result.errorMessage)).toEqual(runs.map(() => undefined));
+    expect(ledger().filter((l) => l.kind === "warmup")).toHaveLength(1);
+    // The family's group: its warm-up and two lens requests, all pack-first.
+    expect(inFamily.filter(isWarmup)).toHaveLength(1);
+    expect(inFamily).toHaveLength(3);
+    expect(inFamily.filter(hasPack)).toHaveLength(3);
+    // The other group: its two lens requests, as pi built them.
+    expect(outFamily).toHaveLength(2);
+    expect(outFamily.filter(isWarmup)).toEqual([]);
+    expect(outFamily.filter(hasPack)).toEqual([]);
+    // Two groups, one id each.
+    const ids = (seen: Seen[]): Set<string | undefined> => new Set(seen.map((s) => s.sessionId));
+    expect(ids(inFamily).size).toBe(1);
+    expect(ids(outFamily).size).toBe(1);
+    expect([...ids(inFamily)][0]).not.toBe([...ids(outFamily)][0]);
+  });
+
+  // An unpinned tier's agent names no model: its group is the route's, and
+  // what is read is the API of the model the host's route landed on.
+  // MUTATION: answer undefined in apiOf (runlens.ts) for a pass with no model
+  // of its own - the routed family group gets no warm-up and this fails.
+  it.each([
+    ["an API of the family: packed", "azure-openai-responses", 1],
+    ["another API: not packed", "anthropic-messages", 0],
+  ] as const)(
+    "passes on the host's route follow the route's model, %s",
+    async (_what, api, warmups) => {
+      const faux = routableFaux({ api, provider: "faux-routed" });
+      const host = await PiHost.create({
+        agentDir: join(dir, "agent-routed"),
+        authEnv: {},
+        settings: { compaction: { enabled: false }, retry: { enabled: false } },
+        configureModels: (runtime) => runtime.registerNativeProvider(faux.provider),
+      });
+      try {
+        const real = host.makeSession.bind(host);
+        vi.spyOn(host, "makeSession").mockImplementation(async (spec) => {
+          const s = await real(spec);
+          sessions.push(s);
+          return s;
+        });
+        const seen: Seen[] = [];
+        respondWith(3, codexLike(seen, new FakeTransport()), faux);
+        const runner = createLensRunner(config({ host, cache: { ...packedCache, size: 2 } }));
+        const runs = await Promise.all(
+          ["pass-free", "pass-free-b"].map((agent) => runner.run({ agent, task: agent })),
+        );
+        expect(runs.map((r) => r.result.errorMessage)).toEqual([undefined, undefined]);
+        expect(seen.filter(isWarmup)).toHaveLength(warmups);
+        const lens = seen.filter((s) => !isWarmup(s));
+        expect(lens).toHaveLength(2);
+        expect(lens.filter(hasPack)).toHaveLength(warmups === 1 ? 2 : 0);
+        expect(new Set(lens.map((s) => s.sessionId)).size).toBe(1);
+      } finally {
+        host.dispose();
+      }
+    },
+  );
+
+  it("an API the host could not name is not in the family", () => {
+    expect(isPackFirstApi(undefined)).toBe(false);
+    expect(isPackFirstApi("")).toBe(false);
+    for (const api of PACK_FIRST_APIS) expect(isPackFirstApi(api), api).toBe(true);
+  });
+
+  // The names are pi's API names, checked against the catalog this pi ships:
+  // an API no model speaks would turn the pack off for everyone, silently.
+  // MUTATION: misspell an entry of PACK_FIRST_FAMILY in leaf-cache.ts past the
+  // compiler (annotate the list `readonly string[]`) - this fails.
+  it("every API of the family is one a model of pi's catalog speaks", () => {
+    const spoken = new Set<string>(
+      getBuiltinProviders()
+        .flatMap((p) => getBuiltinModels(p as Parameters<typeof getBuiltinModels>[0]))
+        .map((m) => m.api),
+    );
+    expect(PACK_FIRST_APIS.size).toBeGreaterThan(0);
+    for (const api of PACK_FIRST_APIS) expect(spoken.has(api), api).toBe(true);
+  });
+
+  // The measured estimate is fitted to runs the pack shaped, so it is true
+  // where the pack applies and nowhere else.
+  // MUTATION: add "anthropic-messages" to PACK_FIRST_FAMILY in leaf-cache.ts,
+  // or drop an entry from MEASURED.apis in measured.ts - this fails.
+  it("the measured estimate's APIs are the pack's: MEASURED.apis equals PACK_FIRST_APIS", () => {
+    expect([...MEASURED.apis].sort()).toEqual([...PACK_FIRST_APIS].sort());
   });
 });
 

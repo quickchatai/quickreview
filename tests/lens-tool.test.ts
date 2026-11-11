@@ -17,6 +17,7 @@ import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-a
 import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
 import {
   interactiveLens,
+  lensHostRoute,
   lensRunConfigFromEnv,
   lensTools,
   sessionRoute,
@@ -718,6 +719,46 @@ describe("[lens] extensions/lens.ts in an interactive pi", () => {
     expect(
       sessionRoute({ model: SOUTH as never, modelRegistry: registry as never })?.fixed.spec,
     ).toBe("south/pro-5");
+  });
+
+  // The lens host borrows the pi's login with nothing to renew it, so a login
+  // shorter than a round is left out. What the host's route is then built from:
+  describe("lensHostRoute: the session's model and the logins the borrow left out", () => {
+    const registry = sessionRegistry(["south"]);
+    const session = sessionRoute({ model: SOUTH as never, modelRegistry: registry as never })!;
+    const short = (provider: string) => ({
+      provider,
+      name: provider,
+      expiresAt: 1_700_000_000_000,
+    });
+
+    it("nothing left out: the session's route as it is, or none", () => {
+      expect(lensHostRoute(session, [])).toBe(session);
+      expect(lensHostRoute(undefined, [])).toBeUndefined();
+    });
+
+    // MUTATION: return `session` (undefined) when there is no session route -
+    // the host is not told what was left out, refuses `no-credential` where a
+    // login exists, and this fails.
+    it("no session route: the host resolves its own, told what was left out", () => {
+      expect(lensHostRoute(undefined, [short("south")])).toEqual({ skipped: [short("south")] });
+    });
+
+    // MUTATION: keep the fixed route when the session's own login was left out
+    // - the host starts a lens on a provider it holds no login for, pi fails it
+    // with its own words instead of the route's refusal, and this fails.
+    it("the session's own login was left out: its model is a stated choice, never a fixed route", () => {
+      const route = lensHostRoute(session, [short("north"), short("south")]);
+      expect(route).toEqual({
+        skipped: [short("north"), short("south")],
+        choice: { provider: "south", model: "pro-5", via: "use", no_estimate_ok: [] },
+      });
+      expect(route).not.toHaveProperty("fixed");
+    });
+
+    it("another provider's login was left out: the session's route is untouched", () => {
+      expect(lensHostRoute(session, [short("north")])).toBe(session);
+    });
   });
 });
 

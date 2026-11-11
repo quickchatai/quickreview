@@ -12,7 +12,7 @@ example and the glue that wrapped it are gone. The wiring:
 | lens agent discovery | the lens runner reads the agent dir's `agents` (`~/.pi/agent/agents`, which the container entrypoints symlink at the daemon-built `state/agents/` (VM) / `docker/companion/agents/` (companion)); a repo-controlled `.pi/agents` dir is reachable only on the bench's `project` scope (`QCR_SUBAGENT_SCOPE`) |
 | concurrency cap | the lens runner's weighted semaphore — `QCR_SUBAGENT_MAX_CONCURRENCY` per session — from `config.toml [engine] lens_max_concurrency`, 8 for the companion (`SUBAGENTS.maxConcurrency`); 4 when unset |
 | lens confinement | a lens is a leaf: it is given the bash guard as an extension factory (`runlens.ts` requires it) and never a lens tool or the memory extension, so a pass cannot fan out and does no ambient memory work; it runs in the session's own cwd, so no reviewed repo's `.pi/` project config loads |
-| per-agent model | pinned in each built agent's frontmatter by `src/include.ts` as the FULL `provider/model:thinking` spec (never a default — the container auth is ChatGPT OAuth, provider prefix `openai-codex/`) |
+| per-agent model | a tier or lens the config pins carries the FULL `provider/model:thinking` spec in its built agent's frontmatter (`packages/pi-plugin/src/include.ts`); one the config does not pin, which is the shipped state, has no `model:` line and a `thinking:` line, and runs on the run's model route: the provider pi has a credential for (`docs/llm-setup.md`) |
 
 ## Why `state/agents` and not `agents/`
 

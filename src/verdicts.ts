@@ -86,7 +86,6 @@ import {
   type IntegrityFingerprint,
   type RoundIntegrityOpts,
 } from "./execboundary.js";
-import { estimateUsd, type ModelPricing } from "./usage.js";
 import { TranscriptIndex } from "./transcriptindex.js";
 import { withinBudget } from "@quickchatai/pi-quickreview/src/budget.js";
 import { classifyGitHubFailure } from "@quickchatai/pi-quickreview/src/githubcore.js";
@@ -373,8 +372,6 @@ export interface VerdictDeps {
   usage?: {
     /** pi session dir for a PR's sticky session (sessions.ts sessionDir()). */
     sessionDirFor?: (pr: number) => string;
-    /** Per-model pricing; defaults to config `[models.pricing]`. */
-    pricing?: Record<string, ModelPricing>;
     /** The transcript reader. Default: one per watcher, so its
      * per-file offsets and parsed lines live as long as the daemon. */
     transcripts?: TranscriptIndex;
@@ -3589,7 +3586,8 @@ export class VerdictWatcher {
   }
 
   /** Measure real token usage for the round window from the pi session JSONLs,
-   * estimate USD from config pricing, and store both. Also the post-hoc
+   * take its dollars from pi's own per-call prices (NULL where they are not
+   * known), and store both. Also the post-hoc
    * exec-policy audit. Best-effort: no failure here disturbs the verdict.
    *
    * The transcripts are read once, async and chunked, through the watcher's
@@ -3607,7 +3605,7 @@ export class VerdictWatcher {
     finishedAt: string,
     integrity: "check" | "interrupted" = "check",
   ): Promise<boolean> {
-    const { cfg, store } = this.deps;
+    const { store } = this.deps;
     let persisted = false;
     try {
       const bounded = await withinBudget(
@@ -3621,16 +3619,17 @@ export class VerdictWatcher {
       const measured = bounded.kind === "done" ? bounded.value : "budget";
       const usage = measured === "budget" ? null : measured.usage;
       if (usage !== null) {
-        // pi's own per-record usage.cost.total is the primary source (verified
-        // live on the VM); the config price table is only the fallback for
-        // windows whose records carried no cost object.
-        const pricing: Record<string, ModelPricing> =
-          this.deps.usage?.pricing ?? cfg.models.pricing ?? {};
+        // The dollars are pi's own per-record usage.cost.total (verified live
+        // on the VM) and nothing else: no price table stands in for a window
+        // whose records carried no cost object, or whose model pi has no
+        // price for. Such a round's spend is recorded as NULL beside its
+        // tokens, which every spend surface counts as unknown, never as $0.
         // The worker's own total (session, in-process lenses, warm-ups) when it closed
         // its report; the transcript's figure for a crashed or re-run worker and for
-        // the tmux routes, which report nothing.
+        // the tmux routes, which report nothing. A worker that saw an unpriced call
+        // reports no total, and the transcript's window says the same.
         const reported = store.workerReportedUsd(roundId);
-        const est = reported ?? usage.cost_usd ?? estimateUsd(usage.models, pricing);
+        const est = reported ?? usage.cost_usd;
         store.recordRoundUsage(roundId, {
           tokens_in: usage.tokens_in,
           tokens_out: usage.tokens_out,
@@ -3639,7 +3638,7 @@ export class VerdictWatcher {
         });
         this.log(
           `verdicts: #${pr} round usage ${usage.tokens_in}in/${usage.tokens_out}out/${usage.tokens_cache_read}cache` +
-            ` est=${est === null ? "unpriced" : `$${est.toFixed(2)}`}${usage.passes_included ? " (+passes)" : ""}${usage.children_included ? " (+children)" : ""}`,
+            ` est=${est === null ? `unknown${usage.unpriced_calls ? ` (${usage.unpriced_calls} unpriced call(s))` : ""}` : `$${est.toFixed(2)}`}${usage.passes_included ? " (+passes)" : ""}${usage.children_included ? " (+children)" : ""}`,
         );
       } else if (measured === "budget") {
         store.logEvent("round_usage_unknown", pr, {

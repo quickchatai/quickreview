@@ -34,6 +34,7 @@ import { chmodSync, copyFileSync, existsSync, readFileSync, unlinkSync } from "n
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
+import { MODEL_CHOICE_FILE } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import { piModelFlags } from "./config.js";
 import { CAP_FD_INDEX } from "./ipc/capability.js";
 import {
@@ -78,8 +79,15 @@ export const TAKEOVER_ENV_ALLOW: readonly string[] = [
   "QCR_IPC_CAP_FD",
 ];
 
-/** The agent-dir files the pi needs besides the login: copied, not linked. */
-const AGENT_FILES = ["models.json", "settings.json"] as const;
+/** The agent-dir files the pi needs besides the login: copied, not linked.
+ * `models-store.json` is the catalog pi learned since its build: a route
+ * resolved in the pane reads the same models the owner's pi does. */
+const AGENT_FILES = ["models.json", "models-store.json", "settings.json"] as const;
+
+/** The files kept beside the login, wherever that is: the remembered model
+ * choice, so a route resolved in the pane is the owner's. Copied, and the
+ * copy is the pane's own: nothing it writes there goes back to the owner. */
+const LOGIN_FILES = [MODEL_CHOICE_FILE] as const;
 
 /** Read the spec the daemon wrote and remove the file. Throws on anything that is
  * not a v1 takeover spec. */
@@ -124,8 +132,8 @@ export const LOGIN_OPEN_BORROWED = "none";
 /**
  * The pi's own agent dir: the owner's login borrowed as a refresh-blanked copy
  * (0600, refused when its token would expire inside the lease's idle window plus
- * pi's refresh margin), and the model and settings files. Nothing is written to
- * the owner's dir.
+ * pi's refresh margin), the model and settings files, and the remembered model
+ * choice from beside the login. Nothing is written to the owner's dir.
  */
 export function prepareBorrowedAgent(
   spec: Pick<TakeoverSpec, "agent_dir" | "login_dir" | "borrow_dir" | "idle_ms">,
@@ -138,13 +146,15 @@ export function prepareBorrowedAgent(
     words: ENGINE_AUTH_WORDS,
     ...(now ? { now } : {}),
   });
-  for (const name of AGENT_FILES) {
-    const from = join(spec.agent_dir, name);
-    if (!existsSync(from)) continue;
+  const copy = (srcDir: string, name: string): void => {
+    const from = join(srcDir, name);
+    if (!existsSync(from)) return;
     const to = join(spec.borrow_dir, name);
     copyFileSync(from, to);
     chmodSync(to, 0o600);
-  }
+  };
+  for (const name of AGENT_FILES) copy(spec.agent_dir, name);
+  for (const name of LOGIN_FILES) copy(spec.login_dir ?? spec.agent_dir, name);
   return { expiresAt };
 }
 

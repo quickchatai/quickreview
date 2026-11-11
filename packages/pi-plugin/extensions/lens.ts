@@ -21,7 +21,11 @@
 // PiHost over the pi's own agent dir (`PI_CODING_AGENT_DIR`) with a read-only
 // copy of its login, and leaves the HTTP dispatcher to the CLI pi
 // (`ownsProcess` false). The host is built when the first lens is asked for, so
-// a missing login fails that call, never the pi's start-up. This is the one
+// a login it cannot use fails that call, never the pi's start-up. The copy is
+// borrowed like any other (packages/pi-plugin/src/engine/auth.ts
+// `borrowedCredentials`), with nothing to renew it: no login file is an empty
+// store, a login shorter than a round is left out, and the refusal a person
+// sees is the route's (`login-too-short`, or `no-credential`). This is the one
 // extension that may reach packages/pi-plugin/src/engine/pisdk.ts (tests/helpers/engine-fences.ts).
 //
 // A lens whose agent file pins no model runs on the model the session is on
@@ -29,7 +33,10 @@
 // its route, so a debug round's lenses run where the round it reproduces ran,
 // and the companion's where the companion itself runs. A session whose model
 // pi has no credential for hands over nothing, and the host resolves a route
-// of its own over the same login.
+// of its own over the same login. A session on a login the borrow left out
+// hands its model over as a stated choice instead: it runs on a key the
+// environment holds for that provider, or the lens is refused, and never
+// moves to another provider on its own.
 //
 // VERIFY-ON-PIN: defineTool's and registerTool's definition shape, as in
 // finding-clusters.ts.
@@ -42,7 +49,7 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { agentDirSettings } from "../src/engine/agentdir.js";
-import { engineCredentials } from "../src/engine/auth.js";
+import { borrowedCredentials } from "../src/engine/auth.js";
 import { LENS_LEDGER_FILE, LENS_SESSIONS_DIR } from "../src/engine/openable.js";
 import { resolvePassDeadlineMs } from "../src/engine/lens/deadline.js";
 import { loadBuiltAgents, type AgentRegistry } from "../src/engine/lens/registry.js";
@@ -58,9 +65,9 @@ import {
   type LensToolDeps,
 } from "../src/engine/lens/tool.js";
 import { LensWave } from "../src/engine/lens/wave.js";
-import { PiHost } from "../src/engine/pisdk.js";
+import { PiHost, type PiHostOptions } from "../src/engine/pisdk.js";
 import { listPrice } from "../src/modelpick.js";
-import type { ModelRoute } from "../src/modelroute.js";
+import type { ModelRoute, SkippedLogin } from "../src/modelroute.js";
 import { bashGuardConfigFromEnv, createBashGuard } from "./bash-guard.js";
 import { toPiTool } from "./pi-tool.js";
 import { registryInventory, type RouteRegistry } from "./route-registry.js";
@@ -209,9 +216,35 @@ function lazyRunner(
   return { run: async (request) => (await ensure()).run(request) };
 }
 
+/**
+ * What a lens host's route is built from: the session's model (`session`) and
+ * the logins the host's borrow left out as too short for a round (`skipped`).
+ *
+ *  - Nothing left out: the session's route as it is, or none.
+ *  - No session route: the host resolves its own, told what was left out, so
+ *    with nothing else usable the refusal is `login-too-short`.
+ *  - The session is on a login that was left out: its model is handed over as
+ *    a choice the person stated. It holds like a pin: it runs on a credential
+ *    the host does have for that provider (a key in the environment), and is
+ *    refused as `login-too-short` otherwise. It is never moved elsewhere.
+ *  - The session's own login was kept: its route as it is.
+ */
+export function lensHostRoute(
+  session: LensHostRoute | undefined,
+  skipped: readonly SkippedLogin[],
+): PiHostOptions["route"] {
+  if (skipped.length === 0) return session;
+  if (session === undefined) return { skipped };
+  const { provider, modelId } = session.fixed;
+  if (!skipped.some((l) => l.provider === provider)) return session;
+  return { skipped, choice: { provider, model: modelId, via: "use", no_estimate_ok: [] } };
+}
+
 /** A PiHost over the interactive pi's own agent dir: a read-only copy of its
- * login, pi's dispatcher left alone. pi looks for a provider key in `env`, by
- * its own names and in its own order (a stored credential owns its provider).
+ * login, pi's dispatcher left alone. Nothing renews the copy while a round
+ * goes, so a login shorter than one is left out of it and named to the host's
+ * route (`lensHostRoute`). pi looks for a provider key in `env`, by its own
+ * names and in its own order (a stored credential owns its provider).
  * `route` is the session's model: what a lens that pins no model runs on. */
 async function interactiveHost(
   agentDir: string,
@@ -219,15 +252,20 @@ async function interactiveHost(
   homeDir: string | undefined,
   route: LensHostRoute | undefined,
 ): Promise<PiHost> {
-  const auth = engineCredentials({ srcDir: agentDir, needMs: LOGIN_WINDOW_MS });
+  const borrowed = borrowedCredentials({
+    srcDir: agentDir,
+    needMs: LOGIN_WINDOW_MS,
+    owner: false,
+  });
+  const hostRoute = lensHostRoute(route, borrowed.skipped);
   return PiHost.create({
     agentDir,
     ownsProcess: false,
     ...(homeDir !== undefined ? { homeDir } : {}),
-    credentials: auth.credentials,
+    credentials: borrowed.credentials,
     settings: agentDirSettings(agentDir),
     authEnv: env,
-    ...(route !== undefined ? { route } : {}),
+    ...(hostRoute !== undefined ? { route: hostRoute } : {}),
   });
 }
 

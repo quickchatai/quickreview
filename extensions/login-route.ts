@@ -291,6 +291,10 @@ export function openLogin(ui: HintUi, open: LoginOpen): "submitted" | "prefilled
 export interface ModelRouteStep extends ModelRouteOptions {
   /** Told when a session starts with no model to run on. Omitted: nothing is said. */
   onRefused?: (ctx: ExtensionContext, refusal: RouteRefusal) => void;
+  /** Told of every prompt before it is routed: its text, and where it came
+   * from (pi's `input` event). A host that opened pi's login for the person
+   * learns here that they are back at the editor. Omitted: nothing is told. */
+  onInput?: (input: { text: string; source: string }) => void;
 }
 
 /**
@@ -313,7 +317,8 @@ export function registerModelRoute(pi: ExtensionAPI, step: ModelRouteStep = {}):
   });
   // pi checks the model's credential after this event, so a login made inside
   // the session is routed here before its first prompt.
-  pi.on("input", async (_event, ctx) => {
+  pi.on("input", async (event, ctx) => {
+    step.onInput?.({ text: event.text, source: event.source });
     await apply(ctx);
     return { action: "continue" };
   });

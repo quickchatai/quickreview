@@ -277,16 +277,22 @@ export function decideOutcome(x: {
   };
 }
 
-/** The env of one worker process: the allowlisted part of the daemon's env, the
- * daemon's explicit additions, and the IPC names (the fd NUMBER, never the
- * capability). A GitHub credential is dropped last, by name, so no addition can
- * carry one in. */
+/** The env of one worker process: the model environment of the secrets dir
+ * (`model`: a provider's key and settings by pi's own names, where the worker's
+ * pi looks for them), the allowlisted part of the daemon's env, the daemon's
+ * explicit additions, and the IPC names (the fd NUMBER, never the capability).
+ * A model variable replaces nothing: one named like an allowlisted name or an
+ * IPC name is left out, and everything after it is written over it. A GitHub
+ * credential is dropped last, by name, so no addition can carry one in. */
 export function workerProcessEnv(
   parent: NodeJS.ProcessEnv,
   extra: Readonly<Record<string, string>>,
   ipc: Readonly<Record<string, string>>,
+  model: Readonly<Record<string, string>> = {},
 ): Record<string, string> {
   const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(model))
+    if (!WORKER_ENV_ALLOW.includes(name) && !name.startsWith("QCR_IPC_")) env[name] = value;
   for (const name of WORKER_ENV_ALLOW) {
     const value = parent[name];
     if (value !== undefined && value !== "") env[name] = value;
@@ -341,6 +347,11 @@ export interface WorkerSupervisorDeps {
   parentEnv?: NodeJS.ProcessEnv;
   /** Daemon-chosen additions to every worker's env. */
   extraEnv?: Readonly<Record<string, string>>;
+  /** The model environment of the install's secrets dir (src/modelenv.ts), asked
+   * for at each spawn and put in that worker's own process env, below
+   * everything else (`workerProcessEnv`). It is in no spec and in no other
+   * process: the daemon's own environment never holds it. */
+  modelEnv?: () => Readonly<Record<string, string>>;
   nodeBin?: string;
   limits?: Partial<WorkerLimits>;
   /** What a command's IPC calls are told beyond its row: a takeover/debug lease
@@ -856,6 +867,7 @@ export class WorkerSupervisor {
         this.deps.parentEnv ?? process.env,
         this.deps.extraEnv ?? {},
         ipcEnv({ socketPath: this.deps.socketPath, commandId: row.id, generation }),
+        this.deps.modelEnv?.() ?? {},
       );
       child = this.spawnFn(
         this.deps.nodeBin ?? process.execPath,

@@ -14,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { BenchCase, CaseSet, PrefetchMeta } from "../src/bench/aacr.js";
-import { CODEX_USD_PER_MTOK, caseCostUsd, ratesFor } from "../src/bench/cost.js";
+import { CODEX_USD_PER_MTOK, caseCostUsd, ratesFor } from "../src/bench/pricetable.js";
 import { reviewForJudge } from "../src/bench/defects.js";
 import { run } from "../src/bench/exec.js";
 import { runArmOf } from "../src/bench/ocr.js";
