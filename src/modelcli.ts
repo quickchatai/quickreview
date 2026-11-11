@@ -22,6 +22,11 @@
 // answer in a daemon's container is the daemon's, not that of a pi home it
 // does not review on.
 //
+// A login shorter than a review is left out, as `qcr review` leaves it out,
+// unless the bot's refresher is renewing it right now: a worker keeps such a
+// login then (src/workerworld.ts `loginOwnerOf`), so the verb does too, and
+// the answer in the daemon's container is the route its workers run on.
+//
 // `--json` prints one object, for the wizard, the scan sandbox and the smoke
 // scripts: `{ ok, route, refusal?, choice, config_pin, skipped }`, where `ok`
 // says a route resolves. `use` and `reset` print the same object for the
@@ -31,6 +36,7 @@
 //
 // Exit status: 0 a route resolves (or the change was made), 1 no route or a
 // failure, 2 a usage error.
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { borrowedCredentials } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
@@ -100,6 +106,9 @@ export interface ModelCliDeps {
   /** The install has a config of its own, which is what a daemon runs on:
    * the answer then also says what holds for the bot's rounds. */
   daemon: boolean;
+  /** The bot's refresher is renewing the login right now (`refresherOwnsLogin`):
+   * a login shorter than a review is kept, as a worker keeps it. Absent: no. */
+  owner?: boolean;
   out: (line: string) => void;
   err: (line: string) => void;
   /** How long a review may last; default `REVIEW_WINDOW_MS`. */
@@ -174,7 +183,7 @@ async function resolve(
   const borrowed = borrowedCredentials({
     srcDir: loginDir,
     needMs: deps.needMs ?? REVIEW_WINDOW_MS,
-    owner: false,
+    owner: deps.owner === true,
     ...(deps.now ? { now: deps.now } : {}),
   });
   const modelEnv =
@@ -479,6 +488,49 @@ export async function cmdModel(
 }
 
 /**
+ * Is the bot's refresher renewing the login in `loginDir` right now, by the
+ * rule a worker's spec is built with: `[login_refresh] enabled` in the
+ * install's own config (`toml`; null when the shipped defaults stand in, and
+ * no daemon runs on those), and the refresher's status file beside the login
+ * saying it works. A file that is not there or cannot be read says nothing
+ * renews the login.
+ */
+export async function refresherOwnsLogin(o: {
+  toml: string | null;
+  loginDir: string;
+  now: number;
+  alive?: (pid: number) => boolean;
+}): Promise<boolean> {
+  if (o.toml === null) return false;
+  let enabled = false;
+  try {
+    const { parse } = await import("smol-toml");
+    const section = (parse(o.toml) as Record<string, unknown>)["login_refresh"];
+    enabled =
+      typeof section === "object" &&
+      section !== null &&
+      (section as Record<string, unknown>)["enabled"] === true;
+  } catch {
+    return false;
+  }
+  if (!enabled) return false;
+  // Loaded only where a refresher may run: the daemon's own module.
+  const { LOGIN_STATUS_FILE, loginOwnerOf } = await import("./workerworld.js");
+  let statusText: string | null = null;
+  try {
+    statusText = readFileSync(join(o.loginDir, LOGIN_STATUS_FILE), "utf8");
+  } catch {
+    // no file, or one that cannot be read: nothing is known to renew the login
+  }
+  return loginOwnerOf({
+    enabled,
+    statusText,
+    now: o.now,
+    ...(o.alive ? { alive: o.alive } : {}),
+  });
+}
+
+/**
  * `qcr model` for this process: the install's config and homes, pi's agent
  * dir as pi finds it, and the login where the daemon reads it.
  *
@@ -524,11 +576,12 @@ export async function runModelCli(
       secretsOverride: env["QC_SECRETS_DIR"],
     });
     const agentDir = piAgentDir(env);
+    // The login the daemon was handed, when that is not its pi's own.
+    const loginDir = loginDirOf(env, agentDir);
     deps = {
       env,
       agentDir,
-      // The login the daemon was handed, when that is not its pi's own.
-      loginDir: loginDirOf(env, agentDir),
+      loginDir,
       tmpDir: join(stateHome(env), "tmp"),
       models: loaded.cfg.models,
       configPath: loaded.path,
@@ -536,6 +589,12 @@ export async function runModelCli(
       // model step: a relative one is under the app's root.
       secretsDir: oneShotSecretsDir(loaded.cfg.github.secrets_dir, sandboxRoot()),
       daemon: loaded.path !== null,
+      // What a worker of this install is told as it starts.
+      owner: await refresherOwnsLogin({
+        toml: loaded.path !== null ? loaded.toml : null,
+        loginDir,
+        now: Date.now(),
+      }),
       out,
       err,
     };

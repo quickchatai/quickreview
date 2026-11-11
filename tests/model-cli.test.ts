@@ -48,11 +48,13 @@ import {
   cmdModel,
   MODEL_USAGE,
   REVIEW_WINDOW_MS,
+  refresherOwnsLogin,
   runModelCli,
   type ModelCliDeps,
   type ModelCliJson,
 } from "../src/modelcli.js";
 import { MODEL_ENV_DIR } from "../src/modelenv.js";
+import { LOGIN_STATUS_FILE } from "../src/workerworld.js";
 import { MEASURED } from "@quickchatai/pi-quickreview/src/measured.js";
 import type { OnboardAdapters } from "../src/onboard/engine.js";
 import { secretsDirFor } from "../src/onboard/steps/ingress.js";
@@ -66,6 +68,9 @@ useOfflineGuard();
 const BUILTIN = "deepseek";
 const BUILTIN_NAME = builtinProviders().find((p) => p.id === BUILTIN)!.name;
 const BUILTIN_ENV = "DEEPSEEK_API_KEY";
+/** A built-in provider pi can sign in to: pi counts a stored login only for a
+ * provider with a login of its own. */
+const SIGN_IN = "anthropic";
 /** Never listened on: no case sends a request. */
 const NOWHERE = "http://127.0.0.1:9/v1";
 /** A config that pins nothing: each tier at its own level. */
@@ -381,6 +386,43 @@ describe("qcr model: the route, and why", () => {
       ),
     );
     expect(REVIEW_WINDOW_MS).toBe(60 * 60_000);
+  });
+
+  // A worker keeps a login shorter than its round while the bot's refresher
+  // renews it (src/botworker.ts), so the verb, asked where the daemon runs,
+  // keeps it too: the wizard's model step takes this answer for the daemon's.
+  // MUTATION: pass `owner: false` to borrowedCredentials in resolve
+  // (src/modelcli.ts) — the login is left out, the answer is login-too-short
+  // and this fails.
+  it("a short login the refresher is renewing is the route, as a worker's is; without the refresher it is refused", async () => {
+    writeFileSync(
+      join(home, "auth.json"),
+      JSON.stringify({
+        [SIGN_IN]: { type: "oauth", access: "a", refresh: "r", expires: NOW + 20 * 60_000 },
+      }),
+    );
+    const owned = await runJson([], { daemon: true, owner: true });
+    expect(owned.code).toBe(0);
+    expect(owned.json.ok).toBe(true);
+    expect(owned.json.route).toMatchObject({
+      provider: SIGN_IN,
+      credential: { kind: "oauth", origin: "stored" },
+    });
+    expect(owned.json.skipped).toEqual([]);
+    for (const none of [{ daemon: true }, { daemon: true, owner: false }]) {
+      const alone = await runJson([], none);
+      expect(alone.code).toBe(1);
+      expect(alone.json.refusal?.code).toBe("login-too-short");
+    }
+    // An expired login is refused under the refresher too: nothing to renew.
+    writeFileSync(
+      join(home, "auth.json"),
+      JSON.stringify({
+        [SIGN_IN]: { type: "oauth", access: "a", refresh: "r", expires: NOW - 60_000 },
+      }),
+    );
+    const expired = await runJson([], { daemon: true, owner: true });
+    expect(expired.json.ok).toBe(false);
   });
 
   // The read waits out a file that is being rewritten before it calls it
@@ -875,6 +917,81 @@ describe("qcr model for a process: which directories its environment names", () 
     }
   });
 
+  // The same question on a bot whose only credential is a login shorter than
+  // a review: its workers run on it while the refresher renews it, so the
+  // daemon's answer is a route, not "sign in again".
+  // MUTATION: drop `owner` from runModelCli's deps (src/modelcli.ts) — the
+  // verb answers login-too-short beside a healthy refresher and this fails.
+  it("a short login beside a refresher that works is the daemon's route; with the refresher off, gone or failing it is not", async () => {
+    const config = join(dir, "xdg-config", "qcr", "default", "config.toml");
+    const example = readFileSync(join(process.cwd(), "config.example.toml"), "utf8");
+    const off = "[login_refresh]\nenabled = false";
+    expect(example).toContain(off);
+    const withRefresher = (enabled: boolean): void => {
+      mkdirSync(join(config, ".."), { recursive: true });
+      writeFileSync(config, example.replace(off, `[login_refresh]\nenabled = ${enabled}`));
+    };
+    writeFileSync(
+      join(agent, "auth.json"),
+      JSON.stringify({
+        [SIGN_IN]: { type: "oauth", access: "a", refresh: "r", expires: Date.now() + 20 * 60_000 },
+      }),
+    );
+    const status = (over: Record<string, unknown> = {}): void =>
+      writeFileSync(
+        join(agent, LOGIN_STATUS_FILE),
+        JSON.stringify({
+          pid: process.pid,
+          checked_at: new Date().toISOString(),
+          paused: false,
+          last_error: null,
+          ...over,
+        }),
+      );
+    withRefresher(true);
+    status();
+    const owned = await asProcess(envOf());
+    expect(owned.ok).toBe(true);
+    expect(owned.route).toMatchObject({ provider: SIGN_IN, credential: { kind: "oauth" } });
+    // failing, or paused for a sign-in: it renews nothing
+    status({ last_error: "refresh refused" });
+    expect((await asProcess(envOf())).refusal?.code).toBe("login-too-short");
+    status({ paused: true });
+    expect((await asProcess(envOf())).refusal?.code).toBe("login-too-short");
+    // no status file
+    rmSync(join(agent, LOGIN_STATUS_FILE));
+    expect((await asProcess(envOf())).refusal?.code).toBe("login-too-short");
+    // a healthy file the config does not stand behind
+    status();
+    withRefresher(false);
+    expect((await asProcess(envOf())).refusal?.code).toBe("login-too-short");
+    // and the shipped defaults: no daemon runs on those
+    rmSync(config);
+    expect((await asProcess(envOf())).refusal?.code).toBe("login-too-short");
+  });
+
+  it("refresherOwnsLogin: the config's switch and the refresher's own file, both", async () => {
+    const toml = (enabled: boolean): string => `[login_refresh]\nenabled = ${enabled}\n`;
+    writeFileSync(
+      join(agent, LOGIN_STATUS_FILE),
+      JSON.stringify({
+        pid: 4242,
+        checked_at: new Date(NOW).toISOString(),
+        paused: false,
+        last_error: null,
+      }),
+    );
+    const ask = (o: Partial<Parameters<typeof refresherOwnsLogin>[0]>): Promise<boolean> =>
+      refresherOwnsLogin({ toml: toml(true), loginDir: agent, now: NOW, alive: () => true, ...o });
+    expect(await ask({})).toBe(true);
+    expect(await ask({ alive: () => false })).toBe(false);
+    expect(await ask({ toml: toml(false) })).toBe(false);
+    expect(await ask({ toml: "" })).toBe(false);
+    expect(await ask({ toml: null })).toBe(false);
+    expect(await ask({ loginDir: join(dir, "nowhere") })).toBe(false);
+    expect(await ask({ now: NOW + 60 * 60_000 })).toBe(false);
+  });
+
   // The step tells the person where a provider key goes
   // (`secretsDirFor`, the wizards' one resolution) and then asks this verb
   // whether pi has a credential: the two must reach one directory, also
@@ -1118,8 +1235,11 @@ describe("refusalText: five refusals, each with what to do", () => {
     expect(refusalText({ code: "login-too-short", logins: [login(3)] }, "app", facts)).toMatch(
       /in the environment\. Open pi once and it renews the login\.$/,
     );
+    // MUTATION: require `l.expiresAt > now` for `renewable` in refusalText -
+    // an expired login, which pi renews when opened as it does one in its last
+    // minutes, loses the sentence; this fails.
     expect(refusalText({ code: "login-too-short", logins: [login(-5)] }, "app", facts)).toMatch(
-      /^your Beta login expired at \d\d:\d\d and nothing here renews it\. /,
+      /^your Beta login expired at \d\d:\d\d and nothing here renews it\. .* Open pi once and it renews the login\.$/,
     );
     expect(
       refusalText(
