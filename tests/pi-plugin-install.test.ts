@@ -20,7 +20,9 @@
 //     (src/plugin/peers.ts), which answers from the running pi's dir. The
 //     install sits outside this checkout, so no node_modules above it holds
 //     a pi that would answer instead;
-//   - /qcr-review --preview runs end to end and answers in the session;
+//   - /qcr-review --preview runs end to end and answers in the session: the
+//     plan with no model on a pi that holds no credential, and the model and
+//     its price once it holds one (a key in its models.json);
 //   - /qcr-scan runs on the plugin's own scan engine with no `qcr` anywhere on
 //     PATH: it cuts a fixture repo into units, saves the cut, and prices the
 //     scan, each answer in the session.
@@ -31,6 +33,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadSource, render, TEMPLATE_CONTRACT } from "../plugins/qcr/render.mjs";
+import { FAKE_ROUTE_MODEL, writeFakeProvider } from "./helpers/fake-openai.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const PLUGIN = join(ROOT, "packages", "pi-plugin");
@@ -47,6 +50,9 @@ const PI = join(
 // repo's node_modules holds a pi that would hide a missing one.
 const SCRATCH = join(tmpdir(), `pi-plugin-install-${process.pid}`);
 const COMMANDS = ["qcr-review", "qcr-scan", "qcr-setup"];
+/** Where the throwaway pi's one model credential points. Never listened on:
+ * no case sends a request. */
+const NOWHERE = "http://127.0.0.1:9/v1";
 const SKILLS = COMMANDS.map((c) => `skill:${c}`);
 
 let tarball = "";
@@ -301,21 +307,34 @@ describe("the packed plugin, installed into a fresh pi", () => {
     writeFileSync(join(repo, "add.ts"), "export const add = (a: number, b: number) => a - b;\n");
     git("add", "-A");
     git("commit", "-q", "-m", "add");
-    const { lines, stderr } = await rpc(
-      repo,
-      [{ id: "p", type: "prompt", message: "/qcr-review --preview" }],
-      (l) => l.some((x) => x["id"] === "p"),
-    );
-    const shown = lines.filter(
-      (x) =>
-        x["type"] === "message_end" &&
-        (x["message"] as { customType?: string }).customType === "qcr-review",
-    );
-    expect(shown, `${stderr}\n${JSON.stringify(lines).slice(0, 2000)}`).toHaveLength(1);
-    const content = (shown[0]!["message"] as { content: string }).content;
-    expect(content).toMatch(/Review feature against main/);
-    expect(content).toMatch(/price: \$\d+\.\d\d/);
-    expect(lines.find((x) => x["id"] === "p")).toMatchObject({ success: true });
+    const preview = async (): Promise<string> => {
+      const { lines, stderr } = await rpc(
+        repo,
+        [{ id: "p", type: "prompt", message: "/qcr-review --preview" }],
+        (l) => l.some((x) => x["id"] === "p"),
+      );
+      const shown = lines.filter(
+        (x) =>
+          x["type"] === "message_end" &&
+          (x["message"] as { customType?: string }).customType === "qcr-review",
+      );
+      expect(shown, `${stderr}\n${JSON.stringify(lines).slice(0, 2000)}`).toHaveLength(1);
+      expect(lines.find((x) => x["id"] === "p")).toMatchObject({ success: true });
+      return (shown[0]!["message"] as { content: string }).content;
+    };
+    // A fresh pi holds no model credential: the plan is still shown, and it
+    // says there is no model to run or price it on.
+    const bare = await preview();
+    expect(bare).toMatch(/Review feature against main/);
+    expect(bare).toMatch(/^ {2}model: none \(no model credential: \/login\)$/m);
+    expect(bare).toMatch(/^ {2}price: unknown until a model credential exists$/m);
+    // With one, the same plan names the model it would run on and its price.
+    writeFakeProvider(agentDir, NOWHERE, { routable: true });
+    const routed = await preview();
+    expect(routed).toMatch(/Review feature against main/);
+    expect(routed).toMatch(new RegExp(`^ {2}model: ${FAKE_ROUTE_MODEL} `, "m"));
+    expect(routed).toMatch(/^ {2}price: /m);
+    expect(routed).not.toMatch(/price: unknown/);
     // a preview starts nothing: no run is left under the state home
     const runs = join(home, "state", "qcr", "default", "review", "runs");
     expect(existsSync(runs) ? readdirSync(runs) : []).toEqual([]);
@@ -327,6 +346,8 @@ describe("the packed plugin, installed into a fresh pi", () => {
   // then a "needs qcr" refusal, and this fails.
   it("runs /qcr-scan on its own engine, with no qcr on PATH", async () => {
     expect(() => run("sh", ["-c", "command -v qcr"], SCRATCH, piEnv())).toThrow();
+    // A scan is priced on the model it would run on, so this pi has one.
+    writeFakeProvider(agentDir, NOWHERE, { routable: true });
     const repo = join(SCRATCH, "scanrepo");
     mkdirSync(join(repo, "app"), { recursive: true });
     mkdirSync(join(repo, "lib"), { recursive: true });
