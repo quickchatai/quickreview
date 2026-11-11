@@ -32,6 +32,7 @@ import { projectRoundProgress } from "@quickchatai/pi-quickreview/src/live/proje
 import { lensActivityLine } from "@quickchatai/pi-quickreview/src/live/lensline.js";
 import type { LiveAgentProgress } from "@quickchatai/pi-quickreview/src/round-progress.js";
 import { PiHost, type PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
+import { REVIEW_SCHEMA_VERSION } from "@quickchatai/pi-quickreview/src/contract.js";
 import {
   liveLensLines,
   REVIEW_DEPS,
@@ -174,7 +175,7 @@ describe("/review: one faux round inside the host pi", () => {
       schema_version: number;
       ok: boolean;
     };
-    expect(data.schema_version).toBe(1);
+    expect(data.schema_version).toBe(REVIEW_SCHEMA_VERSION);
     expect(data.ok).toBe(true);
     expect(REVIEW_MESSAGE).toBe("qcr-review");
   });

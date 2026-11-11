@@ -452,6 +452,19 @@ describe("daemon --preflight: a model route resolves", () => {
       expect(detail(pinned, "login")).toContain("runs local/m");
     },
   );
+
+  // MUTATION: build the path from the config home instead of taking the
+  // located one — a config read through $QCR_CONFIG is named wrongly and this fails.
+  it(
+    "a pin with no credential names the config file that was located",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const located = join(dir, "elsewhere", "custom.toml");
+      const r = await login({ model: `${BUILTIN}/some-model`, configPath: located });
+      expect(failed(r)).toEqual(["login"]);
+      expect(reason(r, "login")).toContain(`[models] model in ${located}`);
+    },
+  );
 });
 
 describe("the image carries the preflight", () => {

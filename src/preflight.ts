@@ -95,6 +95,8 @@ export interface PreflightOptions {
   sessionsDir?: string;
   /** The config home (config.toml + profiles/), read. */
   configHome: string;
+  /** The located config file, named in a refusal about a model it pins. */
+  configPath?: string;
   /** pi's agent dir: the catalog (models.json), and the login unless
    * `loginDir` names it; read. */
   agentDir: string;
@@ -427,7 +429,7 @@ async function login(opts: PreflightOptions, scratch: string): Promise<Preflight
         loginDir,
         need,
         now,
-        configPath: join(opts.configHome, "config.toml"),
+        configPath: opts.configPath ?? null,
         nameOf,
       }),
     );
@@ -450,7 +452,7 @@ function refusalWords(
     loginDir: string;
     need: number;
     now: number;
-    configPath: string;
+    configPath: string | null;
     nameOf: (provider: string) => string;
   },
 ): string {
@@ -577,6 +579,7 @@ export async function preflightMain(
     stateDir,
     ...(sessionsDir ? { sessionsDir } : {}),
     configHome: dirname(located.path),
+    configPath: located.path,
     agentDir,
     loginDir: loginDirOf(env, agentDir),
     secretsDir: locateSecrets({ configured: configuredSecrets, env }).path,
