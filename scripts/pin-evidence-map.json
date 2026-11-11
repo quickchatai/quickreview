@@ -268,8 +268,8 @@
     },
     {
       "id": "plugin-auth-refresh-window",
-      "assumes": "Inside a running pi, the model registry's facade refreshes an OAuth login for pi's own five minutes of validity only; the longer minimum a review needs comes from pi's model runtime, which refreshes under the host's own lock. The file's other tag is what a run cannot borrow from the running pi: getRegisteredProviderIds() lists the providers an extension registered and no other, and a provider keyed for the process alone has the auth status source `runtime`.",
-      "files": { "packages/pi-plugin/extensions/quickreview.ts": 2 },
+      "assumes": "Inside a running pi, the model registry's facade refreshes an OAuth login for pi's own five minutes of validity only; the longer minimum a review needs comes from pi's model runtime, which refreshes under the host's own lock. The file's other tags are what a run cannot borrow from the running pi: getRegisteredProviderIds() lists the providers an extension registered and no other, and a provider keyed for the process alone has the auth status source `runtime`; and what a review host would not find: a credential pi found in its surroundings has the auth status source `environment`, and a provider's auth.apiKey.resolve takes { ctx, credential, signal } and answers undefined for none.",
+      "files": { "packages/pi-plugin/extensions/quickreview.ts": 3 },
       "signal": {
         "source": "none",
         "kind": "gap",
