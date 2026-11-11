@@ -338,14 +338,17 @@ Short, and only what differs from "sign in and run".
   first call is refused for the model, take pi's default:
   `qcr model use amazon-bedrock/<id>`, with the id `qcr model` prints as pi's
   own default. The region and the other AWS variables are yours to set; the
-  host wrapper and the Action forward credential names only, so name the rest
-  in `QCR_MODEL_ENV`.
+  host wrapper and the Action forward credential names only (the key pair,
+  and `AWS_SESSION_TOKEN` beside it), so name the rest in `QCR_MODEL_ENV`.
+  Neither forwards `AWS_PROFILE` or a token file: the container has no
+  `~/.aws`, so a profile works only where pi runs on the machine itself.
 - **Azure OpenAI.** The id pi sends is a deployment name unless you gave pi a
   map. Pin your deployment: `[models] model = "azure/<deployment>"` or
   `qcr model use azure/<deployment>`. It is sent as written.
 - **Google Vertex.** A review host reads nothing under your home directory,
   so the default application credentials file is not seen there. Point
-  `GOOGLE_APPLICATION_CREDENTIALS` at an absolute path.
+  `GOOGLE_APPLICATION_CREDENTIALS` at an absolute path. The host wrapper and
+  the Action mount no such file and do not forward the name.
 - **One key that serves two providers.** Some keys are read by two providers
   of pi's (a global and a regional endpoint, a plan and its sibling). A
   terminal asks, and the rows say they share a key; with nobody to ask the
