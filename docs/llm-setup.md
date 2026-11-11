@@ -288,10 +288,16 @@ providers on our side.
   step accepts one as an argument.
 - The older single file, `<secrets dir>/openai_api_key`, is still read as
   `OPENAI_API_KEY`.
-- **Where the values reach:** the process that asks pi for a credential (a
-  bot worker, the preflight, `qcr model`), and nothing else. They are not
-  exported to a shell, they are not in a session's environment, and the
-  model's tools never see them ([docs/exec-boundary.md](exec-boundary.md)).
+- **Where the values reach:** the process that asks pi for a credential: a
+  bot worker, the preflight, `qcr model`, and a `qcr review` or `qcr scan`
+  run from a shell. The values under `model-env/` are not exported to a
+  shell, they are not in a review worker's session environment, and a review
+  worker's tools never see them. Two exceptions: the image's entrypoint
+  still exports the older `openai_api_key` as `OPENAI_API_KEY`, so the
+  daemon, the tmux server and the login refresher hold that one key; and the
+  operator's takeover and debug panes are a CLI pi whose own process
+  environment carries the model env
+  ([docs/exec-boundary.md](exec-boundary.md)).
 
 The host wrapper and the Action forward a provider's key from the environment
 by name, never by value: [docs/host-wrapper.md](host-wrapper.md),
