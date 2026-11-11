@@ -33,6 +33,7 @@ import {
 } from "../src/setup/scanrun.js";
 import type { ModelRoute } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import {
+  modelDetails,
   previewDetails,
   renderStatus,
   renderThreatModelPreview,
@@ -1562,6 +1563,32 @@ describe("one model per scan: the route in the plan, the key and the record", ()
     expect(pinned.blockers).toEqual(['pi knows no model "nope" (no model matches)']);
   });
 
+  // A sandboxed scan reads the companion's login: `qcr login` signs in a pi
+  // it never reads, so the host names the way in and the model line uses it.
+  // MUTATION: build the head from the surface alone in plannedModel (drop
+  // `routed.login`) — the model line says `qcr login` over a blocker that
+  // says `qcr scan login`, and this fails.
+  it("no credential where the host names its own way in: the model line and the blocker name the same command", async () => {
+    const s = new ScanRunner(ports(runner()));
+    const boxed: ScanRouted = {
+      result: { ok: false, refusal: { code: "no-credential" } },
+      surface: "app",
+      refusal: "no pi login in the companion's pi home — run `qcr scan login`",
+      login: "qcr scan login",
+    };
+    const p = await preview(s, boxed);
+    expect(p.model_lines).toEqual(["model: none (no model credential: qcr scan login)"]);
+    expect(p.blockers).toEqual(["no pi login in the companion's pi home — run `qcr scan login`"]);
+    expect(renderPreview(p)).not.toMatch(/qcr login/);
+    // Without it the surface's own stands: the app's verb, and pi's command.
+    expect((await preview(s, none)).model_lines).toEqual([
+      "model: none (no model credential: qcr login)",
+    ]);
+    expect((await preview(s, { ...none, surface: "plugin" })).model_lines).toEqual([
+      "model: none (no model credential: /login)",
+    ]);
+  });
+
   // MUTATION: drop the `refusedModel` check at the top of ScanRunner.start —
   // the start plans, finds another key and says the plan changed; this fails.
   it("a start whose route is gone is refused in the route's words, not as a changed plan", async () => {
@@ -1588,6 +1615,19 @@ describe("one model per scan: the route in the plan, the key and the record", ()
     expect(p.model_lines).toEqual([
       "model: unknown (the scan sandbox could not be asked: docker is not reachable)",
     ]);
+    // Honest-unknown in the structured result too: nothing was read, so the
+    // plan says so and lists no provider, where "no credential" says there is
+    // none.
+    // MUTATION: answer `alternatives: []` and no `model_unknown` for an
+    // unknown model in plannedModel — a script reads a docker failure as "pi
+    // has no credential", and this fails.
+    const details = previewDetails(p);
+    expect(details).toMatchObject({ model: null, model_unknown: true });
+    expect(details).not.toHaveProperty("alternatives");
+    const refused = previewDetails(await preview(s, none));
+    expect(refused).toMatchObject({ model: null, alternatives: [] });
+    expect(refused).not.toHaveProperty("model_unknown");
+    expect(modelDetails(p)).toEqual({ model: null, model_unknown: true });
     expect(p.blockers[0]).toMatch(
       /^the scan's model is unknown \(the scan sandbox could not be asked/,
     );

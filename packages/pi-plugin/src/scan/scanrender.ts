@@ -656,6 +656,7 @@ export function renderProposal(
 export function modelDetails(p: ScanModelView): Omit<ScanModelView, "model_lines"> {
   return {
     ...(p.model !== undefined ? { model: p.model } : {}),
+    ...(p.model_unknown !== undefined ? { model_unknown: p.model_unknown } : {}),
     ...(p.alternatives !== undefined ? { alternatives: p.alternatives } : {}),
     ...(p.tiers !== undefined ? { tiers: p.tiers } : {}),
   };

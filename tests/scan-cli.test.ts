@@ -17,6 +17,7 @@ import {
   modelFlagOf,
   parseScanArgs,
   runScanCli,
+  scanRouteJoin,
   scanRoutePort,
   sendStarted,
   type ScanCliDeps,
@@ -940,6 +941,34 @@ describe("--model and the scan's route on the verbs", () => {
     expect(h.rig.scan.status().run).toBeNull();
   });
 
+  // What `qcr scan preview --json` prints: a script tells a sandbox that did
+  // not answer from a pi with no credential by the fields, not by the prose.
+  // MUTATION: drop `model_unknown` from modelDetails / the preview's details
+  // — the two answers differ only in their blocker's text, and this fails.
+  it("a structured preview tells an unknown model from no credential", async () => {
+    const h = harness();
+    h.deps.route = async () => ({
+      result: null,
+      surface: "app",
+      refusal: "the scan sandbox could not be asked: docker is not reachable",
+    });
+    const unknown = await h.run(["preview"], true);
+    expect(unknown.json.preview).toMatchObject({ model: null, model_unknown: true });
+    expect(unknown.json.preview).not.toHaveProperty("alternatives");
+    expect(unknown.json.start).toBeNull();
+    const tm = await h.run(["threat-model", "propose"], true);
+    expect(tm.json.preview).toMatchObject({ model: null, model_unknown: true });
+    expect(tm.json.preview).not.toHaveProperty("alternatives");
+
+    h.deps.route = async () => ({
+      result: { ok: false, refusal: { code: "no-credential" } },
+      surface: "app",
+    });
+    const none = await h.run(["preview"], true);
+    expect(none.json.preview).toMatchObject({ model: null, alternatives: [] });
+    expect(none.json.preview).not.toHaveProperty("model_unknown");
+  });
+
   it("stage 2 is proposed and started under one model, and says which", async () => {
     const h = routedHarness();
     await calibrate(h);
@@ -1130,6 +1159,27 @@ describe("the scan's route, resolved where the login is (scanRoutePort)", () => 
     expect(f.notes).toEqual(["--model replaces 3 pinned tier and lens models for this run"]);
   });
 
+  // The driver's cases read the route through the join's getter: the one
+  // place the two sides meet, so it is held here and not in `cmdScan`.
+  // MUTATION: give the port a record of its own in scanRouteJoin
+  // (`scanRoutePort({ ...w, resolved: {} })`) — the getter answers nothing
+  // after a driver's start, every case's host resolves a route of its own,
+  // and this fails.
+  it("the join hands a driver's cases the route its start resolved, and a plan's to nobody", async () => {
+    const { resolved: _own, ...w } = world({}).world;
+    const routes = scanRouteJoin();
+    // The getter is made before the port's world is known (the cases are
+    // assembled first), and answers nothing until a driver resolved a route.
+    expect(routes.route()).toBeUndefined();
+    const port = routes.port(w);
+    await port({ run: false, ask: false });
+    expect(routes.route()).toBeUndefined();
+    await port({ run: true, ask: false });
+    expect(routes.route()).toEqual(routeOn("auto/one"));
+    // Two scans of one process (a test's) never share a route.
+    expect(scanRouteJoin().route()).toBeUndefined();
+  });
+
   it("no route: the host's words go with the refusal, and no tier is named", async () => {
     const w = world({
       answer: {
@@ -1168,6 +1218,37 @@ describe("the scan's route, resolved where the login is (scanRoutePort)", () => 
     await w.port({ run: true, ask: false });
     expect(w.here).toHaveLength(1);
     expect(w.docker.filter((c) => c[0] === "run")).toHaveLength(1);
+  });
+
+  // `qcr login` signs this machine's pi in, which a sandboxed scan never
+  // reads: an answer read from the companion's login names its own way in.
+  // MUTATION: drop `login: SANDBOX_LOGIN` from the port's refusal — the plan's
+  // model line says `qcr login` over a blocker that says `qcr scan login`,
+  // and this fails.
+  it("a refusal read from the companion's login names `qcr scan login`; this machine's own names none", async () => {
+    const refused: ScanRouteAnswer = {
+      result: { ok: false, refusal: { code: "no-credential" } },
+      refusal: "no pi login in the companion's pi home — run `qcr scan login`",
+    };
+    const boxed = world({
+      image: () => ({ ok: true, stdout: `${JSON.stringify(refused)}\n`, stderr: "", code: 0 }),
+      answer: refused,
+    });
+    // A plan, asked of the scan image.
+    expect(await boxed.port({ run: false, ask: false })).toEqual({
+      result: refused.result,
+      surface: "app",
+      refusal: refused.refusal,
+      login: "qcr scan login",
+      notes: [],
+    });
+    // A host scan's plan, and a driver on the host: this machine's pi.
+    const host = world({ answer: refused });
+    expect(await host.port({ run: false, ask: false })).not.toHaveProperty("login");
+    expect(await host.port({ run: true, ask: false })).not.toHaveProperty("login");
+    // A driver inside the sandbox reads the mounted login in its own process.
+    host.world.env["QCR_SCAN_AUTH_SRC"] = "/mnt/pi";
+    expect(await host.port({ run: true, ask: false })).toMatchObject({ login: "qcr scan login" });
   });
 
   // Honest-unknown: a sandbox that does not answer is no route and no "no

@@ -400,6 +400,10 @@ export interface ScanRouted {
   /** Why there is no route, in the host's words: it knows the agent dir, the
    * providers' names and the budget. Omitted: the refusal's plain sentence. */
   refusal?: string;
+  /** The way to sign in where this answer was read, when it is not the
+   * surface's own: a sandboxed scan reads the companion's login, which
+   * `qcr login` never touches. Omitted: `qcr login`, or pi's `/login`. */
+  login?: string;
   /** Each tier's spec as it will run on this route: the tier's own when the
    * config pins it to a model, else the route's at the tier's level. */
   tiers?: Readonly<Record<PassTier, string>>;
@@ -437,7 +441,13 @@ export interface ScanModelView {
   /** The model every case runs on; null: none resolves, or it is unknown,
    * and a start is refused. */
   model?: ScanModel | null;
-  /** Every other usable provider with the model it would run, best first. */
+  /** The host could not find the model out (a sandbox that did not answer):
+   * `model` is null because nothing was read, not because pi has no
+   * credential. Present, and true, only then. */
+  model_unknown?: true;
+  /** Every other usable provider with the model it would run, best first.
+   * Empty when there is none; absent when the model is unknown, since no
+   * provider was read. */
   alternatives?: Array<{
     spec: string;
     provider: string;
@@ -510,24 +520,32 @@ function plannedModel(routed: ScanRouted | undefined): PlannedModel {
       blocker: null,
     };
   }
-  // No route, or an unknown one: the plan is still shown, and nothing starts.
-  const plain = r === null ? "it could not be read" : new RouteRefused(r.refusal).message;
-  const head =
-    r === null
-      ? `model: unknown (${routed.refusal ?? plain})`
-      : `model: none (${
-          r.refusal.code === "no-credential"
-            ? `no model credential: ${routed.surface === "plugin" ? "/login" : "qcr login"}`
-            : plain
-        })`;
+  // An unknown route: the plan is still shown, and nothing starts. Nothing
+  // was read, so the plan says so and names no provider, not even "none".
+  if (r === null) {
+    const why = routed.refusal ?? "it could not be read";
+    return {
+      view: {
+        model: null,
+        model_unknown: true,
+        model_lines: [`model: unknown (${why})`, ...notes],
+      },
+      spec: null,
+      key: {},
+      blocker: `the scan's model is unknown (${why}): nothing starts until it is known`,
+    };
+  }
+  // No route: the same, in the route's words.
+  const plain = new RouteRefused(r.refusal).message;
+  const login = routed.login ?? (routed.surface === "plugin" ? "/login" : "qcr login");
+  const head = `model: none (${
+    r.refusal.code === "no-credential" ? `no model credential: ${login}` : plain
+  })`;
   return {
     view: { model: null, alternatives: [], model_lines: [head, ...notes] },
     spec: null,
     key: {},
-    blocker:
-      r === null
-        ? `the scan's model is unknown (${routed.refusal ?? plain}): nothing starts until it is known`
-        : (routed.refusal ?? plain),
+    blocker: routed.refusal ?? plain,
   };
 }
 

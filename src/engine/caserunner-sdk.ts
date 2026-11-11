@@ -10,14 +10,22 @@
 // That keeps the SDK's process-global HTTP dispatcher and a frozen loop out of
 // the companion (the companion boundary).
 //
-// AUTH. Each case builds its own host on a fresh read-only copy of the owner's
-// login (engineCredentials): a token the companion refreshed mid-scan is
-// picked up at the next case, a token the case would not outlive is refused
-// before it starts, and nothing is ever refreshed or written here. On the host
-// (no container mount), a pi home with no login runs on a provider API key in
-// the environment, as `qcr review` and /qcr-scan do: an empty in-memory store,
-// and pi finds the key in the driver's env by its own lookup (`authEnv`). With
-// neither, the run stops naming `qcr login`.
+// AUTH. Each case builds its own host on a fresh read-only borrow of the
+// owner's login (`borrowedCredentials`, the borrow the route was resolved
+// over): a token the companion refreshed mid-scan is picked up at the next
+// case, and nothing is ever refreshed or written here. No provider is named
+// in this file and no table of key variables is read: pi finds a provider's
+// key, or a cloud identity, in the driver's env by its own lookup (`authEnv`),
+// so a pi home with no login file is an empty in-memory store and nothing
+// more. What stops the run, before a case starts, is said by the route:
+//   - with the scan's route, only the route's provider counts: its login
+//     would not outlive the case, or the stored credential the route was
+//     resolved on is gone. A short-lived login of any other provider, and a
+//     missing login file under a route on an environment key, refuse nothing;
+//   - with no route handed (each case's host then resolves its own), any
+//     login that would not outlive the case, no login in the scan sandbox,
+//     and a host on which pi finds no credential at all.
+// A login file that is there and cannot be read stops the run too.
 //
 // THE MODEL. A scan has one route (`scanRoute`): resolved from that same
 // login source, the choice remembered beside it, pi's saved provider and a
@@ -25,23 +33,21 @@
 // its own. The driver resolves it once, before the run is recorded, and every
 // case's host is handed it as fixed (`ScanSdkCasesOptions.route`), so a login
 // that changes mid-scan can end a case and never move the scan to another
-// model. A case's login is then checked for the route's provider alone: a
-// short-lived login of a provider the scan does not run on refuses nothing.
-// The same function answers a preview: in this process for a host scan, and
-// in the scan image for a sandboxed one (src/scancli.ts), where the login is.
-import { existsSync, mkdirSync } from "node:fs";
+// model. The same function answers a preview: in this process for a host
+// scan, and in the scan image for a sandboxed one (src/scancli.ts), where the
+// login is.
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
+  AuthError,
   AuthExpiring,
-  RUNTIME_KEY_ENVS,
   SCAN_AUTH_SRC_ENV,
   SCAN_CASE_AUTH_BUDGET_MS,
   borrowedCredentials,
-  engineCredentials,
-  keyOnlyCredentials,
   scanAuthExpiring,
   scanAuthMissing,
+  type BorrowedAuth,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   PiHost,
@@ -104,16 +110,20 @@ export interface ScanSdkCasesOptions {
    * alone. Asked per case. Omitted, or answering nothing: each case's host
    * resolves its own, from the login it is given. */
   route?: () => ModelRoute | undefined;
-  /** The host a case runs on, built from its credentials. Omitted: a PiHost that
-   * owns this process (the driver's) and installs pi's HTTP dispatcher. */
-  makeHost?: (o: {
-    agentDir: string;
-    credentials: ReturnType<typeof engineCredentials>["credentials"];
-    /** Where pi looks for a provider key: the driver's env. */
-    authEnv: NodeJS.ProcessEnv;
-    /** The scan's route as the host takes it; absent when the scan has none. */
-    route?: NonNullable<PiHostOptions["route"]>;
-  }) => Promise<PiHost>;
+  /** The host a case runs on, built from what the case hands every host.
+   * Omitted: a PiHost over the same options that owns this process (the
+   * driver's) and installs pi's HTTP dispatcher. */
+  makeHost?: (o: CaseHostOptions) => Promise<PiHost>;
+}
+
+/** What a case hands its host, whoever builds it. */
+export interface CaseHostOptions {
+  agentDir: string;
+  credentials: BorrowedAuth["credentials"];
+  /** Where pi looks for a provider's key: the driver's env. */
+  authEnv: NodeJS.ProcessEnv;
+  /** The scan's route as the host takes it; absent when the scan has none. */
+  route?: NonNullable<PiHostOptions["route"]>;
 }
 
 /**
@@ -124,19 +134,6 @@ export interface ScanSdkCasesOptions {
  */
 export function caseHostRoute(route: ModelRoute): NonNullable<PiHostOptions["route"]> {
   return route.custom ? { pin: { text: route.spec, from: "flag" } } : { fixed: route };
-}
-
-/** The provider key variables set in `env` (RUNTIME_KEY_ENVS). */
-function envKeyNames(env: NodeJS.ProcessEnv): string[] {
-  return Object.values(RUNTIME_KEY_ENVS).filter((name) => (env[name] ?? "").trim() !== "");
-}
-
-/** Why a host scan cannot start with neither a pi login nor an env key. */
-export function hostScanAuthMissing(src: string): string {
-  return (
-    `no pi login at ${src} and no provider API key in the environment ` +
-    `(${Object.values(RUNTIME_KEY_ENVS).join(", ")}) — run \`qcr login\`, or set the key`
-  );
 }
 
 /** Where the borrowed login is read from: the scan container's read-only mount
@@ -243,6 +240,22 @@ export function scanRefusalWords(
   return o.sandboxed
     ? `${words} The scan sandbox reads the companion's login: \`qcr scan login\` signs it in.`
     : words;
+}
+
+/**
+ * Why a case of a scan on `route` cannot start: the route was resolved on a
+ * credential pi had stored, and the login source no longer holds one for that
+ * provider. Nothing moves the scan to another model, so the run stops.
+ */
+export function scanLoginGone(
+  route: Pick<ModelRoute, "providerName">,
+  o: { src: string; sandboxed: boolean },
+): string {
+  return (
+    `this scan runs on the ${route.providerName} credential ${o.sandboxed ? "the companion's pi" : "pi"} ` +
+    `held when it started, and ${join(o.src, "auth.json")} no longer holds one — ` +
+    `run \`${o.sandboxed ? "qcr scan login" : "qcr login"}\`, then start the scan again`
+  );
 }
 
 /**
@@ -356,9 +369,9 @@ export async function scanRoute(o: ScanRouteOptions): Promise<ScanRouteAnswer> {
 
 /**
  * The scan driver's SDK leaf runner: `sdkCaseRunner` over a host per case, each
- * on the login's refresh-blanked in-memory copy (engineCredentials). A login
- * that is missing or would expire inside the case stops the run through
- * `onExpired`, and the case is refused having spent nothing.
+ * on a fresh borrow of the login (the header's AUTH rules). A case that may
+ * not start stops the run through `onExpired`, and is refused having spent
+ * nothing.
  */
 export function scanSdkCases(o: ScanSdkCasesOptions): CaseRunner {
   if (!isAbsolute(o.agentDir))
@@ -371,49 +384,67 @@ export function scanSdkCases(o: ScanSdkCasesOptions): CaseRunner {
     env: o.env,
     runtime: async (extras) => {
       const src = scanAuthSource(o.env);
-      const onHost = !o.env[SCAN_AUTH_SRC_ENV]?.trim();
-      const keyOnly = onHost && !existsSync(join(src, "auth.json"));
+      const sandboxed = Boolean(o.env[SCAN_AUTH_SRC_ENV]?.trim());
+      const needMs = scanAuthWindowMs(o.env);
       // The scan's one route, when its driver resolved one.
       const route = o.route?.();
-      let auth: Pick<ReturnType<typeof engineCredentials>, "credentials">;
+      /** Stop the run: this case may not start, and no later one could. */
+      const stop = (reason: string, code: "missing" | "expiring"): never => {
+        o.onExpired(reason);
+        throw new AuthExpiring(reason, { code });
+      };
+      let borrowed: BorrowedAuth;
       try {
-        if (keyOnly && envKeyNames(o.env).length === 0)
-          throw new AuthExpiring(hostScanAuthMissing(join(src, "auth.json")), { code: "missing" });
-        auth = keyOnly
-          ? { credentials: keyOnlyCredentials() }
-          : engineCredentials({
-              srcDir: src,
-              needMs: scanAuthWindowMs(o.env),
-              words: { missing: scanAuthMissing, expiring: scanAuthExpiring },
-              // With a route the case runs on one provider: only its login
-              // has to last the case.
-              ...(route !== undefined ? { providers: [route.provider] } : {}),
-            });
+        // Nothing renews the login for a scan: its owner is the pi that wrote it.
+        borrowed = borrowedCredentials({ srcDir: src, needMs, owner: false });
       } catch (err) {
-        if (err instanceof AuthExpiring) o.onExpired(err.message);
+        // A login file that is there and cannot be read: no case can run.
+        if (err instanceof AuthError) o.onExpired(err.message);
         throw err;
+      }
+      // The logins this case must outlive: the route's provider's alone; with
+      // no route the case's host may resolve any of them.
+      const short = borrowed.skipped
+        .filter((l) => route === undefined || l.provider === route.provider)
+        .map((l) => (route !== undefined ? { ...l, name: route.providerName } : l))
+        .sort((a, b) => a.expiresAt - b.expiresAt);
+      if (short.length > 0)
+        stop(
+          scanRefusalWords({ code: "login-too-short", logins: short }, { src, needMs, sandboxed }),
+          "expiring",
+        );
+      if (route !== undefined) {
+        // A route on a credential pi had stored needs it still there. One on an
+        // environment key, or on anything else pi found outside the login
+        // file, needs no login file at all.
+        if (route.credential.origin === "stored" && borrowed.summary[route.provider] === undefined)
+          stop(scanLoginGone(route, { src, sandboxed }), "missing");
+      } else if (sandboxed && Object.keys(borrowed.summary).length === 0) {
+        stop(scanRefusalWords({ code: "no-credential" }, { src, needMs, sandboxed }), "missing");
       }
       mkdirSync(o.agentDir, { recursive: true, mode: 0o700 });
       // pi's catalog lives next to the login (the person's own providers, and
       // the models pi learned since its build): the host reads its own copy,
       // the same one the route was resolved over.
       copyCatalogFiles(src, o.agentDir);
-      const hostRoute = route !== undefined ? { route: caseHostRoute(route) } : {};
+      // One set of options for whoever builds the host: the driver's own and
+      // a test's stand-in are handed the same login, env and route.
+      const hostOptions: CaseHostOptions = {
+        agentDir: o.agentDir,
+        credentials: borrowed.credentials,
+        authEnv: o.env,
+        ...(route !== undefined ? { route: caseHostRoute(route) } : {}),
+      };
       const host = await (o.makeHost
-        ? o.makeHost({
-            agentDir: o.agentDir,
-            credentials: auth.credentials,
-            authEnv: o.env,
-            ...hostRoute,
-          })
-        : PiHost.create({
-            agentDir: o.agentDir,
-            ownsProcess: true,
-            homeDir: homedir(),
-            credentials: auth.credentials,
-            authEnv: o.env,
-            ...hostRoute,
-          }));
+        ? o.makeHost(hostOptions)
+        : PiHost.create({ ...hostOptions, ownsProcess: true, homeDir: homedir() }));
+      // With no route the host resolves its own: one on which pi finds no
+      // credential anywhere (no login, no key, no identity in the env) can
+      // run no case.
+      if (route === undefined && (await host.inventory()).length === 0) {
+        host.dispose();
+        stop(scanRefusalWords({ code: "no-credential" }, { src, needMs, sandboxed }), "missing");
+      }
       // The case driver owns its process: a turn its abort and dispose did not
       // end exits it (packages/pi-plugin/src/engine/budget.ts).
       return sdkRuntime(host, { extras, backstop: () => process.exit(BUDGET_EXIT_CODE) });

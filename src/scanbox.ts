@@ -526,7 +526,8 @@ export function loginProblem(s: LoginSummary, now: number): string | null {
   if (Object.keys(s).length === 0) return scanAuthMissing(`${SCANBOX.authSrc}/auth.json`);
   const e = earliestExpiry(s);
   // The scan's SDK runner admits a token only past the budget plus pi's
-  // refresh margin (engineCredentials), so launch and doctor ask the same.
+  // refresh margin (the borrow a case is built on), so launch and doctor ask
+  // the same.
   const needMs = SCAN_CASE_AUTH_BUDGET_MS + PI_REFRESH_MARGIN_MS;
   if (e !== null && e.expiresAt < now + needMs) return scanAuthExpiring({ ...e, needMs });
   return null;

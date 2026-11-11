@@ -25,6 +25,7 @@ import {
   caseHostRoute,
   scanAuthSource,
   scanAuthWindowMs,
+  scanLoginGone,
   scanRefusalWords,
   scanRoute,
   scanSdkCases,
@@ -359,7 +360,7 @@ describe("the driver's host: a login per case, refused and read-only", () => {
   });
 
   // The faux model runs on a stored key; the OAuth entry is the one whose
-  // expiry the engine's admission reads.
+  // expiry a case's admission reads.
   const login = (expires: number, refresh = "real-refresh"): string =>
     JSON.stringify({
       faux: { type: "api_key", key: "faux-key" },
@@ -390,6 +391,9 @@ describe("the driver's host: a login per case, refused and read-only", () => {
     onExpired: (r: string) => void,
     /** The scan's route, and an agent file that pins no model of its own. */
     route?: () => ModelRoute | undefined,
+    /** A host with pi's own providers alone: the faux one is not registered,
+     * so what the host can run on is what pi finds in the login and the env. */
+    bare = false,
   ) {
     writeFileSync(
       join(agentsDir, "pass-survey.md"),
@@ -415,6 +419,7 @@ describe("the driver's host: a login per case, refused and read-only", () => {
           authEnv: o.authEnv,
           ...(o.route ? { route: o.route } : {}),
           configureModels: async (r) => {
+            if (bare) return;
             r.registerNativeProvider(faux.provider);
             // The key-only route: the faux model's key stands in for the
             // provider key the env hands a real model.
@@ -480,8 +485,9 @@ describe("the driver's host: a login per case, refused and read-only", () => {
     expect(made).toHaveLength(0);
   });
 
-  // MUTATION: drop the key-only branch in scanSdkCases (engineCredentials
-  // always) — the first case is refused with "no pi login" and this fails.
+  // MUTATION: refuse a case with no login file outside the sandbox too (drop
+  // `sandboxed &&` from the no-route refusal in scanSdkCases) — the first
+  // case is refused with "no model credential" and this fails.
   // MUTATION: drop `authEnv` from the host scanSdkCases builds — pi looks in
   // the test process's env, finds no key, and this fails.
   it("on the host, no login but a provider key in the env runs on that key, nothing written", async () => {
@@ -501,19 +507,55 @@ describe("the driver's host: a login per case, refused and read-only", () => {
     expect(existsSync(join(dir, "sdk-agent", "auth.json"))).toBe(false);
   });
 
-  // MUTATION: drop the `envKeyNames(o.env).length === 0` refusal — the case
-  // builds a host on an empty store and this fails.
-  it("on the host, neither a login nor a key stops the run naming `qcr login`", async () => {
+  // No table of key variables decides it: the host is asked what pi found.
+  // MUTATION: drop the empty-inventory refusal in scanSdkCases — the case
+  // starts on a host with no credential, the run is not told, and this fails.
+  it("on the host, with no route and nothing pi can run on, the run stops naming `qcr login`", async () => {
     const expired: string[] = [];
+    const none = join(dir, "no-pi");
     const { cases, made } = driver(
-      { PATH: "/bin", HOME: dir, PI_CODING_AGENT_DIR: join(dir, "no-pi"), OPENAI_API_KEY: " " },
+      { PATH: "/bin", HOME: dir, PI_CODING_AGENT_DIR: none },
       (r) => expired.push(r),
+      undefined,
+      true,
     );
     const out = await cases.run(spec, new AbortController().signal);
     expect(out).toMatchObject({ ok: false, cost_usd: 0 });
-    expect((out as { reason: string }).reason).toMatch(/no provider API key.*run `qcr login`/);
+    expect((out as { reason: string }).reason).toMatch(
+      /^pi has no model credential \(agent dir .*no-pi\)\. Run `qcr login`/,
+    );
     expect(expired).toHaveLength(1);
-    expect(made).toHaveLength(0);
+    // The host was asked, and nothing was written for it.
+    expect(made).toHaveLength(1);
+    expect(existsSync(join(none, "auth.json"))).toBe(false);
+  });
+
+  // The scan's route was resolved over pi's whole registry: a key of any
+  // provider pi knows, and no login file at all. The case is not asked for a
+  // login the route never had. (The faux model's key stands in for the
+  // provider's, as above; the env key is the one pi itself finds.)
+  // MUTATION: refuse a routed case whenever its provider is not in the login
+  // file (drop the `origin === "stored"` test in scanSdkCases) — a scan on an
+  // environment key is stopped at its first case, and this fails.
+  it("with a route on an environment key, of any provider pi knows, a case needs no login file", async () => {
+    const expired: string[] = [];
+    const none = join(dir, "no-pi");
+    const { cases, made, keyed } = driver(
+      { PATH: "/bin", HOME: dir, PI_CODING_AGENT_DIR: none, GROQ_API_KEY: "gsk-test" },
+      (r) => expired.push(r),
+      () => ({
+        ...FAUX_ROUTE,
+        credential: { kind: "api_key", origin: "env-key", subscription: false },
+      }),
+    );
+    const out = await cases.run(spec, new AbortController().signal);
+    expect(out, JSON.stringify(out)).toMatchObject({ ok: true, output: "NONE" });
+    expect(expired).toEqual([]);
+    expect(made).toHaveLength(1);
+    expect(await (made[0]!.credentials as { list(): Promise<unknown[]> }).list()).toEqual([]);
+    // pi found the key by its own lookup, in the env the driver handed it.
+    expect(keyed).toEqual([["groq", "GROQ_API_KEY"]]);
+    expect(existsSync(join(none, "auth.json"))).toBe(false);
   });
 
   it("host mode admits a login only if it outlives the turn's wall clock; the container's budget is the case budget", async () => {
@@ -552,7 +594,9 @@ describe("the driver's host: a login per case, refused and read-only", () => {
     expect(existsSync(join(dir, "sdk-agent", "models.json"))).toBe(false);
   });
 
-  // MUTATION: drop `...hostRoute` from the host scanSdkCases builds — the
+  // The driver's own host and this stand-in are built from one options
+  // object (`hostOptions`), so what is seen here is what `PiHost.create` gets.
+  // MUTATION: drop the `route` entry from `hostOptions` in scanSdkCases — the
   // case's host is handed no route and resolves one of its own from the
   // login (another provider's, here), and this fails.
   it("with the scan's route, each case's host is handed it as fixed and runs on it", async () => {
@@ -601,8 +645,9 @@ describe("the driver's host: a login per case, refused and read-only", () => {
 
   // The login beside the route's holds a token that ends in a minute. The
   // scan runs on the faux key: that other login is not its business.
-  // MUTATION: drop `providers: [route.provider]` from the case's
-  // engineCredentials — the case is refused for the other login, and this fails.
+  // MUTATION: count every login left out, route or no route (drop the
+  // provider filter on `borrowed.skipped` in scanSdkCases) — the case is
+  // refused for the other login, and this fails.
   it("with a route, only its provider's login has to last the case", async () => {
     const src = join(dir, "src-agent");
     mkdirSync(src);
@@ -625,6 +670,97 @@ describe("the driver's host: a login per case, refused and read-only", () => {
     expect(out, JSON.stringify(out)).toMatchObject({ ok: true, output: "NONE" });
     expect(expired).toEqual([]);
   });
+
+  // MUTATION: drop the `short` refusal in scanSdkCases — a case starts on a
+  // login that ends inside it, and this fails.
+  it("with a route, its own provider's login that would not last the case stops the run", async () => {
+    const src = join(dir, "src-agent");
+    mkdirSync(src);
+    writeFileSync(join(src, "auth.json"), login(Date.now() + 60_000));
+    const onAnthropic: ModelRoute = {
+      ...FAUX_ROUTE,
+      provider: "anthropic",
+      providerName: "Anthropic",
+      spec: "anthropic/m",
+      credential: { kind: "oauth", origin: "stored", subscription: true },
+    };
+    const expired: string[] = [];
+    const { cases, made } = driver(
+      { PATH: "/bin", HOME: dir, QCR_SCAN_AUTH_SRC: src },
+      (r) => expired.push(r),
+      () => onAnthropic,
+    );
+    const out = await cases.run(spec, new AbortController().signal);
+    expect(out).toMatchObject({ ok: false, cost_usd: 0 });
+    // pi's name for the provider, in the words a sandboxed scan uses.
+    expect(expired).toEqual([
+      expect.stringMatching(
+        /^the companion's Anthropic access token expires at .*never refreshes it/,
+      ),
+    ]);
+    expect((out as { reason: string }).reason).toBe(expired[0]);
+    expect(made).toHaveLength(0);
+  });
+
+  // MUTATION: drop the `scanLoginGone` refusal in scanSdkCases — every case
+  // left of the scan starts on a login that is gone, and this fails.
+  it("with a route on a stored credential that is gone, the run stops naming the way back in", async () => {
+    const src = join(dir, "src-agent");
+    mkdirSync(src);
+    // The login file is there; the route's provider is no longer in it.
+    writeFileSync(
+      join(src, "auth.json"),
+      JSON.stringify({ other: { type: "api_key", key: "other-key" } }),
+    );
+    const boxed: string[] = [];
+    const box = driver(
+      { PATH: "/bin", HOME: dir, QCR_SCAN_AUTH_SRC: src },
+      (r) => boxed.push(r),
+      () => FAUX_ROUTE,
+    );
+    expect(await box.cases.run(spec, new AbortController().signal)).toMatchObject({
+      ok: false,
+      cost_usd: 0,
+    });
+    expect(boxed).toEqual([scanLoginGone(FAUX_ROUTE, { src, sandboxed: true })]);
+    expect(boxed[0]).toMatch(/the Faux credential the companion's pi held .*run `qcr scan login`/);
+    expect(box.made).toHaveLength(0);
+    // On the host the login is the person's own pi's.
+    const hosted: string[] = [];
+    const host = driver(
+      { PATH: "/bin", HOME: dir, PI_CODING_AGENT_DIR: join(dir, "no-pi") },
+      (r) => hosted.push(r),
+      () => FAUX_ROUTE,
+    );
+    expect(await host.cases.run(spec, new AbortController().signal)).toMatchObject({ ok: false });
+    expect(hosted).toHaveLength(1);
+    expect(hosted[0]).toMatch(/the Faux credential pi held .*run `qcr login`, then start/);
+    expect(hosted[0]).not.toMatch(/qcr scan login|companion/);
+  });
+
+  // An unknown store is never taken for an empty one: the read waits out a
+  // login that is being rewritten, then gives up.
+  it(
+    "a login file that cannot be read stops the run, and no host is built",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const src = join(dir, "src-agent");
+      mkdirSync(src);
+      writeFileSync(join(src, "auth.json"), "{ not json");
+      const expired: string[] = [];
+      const { cases, made } = driver(
+        { PATH: "/bin", HOME: dir, QCR_SCAN_AUTH_SRC: src },
+        (r) => expired.push(r),
+        () => FAUX_ROUTE,
+      );
+      const out = await cases.run(spec, new AbortController().signal);
+      expect(out).toMatchObject({ ok: false, cost_usd: 0 });
+      expect(expired).toEqual([
+        expect.stringMatching(/^could not read pi's credentials at .*auth\.json/),
+      ]);
+      expect(made).toHaveLength(0);
+    },
+  );
 
   // MUTATION: copy models.json alone in scanSdkCases — the models pi learned
   // since its build are unknown to the case's host, and this fails.

@@ -33,6 +33,8 @@
 //   - a plan for a sandboxed scan asks the scan image, over the companion's
 //     login read-only (src/scanbox.ts `askOnLogin`, running that same
 //     function there): the host cannot read that login.
+// The driver's route and its cases are joined in one place (`scanRouteJoin`):
+// the port writes what a driver resolved, and the cases' getter reads it.
 // The plan's key covers the route, so a start whose driver resolves another
 // model than the plan showed is refused there. `--model` is also the whole
 // scan's model: the config the run reads keeps no tier or lens on a model of
@@ -57,6 +59,7 @@ import {
 import { SCAN_MODEL_ENV, loadScanConfig } from "./setup/scanbuild.js";
 import type { DockerRunner } from "./tui/companion.js";
 import type { ScanRouteAnswer } from "./engine/caserunner-sdk.js";
+import { SCAN_AUTH_SRC_ENV } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import type { ModelRoute, RouteInput } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import {
   isPinned,
@@ -226,12 +229,18 @@ export interface ScanRouteWorld {
   say?: (line: string) => void;
 }
 
+/** How a sandboxed scan's login is signed in: the companion's pi, which is
+ * the only login the scan sandbox reads. */
+const SANDBOX_LOGIN = "qcr scan login";
+
 /**
  * The verbs' route port over `w` (the header's rules): the pin is `--model`,
  * else the config's own; a driver's route is resolved here and kept for its
  * cases; a plan's is resolved where the run would be driven. Beside the route
  * it answers with each tier's spec as it will run, and says what `--model`
- * replaced and when stage 1's tier is not on the route at all.
+ * replaced and when stage 1's tier is not on the route at all. An answer read
+ * from the companion's login (the scan image's, or a driver's inside the
+ * sandbox) names that login's own way in.
  */
 export function scanRoutePort(w: ScanRouteWorld): NonNullable<ScanCliDeps["route"]> {
   const say = w.say ?? ((l: string) => console.error(l));
@@ -257,12 +266,15 @@ export function scanRoutePort(w: ScanRouteWorld): NonNullable<ScanCliDeps["route
       notes.push(
         `--model replaces ${loaded.replaced} pinned tier and lens model${loaded.replaced === 1 ? "" : "s"} for this run`,
       );
-    const routed = (answer: ScanRouteAnswer): ScanRouted => {
+    const routed = (answer: ScanRouteAnswer, sandboxed: boolean): ScanRouted => {
       if (!answer.result.ok)
         return {
           result: answer.result,
           surface: "app",
           ...(answer.refusal !== undefined ? { refusal: answer.refusal } : {}),
+          // `qcr login` signs this machine's pi in, which a sandboxed scan
+          // never reads.
+          ...(sandboxed ? { login: SANDBOX_LOGIN } : {}),
           notes,
         };
       const route = answer.result.route;
@@ -296,7 +308,7 @@ export function scanRoutePort(w: ScanRouteWorld): NonNullable<ScanCliDeps["route
           refusal: `the scan sandbox could not be asked: ${read.error}`,
           notes,
         };
-      return routed(read.answer);
+      return routed(read.answer, true);
     }
     const resolveHere =
       w.resolveHere ?? (async (o) => (await import("./engine/caserunner-sdk.js")).scanRoute(o));
@@ -310,7 +322,26 @@ export function scanRoutePort(w: ScanRouteWorld): NonNullable<ScanCliDeps["route
     });
     // A driver's route is the one its cases are handed.
     if (ask.run && answer.result.ok) w.resolved.route = answer.result.route;
-    return routed(answer);
+    return routed(answer, Boolean(w.env[SCAN_AUTH_SRC_ENV]?.trim()));
+  };
+}
+
+/**
+ * One scan process's route, joined: the verbs' port, which writes the route a
+ * driver resolved, and the getter its cases read it through (`scanSdkCases`'
+ * `route`). Both sides are made here, over one record, so a driver's cases
+ * cannot be handed anything but the route its start resolved. The getter
+ * comes first: the cases are assembled before the port's world is known.
+ */
+export function scanRouteJoin(): {
+  /** The route the driver resolved; nothing before it did, and for a plan. */
+  route: () => ModelRoute | undefined;
+  port: (w: Omit<ScanRouteWorld, "resolved">) => NonNullable<ScanCliDeps["route"]>;
+} {
+  const resolved: ScanRouteWorld["resolved"] = {};
+  return {
+    route: () => resolved.route,
+    port: (w) => scanRoutePort({ ...w, resolved }),
   };
 }
 
@@ -531,7 +562,7 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
   else delete env[SCAN_MODEL_ENV];
   const inSandbox = Boolean(env[IN_SANDBOX_ENV]?.trim());
   // The route a driver resolves, for the cases it runs.
-  const resolved: { route?: ModelRoute } = {};
+  const routes = scanRouteJoin();
   const shared = sharedPorts(env);
   const engine = buildEngine(env, shared, process.cwd());
   const home = stateHome(env);
@@ -550,7 +581,7 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
         ...o,
         agentDir: join(home, SCAN_SDK_AGENT_DIR),
         // One route per scan: every case's host is handed the driver's.
-        route: () => resolved.route,
+        route: routes.route,
       });
     },
   );
@@ -569,7 +600,7 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
     repo: env.QCR_REVIEWED_REPO!,
     out: (line) => console.log(line),
     ...sandboxDeps,
-    route: scanRoutePort({
+    route: routes.port({
       env,
       root: env.QCR_ROOT?.trim() || sandboxRoot(),
       home,
@@ -577,7 +608,6 @@ export async function cmdScan(argv: string[], json: boolean): Promise<number> {
       // The choice is remembered beside the login: only where this process
       // reads the login itself is there anyone to ask.
       choose: interactive && routeSandbox === null ? chooseOnTerminal : null,
-      resolved,
     }),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => Date.now(),
