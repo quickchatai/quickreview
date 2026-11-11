@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": false,
   "partial": true,
   "coverage": {
@@ -59,9 +59,10 @@
       "standard": "local/r:medium",
       "deep": "local/r:high"
     },
-    "estimate_usd": 0.61,
-    "cap_usd": 1.22,
-    "limit_usd": 1000,
+    "price_basis": "unmeasured",
+    "estimate_usd": null,
+    "cap_usd": 5,
+    "limit_usd": 5,
     "auto": true,
     "key": "0000000000000000"
   },

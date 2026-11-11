@@ -9,18 +9,18 @@ A scan reads the whole repository at one commit, or one folder of it, not a diff
 
 ## Which qcr to run
 
-Every call here is written `qcr --schema 1 …`. `--schema 1` asks qcr for contract 1, the JSON this skill was written for: every payload leads with the `schema_version` the contract names, and the flag implies `--json`. Never call qcr without it, and never read fields from a payload you did not get this way.
+Every call here is written `qcr --schema 2 …`. `--schema 2` asks qcr for contract 2, the JSON this skill was written for: every payload leads with the `schema_version` the contract names, and the flag implies `--json`. Never call qcr without it, and never read fields from a payload you did not get this way.
 
 Before the first call, check the qcr on this machine:
 
 ```sh
-qcr --schema 1 version
+qcr --schema 2 version
 ```
 
 If it exits 0 and prints JSON, run `qcr` as written. If `qcr` is not found, exits nonzero or prints anything but JSON, it is missing or does not speak this contract (a qcr that does not print the contract exits 3 with nothing on stdout; one from before the flag exits nonzero with no JSON). Then run the release this skill came from in its place, with the same arguments after it:
 
 ```sh
-npx -y @quickchatai/quickreview@0.0.0-golden --schema 1 version
+npx -y @quickchatai/quickreview@0.0.0-golden --schema 2 version
 ```
 
 If that fails too, report its error as printed, stop, and use the setup skill (/qcr-setup).
@@ -29,12 +29,14 @@ Every scan call here also carries `--sandbox host`: the scan runs on this machin
 
 ## Steps
 
-1. `qcr --schema 1 scan preview --sandbox host` (add `--path DIR` for one folder, a path relative to the repo root; `--sha REF` for another commit; `--delta` for only what changed since the last scan). Nothing starts. Show the user `repo` (the checkout it scans), `preview.estimate_usd`, `preview.cap_usd` and the case list, and wait for a go. If `repo` is not the repository the user means, say so and start nothing.
-   - If the preview stops because the repo has no saved unit cut (the repo's first scan: a scan reads the repo unit by unit), make one. `qcr --schema 1 scan units propose --sandbox host` proposes a cut from the repo's layout and stores it as a draft; no model runs and nothing is spent. Show the user `draft.units` (each unit's `name`, `roots` and `files`) and any `draft.blocking_save`, and ask whether to save it. Save refuses while `draft.blocking_save` names a problem: fix it with `qcr --schema 1 scan units adjust --file - --sandbox host`, a JSON array of ops on stdin (`rename`, `add`, `remove`, `merge`, `move`, `set_roots`, `ignore`, `unignore`, `note`; for example `[{"op":"remove","unit":"rest"}]` for a unit left with no files), and show the user the adjusted draft. On the user's go, `qcr --schema 1 scan units save --sandbox host` saves it; then preview again. Without a go, stop: the scan needs a cut.
-   - If the preview carries `preview.threat_model_stage`, a threat model is drafted first (stage 0, `[scan] threat_model`), and the scan's own start is refused until that has run. `preview.estimate_usd` and `preview.cap_usd` then price only the scan that follows. Show the user `preview.threat_model_stage.why`, its `estimate_usd` (null: no price measured yet) and its hard stop `cap_usd`, and ask for a go for this stage alone. On the go, `qcr --schema 1 scan threat-model start --key <preview.threat_model_stage.key> --sandbox host` with the same `--sha` as the preview (stage 0 reads the whole repository, whatever folder the preview named), then `qcr --schema 1 scan status --wait --sandbox host` until it ends. If its `run.display` is not `complete` (the wait exits 1), report that and stop. Then `qcr --schema 1 scan preview --sandbox host` again with the same `--path`, `--sha` and `--delta`, show the scan's own price, and wait for a go before step 2. Without a go for stage 0, stop: setting `[scan] threat_model = "off"` scans without a threat model, and that is the user's call.
-2. `qcr --schema 1 scan start --key <preview.key> --sandbox host`, with the same `--path`, `--sha` and `--delta` as the preview. A stale key is refused (`ok: false`); preview again and show the new price.
-3. `qcr --schema 1 scan status --sandbox host` shows progress; `status --wait --timeout S` waits. `qcr --schema 1 scan stop --sandbox host` ends it.
-4. `qcr --schema 1 scan findings --sandbox host` lists what was found; narrow with `--severity`, `--validity`, `--lens`, `--limit N`.
+1. `qcr --schema 2 scan preview --sandbox host` (add `--path DIR` for one folder, a path relative to the repo root; `--sha REF` for another commit; `--delta` for only what changed since the last scan). Nothing starts. Show the user `repo` (the checkout it scans), `preview.model.spec` (the model every case runs on), `preview.estimate_usd`, `preview.cap_usd` and the case list, and wait for a go. If `repo` is not the repository the user means, say so and start nothing.
+   - The model. A scan runs on one model: the provider qcr has a credential for, unless the user names one. `preview.alternatives` lists the other providers that could run it, each with its `spec` and `provider_name`, and `preview.tiers` each tier's model as it will run. If the user names a model, add `--model PROVIDER/ID` to the preview and to every later call of this scan; do not pick one for them. If `preview.model` is `null`, nothing can start and `preview.blockers` says why: with `preview.model_unknown` set the model could not be read (report the blocker as printed), otherwise there is no model login (use the setup skill, /qcr-setup), and stop.
+   - `preview.estimate_usd` may be `null`: there is no price measured for this scan on this model yet. Say so, and show `preview.cap_usd` as the spend at which the scan stops. Never show a price you worked out yourself.
+   - If the preview stops because the repo has no saved unit cut (the repo's first scan: a scan reads the repo unit by unit), make one. `qcr --schema 2 scan units propose --sandbox host` proposes a cut from the repo's layout and stores it as a draft; no model runs and nothing is spent. Show the user `draft.units` (each unit's `name`, `roots` and `files`) and any `draft.blocking_save`, and ask whether to save it. Save refuses while `draft.blocking_save` names a problem: fix it with `qcr --schema 2 scan units adjust --file - --sandbox host`, a JSON array of ops on stdin (`rename`, `add`, `remove`, `merge`, `move`, `set_roots`, `ignore`, `unignore`, `note`; for example `[{"op":"remove","unit":"rest"}]` for a unit left with no files), and show the user the adjusted draft. On the user's go, `qcr --schema 2 scan units save --sandbox host` saves it; then preview again. Without a go, stop: the scan needs a cut.
+   - If the preview carries `preview.threat_model_stage`, a threat model is drafted first (stage 0, `[scan] threat_model`), and the scan's own start is refused until that has run. `preview.estimate_usd` and `preview.cap_usd` then price only the scan that follows. Show the user `preview.threat_model_stage.why`, its `estimate_usd` (null: no price measured yet) and its hard stop `cap_usd`, and ask for a go for this stage alone. On the go, `qcr --schema 2 scan threat-model start --key <preview.threat_model_stage.key> --sandbox host` with the same `--sha` and `--model` as the preview (stage 0 reads the whole repository, whatever folder the preview named), then `qcr --schema 2 scan status --wait --sandbox host` until it ends. If its `run.display` is not `complete` (the wait exits 1), report that and stop. Then `qcr --schema 2 scan preview --sandbox host` again with the same `--path`, `--sha`, `--delta` and `--model`, show the scan's own price, and wait for a go before step 2. Without a go for stage 0, stop: setting `[scan] threat_model = "off"` scans without a threat model, and that is the user's call.
+2. `qcr --schema 2 scan start --key <preview.key> --sandbox host`, with the same `--path`, `--sha`, `--delta` and `--model` as the preview. A stale key is refused (`ok: false`), and a key is stale when the commit, the plan or the model changed since the preview; preview again and show the new model and price.
+3. `qcr --schema 2 scan status --sandbox host` shows progress; `status --wait --timeout S` waits. `qcr --schema 2 scan stop --sandbox host` ends it.
+4. `qcr --schema 2 scan findings --sandbox host` lists what was found; narrow with `--severity`, `--validity`, `--lens`, `--limit N`.
 
 ## Reading the result
 

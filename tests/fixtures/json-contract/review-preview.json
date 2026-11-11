@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ok": true,
   "preview": {
     "repo": "local/pv",
@@ -43,10 +43,11 @@
       "standard": "local/r:medium",
       "deep": "local/r:high"
     },
-    "estimate_usd": 0.61,
-    "cap_usd": 1.22,
-    "limit_usd": 1000,
-    "auto": true,
+    "price_basis": "unmeasured",
+    "estimate_usd": null,
+    "cap_usd": 15,
+    "limit_usd": 15,
+    "auto": false,
     "key": "0000000000000000"
   }
 }

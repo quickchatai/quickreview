@@ -430,6 +430,7 @@ describe("the bodies", () => {
     "--state": "new",
     "--unit": "app",
     "--key": "K",
+    "--model": "local/m",
   };
   // qcr's own flags, taken before the scan's parse (src/scancli.ts, src/schemaflag.ts)
   const OWN = new Set(["--sandbox", "--schema", "--json"]);

@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "errors": [
+    "this review would run on local/r, which has no measured price, and contract 1 cannot say so. Update the QuickReview skills (qcr plugin install)."
+  ]
+}
