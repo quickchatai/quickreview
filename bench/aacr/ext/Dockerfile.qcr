@@ -2,8 +2,8 @@
 #
 #   bench/aacr/ext/ext.sh build      (assembles the context; never run by hand)
 #
-# FROM qcr-bench:pi099 — the image every QuickReview number in FULL-BENCHMARK.md
-# was reviewed with (build b2ce03a, pi 0.99.1). The reviewer is NOT rebuilt:
+# FROM qcr-bench:pi099 — the image the final comparison's QuickReview arms (the benchmark
+# paper's tab:final) were reviewed with (build b2ce03a, pi 0.99.1). The reviewer is NOT rebuilt:
 # its dist/, prompts, agents, config and pi are the base image's, byte for
 # byte. The overlay replaces exactly two compiled harness files and adds data:
 #

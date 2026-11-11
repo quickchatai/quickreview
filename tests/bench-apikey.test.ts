@@ -28,7 +28,9 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createServer, type AddressInfo } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -858,5 +860,83 @@ describe("the bridges (OCR, OpenCode, PR-Agent arms and the external judge)", ()
     expect(py).toContain('API_UPSTREAM = "https://api.openai.com/v1/responses"');
     const judge = readFileSync(join(ROOT, "bench", "aacr", "ext", "ext_judge.py"), "utf8");
     expect(judge).toContain("cb.api_key_route()");
+  });
+
+  // ext_judge.py for real on loopback, its --upstream a local stub that refuses every call (the
+  // temperature probe gets a 400): /health, /stats and judge.jsonl's start row name that URL.
+  // MUTATION: report "openai-api" again in codex_bridge.upstream_label on the API-key route — this fails
+  // MUTATION: drop "upstream" from ext_judge.py's probe row — this fails
+  it("ext_judge.py's /health, /stats and judge.jsonl start row name the real --upstream", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-bridge-up-"));
+    const stub = createHttpServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "stub refuses" } }));
+      });
+    });
+    await new Promise<void>((ok) => stub.listen(0, "127.0.0.1", ok));
+    const upstream = `http://127.0.0.1:${(stub.address() as AddressInfo).port}/v1/responses`;
+    const port = await new Promise<number>((ok) => {
+      const s = createServer().listen(0, "127.0.0.1", () => {
+        const p = (s.address() as AddressInfo).port;
+        s.close(() => ok(p));
+      });
+    });
+    const log = join(dir, "judge.jsonl");
+    const child = spawn(
+      "python3",
+      [
+        join(ROOT, "bench", "aacr", "ext", "ext_judge.py"),
+        "--port",
+        String(port),
+        "--model",
+        "m",
+        "--upstream",
+        upstream,
+        "--probe-temperature",
+        "--log",
+        log,
+      ],
+      {
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          QCR_BENCH_AUTH: "api-key",
+          OPENAI_API_KEY: "sk-test",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stderr = "";
+    child.stderr.on("data", (b: Buffer) => (stderr += b.toString()));
+    try {
+      const get = async (path: string): Promise<Record<string, unknown> | null> => {
+        try {
+          return (await (await fetch(`http://127.0.0.1:${port}${path}`)).json()) as Record<
+            string,
+            unknown
+          >;
+        } catch {
+          return null;
+        }
+      };
+      const deadline = Date.now() + 30_000;
+      let health: Record<string, unknown> | null = null;
+      while (!(health = await get("/health")) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(health, stderr).not.toBeNull();
+      expect(health!.upstream).toBe(upstream);
+      expect((await get("/stats"))!.upstream).toBe(upstream);
+      const start = JSON.parse(readFileSync(log, "utf8").split("\n")[0]!) as Record<
+        string,
+        unknown
+      >;
+      expect(start).toMatchObject({ probe: "temperature", accepted: false, status: 400, upstream });
+    } finally {
+      child.kill();
+      await new Promise<void>((ok) => stub.close(() => ok()));
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

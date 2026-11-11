@@ -1,12 +1,12 @@
 {
-  "name": "martian-hard20-ft0622",
+  "name": "martian-hard20-ccvq",
   "benchmark": "martian",
   "set": "sets/martian50.json",
   "runs": [
-    "ft0622-hard20-qr-opus55",
-    "ft0622-hard20-qr-sonnet55",
-    "ft0622-hard20-sonnet",
-    "ft0622-hard20-cc-high-sonnet55"
+    "ccvq-hard20-qr-opus55",
+    "ccvq-hard20-qr-sonnet55",
+    "ccvq-hard20-sonnet",
+    "ccvq-hard20-cc-high-sonnet55"
   ],
   "judges": {
     "gpt": {"model": "gpt-6.1-sol", "effort": "xhigh", "url": "http://127.0.0.1:8790"},

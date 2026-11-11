@@ -45,7 +45,8 @@ their reasons: tracker ticket.
   tools they are inert, and pi's own Codex client sends them the same way, so
   the bridge is left as it is.
 - **Two judges, rated separately, with an identical prompt:** gpt-6.1-sol at
-  xhigh and Claude Opus 5.5 at xhigh. Every judgment records the prompt's
+  xhigh and Claude Opus 5.5 at xhigh (the plan's `judges`; a plan may name
+  another). Every judgment records the prompt's
   sha256 (the instructions, the packed context and the two rendered reviews,
   as sent).
 - **A judgment counts only at its unit's current prompt.** If its
@@ -86,13 +87,15 @@ their reasons: tracker ticket.
 
 ## Running it
 
-No run starts without the owner's explicit go.
+No run starts without the owner's explicit go. The plans name the runs as the
+published run archive does (`ccvq-…` for the Claude Code vs QuickReview study),
+so point `QCR_BENCH_RUNS_DIR` at an extracted archive's `runs/`.
 
 ```sh
 export QCR_BENCH_RUNS_DIR=/path/to/qcr-bench-runs/runs   # outside any worktree
 E=bench/aacr/elo
-python3 $E/elo.py init $E/plans/martian-hard20-ft0622.json        # → $QCR_BENCH_RUNS_DIR/../elo/<name>/
-D=$QCR_BENCH_RUNS_DIR/../elo/martian-hard20-ft0622
+python3 $E/elo.py init $E/plans/martian-hard20-ccvq.json        # → $QCR_BENCH_RUNS_DIR/../elo/<name>/
+D=$QCR_BENCH_RUNS_DIR/../elo/martian-hard20-ccvq
 python3 $E/elo.py pack $D            # pack every PR; prints prompt sizes; no model call
 
 $E/judge-gpt.sh start                # gpt-6.1-sol at xhigh on 127.0.0.1:8790 (ChatGPT login copy)
@@ -106,6 +109,32 @@ python3 $E/elo.py audit $D [--bridge-log <judge-log dir>/judge.jsonl]
 $E/judge-gpt.sh stop
 ```
 
+- **From the published archive.** Unpack every volume into one directory, as
+  the archive's README does; `QCR_BENCH_RUNS_DIR` is its `runs/`. A plan's
+  `run_dirs` maps a run to the directory holding `<run>.martian` when it is
+  not there: a relative path is read from the repository root, an absolute
+  one as it is. `martian-hard20-all-gpt` keeps the two open-model runs under
+  `bench/aacr/artifacts/open-models/runs`, which a clone does not have, so
+  set both of its `run_dirs` entries to the absolute path of the unpacked
+  `open-models/runs` before `elo.py init` (or in the run directory's
+  `plan.json` after it). `pack` reads each PR from a bare clone per Martian
+  project, `<git_cache>/<project>.git` (the plan's `git_cache`, by default
+  `ext-cache/martian` beside the runs directory; the project is the set's
+  `martian.project`), which the archive does not ship: create each with
+  `git init --bare`, then fetch every PR's `expect_merge_base` and
+  `head_commit` from `https://github.com/<fetch_repo>.git` (the fields of the
+  plan's set, `sets/martian50.json`). `pack` names a missing clone and stops.
+- **The rated judges are the plan's.** `judges` names them, in order: `gpt`,
+  `opus`, `deepseek`, or any other name with a `base_url` (an
+  OpenAI-compatible Chat Completions endpoint), `model`, `effort`,
+  `max_tokens`, and its key as `key_var` in an `env_file` (default
+  `bench/aacr/<name>.env`). `run --judge both` runs every one of them;
+  `report` and [`../recompute/elo_ratings.py`](../recompute/elo_ratings.py)
+  give each its own table, the agreement of every pair, and the pooled table
+  over the units all of them answered. A plan that names no judges rates gpt
+  and opus. A third judge on a published plan: add it under `judges` in the
+  run directory's `plan.json`, run `elo.py run D --judge <name>` (the packs
+  first: `elo.py pack D`), then `elo.py report D`.
 - **Resuming.** `run` picks up where it stopped. It first collects any Opus
   batch still in flight, then retries failed judgments (at most 3 attempts
   each), then schedules the next round. Use `--judge gpt|opus` to run one
@@ -133,6 +162,29 @@ $E/judge-gpt.sh stop
   quota, not dollars.
 - **The GPT judge's login copy** must have two hours left when the container
   starts. Restart `judge-gpt.sh` before a long run.
+
+## The published judgments
+
+The judgments behind the README's Elo chart (plan `martian-hard20-all-gpt`)
+and its smoke plan are published in the Hugging Face dataset
+[quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench):
+- **`elo_judgments`:** one row per judgment, every attempt, with both judges'
+  reasoning and the prompt's sha256. `used_in_ratings` marks the 596 that the
+  ratings use.
+- **`elo_ratings`:** the ratings per plan, judge table (`gpt`, `opus`, the
+  pooled `combined`) and category, with their intervals.
+- **The plan directories** (`plan.json`, `units.jsonl`, `judgments/`,
+  `ratings.json`, `REPORT.md`, logs) are in its `archive/` folder, volume
+  `quickreview-runs-elo-pairwise.tar.zst`, and in its `slim/` bundle.
+
+The packs are not published: they are whole files of the reviewed
+repositories. `elo.py pack` rebuilds them from the public repositories at the
+commits in the plan's set (`expect_merge_base`, `head_commit`), and
+`packs.jsonl` lists the files each pack held.
+Without packs, `elo.py report` cannot run, so
+[`../recompute/elo_ratings.py`](../recompute/elo_ratings.py) refits the
+ratings from the judgments alone, with the same Bradley-Terry code and seed;
+`--check-ratings` shows the refit equals the run's own `ratings.json`.
 
 ## Files
 

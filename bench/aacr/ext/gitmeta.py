@@ -2,7 +2,7 @@
 merge-base of a PR's base and head, and the tree ids of commits.
 
 Read from a local bare cache with full history when it holds both commits
-(bench/aacr/EXTERNAL-BENCHMARKS.md, "Caches"), else from the public repo,
+(ext.sh's $EXT_CACHE), else from the public repo,
 anonymously, as a COMMITS-ONLY partial fetch (`--filter=tree:0`, shallow,
 deepened until the merge-base is verified against the shallow boundary — the
 same rule as src/bench/prefetch.ts mergeBase). These repos are the builder's

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The external benchmarks' judge endpoint: gpt-6.1-sol behind an
 OpenAI-compatible Chat Completions route, for the Martian and SWE-PRBench
-harnesses' OWN judge clients (bench/aacr/EXTERNAL-BENCHMARKS.md).
+harnesses' OWN judge clients (ext.sh starts it; qodo_judge.py asks it too).
 
 It is codex_bridge.py (the loopback bridge the OCR/OpenCode/PR-Agent arms
 already use) with three differences, all about being a judge rather than an
@@ -27,8 +27,67 @@ request key (temperature, max_tokens, …) is logged; usage is logged per
 request, so the judge's tokens are counted. Credentials: the sandbox's own
 refresh-disabled copy of the pi login (codex_bridge.load_credentials refuses
 anything else) — or, on the API-key route (QCR_BENCH_AUTH=api-key),
-OPENAI_API_KEY from the environment against the public API, exactly as
-codex_bridge does it.
+OPENAI_API_KEY from the environment against the public API, or against
+`--upstream`, any Responses API, exactly as codex_bridge does it. /health,
+/stats and the log's start row (written by --probe-temperature, which ext.sh
+always passes) name the upstream (the URL; chatgpt-codex on the login route),
+so a run records which provider judged.
+
+The host-only route, no docker (a re-judge of the published Martian rows,
+with your key and your model). The key is read from its env file in a
+subshell and never typed on a command line, where the shell history and `ps`
+would keep it; bench/aacr/README.md, "Judges on any provider", gives every
+judge's route:
+
+    (set -a; . bench/aacr/openai.env; set +a     # OPENAI_API_KEY=<key>
+     QCR_BENCH_AUTH=api-key exec python3 bench/aacr/ext/ext_judge.py \
+       --port 8765 --model MODEL --effort low --probe-temperature --log judge.jsonl) &
+    # another provider: its own key file, handed over as OPENAI_API_KEY, and its
+    # Responses URL (DigitalOcean's, for one, serves it):
+    #   (set -a; . bench/aacr/digitalocean.env; set +a
+    #    OPENAI_API_KEY="$DIGITALOCEAN_API_KEY" QCR_BENCH_AUTH=api-key exec python3 bench/aacr/ext/ext_judge.py \
+    #      --upstream https://inference.do-ai.run/v1/responses \
+    #      --port 8765 --model MODEL --effort low --probe-temperature --log judge.jsonl) &
+    # in a checkout of withmartian/code-review-benchmark at e616e84 (offline/),
+    # results/benchmark_data.json holding the rows to judge (the run archive's
+    # runs/<run>.martian/results/, or martian_ingest.py --out), run as ext.sh does:
+    export MARTIAN_API_KEY=local MARTIAN_BASE_URL=http://127.0.0.1:8765/v1 MARTIAN_MODEL=MODEL
+    python -m code_review_benchmark.step2_extract_comments --tool quickreview
+    python -m code_review_benchmark.step2_5_dedup_candidates
+    python -m code_review_benchmark.step3_judge_comments --dedup-groups results/MODEL/dedup_groups.json
+    python -m analysis.score_profiles --results-dir results --model MODEL --all-profiles --beta 2
+    # or, with no bridge, straight at a provider's Chat Completions endpoint (its
+    # model must take temperature 0, which Martian's client sends): the key from
+    # its file in a subshell, as above, and the steps inside it
+    (set -a; . /path/to/quickreview/bench/aacr/digitalocean.env; set +a
+     export MARTIAN_API_KEY="$DIGITALOCEAN_API_KEY" MARTIAN_BASE_URL=https://inference.do-ai.run/v1 MARTIAN_MODEL=MODEL
+     python -m code_review_benchmark.step2_extract_comments --tool quickreview &&
+     python -m code_review_benchmark.step2_5_dedup_candidates &&
+     python -m code_review_benchmark.step3_judge_comments --dedup-groups results/MODEL/dedup_groups.json)
+
+Step 3 judges every tool the file holds, and the archive's file holds the
+re-judged vendors' reviews too (their text a sha256 placeholder, the dataset
+card's "What is not here"). To judge one PR, and QuickReview's review alone,
+cut a copy of the file before step 2 (it is rewritten in place):
+
+    python3 - results/benchmark_data.json PR_URL <<'EOF'
+    import json, sys
+    p, pr = sys.argv[1], sys.argv[2]
+    d = json.load(open(p))
+    row = dict(d[pr], reviews=[r for r in d[pr]["reviews"] if r["tool"] == "quickreview"])
+    json.dump({pr: row}, open(p, "w"), indent=1)
+    EOF
+
+From a run directory instead, `martian_ingest.py --only ID` with no
+`--rejudge` writes the same one-PR, one-tool file, and with docker
+`ext.sh martian RUN SET --only ID` does it all. Then score the step-3 output
+beside ours with recompute/martian_scores.py --from-evaluations (the dataset
+card, "Re-judge with your own judge").
+
+The bridge is what makes Martian's client work with a model that refuses its
+temperature 0 (gpt-6.1-sol does): it drops the key and logs that it did. It
+imports codex_bridge.py from beside it (the image) or from bench/aacr/ (a
+checkout).
 """
 from __future__ import annotations
 
@@ -40,7 +99,8 @@ import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Beside it in the image; one directory up in a checkout (the host-only route).
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path(__file__).resolve().parent.parent)]
 import codex_bridge as cb  # noqa: E402
 
 
@@ -82,7 +142,8 @@ def main() -> None:
     bridge = cb.Bridge(a)
     if a.probe_temperature:
         row = probe_temperature(bridge)
-        bridge.log({**row, "model": a.model, "effort": a.effort})
+        # judge.jsonl's start row: the backend it measured, as /health and /stats name it
+        bridge.log({**row, "model": a.model, "effort": a.effort, "upstream": bridge.stats["upstream"]})
         print(f"ext-judge: {json.dumps(row)}", flush=True)
     srv = ThreadingHTTPServer((a.host, a.port), cb.make_handler(bridge))
     srv.daemon_threads = True

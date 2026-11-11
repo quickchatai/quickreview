@@ -16,7 +16,9 @@ we did step by step, and [PROMPTS.md](PROMPTS.md), which gives every prompt
 verbatim. The headline results are in the benchmark paper
 ([`../paper/benchmark.pdf`](../paper/benchmark.pdf)). The chronological
 experiment log this page cites is a working note of the study; it is not in the
-public repo, and the runs it describes are in the published run archive.
+public repo. The runs it describes are published in the Hugging Face dataset
+[quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench): the reviews and
+verdicts as tables, the run directories in its `archive/` folder.
 
 Short version: **the ranking of QuickReview default above every other
 reviewer is robust. The exact size of its lead is not.** Several threats
@@ -25,8 +27,11 @@ below favour our reviewer. Two have now been measured:
 - Seeding the answer key with its comments (threat 1) did not create its
   lead.
 - A second judge from another model family (threat 4) agrees with the first
-  on 98.7% of verdicts, which largely retires judge bias as a threat. It
-  does not validate the answer key, which both judges share.
+  on 98.7% of verdicts on the earlier gpt-6-sol study, the only study it
+  scored, which largely retires judge bias as a threat there. The final
+  gpt-6.1-sol comparison, the frozen build, Martian and Qodo have the GPT
+  judge alone, so for them the threat is narrowed by that study, not
+  measured. It does not validate the answer key, which both judges share.
 
 The rest have not been measured away.
 
@@ -66,8 +71,8 @@ several sources.
   OpenCode, pi-review and Claude Code were only added in a second pass (the
   extension). That pass checked 1,527 of their comments:
   - 931 matched an existing defect;
-  - 691 were excluded;
-  - 16 new defects were added, of which the critics removed 1. Net +15, taking
+  - 692 were excluded;
+  - new defects were added after critics checked each one: net +15, taking
     the total to 394.
 
   A late tool can therefore only score on defects someone earlier also found,
@@ -114,7 +119,7 @@ What it does not show:
   every reviewer's comments anonymised and shuffled, and the reviewer key was
   never shown to them. A comment was never accepted because of who wrote it.
 - **Every rejection is recorded** with its reason: 2,118 in the first pass and
-  691 in the extension. So a reader can audit what was thrown away.
+  692 in the extension. So a reader can audit what was thrown away.
 - **The extension produced few new defects.** Only 15 of the 1,527 new
   comments became new defects. That is evidence the pool was already close to
   saturated, not proof that it was.
@@ -166,7 +171,7 @@ the basis of a decision.
 - **Default stays first out of sample.** Its lead over the next reviewer is
   21 points on the 40 and 16 on the 145. Over the mean of the other six it
   leads by 29.0 points on the 40 and 27.6 on the 145; the difference, +1.4,
-  has a 95% CI of [−6.3, +8.9], so the margin does not measurably shrink.
+  has a 95% CI of [−6.3, +9.1], so the margin does not measurably shrink.
   The rest of the ordering does not hold across the halves (OCR is last on
   the 40 and fourth on the 145; low and Claude Code swap). Every reviewer
   except Codex CLI scores higher on the 145, so the 145 look easier for
@@ -186,8 +191,8 @@ the basis of a decision.
 - **Who built it.** Claude agents did every step: a hunt, then a verifier,
   then a critic that spot-checked about 15 PRs per group, then the extension
   verifier, then extension critics.
-- **What the critics changed.** They corrected 6 things in the first pass and
-  4 in the extension.
+- **What the critics changed.** They fixed the key in place; the release
+  holds the corrected key, not a list of the corrections.
 - **Human review so far.** None. The only other labelled data is the
   quality labels on AACR's reference comments for the 30 original PRs
   (`sets/*.labels.json`, 253 references), and they are not human data
@@ -250,8 +255,11 @@ unmeasured.
   it in one place.
 
 **Mitigation.**
-- **A second judge from the other family re-scored every review.** It
-  covered all 1,295 reviews and ended with 0 errors.
+- **A second judge from the other family re-scored every review of the
+  earlier gpt-6-sol study.** It covered all 1,295 reviews of its seven
+  reviewers and ended with 0 errors. It did not score the final gpt-6.1-sol
+  comparison, the frozen build, the open-model runs, Martian or Qodo: those
+  rest on one GPT judge.
   - It gave the same verdict (found, partly or missed) on 3,593 of 3,640
     reviewer-defect pairs (98.7%), and on 628 of 630 high-severity pairs.
   - Problems found moved by at most ±3 defects per reviewer, and recall is
@@ -297,8 +305,8 @@ same budget.
   `pass-intent` lens uses them. No other tool gets them: the AACR harness
   passes none to OCR, Codex, OpenCode or Claude Code, and pi-review gets only
   the diff. *Favours ours.*
-- **Budget:** QuickReview default runs about 10–15 lens passes plus a
-  validator. Per PR, on average:
+- **Budget:** QuickReview default runs a median of 11 passes per PR, the
+  validator included (interquartile range 8.5–14). Per PR, on average:
 
   | Reviewer | Uncached input | Cached input | Output | Cost per PR |
   |---|---|---|---|---|
@@ -320,8 +328,8 @@ same budget.
     expensive model family. *Direction unclear.*
 - **Single run per arm:** the headline is one run per reviewer. In earlier
   repeat runs of our own reviewer (the experiment log), two runs of the
-  same arm differed by about 1–2 defects per 10 PRs, with run-to-run
-  agreement of 78–89%. We have no variance estimate for the other tools.
+  same arm differed by 1.5–2 found defects per 10-PR set, with run-to-run
+  agreement of 81–93% on two pairs of fresh10 runs. We have no variance estimate for the other tools.
   - Default's lead over the next reviewer (18 points, 84% vs 66%) and over
     the third-party tools (22–36 points) is far larger than that noise.
   - Gaps under about 5 points are not. That covers most comparisons among
@@ -396,19 +404,20 @@ documented in `../README.md`.
 
 **AACR-Bench's own metric.**
 - **The reference comments are not a list of real defects.**
-  - 74% of them are AI-written.
+  - 74% of them are AI-written, according to AACR-Bench v1.0's own paper and
+    dataset metadata ([arXiv:2601.19494](https://arxiv.org/abs/2601.19494)).
   - Of all 1,107 references on the new PRs, only 12.8% are part of a verified
     defect.
   - On the 30 PRs whose references carry (agent-produced, human-unchecked)
     reference labels, about 11% are real defects and about 8% real
     maintainability issues.
-- **The "human" references are partly bot output.** AACR marks 362 of the
+- **The "human" references are partly bot output.** AACR marks 361 of the
   references on our 185 PRs as human comments rewritten by an LLM. At
-  least 80 of those 362 (22%) are rewrites of comments an AI review bot
+  least 80 of those 361 (22%) are rewrites of comments an AI review bot
   posted on the original PR: GitHub Copilot 23, CodeRabbit 20, cubic 20,
   Sourcery 5, LlamaPReview 4, Gemini Code Assist 4, Ellipsis 3, Cursor
-  Bugbot 1. This is a lower bound: only inline comments on the 46
-  PRs where a bot reviewed were checked.
+  Bugbot 1. This is a lower bound: only inline comments on the PRs where
+  a bot reviewed were checked.
   - *Effect on AACR's metric.* A bot that wrote a reference is credited for
     repeating its own earlier comment, so any AACR comparison that includes
     those products is tilted towards them on those PRs. For our reviewers
@@ -458,7 +467,7 @@ documented in `../README.md`.
   to the candidate pool, but not OCR.
 - **Different builds across arms.** Examples:
   - default ran on `2d2036f` for the 40 PRs and `1ad710b` for the 145;
-  - OCR ran on `786278` and `1ad710b`;
+  - OCR ran on `3581ebe` and `1ad710b`;
   - the new arms ran on `641f373`/`3bd89b3`.
 
   The differences between builds are benchmark code and an on-by-default
@@ -480,13 +489,13 @@ documented in `../README.md`.
   - Claude Code's figures are Anthropic's reported `costUSD`.
 - **Judge concurrency and the Opus rate limit.** Several judges ran at once.
   - **The rate limit.** The Opus judge hit the Anthropic organisation's
-    limit for `claude-opus-5-5`: 50 requests per minute, with about 1.7 API
-    calls per judgement. The first pass produced HTTP 429 error files.
+    limit for `claude-opus-5-5`: 50 requests per minute, and a final judgement
+    averages 2.0 API calls. The first pass produced HTTP 429 error files.
   - **The resume.** The queue was stopped and resumed at `-P 3` ×
     concurrency 4. A final `--resume` pass at `-P 1` re-ran every remaining
     error.
-  - **Final state:** 0 errors in 1,295 Opus judgements. The GPT judge's 2
-    error files were retried to 0.
+  - **Final state:** 0 errors in 1,295 Opus judgements. The GPT judge's
+    error files were also retried to 0.
   - `compare.py` counts an error file as not judged, never as a miss, and
     flags any it finds.
   - Retried judgements are fresh model calls, so a retried case is one
@@ -534,8 +543,8 @@ documented in `../README.md`.
   intervals cover PR sampling only.
 - A human-verified answer key for the 145 new PRs.
 - A like-for-like comparison at equal inputs or equal compute. We compared
-  tools as shipped; ours reads the PR description and spends about 10× the
-  tokens.
+  tools as shipped; ours reads the PR description and reads 4–15× the input
+  tokens of each other tool (the Budget table above).
 - Comparability with the published AACR leaderboard.
 
 ## Hardening, in priority order
@@ -547,8 +556,14 @@ documented in `../README.md`.
    subset (threat 1). A stricter per-tool version is still open: recall on
    defects raised by at least one source other than that tool itself.
 3. **A third-family judge** for both metrics. A second-family defect judge
-   (Opus 5.5) is done, with inter-judge agreement. The AACR metric still has
-   only the one judge.
+   (Opus 5.5) is done for the earlier gpt-6-sol study, with inter-judge
+   agreement. A third-family judge (DeepSeek V4.1 Flash) re-graded the frozen
+   build, the final comparison's six third-party reviewers and the Martian
+   and Qodo tools, but without tools or the repository; its verdicts are in
+   the dataset's `second_judges/` folder and summarised in the benchmark
+   paper's judge-reliability section. QuickReview's two final-comparison
+   presets and the AACR metric still have only the one judge, and no
+   third-family judge has read the code.
 4. **Freeze the reviewer** at a tagged commit, then build a new truth
    blind-first for new PRs from outside AACR, and only then run the tools.
 5. **Three runs per arm,** with bootstrap confidence intervals over PRs.

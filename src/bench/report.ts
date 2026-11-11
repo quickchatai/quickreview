@@ -218,7 +218,7 @@ export function datasetLine(set: CaseSet, cases: readonly BenchCase[]): string {
 /** What a report over any other dataset measures: the same reference-matching
  * score, without AACR-Bench's own reference population. */
 const REFERENCE_REPORT_PREAMBLE =
-  "_What this measures: how closely the review reproduces the dataset's reference comments at the same lines (±1), as judged by a model. A comment that is not a reference counts against precision even when it is a real bug. It is not a defect count. Details: bench/aacr/METRICS.md and bench/aacr/EXTERNAL-BENCHMARKS.md._";
+  "_What this measures: how closely the review reproduces the dataset's reference comments at the same lines (±1), as judged by a model. A comment that is not a reference counts against precision even when it is a real bug. It is not a defect count. Details: bench/aacr/METRICS.md, and for the external benchmarks bench/aacr/ext/ext.sh and the benchmark paper (bench/aacr/paper/benchmark.pdf)._";
 
 /** The preamble that opens a run report: AACR-Bench's, with its reference
  * population, for an AACR-Bench set; the plain reference-matching caveat for

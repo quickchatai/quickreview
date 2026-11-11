@@ -13,9 +13,10 @@ themselves whether the review was tuned to the test. Companion documents:
   disagree.
 
 Everything below is traceable to a file, a commit or a run directory. Run
-directories live outside the repo, in `$QCR_BENCH_RUNS_DIR`, and will be published
-in the Hugging Face dataset and run archive (not out yet); the ground-truth analysis scripts lived beside them in
-`<runs>/analysis/`. Commits in brackets are builds in the pre-publication
+directories live outside the repo, in `$QCR_BENCH_RUNS_DIR`, and are published
+in the Hugging Face dataset [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench)
+(tables, and the run archive in its `archive/` folder); the ground-truth analysis scripts lived beside them in
+`<runs>/analysis/`, which the archive's `analysis` volume holds. Commits in brackets are builds in the pre-publication
 history; the public history starts at its first commit, and each run's
 `run.json` records the build it ran on.
 
@@ -150,7 +151,7 @@ in the tables (`compare.py` takes the first run with a judgement per PR).
 
 **One review per PR per reviewer.** Every number comes from a single run. On
 the 40 original PRs, repeated runs of our reviewer earlier this week varied by
-about ±1–2 found defects per 10 PRs (the benchmark paper, its run-to-run variance section).
+1.5–2 found defects per 10-PR set (the benchmark paper, its run-to-run variance section).
 
 ## 5. Ground truth
 
@@ -167,9 +168,8 @@ each file):
   diff and code; every candidate (the hunt, the AACR references with their
   agent-produced reference labels, every comment any reviewer posted in our runs — ours and OCR's,
   anonymised) checked against the code, merged and graded, exclusions recorded;
-  an adversarial critic per set (12 corrections). v2 added the judge's
-  new-defect candidates from 12 judged runs after checking (1 added, 2
-  restated, 41 rejected).
+  an adversarial critic per set. v2 extended the key after checking the
+  judge's new-defect candidates against the code.
 - fresh10 (**v1**): blind hunt, then every comment of both of *our* arms
   (levers off/on) and the AACR references checked by a separate verifier.
   **OCR's comments were not candidates for fresh10.**
@@ -184,18 +184,18 @@ each file):
    `references.json` (the AACR references, model names stripped).
 2. Expert hunt, 29 Claude agents × ~5 PRs (`hunt.json`). The first launch was
    blind (no references); the operator then decided the ground truth should use
-   the benchmark's reference comments as leads, the blind run was stopped (32
-   drafts written) and re-run with references; the 32 drafts were re-checked as
+   the benchmark's reference comments as leads, the blind run was stopped and
+   re-run with references; the drafts it had written were re-checked as
    candidates. Each reference got a verdict. Result: 235 draft defects (46
    high); 134 references judged real, 973 rejected. Reviewer outputs were off
    limits to the hunt.
 3. Reviews by default, low and OCR on rest145.
 4. Independent verification, 29 Claude agents × ~5 PRs: every candidate — the
-   hunt's defects, all 1,107 references, all 2,216 reviewer comments (default
+   hunt's defects, all 1,107 references, all 2,221 reviewer comments (default
    978, low 663, OCR 580) anonymised and shuffled, the arm key in a separate file
    the agents were told never to open — checked against the code, merged,
    graded, rejections recorded with a restatement of the claim.
-5. Adversarial critic per ~15 PRs (10 agents): 6 corrections applied.
+5. Adversarial critic per ~15 PRs (10 agents), fixing the key in place.
 6. One PR (`ollama@2ed14f2`) whose default review was retried mid-verification
    had its candidate list renumbered; it was re-verified by one agent so every
    provenance id is right.
@@ -206,8 +206,8 @@ each file):
 1,527 candidates (OpenCode 557, pi-review 395, Codex 390, Claude Code 185 whole
 review texts) — anonymised and shuffled, checked against the code and the
 current truth by 31 verifier agents, then 11 critics checked every addition:
-931 matched an existing defect, 691 excluded, 16 added, 1 removed by a critic
-(4 critic corrections in total). Net **394 defects** (56 high / 114 medium /
+931 matched an existing defect, 692 excluded, and new defects added once a
+critic had checked them. Net **394 defects** (56 high / 114 medium /
 224 low). The same pass added no defect on the original 40, so their files and
 versions were **not changed** (their new exclusions stay in
 `qcr-bench-runs/{orig40-code}/*/truth-ext.json`); only rest145 moved to v2
@@ -256,6 +256,18 @@ never reached are not judged. Three CI-gate defects (a lint rule, stale generate
 SQL, clippy) carry a `benchmark_limitation` note: a read-only review can find
 them only by knowing the repo's CI; they are scored and also reported apart.
 
+**The judge's prompt, rebuilt.** The prompt is `judgePrompt()` in
+`src/bench/defects.ts`, built from `reviewForJudge()`'s view of the review.
+The public main's code from commit `34164fe0e` to `839e26454` builds exactly
+the prompts behind every published primary-judge verdict of a QuickReview arm;
+later commits render a few reviews differently. `recompute/judge_prompt.py`
+prints that prompt for any arm and PR from the dataset's tables, and equals
+the prompt the judge received apart from the release's name rewrite. The
+`review_hash` in some judge files is not a public check: it was taken before
+the name rewrite. A deleted-line comment the review also re-anchored to the
+new side appears twice in what the judge read, and both copies were graded
+and count (the dataset card gives the counts).
+
 **Second defect judge** (`claude-opus-5-5`). The same judge prompt, the same
 inputs and the same parser, run on Anthropic's model over the same 1,295
 reviews (7 reviewers × 185 PRs).
@@ -293,15 +305,15 @@ pipeline (§5) and the independent-source check, and its limits are in
 
 **Judge errors and the Opus rate limit.** The Opus judge hit the Anthropic
 organisation's rate limit for `claude-opus-5-5`. That limit is 50 requests
-per minute, and a judgement averages about 1.7 API calls. The first pass
+per minute, and a final judgement averages 2.0 API calls. The first pass
 produced HTTP 429 error files. Here is what was done:
 
 1. The queue was stopped and resumed at lower parallelism (`-P 3` ×
    concurrency 4).
 2. A final `--resume` pass at `-P 1` re-ran every remaining error file.
 
-Final state: **0 errors in 1,295 Opus judgements**. The GPT judge left 2
-error files, which were retried to 0. `compare.py` treats an error file as
+Final state: **0 errors in 1,295 Opus judgements**. The GPT judge's error
+files were also retried to 0. `compare.py` treats an error file as
 "not judged", never as a miss, and every final row reads 185/185.
 
 **AACR eval** (`bench.sh eval`, `in-container.sh`): the harness's
@@ -362,8 +374,9 @@ The hunt, verify and extension prompts are reproduced in `PROMPTS.md`.
 
 **In this repo**: the harness wrapper, every arm, sets, ground truth,
 the compare/charts scripts, METRICS and the two papers (with the figures they
-include). **In the Hugging Face dataset and run archive (to be published; not out yet)**: the run directories (reviews, transcripts,
-judge files, eval metrics), the generated charts and tables, and a slim
+include). **In the Hugging Face dataset [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench)**: the run directories (reviews,
+judge files, eval metrics, and a numbers-only extract in place of each raw
+session log), the generated charts and tables, and a slim
 re-score bundle; `../README.md` "Reproduce" says how to use each. A re-run
 reproduces the method, not the exact numbers: models are nondeterministic and
 each reviewer ran once.
@@ -408,5 +421,5 @@ wrote which comment. That is why the reports show the two halves separately.
 | `bench/aacr/defects/*.json` | ground truth (versioned; the rendered `.md` keys are in the dataset) |
 | `bench/aacr/arm.sh`, `bench.sh`, `in-container.sh`, `compare.py`, `charts.py` | the pipeline |
 | `src/bench/*.ts`, `bench/aacr/*_arm.py`, `claude_driver.py`, `codex_bridge.py` | runners, judge, parser, bridge |
-| `$QCR_BENCH_RUNS_DIR` | every run directory (published in the run archive) |
+| `$QCR_BENCH_RUNS_DIR` | every run directory (published in the dataset's run archive, `archive/`) |
 | `<runs>/analysis/2026-09-27-rest145/` | ground-truth build scripts, batches, logs |

@@ -1,20 +1,31 @@
 #!/usr/bin/env bash
 # External benchmarks for QuickReview — Martian's offline code-review benchmark
 # and SWE-PRBench — each scored by ITS OWN evaluation code, unmodified, with
-# QuickReview plugged in as one more tool. The benchmark paper's external-benchmark
-# section (bench/aacr/paper/benchmark.pdf) is the design, the deviations and the
-# results; this script is every command.
+# QuickReview plugged in as one more tool, and Qodo's PR-Review-Bench under our
+# judge (Qodo publishes none). The benchmark paper's sections on Martian and Qodo
+# (bench/aacr/paper/benchmark.pdf) are their design, deviations and results; the
+# SWE-PRBench runs back no published number (their results are in the run
+# archive). This script is every command.
 #
 #   ext.sh build                      the three images (reviewer overlay, Martian, SWE-PRBench)
 #   ext.sh prefetch SET               per-case stores for SET (martian-*, sweprbench-*), from the
 #                                     local caches first ($EXT_CACHE), read-only
 #   ext.sh review SET [arm.sh flags]  QuickReview `default` on gpt-6.1-sol, exactly the final
 #                                     comparison's arm (image qcr-bench:pi099-ext, --config $DEFAULT)
-#   ext.sh martian RUN SET            step 1 adapter + Martian's steps 2/2.5/3 + score_profiles,
-#                                     judge gpt-6.1-sol; also re-judges three published tools
-#   ext.sh sweprbench RUN SET         export + replay + SWE-PRBench's run_eval.py, judge gpt-6.1-sol
-#   ext.sh qodo RUN|none SET          Qodo PR-Review-Bench: QuickReview (RUN) and the nine published
-#                                     vendor runs, ONE judge (gpt-6.1-sol) for all — qodo_judge.py
+#   ext.sh martian RUN SET [--only ID[,ID]]
+#                                     step 1 adapter + Martian's steps 2/2.5/3 + score_profiles,
+#                                     judge $EXT_JUDGE_MODEL; also re-judges three published tools
+#                                     (--only: those cases of SET only; qodo takes --only too)
+#   ext.sh sweprbench RUN SET         export + replay + SWE-PRBench's run_eval.py, judge $EXT_JUDGE_MODEL
+#   ext.sh qodo RUN|none SET [--resume] [qodo_judge.py flags]
+#                                     Qodo PR-Review-Bench: QuickReview (RUN) and the nine published
+#                                     vendor runs, ONE judge ($EXT_JUDGE_MODEL) for all — qodo_judge.py.
+#                                     An existing <run>.qodo work dir (an earlier run's, or the run
+#                                     archive's) is refused unless --resume: one judge per work dir.
+#                                     No $EXT_CACHE/qodo/tool-comments.json: QuickReview alone.
+#                                     EXT_QODO_REVIEWS=<qodo_reviews.jsonl> EXT_QODO_REVIEW_KEY=WORK|TOOL:
+#                                     judge the published rows of that key (exactly what our judge
+#                                     saw) instead of re-reading RUN; give RUN as `none`.
 #   A RUN of a third-party arm (pragent, opencode, … — its <run>.arm.json) is scored under that
 #   arm's tool name (martian_ingest.py ARM_TOOLS) with the same steps; add `--only-tools <name>`
 #   to qodo and EXT_MARTIAN_REJUDGE= (empty) to martian to judge that tool alone.
@@ -24,6 +35,10 @@
 #   QCR_BENCH_RUNS_DIR   where runs live (required; outside any worktree)
 #   EXT_CACHE            the local bare git caches (default $QCR_BENCH_RUNS_DIR/../ext-cache)
 #   EXT_DATA             the pinned benchmark data (default $QCR_BENCH_RUNS_DIR/../ext-data)
+#   EXT_JUDGE_MODEL      the judge's model (default gpt-6.1-sol, ours): what ext_judge.py asks its
+#                        upstream for, Martian's MARTIAN_MODEL, SWE-PRBench's judge and qodo_judge.py
+#                        --model; another model must be one the credential route serves
+#                        (QCR_BENCH_AUTH=api-key: the public OpenAI API)
 #   EXT_JUDGE_EFFORT     the judge's reasoning effort (default low — see the benchmark paper)
 #
 # Sandboxing: every container runs read-only, all capabilities dropped,
@@ -56,7 +71,7 @@ AUTH_VOLUME="${QCR_BENCH_AUTH_VOLUME:-companion-pihome}"
 # your own OpenAI key (bench/aacr/openai.env, --env-file) instead of the login volume.
 AUTH_MODE="${QCR_BENCH_AUTH:-login}"
 OPENAI_ENV="${QCR_BENCH_OPENAI_ENV:-$AACR/openai.env}"
-JUDGE_MODEL="gpt-6.1-sol"
+JUDGE_MODEL="${EXT_JUDGE_MODEL:-gpt-6.1-sol}"
 JUDGE_EFFORT="${EXT_JUDGE_EFFORT:-low}"
 NET_INTERNAL="qcr-ext-internal"
 NET_EGRESS="qcr-ext-egress"
@@ -115,8 +130,13 @@ start_judge() { # work tag
       "$SIMG" python /opt/qcr-ext/mock_judge.py >/dev/null
     echo "MOCK judge — plumbing only; these numbers mean nothing" > "$work/judge/JUDGE.txt"
   else
+    # The login route checks the login copy's life first (cli.js auth); the
+    # API-key route has no login to check, so it runs the judge alone and never
+    # needs the image's compiled CLI.
     local cred=() how="ChatGPT login, refresh-disabled copy"
+    local pre="node /opt/quickreview/sandbox/dist/src/bench/cli.js auth --need-min 120 && "
     if [[ "$AUTH_MODE" == api-key ]]; then
+      pre=""
       [[ -f "$OPENAI_ENV" && ! -L "$OPENAI_ENV" ]] && grep -qE '^OPENAI_API_KEY=.+' "$OPENAI_ENV" \
         || die "QCR_BENCH_AUTH=api-key needs OPENAI_API_KEY=<key> in $OPENAI_ENV (a regular file)"
       cred=(-e QCR_BENCH_AUTH=api-key --env-file "$OPENAI_ENV"); how="the public OpenAI API, your API key"
@@ -128,13 +148,19 @@ start_judge() { # work tag
     docker run -d --rm --name "$name" "${HARDEN[@]}" --memory 2g --cpus 2 --network "$NET_EGRESS" \
       "${cred[@]}" \
       --mount "type=bind,src=$work/judge,dst=/judge-out" \
-      --entrypoint bash "$JIMG" -c "mkdir -p \"\$HOME\" && node /opt/quickreview/sandbox/dist/src/bench/cli.js auth --need-min 120 \
-        && exec python3 /opt/quickreview/bench/ext_judge.py --host 0.0.0.0 --port 8765 --model $JUDGE_MODEL \
+      --entrypoint bash "$JIMG" -c "mkdir -p \"\$HOME\" && $pre\
+        exec python3 /opt/quickreview/bench/ext_judge.py --host 0.0.0.0 --port 8765 --model $JUDGE_MODEL \
            --effort $JUDGE_EFFORT --max-inflight 64 --probe-temperature --log /judge-out/judge.jsonl" >/dev/null
     docker network connect --alias "$JUDGE_HOST" "$NET_INTERNAL" "$name"
-    echo "$JUDGE_MODEL, reasoning effort $JUDGE_EFFORT, via bench/aacr/ext/ext_judge.py ($how)" > "$work/judge/JUDGE.txt"
   fi
   wait_health "$name" 8765
+  if [[ "${EXT_JUDGE:-}" != mock ]]; then
+    # The backend as the judge's own /health names it (the --upstream URL on the API-key route,
+    # chatgpt-codex on the login route): the same value judge.jsonl's start row records.
+    local up
+    up="$(docker exec "$name" python3 -c "import json, urllib.request; print(json.load(urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=5)).get('upstream') or '')" 2>/dev/null || true)"
+    echo "$JUDGE_MODEL, reasoning effort $JUDGE_EFFORT, via bench/aacr/ext/ext_judge.py ($how; upstream ${up:-not reported})" > "$work/judge/JUDGE.txt"
+  fi
   log "judge $name up ($(cat "$work/judge/JUDGE.txt"))"
 }
 
@@ -205,32 +231,59 @@ PY
     run="${1:?usage: ext.sh qodo RUN|none SET}"; set_name="${2:?usage: ext.sh qodo RUN|none SET}"; shift 2
     f="$AACR/sets/$set_name.json"; [[ -f "$f" ]] || die "no set $f"
     data="$EXT_CACHE/qodo"
-    [[ -f "$data/tool-comments.json" ]] || die "no $data/tool-comments.json — run qodo_scrape.py --cache $data build first"
+    # The vendors' comments are needed only to judge the vendors.
+    vendors=()
+    if [[ -f "$data/tool-comments.json" ]]; then vendors=(--tools /data/tool-comments.json)
+    elif [[ "$run" == none && -z "${EXT_QODO_REVIEWS:-}" ]]; then
+      die "no $data/tool-comments.json — run qodo_scrape.py --cache $data build first (the vendors' comments)"
+    else log "no $data/tool-comments.json: judging QuickReview only"; fi
     got="$(sha256sum "$data/git_code_review_bench_100_w_open_prs.jsonl" | cut -d' ' -f1)"
     want="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dataset"]["sha256"])' "$f")"
     [[ "$got" == "$want" ]] || die "the Qodo dataset under $data does not match the set's pin"
     runargs=()
-    if [[ "$run" == none ]]; then work="$QCR_BENCH_RUNS_DIR/ext-qodo-vendors-$set_name.qodo"
+    if [[ -n "${EXT_QODO_REVIEWS:-}" ]]; then
+      [[ "$run" == none ]] || die "EXT_QODO_REVIEWS judges the published rows: give RUN as none"
+      [[ "$EXT_QODO_REVIEWS" == *.jsonl && -f "$EXT_QODO_REVIEWS" && ! -L "$EXT_QODO_REVIEWS" ]] \
+        || die "EXT_QODO_REVIEWS=$EXT_QODO_REVIEWS: not a regular .jsonl file (the image reads no parquet)"
+      key="${EXT_QODO_REVIEW_KEY:?EXT_QODO_REVIEWS needs EXT_QODO_REVIEW_KEY=WORK|TOOL}"
+      work="$QCR_BENCH_RUNS_DIR/rejudge-${key//|/.}-$set_name.qodo${EXT_WORK_TAG:+-$EXT_WORK_TAG}"
+      runargs=(--reviews /reviews.jsonl --review-key "$key")
+    elif [[ "$run" == none ]]; then work="$QCR_BENCH_RUNS_DIR/ext-qodo-vendors-$set_name.qodo"
     else
       [[ -d "$QCR_BENCH_RUNS_DIR/$run/results/all" && ! -L "$QCR_BENCH_RUNS_DIR/$run" ]] || die "no finished run $run"
       work="$QCR_BENCH_RUNS_DIR/$run.qodo${EXT_WORK_TAG:+-$EXT_WORK_TAG}"; runargs=(--run /run --run-tool "$(arm_tool "$(run_arm "$run")")")
     fi
     [[ "${EXT_JUDGE:-}" == mock ]] && work="$work-MOCK"
+    # One judge per work dir: an existing one (an interrupted run's, or an
+    # unpacked archive's) is continued only on --resume, which qodo_judge.py
+    # also refuses for a different judge; otherwise its judgements would be
+    # reused for, or appended beside, this judge's.
+    resume=0; for x in "$@"; do [[ "$x" == --resume ]] && resume=1; done
+    [[ ! -e "$work" || "$resume" == 1 ]] || die "$work exists — pass --resume to continue it with the same judge, or move it away"
     mkdir -p "$work"   # resumable: qodo_judge.py caches every judgement in $work/judgements.jsonl
     start_judge "$work" "q-$$"
     trap 'stop_judge "q-$$" "$work"' EXIT
     mounts=(--mount "type=bind,src=$HERE,dst=/ext,readonly" --mount "type=bind,src=$f,dst=/set.json,readonly"
             --mount "type=bind,src=$data,dst=/data,readonly" --mount "type=bind,src=$work,dst=/work")
     [[ "$run" != none ]] && mounts+=(--mount "type=bind,src=$QCR_BENCH_RUNS_DIR/$run,dst=/run,readonly")
-    log "Qodo PR-Review-Bench judge (gpt-6.1-sol @ $JUDGE_EFFORT, one judge for every tool) in $work"
+    [[ -n "${EXT_QODO_REVIEWS:-}" ]] && mounts+=(--mount "type=bind,src=$EXT_QODO_REVIEWS,dst=/reviews.jsonl,readonly")
+    log "Qodo PR-Review-Bench judge ($JUDGE_MODEL @ $JUDGE_EFFORT, one judge for every tool) in $work"
     docker run --rm "${HARDEN[@]}" --memory 2g --network "$NET_INTERNAL" "${mounts[@]}" --entrypoint python3 "$JIMG" \
       /ext/qodo_judge.py --set /set.json --gt /data/git_code_review_bench_100_w_open_prs.jsonl \
-        --tools /data/tool-comments.json ${runargs[@]+"${runargs[@]}"} \
+        ${vendors[@]+"${vendors[@]}"} ${runargs[@]+"${runargs[@]}"} --model "$JUDGE_MODEL" \
         --endpoint "http://$JUDGE_HOST:8765/v1/chat/completions" --out /work "$@" | tee -a "$work/judge.log"
     ;;
 
   martian)
-    run="${1:?usage: ext.sh martian RUN|none SET}"; set_name="${2:?usage: ext.sh martian RUN|none SET}"
+    run="${1:?usage: ext.sh martian RUN|none SET [--only ID[,ID]]}"; set_name="${2:?usage: ext.sh martian RUN|none SET [--only ID[,ID]]}"
+    shift 2
+    only=()
+    while (($#)); do
+      case "$1" in
+        --only) only=(--only "${2:?--only needs ID[,ID]}"); shift 2 ;;
+        *) die "ext.sh martian: unknown flag $1 (RUN SET [--only ID[,ID]])" ;;
+      esac
+    done
     f="$AACR/sets/$set_name.json"; [[ -f "$f" ]] || die "no set $f"
     # Unset: re-judge the three published comparators beside RUN; set empty: none.
     tools="${EXT_MARTIAN_REJUDGE-qodo-extended-v2,cubic-v2,claude-code}"
@@ -247,7 +300,7 @@ PY
     docker run --rm --network none --entrypoint cat "$MIMG" /opt/martian/offline/results/benchmark_data.json > "$work/published-benchmark_data.json"
     python3 "$HERE/martian_ingest.py" --run "$QCR_BENCH_RUNS_DIR/$run" --set "$f" \
       --published "$work/published-benchmark_data.json" --out "$work/results/benchmark_data.json" \
-      --rejudge "$tools" ${qr[@]+"${qr[@]}"} | tee "$work/logs/ingest.log"
+      --rejudge "$tools" ${qr[@]+"${qr[@]}"} ${only[@]+"${only[@]}"} ${EXT_WORK_TAG:+--interim} | tee "$work/logs/ingest.log"
     start_judge "$work" "m-$$"
     trap 'stop_judge "m-$$" "$work"' EXIT
     # Steps 2, 2.5, 3 and the profile scorer — THEIR code, run as their README
@@ -311,7 +364,7 @@ judge:
     model: $JUDGE_MODEL
     base_url: http://JUDGE_HOST_PLACEHOLDER:8765/v1
     api_key_env: JUDGE_API_KEY
-    note: "gpt-6.1-sol @ $JUDGE_EFFORT through bench/aacr/ext/ext_judge.py (the published judge is GPT-5.2)"
+    note: "$JUDGE_MODEL @ $JUDGE_EFFORT through bench/aacr/ext/ext_judge.py (the published judge is GPT-5.2)"
 models:
   quickreview:
     provider: openai_compatible
