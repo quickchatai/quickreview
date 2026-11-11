@@ -1296,9 +1296,13 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
     });
     await runReviewCommand("", host, ui, deps);
     expect(titles).toEqual(["QuickReview: which provider runs the review?"]);
-    // the first row is the one the order would take
+    // the first row is the one the order would take; each says what is
+    // known of its price (the fakes' models were never measured)
     expect(ui.asked).toEqual([
-      ["alpha/m-2    Alpha, an API key stored in pi", "beta/m-2     Beta, an API key stored in pi"],
+      [
+        "alpha/m-2    Alpha, an API key stored in pi    no estimate",
+        "beta/m-2     Beta, an API key stored in pi    no estimate",
+      ],
     ]);
     expect(ui.notes).toContainEqual([
       "info",
@@ -1328,7 +1332,7 @@ describe("/qcr-review's work, waited for (runReviewCommand)", () => {
     const deps = fakeReview();
     const host = fakeHost({}, { alpha: {}, beta: {} });
     refuseChoiceWrites(host.agentDir);
-    const ui = fakeUi({ picks: ["beta/m-2     Beta, an API key stored in pi"] });
+    const ui = fakeUi({ picks: ["beta/m-2     Beta, an API key stored in pi    no estimate"] });
     await runReviewCommand("", host, ui, deps);
     expect(ui.asked).toHaveLength(1);
     expect(ui.notes).toContainEqual([
@@ -2439,7 +2443,7 @@ describe("/qcr-scan (the plugin's own engine)", () => {
   // resolves on the order's first provider, the runner refuses the key as
   // changed, and this fails.
   it("starts on the provider picked for the plan when pi's agent dir would not keep the answer", async () => {
-    const beta = "beta/m-2     Beta, an API key stored in pi";
+    const beta = "beta/m-2     Beta, an API key stored in pi    no estimate";
     const host = scanHost({}, { alpha: {}, beta: {} });
     refuseChoiceWrites(host.agentDir);
     const seen: { route?: () => ScanCaseRoute | undefined } = {};
@@ -2466,7 +2470,7 @@ describe("/qcr-scan (the plugin's own engine)", () => {
   // The same holds across two commands: `preview`, then the start it names.
   // (The mutation above fails this one too.)
   it("a verb's start is on the provider picked for its preview, and the next plan asks again", async () => {
-    const beta = "beta/m-2     Beta, an API key stored in pi";
+    const beta = "beta/m-2     Beta, an API key stored in pi    no estimate";
     const host = scanHost({}, { alpha: {}, beta: {} });
     refuseChoiceWrites(host.agentDir);
     const deps = fakeScan(host);
