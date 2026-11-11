@@ -341,7 +341,8 @@ export function buildWorkerWorld(o: WorkerWorldOptions): WorkerWorld {
     await supervisorRef?.launchPending();
   };
   // A takeover's pane gets the session's names as a worker's session does: the plan is
-  // written to a file, so it holds no model key either.
+  // written to a file, so it holds no model key. It names the secrets dir, and the
+  // pane's own process reads the model env from there (src/takeoverpi.ts `paneModelEnv`).
   const paneEnv = (pr: number): Record<string, string> =>
     workerSessionEnv(sessions, prSessionName(pr), {
       QCR_PR: String(pr),

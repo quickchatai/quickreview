@@ -24,6 +24,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { DISABLED_REFRESH } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
+  paneLogins,
   prepareBorrowedAgent,
   readTakeoverSpec,
   runTakeover,
@@ -246,6 +247,116 @@ describe("the takeover's login is a refresh-blanked borrowed copy", () => {
     expect(existsSync(join(dir, "run", "takeover-pr-7.agent", "auth.json"))).toBe(false);
   });
 
+  // A login of a provider the session does not run on decides nothing: it is
+  // left out of the copy, and the pane starts on the logins that last.
+  // MUTATION: call copyPiAuth with no `providers` in prepareBorrowedAgent
+  // (src/takeoverpi.ts) — the earliest expiry in the whole file refuses the
+  // pane, and this fails.
+  it("a login of another provider that is about to expire is left out of the copy, never a refusal", async () => {
+    const agent = ownerAgent();
+    const logins = JSON.parse(readFileSync(join(agent, "auth.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    writeFileSync(
+      join(agent, "auth.json"),
+      JSON.stringify({
+        ...logins,
+        elsewhere: {
+          type: "oauth",
+          access: "SHORT",
+          refresh: "SHORT-REFRESH",
+          expires: Date.now() + 10 * 60_000,
+        },
+      }),
+    );
+    const lines: string[] = [];
+    let ran = false;
+    const code = await runTakeover(specFile(), {
+      env: { PATH: "/usr/bin" },
+      log: (l) => lines.push(l),
+      run: async () => {
+        ran = true;
+        return 0;
+      },
+    });
+    expect(lines).toEqual([]);
+    expect(code).toBe(0);
+    expect(ran).toBe(true);
+    const copy = JSON.parse(
+      readFileSync(join(dir, "run", "takeover-pr-7.agent", "auth.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(Object.keys(copy)).toEqual(["openai-codex"]);
+  });
+
+  // MUTATION: return `lasting` alone from paneLogins (src/takeoverpi.ts) — a
+  // pane pinned to a model whose login dies inside the window starts on a
+  // copy without it, and this fails.
+  it("the pinned model's own login must last: a short one refuses the pane whatever else lasts", async () => {
+    const agent = ownerAgent();
+    const logins = JSON.parse(readFileSync(join(agent, "auth.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    writeFileSync(
+      join(agent, "auth.json"),
+      JSON.stringify({
+        ...logins,
+        faux: { type: "oauth", access: "F", refresh: "F-R", expires: Date.now() + 10 * 60_000 },
+      }),
+    );
+    const lines: string[] = [];
+    const code = await runTakeover(specFile(), {
+      env: { PATH: "/usr/bin" },
+      log: (l) => lines.push(l),
+      run: async () => 0,
+    });
+    expect(code).toBe(3);
+    expect(lines.join("\n")).toMatch(/the faux access token expires at/);
+    expect(existsSync(join(dir, "run", "takeover-pr-7.agent", "auth.json"))).toBe(false);
+  });
+
+  it("paneLogins: the lasting logins, the pin's own kept to be refused, and the whole file when nothing is left", () => {
+    const now = 1_000_000;
+    const raw = JSON.stringify({
+      long: { type: "oauth", expires: now + 60 * 60_000 },
+      key: { type: "api_key", key: "k" },
+      short: { type: "oauth", expires: now + 60_000 },
+    });
+    const of = (pin: string | null, keyed = false, text = raw): string[] | undefined =>
+      paneLogins(text, { needMs: 30 * 60_000, now, pin, keyed });
+    expect(of(null)).toEqual(["long", "key"]);
+    expect(of("long")).toEqual(["long", "key"]);
+    expect(of("short")).toEqual(["long", "key", "short"]);
+    // a provider with no stored login (its credential is a key) decides nothing
+    expect(of("absent")).toEqual(["long", "key"]);
+    const onlyShort = JSON.stringify({ short: { type: "oauth", expires: now + 60_000 } });
+    // nothing lasts and no key is handed over: the whole file is judged, and refuses
+    expect(of(null, false, onlyShort)).toBeUndefined();
+    // with a key the pi runs on it: the short login is left out
+    expect(of(null, true, onlyShort)).toEqual([]);
+    expect(of("short", true, onlyShort)).toEqual(["short"]);
+  });
+
+  it("with a key file a login that is about to expire is left out and the pi starts on the key", async () => {
+    ownerAgent(10 * 60_000);
+    const secrets = join(dir, "secrets");
+    mkdirSync(join(secrets, "model-env"), { recursive: true });
+    writeFileSync(join(secrets, "model-env", "NORTH_API_KEY"), "north-key-value\n");
+    const base = JSON.parse(readFileSync(specFile(), "utf8")) as TakeoverSpec;
+    const lines: string[] = [];
+    const code = await runTakeover(specFile({ env: { ...base.env, QCR_SECRETS_DIR: secrets } }), {
+      env: { PATH: "/usr/bin" },
+      log: (l) => lines.push(l),
+      run: async () => 0,
+    });
+    expect(lines).toEqual([]);
+    expect(code).toBe(0);
+    expect(
+      JSON.parse(readFileSync(join(dir, "run", "takeover-pr-7.agent", "auth.json"), "utf8")),
+    ).toEqual({});
+  });
+
   it("is refused when there is no login at all", async () => {
     mkdirSync(join(dir, "agent"));
     const lines: string[] = [];
@@ -257,6 +368,56 @@ describe("the takeover's login is a refresh-blanked borrowed copy", () => {
       }),
     ).toBe(3);
     expect(lines.join("\n")).toMatch(/no pi login/);
+  });
+
+  // MUTATION: drop the model env from takeoverEnv's result (or never read it
+  // in runTakeover) - the pi starts with no credential at all; this fails.
+  // MUTATION: pass `false` for `keyed` in runTakeover - the pane dies at the
+  // login copy with "no pi login"; this fails.
+  it("with no login but a key file in the secrets dir the pi starts on the key, which no spec file holds", async () => {
+    mkdirSync(join(dir, "agent"));
+    const secrets = join(dir, "secrets");
+    mkdirSync(join(secrets, "model-env"), { recursive: true });
+    writeFileSync(join(secrets, "model-env", "NORTH_API_KEY"), "north-key-value\n");
+    const base = JSON.parse(readFileSync(specFile(), "utf8")) as TakeoverSpec;
+    const file = specFile({ env: { ...base.env, QCR_SECRETS_DIR: secrets } });
+    expect(readFileSync(file, "utf8")).not.toMatch(/north-key-value/);
+    const seen: Array<{ env: NodeJS.ProcessEnv }> = [];
+    const lines: string[] = [];
+    const code = await runTakeover(file, {
+      env: { PATH: "/usr/bin" },
+      log: (l) => lines.push(l),
+      run: async (cmd) => {
+        seen.push(cmd);
+        return 0;
+      },
+    });
+    expect(lines).toEqual([]);
+    expect(code).toBe(0);
+    expect(seen[0]!.env["NORTH_API_KEY"]).toBe("north-key-value");
+    const borrowed = join(dir, "run", "takeover-pr-7.agent");
+    expect(seen[0]!.env["PI_CODING_AGENT_DIR"]).toBe(borrowed);
+    expect(existsSync(join(borrowed, "auth.json"))).toBe(false);
+  });
+
+  it("with a login and a key file the login is borrowed as ever and the key rides along", async () => {
+    ownerAgent();
+    const secrets = join(dir, "secrets");
+    mkdirSync(join(secrets, "model-env"), { recursive: true });
+    writeFileSync(join(secrets, "model-env", "NORTH_API_KEY"), "north-key-value\n");
+    const base = JSON.parse(readFileSync(specFile(), "utf8")) as TakeoverSpec;
+    const seen: Array<{ env: NodeJS.ProcessEnv }> = [];
+    const code = await runTakeover(specFile({ env: { ...base.env, QCR_SECRETS_DIR: secrets } }), {
+      env: { PATH: "/usr/bin" },
+      log: () => {},
+      run: async (cmd) => {
+        seen.push(cmd);
+        return 0;
+      },
+    });
+    expect(code).toBe(0);
+    expect(seen[0]!.env["NORTH_API_KEY"]).toBe("north-key-value");
+    expect(existsSync(join(dir, "run", "takeover-pr-7.agent", "auth.json"))).toBe(true);
   });
 
   it("refuses a file that is not a takeover spec", async () => {
@@ -364,6 +525,15 @@ describe("the pi the pane starts", () => {
         "QCR_TAKEOVER",
       ].sort(),
     );
+    // the model env goes in first: it adds its names and replaces none
+    const keyed = takeoverEnv({ PATH: "/usr/bin" }, spec, {
+      NORTH_API_KEY: "north-key-value",
+      PATH: "/from/a/key/file",
+      GH_TOKEN: "t",
+    });
+    expect(keyed["NORTH_API_KEY"]).toBe("north-key-value");
+    expect(keyed["PATH"]).toBe("/usr/bin");
+    expect(keyed["GH_TOKEN"]).toBeUndefined();
     // even a spec that names a token (it must not) does not pass one on
     const dirty = takeoverEnv(
       {},

@@ -206,6 +206,32 @@ describe("the debug pi's login is a refresh-blanked borrowed copy", () => {
     expect(lines.join("\n")).toMatch(/expires at/);
   });
 
+  // MUTATION: call prepareDebugAgent without `keyed`, or debugRoundEnv without
+  // the model env, in runDebugRoundPane - the pane dies at the login copy, or
+  // its pi holds no key; this fails.
+  it("with no login but a key file in the secrets dir the pi starts on the key, which no spec file holds", async () => {
+    mkdirSync(join(dir, "agent"));
+    const secrets = join(dir, "secrets");
+    mkdirSync(join(secrets, "model-env"), { recursive: true });
+    writeFileSync(join(secrets, "model-env", "NORTH_API_KEY"), "north-key-value\n");
+    const file = specFile({ env: { ...specOf().env, QCR_SECRETS_DIR: secrets } });
+    expect(readFileSync(file, "utf8")).not.toMatch(/north-key-value/);
+    const seen: Array<{ env: NodeJS.ProcessEnv }> = [];
+    const lines: string[] = [];
+    const code = await runDebugRoundPane(file, {
+      env: { PATH: "/usr/bin" },
+      log: (l) => lines.push(l),
+      run: async (cmd) => {
+        seen.push(cmd);
+        return 0;
+      },
+    });
+    expect(lines).toEqual([]);
+    expect(code).toBe(0);
+    expect(seen[0]!.env["NORTH_API_KEY"]).toBe("north-key-value");
+    expect(existsSync(join(dir, "run", "debug-pr-7.agent", "auth.json"))).toBe(false);
+  });
+
   it("is refused, with no pi, when the saved order no longer verifies", async () => {
     ownerAgent();
     const spec = specOf();

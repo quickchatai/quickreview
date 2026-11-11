@@ -61,6 +61,7 @@ import {
   loginRouteExtension,
   onTerminal,
   paneLaunch,
+  paneModelEnv,
   prepareBorrowedAgent,
   takeoverEnv,
 } from "./takeoverpi.js";
@@ -135,8 +136,12 @@ export function debugRoundOrder(spec: DebugRoundSpec, path = process.env["PATH"]
 /** Prepare the pi's own agent dir: the blanked login copy and models/settings (the
  * takeover's borrow), the built lens agents linked, the order file, and the lens
  * dir. Returns the order file. Nothing is written to the owner's dir. */
-export function prepareDebugAgent(spec: DebugRoundSpec, now?: () => number): { orderFile: string } {
-  prepareBorrowedAgent(spec, now);
+export function prepareDebugAgent(
+  spec: DebugRoundSpec,
+  now?: () => number,
+  keyed = false,
+): { orderFile: string } {
+  prepareBorrowedAgent(spec, now, keyed);
   // The lens passes read the built agents from the pi's agent dir.
   const agents = join(spec.agent_dir, "agents");
   const link = join(spec.borrow_dir, "agents");
@@ -178,8 +183,9 @@ export function debugRoundArgv(spec: DebugRoundSpec): string[] {
 export function debugRoundEnv(
   base: Readonly<Record<string, string | undefined>>,
   spec: DebugRoundSpec,
+  modelEnv: Readonly<Record<string, string>> = {},
 ): NodeJS.ProcessEnv {
-  const env = takeoverEnv(base, spec);
+  const env = takeoverEnv(base, spec, modelEnv);
   env["QCR_DEBUG_ORDER_FILE"] = join(spec.borrow_dir, DEBUG_ORDER_NAME);
   env["QCR_DEBUG_STATUS_FILE"] = join(spec.borrow_dir, DEBUG_STATUS_NAME);
   env["QCR_DEBUG_LENS_DIR"] = spec.lens_dir;
@@ -221,6 +227,8 @@ export async function runDebugRoundPane(
     log(`debug round: ${(e as Error).message}`);
     return 2;
   }
+  // The secrets dir's model env, read in this process (the spec holds its path only).
+  const modelEnv = paneModelEnv(spec);
   try {
     // The pi's bash runs in pi's uid: where the image asks for a separate tool uid
     // the pi is started as that uid (below); where it asked and could not arrange it,
@@ -230,12 +238,12 @@ export async function runDebugRoundPane(
       instead: "none; the image must arrange the tool uid",
       isolated: true,
     });
-    prepareDebugAgent(spec, deps.now);
+    prepareDebugAgent(spec, deps.now, Object.keys(modelEnv).length > 0);
   } catch (e) {
     log(`debug round: ${(e as Error).message}`);
     return 3;
   }
-  const env = debugRoundEnv(procEnv, spec);
+  const env = debugRoundEnv(procEnv, spec, modelEnv);
   const pi = paneLaunch(debugRoundArgv(spec), deps.piBin ?? spec.pi_bin);
   const launch = toolIsolation(pi.bin, pi.argv, procEnv);
   if ("refused" in launch) {

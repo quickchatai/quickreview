@@ -483,8 +483,9 @@ describe("a model key reaches a worker's process and nothing else", () => {
   });
 
   // The loader has a closed set of readers. Each hands the map to pi's
-  // credential lookup or to a worker's own process; none puts it in this
-  // process's environment, so the tmux server and the login refresher (which
+  // credential lookup, to a worker's own process, or (the pane's entry,
+  // takeoverpi.ts, which the debug pane goes through) to the operator's own
+  // CLI pi; none puts it in this process's environment, so the tmux server and the login refresher (which
   // is spawned with this process's environment) never see a model key.
   // MUTATION: import modelEnvFrom in src/loginrefresh/supervisor.ts and
   // spread it into the refresher's spawn env — this fails.
@@ -507,6 +508,7 @@ describe("a model key reaches a worker's process and nothing else", () => {
       "reviewcli.ts",
       "scancli.ts",
       "sessions.ts",
+      "takeoverpi.ts",
       "workerworld.ts",
     ]);
     // and no reader of it assigns into this process's environment
@@ -515,7 +517,7 @@ describe("a model key reaches a worker's process and nothing else", () => {
       expect(text, file).not.toMatch(/Object\.assign\(\s*process\.env/);
     }
     const ASSIGNS_ENV = /process\.env(\.\w+|\[[^\]]+\])\s*=[^=]/;
-    for (const file of ["sessions.ts", "workerworld.ts", "preflight.ts"])
+    for (const file of ["sessions.ts", "workerworld.ts", "preflight.ts", "takeoverpi.ts"])
       expect(readFileSync(join(SRC, file), "utf8"), file).not.toMatch(ASSIGNS_ENV);
   });
 });

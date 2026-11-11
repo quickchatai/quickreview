@@ -29,18 +29,34 @@
 //
 // The pi runs as the separate tool uid where the image has one, as a debug
 // round's does. The env it gets is an allowlist: no GitHub token of any name.
+// The model environment (the secrets dir's `model-env/`, src/modelenv.ts) is
+// read here, in the pane's own process, from the directory the spec's env
+// names: the spec file holds the path and never a value. With one, an owner
+// with no stored login is no refusal: the pi runs on the key.
 import { spawn } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GITHUB_TOKEN_ENVS } from "@quickchatai/pi-quickreview/src/envstrip.js";
 import { MODEL_CHOICE_FILE } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import { piModelFlags } from "./config.js";
 import { CAP_FD_INDEX } from "./ipc/capability.js";
+import { modelEnvFrom } from "./modelenv.js";
 import {
   PI_REFRESH_MARGIN_MS,
   ENGINE_AUTH_WORDS,
   copyPiAuth,
+  loginSummary,
+  readOwnerAuth,
+  specProvider,
 } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   TOOL_UMASK,
@@ -129,23 +145,84 @@ export function loginRouteExtension(root: string): string {
 export const LOGIN_OPEN_ENV = "QCR_LOGIN_OPEN";
 export const LOGIN_OPEN_BORROWED = "none";
 
+/** The name a session's env gives the secrets dir under (src/sessions.ts
+ * `buildEnv`): a path, which is all a spec file holds of the model env. */
+export const SECRETS_DIR_ENV = "QCR_SECRETS_DIR";
+
+/** The model environment a pane's pi is given: the one loader's read of the
+ * secrets dir the spec's env names, made in the pane's process. No directory
+ * named: none. */
+export function paneModelEnv(spec: Pick<TakeoverSpec, "env">): Record<string, string> {
+  const dir = spec.env[SECRETS_DIR_ENV];
+  return dir ? modelEnvFrom(dir) : {};
+}
+
+/**
+ * Which of the owner's logins a pane's copy takes, and is judged by: every
+ * login that lasts the pane's window. One that does not is left out, never a
+ * refusal: it is another provider's, and the pi the pane starts runs on the
+ * session's model or the route's (the login route's step says so, in the
+ * pane, when no model is left usable). Two logins still refuse the pane, by
+ * being kept in the list the copy checks: the one the pinned model is on, and
+ * the last one there is when the pi is handed no key either (`undefined`: the
+ * whole file, as a copy with no list judges it).
+ */
+export function paneLogins(
+  raw: string,
+  o: { needMs: number; now: number; pin: string | null; keyed: boolean },
+): string[] | undefined {
+  const lasting: string[] = [];
+  const short: string[] = [];
+  for (const [provider, login] of Object.entries(loginSummary(raw)))
+    (login.expires !== null && login.expires < o.now + o.needMs ? short : lasting).push(provider);
+  if (lasting.length === 0 && !o.keyed) return undefined;
+  return o.pin !== null && short.includes(o.pin) ? [...lasting, o.pin] : lasting;
+}
+
 /**
  * The pi's own agent dir: the owner's login borrowed as a refresh-blanked copy
- * (0600, refused when its token would expire inside the lease's idle window plus
- * pi's refresh margin), the model and settings files, and the remembered model
- * choice from beside the login. Nothing is written to the owner's dir.
+ * (0600; the logins that last the lease's idle window plus pi's refresh margin,
+ * `paneLogins`, refused when the pinned model's own would not), the model and
+ * settings files, and the remembered model choice from beside the login.
+ * Nothing is written to the owner's dir.
+ *
+ * `keyed` says the pi is handed a model environment: an owner with no stored
+ * login is then an empty login (the agent dir holds no auth file), not a
+ * refusal. A login that is there is borrowed, and checked, as ever.
  */
 export function prepareBorrowedAgent(
-  spec: Pick<TakeoverSpec, "agent_dir" | "login_dir" | "borrow_dir" | "idle_ms">,
+  spec: Pick<TakeoverSpec, "agent_dir" | "login_dir" | "borrow_dir" | "idle_ms"> &
+    Partial<Pick<TakeoverSpec, "model">>,
   now?: () => number,
+  keyed = false,
 ): { expiresAt: number | null } {
-  const { expiresAt } = copyPiAuth({
-    srcDir: spec.login_dir ?? spec.agent_dir,
-    dstDir: spec.borrow_dir,
-    needMs: spec.idle_ms + PI_REFRESH_MARGIN_MS,
-    words: ENGINE_AUTH_WORDS,
-    ...(now ? { now } : {}),
-  });
+  const loginDir = spec.login_dir ?? spec.agent_dir;
+  const authFile = join(loginDir, "auth.json");
+  let expiresAt: number | null = null;
+  if (keyed && !existsSync(authFile)) {
+    mkdirSync(spec.borrow_dir, { recursive: true, mode: 0o700 });
+    // An earlier borrow's copy is not this owner's login any more.
+    rmSync(join(spec.borrow_dir, "auth.json"), { force: true });
+  } else {
+    const needMs = spec.idle_ms + PI_REFRESH_MARGIN_MS;
+    // No file: the copy below says so, in the owner's words.
+    const providers = existsSync(authFile)
+      ? paneLogins(readOwnerAuth(authFile), {
+          needMs,
+          now: (now ?? Date.now)(),
+          pin: specProvider(spec.model ?? ""),
+          keyed,
+        })
+      : undefined;
+    ({ expiresAt } = copyPiAuth({
+      srcDir: loginDir,
+      dstDir: spec.borrow_dir,
+      needMs,
+      words: ENGINE_AUTH_WORDS,
+      ...(now ? { now } : {}),
+      ...(providers ? { providers } : {}),
+    }));
+  }
   const copy = (srcDir: string, name: string): void => {
     const from = join(srcDir, name);
     if (!existsSync(from)) return;
@@ -197,14 +274,17 @@ export function takeoverArgv(spec: TakeoverSpec): string[] {
   ];
 }
 
-/** The env the pi is started with: the allowlisted part of the pane's env, then the
- * daemon's spec env, then the agent dir and the login route's word that the
- * login is a borrowed copy. No GitHub token of any name. */
+/** The env the pi is started with: the model environment (`paneModelEnv`; it
+ * goes in first, so no name below is ever replaced by one of its), the
+ * allowlisted part of the pane's env, then the daemon's spec env, then the
+ * agent dir and the login route's word that the login is a borrowed copy. No
+ * GitHub token of any name. */
 export function takeoverEnv(
   base: Readonly<Record<string, string | undefined>>,
   spec: Pick<TakeoverSpec, "env" | "borrow_dir">,
+  modelEnv: Readonly<Record<string, string>> = {},
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
+  const env: NodeJS.ProcessEnv = { ...modelEnv };
   for (const name of TAKEOVER_ENV_ALLOW) if (base[name] !== undefined) env[name] = base[name];
   Object.assign(env, spec.env);
   env["PI_CODING_AGENT_DIR"] = spec.borrow_dir;
@@ -275,6 +355,7 @@ export async function runTakeover(specFile: string, deps: TakeoverRunDeps = {}):
     log(`takeover: ${(e as Error).message}`);
     return 2;
   }
+  const modelEnv = paneModelEnv(spec);
   try {
     // The pi's bash runs in pi's uid: where the image asks for a separate tool uid
     // the pi is started as that uid (below); where it asked and could not arrange
@@ -284,12 +365,12 @@ export async function runTakeover(specFile: string, deps: TakeoverRunDeps = {}):
       instead: "none; the image must arrange the tool uid",
       isolated: true,
     });
-    prepareBorrowedAgent(spec, deps.now);
+    prepareBorrowedAgent(spec, deps.now, Object.keys(modelEnv).length > 0);
   } catch (e) {
     log(`takeover: ${(e as Error).message}`);
     return 3;
   }
-  const env = takeoverEnv(procEnv, spec);
+  const env = takeoverEnv(procEnv, spec, modelEnv);
   const pi = paneLaunch(takeoverArgv(spec), deps.piBin ?? spec.pi_bin);
   const launch = toolIsolation(pi.bin, pi.argv, procEnv);
   if ("refused" in launch) {
