@@ -31,6 +31,7 @@ import {
   QUICKREVIEW_COMMANDS,
   routeInRunningPi,
   unborrowable,
+  unseenByReviewHost,
   type RunningPi,
 } from "@quickchatai/pi-quickreview/extensions/quickreview.js";
 import {
@@ -573,6 +574,8 @@ interface FakeProvider {
   registered?: boolean;
   /** pi's status says "not configured" although its models are available. */
   statusSaysNo?: boolean;
+  /** The provider's own lookup finds its credential in a file there. */
+  credentialFile?: string;
 }
 
 type FakeProviders = Record<string, FakeProvider>;
@@ -597,7 +600,23 @@ function fakeRegistry(providers: FakeProviders): RunningPi["modelRegistry"] {
     getProvider: (p) =>
       providers[p] === undefined
         ? undefined
-        : { auth: providers[p].oauth ? { oauth: { isSubscription: false } } : {} },
+        : {
+            auth: {
+              ...(providers[p].oauth ? { oauth: { isSubscription: false } } : {}),
+              ...(providers[p].credentialFile !== undefined
+                ? {
+                    apiKey: {
+                      resolve: async (o: {
+                        ctx: { fileExists(path: string): Promise<boolean> };
+                      }): Promise<unknown> =>
+                        (await o.ctx.fileExists(providers[p]!.credentialFile!))
+                          ? { auth: {} }
+                          : undefined,
+                    },
+                  }
+                : {}),
+            },
+          },
     getProviderDisplayName: (p) => p.charAt(0).toUpperCase() + p.slice(1),
     isUsingOAuth: (m) => providers[m.provider]?.oauth !== undefined,
     find: (p, id) => modelsOf(p).find((m) => m.id === id),
@@ -724,6 +743,44 @@ describe("the route inside a running pi", () => {
     });
     expect(alone.result).toEqual({ ok: false, refusal: { code: "no-credential" } });
     expect(alone.notes[0]).toMatch(/^Keyed is registered by a pi extension/);
+  });
+
+  // The running pi looks under the home directory for a credential; the
+  // run's host does not (engine/authcontext.ts).
+  // MUTATION: answer an empty set from unseenByReviewHost, or drop `unseen`
+  // from routeInRunningPi's exclusions - the route names the provider the
+  // session is on, which no session of the run could open; this fails.
+  it("leaves out a provider whose credential is a file under the home directory, and says so", async () => {
+    const here = join(tmp, "ambient-credential.json");
+    writeFileSync(here, "{}");
+    const providers: FakeProviders = {
+      homely: { source: "environment", label: "a file", credentialFile: "~/.config/x/cred.json" },
+      absolute: { source: "environment", label: "a file", credentialFile: here },
+      alpha: { source: "environment", label: "ALPHA_API_KEY" },
+      stored: { credentialFile: "~/.config/x/other.json" },
+    };
+    const registry = fakeRegistry(providers);
+    const unseen = await unseenByReviewHost(registry, {});
+    expect([...unseen]).toEqual(["homely"]);
+    const r = routeInRunningPi(
+      { model: fakeModel("homely", "m-2"), modelRegistry: registry },
+      {},
+      unseen,
+    );
+    expect(r.inventory.map((e) => e.provider).sort()).toEqual(["absolute", "alpha", "stored"]);
+    expect(r.result.ok && r.result.route.provider).not.toBe("homely");
+    const note =
+      "Homely's credential is under your home directory, which a review host does not read: point the provider's credential variable at an absolute path (docs/llm-setup.md)";
+    expect(r.notes).toEqual([note]);
+    // alone, there is no route, and the note says why
+    const alone = fakeRegistry({ homely: providers["homely"]! });
+    const none = routeInRunningPi(
+      { model: fakeModel("homely", "m-2"), modelRegistry: alone },
+      {},
+      await unseenByReviewHost(alone, {}),
+    );
+    expect(none.result).toEqual({ ok: false, refusal: { code: "no-credential" } });
+    expect(none.notes).toEqual([note]);
   });
 
   // MUTATION: hand textResolver the registry's own getAvailable in

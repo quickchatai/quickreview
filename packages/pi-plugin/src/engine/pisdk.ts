@@ -53,7 +53,7 @@
 // on that route, and a spec that names a provider with no credential moves by
 // the one rule there.
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
-import { access } from "node:fs/promises";
+import { reviewAuthContext } from "./authcontext.js";
 import { createRequire } from "node:module";
 import { dirname, join, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -332,28 +332,8 @@ export function buildBashEnv(
 
 // ---- provider auth discovery that does not look in HOME ------------------------
 
-/** pi-ai's default auth context expands `~` to the operator's home to look for
- * ambient credentials (google-vertex checks ~/.config/gcloud for ADC). A review
- * host takes its credentials from the store it was given and from an
- * environment, so `~` paths are simply absent. The environment is the one the
- * host names (`authEnv`), else the process's, read at each lookup. */
-function isolatedAuthContext(authEnv: Readonly<Record<string, string | undefined>> | undefined) {
-  return {
-    async env(name: string): Promise<string | undefined> {
-      const value = (authEnv ?? process.env)[name];
-      return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-    },
-    async fileExists(path: string): Promise<boolean> {
-      if (path.startsWith("~")) return false;
-      try {
-        await access(path);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-  };
-}
+/** A review host's auth context (authcontext.ts): no `~` path is there. */
+const isolatedAuthContext = reviewAuthContext;
 
 /** A model store that holds nothing and keeps nothing: what a host with no
  * stored catalog reads. A host refreshes offline only, and pi persists a
