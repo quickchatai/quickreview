@@ -141,6 +141,29 @@ function stripTsComments(text: string): string {
   return out;
 }
 
+/**
+ * The text of every string in a TypeScript source, by TypeScript's own parse:
+ * a quoted string, a template with no substitution, and each piece of a
+ * template that has them. Pairing quotes by pattern is no reader: a short
+ * string earlier on the line (`id === "" || id === "<leaf>"`) makes the pairs
+ * fall between the strings, and the one after it is never seen.
+ */
+function tsLiteralTexts(text: string): string[] {
+  const source = ts.createSourceFile("f.ts", text, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  const out: string[] = [];
+  const walk = (node: ts.Node): void => {
+    if (
+      ts.isStringLiteralLike(node) ||
+      ts.isTemplateHead(node) ||
+      ts.isTemplateMiddleOrTemplateTail(node)
+    )
+      out.push(node.text);
+    ts.forEachChild(node, walk);
+  };
+  walk(source);
+  return out;
+}
+
 /** A shell script with its comment lines removed. */
 function stripShellComments(text: string): string {
   return text
@@ -158,10 +181,12 @@ function modelNameHits(text: string, kind: "ts" | "sh"): string[] {
   const hits = new Set<string>();
   for (const [what, re] of kind === "ts" ? TS_PATTERNS : SH_PATTERNS)
     for (const m of code.matchAll(re)) hits.add(`${what}: ${m[0].trim()}`);
-  const literal =
-    kind === "ts" ? /(["'`])([^"'`\n]{6,80})\1/g : /(["'=\s])([A-Za-z0-9@._-]{6,80})(?=["'\s]|$)/gm;
-  for (const m of code.matchAll(literal))
-    if (MODEL_LEAVES.has(m[2]!.toLowerCase())) hits.add(`a model id as a literal: ${m[2]}`);
+  const literals =
+    kind === "ts"
+      ? tsLiteralTexts(text)
+      : [...code.matchAll(/(["'=\s])([A-Za-z0-9@._-]{6,80})(?=["'\s]|$)/gm)].map((m) => m[2]!);
+  for (const literal of literals)
+    if (MODEL_LEAVES.has(literal.toLowerCase())) hits.add(`a model id as a literal: ${literal}`);
   return [...hits].sort();
 }
 
@@ -244,6 +269,15 @@ describe("no model or provider name decides anything", () => {
       `const spec = "${provider}/some-model:medium";`,
       `const spec = \`${provider}/\${id}\`;`,
       `const model = "${leaf}";`,
+      // MUTATION: find the TypeScript literals by pairing quotes with a
+      // pattern (/(["'\`])([^"'\`\n]{6,80})\1/g over the comment-stripped text)
+      // instead of tsLiteralTexts - the short string earlier on each of these
+      // lines throws the pairing off and the model id is never seen; this fails.
+      `if (id === "" || id === "${leaf}") return 1;`,
+      `if (a === "x") return "${leaf}";`,
+      `const m = ok ? "a" : fallbackTo("${leaf}");`,
+      `const m = cond ? '' : pick(\`${leaf}\`);`,
+      `const m = \`\${prefix}${leaf}\`;`,
       // A `//` that ends a regex, or sits in a string, starts no comment.
       `return spec.replace(/^some-prefix\\//, "${provider}/");`,
       `const url = "see // here"; const spec = "${provider}/some-model";`,
