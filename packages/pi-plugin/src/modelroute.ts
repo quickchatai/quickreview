@@ -783,10 +783,9 @@ export function refusalText(
           `${fact}pi did not renew it. ` +
           "Sign in again with /login, or use another credential: a provider key in the environment."
         );
-      // pi renews a login only inside its last minutes, and only when it is opened.
-      const renewable = refusal.logins.some(
-        (l) => l.expiresAt > now && l.expiresAt - now < PI_RENEWS_INSIDE_MS,
-      );
+      // pi renews a login inside its last minutes or past its expiry, and
+      // only when it is opened.
+      const renewable = refusal.logins.some((l) => l.expiresAt - now < PI_RENEWS_INSIDE_MS);
       return (
         `${fact}nothing here renews it. ` +
         "Run the review inside pi (/qcr-review), where pi renews it, or use another credential: `qcr login`, or a provider key in the environment." +

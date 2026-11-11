@@ -682,7 +682,10 @@ export function runModels(
 /** The stored logins a run's specs (each as it will run, `runModels`) lean
  * on that were left out as too short for the run: a tier or a lens the
  * config pins to such a provider would fail when its session is opened, so
- * the run is refused before anything starts. Empty when there are none. */
+ * the run is refused before anything starts. A provider that still has a
+ * credential here (an environment key beside the short login) is not one of
+ * them: its sessions open on that credential, as the route itself resolved.
+ * Empty when there are none. */
 export function tooShortFor(specs: readonly string[], on: RunRoute | null): SkippedLogin[] {
   const skipped = on?.skipped ?? [];
   if (skipped.length === 0) return [];
@@ -691,7 +694,8 @@ export function tooShortFor(specs: readonly string[], on: RunRoute | null): Skip
     const named = splitProvider(splitModelSpec(spec).model);
     if (named !== null) providers.add(named.provider);
   }
-  return skipped.filter((l) => providers.has(l.provider));
+  const held = new Set((on?.inventory ?? []).map((e) => e.provider));
+  return skipped.filter((l) => providers.has(l.provider) && !held.has(l.provider));
 }
 
 // ---- the contract a caller reads -----------------------------------------------------

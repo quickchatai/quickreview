@@ -36,7 +36,12 @@ import { contextFrom } from "@quickchatai/pi-quickreview/src/engine/context.js";
 import type { PiHostOptions } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import type { Runtime, SessionSpec } from "@quickchatai/pi-quickreview/src/engine/port.js";
 import { reviewSdkRuntime } from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
-import { reviewKey, runModels, specAsRun } from "@quickchatai/pi-quickreview/src/localreview.js";
+import {
+  reviewKey,
+  runModels,
+  specAsRun,
+  tooShortFor,
+} from "@quickchatai/pi-quickreview/src/localreview.js";
 import { MODEL_CHOICE_FILE } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import type { ModelRoute, ProviderInventory } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import { parseCoreConfig, type CoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
@@ -745,6 +750,26 @@ describe("a spec as it will run", () => {
     );
     expect(m.tiers.standard).toBe("gone/shared:medium");
     expect(m.all).toContain("gone/shared:medium");
+  });
+
+  // MUTATION: drop the inventory half of tooShortFor's filter
+  // (packages/pi-plugin/src/localreview.ts) - a route that resolved on an
+  // environment key is refused as login-too-short for the stored login beside
+  // it; this fails.
+  it("a too-short login refuses the run only where its provider has no other credential here", () => {
+    const short = { provider: "held", name: "Held", expiresAt: 1 };
+    // the route's own provider: its login was left out, a key for it resolves
+    const keyed = { ...on, skipped: [short] };
+    const m = runModels(UNPINNED, ["pass-contracts--standard"], keyed);
+    expect(m.main).toBe("held/x");
+    expect(tooShortFor(m.all, keyed)).toEqual([]);
+    // a pin on a provider with nothing but the short login is still refused
+    const gone = { ...short, provider: "gone", name: "Gone" };
+    expect(tooShortFor(["gone/shared:high", "held/x"], { ...on, skipped: [gone, short] })).toEqual([
+      gone,
+    ]);
+    expect(tooShortFor(["held/x"], { ...on, skipped: [gone] })).toEqual([]);
+    expect(tooShortFor(["gone/shared"], null)).toEqual([]);
   });
 
   it("what is not known is not filled in: no route, or no route given", () => {
