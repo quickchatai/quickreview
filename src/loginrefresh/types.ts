@@ -12,8 +12,9 @@ export interface LoginRefreshSkip {
 export interface LoginRefreshFileStatus {
   pid: number;
   started_at: string;
-  /** The earliest OAuth expiry in auth.json, ISO, or `never` when no OAuth
-   * entry expires; null when there is none (or no login yet). */
+  /** The earliest OAuth expiry in auth.json among the logins the refresher
+   * keeps alive (an entry named in `skipped` is left out), ISO, or `never`
+   * when none of them expires; null when there is none (or no login yet). */
   expires_at: string | null;
   /** The provider that expiry belongs to. */
   provider: string | null;

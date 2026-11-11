@@ -355,8 +355,10 @@ export class LoginRefresher {
       this.skipped = skipped;
       this.expiresAt = null;
       this.provider = null;
+      // The earliest expiry among the logins this refresher keeps alive: one
+      // it skips is named by its note, and its expiry is nobody's to act on.
       for (const [name, entry] of Object.entries(parsed)) {
-        if (!isOAuthEntry(entry)) continue;
+        if (!isOAuthEntry(entry) || skipped.some((s) => s.provider === name)) continue;
         if (this.expiresAt === null || entry.expires < this.expiresAt) {
           this.expiresAt = entry.expires;
           this.provider = name;

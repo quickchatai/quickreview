@@ -372,11 +372,18 @@ describe("every login in the file", () => {
   // and fails again at every check; this fails.
   it("skips an entry pi has no OAuth flow for, with a note in the status file and no failure", async () => {
     const r = await rig();
-    writeLogins(r.dir, { "no-flow": r.clk.now() + HOUR, "provider-a": r.clk.now() + HOUR });
+    // The skipped entry is the earlier of the two (already past its expiry).
+    writeLogins(r.dir, { "no-flow": r.clk.now() - HOUR, "provider-a": r.clk.now() + HOUR });
     const seen: string[] = [];
     const refresher = await start(r, { refresh: flows(r, seen) });
     expect(seen).toEqual(["provider-a"]);
-    expect(readStatus(r.dir)).toMatchObject({
+    // MUTATION: run the earliest-expiry loop in LoginRefresher.check over the
+    // skipped entries too - the record reads as an expired no-flow login with
+    // no error; this fails.
+    const first = readStatus(r.dir);
+    expect(first.provider).toBe("provider-a");
+    expect(Date.parse(first.expires_at!)).toBeGreaterThan(r.clk.now());
+    expect(first).toMatchObject({
       last_error: null,
       error_since: null,
       skipped: [{ provider: "no-flow", reason: "pi has no OAuth flow for it" }],
