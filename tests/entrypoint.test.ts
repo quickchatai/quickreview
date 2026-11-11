@@ -1293,7 +1293,9 @@ describe.skipIf(!hasDist)("the real cli, through the entrypoint (no model)", () 
       ok: boolean;
       preview: { branch: string };
     };
-    expect(payload.schema_version).toBe(1);
+    // The review family's current schema: a payload asked for with no
+    // --schema is printed in it.
+    expect(payload.schema_version).toBe(2);
     expect(payload.ok).toBe(true);
     expect(payload.preview.branch).toBe("feat");
   });

@@ -49,6 +49,11 @@ const NOW = Date.parse("2026-10-20T12:00:00Z");
 const BUILTIN = "deepseek";
 const BUILTIN_NAME = builtinProviders().find((p) => p.id === BUILTIN)!.name;
 const BUILTIN_ENV = "DEEPSEEK_API_KEY";
+/** A built-in provider pi can sign in to. pi counts a stored login only for a
+ * provider with a login of its own: one stored for a key-only provider (the
+ * one above) is no credential to pi. */
+const SIGN_IN = "anthropic";
+const SIGN_IN_NAME = builtinProviders().find((p) => p.id === SIGN_IN)!.name;
 /** Never listened on: no case sends a request. */
 const NOWHERE = "http://127.0.0.1:9/v1";
 
@@ -119,9 +124,9 @@ const detail = (r: PreflightReport, n: string): string =>
   r.checks.find((c) => c.name === n)?.detail ?? "";
 /** pi's agent dir with no credential in it at all. */
 const noCredential = (): void => writeFileSync(join(opts.agentDir, "models.json"), "{}");
-/** Write the login file with one stored login for the built-in provider. */
+/** Write the login file with one stored login for the sign-in provider. */
 const storedLogin = (entry: Record<string, unknown>, at = opts.agentDir): void =>
-  writeFileSync(join(at, "auth.json"), JSON.stringify({ [BUILTIN]: { type: "oauth", ...entry } }));
+  writeFileSync(join(at, "auth.json"), JSON.stringify({ [SIGN_IN]: { type: "oauth", ...entry } }));
 /** A secrets dir holding `files` under its model env. */
 const secretsWith = (files: Record<string, string>): string => {
   const secrets = join(dir, "secrets");
@@ -231,8 +236,14 @@ describe("daemon --preflight", () => {
 
   it("fails an unparsable models.json", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     writeFileSync(join(opts.agentDir, "models.json"), "{oops");
+    // The fixture's credential was a key in that file: with the file broken
+    // the login check has none either, and each check says its own half.
     const r = await runPreflight(opts);
-    expect(failed(r)).toEqual(["models"]);
+    expect(failed(r)).toEqual(["login", "models"]);
+    expect(reason(r, "models")).toContain("does not parse");
+    // With a credential that is not in the file, the file is the one failure.
+    const keyed = await runPreflight({ ...opts, env: { [BUILTIN_ENV]: "not-a-key" } });
+    expect(failed(keyed), JSON.stringify(keyed)).toEqual(["models"]);
   });
 
   it(
@@ -376,14 +387,14 @@ describe("daemon --preflight: a model route resolves", () => {
       const renewable = await login();
       expect(failed(renewable), JSON.stringify(renewable)).toEqual([]);
       expect(detail(renewable, "login")).toMatch(
-        new RegExp(`^runs ${BUILTIN}/\\S+ \\(${BUILTIN_NAME}, signed in with pi`),
+        new RegExp(`^runs ${SIGN_IN}/\\S+ \\(${SIGN_IN_NAME}, signed in with pi`),
       );
       // no refresh token, and it runs out inside the window
       storedLogin({ access: "a", refresh: DISABLED_REFRESH, expires: NOW + 600_000 });
       const short = await login();
       expect(failed(short)).toEqual(["login"]);
       expect(reason(short, "login")).toBe(
-        `the ${BUILTIN_NAME} login has no refresh token and expires inside the ${DEFAULT_WORK_WINDOW_MIN}-minute work window`,
+        `the ${SIGN_IN_NAME} login has no refresh token and expires inside the ${DEFAULT_WORK_WINDOW_MIN}-minute work window`,
       );
       // no refresh token, and it outlasts the window
       storedLogin({ access: "a", refresh: DISABLED_REFRESH, expires: NOW + 24 * 3600_000 });
@@ -399,7 +410,7 @@ describe("daemon --preflight: a model route resolves", () => {
       const r = await login();
       expect(failed(r), JSON.stringify(r)).toEqual([]);
       expect(detail(r, "login")).toBe(
-        `runs ${FAKE_ROUTE_MODEL} (local, a key in pi's models.json); left out: the ${BUILTIN_NAME} login (no refresh token)`,
+        `runs ${FAKE_ROUTE_MODEL} (local, a key in pi's models.json); left out: the ${SIGN_IN_NAME} login (no refresh token)`,
       );
     },
   );
@@ -436,7 +447,7 @@ describe("daemon --preflight: a model route resolves", () => {
       expect(failed(await login())).toEqual(["login"]);
       const r = await login({ loginDir: shared });
       expect(failed(r), JSON.stringify(r)).toEqual([]);
-      expect(detail(r, "login")).toContain(`runs ${BUILTIN}/`);
+      expect(detail(r, "login")).toContain(`runs ${SIGN_IN}/`);
     },
   );
 
