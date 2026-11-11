@@ -68,7 +68,7 @@
 \title{QuickReview: a multi-pass automated code reviewer,\\
 \large its design, its cost, and how it performs on a verified defect benchmark}
 \author{Mateusz Jakubczak \\ Quickchat AI \\ \texttt{mateusz@quickchat.ai}}
-\date{Draft of 2026-10-04}
+\date{2026-11-11}
 
 \begin{document}
 \maketitle
@@ -386,9 +386,14 @@ always run at high reasoning; the others run at medium in the
 \code{default} preset (Section~\ref{sec:presets}). The last column gives the
 share of the 185 PRs on which each lens ran in the gpt-6-sol default
 run.\footnote{\code{executed\_passes} and \code{planned\_lenses} in each
-case's \code{case-summary.json}, computed 2026-09-29 (\code{wp-data/passes.json}\footnote{File names in footnotes --- \code{RESULTS.md}, \code{FULL-BENCHMARK.md}, \code{CHANGES-quickreview.md} --- are the study's working notes, not part of the public repository; the scratch analyses under \code{wp-data/} and \code{paper-data/} ship in the run archive~\cite{qcrbench}, with the run data they were computed from.}).
+case's \code{case-summary.json}, computed 2026-09-29 (\code{wp-data/passes.json}).
 The gpt-6.1-sol run has the same plan on 181 of the 185 PRs: the presets
-and the model change tiers, not the plan.}
+and the model change tiers, not the plan. File names in footnotes ---
+\code{RESULTS.md}, \code{FULL-BENCHMARK.md}, \code{CHANGES-quickreview.md},
+\code{tuning-writeup.md} --- are the study's working notes, not part of the
+public repository; the scratch analyses under \code{wp-data/} and
+\code{paper-data/} ship in the run archive~\cite{qcrbench}, with the run data
+they were computed from.}
 
 \begin{table}[p]
 \centering
