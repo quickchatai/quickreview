@@ -1,26 +1,74 @@
-// The borrowed login: a review inside a user's pi runs on that pi's own
-// login, and only that pi ever refreshes it.
+// The model a run inside a user's pi is on, and the login it borrows for it.
 //
-// Before a run, each provider the review's models name is checked against the
-// host pi:
-//   - an OAuth login that would not last the run's window is refreshed by the
-//     host pi itself (its model registry, under its own lock, written to its
-//     own storage), so a token near the end of its life is renewed rather
-//     than the run refused;
-//   - a provider pi has no credential for at all fails the run with a hint
-//     that names pi's /login. A key for some other provider is never a reason
-//     to run on another model: the review runs on the models its config
-//     names, or not at all. The one exception is the OpenAI family: an
-//     `openai-codex/` model runs on an `openai` login (and back) when only
-//     that one exists (modelroute.ts), the same model id on either.
-// A config that pins no model names no provider. The run is then on
-// whichever provider the login holds, so the whole login is borrowed: every
-// stored login is made to last the same way, and one the host cannot renew is
-// left out, since nothing says the review needs it.
-// The run then reads a refresh-disabled copy of the login (engine/auth.ts):
-// nothing in it can refresh, so a rotated token never leaves the host.
-import type { LoginSummary } from "../engine/auth.js";
-import { routeProvider } from "../modelroute.js";
+// A review or a scan inside pi runs on what that pi has a credential for.
+// The running pi resolves the route over its own model registry (the host's
+// `route`, which the extension builds: extensions/quickreview.ts), with the
+// pin the run names (`--model`, else the config's `[models] model`) and the
+// choice remembered beside pi's logins (../modelchoice.ts). When two
+// providers tie and a person is there, they are asked once, through pi's own
+// select, and the answer is remembered.
+//
+// Once the route is known the login is borrowed for it, and only for it:
+//   - the host pi is asked to renew each stored login the run is on that
+//     would not last the run's window (its own model runtime, under its own
+//     lock, written to its own storage);
+//   - the run then holds a refresh-disabled copy of exactly those providers'
+//     logins, in memory (../engine/auth.ts `borrowedCredentials`, as an owner
+//     route: the host pi renews while the run goes, so a login shorter than
+//     the run is kept, and the copy takes the newer token from the host's
+//     file when pi asks for a refresh);
+//   - a login of the route that is still too short after the host was asked
+//     is a refusal before anything runs, in the route's own words.
+// Nothing here refreshes a login: a rotated token never leaves the host. A
+// person's pi holds other logins too, which neither ride along nor refuse
+// the run.
+//
+// The run's own host is then handed the route as fixed, with the model
+// object the running pi resolved, so the two never name different models.
+//
+// A host that hands no registry (`route` absent) names no model: the run's
+// own host resolves one from the whole borrowed login.
+import type { Api, CredentialStore, Model } from "@earendil-works/pi-ai";
+import { borrowedCredentials, PI_REFRESH_MARGIN_MS, type LoginSummary } from "../engine/auth.js";
+import { readModelChoice, writeModelChoice } from "../modelchoice.js";
+import {
+  credentialWords,
+  moveToCredentialed,
+  splitProvider,
+  type ModelChoice,
+  type ModelRoute,
+  type ProviderInventory,
+  type RouteInput,
+  type RouteRefusal,
+  type RouteResult,
+  type SkippedLogin,
+} from "../modelroute.js";
+import { splitModelSpec, type CoreConfig } from "../reviewconfig.js";
+
+/** What a run asks the running pi's route for. */
+export interface HostRouteAsk {
+  /** `--model`, else the config's `[models] model` when it names a model. */
+  pin?: RouteInput["pin"];
+  /** The remembered choice. */
+  choice?: ModelChoice;
+}
+
+/** The route as the running pi resolved it over its own registry. */
+export interface HostRouted {
+  /** The route, or why there is none. */
+  result: RouteResult;
+  /** The providers the running pi has a credential for that a run can borrow. */
+  inventory: readonly ProviderInventory[];
+  /** pi's own model object for the route: the run's host is handed it, so an
+   * id its own catalog lacks still runs. */
+  model?: Model<Api>;
+  /** pi's display name for a provider id. */
+  nameOf: (provider: string) => string;
+  /** What the person should hear beside a refusal (the provider this pi
+   * session is on cannot be borrowed). A route carries the same lines in its
+   * own notices. */
+  notes: readonly string[];
+}
 
 /** What the plugin asks of the host pi's auth, by shape (the extension wires
  * it to `ctx.modelRegistry` and the host's auth file). */
@@ -33,152 +81,255 @@ export interface HostAuth {
   /** Ask the host pi to make `provider`'s OAuth token valid for at least
    * `minValidityMs` more: it refreshes it if not. Rejects when it cannot. */
   refresh(provider: string, minValidityMs: number): Promise<void>;
+  /** The run's route over the running pi's own model registry. Absent: the
+   * host hands no registry, so no model is named before the run and the
+   * run's own host resolves one. */
+  route?(ask: HostRouteAsk): HostRouted;
 }
+
+// ---- the borrow ----------------------------------------------------------------
 
 export type BorrowResult =
   | {
       ok: true;
-      refreshed: string[];
-      /** The providers the run uses, each OpenAI one on the login that exists:
-       * the run's login copy carries exactly these. For a review that names
-       * no provider: the stored logins that last the run, and empty when pi
-       * stores none (the copy is then the whole login, which is nothing). */
-      providers: string[];
+      /** The run's login: a refresh-disabled copy, in memory. */
+      credentials: CredentialStore;
+      /** Stored logins left out as too short, for a run that named no
+       * providers: its own host leaves them out of its route. */
+      skipped: SkippedLogin[];
     }
-  | { ok: false; error: string };
+  | { ok: false; refusal: Extract<RouteRefusal, { code: "login-too-short" }> };
 
-/** The hint for a provider pi has no credential for. */
-export function noLoginHint(provider: string, keyed: readonly string[]): string {
-  const keys =
-    keyed.length > 0
-      ? ` pi has a key for ${keyed.join(", ")}, and the review does not switch models to use it: to review on that provider, set the review's models to it in your qcr config.`
-      : "";
-  return (
-    `the review runs on ${provider}, and this pi has no login for it. ` +
-    `Run /login ${provider} in pi, then /qcr-review again.${keys}`
-  );
+/** `store`, answering for `providers` alone. */
+function only(store: CredentialStore, providers: readonly string[]): CredentialStore {
+  const used = new Set(providers);
+  return {
+    read: async (id, options) => (used.has(id) ? store.read(id, options) : undefined),
+    list: async (options) => (await store.list(options)).filter((c) => used.has(c.providerId)),
+    modify: (id, fn, options) => store.modify(id, fn, options),
+    delete: (id, options) => store.delete(id, options),
+  };
 }
 
-/** The providers a run actually uses for the review's `providers`: each one
- * itself, or its OpenAI twin when only the twin has a credential
- * (modelroute.ts). One reading for the setup checklist and `borrowLogin`, so
- * setup never calls a login missing that a review can run on. */
-export function routedProviders(
-  providers: readonly string[],
-  host: Pick<HostAuth, "logins" | "configured">,
+/**
+ * Borrow the host pi's login for one run of `needMs`. The host is first asked
+ * to renew each stored login the run is on that would not last it. A failed
+ * renewal is not the answer: the borrow that follows is. It keeps a login the
+ * host renews while the run goes, and leaves out one that has run out; a
+ * provider the run is on whose login was left out refuses the run.
+ *
+ * With `providers`, the run holds exactly their logins. Without (a host that
+ * resolved no route), it holds the whole login, less what cannot last.
+ *
+ * Throws `AuthUnreadable` when the login file is there and cannot be read: an
+ * unknown store is never taken for an empty one.
+ */
+export async function borrowLogin(o: {
+  /** The host pi's agent dir: its login is read there, never written. */
+  agentDir: string;
+  host: Pick<HostAuth, "logins" | "refresh">;
+  /** The providers the run's sessions are on (`routeProviders`). */
+  providers?: readonly string[];
+  needMs: number;
+  /** The stretch at the end of a login's life in which pi itself would
+   * refresh it; default pi's own. */
+  marginMs?: number;
+  /** pi's display name for a provider id; omitted, the id is the name. */
+  nameOf?: (provider: string) => string;
+  now?: () => number;
+}): Promise<BorrowResult> {
+  const now = o.now ?? Date.now;
+  const margin = o.marginMs ?? PI_REFRESH_MARGIN_MS;
+  const want = o.needMs + margin;
+  const used = (provider: string): boolean =>
+    o.providers === undefined || o.providers.includes(provider);
+  for (const [provider, login] of Object.entries(o.host.logins())) {
+    if (!used(provider) || login.type !== "oauth" || login.expires === null) continue;
+    if (login.expires >= now() + want) continue;
+    try {
+      await o.host.refresh(provider, want);
+    } catch {
+      // The borrow below reads what the host's file holds now.
+    }
+  }
+  const borrowed = borrowedCredentials({
+    srcDir: o.agentDir,
+    needMs: o.needMs,
+    marginMs: margin,
+    ...(o.now ? { now: o.now } : {}),
+    // The host pi renews its login while the run goes.
+    owner: true,
+    renew: (provider) => o.host.refresh(provider, want),
+  });
+  if (o.providers === undefined)
+    return { ok: true, credentials: borrowed.credentials, skipped: borrowed.skipped };
+  const short = borrowed.skipped
+    .filter((l) => used(l.provider))
+    .map((l) => ({ ...l, name: o.nameOf?.(l.provider) ?? l.name }));
+  if (short.length > 0) return { ok: false, refusal: { code: "login-too-short", logins: short } };
+  return { ok: true, credentials: only(borrowed.credentials, o.providers), skipped: [] };
+}
+
+/**
+ * The providers one run's sessions are on: the route's own, then the
+ * provider of every spec the config pins to a model of its own (a tier, a
+ * lens), where that spec will run: on the provider it names when pi has a
+ * credential for it, else on the one the route's move rule sends it to
+ * (../modelroute.ts `moveToCredentialed`). A spec the rule cannot place keeps
+ * the provider it names: there is no login to borrow for it, and the run
+ * refuses that session when it opens.
+ */
+export function routeProviders(
+  route: Pick<ModelRoute, "provider">,
+  cfg: Pick<CoreConfig, "models">,
+  on: { inventory: readonly ProviderInventory[]; prefer?: string },
 ): string[] {
-  const logins = host.logins();
-  const out: string[] = [];
-  for (const named of providers) {
-    const p = routeProvider(named, "", {
-      hasCredential: (q) => logins[q] !== undefined || host.configured(q),
-    });
-    if (!out.includes(p)) out.push(p);
+  const out = [route.provider];
+  const m = cfg.models;
+  for (const spec of [m.model, ...Object.values(m.tiers), ...Object.values(m.pass_models)]) {
+    const named = splitProvider(splitModelSpec(spec).model);
+    if (named === null) continue;
+    let provider = named.provider;
+    if (!on.inventory.some((e) => e.provider === provider)) {
+      const move = moveToCredentialed({ provider, id: named.rest }, on.inventory, on.prefer);
+      if (move !== null && "provider" in move) provider = move.provider;
+    }
+    if (!out.includes(provider)) out.push(provider);
   }
   return out;
 }
 
-/** Can a run use `provider` at all: an OAuth login (pi refreshes a short one
- * before the run), or any other credential pi has. */
-export function canUseProvider(
-  provider: string,
-  host: Pick<HostAuth, "logins" | "configured">,
-): boolean {
-  return host.logins()[provider]?.type === "oauth" || host.configured(provider);
+// ---- the route of one run --------------------------------------------------------
+
+/** The rows of the provider question, and of /qcr-setup model: the model each
+ * provider would run, whose credential it is, and what is not known about its
+ * price. The first is the one the order takes. */
+export function providerRows(route: ModelRoute): string[] {
+  const options = [route, ...route.alternatives];
+  const width = Math.max(...options.map((x) => x.spec.length));
+  return options.map((x) =>
+    [
+      x.spec.padEnd(width),
+      `${x.providerName}, ${credentialWords(x.credential)}`,
+      ...(x.priced ? [] : ["no list price"]),
+    ].join("    "),
+  );
 }
 
-/** What `borrowLogin` is asked. */
-interface BorrowRequest {
-  /** The providers the review's pinned models name. Empty: the review names
-   * none, and the whole login is borrowed. */
+/** What the run's own host is handed: the borrowed login and the route, with
+ * the model object the running pi resolved it to. */
+export interface RunLogin {
+  credentials: CredentialStore;
+  route: { fixed: ModelRoute; model?: Model<Api> };
+  /** The providers whose logins the run holds. */
   providers: readonly string[];
-  host: HostAuth;
-  needMs: number;
-  marginMs: number;
-  now?: () => number;
+}
+
+/** One run's model side, as resolved inside pi. */
+export interface RunRouted {
+  /** The route, or why there is none (a login the host could not renew
+   * included). */
+  result: RouteResult;
+  inventory: readonly ProviderInventory[];
+  /** The remembered provider. */
+  prefer?: string;
+  nameOf: (provider: string) => string;
+  /** What the person should hear beside a refusal. */
+  notes: readonly string[];
+  /** What the run's host is handed. Absent for a plan, and with no route. */
+  login?: RunLogin;
+}
+
+/** The part of the session's UI the provider question needs (session.ts
+ * `SessionUi`). */
+interface AskUi {
+  interactive: boolean;
+  select(title: string, options: string[], signal?: AbortSignal): Promise<string | undefined>;
+  notify(message: string, level: "info" | "warning" | "error"): void;
 }
 
 /**
- * Make one stored OAuth login last `want` more milliseconds, asking the host
- * pi to refresh it when it would not. Resolves to whether pi refreshed it,
- * or to the reason it cannot last.
+ * Resolve one run's route inside pi, asking once when two providers tie and
+ * a person may be asked, and borrow the login for it when the run starts.
  */
-async function lastOrRefresh(
-  o: BorrowRequest,
-  provider: string,
-  want: number,
-): Promise<{ refreshed: boolean } | { error: string }> {
-  const now = o.now ?? Date.now;
-  const held = o.host.logins()[provider];
-  if (held?.type === "oauth" && held.expires !== null && held.expires >= now() + want)
-    return { refreshed: false };
-  try {
-    await o.host.refresh(provider, want);
-  } catch (err) {
-    return {
-      error: `pi could not refresh your ${provider} login (${err instanceof Error ? err.message : String(err)}). Run /login ${provider} in pi, then /qcr-review again.`,
-    };
-  }
-  const after = o.host.logins()[provider];
-  if (after?.type !== "oauth" || after.expires === null || after.expires < now() + want)
-    return {
-      error: `your ${provider} login does not last this review's ${Math.round(o.needMs / 60_000)} minutes even after pi refreshed it. Run /login ${provider} in pi, then /qcr-review again.`,
-    };
-  return { refreshed: true };
-}
-
-/**
- * The whole login, for a review that names no provider: every stored key,
- * and every stored OAuth login that lasts the run or that pi refreshed to
- * last it. A login pi cannot renew is left out, not a refusal: the review
- * runs on another one. Only when pi stores logins and none of them can last
- * is the run refused, with the first one's reason. A pi that stores no login
- * borrows nothing, and a key in the environment is then the route.
- */
-async function borrowWholeLogin(o: BorrowRequest, want: number): Promise<BorrowResult> {
-  const refreshed: string[] = [];
-  const kept: string[] = [];
-  let firstError: string | undefined;
-  for (const [provider, login] of Object.entries(o.host.logins())) {
-    if (login.type !== "oauth") {
-      kept.push(provider);
-      continue;
+export async function routeInPi(o: {
+  /** The host pi: its agent dir (the login, the remembered choice) and auth. */
+  host: { agentDir: string; auth: Pick<HostAuth, "logins" | "refresh"> };
+  /** The host's route (`host.auth.route`), which the caller found present. */
+  resolve: NonNullable<HostAuth["route"]>;
+  ui: AskUi;
+  pin?: RouteInput["pin"];
+  /** A person may be asked which provider: never for a plan or JSON. */
+  ask: boolean;
+  /** What runs, in the question: "review" or "scan". */
+  what: string;
+  /** The run the login is borrowed for. Omitted: a plan, which borrows nothing. */
+  run?: { needMs: number; cfg: Pick<CoreConfig, "models"> };
+  signal?: AbortSignal;
+  warn: (line: string) => void;
+}): Promise<RunRouted> {
+  const { agentDir } = o.host;
+  const remembered = readModelChoice(agentDir);
+  if (remembered.notice !== undefined) o.warn(remembered.notice);
+  let choice = remembered.choice;
+  const resolve = (): HostRouted =>
+    o.resolve({ ...(o.pin ? { pin: o.pin } : {}), ...(choice ? { choice } : {}) });
+  let got = resolve();
+  if (got.result.ok && got.result.route.ask && o.ask && o.ui.interactive) {
+    const options = [got.result.route, ...got.result.route.alternatives];
+    const rows = providerRows(got.result.route);
+    const picked = await o.ui.select(
+      `QuickReview: which provider runs the ${o.what}?`,
+      rows,
+      o.signal,
+    );
+    const answer = picked === undefined ? undefined : options[rows.indexOf(picked)];
+    if (answer !== undefined) {
+      const written = writeModelChoice(agentDir, {
+        provider: answer.provider,
+        model: null,
+        via: "ask",
+      });
+      // A choice that cannot be kept still holds for this run.
+      if (written.ok)
+        o.ui.notify(
+          `QuickReview will use ${answer.providerName} from now on. /qcr-setup model changes it.`,
+          "info",
+        );
+      else o.ui.notify(written.error, "warning");
+      choice = {
+        provider: answer.provider,
+        model: null,
+        via: "ask",
+        no_estimate_ok: remembered.noEstimateOk,
+      };
+      got = resolve();
     }
-    const lasting = await lastOrRefresh(o, provider, want);
-    if ("error" in lasting) {
-      firstError ??= lasting.error;
-      continue;
-    }
-    if (lasting.refreshed) refreshed.push(provider);
-    kept.push(provider);
   }
-  if (kept.length === 0 && firstError !== undefined) return { ok: false, error: firstError };
-  return { ok: true, refreshed, providers: kept };
-}
-
-/**
- * Make sure every provider the review needs is usable for `needMs` from now,
- * refreshing a short OAuth login through the host. `marginMs` is added to the
- * window the host must cover. An empty `providers` is the whole login
- * (`borrowWholeLogin`), never no login at all.
- */
-export async function borrowLogin(o: BorrowRequest): Promise<BorrowResult> {
-  const want = o.needMs + o.marginMs;
-  if (o.providers.length === 0) return borrowWholeLogin(o, want);
-  const refreshed: string[] = [];
-  const providers = routedProviders(o.providers, o.host);
-  for (const p of providers) {
-    if (o.host.logins()[p]?.type === "oauth") {
-      const lasting = await lastOrRefresh(o, p, want);
-      if ("error" in lasting) return { ok: false, error: lasting.error };
-      if (lasting.refreshed) refreshed.push(p);
-      continue;
-    }
-    if (o.host.configured(p)) continue;
-    const keyed = Object.entries(o.host.logins())
-      .filter(([name, l]) => name !== p && l.type === "api_key")
-      .map(([name]) => name);
-    return { ok: false, error: noLoginHint(p, keyed) };
-  }
-  return { ok: true, refreshed, providers };
+  const base = {
+    inventory: got.inventory,
+    ...(choice !== undefined ? { prefer: choice.provider } : {}),
+    nameOf: got.nameOf,
+    notes: got.notes,
+  };
+  if (!got.result.ok || o.run === undefined) return { result: got.result, ...base };
+  const route = got.result.route;
+  const providers = routeProviders(route, o.run.cfg, base);
+  const borrowed = await borrowLogin({
+    agentDir,
+    host: o.host.auth,
+    providers,
+    needMs: o.run.needMs,
+    nameOf: got.nameOf,
+  });
+  if (!borrowed.ok) return { result: { ok: false, refusal: borrowed.refusal }, ...base };
+  return {
+    result: got.result,
+    ...base,
+    login: {
+      credentials: borrowed.credentials,
+      route: { fixed: route, ...(got.model !== undefined ? { model: got.model } : {}) },
+      providers,
+    },
+  };
 }

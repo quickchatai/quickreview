@@ -13,8 +13,14 @@
 //   there (`$QCR_CONFIG`, or the install's config home), else the shipped
 //   defaults; it is only read. A preset (args.ts) is the core's own review
 //   options, named.
-// - The login is the host pi's, borrowed (login.ts): the host refreshes a
-//   short one first, and the run reads a refresh-disabled copy.
+// - The model is the one this pi has a credential for: the running pi
+//   resolves the route over its own registry once the review has a plan,
+//   with `--model` (else the config's `[models] model`) as its pin, and asks
+//   once when two providers tie (login.ts). `--model` is the whole review's
+//   model for the run: no tier and no lens keeps a model of its own under it.
+// - The login is the host pi's, borrowed for that route (login.ts): the host
+//   renews a short one first, and the run holds a refresh-disabled copy of
+//   the route's providers alone, in memory.
 // - The run's sessions are nested SDK sessions in this process, isolated
 //   from the person's own pi setup (their extensions, skills and settings
 //   never reach a reviewer session), and the person's own session gets no
@@ -32,7 +38,6 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { assetRoot } from "../assetroot.js";
-import { PI_REFRESH_MARGIN_MS, type AuthCopyWords } from "../engine/auth.js";
 import { contextFrom } from "../engine/context.js";
 import { lazyReviewRuntime, type ReviewRuntimeOptions } from "../engine/reviewruntime.js";
 import { homeProfilePlaces, loadOneShotConfig, stateHome } from "../homes.js";
@@ -47,12 +52,13 @@ import {
   type ReviewRuntime,
   type ReviewTarget,
 } from "../reviewapi.js";
-import type { CoreConfig } from "../reviewconfig.js";
+import { readModelChoice } from "../modelchoice.js";
+import { routeNoticeLines, type RouteInput } from "../modelroute.js";
+import { isPinned, splitModelSpec, stripPins, type CoreConfig } from "../reviewconfig.js";
 import type { Destination } from "../reviewdest.js";
 import { prepareReviewHost } from "../reviewhost.js";
 import { parseReviewCommand, reviewLabel, REVIEW_PRESETS, type ReviewCommand } from "./args.js";
-import { borrowLogin } from "./login.js";
-import { reviewProviders } from "../modelroute.js";
+import { borrowLogin, routeInPi } from "./login.js";
 import type { PluginHost, SessionUi } from "./session.js";
 import { DEFAULT_SETTINGS, type PostingRule, type QuickReviewSettings } from "./settings.js";
 
@@ -62,12 +68,9 @@ export { KEEP_IT_HERE, postAnswer, REVIEW_MESSAGE } from "./messages.js";
 /** A review's wall clock, as `qcr review`'s. */
 export const REVIEW_TIMEOUT_MS = 60 * 60_000;
 
-/** What a refused login says inside pi: pi's own /login is the fix. */
-export const PLUGIN_AUTH_WORDS: AuthCopyWords = {
-  missing: (src) => `no pi login at ${src}: run /login in pi, then /qcr-review again`,
-  expiring: ({ provider, expiresAt, needMs }) =>
-    `your ${provider ?? "pi"} login expires at ${new Date(expiresAt).toISOString()}, inside this review's ${Math.round(needMs / 60_000)}-minute window, and pi did not renew it. Run /login${provider ? ` ${provider}` : ""} in pi, then /qcr-review again.`,
-};
+/** What the run's own host is handed of the model side: the borrowed login,
+ * and the route (fixed, once this pi resolved it). */
+type RunHost = Pick<ReviewRuntimeOptions, "credentials" | "route">;
 
 /** How long a stopped review (`--stop`, the session ending) gets to wind
  * down before /qcr-review gives up waiting on it. */
@@ -263,10 +266,13 @@ async function reviewJob(
   let root: string;
   let cfg: CoreConfig;
   let ecosystem: ReviewOptions["ecosystem"];
+  /** The install's config file; null when the shipped defaults stand in. */
+  let configPath: string | null;
   const profileHomes = homeProfilePlaces(env);
   try {
     root = deps.root();
     const loaded = loadOneShotConfig({ root, env, warn });
+    configPath = loaded.path;
     ({ cfg, ecosystem } = contextFrom(
       root,
       loaded,
@@ -287,29 +293,62 @@ async function reviewJob(
       ui,
       `${host.cwd} is not inside a git repository: /qcr-review reviews a git checkout`,
     );
-  // The providers whose logins ride into the run: the ones the config's
-  // pinned models name, routed by borrowLogin to the OpenAI login that
-  // exists. A config that pins none names none: the list is empty, and that
-  // is the whole login (borrowLogin, prepareReviewHost), never none of it.
-  let runProviders = reviewProviders(cfg);
+  // The route's pin: `--model`, else the config's own model. `--model` is the
+  // whole review's model for this run: every tier and lens the config pins to
+  // a model of its own loses that model and keeps its level, and the main
+  // session names no model either, so it runs on the route at the level the
+  // flag names, else the config's.
+  const pin: RouteInput["pin"] | undefined =
+    cmd.model !== undefined
+      ? { text: cmd.model, from: "flag" }
+      : isPinned(cfg.models.model)
+        ? { text: cfg.models.model, from: "config" }
+        : undefined;
+  const notes: string[] = [];
+  if (cmd.model !== undefined) {
+    const stripped = stripPins(cfg);
+    const level =
+      splitModelSpec(cmd.model).thinking !== null
+        ? null
+        : splitModelSpec(cfg.models.model).thinking;
+    cfg = {
+      ...stripped.cfg,
+      models: { ...stripped.cfg.models, model: level !== null ? `:${level}` : "" },
+    };
+    if (stripped.replaced > 0)
+      notes.push(
+        `--model replaces ${stripped.replaced} pinned tier and lens model${stripped.replaced === 1 ? "" : "s"} for this run`,
+      );
+  }
+  const config = cfg;
   const progress: ReviewProgress = {
     label,
     stage: cmd.preview ? "pricing" : "preparing",
     startedAt: Date.now(),
   };
   const showStatus = (): void => ui.status(reviewStatusLine(progress, Date.now()));
-  if (!cmd.preview) {
-    // The borrowed login first: refreshed by the host when short, refused
-    // with a hint when pi has none for a provider the review runs on, before
-    // anything is paid for.
+  // What the run's host is handed: set where the route is resolved, before
+  // the runtime is asked for.
+  let runHost: RunHost = {};
+  const resolve = host.auth.route;
+  if (resolve === undefined && !cmd.preview) {
+    // A host that hands no registry names no model: the whole login is
+    // borrowed, and the run's own host resolves its route from it.
     const borrowed = await borrowLogin({
-      providers: runProviders,
+      agentDir: host.agentDir,
       host: host.auth,
       needMs: REVIEW_TIMEOUT_MS,
-      marginMs: PI_REFRESH_MARGIN_MS,
     });
-    if (!borrowed.ok) return fail(ui, borrowed.error);
-    runProviders = borrowed.providers;
+    const choice = readModelChoice(host.agentDir).choice;
+    if (borrowed.ok)
+      runHost = {
+        credentials: borrowed.credentials,
+        route: {
+          skipped: borrowed.skipped,
+          ...(pin !== undefined ? { pin } : {}),
+          ...(choice !== undefined ? { choice } : {}),
+        },
+      };
   }
   // The result is shown here and kept as files; JSON alone with --json. A
   // post is never a destination: the posting rule offers it after the review.
@@ -373,7 +412,7 @@ async function reviewJob(
     runsDir: join(storeDir, "runs"),
     dryrunDir: join(storeDir, "dryrun"),
     storeDir,
-    config: cfg,
+    config,
     ecosystem,
     profileHomes,
     // `--security`, or the `security` preset: the person at pi asks for the
@@ -384,10 +423,10 @@ async function reviewJob(
       : {}),
     runtime: (req) => {
       runDir = req.runDir;
-      return deps.runtime(cfg, {
+      return deps.runtime(config, {
         hostPi: true,
-        // The host pi renewed the login for this run's whole window just now.
-        authMarginMs: 0,
+        // The login this pi lent the run, and the route it resolved.
+        ...runHost,
         warn: log,
         homeDir: host.home,
         fenceDirs: [host.agentDir],
@@ -399,17 +438,47 @@ async function reviewJob(
         },
       });
     },
-    // Only the review's providers ride into the run, as borrowLogin renewed
-    // (and, for an OpenAI model, routed) them: a person's pi holds other
-    // logins, which neither go along nor refuse the run. For a review that
-    // names no provider these are the stored logins borrowLogin kept.
-    prepareHost: (req) =>
-      prepareReviewHost({
-        ...req,
-        profile: req.profile,
-        authWords: PLUGIN_AUTH_WORDS,
-        authProviders: runProviders,
-      }),
+    // The model, resolved by this pi once the review has a plan. A start
+    // borrows the login for it; a preview borrows nothing and asks nothing.
+    ...(resolve !== undefined
+      ? {
+          route: async () => {
+            const routed = await routeInPi({
+              host,
+              resolve,
+              ui,
+              ...(pin !== undefined ? { pin } : {}),
+              ask: !cmd.preview && !cmd.json,
+              what: "review",
+              ...(cmd.preview ? {} : { run: { needMs: REVIEW_TIMEOUT_MS, cfg: config } }),
+              signal: stop.signal,
+              warn,
+            });
+            if (routed.login !== undefined)
+              runHost = { credentials: routed.login.credentials, route: routed.login.route };
+            if (!routed.result.ok) for (const note of routed.notes) warn(note);
+            else if (!cmd.preview) {
+              // Which model runs, why, and how to change it: said once, where
+              // the person reads (the preview's own lines go to the run's log).
+              const said = routeNoticeLines(routed.result.route, "plugin").join("\n");
+              if (ui.mode === "print" && !cmd.json) ui.print(said);
+              ui.notify(said, "info");
+            }
+            return {
+              result: routed.result,
+              inventory: routed.inventory,
+              ...(routed.prefer !== undefined ? { prefer: routed.prefer } : {}),
+              surface: "plugin" as const,
+              facts: { needMs: REVIEW_TIMEOUT_MS, configPath, nameOf: routed.nameOf },
+              notes,
+            };
+          },
+        }
+      : {}),
+    // The run's private agent dir holds no login file: the host has the
+    // borrowed one in memory. It does get pi's two catalog files, so the run
+    // knows the models this pi knows.
+    prepareHost: (req) => prepareReviewHost({ ...req, auth: "injected" }),
     memory: null,
     destinations,
     full: preset?.full ?? false,

@@ -15,6 +15,14 @@
 // person agrees. `--preview` prices the run and starts nothing. `--path DIR`
 // scans one folder of the repo (scan/scan.ts `scanPath`).
 //
+// A scan has one model: the route this pi resolves over its own registry
+// (login.ts), with `--model` (else the config's `[models] model`) as its pin.
+// It is resolved for every plan, which shows it and keys on it, and again
+// for every start, which borrows the login for it and hands each case's host
+// that one route (scancases.ts). `--model` is the whole scan's model: under
+// it no tier and no lens keeps a model of its own. Two providers that tie
+// are asked about once, when a plan is made for a person.
+//
 // `/qcr-scan <subcommand> …` is the scan's verb of that name, the same one
 // `qcr scan <subcommand>` runs (scan/scanverbs.ts), answered here. A start
 // runs in the background in this pi, like the guided one. What is the app's
@@ -28,14 +36,16 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { assetRoot } from "../assetroot.js";
 import { homeProfileLookup, loadOneShotConfig, repoScanHome, stateHome } from "../homes.js";
-import type { CoreConfig } from "../reviewconfig.js";
+import { refusalText, type RouteInput } from "../modelroute.js";
+import { isPinned, splitModelSpec, stripPins, tierSpec, type CoreConfig } from "../reviewconfig.js";
+import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import { scanConfigOf } from "../scan/scanagents.js";
 import { assembleScan, type AssembledScan } from "../scan/scanassemble.js";
 import { checkoutReader, stateHomeFs } from "../scan/scanfs.js";
 import type { CaseRunner, Refusal } from "../scan/scanports.js";
 import { listFindings, renderStatus, type ScanVerbs } from "../scan/scanrender.js";
 import { scanPath, underPath } from "../scan/scan.js";
-import type { ScanRun, ScanStatus } from "../scan/scanrun.js";
+import type { ScanModelView, ScanRouted, ScanRun, ScanStatus } from "../scan/scanrun.js";
 import {
   findingJson,
   parseScanArgs,
@@ -44,11 +54,9 @@ import {
   type FindingJson,
 } from "../scan/scanverbs.js";
 import { UnitCutStore } from "../scan/unitcutstore.js";
-import { PI_REFRESH_MARGIN_MS } from "../engine/auth.js";
 import { splitArgs } from "./args.js";
-import { borrowLogin } from "./login.js";
-import { reviewProviders } from "../modelroute.js";
-import { PLUGIN_CASE_MS, pluginScanCases } from "./scancases.js";
+import { routeInPi } from "./login.js";
+import { PLUGIN_CASE_MS, pluginScanCases, scanWords, type ScanCaseRoute } from "./scancases.js";
 import type { PluginHost, SessionUi } from "./session.js";
 
 /** The npm package of the QuickReview app (the `qcr` CLI). The scan does not
@@ -79,7 +87,7 @@ export const SCAN_SUBCOMMANDS = [
 export const APP_SUBCOMMANDS: readonly string[] = ["login", "doctor", "rebuild", "dismiss"];
 
 export const SCAN_COMMAND_USAGE =
-  "usage: /qcr-scan [--delta] [--sha REF] [--path DIR] [--preview] | /qcr-scan <scan subcommand> …";
+  "usage: /qcr-scan [--delta] [--sha REF] [--path DIR] [--model M] [--preview] | /qcr-scan <scan subcommand> …";
 
 /** How the scan's answers name the next step here. */
 export const PLUGIN_SCAN_VERBS: ScanVerbs = {
@@ -98,7 +106,15 @@ export const PLUGIN_SCAN_VERBS: ScanVerbs = {
 /** The guided `/qcr-scan` line for `o`: what a preview offers as the run
  * after it keeps the scope the person priced (folder, delta, commit). */
 export function guidedScanLine(o: ScanOptions): string {
-  return `/qcr-scan${o.delta ? " --delta" : ""}${o.sha ? ` --sha ${o.sha}` : ""}${slashPathFlag(o.path)}`;
+  return `/qcr-scan${o.delta ? " --delta" : ""}${o.sha ? ` --sha ${o.sha}` : ""}${slashPathFlag(o.path)}${slashModelFlag(o.model)}`;
+}
+
+/** ` --model M` for a `/qcr-scan` line, or nothing: a plan made under
+ * `--model` is started under it, or its key no longer holds. Double-quoted
+ * when it holds a space, as pi's words read it back (`slashPathFlag`). */
+export function slashModelFlag(model: string | undefined): string {
+  if (model === undefined) return "";
+  return ` --model ${/\s/.test(model) ? `"${model}"` : model}`;
 }
 
 /**
@@ -124,6 +140,8 @@ export interface ScanOptions {
   sha?: string;
   /** One folder of the repo, normalised (scan/scan.ts `scanPath`). */
   path?: string;
+  /** `--model`, as written: the whole scan's model for this run. */
+  model?: string;
   /** Price it, start nothing. */
   preview?: boolean;
 }
@@ -150,6 +168,11 @@ export function parseScanCommand(
       // The last --path wins, as `qcr scan`'s does: a later `.` is the whole repo.
       if (p.path === null) delete o.path;
       else o.path = p.path;
+      i++;
+    } else if (w === "--model" && next !== undefined && !next.startsWith("--")) {
+      if (next.trim() === "")
+        return { error: `--model needs a model: provider/model\n${SCAN_COMMAND_USAGE}` };
+      o.model = next.trim();
       i++;
     } else if (w === "--sandbox")
       return {
@@ -187,8 +210,16 @@ interface RepoScan extends AssembledScan {
   /** The host the latest command came from: the cases borrow its login. */
   host: PluginHost;
   units: UnitCutStore;
-  /** The config as it reads now, or why it cannot be read. */
-  config: () => { ok: true; cfg: CoreConfig } | Refusal;
+  /** The config as it reads now, or why it cannot be read. Under `--model`
+   * (`flag`) no tier and no lens keeps a model of its own, and `replaced`
+   * counts the ones that had one. `path` is the config's file; null when the
+   * shipped defaults stand in. */
+  config: () => { ok: true; cfg: CoreConfig; replaced: number; path: string | null } | Refusal;
+  /** The `--model` of the command that plans or starts now. A command that
+   * does neither leaves it alone. */
+  flag: { model?: string };
+  /** The route the latest start resolved, for the cases of its run. */
+  caseRoute: ScanCaseRoute | undefined;
   log: (line: string) => void;
 }
 
@@ -248,10 +279,14 @@ function buildRepoScan(host: PluginHost, home: string, deps: ScanCommandDeps): R
     }
   };
   const profiles = homeProfileLookup(env);
-  const config = (): { ok: true; cfg: CoreConfig } | Refusal => {
+  const flag: RepoScan["flag"] = {};
+  const config: RepoScan["config"] = () => {
     try {
       const loaded = loadOneShotConfig({ root, env, warn: log });
-      return { ok: true, cfg: scanConfigOf(loaded.cfg, root, profiles) };
+      const cfg = scanConfigOf(loaded.cfg, root, profiles);
+      if (flag.model === undefined) return { ok: true, cfg, replaced: 0, path: loaded.path };
+      const stripped = stripPins(cfg);
+      return { ok: true, cfg: stripped.cfg, replaced: stripped.replaced, path: loaded.path };
     } catch (err) {
       return {
         ok: false,
@@ -280,20 +315,123 @@ function buildRepoScan(host: PluginHost, home: string, deps: ScanCommandDeps): R
         host: () => repo?.host ?? host,
         root,
         home,
-        // the configuration the latest start built its agents from; empty
-        // when it pins no model, and a case then borrows the whole login
-        providers: () => {
-          const c = config();
-          return c.ok ? reviewProviders(c.cfg) : [];
-        },
+        // the route the latest start resolved: one per scan
+        route: () => repo?.caseRoute,
         agentsDir,
         transcriptDir,
         stop,
       }),
     log,
   });
-  repo = { ...assembled, host, units, config, log };
+  repo = { ...assembled, host, units, config, flag, caseRoute: undefined, log };
   return repo;
+}
+
+/** A plan's lines about the scan's model, each on a line of its own after
+ * what the plan says; nothing when the host named no model. */
+const modelWords = (view: ScanModelView): string =>
+  view.model_lines?.length ? `\n${view.model_lines.join("\n")}` : "";
+
+/** The question a price ends in: on the plan's own line, or on a line of its
+ * own under the model's. */
+const startIt = (on: string): string => `${on}${on === "" ? " " : "\n"}Start it?`;
+
+/**
+ * The scan's model for one plan or one start, as this pi resolves it
+ * (login.ts `routeInPi`): the pin is the command's `--model`, else the
+ * config's own. Beside the route it answers with each tier's spec as it will
+ * run, and says what `--model` replaced and when stage 1's tier is not on
+ * the route at all. A start (`run`) also borrows the login for the route,
+ * which refuses a login the host could not renew before anything is paid
+ * for, and keeps the route for the cases of its run.
+ */
+async function scanRouteOn(
+  resolve: NonNullable<PluginHost["auth"]["route"]>,
+  host: PluginHost,
+  ui: SessionUi,
+  engine: RepoScan,
+  o: { run: boolean; ask: boolean },
+): Promise<ScanRouted> {
+  const loaded = engine.config();
+  const cfg = loaded.ok ? loaded.cfg : null;
+  const flagged = engine.flag.model;
+  const pin: RouteInput["pin"] | undefined =
+    flagged !== undefined
+      ? { text: flagged, from: "flag" }
+      : cfg !== null && isPinned(cfg.models.model)
+        ? { text: cfg.models.model, from: "config" }
+        : undefined;
+  const notes: string[] = [];
+  if (flagged !== undefined && loaded.ok && loaded.replaced > 0)
+    notes.push(
+      `--model replaces ${loaded.replaced} pinned tier and lens model${loaded.replaced === 1 ? "" : "s"} for this run`,
+    );
+  const routed = await routeInPi({
+    host,
+    resolve,
+    ui,
+    ...(pin !== undefined ? { pin } : {}),
+    ask: o.ask,
+    what: "scan",
+    // A config that cannot be read starts nothing: the plan refuses for it.
+    ...(o.run && cfg !== null ? { run: { needMs: PLUGIN_CASE_MS, cfg } } : {}),
+    signal: host.shutdown,
+    warn: (line) => ui.notify(line, "warning"),
+  });
+  if (o.run)
+    engine.caseRoute =
+      routed.login !== undefined
+        ? { route: routed.login.route, providers: routed.login.providers, nameOf: routed.nameOf }
+        : undefined;
+  if (!routed.result.ok) {
+    for (const note of routed.notes) ui.notify(scanWords(note), "warning");
+    return {
+      result: routed.result,
+      surface: "plugin",
+      refusal: scanWords(
+        refusalText(routed.result.refusal, "plugin", {
+          needMs: PLUGIN_CASE_MS,
+          configPath: loaded.ok ? loaded.path : null,
+          nameOf: routed.nameOf,
+        }),
+      ),
+      notes,
+    };
+  }
+  const route = routed.result.route;
+  const result = {
+    ok: true as const,
+    route: { ...route, notices: route.notices.map(scanWords) },
+  };
+  if (cfg === null) return { result, surface: "plugin", notes };
+  const tiers = Object.fromEntries(
+    PASS_TIER_ORDER.map((tier) => [tier, tierSpec(route, cfg, tier)]),
+  ) as Record<PassTier, string>;
+  // A tier the config pins to a model of its own does not run on the route:
+  // said where stage 1's does, since the model line names another.
+  const own = cfg.models.tiers[cfg.scan.tier];
+  if (isPinned(own) && splitModelSpec(own).model !== route.spec)
+    notes.push(
+      `stage 1 runs on ${own}: [models.tiers] ${cfg.scan.tier} pins it (--model puts the whole scan on one model)`,
+    );
+  return { result, surface: "plugin", tiers, notes };
+}
+
+/** `scanRouteOn` as a plan or a start takes it. A host that hands no
+ * registry answers nothing: the plan names no model, and each case's host
+ * resolves its own. */
+async function scanRoute(
+  host: PluginHost,
+  ui: SessionUi,
+  engine: RepoScan,
+  o: { run: boolean; ask: boolean },
+): Promise<{ model?: ScanRouted }> {
+  const resolve = host.auth.route;
+  if (resolve === undefined) {
+    if (o.run) engine.caseRoute = undefined;
+    return {};
+  }
+  return { model: await scanRouteOn(resolve, host, ui, engine, o) };
 }
 
 const usd = (n: number | null): string => (n === null ? "an unknown price" : `$${n.toFixed(2)}`);
@@ -351,12 +489,24 @@ async function priceAndStart(
   { ok: true; run: ScanRun } | { ok: true; preview: string } | { ok: false; error: string }
 > {
   const { scan } = engine;
+  if (o.model !== undefined && host.auth.route === undefined)
+    return {
+      ok: false,
+      error: "--model is not available here: this surface resolves no model for a scan",
+    };
+  // The command's `--model`, for the config its plan and its start read.
+  if (o.model !== undefined) engine.flag.model = o.model;
+  else delete engine.flag.model;
   ui.status("QuickReview: pricing the scan…");
   try {
+    // The scan's model, for the plan: asked about once when two providers
+    // tie and a person is here.
+    const planned = await scanRoute(host, ui, engine, { run: false, ask: true });
     const previewArgs = {
       ...(o.sha ? { sha: o.sha } : {}),
       delta: o.delta,
       ...(o.path ? { path: o.path } : {}),
+      ...planned,
     };
     let pv = await scan.preview(previewArgs);
     if (!pv.ok && pv.errors.some((e) => NO_CUT.test(e))) {
@@ -386,27 +536,18 @@ async function priceAndStart(
     let p = pv.preview;
     if (p.blockers.length > 0)
       return { ok: false, error: `the scan cannot start: ${p.blockers.join("; ")}` };
-    // The login before anything is paid for: pi's /login is the fix. Asked
-    // once, before whichever start comes first.
-    let borrowed = false;
-    const borrow = async (): Promise<string | null> => {
-      if (borrowed) return null;
-      borrowed = true;
-      const cfg = engine.config();
-      if (!cfg.ok) return null;
-      const b = await borrowLogin({
-        providers: reviewProviders(cfg.cfg),
-        host: host.auth,
-        needMs: PLUGIN_CASE_MS,
-        marginMs: PI_REFRESH_MARGIN_MS,
-      });
-      return b.ok ? null : b.error.replaceAll("/qcr-review", "/qcr-scan");
-    };
+    // The model again for a start, and the login borrowed for it before
+    // anything is paid for: a start with no route, or with a login this pi
+    // could not renew, is refused by the runner in the route's own words.
+    const started = (): Promise<{ model?: ScanRouted }> =>
+      scanRoute(host, ui, engine, { run: true, ask: false });
     // Stage 0 is part of the scan ([scan] threat_model): when it is due, the
     // threat model is drafted first, at the price shown, and the scan is
     // priced again over its draft.
     const stage0 = p.threat_model_stage;
     if (stage0 !== undefined) {
+      // The model this plan is for: stage 0 runs on it too.
+      const on = modelWords(p);
       const first =
         `Before scanning ${host.cwd}, QuickReview drafts its threat model (stage 0 — ${stage0.why}): one case, ` +
         `${stage0.estimate_usd === null ? "no price measured yet" : `about ${usd(stage0.estimate_usd)}`}, stopped hard at ${usd(stage0.cap_usd)}. ` +
@@ -414,16 +555,14 @@ async function priceAndStart(
       if (o.preview)
         return {
           ok: true,
-          preview: `${first}\n\nStart it with \`${PLUGIN_SCAN_VERBS.threatModelStart!(stage0)}\`, or \`${guidedScanLine(o)}\`; the scan itself is priced once the draft is written.`,
+          preview: `${first}${on}\n\nStart it with \`${PLUGIN_SCAN_VERBS.threatModelStart!(stage0)}${slashModelFlag(o.model)}\`, or \`${guidedScanLine(o)}\`; the scan itself is priced once the draft is written.`,
         };
       if (!ui.interactive)
         return {
           ok: false,
-          error: `${first} A scan spends money, and nobody here can confirm it: run /qcr-scan in an interactive pi.`,
+          error: `${first} A scan spends money, and nobody here can confirm it: run /qcr-scan in an interactive pi.${on}`,
         };
-      const login = await borrow();
-      if (login !== null) return { ok: false, error: login };
-      if (!(await ui.confirm("QuickReview scan", `${first} Start it?`, host.shutdown)))
+      if (!(await ui.confirm("QuickReview scan", `${first}${startIt(on)}`, host.shutdown)))
         return {
           ok: false,
           error:
@@ -431,7 +570,7 @@ async function priceAndStart(
               ? 'the scan was not started: [scan] threat_model drafts a threat model first (set it to "off" to skip drafting and scan with no threat model)'
               : 'the scan was not started: [scan] threat_model drafts a revised threat model first (set it to "off" to skip drafting; the scan still reads the existing model)',
         };
-      const s0 = await scan.start({ key: stage0.key, sha: stage0.sha });
+      const s0 = await scan.start({ key: stage0.key, sha: stage0.sha, ...(await started()) });
       if (!s0.ok) return { ok: false, error: s0.errors.join("; ") };
       // Stage 0 is paid for like any stage: Esc, the session ending and a
       // stop asked for from outside this pi stop it, as they stop the scan.
@@ -466,25 +605,24 @@ async function priceAndStart(
     if (o.preview)
       return {
         ok: true,
-        preview: `${what}\n\nStart it with \`${PLUGIN_SCAN_VERBS.start(p)}\`, or \`${guidedScanLine(o)}\`.`,
+        preview: `${what}${modelWords(p)}\n\nStart it with \`${PLUGIN_SCAN_VERBS.start(p)}${slashModelFlag(o.model)}\`, or \`${guidedScanLine(o)}\`.`,
       };
     if (!ui.interactive)
       return {
         ok: false,
-        error: `${what} A scan spends money, and nobody here can confirm it: run /qcr-scan in an interactive pi.`,
+        error: `${what} A scan spends money, and nobody here can confirm it: run /qcr-scan in an interactive pi.${modelWords(p)}`,
       };
-    const login = await borrow();
-    if (login !== null) return { ok: false, error: login };
-    if (!(await ui.confirm("QuickReview scan", `${what} Start it?`, host.shutdown)))
+    if (!(await ui.confirm("QuickReview scan", `${what}${startIt(modelWords(p))}`, host.shutdown)))
       return { ok: false, error: "the scan was not started" };
-    const started = await scan.start({
+    const run = await scan.start({
       key: p.key,
       sha: p.sha,
       delta: p.mode === "delta",
       ...(p.path !== null ? { path: p.path } : {}),
+      ...(await started()),
     });
-    if (!started.ok) return { ok: false, error: started.errors.join("; ") };
-    return { ok: true, run: started.run };
+    if (!run.ok) return { ok: false, error: run.errors.join("; ") };
+    return { ok: true, run: run.run };
   } finally {
     ui.status(undefined);
   }
@@ -688,6 +826,12 @@ async function passThrough(
   if (host.shutdown.aborted) halt.abort();
   const offEscape = ui.onEscape(() => halt.abort());
   const out: string[] = [];
+  const resolve = host.auth.route;
+  // The verb's `--model`, for the config its plan and its start read.
+  const useFlag = (model: string | undefined): void => {
+    if (model !== undefined) engine.flag.model = model;
+    else delete engine.flag.model;
+  };
   let code: number;
   try {
     code = await runScanVerb(rest, json, {
@@ -700,6 +844,16 @@ async function passThrough(
       repo: host.cwd,
       driverLog: join(engine.home, "scan", "plugin.log"),
       out: (l) => out.push(l),
+      // The scan's model, as this pi resolves it. A host that hands no
+      // registry offers none, and `--model` is then refused.
+      ...(resolve !== undefined
+        ? {
+            route: (ask): Promise<ScanRouted> => {
+              useFlag(ask.pin);
+              return scanRouteOn(resolve, host, ui, engine, { run: ask.run, ask: ask.ask });
+            },
+          }
+        : {}),
       // A start runs here, in the background, like the guided one.
       detach: async (args): Promise<DetachOutcome> => {
         if (sessions.running !== null)
@@ -710,6 +864,10 @@ async function passThrough(
             ],
           };
         const parsed = parseScanArgs(args);
+        // The cases run in this pi: its route, resolved once for the start,
+        // and the key holds only when it is the one the plan was shown under.
+        useFlag("model" in parsed ? parsed.model : undefined);
+        const m = await scanRoute(host, ui, engine, { run: true, ask: false });
         const r =
           parsed.verb === "start"
             ? await engine.scan.start({
@@ -717,16 +875,19 @@ async function passThrough(
                 ...(parsed.sha ? { sha: parsed.sha } : {}),
                 delta: parsed.delta,
                 ...(parsed.path ? { path: parsed.path } : {}),
+                ...m,
               })
             : parsed.verb === "stage2-start"
               ? await engine.scan.startStage2({
                   key: parsed.key,
                   ...(parsed.rows ? { rows: parsed.rows } : {}),
+                  ...m,
                 })
               : parsed.verb === "threat-model-start"
                 ? await engine.scan.startThreatModel({
                     key: parsed.key,
                     ...(parsed.sha ? { sha: parsed.sha } : {}),
+                    ...m,
                   })
                 : ({ ok: false, errors: [`not a start: ${args.join(" ")}`] } as Refusal);
         if (!r.ok) return r;

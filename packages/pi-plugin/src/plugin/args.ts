@@ -14,6 +14,11 @@
 //   --json          the result as JSON (pi's print mode)
 //   --profile NAME  review under that profile
 //   --limit USD     this run's limit (above it the run asks)
+//   --model MODEL   the model the whole review runs on, for this run:
+//                   provider/id, an id pi knows, or either with a :level, as
+//                   pi's own --model reads it. It replaces every tier and
+//                   lens model the config pins; `/qcr-setup model` keeps a
+//                   choice
 //   --repo O/N      the PR's repo, when it is not the cwd's
 //   --stop          stop the review running in this session
 //   --security      ask for a security review on top of the plan: the
@@ -78,6 +83,8 @@ export interface ReviewCommand {
   json: boolean;
   profile?: string;
   limitUsd?: number;
+  /** `--model`, as written: the route's pin for this run. */
+  model?: string;
   /** `--security`: a security review asked for on top of the plan. Set only
    * when the flag is given. */
   securityRequest?: true;
@@ -85,7 +92,7 @@ export interface ReviewCommand {
 
 export const REVIEW_COMMAND_USAGE =
   `usage: /qcr-review [${REVIEW_PRESET_NAMES.join("|")}] [PR number or URL | BRANCH | --uncommitted] ` +
-  "[--base REF] [--preview] [--json] [--security] [--profile NAME] [--limit USD] [--repo OWNER/NAME] | /qcr-review --stop";
+  "[--base REF] [--preview] [--json] [--security] [--profile NAME] [--limit USD] [--model MODEL] [--repo OWNER/NAME] | /qcr-review --stop";
 
 /** The words of a command line; double quotes group, nothing else is special. */
 export function splitArgs(line: string): string[] {
@@ -157,6 +164,12 @@ export function parseReviewCommand(
           if (!Number.isFinite(n) || n <= 0)
             throw new Error("--limit takes a positive amount in USD");
           cmd.limitUsd = n;
+          break;
+        }
+        case "--model": {
+          const text = value(i++, w).trim();
+          if (text === "") throw new Error("--model needs a model: provider/model");
+          cmd.model = text;
           break;
         }
         case "--full":

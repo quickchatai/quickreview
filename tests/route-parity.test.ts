@@ -13,11 +13,17 @@
 //   the registry  registryInventory + textResolver + resolveRoute over a pi
 //                 registry facade (what an extension inside a running pi is
 //                 handed);
+//   the plugin    the pi plugin's own sequence inside a running pi: the
+//                 extension's host auth over the pi's registry
+//                 (packages/pi-plugin/extensions/quickreview.ts `hostAuth`)
+//                 and the plugin's reading of the remembered choice
+//                 (packages/pi-plugin/src/plugin/login.ts `routeInPi`), which
+//                 is how /qcr-review, /qcr-scan and /qcr-setup resolve;
 //   the CLI       `qcr model --json` (src/modelcli.ts), which resolves on a
 //                 private copy of the home's catalog.
 //
-// The legs that are not built yet join here as they land: the plugin's
-// extension itself, and the worker's own sequence.
+// The leg that is not built yet joins here as it lands: the worker's own
+// sequence.
 //
 // Five homes, one per thing that decides a route: one provider, several,
 // a remembered answer, the guard (pi's default standing in for a newest
@@ -32,13 +38,18 @@
 // out of CATALOG_FILES in packages/pi-plugin/src/reviewhost.ts) — the CLI's
 // private copy has never heard of the overlay model, the overlay case differs
 // and this fails.
+//
+// MUTATION: drop `choice` from what routeInPi asks the host's route for
+// (packages/pi-plugin/src/plugin/login.ts) — the plugin leg forgets the
+// remembered answer, the remembered case differs and this fails.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { builtinProviders, getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
-import { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRegistry, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { hostAuth } from "@quickchatai/pi-quickreview/extensions/quickreview.js";
 import { borrowedCredentials } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import {
   PiHost,
@@ -50,6 +61,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { MODEL_CHOICE_FILE, readModelChoice } from "@quickchatai/pi-quickreview/src/modelchoice.js";
 import { listPrice, pickModel } from "@quickchatai/pi-quickreview/src/modelpick.js";
+import { routeInPi } from "@quickchatai/pi-quickreview/src/plugin/login.js";
 import {
   resolveRoute,
   type ModelRoute,
@@ -172,6 +184,28 @@ async function viaRegistry(): Promise<RouteResult> {
   });
 }
 
+/** The plugin: the extension's host auth over a running pi's registry, then
+ * the plugin's own sequence (the choice file read from the pi's agent dir).
+ * The pi's session is on no model, as pi's settings name no provider here. */
+async function viaPlugin(): Promise<RouteResult> {
+  const { credentials, authEnv } = inputs();
+  // A host with no route inputs of its own stands in for the running pi.
+  const pi = await hostOver({ credentials, authEnv });
+  await pi.inventory();
+  const ctx = { model: undefined, modelRegistry: new ModelRegistry(pi.modelRuntime) };
+  const auth = hostAuth(ctx as unknown as ExtensionCommandContext, home);
+  const routed = await routeInPi({
+    host: { agentDir: home, auth },
+    resolve: auth.route!,
+    // Nobody to ask: the order decides, as on the other legs.
+    ui: { interactive: false, select: async () => undefined, notify: () => {} },
+    ask: false,
+    what: "review",
+    warn: () => {},
+  });
+  return routed.result;
+}
+
 /** The CLI: `qcr model --json`, over a config whose `[models]` is `models`. */
 async function viaCli(models: ModelCliDeps["models"]): Promise<ModelCliJson> {
   const out: string[] = [];
@@ -199,6 +233,7 @@ async function sameOnEveryRoute(models: ModelCliDeps["models"] = UNPINNED): Prom
   const host = await viaHost();
   if (!host.ok) throw new Error(`the host has no route: ${JSON.stringify(host.refusal)}`);
   expect(await viaRegistry(), "the registry leg").toEqual(host);
+  expect(await viaPlugin(), "the plugin leg").toEqual(host);
   const cli = await viaCli(models);
   expect(cli.config_pin, "the CLI leg").toBeNull();
   expect(cli.ok, "the CLI leg").toBe(true);
@@ -206,7 +241,7 @@ async function sameOnEveryRoute(models: ModelCliDeps["models"] = UNPINNED): Prom
   return host.route;
 }
 
-describe("one rule on every route: the host, the registry and qcr model agree", () => {
+describe("one rule on every route: the host, the registry, the plugin and qcr model agree", () => {
   it("one provider", async () => {
     withLocal();
     expect(await sameOnEveryRoute()).toMatchObject({

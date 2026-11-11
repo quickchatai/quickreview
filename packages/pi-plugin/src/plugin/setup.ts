@@ -3,10 +3,15 @@
 // /qcr-setup detects afresh.
 //
 //   pi version     the running pi is inside the plugin's declared range
-//   login          pi has a login the review can run on: any stored login
-//                  when the config pins no model; with pinned models, one for
-//                  every provider they name (only a key for another provider
-//                  is then missing, with the /login hint)
+//   login          pi has a credential the review can run on: a route
+//                  resolves over this pi's own registry (login.ts), for any
+//                  provider, a stored login or a key in the environment. A
+//                  config that pins a model needs that model's provider.
+//   review model   the model reviews run on and why it is the one. Optional:
+//                  it is pending only while two providers tie and nothing was
+//                  chosen. `/qcr-setup model`, or yes to the offer after the
+//                  list, picks the provider (or hands the pick back to
+//                  QuickReview) and remembers it beside pi's logins.
 //   git            git is on PATH (every review target is a git one)
 //   GitHub         a credential for PR targets: GH_TOKEN or GITHUB_TOKEN set,
 //                  or `gh` logged in (only their presence is read, never a
@@ -37,10 +42,18 @@ import { LENS_TUNING_KEYS } from "../lenstuning.js";
 import { REPO_PROFILE_DIR, REPO_TOML_KEYS } from "../profileoverrides.js";
 import { PROFILES_DIR } from "../profilelookup.js";
 import type { CoreConfig } from "../reviewconfig.js";
+import { clearModelChoice, readModelChoice, writeModelChoice } from "../modelchoice.js";
+import {
+  credentialWords,
+  refusalText,
+  routeNoticeLines,
+  routeWhy,
+  type RouteInput,
+} from "../modelroute.js";
+import { isPinned } from "../reviewconfig.js";
 import { SEVERITIES } from "../severityrank.js";
 import { PASS_TIER_ORDER } from "../types.js";
-import { canUseProvider, noLoginHint, routedProviders } from "./login.js";
-import { reviewProviders } from "../modelroute.js";
+import { providerRows, type HostRouted } from "./login.js";
 import type { PluginHost, SessionUi } from "./session.js";
 import { piGate } from "./versiongate.js";
 
@@ -48,6 +61,7 @@ import { piGate } from "./versiongate.js";
 export const PLUGIN_SETUP_STEPS = {
   pi: "pi_version",
   login: "pi_login",
+  model: "review_model",
   git: "git",
   github: "github_credential",
   profile: "repo_profile",
@@ -65,19 +79,54 @@ export interface PluginSetupOptions {
   tellAgent?: (text: string) => void;
 }
 
-/** The review's config as /qcr-review would load it; the reason when it
- * cannot be read. */
-function reviewConfig(host: PluginHost, root: () => string): CoreConfig | string {
+/** The review's config as /qcr-review would load it, and its file (null:
+ * the shipped defaults stand in); the reason when it cannot be read. */
+function reviewConfig(
+  host: PluginHost,
+  root: () => string,
+): { cfg: CoreConfig; path: string | null } | string {
   try {
     const env = { ...host.env, HOME: host.home };
     const r = root();
     const loaded = loadOneShotConfig({ root: r, env });
-    return contextFrom(r, loaded, loaded.cfg.review.profile, "", {
+    const { cfg } = contextFrom(r, loaded, loaded.cfg.review.profile, "", {
       homes: homeProfilePlaces(env),
-    }).cfg;
+    });
+    return { cfg, path: loaded.path };
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
   }
+}
+
+/** The route a review started now would run on, as this pi resolves it
+ * (login.ts): the config's pin and the remembered choice. `unread` says why
+ * it cannot be asked for at all. */
+function reviewRoute(
+  host: PluginHost,
+  root: () => string,
+):
+  | { routed: HostRouted; pin: RouteInput["pin"] | undefined; configPath: string | null }
+  | { unread: string } {
+  const loaded = reviewConfig(host, root);
+  if (typeof loaded === "string")
+    return { unread: `the review's config cannot be read: ${loaded}` };
+  const resolve = host.auth.route;
+  if (resolve === undefined)
+    return {
+      unread: "this pi's model registry cannot be read here, so its credentials are unknown",
+    };
+  const pin: RouteInput["pin"] | undefined = isPinned(loaded.cfg.models.model)
+    ? { text: loaded.cfg.models.model, from: "config" }
+    : undefined;
+  const choice = readModelChoice(host.agentDir).choice;
+  return {
+    routed: resolve({
+      ...(pin !== undefined ? { pin } : {}),
+      ...(choice !== undefined ? { choice } : {}),
+    }),
+    pin,
+    configPath: loaded.path,
+  };
 }
 
 /** A step whose run and verify both re-check what detect checks: there is
@@ -170,42 +219,41 @@ export function pluginSetupSteps(o: PluginSetupOptions): SetupStep[] {
         order: 2,
       },
       async () => {
-        const cfg = reviewConfig(host, root);
-        if (typeof cfg === "string")
-          return { missing: `the review's config cannot be read: ${cfg}` };
-        const logins = host.auth.logins();
-        const named = reviewProviders(cfg);
-        // A config that pins no model names no provider: the review runs on
-        // whichever one pi holds a login for, so any stored login is the
-        // login. (What pi stores is all this check can list: a key that is
-        // only in the environment is found by the review itself.)
-        if (named.length === 0) {
-          const held = Object.keys(logins);
-          return held.length > 0
-            ? {
-                found: `pi has a login for ${held.join(", ")}: the review runs on a provider pi is signed in to`,
-              }
-            : {
-                missing:
-                  "pi stores no login. Run /login in pi and sign in to any provider, then /qcr-review again. A provider key in the environment works too.",
-              };
-        }
-        // the providers a review would run on, twins rerouted as borrowLogin does
-        const providers = routedProviders(named, host.auth);
-        const missing = providers.filter((p) => !canUseProvider(p, host.auth));
-        if (missing.length === 0)
+        const r = reviewRoute(host, root);
+        if ("unread" in r) return { missing: r.unread };
+        const { result, nameOf, notes } = r.routed;
+        if (result.ok)
           return {
-            found: `pi can reach ${providers.join(", ")}, the providers the review runs on`,
+            found: `${result.route.providerName}, ${credentialWords(result.route.credential)}: a review runs on ${result.route.spec}`,
           };
-        const keyed = Object.entries(logins)
-          .filter(([, l]) => l.type === "api_key")
-          .map(([name]) => name);
         return {
-          missing: noLoginHint(
-            missing[0]!,
-            keyed.filter((k) => !missing.includes(k)),
-          ),
+          missing: [
+            refusalText(result.refusal, "plugin", { configPath: r.configPath, nameOf }),
+            ...notes,
+          ].join(" "),
         };
+      },
+    ),
+    checkStep(
+      {
+        id: PLUGIN_SETUP_STEPS.model,
+        title: "review model",
+        explain: "The model reviews run on, and why it is the one.",
+        order: 2.5,
+        optional: true,
+      },
+      async () => {
+        const r = reviewRoute(host, root);
+        if ("unread" in r || !r.routed.result.ok)
+          return { missing: "none yet: no model resolves (the login check says why)" };
+        const route = r.routed.result.route;
+        const line = `${route.spec} (${routeWhy(route, "plugin", { configPath: r.configPath })})`;
+        // Two providers tie and nothing was chosen: the pick is the person's.
+        return route.ask
+          ? {
+              missing: `${line}. pi has credentials for ${1 + route.alternatives.length} providers: \`/qcr-setup model\` picks the one reviews run on`,
+            }
+          : { found: line };
       },
     ),
     checkStep(
@@ -332,8 +380,83 @@ export function renderChecklist(lines: readonly StepStatusLine[]): string {
 const NOT_NOW = "No, not now";
 const SET_UP = "Yes, set up this repo's profile";
 
-/** /qcr-setup [profile]. Bare: the checklist, then (with someone to ask and
- * no profile yet) the offer of Setup, No first. `profile`: Setup now. */
+/** The last row of /qcr-setup model: the pick goes back to the rule. */
+export const AUTOMATIC = "automatic (let QuickReview pick)";
+
+/**
+ * /qcr-setup model: pick the provider reviews run on, through pi's select.
+ * One row per usable provider (the model each would run, and whose
+ * credential it is), then `AUTOMATIC`. A provider is remembered as a stated
+ * choice, which holds like a pin; `AUTOMATIC` forgets the choice. The route a
+ * review would now run on is said afterwards. Nothing is asked with nobody to
+ * ask: the route is said, and how to name a model for one run.
+ */
+async function modelSetup(host: PluginHost, ui: SessionUi, root: () => string): Promise<void> {
+  const say = (text: string): void => (ui.mode === "print" ? ui.print(text) : ui.show(text));
+  const resolve = host.auth.route;
+  if (resolve === undefined)
+    return ui.notify("this pi's model registry cannot be read here: no model to choose", "error");
+  const now = (): string[] => {
+    const r = reviewRoute(host, root);
+    if ("unread" in r) return [r.unread];
+    const { result, nameOf, notes } = r.routed;
+    if (!result.ok)
+      return [
+        "model: none",
+        refusalText(result.refusal, "plugin", { configPath: r.configPath, nameOf }),
+        ...notes,
+      ];
+    return [
+      ...routeNoticeLines(result.route, "plugin"),
+      // A stated choice does not move a model the config pins.
+      ...(r.pin !== undefined && readModelChoice(host.agentDir).choice !== undefined
+        ? [
+            `[models] model in ${r.configPath ?? "the config"} still pins ${r.pin.text}: the config wins`,
+          ]
+        : []),
+    ];
+  };
+  // Every usable provider, as the rule orders them with nothing chosen.
+  const open = resolve({});
+  if (!open.result.ok) return say(now().join("\n"));
+  if (!ui.interactive)
+    return say(
+      [
+        ...now(),
+        "Choosing needs a person: run /qcr-setup model in an interactive pi, or name a model for one run with --model <provider>/<id>.",
+      ].join("\n"),
+    );
+  const route = open.result.route;
+  const options = [route, ...route.alternatives];
+  const rows = providerRows(route);
+  const picked = await ui.select(
+    "QuickReview: which provider do reviews run on?",
+    [...rows, AUTOMATIC],
+    host.shutdown,
+  );
+  // Dismissed: nothing changes.
+  if (picked === undefined) return;
+  const answer = options[rows.indexOf(picked)];
+  const written =
+    answer === undefined
+      ? clearModelChoice(host.agentDir)
+      : writeModelChoice(host.agentDir, { provider: answer.provider, model: null, via: "use" });
+  if (!written.ok) return ui.notify(written.error, "error");
+  ui.notify(
+    [
+      answer === undefined
+        ? "QuickReview picks the model again."
+        : `QuickReview will use ${answer.providerName} from now on.`,
+      ...now(),
+    ].join("\n"),
+    "info",
+  );
+}
+
+/** /qcr-setup [model | profile]. Bare: the checklist, then (with someone to
+ * ask) the provider question while two providers tie and nothing was chosen,
+ * and the offer of Setup while there is no profile yet, No first. `model`:
+ * the provider question now. `profile`: Setup now. */
 export async function runSetupCommand(
   args: string,
   host: PluginHost,
@@ -341,11 +464,13 @@ export async function runSetupCommand(
   o: { range: string; root?: () => string },
 ): Promise<void> {
   const say = (text: string): void => (ui.mode === "print" ? ui.print(text) : ui.show(text));
-  if (args !== "" && args !== "profile")
+  if (args !== "" && args !== "profile" && args !== "model")
     return ui.notify(
-      `/qcr-setup takes nothing, or \`profile\` to set up this repo's profile; not ${JSON.stringify(args)}`,
+      `/qcr-setup takes nothing, \`model\` to pick the provider reviews run on, or \`profile\` to set up this repo's profile; not ${JSON.stringify(args)}`,
       "error",
     );
+  const root = o.root ?? assetRoot;
+  if (args === "model") return modelSetup(host, ui, root);
   const checklist = pluginChecklist({ ...o, host, tellAgent: (t) => ui.tellAgent(t) });
   await checklist.detect();
   const profileSetup = async (): Promise<void> => {
@@ -355,8 +480,14 @@ export async function runSetupCommand(
   if (args === "profile") return profileSetup();
   const lines = checklist.list();
   say(renderChecklist(lines));
+  if (!ui.interactive) return;
+  // The model step is pending only while a route resolves and the pick
+  // among several providers is still the person's to make.
+  const model = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.model);
+  const login = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.login);
+  if (model?.status === "pending" && login?.status === "done") await modelSetup(host, ui, root);
   const profile = lines.find((l) => l.id === PLUGIN_SETUP_STEPS.profile);
-  if (!ui.interactive || profile?.status !== "pending") return;
+  if (profile?.status !== "pending") return;
   const pick = await ui.select(
     "QuickReview: set up this repo's profile? Your agent surveys the repo, asks you about it, and writes .qcr/",
     [NOT_NOW, SET_UP],
