@@ -5,7 +5,7 @@ Everything this daemon remembers lives in one of four places:
 | Store | Path | Written by | Read by |
 | --- | --- | --- | --- |
 | SQLite database | `state/state.db` | `StateStore` (`src/state.ts`) — the only module with SQL in it | every daemon module, through typed `StateStore` methods |
-| Runtime drop-boxes | `inject/`, `verdict/`, `commands/`, `archive/`, `digest/`, `memory/` at the sandbox root | daemon and pi sessions, by file | the opposite side of each channel |
+| Runtime drop-boxes | `inject/`, `verdict/`, `commands/`, `archive/`, `digest/` at the sandbox root | daemon and pi sessions, by file | the opposite side of each channel |
 | Derived / scratch state | `state/**` (everything except `state.db`) | daemon, TUI, onboarding | the same, plus the operator CLI |
 | Configuration | `config.toml` in the install's config home (`$QCR_CONFIG`, else `<config home>/config.toml`; never the checkout's) | the operator (or the home and the setup wizard) | `loadConfig()` in `src/config.ts` |
 
@@ -18,10 +18,11 @@ Two rules cover almost everything below.
 2. **Nothing under the runtime directories is ever committed.**
    `tests/publishability.test.ts` fails the build if any tracked file appears
    under `state/`, `inject/`, `verdict/`, `commands/`, `digest/`, `archive/`
-   or `memory/`, apart from `.gitkeep` markers and `memory/README.md`.
+   or `memory/`, not even a `.gitkeep`: the code that writes each directory
+   creates it.
 
 Reviewer *memory* is deliberately not in this document: it lives in a separate
-engine, not in SQLite. See [`../../memory/README.md`](../../memory/README.md).
+engine, not in SQLite. See [memory.md](memory.md).
 
 ---
 
@@ -203,7 +204,6 @@ processes that do not share memory.
 | `commands/operator/` | the same envelope, root-owned so the daemon's uid cannot write it | operator tools (`qcr drain`, the board's unwedge key, the deploy tab) | the operator `CommandWatcher`; results are written to `commands/results/` so clients read one place |
 | `archive/<session>/` | a closed session's `ledger.md`, its verdict files and `meta.json` (naming its newest transcript); for a closed PR the archiver later adds `transcripts/` and state bundles | `SessionManager.archiveAndClose`, then the closed-PR archiver (`src/archive/`) | humans, `qcr why`, `qcr archive extract` |
 | `digest/` | `<YYYY-MM-DD>.md` | `writeDigest` (`src/digest.ts`) | `latestDigestHeadline`, which `src/wire.ts` points at `join(root, "digest")` |
-| `memory/` | empty drop-box; reviewer memory lives in the memory engine | — | see [`../../memory/README.md`](../../memory/README.md) |
 | `evidence/` | finished-round evidence copied down by the TUI | `EvidenceStore` (`src/tui/evidence.ts`) | the companion container, read-only. The location is `[companion] evidence_dir`; the shipped default is outside the repo, and an empty value resolves to `<root>/evidence` |
 | `pihome/` | pi's home inside the container (auth tokens, sessions) | pi | pi |
 
@@ -766,7 +766,7 @@ for the owner's Slack id is still accepted on input and folded to
 | What does an alert file look like? | `parseAlert` in `src/tui/alerts.ts` |
 | Where does a config knob get read? | `src/config.ts` — the `Config` interface and the `*_DEFAULTS` constants |
 | What is a safe starting `config.toml`? | `config.example.toml` (annotated, validated by the suite) |
-| Where does reviewer memory live? | `memory/README.md`, `src/memory/`, `src/openviking/` |
+| Where does reviewer memory live? | [memory.md](memory.md), `src/memory/`, `src/openviking/` |
 
 ## See also
 
@@ -775,4 +775,4 @@ for the owner's Slack id is still accepted on input and folded to
 - [`../profiles.md`](../profiles.md) — the `[review] profile` mechanism
 - [`../exec-boundary.md`](../exec-boundary.md) — what the reviewer may and may not run
 - [`../single-shepherd-invariant.md`](../single-shepherd-invariant.md) — the session model behind `session_commands` and `pending_wakes`
-- [`../../memory/README.md`](../../memory/README.md) — reviewer memory, which is not in this database
+- [memory.md](memory.md) — reviewer memory, which is not in this database

@@ -32,8 +32,7 @@ export const isDocs = (p) =>
   /^docs\/.+\.md$/.test(p) ||
   p.startsWith("docs/media/") ||
   /^[^/]+\.md$/.test(p) ||
-  /^\.github\/[^/]+\.md$/.test(p) ||
-  p === "memory/README.md";
+  /^\.github\/[^/]+\.md$/.test(p);
 
 /** The test files that read docs prose, the whole of a docs-only run. A test
  * that starts reading docs joins this list; tests/ci-changes.test.ts fails a

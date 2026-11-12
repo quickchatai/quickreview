@@ -15,8 +15,8 @@
 //   (c) config.example.toml exists and passes full config validation (the
 //       example-config suite in tests/config.test.ts owns the deeper
 //       assertions);
-//   (d) no tracked file under the runtime state directories except .gitkeep
-//       markers and memory/README.md;
+//   (d) no tracked file under the runtime state directories, not even a
+//       .gitkeep: the code that writes each one creates it;
 //   (e) a NEGATIVE control: the same scanner, fed planted canary tokens from
 //       a test-only denylist file, reports the violations — the lint
 //       demonstrably bites, with or without the maintainers' list;
@@ -318,12 +318,7 @@ describe("publishability lint", () => {
       "archive/",
       "memory/",
     ];
-    const ALLOWED = new Set(["memory/README.md"]);
-    const offenders = tracked.filter((p) => {
-      if (!RUNTIME_DIRS.some((d) => p.startsWith(d))) return false;
-      if (ALLOWED.has(p)) return false;
-      return !p.endsWith("/.gitkeep");
-    });
+    const offenders = tracked.filter((p) => RUNTIME_DIRS.some((d) => p.startsWith(d)));
     expect(offenders, "runtime state must never be tracked").toEqual([]);
   });
 
