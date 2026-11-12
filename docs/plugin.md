@@ -1,9 +1,16 @@
 # QuickReview in your coding-agent CLI
 
-`qcr plugin` installs QuickReview's review, scan and setup commands into the
-coding-agent CLIs on this machine: Claude Code, Codex, Copilot CLI, Cursor,
-opencode, Gemini CLI and Antigravity (the **hosts**). Each command runs `qcr`
-on this machine. There is no Docker, no image and no GitHub package token.
+QuickReview is an open-source AI code reviewer. `qcr plugin` adds its review,
+scan and setup commands to the coding agents on this machine: Claude Code,
+Codex, Copilot CLI, Cursor, opencode, Gemini CLI and Antigravity (the
+**hosts**). Each command runs `qcr` on this machine, and `qcr` needs Node
+22.19 or later. There is no Docker, no image and no GitHub package token.
+
+A review signs in to a model provider of its own and never uses the host's
+login. Run `qcr login` once (`npx @quickchatai/quickreview login` without a
+global install), or keep a provider's API key in the environment
+([llm-setup.md](llm-setup.md)).
+
 pi has its own plugin, `pi install npm:@quickchatai/pi-quickreview`
 ([packages/pi-plugin/README.md](../packages/pi-plugin/README.md)).
 

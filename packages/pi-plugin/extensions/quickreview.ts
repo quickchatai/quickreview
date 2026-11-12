@@ -374,7 +374,7 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
     const reviews = new ReviewSlot();
     pi.registerCommand("qcr-review", {
       description:
-        "QuickReview: review this branch with its uncommitted changes, a PR, a branch or --uncommitted, in the background ([quick|full|security] first; --preview prices it, --model names the model for one run, --stop stops it)",
+        "QuickReview: review this branch and its uncommitted changes, a pull request or another branch, in the background. Put quick, full or security first for a preset. --uncommitted reviews those changes alone, --preview shows the plan and the price, --model picks one run's model, --stop stops the review.",
       handler: async (args, ctx) => {
         const ui = sessionUi(pi, ctx, config.print);
         await startReviewCommand(args.trim(), await hostOf(ctx), ui, {
@@ -389,7 +389,7 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
     const scans = new ScanSessions();
     pi.registerCommand("qcr-scan", {
       description:
-        "QuickReview: scan the whole repo in the background (--delta, --sha REF, --model M, --preview; or a scan subcommand: status, stop, findings, units …)",
+        "QuickReview: scan the whole repository for defects, in the background, priced before it starts. --path DIR scans one folder, --delta what changed since the last scan, --sha REF another commit; --preview shows the price alone, --model picks one run's model. Subcommands: status, stop, findings, units and more.",
       handler: async (args, ctx) => {
         await runScanCommand(args.trim(), await hostOf(ctx), sessionUi(pi, ctx, config.print), {
           sessions: scans,
@@ -398,7 +398,7 @@ export function createQuickReview(config: QuickReviewConfig): (pi: ExtensionAPI)
     });
     command(
       "qcr-setup",
-      "QuickReview: check what the plugin needs (pi, login, git, GitHub); `model` picks the provider reviews run on, `profile` sets up this repo's profile",
+      "QuickReview: check what a review needs here (the pi version, a model login, git, GitHub access). `/qcr-setup model` picks the provider reviews run on, `/qcr-setup profile` sets up this repository's profile.",
       (args, host, ui) => runSetupCommand(args, host, ui, { range }),
     );
   };

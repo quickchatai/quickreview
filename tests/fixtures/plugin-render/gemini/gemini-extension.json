@@ -1,5 +1,5 @@
 {
   "name": "qcr",
   "version": "0.0.0-golden",
-  "description": "QuickReview's multi-lens AI code review, whole-repo scan and setup, run through its qcr command-line tool."
+  "description": "QuickReview, an open-source AI code reviewer for your coding agent. Adds commands to review your changes or a pull request, scan a whole repository and check the setup. Each one runs the qcr command-line tool on this machine."
 }
