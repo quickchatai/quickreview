@@ -228,6 +228,23 @@ describe("DOCS_SUITE", () => {
     for (const t of readers) expect(suite.includes(t) || t in EXEMPT, `${t} reads docs`).toBe(true);
     for (const t of Object.keys(EXEMPT)) expect(suite, t).not.toContain(t);
   });
+
+  // README.md and BENCHMARKS.md print benchmark numbers and are docs prose, so
+  // a change to either alone takes the docs-only route. The tests that hold
+  // those numbers to the claims manifest and to the committed data run there.
+  // MUTATION: remove tests/bench-claims.test.ts from DOCS_SUITE — this fails.
+  it("holds the tests that check the numbers of the README and BENCHMARKS.md", () => {
+    for (const page of ["README.md", "BENCHMARKS.md"]) {
+      expect(isDocs(page), page).toBe(true);
+      expect(route([page]).full, page).toBe(false);
+    }
+    for (const t of [
+      "tests/bench-claims.test.ts",
+      "tests/bench-recompute.test.ts",
+      "tests/hf-card.test.ts",
+    ])
+      expect(suite, t).toContain(t);
+  });
 });
 
 describe("gate", () => {

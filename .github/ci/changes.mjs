@@ -39,15 +39,20 @@ export const isDocs = (p) =>
  * that starts reading docs joins this list; tests/ci-changes.test.ts fails a
  * test file that names a docs file and is in neither this list nor its
  * exemptions. context-files and reviewer-context hold the root's agent
- * context files (AGENTS.md present, no AGENTS.override.md). They all pass
+ * context files (AGENTS.md present, no AGENTS.override.md). bench-claims,
+ * bench-recompute and hf-card hold the numbers of README.md and BENCHMARKS.md
+ * to the claims manifest and the committed benchmark data. They all pass
  * with no dist/. */
 export const DOCS_SUITE = [
   "tests/action.test.ts",
+  "tests/bench-claims.test.ts",
+  "tests/bench-recompute.test.ts",
   "tests/ci-clone-smoke.test.ts",
   "tests/companion-memory.test.ts",
   "tests/context-files.test.ts",
   "tests/fences-published.test.ts",
   "tests/fences-tui.test.ts",
+  "tests/hf-card.test.ts",
   "tests/onboarding-docs.test.ts",
   "tests/plugin-docs.test.ts",
   "tests/publishability.test.ts",

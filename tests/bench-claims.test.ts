@@ -4,10 +4,11 @@
 // no release data:
 //
 //   1. the completeness fence: on the real tree, every number token of
-//      README.md is a manifest claim or a listed not-claim, and every anchor of
-//      every listed file is still on exactly one line carrying its value;
-//   2. the fence bites: a README copy with one more benchmark percentage, or
-//      with a claimed number changed, fails the lint;
+//      README.md and of BENCHMARKS.md (the full results the README links) is a
+//      manifest claim or a listed not-claim, and every anchor of every listed
+//      file is still on exactly one line carrying its value;
+//   2. the fence bites: a copy of either page with one more benchmark
+//      percentage, or with a claimed number changed, fails the lint;
 //   3. the tokenizer: what counts as a number on a published line;
 //   4. the verifier, end to end on small .jsonl tables: a claim whose number
 //      the data gives passes, a stale one fails as a mismatch, a claim with no
@@ -17,7 +18,7 @@
 //   5. how a computed number is compared: printed like the published value,
 //      and an "about" claim within its tolerance;
 //   6. verify_slim.py's constants for the open-model figures (the DigitalOcean
-//      table and smoke, the README's notes under the Other models table) are
+//      table and smoke, BENCHMARKS.md's notes under the Other models table) are
 //      the numbers the pages print;
 //   7. both papers name the published dataset, leave no XXXX placeholder, and
 //      say the raw session transcripts are not published.
@@ -65,16 +66,20 @@ function py(code: string, ...args: string[]): unknown {
 
 const MANIFEST = JSON.parse(readFileSync(join(AACR, "claims.json"), "utf8")) as Manifest;
 
-/** A scratch tree holding a README.md and a manifest of only its README entries. */
-function readmeTree(name: string, readme: string): { repo: string; manifest: string } {
+/** The two pages a reader meets first: the README, and the full results it links. */
+const PAGES = ["README.md", "BENCHMARKS.md"] as const;
+type Page = (typeof PAGES)[number];
+
+/** A scratch tree holding one page and a manifest of only that page's entries. */
+function pageTree(name: string, page: Page, text: string): { repo: string; manifest: string } {
   const repo = join(tmp, name);
   mkdirSync(repo, { recursive: true });
-  writeFileSync(join(repo, "README.md"), readme);
+  writeFileSync(join(repo, page), text);
   const m: Manifest = {
     ...MANIFEST,
-    files: { "README.md": MANIFEST.files["README.md"]! },
-    claims: MANIFEST.claims.filter((c) => c.file === "README.md"),
-    not_claims: MANIFEST.not_claims.filter((n) => n.file === "README.md"),
+    files: { [page]: MANIFEST.files[page]! },
+    claims: MANIFEST.claims.filter((c) => c.file === page),
+    not_claims: MANIFEST.not_claims.filter((n) => n.file === page),
     checks: Object.fromEntries(
       Object.entries(MANIFEST.checks).map(([k, v]) => [k, { ...(v as object), scripts: [] }]),
     ),
@@ -86,22 +91,33 @@ function readmeTree(name: string, readme: string): { repo: string; manifest: str
 
 describe("the claims manifest against the published text", () => {
   // MUTATION: add a sentence with a new percentage ("QuickReview finds 99% of …")
-  // to README.md and no manifest entry — this fails (and so does editing any
-  // claimed number or anchored line of a listed file without updating the manifest).
-  it("accounts for every number of README.md, and every anchor is on its line", () => {
+  // to README.md or to BENCHMARKS.md and no manifest entry — this fails (and so
+  // does editing any claimed number or anchored line of a listed file without
+  // updating the manifest).
+  // MUTATION: set BENCHMARKS.md's `lint` to "report" in claims.json's `files` — this fails
+  it("accounts for every number of README.md and BENCHMARKS.md, and every anchor is on its line", () => {
     const r = run(["--lint"]);
     expect(r.out).not.toMatch(/MANIFEST:/);
-    expect(r.out).toMatch(
-      /README\.md: \d+ number tokens, \d+ claims, \d+ not-claims, 0 unaccounted \(complete\)/,
-    );
+    for (const page of PAGES) {
+      // the page's own line: "bench/aacr/README.md: …" is another file's
+      const line = r.out.split("\n").find((l) => l.startsWith(`${page}: `));
+      expect(line, page).toMatch(
+        /: \d+ number tokens, \d+ claims, \d+ not-claims, 0 unaccounted \(complete\)$/,
+      );
+      expect(MANIFEST.files[page]?.lint, page).toBe("complete");
+    }
     expect(r.code).toBe(0);
-    expect(MANIFEST.files["README.md"]?.lint).toBe("complete");
   });
 
-  it("lists every number README.md prints as a claim with a check, never one without", () => {
+  // The README prints the headline paragraph and its chart; every other
+  // benchmark number is on BENCHMARKS.md.
+  // MUTATION: turn the claims of BENCHMARKS.md's full tables into not-claims — this fails
+  it("lists every number the two pages print as a claim with a check, never one without", () => {
     const readme = MANIFEST.claims.filter((c) => c.file === "README.md");
-    expect(readme.length).toBeGreaterThan(300);
-    expect(readme.filter((c) => !c.q)).toEqual([]);
+    const full = MANIFEST.claims.filter((c) => c.file === "BENCHMARKS.md");
+    expect(readme.length).toBeGreaterThan(20);
+    expect(full.length).toBeGreaterThan(300);
+    expect([...readme, ...full].filter((c) => !c.q)).toEqual([]);
   });
 
   // MUTATION: drop the undeclared-group check from verify_claims.py's lint (the `groups` loop) — this fails
@@ -112,7 +128,7 @@ describe("the claims manifest against the published text", () => {
     ];
     const groups = MANIFEST["groups"] as Record<string, { what?: string }>;
     expect(used.filter((g) => !groups[g!]?.what)).toEqual([]);
-    const t = readmeTree("groups", readFileSync(join(ROOT, "README.md"), "utf8"));
+    const t = pageTree("groups", "README.md", readFileSync(join(ROOT, "README.md"), "utf8"));
     const m = JSON.parse(readFileSync(t.manifest, "utf8")) as Manifest;
     const g = (m.claims[0] as { group?: string }).group!;
     const plant = (name: string, f: (gs: Record<string, { what?: string }>) => void): string => {
@@ -135,28 +151,37 @@ describe("the claims manifest against the published text", () => {
     );
   });
 
-  it("fails a README with one more benchmark number than the manifest lists", () => {
-    const real = readFileSync(join(ROOT, "README.md"), "utf8");
-    const ok = readmeTree("readme-ok", real);
-    expect(run(["--lint", "--repo", ok.repo, "--manifest", ok.manifest]).code).toBe(0);
-    const added = readmeTree(
-      "readme-added",
-      real.replace("## Benchmarks\n", "## Benchmarks\n\nQuickReview finds 99% of every defect.\n"),
-    );
-    const r = run(["--lint", "--repo", added.repo, "--manifest", added.manifest]);
-    expect(r.code).toBe(1);
-    expect(r.out).toMatch(/README\.md: 1 number\(s\) neither a claim nor a listed not-claim/);
-    expect(r.out).toContain("'99%'");
-  });
+  // Each page, with the sentence planted under its Benchmarks heading.
+  it.each([
+    ["README.md", "## Benchmarks\n"],
+    ["BENCHMARKS.md", "# Benchmarks\n"],
+  ] as const)(
+    "fails a %s with one more benchmark number than the manifest lists",
+    (page, heading) => {
+      const real = readFileSync(join(ROOT, page), "utf8");
+      const ok = pageTree(`${page}-ok`, page, real);
+      expect(run(["--lint", "--repo", ok.repo, "--manifest", ok.manifest]).code).toBe(0);
+      const added = pageTree(
+        `${page}-added`,
+        page,
+        real.replace(heading, `${heading}\nQuickReview finds 99% of every defect.\n`),
+      );
+      const r = run(["--lint", "--repo", added.repo, "--manifest", added.manifest]);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`${page}: 1 number(s) neither a claim nor a listed not-claim`);
+      expect(r.out).toContain("'99%'");
+    },
+  );
 
-  it("fails a README whose claimed number changed under the manifest", () => {
-    const real = readFileSync(join(ROOT, "README.md"), "utf8");
+  it("fails a BENCHMARKS.md whose claimed number changed under the manifest", () => {
+    const real = readFileSync(join(ROOT, "BENCHMARKS.md"), "utf8");
     const line = real
       .split("\n")
       .find((l) => l.includes("The price: 6.9 comments per PR, 42% of them"));
     expect(line).toBeDefined();
-    const changed = readmeTree(
-      "readme-changed",
+    const changed = pageTree(
+      "page-changed",
+      "BENCHMARKS.md",
       real.replace("42% of them true but minor", "41% of them true but minor"),
     );
     const r = run(["--lint", "--repo", changed.repo, "--manifest", changed.manifest]);
@@ -780,15 +805,15 @@ describe("verify_slim.py's copy of the published open-model figures", () => {
     expect(text).toContain(`took ${vs.slowest.replace("-", "–")} minutes`);
   });
 
-  // MUTATION: print "missing a lens pass on 8" in README.md's Other models notes — this fails
-  it("holds the README's notes on the open-model rows as the README prints them", () => {
-    const readme = flat(readFileSync(join(ROOT, "README.md"), "utf8"));
+  // MUTATION: print "missing a lens pass on 8" in BENCHMARKS.md's Other models notes — this fails
+  it("holds the notes on the open-model rows as BENCHMARKS.md prints them", () => {
+    const page = flat(readFileSync(join(ROOT, "BENCHMARKS.md"), "utf8"));
     const n = vs.notes;
-    expect(readme).toContain(
+    expect(page).toContain(
       `low reasoning effort on ${n["DeepSeek low-effort PRs"]} of its PRs and lost one lens pass on ` +
         `${n["DeepSeek PRs that lost a lens pass"]} PRs.`,
     );
-    expect(readme).toContain(
+    expect(page).toContain(
       `one lens pass was lost on ${n["GLM PRs that lost a lens pass"]} PR and the validator on ` +
         `${n["GLM PRs that lost only the validator"]}, and on ${n["GLM PRs missing a lens pass"]} more a lens pass ran`,
     );
