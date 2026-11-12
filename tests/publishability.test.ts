@@ -80,6 +80,11 @@ const ALLOWLIST: AllowlistEntry[] = [
     reason: "the dataset card's citations name the papers' author",
   },
   {
+    path: "CITATION.cff",
+    labels: [OWNER_NAME],
+    reason: "the citation file names the author of the software and the dataset, as the papers do",
+  },
+  {
     path: "CODE_OF_CONDUCT.md",
     labels: [OWNER_NAME],
     reason: "the conduct reports go to the maintainer's own address, by decision",

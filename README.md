@@ -83,7 +83,10 @@ its results are the frozen build of 2026-10-04 on `gpt-6.1-sol`, shipped
 defaults, one review per PR. The third-party tools we ran used the best
 configuration we found for each (except Claude Code, which ran `/code-review`
 at its default effort and was not varied), the OpenAI-based ones on the same
-model, under the same judge on the same PRs.
+model, under the same judge on the same PRs. Every run behind these results
+is public, with its reviews, verdicts and answer key, in the Hugging Face
+dataset [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench)
+(DOI [10.57967/hf/11598](https://doi.org/10.57967/hf/11598)), and each number can be recomputed from it.
 
 **AACR-Bench, verified defects.** AACR-Bench's own reference comments are
 mostly not real problems, so we built a key of 520 defects, each verified in

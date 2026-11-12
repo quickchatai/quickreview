@@ -57856,6 +57856,15 @@
    "why": "wizard step numbers"
   },
   {
+   "file": "README.md",
+   "anchor": "(DOI [10.57967/hf/11598](https://doi.org/10.57967/hf/11598)), and each number can be recomputed from it.",
+   "tokens": [
+    "10.57967",
+    "11598"
+   ],
+   "why": "a citation (year, pages, volume, DOI, arXiv id)"
+  },
+  {
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
    "anchor": "1M tokens, 2026-10-13):",
    "tokens": [
@@ -68722,6 +68731,15 @@
    "why": "an iteration number"
   },
   {
+   "file": "bench/aacr/paper/quickreview.tex",
+   "anchor": "its run data: \\url{https://huggingface.co/datasets/quickchatai/quickreview-bench}, doi:10.57967/hf/11598.",
+   "tokens": [
+    "10.57967",
+    "11598"
+   ],
+   "why": "a citation (year, pages, volume, DOI, arXiv id)"
+  },
+  {
    "file": "bench/aacr/docs/DIGITALOCEAN.md",
    "anchor": "~$2,100 a full run (about $3.17 a PR at the 10-PR smoke's profile), more than",
    "tokens": [
@@ -70551,6 +70569,15 @@
    "why": "configuration or a method parameter"
   },
   {
+   "file": "bench/aacr/paper/benchmark.tex",
+   "anchor": "(doi:10.57967/hf/11598): browsable tables of every review, finding",
+   "tokens": [
+    "10.57967",
+    "11598"
+   ],
+   "why": "a citation (year, pages, volume, DOI, arXiv id)"
+  },
+  {
    "file": "bench/aacr/README.md",
    "anchor": "**Needs.** Tier 1 and the dataset",
    "tokens": [
@@ -70648,6 +70675,15 @@
     "0"
    ],
    "why": "a request parameter a judge's model must accept (Martian's client sends temperature 0), not a measurement"
+  },
+  {
+   "file": "bench/aacr/README.md",
+   "anchor": "(DOI [10.57967/hf/11598](https://doi.org/10.57967/hf/11598)):",
+   "tokens": [
+    "10.57967",
+    "11598"
+   ],
+   "why": "a citation (year, pages, volume, DOI, arXiv id)"
   },
   {
    "file": "bench/aacr/hf/card.md",

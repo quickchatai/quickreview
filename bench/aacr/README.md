@@ -16,7 +16,8 @@ reviewer), and in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md),
 [`docs/THREATS-TO-VALIDITY.md`](docs/THREATS-TO-VALIDITY.md) and
 [`docs/PROMPTS.md`](docs/PROMPTS.md). Every run behind them — reviews,
 verdicts, scores, the charts and tables they produce — is published in the
-Hugging Face dataset [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench):
+Hugging Face dataset [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench)
+(DOI [10.57967/hf/11598](https://doi.org/10.57967/hf/11598)):
 tables of every review and verdict, the run archive in its `archive/` folder
 and the slim re-score bundle in `slim/`. [`recompute/`](recompute/README.md)
 rebuilds each published number from it with no model call.
@@ -32,7 +33,7 @@ the authors' machines.
 
 **Needs.** Tier 1 and the dataset's own checks (the card's "How to verify"):
 git, Python 3.11 or newer, [uv](https://docs.astral.sh/uv/), zstd (for
-`tar --zstd`) and a Hugging Face login (`uvx hf auth login`). Run `hf` as
+`tar --zstd`); the dataset is public, so no Hugging Face login. Run `hf` as
 `uvx hf` when Hugging Face's CLI is not installed, and the card's
 `load_dataset` with `uv run --no-project --with datasets python`. About 3 GB
 of disk, no docker, no key. Tiers 2 and 3, and every `bench.sh` or

@@ -728,7 +728,7 @@ The archive's README gives the count of every rewrite over the whole archive.
 ## How to verify
 
 Needs: git, Python 3.11 or newer, [uv](https://docs.astral.sh/uv/), zstd (for
-`tar --zstd`) and a Hugging Face login (`uvx hf auth login`). Run `hf` as
+`tar --zstd`); the dataset is public, so no Hugging Face login. Run `hf` as
 `uvx hf` when Hugging Face's CLI is not installed, and `load_dataset` (see
 "Configs") with `uv run --no-project --with datasets python`. Nothing in this
 section needs docker, a key or a model call. Disk: about 3 GB covers the
