@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: >-
+  If you use QuickReview, cite it as below. If you use its benchmark runs,
+  cite the dataset listed under references.
+title: QuickReview
+type: software
+authors:
+  - given-names: Mateusz
+    family-names: Jakubczak
+    affiliation: Quickchat AI
+repository-code: https://github.com/quickchatai/quickreview
+license: MIT
+references:
+  - type: data
+    title: "Real defects in code review: QuickReview benchmark data"
+    authors:
+      - given-names: Mateusz
+        family-names: Jakubczak
+        affiliation: Quickchat AI
+    year: 2026
+    doi: 10.57967/hf/11598
+    url: https://huggingface.co/datasets/quickchatai/quickreview-bench
+    repository-code: https://github.com/quickchatai/quickreview/tree/bench-data-v1
+    license: Apache-2.0

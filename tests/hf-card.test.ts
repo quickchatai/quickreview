@@ -461,7 +461,7 @@ describe("the reproduction docs work on a fresh machine", () => {
         "Python 3.11",
         "https://docs.astral.sh/uv/",
         "zstd",
-        "uvx hf auth login",
+        "no Hugging Face login",
         "`uvx hf`",
         "uv run --no-project --with datasets python",
         "3 GB",
