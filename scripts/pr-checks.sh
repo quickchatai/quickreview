@@ -87,10 +87,36 @@ OUT="$(mktemp)"
 RUNS="$(mktemp)"
 FAILING="$(mktemp)"
 STATUSES="$(mktemp)"
-trap 'rm -f "$OUT" "$RUNS" "$FAILING" "$FAILING.output" "$STATUSES"' EXIT
+WORKFLOWS="$(mktemp)"
+trap 'rm -f "$OUT" "$RUNS" "$FAILING" "$FAILING.output" "$STATUSES" "$WORKFLOWS"' EXIT
 
 get "/repos/$REPO/pulls/$PR"
 HEAD_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$OUT")"
+
+# The WORKFLOW RUNS at the head, read BEFORE the check-runs (as src/github.ts
+# listChecks reads them): the one source that ties a check-run's suite to its
+# workflow, so the husks of a run that a newer run of the same workflow
+# superseded are not counted (packages/pi-plugin/src/cigate.ts supersededSuites
+# states the rule). Unreadable — no Actions permission, Actions off, any error
+# — means nothing is superseded: every check-run counts, stricter, never greener.
+echo '{"workflow_runs": []}' >"$WORKFLOWS"
+for ((page = 1; page <= 10; page++)); do
+  (get "/repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100&page=$page") 2>/dev/null \
+    || { echo '{"workflow_runs": []}' >"$WORKFLOWS"; break; }
+  n="$(python3 -c '
+import json, sys
+acc = json.load(open(sys.argv[1]))
+page_doc = json.load(open(sys.argv[2]))
+rows = page_doc.get("workflow_runs") if isinstance(page_doc, dict) else None
+if not isinstance(rows, list):
+    raise SystemExit(1)
+acc["workflow_runs"] += rows
+json.dump(acc, open(sys.argv[1], "w"))
+print(len(rows))' "$WORKFLOWS" "$OUT")" || { echo '{"workflow_runs": []}' >"$WORKFLOWS"; break; }
+  if ((n < 100)); then break; fi
+  # Ten full pages and still more: an incomplete read supersedes nothing.
+  ((page < 10)) || echo '{"workflow_runs": []}' >"$WORKFLOWS"
+done
 
 # Every page, as src/github.ts listChecks and guards.sh read them: a failing
 # or pending run past row 100 is still a check at this head. Up to 10 pages; a
@@ -135,10 +161,41 @@ print(len(rows))' "$STATUSES" "$OUT")" || die "statuses page $page unreadable"
 done
 ((n < 100)) || die "incomplete statuses: page limit reached"
 
-python3 - "$RUNS" "$FAILING" "$STATUSES" <<'PY'
+python3 - "$RUNS" "$FAILING" "$STATUSES" "$WORKFLOWS" "$HEAD_SHA" <<'PY'
 import json, re, sys
 runs = json.load(open(sys.argv[1])).get("check_runs", [])
 statuses = json.load(open(sys.argv[3])).get("statuses", [])
+workflows = json.load(open(sys.argv[4])).get("workflow_runs", [])
+head_sha = sys.argv[5].lower()
+# Superseded workflow runs (mirrors packages/pi-plugin/src/cigate.ts
+# supersededSuites): runs group by workflow AND event; the newest of a group
+# (latest created_at, then higher id) supersedes the others only once it has
+# completed, and only an older run that concluded `cancelled` is superseded.
+wf = [
+    w for w in workflows
+    if isinstance(w, dict) and isinstance(w.get("id"), int) and isinstance(w.get("workflow_id"), int)
+    and isinstance(w.get("created_at"), str)
+    and (not isinstance(w.get("head_sha"), str) or w["head_sha"].lower() == head_sha)
+]
+newest = {}
+for w in wf:
+    k = (w["workflow_id"], w.get("event") or "")
+    p = newest.get(k)
+    if p is None or (w["created_at"], w["id"]) > (p["created_at"], p["id"]):
+        newest[k] = w
+superseded = {}
+for w in wf:
+    top = newest[(w["workflow_id"], w.get("event") or "")]
+    if top is w or not isinstance(w.get("check_suite_id"), int):
+        continue
+    if (top.get("status") or "").lower() != "completed" or (w.get("status") or "").lower() != "completed":
+        continue
+    if (w.get("conclusion") or "").lower() != "cancelled":
+        continue
+    superseded[w["check_suite_id"]] = top["id"]
+def husk(c):
+    suite = (c.get("check_suite") or {}).get("id")
+    return isinstance(suite, int) and suite in superseded
 # Latest-run-per-name (mirrors packages/pi-plugin/src/cigate.ts latestRunPerName, where the rule
 # is stated exactly): GitHub auto-cancels superseded runs, so only the most
 # recent run of each check name counts.
@@ -148,6 +205,8 @@ statuses = json.load(open(sys.argv[3])).get("statuses", [])
 # such per name. Superseded husks are shown, marked, and excluded from the tally.
 timed, untimed = {}, {}
 for c in runs:
+    if husk(c):
+        continue
     key = c.get("name") or "check"
     at = c.get("started_at") or None
     if at is None:
@@ -160,10 +219,14 @@ passed = failed = pending = 0
 for c in runs:
     concl = c.get("conclusion")
     state = f"{c['status']}/{concl or '-'}"
-    superseded = id(c) not in current
-    tag = "  [superseded — does not count]" if superseded else ""
+    dropped = id(c) not in current
+    tag = (
+        f"  [superseded run — run {superseded[c['check_suite']['id']]} replaced it; does not count]"
+        if husk(c)
+        else "  [superseded — does not count]" if dropped else ""
+    )
     print(f"{c['name']}: {state}  {c.get('html_url') or '-'}{tag}")
-    if superseded:
+    if dropped:
         continue
     if c["status"] != "completed":
         pending += 1

@@ -8,12 +8,15 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkOutcome,
+  ciBlockers,
   ciBlocksApproval,
   classifyCi,
   latestRunPerName,
+  supersededSuites,
   withheldApprovalNote,
   withholdApproval,
   type CheckSummary,
+  type WorkflowRunSummary,
 } from "@quickchatai/pi-quickreview/src/cigate.js";
 import { retryWithheldApproval } from "../src/ciretry.js";
 import { parseConfig, GUARDS_DEFAULTS, type Config } from "../src/config.js";
@@ -31,6 +34,11 @@ import { StateStore } from "../src/state.js";
 import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { applyInterpretation, interpretEvent } from "../src/webhook.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import {
+  WINNING_RUN,
+  supersededCheckRuns,
+  supersededWorkflowRuns,
+} from "./helpers/superseded-run-fixture.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -1134,4 +1142,242 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
       ).toEqual([]);
     },
   );
+});
+
+// ---- a workflow run superseded by a newer run of the same workflow ----------
+//
+// The head CI read red forever: the CI workflow ran twice, concurrency
+// cancelled the first run, and that run's job carried a name no newer run
+// repeats — so latest-run-per-name kept its cancelled husk. The approval was
+// withheld, every green completion re-read red, and nothing ever re-queued it.
+
+describe("supersededSuites — the rule, exactly", () => {
+  const wr = (over: Partial<WorkflowRunSummary> & { id: number }): WorkflowRunSummary => ({
+    workflow_id: 1,
+    event: "pull_request",
+    check_suite_id: over.id * 10,
+    status: "completed",
+    conclusion: "success",
+    created_at: `2026-11-13T09:00:0${over.id}Z`,
+    ...over,
+  });
+
+  it("a cancelled older run of the same workflow and event is superseded by the newest, once it completed", () => {
+    const got = supersededSuites([wr({ id: 1, conclusion: "cancelled" }), wr({ id: 2 })]);
+    expect([...got]).toEqual([[10, 2]]);
+  });
+  it("the newest run still queued or running supersedes nothing yet", () => {
+    for (const status of ["queued", "in_progress"])
+      expect(
+        supersededSuites([
+          wr({ id: 1, conclusion: "cancelled" }),
+          wr({ id: 2, status, conclusion: null }),
+        ]).size,
+      ).toBe(0);
+  });
+  it("an older run that FAILED is a real failure, never superseded", () => {
+    expect(supersededSuites([wr({ id: 1, conclusion: "failure" }), wr({ id: 2 })]).size).toBe(0);
+  });
+  it("a run of another workflow, or of the same workflow on another event, never supersedes", () => {
+    expect(
+      supersededSuites([wr({ id: 1, conclusion: "cancelled" }), wr({ id: 2, workflow_id: 9 })])
+        .size,
+    ).toBe(0);
+    expect(
+      supersededSuites([wr({ id: 1, conclusion: "cancelled" }), wr({ id: 2, event: "push" })]).size,
+    ).toBe(0);
+  });
+  it("the newest run is never superseded — a cancellation with no successor still counts", () => {
+    expect(supersededSuites([wr({ id: 1 }), wr({ id: 2, conclusion: "cancelled" })]).size).toBe(0);
+  });
+  it("an equal created_at resolves to the higher run id", () => {
+    const t = "2026-11-13T09:00:00Z";
+    const got = supersededSuites([
+      wr({ id: 2, created_at: t }),
+      wr({ id: 1, created_at: t, conclusion: "cancelled" }),
+    ]);
+    expect([...got]).toEqual([[10, 2]]);
+  });
+  it("latestRunPerName drops a marked husk, and only a check-run", () => {
+    const husk: CheckSummary = {
+      ...done("cancelled", "pre_checks / detect_changes"),
+      superseded_by_run: 2,
+    };
+    expect(classifyCi([husk, done("success", "all_checks")])).toBe("green");
+    expect(classifyCi([{ ...husk, superseded_by_run: undefined }, done("success")])).toBe("red");
+  });
+});
+
+describe("the adapter reads which workflow run each check-run belongs to", () => {
+  const minter = {
+    appJwt: () => "jwt",
+    installationToken: async () => "tok",
+    invalidate: () => {},
+  } as unknown as TokenMinter;
+
+  /** The real `listChecks` over GitHub's payload shapes. `workflowRuns`
+   * null: the actions endpoint answers 403 (no Actions: read). */
+  async function adapterChecks(
+    workflowRuns: unknown[] | null,
+    calls: string[] = [],
+  ): Promise<CheckSummary[]> {
+    const fetchFn = (async (url: string | URL) => {
+      const u = String(url);
+      calls.push(u);
+      if (u.includes("/actions/runs") && workflowRuns === null)
+        return {
+          ok: false,
+          status: 403,
+          headers: new Headers(),
+          json: async () => ({ message: "Resource not accessible by integration" }),
+          text: async () => '{"message":"Resource not accessible by integration"}',
+        } as unknown as Response;
+      const payload = u.includes("/actions/runs")
+        ? { total_count: workflowRuns!.length, workflow_runs: workflowRuns }
+        : u.includes("/check-runs")
+          ? { check_runs: supersededCheckRuns() }
+          : u.includes("/status")
+            ? { state: "x", statuses: [] }
+            : null;
+      if (payload === null) throw new Error(`unexpected ${u}`);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => payload,
+        text: async () => JSON.stringify(payload),
+      } as unknown as Response;
+    }) as unknown as FetchFn;
+    const gate = new MutationGate(true, dryrunDir, async () => ({}));
+    return new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com", {
+      sleep: async () => {},
+      checkRestartMs: 0,
+    }).listChecks(HEAD);
+  }
+
+  it("a head whose cancelled CI run was replaced by a green one reads green", async () => {
+    const calls: string[] = [];
+    const checks = await adapterChecks(supersededWorkflowRuns(HEAD), calls);
+    expect(classifyCi(checks)).toBe("green");
+    expect(ciBlockers(checks)).toEqual([]);
+    expect(
+      checks
+        .filter((c) => c.superseded_by_run === WINNING_RUN)
+        .map((c) => c.name)
+        .sort(),
+    ).toEqual([
+      "all_checks",
+      "check_migration_conflicts",
+      "pre_checks / detect_changes",
+      "run_tests_branch",
+    ]);
+    // The runs are read before the check-runs: a run seen completed already
+    // has every check-run it will ever have in the read that follows.
+    const runsAt = calls.findIndex((u) => u.includes("/actions/runs"));
+    const checksAt = calls.findIndex((u) => u.includes("/check-runs"));
+    expect(runsAt).toBeGreaterThan(-1);
+    expect(runsAt).toBeLessThan(checksAt);
+    expect(calls[runsAt]).toContain(`head_sha=${HEAD}`);
+  });
+
+  it("without that read the husk still counts — stricter, never greener — and the blocker is named", async () => {
+    // MUTATION: drop the supersession read from listChecks — the first case above reads red.
+    const checks = await adapterChecks(null);
+    expect(classifyCi(checks)).toBe("red");
+    expect(ciBlockers(checks).map((b) => b.name)).toContain("pre_checks / detect_changes");
+  });
+
+  it("while the newer run is still running, the cancelled run still counts", async () => {
+    const checks = await adapterChecks(
+      supersededWorkflowRuns(HEAD, { winningStatus: "in_progress", winningConclusion: null }),
+    );
+    expect(checks.some((c) => c.superseded_by_run !== undefined)).toBe(false);
+    expect(classifyCi(checks)).toBe("red");
+  });
+
+  it("an older run that failed rather than being cancelled keeps counting", async () => {
+    const checks = await adapterChecks(
+      supersededWorkflowRuns(HEAD, { cancelledConclusion: "failure" }),
+    );
+    expect(classifyCi(checks)).toBe("red");
+  });
+
+  it("a run reported for another commit is never this head's evidence", async () => {
+    const runs = supersededWorkflowRuns(HEAD).map((r) =>
+      r["id"] === WINNING_RUN ? { ...r, head_sha: OLD } : r,
+    );
+    // The winning run is not at this head, so the cancelled one is the newest
+    // of its workflow here and is not superseded.
+    const checks = await adapterChecks(runs);
+    expect(checks.some((c) => c.superseded_by_run !== undefined)).toBe(false);
+    expect(checks.find((c) => c.name === "pre_checks / detect_changes")).toBeDefined();
+  });
+});
+
+describe("the retry, over a superseded run", () => {
+  const husk: CheckSummary = {
+    ...done("cancelled", "pre_checks / detect_changes"),
+    started_at: "2026-11-13T09:43:12Z",
+  };
+  const greens = [
+    done("success", "all_checks"),
+    done("skipped", "pre_checks"),
+    done("success", "sync"),
+  ];
+  const held = (): Array<{ payload: string }> =>
+    store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'approval_retry_held' ORDER BY id")
+      .all() as Array<{ payload: string }>;
+
+  it("re-queues the withheld approval once the husk is marked superseded", async () => {
+    tracked(6564, HEAD);
+    store.recordApprovalWithheld(6564, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
+    const adapter = new CiFake();
+    adapter.checks = [{ ...husk, superseded_by_run: WINNING_RUN }, ...greens];
+    const outcome = await retryWithheldApproval(
+      { cfg, store, adapter },
+      { pr: 6564, head_sha: HEAD, conclusion: "success" },
+    );
+    expect(outcome).toMatchObject({ action: "requeued", ci: "green" });
+    expect(store.getPr(6564)?.state).toBe("queued");
+  });
+
+  it("still red: names the precise check, once per distinct answer", async () => {
+    tracked(6564, HEAD);
+    store.recordApprovalWithheld(6564, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
+    const adapter = new CiFake();
+    adapter.checks = [husk, ...greens];
+    // Duplicate success webhooks: every one is asked, the same answer logged once.
+    for (let i = 0; i < 3; i++)
+      expect(
+        await retryWithheldApproval(
+          { cfg, store, adapter },
+          { pr: 6564, head_sha: HEAD, conclusion: "success" },
+        ),
+      ).toMatchObject({ action: "noop", reason: "ci-not-green", ci: "red" });
+    expect(held()).toHaveLength(1);
+    expect(JSON.parse(held()[0]!.payload)).toEqual({
+      head_sha: HEAD,
+      ci_state: "red",
+      blocking: [
+        { name: "pre_checks / detect_changes", outcome: "failed", conclusion: "cancelled" },
+      ],
+      superseded_runs: [],
+    });
+    expect(store.approvalWithheld(6564)).toBeDefined();
+    expect(store.getPr(6564)?.state).toBe("tracked");
+    // A different answer is news.
+    adapter.checks = [husk, ...greens, run("in_progress", null, "late")];
+    await retryWithheldApproval({ cfg, store, adapter }, { pr: 6564, head_sha: HEAD });
+    expect(held()).toHaveLength(2);
+  });
+
+  it("with no checks read the blockers are unknown, never an empty list", async () => {
+    tracked(6564, HEAD);
+    store.recordApprovalWithheld(6564, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
+    await retryWithheldApproval(
+      { cfg, store, adapter: {} },
+      { pr: 6564, head_sha: HEAD, conclusion: "cancelled" },
+    );
+    expect(JSON.parse(held()[0]!.payload)).toMatchObject({ blocking: null, superseded_runs: null });
+  });
 });

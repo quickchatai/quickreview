@@ -633,8 +633,15 @@ describe("status.json", () => {
         paused: 0,
         rounds: 1,
         last_verdict: "APPROVE",
+        approval_withheld: null,
       },
     ]);
+    // The code verdict APPROVE is not GitHub's approval: a withheld one says so.
+    store.recordApprovalWithheld(7, { head_sha: "abc1234567", ci_state: "red", reason: "red-ci" });
+    expect(buildStatusSnapshot(store, false, undefined, now).prs[0]).toMatchObject({
+      last_verdict: "APPROVE",
+      approval_withheld: { head_sha: "abc1234567", ci_state: "red", since: expect.any(String) },
+    });
 
     const noHeadline = buildStatusSnapshot(store, false, undefined, now);
     expect("digest_headline" in noHeadline).toBe(false);

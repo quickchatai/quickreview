@@ -6,6 +6,7 @@
 // Nothing here triggers, re-runs or cancels CI: the one CI call is a GET.
 import { botAccountLogin } from "@quickchatai/pi-quickreview/src/identity.js";
 import {
+  ciBlockers,
   classifyCi,
   type CheckSummary,
   type CiState,
@@ -100,9 +101,11 @@ export async function retryWithheldApproval(
   if (before) return noop(before);
 
   let state: CiState;
+  let checks: CheckSummary[] | null = null;
   if (deps.adapter.listChecks) {
     try {
-      state = classifyCi(await deps.adapter.listChecks(mark.head_sha));
+      checks = await deps.adapter.listChecks(mark.head_sha);
+      state = classifyCi(checks);
     } catch (err) {
       // Unreadable CI is not evidence of anything. The mark stands and the next
       // completion (or the reconcile poll) tries again.
@@ -116,7 +119,10 @@ export async function retryWithheldApproval(
   } else {
     state = (req.conclusion ?? "").toLowerCase() === "success" ? "green" : "red";
   }
-  if (state !== "green") return noop("ci-not-green", state);
+  if (state !== "green") {
+    logHeld(store, req.pr, mark.head_sha, state, checks);
+    return noop("ci-not-green", state);
+  }
   const after = admissible();
   if (after) return noop(after, state);
 
@@ -139,4 +145,37 @@ export async function retryWithheldApproval(
     `cigate: #${req.pr} CI green at ${mark.head_sha.slice(0, 7)} — re-queued for the withheld approval`,
   );
   return { action: "requeued", ci: state, head_sha: mark.head_sha };
+}
+
+/**
+ * Why a withheld approval is still withheld, in the precise check: the CI
+ * state and every counted check that keeps it from green. Logged once per
+ * distinct answer — a CI completion and the reconcile poll ask again and
+ * again, and the same answer is not news — so the operator reads, beside the
+ * withheld mark, exactly which check the approval is waiting on. With no
+ * checks read (the conclusion fallback) the blockers are unknown, `null`,
+ * never an empty list.
+ */
+function logHeld(
+  store: StateStore,
+  pr: number,
+  head_sha: string,
+  ci: CiState,
+  checks: readonly CheckSummary[] | null,
+): void {
+  const payload = {
+    head_sha,
+    ci_state: ci,
+    blocking: checks ? ciBlockers(checks) : null,
+    superseded_runs: checks
+      ? [...new Set(checks.flatMap((c) => (c.superseded_by_run ? [c.superseded_by_run] : [])))]
+      : null,
+  };
+  const last = store.db
+    .prepare(
+      "SELECT payload FROM events WHERE pr = ? AND kind = 'approval_retry_held' ORDER BY id DESC LIMIT 1",
+    )
+    .get(pr) as { payload: string } | undefined;
+  if (last?.payload === JSON.stringify(payload)) return;
+  store.logEvent("approval_retry_held", pr, payload);
 }

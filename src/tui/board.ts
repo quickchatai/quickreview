@@ -152,6 +152,10 @@ function rowChip(pr: SnapshotPr): string {
   if (pr.review_failure) return `${FG.anomaly}FAILED_LOUD${RESET}`;
   // The worker crash-loop breaker parked it: no worker starts until rerun-round / restart-session.
   if (pr.worker_crash?.parked_at) return `${FG.anomaly}PARKED${RESET}`;
+  // The code verdict is APPROVE but GitHub holds only the COMMENT: the
+  // approval waits on CI. Never painted as an approval.
+  if (pr.approval_withheld && pr.last_verdict === "APPROVE")
+    return `${FG.dim}APPROVE·withheld${RESET}`;
   return verdictChip(pr.last_verdict);
 }
 
@@ -1052,6 +1056,17 @@ export function detailLines(
       width,
     ),
   );
+  // A verdict is the code's decision, not GitHub's state: an APPROVE whose
+  // approval is withheld for CI posted only a COMMENT.
+  if (pr.approval_withheld) {
+    const w = pr.approval_withheld;
+    lines.push(
+      truncate(
+        `  ${FG.dim}APPROVE not posted — withheld for CI${w.ci_state ? ` ${sanitizeText(w.ci_state)}` : ""} at ${sanitizeText(w.head_sha.slice(0, 7))}; GitHub holds the COMMENT only, re-tried when CI is green${RESET}`,
+        width,
+      ),
+    );
+  }
   for (const r of detail.rounds) {
     if (r.status !== "cancelled") continue;
     const loud = isLoudCancelCause(r.cancel_cause);

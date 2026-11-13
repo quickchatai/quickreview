@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyCi } from "@quickchatai/pi-quickreview/src/cigate.js";
+import { supersededCheckRuns, supersededWorkflowRuns } from "./helpers/superseded-run-fixture.js";
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,6 +27,9 @@ let logStatus: number;
 let pagedRuns: unknown[] | null;
 /** The combined-status endpoint's `statuses` rows at the head. */
 let statusRows: unknown[];
+/** When set, `GET /actions/runs?head_sha=` serves these workflow runs;
+ * otherwise it answers 404 like a repo without Actions. */
+let workflowRuns: unknown[] | null;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "qcr-prchecks-"));
@@ -43,6 +47,7 @@ beforeEach(async () => {
   logStatus = 200;
   pagedRuns = null;
   statusRows = [];
+  workflowRuns = null;
   server = createServer((req, res) => {
     methods.push(req.method ?? "?");
     const url = req.url ?? "";
@@ -55,6 +60,8 @@ beforeEach(async () => {
       return res.end("write attempted");
     }
     if (url === "/repos/o/r/pulls/7") return json({ head: { sha: HEAD } });
+    if (url.startsWith(`/repos/o/r/actions/runs?head_sha=${HEAD}`) && workflowRuns)
+      return json({ total_count: workflowRuns.length, workflow_runs: workflowRuns });
     if (url.startsWith(`/repos/o/r/commits/${HEAD}/check-runs`) && pagedRuns) {
       const q = new URL(url, "http://stub").searchParams;
       const per = Number(q.get("per_page") ?? 30);
@@ -276,5 +283,38 @@ describe("pr-checks.sh --why", () => {
     expect(err.code).not.toBe(0);
     expect(err.stderr).toContain("check-runs page");
     expect(err.stdout ?? "").not.toContain("CLASSIFIED");
+  });
+});
+
+describe("pr-checks.sh — a workflow run superseded by a newer run of its workflow", () => {
+  // The session's half of the gate must agree with classifyCi on the head
+  // that kept an approval withheld forever (tests/cigate.test.ts drives the
+  // adapter over the same fixture).
+  it("does not count the cancelled run's husks once the newer run completed", async () => {
+    pagedRuns = supersededCheckRuns();
+    workflowRuns = supersededWorkflowRuns(HEAD);
+    const { stdout } = await checks();
+    expect(stdout).toContain("pre_checks / detect_changes: completed/cancelled");
+    expect(stdout).toMatch(
+      /pre_checks \/ detect_changes: .*\[superseded run — run \d+ replaced it; does not count\]/,
+    );
+    expect(stdout.trim().split("\n").pop()).toBe("CLASSIFIED: green");
+  });
+
+  it("counts them while the newer run is still running, or when the runs cannot be read", async () => {
+    pagedRuns = supersededCheckRuns();
+    workflowRuns = supersededWorkflowRuns(HEAD, {
+      winningStatus: "in_progress",
+      winningConclusion: null,
+    });
+    expect((await checks()).stdout.trim().split("\n").pop()).toBe("CLASSIFIED: red");
+    workflowRuns = null; // 404: no Actions read — stricter, never greener
+    expect((await checks()).stdout.trim().split("\n").pop()).toBe("CLASSIFIED: red");
+  });
+
+  it("an older run that failed rather than being cancelled keeps counting", async () => {
+    pagedRuns = supersededCheckRuns();
+    workflowRuns = supersededWorkflowRuns(HEAD, { cancelledConclusion: "failure" });
+    expect((await checks()).stdout.trim().split("\n").pop()).toBe("CLASSIFIED: red");
   });
 });

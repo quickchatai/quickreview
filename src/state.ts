@@ -8654,7 +8654,14 @@ export interface StatusSnapshot {
         /** What hosts this PR's session now. Absent: `tmux`. */
         runtime?: PrRuntime;
         rounds?: number;
+        /** The last round's code verdict. NOT what GitHub shows: an APPROVE
+         * here with `approval_withheld` set never reached GitHub as an
+         * approval. */
         last_verdict?: string | null;
+        /** An approval decided and withheld for CI at this head — the code
+         * verdict is APPROVE, GitHub holds only the COMMENT — or null when
+         * none is withheld. Absent: a snapshot from an older daemon, unknown. */
+        approval_withheld?: { head_sha: string; ci_state: string | null; since: string } | null;
         /** The authoritative running plan/timing. Live lens activity is a
          * separate ephemeral sidecar; neither source impersonates the other. */
         current_round?: Pick<
@@ -9010,6 +9017,10 @@ export function buildStatusSnapshot(
     prs: store.allPrs().map((p) => ({
       rounds: byPr.get(p.number)?.c ?? 0,
       last_verdict: byPr.get(p.number)?.v ?? null,
+      approval_withheld: ((w) =>
+        w ? { head_sha: w.head_sha, ci_state: w.ci_state, since: w.created_at } : null)(
+        store.approvalWithheld(p.number),
+      ),
       ...(runningByPr.get(p.number)
         ? {
             current_round: {

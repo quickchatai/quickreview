@@ -50,6 +50,73 @@ export interface CheckSummary {
    * and never on commit statuses: the adapter does not carry a time for
    * them, and `latestRunPerName` does not collapse them at all. */
   started_at?: string | null;
+  /** Set by the adapter on a check-run whose whole workflow run was
+   * superseded (`supersededSuites`): the id of the newer run of the same
+   * workflow that replaced it. Such a row is a husk, not evidence, and
+   * `latestRunPerName` drops it. Never set on a commit status. */
+  superseded_by_run?: number;
+}
+
+/**
+ * One GitHub Actions workflow run at a head, as `GET /actions/runs?head_sha=`
+ * reports it — the only source that says which check-runs belong to which
+ * run of which workflow. The adapter is its only reader.
+ */
+export interface WorkflowRunSummary {
+  id: number;
+  workflow_id: number;
+  /** The event that triggered the run (`pull_request`, `push`, …). */
+  event: string;
+  /** The check suite holding this run's check-runs. */
+  check_suite_id: number | null;
+  status: string;
+  conclusion: string | null;
+  created_at: string;
+}
+
+/**
+ * The check suites whose check-runs are husks of a superseded workflow run,
+ * mapped to the id of the run that superseded each.
+ *
+ * Why name-collapsing alone is not enough: a workflow cancelled by its own
+ * `concurrency` group leaves its check-runs behind, and a job that the newer
+ * run named differently (a reusable workflow's `caller / callee` job that the
+ * newer run skipped, so it reports as plain `caller`) has no newer run of its
+ * name to lose to. Counted, that one cancelled husk keeps the head red
+ * forever, and no withheld approval can ever be given.
+ *
+ * The rule, exactly — conservative on every axis:
+ *
+ *  - Runs group by workflow AND triggering event: a `push` run and a
+ *    `pull_request` run of one workflow are two checks, never one
+ *    superseding the other.
+ *  - Within a group the newest run (latest `created_at`, then the higher id)
+ *    supersedes the others ONLY once it has completed. While it is still
+ *    queued or running it is no evidence yet, and the older runs still count.
+ *  - Only an older run that concluded `cancelled` is superseded. An older run
+ *    that failed is a real failure at this head and keeps counting.
+ *  - The newest run is never superseded, so a run cancelled by hand with no
+ *    successor still counts — a cancellation is never blanket-ignored.
+ */
+export function supersededSuites(runs: readonly WorkflowRunSummary[]): Map<number, number> {
+  const newest = new Map<string, WorkflowRunSummary>();
+  const key = (r: WorkflowRunSummary): string => `${r.workflow_id}\u0000${r.event}`;
+  const newer = (a: WorkflowRunSummary, b: WorkflowRunSummary): boolean =>
+    a.created_at > b.created_at || (a.created_at === b.created_at && a.id > b.id);
+  for (const r of runs) {
+    const prev = newest.get(key(r));
+    if (!prev || newer(r, prev)) newest.set(key(r), r);
+  }
+  const out = new Map<number, number>();
+  for (const r of runs) {
+    const top = newest.get(key(r))!;
+    if (top === r || r.check_suite_id === null) continue;
+    if ((top.status ?? "").toLowerCase() !== "completed") continue;
+    if ((r.status ?? "").toLowerCase() !== "completed") continue;
+    if ((r.conclusion ?? "").toLowerCase() !== "cancelled") continue;
+    out.set(r.check_suite_id, top.id);
+  }
+  return out;
 }
 
 /**
@@ -97,6 +164,10 @@ const UNFINISHED = new Set(["queued", "in_progress", "waiting", "pending", "requ
  * with a null start) could lose to a passing status listed after it — either
  * way red or pending reads green. `scripts/pr-checks.sh` reads check-runs and commit statuses and applies
  * both clauses. Keep the two in step (`tests/fences-cigate.test.ts`).
+ *
+ * Before any of that, a check-run the adapter marked `superseded_by_run` is
+ * dropped: it belongs to a whole workflow run a newer run of the same
+ * workflow replaced (`supersededSuites` states when that holds).
  */
 export function latestRunPerName(checks: readonly CheckSummary[]): CheckSummary[] {
   interface Kept {
@@ -107,6 +178,7 @@ export function latestRunPerName(checks: readonly CheckSummary[]): CheckSummary[
   const timedRuns = new Map<string, Kept & { at: string }>();
   const untimedRuns = new Map<string, Kept>();
   checks.forEach((check, idx) => {
+    if (check.source === "check_run" && check.superseded_by_run !== undefined) return;
     if (check.source !== "check_run") {
       kept.push({ check, idx }); // a status is never collapsed, in either direction
       return;
@@ -160,6 +232,24 @@ export function checkOutcome(c: CheckSummary): "pending" | "success" | "inert" |
   if (conclusion === "success") return "success";
   if (INERT_CONCLUSIONS.has(conclusion)) return "inert";
   return "failed";
+}
+
+/**
+ * The counted checks that keep CI from green — every failed or still-pending
+ * one, after the same supersession and latest-run rules `classifyCi` applies.
+ * What an operator reads when an approval stays withheld: the precise check,
+ * not just "red".
+ */
+export function ciBlockers(
+  allChecks: readonly CheckSummary[],
+): Array<{ name: string; outcome: "failed" | "pending"; conclusion: string | null }> {
+  const out: Array<{ name: string; outcome: "failed" | "pending"; conclusion: string | null }> = [];
+  for (const c of latestRunPerName(allChecks)) {
+    const outcome = checkOutcome(c);
+    if (outcome === "failed" || outcome === "pending")
+      out.push({ name: c.name, outcome, conclusion: c.conclusion });
+  }
+  return out;
 }
 
 /**

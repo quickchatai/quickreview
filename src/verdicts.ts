@@ -1949,8 +1949,10 @@ export class VerdictWatcher {
    *     failed;
    *   - the PR returns to the state its standing review put it in, read off
    *     the live mark through the one standing-review interpretation; the
-   *     mark itself, GitHub and the withheld-approval mark are left exactly
-   *     as they were;
+   *     mark itself and GitHub are left exactly as they were, and so is the
+   *     withheld-approval mark — except that a round which withheld its
+   *     approval again re-records it (`rewithholdGuardedApproval`), since
+   *     dispatch spent it and the approval is still owed;
    *   - round-end housekeeping runs as after a verdict: a fresh-head
    *     successor is promoted, otherwise the wakes held during the round
    *     flow;
@@ -2057,6 +2059,7 @@ export class VerdictWatcher {
       // is answered (as a verdict's apply and dispatch's skip answer it), a
       // fresher one stays for the promotion below.
       store.settleSuccessor(round.pr, noop.head_sha);
+      const rewithheld = this.rewithholdGuardedApproval(round, noop, verdict);
       store.logEvent("posting_guarded_noop", round.pr, {
         stage: "posting",
         via,
@@ -2074,6 +2077,9 @@ export class VerdictWatcher {
         restored_state: restored,
         trigger_ts: round.trigger_ts,
         mark: snapshotMark(mark!),
+        // The approval this round decided and withheld again, still owed:
+        // the mark re-recorded, so green CI re-queues the PR once more.
+        approval_withheld: rewithheld,
       });
       return { owed, restored };
     })();
@@ -2096,6 +2102,55 @@ export class VerdictWatcher {
     if (!successorPromoted) await this.flushWakes(round.pr);
     await this.closeMeasurement(owed, measure);
     return "settled";
+  }
+
+  /**
+   * A guard-2 no-op round that withheld its approval again: the withheld
+   * mark, re-recorded. Called inside the guarded no-op's settlement
+   * transaction.
+   *
+   * Dispatch spends the mark when a round re-decides a withheld approval
+   * (`approval_retry_dispatched`). When that round decides "no blockers,
+   * approval withheld for CI" once more, its COMMENT repeats the review
+   * already standing at this head, so guard 2 refuses it — rightly, a second
+   * COMMENT is a duplicate. But the approval is still owed, and with the mark
+   * spent nothing would ever re-queue the PR when CI turns green: the PR
+   * would sit with an APPROVE verdict and no approval on GitHub.
+   *
+   * The round withheld its approval when its session asked for a COMMENT —
+   * by the round templates' contract the withheld-approval shape and nothing
+   * else (`decidedVerdictFromReceipt`) — and its verdict file, when one
+   * exists, says APPROVE with `approval_withheld`. Anything else re-records
+   * nothing. Neither does a head the PR has moved past, nor a mark standing
+   * at another head: those belong to their own routes. Returns whether the
+   * mark was recorded.
+   */
+  private rewithholdGuardedApproval(
+    round: RoundRow,
+    noop: GuardedNoopReceipt,
+    verdict: VerdictFile | undefined,
+  ): boolean {
+    const { store } = this.deps;
+    if (noop.intended_event !== "COMMENT") return false;
+    if (verdict && !(verdict.verdict === "APPROVE" && verdict.approval_withheld === true))
+      return false;
+    const head = noop.head_sha.toLowerCase();
+    const prHead = store.getPr(round.pr)?.head_sha;
+    if (!prHead || prHead.toLowerCase() !== head) return false;
+    const current = store.approvalWithheld(round.pr);
+    if (current && current.head_sha.toLowerCase() !== head) return false;
+    store.recordApprovalWithheld(round.pr, {
+      head_sha: noop.head_sha,
+      ci_state: current?.ci_state ?? null,
+      reason: "red-ci",
+    });
+    store.logEvent("approval_withheld_red_ci", round.pr, {
+      head_sha: noop.head_sha,
+      source: "guarded_noop",
+      round_no: round.round_no,
+      ci_state: current?.ci_state ?? null,
+    });
+    return true;
   }
 
   /**

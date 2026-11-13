@@ -3382,6 +3382,88 @@ describe("guarded no-op settlement", () => {
     ]);
   });
 
+  // The approval retry's round withheld its approval again at the same head:
+  // its COMMENT is a duplicate guard 2 rightly refuses, but dispatch spent the
+  // withheld mark at handoff, so without re-recording it nothing would ever
+  // re-queue the PR on green CI — an APPROVE verdict and no approval, forever.
+  // MUTATION: drop the rewithholdGuardedApproval call — the mark is undefined
+  // and the retry answers no-withheld-approval.
+  it("a round that withheld its approval again re-records the spent mark, so green CI still re-queues", async () => {
+    // Round 1 posted the withheld COMMENT and decided APPROVE.
+    const mark = standingMark(530, "COMMENT");
+    store.recordReviewedVerdict(530, HEAD, "APPROVE");
+    const live = store.reviewedHead(530)!;
+    reviewingRound(530);
+    const { key } = stampPosting(530, 1);
+    writeGuardedNoop(530, 1, key, live, { intended_event: "COMMENT" });
+    expect(mark.head_sha).toBe(HEAD);
+    expect(store.approvalWithheld(530)).toBeUndefined(); // spent at dispatch
+
+    await watcher().handleFile(
+      write(530, 1, verdictFile({ pr: 530, verdict: "APPROVE", approval_withheld: true })),
+    );
+
+    expect(store.roundsFor(530)[0]).toMatchObject({
+      status: "cancelled",
+      cancel_cause: "no_new_evidence",
+    });
+    expect(store.getPr(530)?.state).toBe("tracked");
+    expect(store.approvalWithheld(530)).toMatchObject({ head_sha: HEAD, reason: "red-ci" });
+    expect(events("approval_withheld_red_ci", 530)).toEqual([
+      expect.objectContaining({ head_sha: HEAD, source: "guarded_noop", round_no: 1 }),
+    ]);
+    expect(events("posting_guarded_noop", 530)[0]).toMatchObject({
+      intended_event: "COMMENT",
+      unposted_verdict: "APPROVE",
+      approval_withheld: true,
+    });
+    // No second COMMENT: nothing posted.
+    expect(adapter.calls.filter((c) => !c.includes("Label"))).toEqual([]);
+
+    // CI is green at the head: the retry re-queues the PR for its approval.
+    adapter.listChecks = async () => [
+      { name: "ci", source: "check_run", status: "completed", conclusion: "success" },
+    ];
+    expect(
+      await retryWithheldApproval({ cfg, store, adapter }, { pr: 530, head_sha: HEAD }),
+    ).toMatchObject({ action: "requeued" });
+    expect(store.getPr(530)?.state).toBe("queued");
+  });
+
+  it.each([
+    [
+      "a verdict that did not withhold",
+      { intended_event: "COMMENT" },
+      { approval_withheld: false },
+      null,
+    ],
+    [
+      "a REQUEST_CHANGES refusal",
+      { intended_event: "REQUEST_CHANGES" },
+      { verdict: "REQUEST_CHANGES" },
+      null,
+    ],
+    [
+      "a head the PR has moved past",
+      { intended_event: "COMMENT" },
+      { approval_withheld: true },
+      "def456",
+    ],
+  ] as const)("re-records nothing for %s", async (_label, receipt, verdictOver, movedTo) => {
+    standingMark(531, "COMMENT");
+    store.recordReviewedVerdict(531, HEAD, "APPROVE");
+    const live = store.reviewedHead(531)!;
+    reviewingRound(531);
+    const { key } = stampPosting(531, 1);
+    writeGuardedNoop(531, 1, key, live, receipt);
+    if (movedTo) store.upsertPr({ ...store.getPr(531)!, head_sha: movedTo });
+    await watcher().handleFile(
+      write(531, 1, verdictFile({ pr: 531, verdict: "APPROVE", ...verdictOver })),
+    );
+    expect(store.approvalWithheld(531)).toBeUndefined();
+    expect(events("approval_withheld_red_ci", 531)).toEqual([]);
+  });
+
   it("rolls back guarded-noop cancellation when its restoration receipt cannot commit", async () => {
     const { roundId } = skippedRound(519);
     store.db.exec(`CREATE TRIGGER reject_noop_receipt BEFORE INSERT ON events
