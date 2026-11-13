@@ -241,6 +241,13 @@ collaborator (`[security] command`) and `qcr review-now <pr> --security`
 need no label. `[security] label = ""` turns label requests off. See
 [profiles.md](profiles.md#asking-for-a-security-review).
 
+A fifth, optional the same way: **`qcr:state-machines`**
+(`config.toml [state_machines] label`) asks for a state-machine review on
+top of the PR's plan. `@<bot> state-machines` and
+`qcr review-now <pr> --state-machines` need no label, and
+`[state_machines] label = ""` turns label requests off. See
+[profiles.md](profiles.md#asking-for-a-state-machine-review).
+
 ## 8. Verify
 
 The wizard's verification step runs these in layers and stops at the first red

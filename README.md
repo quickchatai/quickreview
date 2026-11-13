@@ -308,6 +308,11 @@ the reviewer. Webhooks need the GitHub App route and an HTTPS URL
   as files ([docs/profiles.md](docs/profiles.md)).
 - **Security review on demand:** the `qcr:security` label adds the fourteen
   security lenses.
+- **State-machine review on demand:** the `qcr:state-machines` label,
+  `@<bot> state-machines` or `--state-machines` adds the eight `pass-sm-*`
+  lenses, which look for implicit state machines gone wrong: flags that can
+  disagree, a status written with no check of the old one, a spinner an
+  error leaves on.
 - **Presets:** `[review] preset` is `default`, `max` (every model at its
   ceiling) or `low` (about half the cost and time, lower recall).
 - **Cost:** the bot is one small container, and the model spend is per review.

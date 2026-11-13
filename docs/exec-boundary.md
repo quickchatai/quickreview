@@ -437,6 +437,78 @@ GNU sed reads an option anywhere, so a file in a PR's tree named
 `-es/.*/<cmd>/e` would otherwise be a script. The chains are round 13 of the
 corpus, replayed against the compiled guard.
 
+## The in-process state reader — a tool that holds the boundary itself
+
+`state_explore` (`packages/pi-plugin/extensions/state-explore.ts` over
+`packages/pi-plugin/src/stateexplore.ts` and `stateexploregit.ts`) answers a
+state-machine lens's structural questions about the PR: anchors over the diff,
+the writers and readers of a name, a function's exits, a line's siblings. It is
+a pi tool, not the model's bash, so it runs in the worker process as the run
+uid. **None of the five layers sees it**: layer 1 pins the session's git argv,
+and this git is the tool's own child; layers 2 and 3 judge the model's command
+strings and the file tools' targets, and the tool is neither; layer 4 hashes
+what a session could have changed, and the tool writes nothing; layer 5 audits
+GitHub, which the tool never reaches. The tool-uid split and the file fence
+cover bash and the built-in file tools only. So it holds these rules itself, in
+code, and a change to it is reviewed under the discipline below:
+
+- **Committed objects only.** It reads the tree and blobs of the two commits
+  the lens names, never the working tree, so a planted symlink or an
+  uncommitted file reaches nothing.
+- **Plumbing verbs only.** `rev-parse --verify <sha>^{commit}`,
+  `ls-tree -r -l -z`, `cat-file --batch`, and `diff-tree -r -p -M --no-ext-diff
+  --no-textconv --no-color`. Never a porcelain verb (`diff`, `log`, `show`,
+  `grep`), never `ls-files` (the index reaches fsmonitor), never a textconv or
+  filter.
+- **Git hardened per child.** `-c core.fsmonitor=false -c protocol.allow=never
+  -c core.sshCommand=false -c diff.external= -c safe.bareRepository=explicit
+  -c safe.directory=<worktree>` on the argv, and an env built from nothing: the
+  host's `PATH` cut to its absolute entries, `GIT_CEILING_DIRECTORIES=<the
+  worktree's parent>`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
+  `GIT_TERMINAL_PROMPT=0`, `GIT_NO_LAZY_FETCH=1`, `GIT_OPTIONAL_LOCKS=0`,
+  `LC_ALL=C`, `HOME=/nonexistent`. Children start in `/`. Async children only:
+  one worker hosts every lens session. `safe.directory` is pinned because the
+  reader does not load the system file that grants it in the release image; a
+  bind-mounted worktree another uid owns would otherwise be refused.
+- **The reader picks the repository, not git.** Git finds a repository by
+  looking, and what it finds decides whose objects and whose configuration a
+  child reads. So discovery is fenced (no bare repository found by looking, and
+  no looking above the worktree's parent), and the first child asks git which
+  repository it found: the worktree must be the top of its work tree, and the
+  git directory `<worktree>/.git` or a linked worktree's directory
+  (`<common>/worktrees/<id>`) whose `gitdir` file names `<worktree>/.git` back.
+  Every later child names that directory with `--git-dir`. A target is
+  verified once per session: a later call over the same worktree, `base` and
+  `head` starts from the directory that verification accepted, and reuses the
+  target's tree listings and diff, since commit ids name immutable objects;
+  only a positive answer is kept, and a call that changes the target verifies
+  again. Without this, a PR
+  that commits a directory shaped like a bare repository (`HEAD`, `refs/`,
+  `objects/info/alternates` pointing elsewhere) lends the tool another
+  repository's objects, and its own `config`.
+- **Contained.** The worktree must be absolute and its realpath equal to or
+  under the session's `cwd`; `base` and `head` must be full hex commit ids that
+  resolve to commits. Anything else is a refusal text, never a throw and never
+  a git call over an unchecked path.
+- **Nothing else.** No write, no network, no GitHub client, no inject file, no
+  session, no agent.
+
+Who holds it is gated twice on the runner's side: the build puts the name on
+the `pass-sm-*` family's tools lines alone (`applyStateTools`,
+`packages/pi-plugin/src/include.ts`), and the runner attaches the tool only to a
+family variant whose own line names it, or that carries no allowlist at all
+(`stateLeafTools`, `packages/pi-plugin/extensions/lens.ts`): a profile
+layer's or a repository's own `agents/pass-sm-*.md` with no `tools:` line
+has every tool the harness gives, this one included. A scan or replay leaf
+never has it: that build writes every leaf's line.
+The process test (`tests/state-explore-git.test.ts`) plants a textconv driver,
+an external diff, an fsmonitor hook, a pager and an ssh command in a scratch
+repo's config and shows that no action of the tool runs any of them; it also
+refuses a committed bare-shaped directory, a `.git` file naming another
+repository and a directory inside the worktree, and shows that each of
+`GIT_NO_LAZY_FETCH` and `protocol.allow=never` alone keeps a partial clone's
+promisor from running. It is the regression test for these rules.
+
 ## The guarantees, stated so they can be falsified
 
 **G1 — the set of files git reads configuration from is fixed at spawn, small,

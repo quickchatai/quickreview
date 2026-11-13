@@ -65,6 +65,11 @@ Shipped profiles:
   fourteen `pass-sec-*` lenses and the validator and nothing else, and posts
   security findings only. An APPROVE from it means "no security finding".
   See "Security review" below and `profiles/security/README.md`.
+- `state-machines/` — a state-machine-only review: extends `default`, plans
+  the eight `pass-sm-*` lenses and the validator and nothing else, and posts
+  state-machine findings only. An APPROVE from it means "no state-machine
+  finding". See "State-machine review" below and
+  `profiles/state-machines/README.md`.
 - `minimal/` — empty; a self-contained skeleton (it extends nothing). No
   `heuristics.toml`: absent is legal and means "the generic selection core
   alone". A new profile is better written as a child of `default/` — only
@@ -269,7 +274,7 @@ one, a model. There are three, ascending:
 |---|---|---|
 | `light` | `medium` | the raisable lenses of a small, quiet diff (under `[models] small_diff_lines` changed lines, no migration) |
 | `standard` | `medium` | the raisable lenses of every other diff; the tier a `light` lens is raised to; the scan's stage 1 (`[scan] tier`) |
-| `deep` | `high` | the risk passes and every `pass-sec-*` lens, the validator (`[models] validate_tier`), and the three lenses that read every changed line |
+| `deep` | `high` | the risk passes and every `pass-sec-*` lens, the validator (`[models] validate_tier`), the three lenses that read every changed line, and the eight state-machine lenses (`pass-sm-*`) |
 
 - **Unpinned, a tier is a level on the review's one model.** The shipped
   config names no model, so all three run on the model the review's route
@@ -807,6 +812,7 @@ body = "verdict"          # full (default) | verdict (the verdict line + one sen
 comment_style = "concise" # full (default) | concise (one claim, ≤3 sentences)
 security_max = 8          # 0 (default) = no separate channel; else security findings' own budget
 scope = "security"        # all (default) | security (post security findings only)
+                          # | state (post state-machine findings only)
 ```
 
 Inherited through `extends` like every scalar: per key, the nearest profile
@@ -822,7 +828,7 @@ Three places carry a non-default policy (`packages/pi-plugin/src/postingpolicy.t
    (`{{posting_policy_note}}`), telling the session what posts and that every
    survivor it does not post is recorded `"disposition": "withheld"` with its
    word (`over-budget`, `nits-off`, `questions-off`, `question-not-blocking`,
-   `repeat-site`, `security-scope`).
+   `repeat-site`, `security-scope`, `state-scope`).
 2. **The validator** — a generated addendum (`posting-policy-validate`,
    composed after the profile's pack and its lens-ceiling addenda; the id is
    reserved) that, after the ordinary audit, SELECTS what posts by what a
@@ -864,6 +870,12 @@ of a `security`, `exploit-chain` or `partial-chain` kind,
   whose lens says nothing of security is recorded with a `security` kind so
   it posts. `[security] only = true` sets
   it unless the profile chain sets a scope.
+
+**`scope = "state"`** is the same rule for the state-machine family: every
+finding that is not a state-machine finding (one from a `pass-sm-*` lens, or
+of a `state-machine` kind, `severity.ts isStateFinding`) is withheld with
+the word `state-scope`, a blocker included. `[state_machines] only = true`
+sets it unless the profile chain sets a scope.
 
 Under any policy or none, **a partial exploit chain never posts**: a chain
 the validator left with two or more unproven hops is recorded doubted with
@@ -958,13 +970,18 @@ sweep cap and those of a failed row. Default on; off ⇒ the round order
 carries no coverage step (pinned). On the stored round-1 data it would fire on
 63% of PRs, about 0.65 rows per PR.
 
-### The lenses that read every changed line run at high effort
+### The lenses pinned at high effort
 
 `pass-baseline`, `pass-sweep` and `pass-behaviour-delta` run at the
 `deep` tier — the review's model at high effort — on every PR, by default
-(`DEFAULT_PASS_TIERS` in `src/config.ts`, the code default of
-`[models.pass_tiers]`; every other lens keeps its planned tier and its raise
-ladder). The reason is measured, on gpt-6.1-sol: the same 30 PRs at
+(`DEFAULT_PASS_TIERS` in `packages/pi-plugin/src/reviewconfig.ts`, the code default of
+`[models.pass_tiers]`), and so do the eight state-machine lenses
+(`pass-sm-*`) on every round that plans one; every other lens keeps its
+planned tier and its raise ladder. For the state-machine lenses the reason
+is what they look for: their defects are mostly absences — a reset at one
+exit and not another, a persisted field with no migration — found only by
+comparing sibling exits and writers, which takes the reading the deep tier
+gives. For the three line-by-line lenses the reason is measured, on gpt-6.1-sol: the same 30 PRs at
 default effort and at high effort for these three lenses gave +6 AACR defects
 (51 → 57 on 18 PRs, +3 medium on the miss set, no high-severity loss) and
 2 more Qodo issues, for +18% cost per PR and +31% time; Martian's unmatched
@@ -973,7 +990,7 @@ comments rose with it (68 → 92), the accepted price (runs `dv1-*` vs
 
 Because the default is a `[models.pass_tiers]` pin, it reaches every install
 whatever its profile (a profile that does not extend `default` included) and
-the bench without any `--config`. The three lenses are therefore pinned: their
+the bench without any `--config`. These lenses are therefore pinned: their
 plan rows name `deep` and are not raisable. To lower it:
 
 - **per install** — a `[models.pass_tiers]` entry in `config.toml` replaces
@@ -981,7 +998,9 @@ plan rows name `deep` and are not raisable. To lower it:
 - **per repo profile** — `[lenses.<pass>] effort = "medium"` keeps the pin's
   tier name but gives that lens's variants the lower thinking level (with no
   tier pinned to a model of its own, every tier runs the same model, so
-  effort is the lever that matters).
+  effort is the lever that matters);
+- **every tier at once** — `[models] effort = "low"|"medium"` sets one
+  level on every tier, pins included.
 
 The validator is unaffected: it runs at its own `validate_tier` and never
 follows a pinned lens.
@@ -1062,6 +1081,14 @@ command = true          # config.toml only; "@<bot> security"
   posts as a question naming the proof gap (`security-demoted`) instead of
   being doubted; the findings record counts any it still doubted
   (`security_doubted`).
+- **Each family lens session holds `state_explore`**, a read-only tool over
+  the PR's committed objects: `anchors` (lines where something may be
+  missing, from the diff's shape), and the `writes`, `reads`, `exits` and
+  `siblings` of a name. It runs no code and reaches no network, holds the
+  exec boundary itself, and is given to a `pass-sm-*` session and no other
+  ([`docs/exec-boundary.md`](exec-boundary.md), "The in-process state
+  reader"). What it prints is where to look; a finding still rests on lines
+  the lens read.
 - **`only = true`**: every lens outside the family and `pass-validate` is
   switched off through the same `enabled = false` a profile writes by hand
   (`pass-baseline`, `pass-bounds`, `pass-security`, the sweep, tests and the
@@ -1148,6 +1175,156 @@ more than a day before this daemon began tracking the PR (a fresh state
 database sweeps the PR's whole history); it is logged as ignored
 (`stale-comment`).
 
+## State-machine review — the `pass-sm-*` family and `[state_machines]`
+
+Eight lenses read a change for one class of defect an **implicit state
+machine** produces: behaviour that depends on which state a thing is in,
+where the states and the moves between them are written down nowhere
+(`packages/pi-plugin/src/passes.ts STATE_FAMILY`).
+
+| Lens | Looks for | `kind:` |
+|---|---|---|
+| `pass-sm-states` | a combination of flags, nullable fields and status values that must never exist, with a writer that produces it and a reader that mishandles it | `state-machine:illegal-state` |
+| `pass-sm-transitions` | a write of the state with no check of the state it leaves; a guard removed; a transition that skips what its siblings do | `state-machine:transition` |
+| `pass-sm-exhaustive` | a state added, renamed or removed, and a dispatch, list, map or filter over the set that was not updated | `state-machine:unhandled-state` |
+| `pass-sm-stuck` | a transient state (loading, processing, locked) that an error, early return, timeout or cancel leaves set | `state-machine:stuck` |
+| `pass-sm-events` | an event that arrives twice, late, out of order or while the last is in flight | `state-machine:event-order` |
+| `pass-sm-derived` | a stored copy or summary of other state, and a writer of the source that leaves it stale | `state-machine:derived` |
+| `pass-sm-lifecycle` | calls that must come in an order nothing enforces: use before init, use after close | `state-machine:lifecycle` |
+| `pass-sm-durable` | stored state: a persisted shape changed with no migration or version change (server or client), a state write and its side effect that are not atomic, sequential writes outside a transaction, a stored transition with no compare on the old state, recovery, old data meeting new code | `state-machine:stored` |
+
+Every one includes the shared contract `prompts/pass-sm-common.md`. A
+finding is a claim that **a sequence of events reaches a state the code
+mishandles**, so its evidence block names the state variable, the state,
+the event, a numbered trace with one `file:line` per step, the line that
+acts with no check, the property broken (absence, precedence or response),
+the consequence and the guards hunted. Most of the defects the family
+misses are absences, so the procedure has a comparison step: each write,
+call or exit the change adds, moves or removes is compared with its
+siblings (the other exits of the function, the other writers of the field,
+the old place of a moved call, a persisted shape against a migration,
+writes against a transaction), and an absence finding may rest on a
+`compare:` line, the place the line is present against the place it is
+missing. A lens answers `NONE` only with a `checked:` list of the sites it
+opened and the line that clears each, and a state defect another lens owns
+is reported anyway with `owner <lens>` in `detail`, never dropped. The
+contract also says what is never a finding: an inventory of the machines a module holds, a proposal to
+introduce a state machine or an enum, a combination that is representable
+but that nothing writes, independent flags, a derived boolean, a dispatch
+the build already proves exhaustive, "add a default case", and a race with
+no named second actor. The reviewer reads code and never runs it, so a
+finding says "by reading" and recommends the test that would confirm it.
+
+`pass-statelessness`, `pass-concurrency`, `pass-rollout` and
+`pass-sec-toctou` are not members and keep what is theirs.
+
+```toml
+# config.toml (a profile's [state_machines] wins for triggers and only)
+[state_machines]
+triggers = "strong"            # off | strong (default) | all
+only = false                   # a state-machine-only review
+label = "qcr:state-machines"   # config.toml only; "" = no label requests
+command = true                 # config.toml only; "@<bot> state-machines"
+```
+
+- **What plans a family lens** (`packages/pi-plugin/src/statetriggers.ts`).
+  Every probe reads one line of the diff at a time, cut to 400 characters.
+
+  | Lens | Strong (planned in every profile) | Weak (only under `triggers = "all"`) |
+  |---|---|---|
+  | `pass-sm-states` | two or more status flags added in one file | one status flag; a nullable marker field (`completedAt`, `deleted_by`) |
+  | `pass-sm-transitions` | a check of the current state removed and not added back | a write of a `status`, `state`, `phase`, `stage` or `step`; the PR text says "state machine" or "transition" |
+  | `pass-sm-exhaustive` | a member added to an enumeration or union of literals that already had members | a `switch`, `match` or `when` over a state-like value |
+  | `pass-sm-stuck` | a transient state entered in a file whose added lines handle no failure (`finally`, `catch`, `defer`, `with`, …) | any transient state entered; the PR text says "stuck" or "never reset" |
+  | `pass-sm-events` | the PR text says double submit, duplicate, out of order, idempotent, re-entrant | an event handler, listener, receiver or consumer |
+  | `pass-sm-derived` | an effect whose body only sets state | a stored count, total, cache or last-value field written |
+  | `pass-sm-lifecycle` | a check of a lifecycle phase (`initialized`, `closed`, …) removed | a lifecycle method (`init`, `start`, `close`, `dispose`, …) |
+  | `pass-sm-durable` | a migration, schema or SQL file whose added lines name a state column or an enum type | `UPDATE … SET status`, `.update(status=…)` |
+
+  Also: a profile `heuristics.toml` probe for a family lens (`paths` and
+  `added_lines`, always strong), a request (below), and `[lenses.<pass>] plan = "always"`. `off` leaves the
+  requests and `always`.
+  A wholly new enumeration plans nothing: every dispatch over it is written
+  in the same change. The trigger rates are unmeasured.
+- **A family row runs at the `deep` tier on every route** — a trigger, a
+  request, `plan = "always"` — because the eight lenses are shipped pins
+  (`DEFAULT_PASS_TIERS`, see "The lenses pinned at high effort" above), so
+  the row is not raisable. It is lowered per lens: a `[models.pass_tiers]`
+  entry in `config.toml` (`"pass-sm-stuck" = "standard"`), a profile's
+  `[lenses.<pass>] effort = "medium"` (the `fast` profile sets `low` on all
+  eight), or `[models] effort` for every tier at once. A profile cannot
+  `risk = true` a family lens: a pinned lens takes no risk entry. It is
+  never a required row.
+- **The family is offered as addable only to a round already doing
+  state-machine work** (a family row planned, a request, `only`), so a
+  round with no state signal is offered what it was before the family
+  existed.
+- **The validator** replays a state-machine candidate's trace
+  (`validate-state-evidence`, in every build): each line and step is valid,
+  plausible or contradicted; then five refutation questions — is the state
+  unrepresentable or the dispatch proven exhaustive, is the guard somewhere
+  else, is it the same object on every step, is each step feasible, does
+  something restore the state. A contradicted step or a found guard is
+  `refuted` with the line cited; a candidate already written as a question
+  naming its gap (confidence 0.6 or less) survives as that question; an
+  inventory, a refactor proposal and a representable-only combination are
+  `below-bar`; a machine the change did not touch is `out-of-scope`. No
+  word is added to the kill vocabulary. A state defect a family lens hands
+  to a security lens (`detail: owner pass-sec-…`) is written with a
+  `security:<class>` kind, by the lens or else by the validator, so the
+  security rules judge it and `scope = "security"` posts it, while its
+  `pass-sm-*` lens keeps it a state-machine finding. A second rule (`validate-state-keep`, after the
+  external-semantics rule) keeps such a finding at its weight: a regression
+  the local code proves (a removed fallback, guard or terminal transition,
+  or an exit the code distinguishes that misses the state its siblings
+  reach) keeps its severity and confidence when a dependency's source is
+  missing, with the open premise as a caveat; an absence is affirmed only
+  after a search for the other writers, readers or exits; and two state
+  candidates merge only when they name the same transition and one fix
+  closes both.
+- **Each family lens session holds `state_explore`**, a read-only tool over
+  the PR's committed objects: `anchors` (lines where something may be
+  missing, from the diff's shape), and the `writes`, `reads`, `exits` and
+  `siblings` of a name. It runs no code and reaches no network, holds the
+  exec boundary itself, and is given to a `pass-sm-*` session and no other
+  ([`docs/exec-boundary.md`](exec-boundary.md), "The in-process state
+  reader"). What it prints is where to look; a finding still rests on lines
+  the lens read.
+- **`only = true`**: every lens outside the family and `pass-validate` is
+  switched off through `enabled = false`, exactly as `[security] only`
+  does for its family, and posting is scoped to state-machine findings
+  (`[posting] scope = "state"`). `[security] only` and `[state_machines]
+  only` together are refused at load: a review keeps one family alone.
+  With no baseline, every re-review is a full round (`baseline-unplanned`):
+  there is no follow-up delta in a state-machine-only review yet.
+
+The shipped profile `state-machines` is that review, with every trigger on
+and all eight lenses planned on every change to code or config
+(`profiles/state-machines/README.md`).
+
+### Asking for a state-machine review
+
+A request plans the whole family on the PR's next round, on top of the
+profile's plan, but never a lens the profile switched off or skipped. It is
+the security request's machinery under a second kind
+(`src/staterequest.ts`, kind `state-machines` in `pr_review_requests`), so
+everything said under *Asking for a security review* holds for it: who may
+ask, the acknowledgement, serving once, a request that waits for a running
+round, the reconcile poll. A PR may carry both requests at once, each
+withdrawn by its own label.
+
+- the **label** `[state_machines] label` (`qcr:state-machines`);
+- **`@<bot> state-machines`** (also `state-machine`, `state machines`, each
+  with an optional `review`) as the first line of a comment by an OWNER,
+  MEMBER or COLLABORATOR, while `[state_machines] command` is on. The
+  acknowledgement is marked `<!-- qcr-state-machines-request -->`;
+- **`qcr review-now <pr> --state-machines`** from the operator (it may be
+  given together with `--security`);
+- **`/qcr-review --state-machines`** in pi, or **`qcr review
+  --state-machines`** in the terminal, for that run alone. The
+  **`/qcr-review state-machines`** preset is the review mode: the family
+  and the validator, and no other lens.
+
 ## Lens-selection heuristics — `heuristics.toml`
 
 Lens selection (`packages/pi-plugin/src/heuristics.ts selectLenses`) is split in two:
@@ -1192,8 +1369,10 @@ config_lines = ['AuthType:\s*NONE']  # probes over ADDED lines of config files
   "strong"` too.
 - **Extendable lenses only**: `pass-ui`, `pass-contracts`,
   `pass-data-safety`, `pass-security`, `pass-statelessness`,
-  `pass-prod-risk`, `pass-delivery`, `pass-backcompat`, and the fourteen
-  `pass-sec-*` lenses. Not extendable:
+  `pass-prod-risk`, `pass-delivery`, `pass-backcompat`, the fourteen
+  `pass-sec-*` lenses and the eight `pass-sm-*` lenses (their `paths` and
+  `added_lines`; a probe for one is a strong state-machine trigger). Not
+  extendable:
   `pass-intent` (body-keyed, never file-shaped),
   `pass-placement`/`pass-simplicity` (computed from code-file status/size,
   not path membership), and `pass-concurrency`/`pass-ask-human`

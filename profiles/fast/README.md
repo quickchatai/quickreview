@@ -4,9 +4,9 @@
 
 - **Low reasoning everywhere.** Use it with `[review] preset = "low"`: the
   preset puts the main session and every tier at low reasoning. The profile
-  also sets `effort = "low"` on the three lenses `default` pins at high
-  (baseline, sweep, behaviour-delta) and on the validator, so those stay low
-  even if the preset is not set.
+  also sets `effort = "low"` on every lens `default` pins at high
+  (baseline, sweep, behaviour-delta and the eight state-machine lenses)
+  and on the validator, so those stay low even if the preset is not set.
 - **Bug-finding lenses only.** Maintainability, duplication, abstraction,
   consistency, style, lint-conformance, placement and intent are off — the
   lenses that find true but non-bug issues. Baseline, the per-file sweep,
