@@ -181,7 +181,7 @@ jobs:
       # On a Blacksmith runner: Blacksmith's builder, whose layer cache lives on
       # the runner fleet's own disks (one cache per image and arch). Anywhere
       # else (QCR_RUNNERS=github, the QEMU leg): buildx with the gha cache.
-      - uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184 # v2.2.0
+      - uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267 # v2.3.0
         if: startsWith(matrix.runner, 'blacksmith-')
         with:
           cache-key: ${{ matrix.image }}-${{ matrix.arch }}
@@ -290,7 +290,7 @@ jobs:
       REPO: ${{ matrix.image == 'release' && 'ghcr.io/quickchatai/quickreview' || 'ghcr.io/quickchatai/quickreview-memory' }}
     steps:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
