@@ -455,7 +455,7 @@ const IOTA_NAME_RE = /^\s*[A-Za-z_]\w{0,60}\s+([A-Za-z_]\w{0,60})\s*=\s*iota\b/;
  *   `type X =`, `X = Literal[`                                      X
  *   a Go `Member X = iota` line                                     X
  * Reads the line's first `LINE_MAX` characters. */
-export function enumTypeName(line: string): string | undefined {
+function enumTypeName(line: string): string | undefined {
   const cut = line.slice(0, LINE_MAX);
   const cls = CLASS_NAME_RE.exec(cut);
   if (cls && ENUM_BASE_RE.test(cls[2]!)) return cls[1];
@@ -469,47 +469,32 @@ export function enumTypeName(line: string): string | undefined {
 /** An added line that grows an enumeration which already had members. */
 export interface MemberCandidate {
   file: string;
-  /** Index of the hunk in the file's patch. */
-  hunk: number;
-  /** Head line of the added member. */
-  line: number;
   /** The added line, sign stripped, cut to `LINE_MAX`. */
   text: string;
-  /** A member of a union of string literals. */
-  union: boolean;
-  /** The enumeration's type, when the hunk shows its declaration line and
-   * the declaration names one (`enumTypeName`). */
-  typeName?: string;
 }
 
 interface HunkLine {
   sign: "+" | "-" | " ";
   /** Sign stripped, cut to `LINE_MAX`. */
   text: string;
-  /** Head line; 0 for a removed line, which has none. */
-  line: number;
 }
 
-/** A patch as hunks: each header (cut) and its body lines with their head
- * line numbers. Text before the first header belongs to no hunk; an empty
- * line and a `\ No newline` marker are no line of either side. */
+/** A patch as hunks: each header (cut) and its body lines. Text before the
+ * first header belongs to no hunk; an empty line and a `\ No newline` marker
+ * are no line of either side. */
 function hunksOf(patch: string): { header: string; lines: HunkLine[] }[] {
   const hunks: { header: string; lines: HunkLine[] }[] = [];
   let cur: { header: string; lines: HunkLine[] } | null = null;
-  let head = 0;
   for (const raw of patch.split("\n")) {
     const cut = raw.slice(0, 1 + LINE_MAX);
-    const header = parseHunkHeader(cut);
-    if (header) {
+    if (parseHunkHeader(cut)) {
       cur = { header: cut, lines: [] };
       hunks.push(cur);
-      head = header.new_start;
       continue;
     }
     if (!cur || raw === "" || raw.startsWith("\\")) continue;
     const sign = raw[0] === "+" ? "+" : raw[0] === "-" ? "-" : " ";
-    cur.lines.push({ sign, text: cut.slice(1), line: sign === "-" ? 0 : head });
-    if (sign !== "-") head++;
+    cur.lines.push({ sign, text: cut.slice(1) });
   }
   return hunks;
 }
@@ -521,15 +506,13 @@ function scopeOf(header: string): string {
   return end < 0 ? "" : header.slice(end + 2);
 }
 
-/** The declaration a line opens, as its type name (undefined when the shape
- * names none); null when the line opens none. A member line that only holds
- * the word (`RED = enum.auto()`) opens none and keeps the declaration above
- * it; a bare `X = iota` opens a block that names no type. */
-function openedBy(text: string, member: boolean): { name: string | undefined } | null {
-  if (!declaresEnum(text)) return null;
+/** Whether a line opens an enumeration's declaration. A member line that
+ * only holds the word (`RED = enum.auto()`) opens none and keeps the
+ * declaration above it; a bare `X = iota` opens a block that names no type. */
+function opensEnum(text: string, member: boolean): boolean {
+  if (!declaresEnum(text)) return false;
   const code = codeOf(text);
-  const name = enumTypeName(code);
-  return name !== undefined || !member || IOTA_RE.test(code) ? { name } : null;
+  return enumTypeName(code) !== undefined || !member || IOTA_RE.test(code);
 }
 
 function memberKind(text: string): "union" | "enum" | null {
@@ -565,11 +548,9 @@ export function memberCandidates(files: readonly PrFileEntry[]): MemberCandidate
   const out: MemberCandidate[] = [];
   for (const f of files) {
     if (!isSourceCode(f)) continue;
-    hunksOf(f.patch as string).forEach((h, hunk) => {
+    for (const h of hunksOf(f.patch as string)) {
       const kinds = h.lines.map((l) => memberKind(l.text));
-      const scope = scopeOf(h.header);
-      const headerDeclares = declaresEnum(scope);
-      const declared = headerDeclares || h.lines.some((l) => declaresEnum(l.text));
+      const declared = declaresEnum(scopeOf(h.header)) || h.lines.some((l) => declaresEnum(l.text));
       const existing = { union: false, enum: false };
       h.lines.forEach((l, i) => {
         const kind = kinds[i];
@@ -580,25 +561,19 @@ export function memberCandidates(files: readonly PrFileEntry[]): MemberCandidate
       // an added line that replaces none, so its members are new with it.
       // `replaced`: a declaration was removed since the last context line or
       // declaration.
-      const enums = { name: headerDeclares ? enumTypeName(scope) : undefined, fresh: false };
-      const unions = { name: UNION_NAME_RE.exec(scope)?.[1], fresh: false };
+      const enums = { fresh: false };
+      const unions = { fresh: false };
       const replaced = { union: false, enum: false };
       h.lines.forEach((l, i) => {
-        const opened = openedBy(l.text, kinds[i] !== null);
-        const union = NOT_DECL_RE.test(l.text) ? null : UNION_NAME_RE.exec(codeOf(l.text));
+        const opened = opensEnum(l.text, kinds[i] !== null);
+        const union = !NOT_DECL_RE.test(l.text) && UNION_NAME_RE.test(codeOf(l.text));
         if (l.sign === "-") {
           if (opened) replaced.enum = true;
           if (union) replaced.union = true;
           return;
         }
-        if (opened) {
-          enums.name = opened.name;
-          enums.fresh = l.sign === "+" && !replaced.enum;
-        }
-        if (union) {
-          unions.name = union[1];
-          unions.fresh = l.sign === "+" && !replaced.union;
-        }
+        if (opened) enums.fresh = l.sign === "+" && !replaced.enum;
+        if (union) unions.fresh = l.sign === "+" && !replaced.union;
         if (opened || l.sign === " ") replaced.enum = false;
         if (union || l.sign === " ") replaced.union = false;
         if (l.sign !== "+") return;
@@ -606,17 +581,9 @@ export function memberCandidates(files: readonly PrFileEntry[]): MemberCandidate
         if (!kind || !existing[kind]) return;
         if (kind === "enum" && (!declared || enums.fresh)) return;
         if (kind === "union" && unions.fresh) return;
-        const typeName = kind === "union" ? unions.name : enums.name;
-        out.push({
-          file: f.filename,
-          hunk,
-          line: l.line,
-          text: l.text,
-          union: kind === "union",
-          ...(typeName !== undefined ? { typeName } : {}),
-        });
+        out.push({ file: f.filename, text: l.text });
       });
-    });
+    }
   }
   return out;
 }
