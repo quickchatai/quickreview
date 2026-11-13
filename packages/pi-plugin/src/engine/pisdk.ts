@@ -97,6 +97,7 @@ import {
   type SkippedLogin,
 } from "../modelroute.js";
 import { keyOnlyCredentials } from "./auth.js";
+import { DEFAULT_TOOLS } from "../pidefaulttools.js";
 import type { AgentsFile } from "./port.js";
 import {
   FENCED_TOOLS,
@@ -571,8 +572,7 @@ export interface HostSessionSpec {
   onExtensionError?: (error: ExtensionError) => void;
 }
 
-/** pi's own default tool set at the pin (DEFAULT_TOOL_NAMES). Canary 5 holds it. */
-export const DEFAULT_TOOLS: readonly string[] = ["read", "bash", "edit", "write"];
+export { DEFAULT_TOOLS };
 
 function checkToolAllowlist(tools: readonly string[]): void {
   for (const t of tools)

@@ -162,6 +162,33 @@ describe("pass-sm-states", () => {
   });
 });
 
+describe("pass-sm-states: the flag forms", () => {
+  // The strong trigger (two flags) and the weak one (one) read one pattern.
+  // MUTATION: give the strong record its own copy of the pattern without
+  // `BooleanField` — the Django row's strong half fails.
+  it.each([
+    ["TS field", "isOpen: boolean;", "hasPaid: boolean;"],
+    ["Python literal", "is_open = False", "has_paid = False"],
+    [
+      "Django field",
+      "is_open = models.BooleanField(default=True)",
+      "has_paid = models.BooleanField()",
+    ],
+    ["SQLAlchemy column", "is_open = Column(Boolean)", "has_paid = Column(Boolean)"],
+    [
+      "React state",
+      "const [isOpen, setOpen] = useState<boolean>(false);",
+      "const [hasPaid, setPaid] = useState<boolean>(true);",
+    ],
+  ])("%s: two are strong, one is weak", (_form, a, b) => {
+    const two = added("src/flags.ts", a, b);
+    expect(of(select([two], "strong"), "pass-sm-states")).toMatchObject({ strength: "strong" });
+    const one = added("src/flags.ts", a);
+    expect(of(select([one], "strong"), "pass-sm-states")).toBeUndefined();
+    expect(of(select([one], "all"), "pass-sm-states")).toMatchObject({ strength: "weak" });
+  });
+});
+
 describe("pass-sm-transitions", () => {
   // MUTATION: drop the "not added back" filter in lineHit — the moved-check
   // case fires and this fails.

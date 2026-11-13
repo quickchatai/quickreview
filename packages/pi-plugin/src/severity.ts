@@ -28,7 +28,7 @@
 import type { Verdict as VerdictType } from "./types.js";
 
 import { SEVERITIES } from "./severityrank.js";
-import { isSecurityLens, isStateLens, lensToken } from "./passes.js";
+import { isSecurityLens, isStateLens, lensFieldTokens } from "./passes.js";
 export { SEVERITIES };
 export type Severity = (typeof SEVERITIES)[number];
 
@@ -331,10 +331,7 @@ export function isSecurityFinding(kind?: string | null, lens?: string | null): b
   if (SECURITY_KIND_RE.test((kind ?? "").trim().toLowerCase())) return true;
   const field = lens ?? "";
   if (isSecurityLens(field)) return true;
-  return field
-    .toLowerCase()
-    .split(/[+,/&;|]/)
-    .some((part) => lensToken(part) === GENERAL_SECURITY_LENS);
+  return lensFieldTokens(field).includes(GENERAL_SECURITY_LENS);
 }
 
 // ---- state-machine findings ---------------------------------------------

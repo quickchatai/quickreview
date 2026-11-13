@@ -42,7 +42,7 @@
 
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { readFile, realpath, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { isInside } from "./pathinside.js";
 import type { ExploreIo } from "./stateexplore.js";
 import { parseUnifiedDiff } from "./unifieddiff.js";
@@ -506,7 +506,9 @@ export function gitExploreIo(opts: GitExploreOptions): GitExploreIo {
       let back: string | null = null;
       try {
         const text = await readFile(join(realDir, "gitdir"), "utf8");
-        if (text.length <= 4096) back = await real(text.trim());
+        // A relative backlink (`git worktree add --relative-paths`,
+        // `worktree.useRelativePaths`) is relative to the admin directory.
+        if (text.length <= 4096) back = await real(resolve(realDir, text.trim()));
       } catch {
         back = null;
       }

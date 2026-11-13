@@ -89,6 +89,11 @@ const STATE_NAME = `(?:${STATE_NAMES.join("|")})`;
  * pattern source. */
 const TRANSIENT = String.raw`(?:loading|submitting|saving|pending|busy|processing|fetching|uploading|syncing|running|locked|starting|stopping|connecting|in[_-]?progress|in[_-]?flight)`;
 
+/** A boolean status-flag declaration (`isDirty: boolean`, `has_paid =
+ * False`, `useState<boolean>(false)`), as a pattern source: the strong
+ * trigger (two side by side) and the weak one (one) read this one form. */
+const STATUS_FLAG = String.raw`\b(?:is|has|was|did|should|can)(?:[A-Z]\w{1,40}|_[a-z]\w{1,40})\b.{0,40}(?::\s*bool(?:ean)?\b|=\s*(?:true|false|True|False)\b|BooleanField|Column\(\s*Boolean|useState(?:<boolean>)?\(\s*(?:true|false))`;
+
 export const STATE_TRIGGERS: readonly StateTrigger[] = [
   // ---- pass-sm-states: which combinations can exist ----------------------
   {
@@ -97,9 +102,7 @@ export const STATE_TRIGGERS: readonly StateTrigger[] = [
     strength: "strong",
     probe: "added",
     min: 2,
-    re: new RegExp(
-      String.raw`\b(?:is|has|was|did|should|can)(?:[A-Z]\w{1,40}|_[a-z]\w{1,40})\b.{0,40}(?::\s*bool(?:ean)?\b|=\s*(?:true|false|True|False)\b|BooleanField|Column\(\s*Boolean|useState(?:<boolean>)?\(\s*(?:true|false))`,
-    ),
+    re: new RegExp(STATUS_FLAG),
     why: "two or more status flags are added side by side",
   },
   {
@@ -107,9 +110,7 @@ export const STATE_TRIGGERS: readonly StateTrigger[] = [
     lens: "pass-sm-states",
     strength: "weak",
     probe: "added",
-    re: new RegExp(
-      String.raw`\b(?:is|has|was|did|should|can)(?:[A-Z]\w{1,40}|_[a-z]\w{1,40})\b.{0,40}(?::\s*bool(?:ean)?\b|=\s*(?:true|false|True|False)\b|BooleanField|Column\(\s*Boolean|useState(?:<boolean>)?\(\s*(?:true|false))`,
-    ),
+    re: new RegExp(STATUS_FLAG),
     why: "a status flag is added",
   },
   {

@@ -165,20 +165,24 @@ export function lensToken(part: string): string {
  * `pass-security` is not a member; a caller that counts it as security
  * says so itself. */
 export function isSecurityLens(lensField: string): boolean {
-  for (const part of lensField.toLowerCase().split(/[+,/&;|]/)) {
-    if (SECURITY_FAMILY.includes(lensToken(part))) return true;
-  }
-  return false;
+  return lensFieldTokens(lensField).some((t) => SECURITY_FAMILY.includes(t));
 }
 
 /** Whether a recorded lens field names a state-machine-family lens, read as
  * `isSecurityLens` reads one: joined fields, a `#n` or `@ site` after the
  * name and the agent's tier suffix all count. */
 export function isStateLens(lensField: string): boolean {
-  for (const part of lensField.toLowerCase().split(/[+,/&;|]/)) {
-    if (STATE_FAMILY.includes(lensToken(part))) return true;
-  }
-  return false;
+  return lensFieldTokens(lensField).some((t) => STATE_FAMILY.includes(t));
+}
+
+/** The lens names a recorded lens field holds, lower-cased: the field split
+ * at `+ , / & ; |` (how sessions join lenses), each part read by
+ * `lensToken`. Every family test reads a field through this one split. */
+export function lensFieldTokens(lensField: string): string[] {
+  return lensField
+    .toLowerCase()
+    .split(/[+,/&;|]/)
+    .map(lensToken);
 }
 
 /** Lenses the whole-repo scan never runs: each needs a diff, a PR body or a

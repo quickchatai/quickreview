@@ -98,7 +98,8 @@ export function benchContextPack(
 
 // ---- the security inputs -------------------------------------------------------
 
-/** What a host hands a one-shot round about security beyond the files. */
+/** What a host hands a one-shot round beyond the files: the family requests
+ * (security, state-machine), the threat-model reader and the security facts. */
 export interface OneShotSecurity {
   /** A security review was asked for (`/qcr-review --security`): the whole
    * security family is planned. */

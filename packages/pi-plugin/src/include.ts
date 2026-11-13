@@ -41,6 +41,7 @@ import {
 } from "./reviewconfig.js";
 import { SCAN_DEEP_LENSES, SECURITY_FAMILY, STATE_FAMILY } from "./passes.js";
 import { STATE_EXPLORE_TOOL } from "./stateexplore.js";
+import { DEFAULT_TOOLS } from "./pidefaulttools.js";
 import { flooredToMin, PASS_TIER_ORDER, RISK_TIER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";
 import type { EcosystemName } from "./ecosystem.js";
@@ -387,13 +388,18 @@ export function applyMemoryTools(
  * runner's own gate (extensions/lens.ts `stateLeafTools`) attaches the tool to
  * a session only when the name is a family variant AND its line names it.
  *
- * A pass with no `tools:` line is left alone, for `applyMemoryTools`'s reason:
- * it has no allowlist, so it has every tool the harness gives, and the
- * runner's gate gives a family variant with no line `state_explore` too.
+ * A family variant with no `tools:` line (a profile layer's or a
+ * repository's own `agents/pass-sm-*.md`) gets one: the harness gives a
+ * session with no allowlist pi's default tools as its allowlist, which holds
+ * no extension tool, so the line is pi's defaults and `state_explore`. Any
+ * other pass with no line is left alone.
  */
 export function applyStateTools(frontmatter: string, pass: string): string {
   const listed = toolsList(frontmatter);
-  if (listed === null) return frontmatter;
+  if (listed === null)
+    return STATE_FAMILY.includes(pass)
+      ? applyField(frontmatter, "tools", [...DEFAULT_TOOLS, STATE_EXPLORE_TOOL].join(", "))
+      : frontmatter;
   const kept = listed.filter((t) => t.toLowerCase() !== STATE_EXPLORE_TOOL);
   const tools = STATE_FAMILY.includes(pass) ? [...kept, STATE_EXPLORE_TOOL] : kept;
   return frontmatter.replace(TOOLS_LINE_RE, `tools: ${tools.join(", ")}`);

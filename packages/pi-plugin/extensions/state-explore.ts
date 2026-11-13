@@ -4,11 +4,12 @@
 //
 // Who holds it: a `pass-sm-*` lens session, and nothing else. Two gates, both
 // on the runner's side of the session: the agent's name must be a
-// STATE_FAMILY variant and its own `tools:` allowlist must name the tool, or
-// it must carry no allowlist at all (`stateLeafTools` in extensions/lens.ts,
-// which every lens route's runner config comes from). The build puts the name on exactly the family's lines
-// (`applyStateTools`, packages/pi-plugin/src/include.ts) and strips it from
-// every other agent and from a scan or replay build.
+// STATE_FAMILY variant and its own `tools:` allowlist must name the tool
+// (`stateLeafTools` in extensions/lens.ts, which every lens route's runner
+// config comes from). The build puts the name on exactly the family's lines,
+// writing a line for a family variant that has none (`applyStateTools`,
+// packages/pi-plugin/src/include.ts), and strips it from every other agent
+// and from a scan or replay build.
 //
 // What it is: in-process, read-only, deterministic. It runs in the worker
 // process, outside the bash guard, the tool-uid split and the file fence, so
@@ -41,6 +42,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { textResult, toPiTool, type QcrTool, type QcrToolResult } from "./pi-tool.js";
 import {
+  EXPLORE_ACTIONS,
   STATE_EXPLORE_DESCRIPTION,
   STATE_EXPLORE_PARAMS,
   STATE_EXPLORE_TOOL,
@@ -109,8 +111,6 @@ export interface StateExploreConfig {
   ) => ExploreCheck | Promise<ExploreCheck>;
 }
 
-const ACTIONS: readonly ExploreAction[] = ["anchors", "writes", "reads", "exits", "siblings"];
-
 /** A commit id as the task prints it: full SHA-1 or SHA-256 hex. */
 const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
@@ -138,8 +138,8 @@ function str(v: unknown): string | undefined {
 /** Read the request half of the arguments, or say what is wrong with it. */
 function readRequest(params: Record<string, unknown>): ExploreRequest | string {
   const action = str(params["action"]);
-  if (action === undefined || !(ACTIONS as readonly string[]).includes(action))
-    return `action must be one of ${ACTIONS.join(", ")}`;
+  if (action === undefined || !(EXPLORE_ACTIONS as readonly string[]).includes(action))
+    return `action must be one of ${EXPLORE_ACTIONS.join(", ")}`;
   const req: ExploreRequest = { action: action as ExploreAction };
   if (params["name"] !== undefined) {
     const name = str(params["name"]);

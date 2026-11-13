@@ -499,11 +499,12 @@ code, and a change to it is reviewed under the discipline below:
 Who holds it is gated twice on the runner's side: the build puts the name on
 the `pass-sm-*` family's tools lines alone (`applyStateTools`,
 `packages/pi-plugin/src/include.ts`), and the runner attaches the tool only to a
-family variant whose own line names it, or that carries no allowlist at all
-(`stateLeafTools`, `packages/pi-plugin/extensions/lens.ts`): a profile
-layer's or a repository's own `agents/pass-sm-*.md` with no `tools:` line
-has every tool the harness gives, this one included. A scan or replay leaf
-never has it: that build writes every leaf's line.
+family variant whose own line names it (`stateLeafTools`,
+`packages/pi-plugin/extensions/lens.ts`). A profile layer's or a
+repository's own `agents/pass-sm-*.md` with no `tools:` line is given one by
+the build: pi's default tools and this one, since the host gives a session
+with no allowlist pi's defaults, which hold no extension tool. A scan or
+replay leaf never has it: that build writes every leaf's line.
 The process test (`tests/state-explore-git.test.ts`) plants a textconv driver,
 an external diff, an fsmonitor hook, a pager and an ssh command in a scratch
 repo's config and shows that no action of the tool runs any of them; it also

@@ -2,12 +2,12 @@
 //
 // Three layers hold "the state-machine family, and nothing else":
 //   - the build (`applyStateTools`, include.ts) puts the name on exactly the
-//     STATE_FAMILY variants' tools lines of a PR build, strips it from every
-//     other agent, and a scan or replay build carries none;
+//     STATE_FAMILY variants' tools lines of a PR build (writing a line for a
+//     family variant that has none), strips it from every other agent, and a
+//     scan or replay build carries none;
 //   - the runner's gate (`stateLeafTools`, extensions/lens.ts, which every
 //     route's LensRunConfig comes from) attaches the tool's factory only when
-//     the agent is a family variant AND its own line names the tool or it
-//     carries no allowlist at all;
+//     the agent is a family variant AND its own line names the tool;
 //   - the extension itself refuses a target outside the session's cwd that
 //     is not the round's own worktree, or a malformed sha, with a text
 //     result, never a throw, and keeps its memory per session.
@@ -35,7 +35,7 @@ import {
   type ExploreTarget,
   type StateExploreConfig,
 } from "@quickchatai/pi-quickreview/extensions/state-explore.js";
-import type { ExploreIo } from "@quickchatai/pi-quickreview/src/stateexplore.js";
+import { EXPLORE_ACTIONS, type ExploreIo } from "@quickchatai/pi-quickreview/src/stateexplore.js";
 import {
   PASS_ADDENDA,
   PASS_TIERS,
@@ -51,6 +51,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
 import { createLensRunner } from "@quickchatai/pi-quickreview/src/engine/lens/runlens.js";
 import { STATE_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
+import { DEFAULT_TOOLS } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { lensTuningAddenda, roundAgentModels } from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import { postingPolicyAddenda } from "@quickchatai/pi-quickreview/src/postingpolicy.js";
 import type { PassTier } from "@quickchatai/pi-quickreview/src/types.js";
@@ -176,8 +177,14 @@ describe("the build grants state_explore to the state-machine family alone", () 
     ).toBe("name: x\ntools: read, bash\n");
     // pass-validate judges the family's findings; it never explores.
     expect(applyStateTools(`tools: read, State_Explore\n`, "pass-validate")).toBe("tools: read\n");
-    // No line: no allowlist, which a grant must not narrow.
-    expect(applyStateTools("name: x\n", "pass-sm-stuck")).toBe("name: x\n");
+    // No line: a family variant gets pi's defaults and the tool (the host
+    // would give pi's defaults alone); any other pass is left alone.
+    // MUTATION: return the frontmatter unchanged for no line in
+    // applyStateTools — the family case keeps no line; this fails.
+    expect(applyStateTools("name: x\n", "pass-sm-stuck")).toBe(
+      `name: x\ntools: ${[...DEFAULT_TOOLS, STATE_EXPLORE_TOOL].join(", ")}\n`,
+    );
+    expect(applyStateTools("name: x\n", "pass-baseline")).toBe("name: x\n");
   });
 });
 
@@ -198,9 +205,10 @@ describe("the runner's gate: a family name AND the agent's own allowlist, if it 
 
   // MUTATION: drop the STATE_FAMILY test from stateLeafTools (extensions/lens.ts) — fails.
   // MUTATION: drop the allowlist test from stateLeafTools — fails.
-  // MUTATION: restore `(agent.tools ?? []).includes(…)` — the family variant
-  // with no allowlist gets nothing, and this fails.
-  it("gives a factory to a family variant whose line names the tool or that has no line, and to nothing else", () => {
+  // MUTATION: restore the `agent.tools === undefined ||` arm — the family
+  // variant with no allowlist gets a factory pi would never let it use; this
+  // fails.
+  it("gives a factory to a family variant whose line names the tool, and to nothing else", () => {
     const withTool = ["read", "bash", "grep", STATE_EXPLORE_TOOL];
     for (const tier of PASS_TIERS)
       expect(gate(agent(`pass-sm-stuck--${tier}`, withTool)), tier).toHaveLength(1);
@@ -212,17 +220,17 @@ describe("the runner's gate: a family name AND the agent's own allowlist, if it 
     expect(gate(agent("pass-baseline+pass-sm-stuck--deep", withTool))).toEqual([]);
     // The allowlist gate: a family variant built without it gets nothing.
     expect(gate(agent("pass-sm-stuck--deep", ["read", "grep", "find", "ls"]))).toEqual([]);
-    // No allowlist means every tool the harness gives, this one included —
-    // for a family variant; a lens outside the family still gets nothing.
-    expect(gate(agent("pass-sm-stuck--deep", undefined))).toHaveLength(1);
+    // No allowlist is pi's defaults at the host, which hold no extension
+    // tool: no factory, family or not (a PR build writes the family's line).
+    expect(gate(agent("pass-sm-stuck--deep", undefined))).toEqual([]);
     expect(gate(agent("pass-baseline--deep", undefined))).toEqual([]);
   });
 
   // A profile layer's or a repository's own agents/pass-sm-*.md with no
-  // `tools:` line is left alone by the build (no allowlist to narrow), so the
-  // built family variant carries no line and the gate must still give it the
-  // tool. The same file for a lens outside the family gives nothing.
-  // MUTATION: restore `(agent.tools ?? []).includes(…)` in stateLeafTools — fails.
+  // `tools:` line gets one from the build: pi's defaults and the tool, so the
+  // gate gives it the tool. The same file for a lens outside the family is
+  // left with no line and gets nothing.
+  // MUTATION: return the frontmatter unchanged for no line in applyStateTools — fails.
   it("a family agent file a profile layer serves with no tools line keeps the tool through the build", () => {
     const out = mkdtempSync(join(scratch, "no-line-"));
     const noLine = (text: string): string => text.replace(/^tools:.*\n/m, "");
@@ -241,7 +249,7 @@ describe("the runner's gate: a family name AND the agent's own allowlist, if it 
     const baseline = registry.get("pass-baseline--light");
     expect(stuck, "built").toBeDefined();
     expect(baseline, "built").toBeDefined();
-    expect(stuck!.tools).toBeUndefined();
+    expect(stuck!.tools).toEqual([...DEFAULT_TOOLS, STATE_EXPLORE_TOOL]);
     expect(baseline!.tools).toBeUndefined();
     expect(gate(stuck!)).toHaveLength(1);
     expect(gate(baseline!)).toEqual([]);
@@ -333,6 +341,58 @@ describe("[runLens] a pass-sm session holds state_explore; no other lens does", 
         if (STATE_FAMILY.includes(passOf(name))) expect(held, name).toContain(STATE_EXPLORE_TOOL);
         else expect(held, name).not.toContain(STATE_EXPLORE_TOOL);
       }
+    },
+  );
+
+  // A family agent file with no tools line, through the build and a real
+  // host session: the host gives a spec with no tools pi's defaults as the
+  // allowlist, which would drop the extension tool, so the session must hold
+  // it from the line the build wrote. MUTATION: return the frontmatter
+  // unchanged for no line in applyStateTools (and restore the runner gate's
+  // `agent.tools === undefined ||` arm) — the stuck session holds only pi's
+  // defaults; this fails.
+  it(
+    "a family agent with no tools line holds the tool in its session; a lens outside the family does not",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const out = join(dir, "built-no-line");
+      const tiers = Object.fromEntries(PASS_TIERS.map((t) => [t, "faux/faux-1"])) as Record<
+        PassTier,
+        string
+      >;
+      const own = new Set(["pass-sm-stuck.md", "pass-baseline.md"]);
+      buildAgents(join(ROOT, "agents"), out, {
+        root: ROOT,
+        tiers,
+        riskPasses: [],
+        validateTier: "light",
+        readFile: (p: string) => {
+          const text = readFileSync(p, "utf8");
+          return own.has(p.slice(p.lastIndexOf("/") + 1)) ? text.replace(/^tools:.*\n/m, "") : text;
+        },
+      });
+      const names = ["pass-sm-stuck--light", "pass-baseline--light"];
+      rig.faux.setResponses(names.map(() => () => fauxAssistantMessage("fine")));
+      const runner = createLensRunner({
+        host: rig.host,
+        permits: 2,
+        registry: loadBuiltAgents(out),
+        cwd: dir,
+        env: { PATH: process.env["PATH"], HOME: dir },
+        bashGuard: createBashGuard({ sandboxRoot: dir, replay: false, secretDirs: [] }),
+        leafTools: stateLeafTools(dir, process.env["PATH"] ?? ""),
+        ledgerPath: join(dir, "round", "lens-ledger.jsonl"),
+        sessionGapMs: 0,
+      });
+      const held: Record<string, string[]> = {};
+      for (const name of names) {
+        const before = sessions.length;
+        const { result } = await runner.run({ agent: name, task: "go" });
+        expect(result.exitCode, `${name}: ${result.errorMessage ?? ""}`).toBe(0);
+        held[name] = sessions[before]!.getAllTools().map((t) => t.name);
+      }
+      expect(held["pass-sm-stuck--light"]).toEqual([...DEFAULT_TOOLS, STATE_EXPLORE_TOOL]);
+      expect(held["pass-baseline--light"]).not.toContain(STATE_EXPLORE_TOOL);
     },
   );
 });
@@ -444,7 +504,7 @@ describe("the extension: refusals are text, memory is per session", () => {
       model: undefined,
       modelId: undefined,
       thinking: null,
-      tools: undefined,
+      tools: ["read", "bash", "grep", STATE_EXPLORE_TOOL],
       body: "",
       filePath: "/agents/pass-sm-events--deep.md",
       origin: "built",
@@ -502,6 +562,20 @@ describe("the extension: refusals are text, memory is per session", () => {
     expect(await call(tool, { action: "exits", file: "a.c", line: 0, ...target })).toMatch(
       /refused: line must be/,
     );
+  });
+
+  // The extension reads the engine's own action list. MUTATION: check
+  // actions against a local list without "siblings" in readRequest — the
+  // siblings call is refused; this fails.
+  it("accepts every action the engine names", async () => {
+    const { config } = recorded();
+    const tool = session(createStateExplore(config));
+    const target = { worktree: join(cwd, "wt", "pr-1"), base: SHA_A, head: SHA_B };
+    for (const action of EXPLORE_ACTIONS)
+      expect(
+        await call(tool, { action, name: "state", file: "a.c", line: 1, ...target }),
+        action,
+      ).not.toMatch(/action must be/);
   });
 
   // MUTATION: drop the `memory.target === undefined || …` reuse and re-check

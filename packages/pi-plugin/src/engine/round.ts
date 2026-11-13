@@ -160,9 +160,10 @@ export interface RoundSpec {
   dependencyNote?: string;
   /** The memory seed for the first round's prompt (ignored with `prompts`). */
   memory?: RoundMemory;
-  /** The first round's security inputs (`--security`, the host's threat-model
-   * reader, the facts; ignored with `prompts`). Omitted: none — the plan's
-   * security rows come from the triggers and the profile alone. */
+  /** The first round's family inputs (`--security`, `--state-machines`, the
+   * host's threat-model reader, the facts; ignored with `prompts`). Omitted:
+   * none — the plan's family rows come from the triggers and the profile
+   * alone. */
   security?: OneShotSecurity;
   /** Names the run in log lines (default `repo#number`). */
   label?: string;

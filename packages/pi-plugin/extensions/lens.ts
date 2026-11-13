@@ -99,19 +99,18 @@ export function createLens(deps: LensToolDeps): ExtensionFactory {
 
 /**
  * The leaf tools a lens session is given beside the bash guard: `state_explore`
- * for a state-machine family variant whose own allowlist names it or that
- * carries no allowlist, nothing for any other agent. Two gates, each enough
- * alone to keep the tool off a lens: the agent's name (its pass, the
- * variant's tier suffix dropped, must be in STATE_FAMILY, so a profile that
- * puts the name on another lens's line grants nothing) and the agent's
- * `tools:` line (a family variant built without the tool, as a scan or replay
- * build is, gets none). A family variant with no `tools:` line at all — a
- * profile layer's or a repository's own `agents/pass-sm-*.md` that the build
- * leaves alone — has every tool the harness gives, so it is given this one
- * too; a scan or replay build always writes a line, so none of its leaves
- * reaches that case. Each call of the returned function makes a fresh
- * factory, so each pass's session has a memory of its own. `worktree` is the
- * round's own (`QCR_WORKTREE`), which the tool reads wherever it sits.
+ * for a state-machine family variant whose own allowlist names it, nothing
+ * for any other agent. Two gates, each enough alone to keep the tool off a
+ * lens: the agent's name (its pass, the variant's tier suffix dropped, must
+ * be in STATE_FAMILY, so a profile that puts the name on another lens's line
+ * grants nothing) and the agent's `tools:` line (a family variant built
+ * without the tool, as a scan or replay build is, gets none). A variant with
+ * no line gets none either: the host would give it pi's defaults as its
+ * allowlist, which holds no extension tool, and a PR build writes the tool on
+ * every family variant's line (`applyStateTools`). Each call of the returned
+ * function makes a fresh factory, so each pass's session has a memory of its
+ * own. `worktree` is the round's own (`QCR_WORKTREE`), which the tool reads
+ * wherever it sits.
  */
 export function stateLeafTools(
   cwd: string,
@@ -120,7 +119,7 @@ export function stateLeafTools(
 ): (agent: LensAgent) => ExtensionFactory[] {
   return (agent) =>
     STATE_FAMILY.includes(agent.name.replace(/--.*$/, "")) &&
-    (agent.tools === undefined || agent.tools.includes(STATE_EXPLORE_TOOL))
+    agent.tools?.includes(STATE_EXPLORE_TOOL) === true
       ? [createStateExplore({ cwd, path, ...(worktree ? { worktree } : {}) })]
       : [];
 }

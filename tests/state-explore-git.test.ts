@@ -19,7 +19,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { stateExploreTool } from "@quickchatai/pi-quickreview/extensions/state-explore.js";
 import {
@@ -375,6 +375,42 @@ describe("state_explore picks the repository, not git", () => {
     const x = target(forged);
     expect(await x.verify()).toMatch(/is not that worktree's own/);
     await x.close();
+  });
+
+  // A worktree added with relative paths (`git worktree add --relative-paths`,
+  // `worktree.useRelativePaths`) has a backlink relative to its admin
+  // directory; it is written by hand here so any git version serves.
+  // MUTATION: resolve the backlink without the admin directory
+  // (`real(text.trim())` in stateexploregit.ts) — it resolves against the
+  // process's cwd, the registered worktree is refused, and this fails.
+  it("accepts a linked worktree whose backlink is relative, and refuses one that names another", async () => {
+    const add = (name: string): string => {
+      git([
+        "-c",
+        "core.fsmonitor=false",
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        join(root, name),
+        head,
+      ]);
+      return join(repo, ".git", "worktrees", name);
+    };
+    const relAdmin = add("rel");
+    const otherAdmin = add("rel-other");
+    writeFileSync(join(relAdmin, "gitdir"), `${relative(relAdmin, join(root, "rel", ".git"))}\n`);
+    writeFileSync(
+      join(otherAdmin, "gitdir"),
+      `${relative(otherAdmin, join(root, "rel", ".git"))}\n`,
+    );
+    const rel = target(join(root, "rel"));
+    expect(await rel.verify()).toBeNull();
+    expect(await rel.readHead("src/save.ts")).toBe(SAVE_HEAD);
+    await rel.close();
+    const other = target(join(root, "rel-other"));
+    expect(await other.verify()).toMatch(/is not that worktree's own/);
+    await other.close();
   });
 
   // MUTATIONS, each fails this: drop GIT_CEILING_DIRECTORIES from

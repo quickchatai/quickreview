@@ -149,6 +149,15 @@ describe("isStateLens and isStateFinding", () => {
     expect(isStateLens(field)).toBe(want);
   });
 
+  // Both families and the general security lens read a joined field through
+  // one split (`lensFieldTokens`). MUTATION: drop `|` from the split in
+  // lensFieldTokens — the `|` row fails for all three.
+  it.each(["+", ",", "/", "&", ";", "|"])("a field joined with %j names each lens in it", (sep) => {
+    expect(isStateLens(`pass-baseline${sep}pass-sm-stuck`)).toBe(true);
+    expect(isSecurityLens(`pass-baseline${sep}pass-sec-access`)).toBe(true);
+    expect(isSecurityFinding(undefined, `pass-baseline${sep}pass-security`)).toBe(true);
+  });
+
   // MUTATION: make STATE_KIND_RE match "state" alone — the `stateless` and
   // `state` cases fail.
   it("a finding is a state-machine finding by its lens or by its kind", () => {
