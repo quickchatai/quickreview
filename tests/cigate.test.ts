@@ -1329,21 +1329,21 @@ describe("the retry, over a superseded run", () => {
       .all() as Array<{ payload: string }>;
 
   it("re-queues the withheld approval once the husk is marked superseded", async () => {
-    tracked(6564, HEAD);
-    store.recordApprovalWithheld(6564, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
+    tracked(7001, HEAD);
+    store.recordApprovalWithheld(7001, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
     const adapter = new CiFake();
     adapter.checks = [{ ...husk, superseded_by_run: WINNING_RUN }, ...greens];
     const outcome = await retryWithheldApproval(
       { cfg, store, adapter },
-      { pr: 6564, head_sha: HEAD, conclusion: "success" },
+      { pr: 7001, head_sha: HEAD, conclusion: "success" },
     );
     expect(outcome).toMatchObject({ action: "requeued", ci: "green" });
-    expect(store.getPr(6564)?.state).toBe("queued");
+    expect(store.getPr(7001)?.state).toBe("queued");
   });
 
   it("still red: names the precise check, once per distinct answer", async () => {
-    tracked(6564, HEAD);
-    store.recordApprovalWithheld(6564, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
+    tracked(7001, HEAD);
+    store.recordApprovalWithheld(7001, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
     const adapter = new CiFake();
     adapter.checks = [husk, ...greens];
     // Duplicate success webhooks: every one is asked, the same answer logged once.
@@ -1351,7 +1351,7 @@ describe("the retry, over a superseded run", () => {
       expect(
         await retryWithheldApproval(
           { cfg, store, adapter },
-          { pr: 6564, head_sha: HEAD, conclusion: "success" },
+          { pr: 7001, head_sha: HEAD, conclusion: "success" },
         ),
       ).toMatchObject({ action: "noop", reason: "ci-not-green", ci: "red" });
     expect(held()).toHaveLength(1);
@@ -1363,20 +1363,20 @@ describe("the retry, over a superseded run", () => {
       ],
       superseded_runs: [],
     });
-    expect(store.approvalWithheld(6564)).toBeDefined();
-    expect(store.getPr(6564)?.state).toBe("tracked");
+    expect(store.approvalWithheld(7001)).toBeDefined();
+    expect(store.getPr(7001)?.state).toBe("tracked");
     // A different answer is news.
     adapter.checks = [husk, ...greens, run("in_progress", null, "late")];
-    await retryWithheldApproval({ cfg, store, adapter }, { pr: 6564, head_sha: HEAD });
+    await retryWithheldApproval({ cfg, store, adapter }, { pr: 7001, head_sha: HEAD });
     expect(held()).toHaveLength(2);
   });
 
   it("with no checks read the blockers are unknown, never an empty list", async () => {
-    tracked(6564, HEAD);
-    store.recordApprovalWithheld(6564, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
+    tracked(7001, HEAD);
+    store.recordApprovalWithheld(7001, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
     await retryWithheldApproval(
       { cfg, store, adapter: {} },
-      { pr: 6564, head_sha: HEAD, conclusion: "cancelled" },
+      { pr: 7001, head_sha: HEAD, conclusion: "cancelled" },
     );
     expect(JSON.parse(held()[0]!.payload)).toMatchObject({ blocking: null, superseded_runs: null });
   });
