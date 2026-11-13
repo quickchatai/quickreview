@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyCi } from "@quickchatai/pi-quickreview/src/cigate.js";
-import { supersededCheckRuns, supersededWorkflowRuns } from "./helpers/superseded-run-fixture.js";
+import { SUPERSESSION_CASES } from "./helpers/superseded-run-fixture.js";
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -30,6 +30,8 @@ let statusRows: unknown[];
 /** When set, `GET /actions/runs?head_sha=` serves these workflow runs;
  * otherwise it answers 404 like a repo without Actions. */
 let workflowRuns: unknown[] | null;
+/** The `total_count` the runs endpoint advertises; null: the true count. */
+let workflowTotal: number | null;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "qcr-prchecks-"));
@@ -48,6 +50,7 @@ beforeEach(async () => {
   pagedRuns = null;
   statusRows = [];
   workflowRuns = null;
+  workflowTotal = null;
   server = createServer((req, res) => {
     methods.push(req.method ?? "?");
     const url = req.url ?? "";
@@ -61,7 +64,10 @@ beforeEach(async () => {
     }
     if (url === "/repos/o/r/pulls/7") return json({ head: { sha: HEAD } });
     if (url.startsWith(`/repos/o/r/actions/runs?head_sha=${HEAD}`) && workflowRuns)
-      return json({ total_count: workflowRuns.length, workflow_runs: workflowRuns });
+      return json({
+        total_count: workflowTotal ?? workflowRuns.length,
+        workflow_runs: workflowRuns,
+      });
     if (url.startsWith(`/repos/o/r/commits/${HEAD}/check-runs`) && pagedRuns) {
       const q = new URL(url, "http://stub").searchParams;
       const per = Number(q.get("per_page") ?? 30);
@@ -287,34 +293,17 @@ describe("pr-checks.sh --why", () => {
 });
 
 describe("pr-checks.sh — a workflow run superseded by a newer run of its workflow", () => {
-  // The session's half of the gate must agree with classifyCi on the head
-  // that kept an approval withheld forever (tests/cigate.test.ts drives the
-  // adapter over the same fixture).
-  it("does not count the cancelled run's husks once the newer run completed", async () => {
-    pagedRuns = supersededCheckRuns();
-    workflowRuns = supersededWorkflowRuns(HEAD);
+  // The session's half of the gate, driven with the same case table as the
+  // adapter (tests/cigate.test.ts), so the two cannot drift.
+  it.each(SUPERSESSION_CASES.map((c) => [c.name, c] as const))("%s", async (_name, c) => {
+    pagedRuns = c.checkRuns();
+    workflowRuns = c.runs(HEAD);
+    workflowTotal = c.totalCount ?? null;
     const { stdout } = await checks();
-    expect(stdout).toContain("pre_checks / detect_changes: completed/cancelled");
-    expect(stdout).toMatch(
-      /pre_checks \/ detect_changes: .*\[superseded run — run \d+ replaced it; does not count\]/,
-    );
-    expect(stdout.trim().split("\n").pop()).toBe("CLASSIFIED: green");
-  });
-
-  it("counts them while the newer run is still running, or when the runs cannot be read", async () => {
-    pagedRuns = supersededCheckRuns();
-    workflowRuns = supersededWorkflowRuns(HEAD, {
-      winningStatus: "in_progress",
-      winningConclusion: null,
-    });
-    expect((await checks()).stdout.trim().split("\n").pop()).toBe("CLASSIFIED: red");
-    workflowRuns = null; // 404: no Actions read — stricter, never greener
-    expect((await checks()).stdout.trim().split("\n").pop()).toBe("CLASSIFIED: red");
-  });
-
-  it("an older run that failed rather than being cancelled keeps counting", async () => {
-    pagedRuns = supersededCheckRuns();
-    workflowRuns = supersededWorkflowRuns(HEAD, { cancelledConclusion: "failure" });
-    expect((await checks()).stdout.trim().split("\n").pop()).toBe("CLASSIFIED: red");
+    expect(stdout.trim().split("\n").pop()).toBe(`CLASSIFIED: ${c.want}`);
+    if (c.want === "green")
+      expect(stdout).toMatch(
+        /pre_checks \/ detect_changes: completed\/cancelled .*\[superseded run — run \d+ replaced it; does not count\]/,
+      );
   });
 });

@@ -642,6 +642,24 @@ describe("status.json", () => {
       last_verdict: "APPROVE",
       approval_withheld: { head_sha: "abc1234567", ci_state: "red", since: expect.any(String) },
     });
+    // Dispatch spends the mark when a retry round takes it; spending it posts
+    // nothing, so the approval is still outstanding while that round runs.
+    // MUTATION: drop the retry-spend branch from outstandingApproval — null here.
+    store.clearApprovalWithheld(7);
+    const retry = store.startRound(7, "re-review", [], 45);
+    store.logEvent("approval_retry_dispatched", 7, {
+      head_sha: "abc1234567",
+      round_id: retry,
+      ci_state: "red",
+      reason: "red-ci",
+    });
+    expect(buildStatusSnapshot(store, false, undefined, now).prs[0]).toMatchObject({
+      last_verdict: "APPROVE",
+      approval_withheld: { head_sha: "abc1234567", ci_state: "red", retry_round: 2 },
+    });
+    // Once that round ends, the spend describes nothing running.
+    store.finishRound(retry, "APPROVE", 1);
+    expect(buildStatusSnapshot(store, false, undefined, now).prs[0]?.approval_withheld).toBeNull();
 
     const noHeadline = buildStatusSnapshot(store, false, undefined, now);
     expect("digest_headline" in noHeadline).toBe(false);

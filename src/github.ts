@@ -1040,11 +1040,14 @@ export class GitHubAdapter {
     // The workflow runs are read BEFORE the check-runs: a run this read sees
     // completed already has every check-run it will ever have, so the read
     // below holds them, and a husk is never dropped for a result not seen.
-    const superseded = await this.supersededCheckSuites(ref);
+    const workflowRuns = await this.workflowRunsAt(ref);
     const runs = await this.completeCheckPages<any>(
       `/repos/${this.owner}/${this.repo}/commits/${enc}/check-runs`,
       "check_runs",
     );
+    const present = new Set<number>();
+    for (const r of runs) if (typeof r.check_suite?.id === "number") present.add(r.check_suite.id);
+    const superseded = supersededSuites(workflowRuns, present);
     for (const r of runs) {
       const suite: unknown = r.check_suite?.id;
       const by = typeof suite === "number" ? superseded.get(suite) : undefined;
@@ -1072,15 +1075,16 @@ export class GitHubAdapter {
   }
 
   /**
-   * The check suites at a head that belong to a superseded workflow run
-   * (`supersededSuites` in cigate.ts states the rule). Read from
+   * The workflow runs at a head, for `supersededSuites` (cigate.ts states
+   * the rule). Read from
    * `GET /actions/runs?head_sha=`, the one source that ties a check suite to
    * its workflow. Any failure to read it — no Actions permission, Actions off,
-   * a transient error — answers "nothing superseded": every check-run then
-   * counts, which can only read CI stricter, never greener.
+   * a transient error, an inconsistent snapshot — answers no runs, so nothing
+   * is superseded: every check-run then counts, which can only read CI
+   * stricter, never greener.
    */
-  private async supersededCheckSuites(ref: string): Promise<Map<number, number>> {
-    if (!/^[0-9a-f]{40}$/i.test(ref)) return new Map();
+  private async workflowRunsAt(ref: string): Promise<WorkflowRunSummary[]> {
+    if (!/^[0-9a-f]{40}$/i.test(ref)) return [];
     let rows: any[];
     try {
       rows = await this.completeCheckPages<any>(
@@ -1088,7 +1092,7 @@ export class GitHubAdapter {
         "workflow_runs",
       );
     } catch {
-      return new Map();
+      return [];
     }
     const runs: WorkflowRunSummary[] = [];
     for (const r of rows) {
@@ -1107,7 +1111,7 @@ export class GitHubAdapter {
         created_at: r.created_at,
       });
     }
-    return supersededSuites(runs);
+    return runs;
   }
 
   /**

@@ -170,7 +170,12 @@ export interface TuiView {
     /** An APPROVE verdict whose approval is withheld for CI: GitHub holds
      * only the COMMENT. null: none withheld. Absent: the snapshot does not
      * report it (an older daemon) — unknown. */
-    approval_withheld?: { head_sha: string; ci_state: string | null; since: string } | null;
+    approval_withheld?: {
+      head_sha: string;
+      ci_state: string | null;
+      since: string;
+      retry_round?: number;
+    } | null;
     author?: string | null;
     stale_recheck?: boolean;
   };

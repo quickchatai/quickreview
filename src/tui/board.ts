@@ -1062,7 +1062,7 @@ export function detailLines(
     const w = pr.approval_withheld;
     lines.push(
       truncate(
-        `  ${FG.dim}APPROVE not posted — withheld for CI${w.ci_state ? ` ${sanitizeText(w.ci_state)}` : ""} at ${sanitizeText(w.head_sha.slice(0, 7))}; GitHub holds the COMMENT only, re-tried when CI is green${RESET}`,
+        `  ${FG.dim}APPROVE not posted — withheld for CI${w.ci_state ? ` ${sanitizeText(w.ci_state)}` : ""} at ${sanitizeText(w.head_sha.slice(0, 7))}; GitHub holds the COMMENT only, ${w.retry_round !== undefined ? `round ${w.retry_round} re-deciding it now` : "re-tried when CI is green"}${RESET}`,
         width,
       ),
     );

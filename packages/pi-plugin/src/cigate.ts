@@ -91,14 +91,25 @@ export interface WorkflowRunSummary {
  *    `pull_request` run of one workflow are two checks, never one
  *    superseding the other.
  *  - Within a group the newest run (latest `created_at`, then the higher id)
- *    supersedes the others ONLY once it has completed. While it is still
- *    queued or running it is no evidence yet, and the older runs still count.
+ *    supersedes the others ONLY once it has completed with `success` AND its
+ *    own check-runs are in the read (`presentSuites`). It must stand in for
+ *    what it replaces: a newest run still queued or running is no evidence
+ *    yet; one that was itself cancelled — while it waited on concurrency, it
+ *    may create no job at all — or failed to start proves nothing, and a
+ *    successful run with no check-run in the read leaves nothing to count in
+ *    the husks' place. In each of those cases the older runs still count.
  *  - Only an older run that concluded `cancelled` is superseded. An older run
  *    that failed is a real failure at this head and keeps counting.
  *  - The newest run is never superseded, so a run cancelled by hand with no
  *    successor still counts — a cancellation is never blanket-ignored.
+ *
+ * `scripts/pr-checks.sh` applies the same rule; the case table in
+ * `tests/helpers/superseded-run-fixture.ts` drives both.
  */
-export function supersededSuites(runs: readonly WorkflowRunSummary[]): Map<number, number> {
+export function supersededSuites(
+  runs: readonly WorkflowRunSummary[],
+  presentSuites: ReadonlySet<number>,
+): Map<number, number> {
   const newest = new Map<string, WorkflowRunSummary>();
   const key = (r: WorkflowRunSummary): string => `${r.workflow_id}\u0000${r.event}`;
   const newer = (a: WorkflowRunSummary, b: WorkflowRunSummary): boolean =>
@@ -112,6 +123,8 @@ export function supersededSuites(runs: readonly WorkflowRunSummary[]): Map<numbe
     const top = newest.get(key(r))!;
     if (top === r || r.check_suite_id === null) continue;
     if ((top.status ?? "").toLowerCase() !== "completed") continue;
+    if ((top.conclusion ?? "").toLowerCase() !== "success") continue;
+    if (top.check_suite_id === null || !presentSuites.has(top.check_suite_id)) continue;
     if ((r.status ?? "").toLowerCase() !== "completed") continue;
     if ((r.conclusion ?? "").toLowerCase() !== "cancelled") continue;
     out.set(r.check_suite_id, top.id);

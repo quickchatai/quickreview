@@ -100,23 +100,42 @@ HEAD_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hea
 # states the rule). Unreadable — no Actions permission, Actions off, any error
 # — means nothing is superseded: every check-run counts, stricter, never greener.
 echo '{"workflow_runs": []}' >"$WORKFLOWS"
+WF_OK=1
 for ((page = 1; page <= 10; page++)); do
   (get "/repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100&page=$page") 2>/dev/null \
-    || { echo '{"workflow_runs": []}' >"$WORKFLOWS"; break; }
-  n="$(python3 -c '
+    || { WF_OK=0; break; }
+  # Accumulate; print "<rows on this page> <done>". A snapshot that contradicts
+  # itself — total_count moving between pages, more rows than it advertised,
+  # or a short page before it — fails, as the adapter's completeCheckPages does.
+  out="$(python3 -c '
 import json, sys
 acc = json.load(open(sys.argv[1]))
 page_doc = json.load(open(sys.argv[2]))
 rows = page_doc.get("workflow_runs") if isinstance(page_doc, dict) else None
 if not isinstance(rows, list):
     raise SystemExit(1)
+count = page_doc.get("total_count")
+if count is not None:
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        raise SystemExit(1)
+    if acc.get("total_count") is not None and acc["total_count"] != count:
+        raise SystemExit(1)
+    acc["total_count"] = count
 acc["workflow_runs"] += rows
+expected = acc.get("total_count")
+got = len(acc["workflow_runs"])
+if expected is not None and got > expected:
+    raise SystemExit(1)
+done = len(rows) < 100 or (expected is not None and got == expected)
+if done and expected is not None and got != expected:
+    raise SystemExit(1)
 json.dump(acc, open(sys.argv[1], "w"))
-print(len(rows))' "$WORKFLOWS" "$OUT")" || { echo '{"workflow_runs": []}' >"$WORKFLOWS"; break; }
-  if ((n < 100)); then break; fi
-  # Ten full pages and still more: an incomplete read supersedes nothing.
-  ((page < 10)) || echo '{"workflow_runs": []}' >"$WORKFLOWS"
+print(len(rows), int(done))' "$WORKFLOWS" "$OUT")" || { WF_OK=0; break; }
+  [[ "${out#* }" == 1 ]] && break
+  ((page < 10)) || WF_OK=0
 done
+# Unreadable or inconsistent: no runs, so nothing is superseded.
+[[ "$WF_OK" == 1 ]] || echo '{"workflow_runs": []}' >"$WORKFLOWS"
 
 # Every page, as src/github.ts listChecks and guards.sh read them: a failing
 # or pending run past row 100 is still a check at this head. Up to 10 pages; a
@@ -170,7 +189,13 @@ head_sha = sys.argv[5].lower()
 # Superseded workflow runs (mirrors packages/pi-plugin/src/cigate.ts
 # supersededSuites): runs group by workflow AND event; the newest of a group
 # (latest created_at, then higher id) supersedes the others only once it has
-# completed, and only an older run that concluded `cancelled` is superseded.
+# completed with `success` and its own check-runs are in the read, and only an
+# older run that concluded `cancelled` is superseded.
+present = set(
+    (c.get("check_suite") or {}).get("id")
+    for c in runs
+    if isinstance((c.get("check_suite") or {}).get("id"), int)
+)
 wf = [
     w for w in workflows
     if isinstance(w, dict) and isinstance(w.get("id"), int) and isinstance(w.get("workflow_id"), int)
@@ -189,6 +214,8 @@ for w in wf:
     if top is w or not isinstance(w.get("check_suite_id"), int):
         continue
     if (top.get("status") or "").lower() != "completed" or (w.get("status") or "").lower() != "completed":
+        continue
+    if (top.get("conclusion") or "").lower() != "success" or top.get("check_suite_id") not in present:
         continue
     if (w.get("conclusion") or "").lower() != "cancelled":
         continue
