@@ -102,7 +102,7 @@ export const STATE_EXPLORE_PARAMS = {
     action: {
       type: "string",
       enum: [...EXPLORE_ACTIONS],
-      description: "anchors | writes | reads | exits | siblings",
+      description: EXPLORE_ACTIONS.join(" | "),
     },
     worktree: {
       type: "string",
@@ -151,6 +151,10 @@ export const EXPLORE_MAX_FILE_BYTES = 256 * 1024;
  * companions, the alias searches, the functions and moved lines walked), so
  * the larger cap costs time in proportion, never more. */
 export const EXPLORE_MAX_CHANGED_FILE_BYTES = 1024 * 1024;
+/** A changed file's patch is parsed up to this length: a head and a base
+ * within the changed-file cap give no longer one, and a longer one is not
+ * held line by line, so its file is named unknown for every kind it feeds. */
+const MAX_PATCH_CHARS = 4 * EXPLORE_MAX_CHANGED_FILE_BYTES;
 /** Text read in one call. */
 export const EXPLORE_MAX_BYTES = 64 * 1024 * 1024;
 /** Characters of one answer. */
@@ -235,16 +239,19 @@ export function holdsWord(code: string, word: string): boolean {
   return false;
 }
 
-/** Each identifier token of a line with where it starts. */
+/** Each identifier token of a line with where it starts. A `$` is part of
+ * an identifier (`loading$`, `load$state`), as `holdsWord` reads one; a
+ * single leading `$` is a sigil (PHP `$count`, JS `$el`), so the token is the
+ * name after it, and a bare `$` is no token. */
 function* tokensOf(line: string): Generator<{ token: string; at: number }> {
   let start = -1;
   for (let k = 0; k <= line.length; k++) {
     const c = k < line.length ? line.charCodeAt(k) : 32;
-    const w = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
-    if (w) {
+    if (isWordCode(c)) {
       if (start < 0) start = k;
     } else if (start >= 0) {
-      yield { token: line.slice(start, k), at: start };
+      const at = line.charCodeAt(start) === 36 ? start + 1 : start;
+      if (at < k) yield { token: line.slice(at, k), at };
       start = -1;
     }
   }
@@ -421,6 +428,13 @@ function whyText(why: Why, cap: number = EXPLORE_MAX_FILE_BYTES): string {
   return "it could not be read at the head";
 }
 
+/** Whether a path is code the tool reads: a file the shape has a dialect
+ * for (Objective-C's `.m`, `.mm` among them), or one the planner counts as
+ * code. The anchors and every sweep read the same set. */
+function isCodePath(path: string): boolean {
+  return dialectOf(path) !== null || CODE_FILE_RE.test(path);
+}
+
 /** The files a sweep searches, in order: `first`; files in `dirs`; the rest.
  * Code files only; tests and vendored code left out. */
 function sweepOrder(
@@ -432,7 +446,7 @@ function sweepOrder(
   const kept: string[] = [];
   const keptSet = new Set<string>();
   for (const { path } of listing) {
-    if (!CODE_FILE_RE.test(path) || isTestFile(path) || isVendored(path)) continue;
+    if (!isCodePath(path) || isTestFile(path) || isVendored(path)) continue;
     if (filter && !filter(path)) continue;
     kept.push(path);
     keptSet.add(path);
@@ -603,7 +617,8 @@ export function nameFormsOf(raw: string): NameForms | null {
   if (raw.length === 0 || raw.length > 200) return null;
   const last = raw.split(/\.|->|::/).pop() ?? "";
   if (!NAME_RE.test(last)) return null;
-  const name = last.replace(/\$/g, "");
+  // A leading `$` is a sigil; one inside the name is part of it.
+  const name = last.replace(/^\$/, "");
   if (name === "") return null;
   const forms = new Set([name, `${name}_`, `_${name}`, `m_${name}`, `m${capFirst(name)}`]);
   const setters = new Set([`set${capFirst(name)}`, `set_${name}`]);
@@ -1211,7 +1226,10 @@ function makeCoverage(shape: Shape, fn: Block): Coverage | string {
       const sb = blockFor(s.line, false);
       const eb = blockFor(e.line, e.kind === "end");
       for (const g of guards) {
-        if (!isWithin(st, sb, g.fin)) continue;
+        // Only a statement directly in the finally block runs on every exit;
+        // one under a condition there (`if (ok) reset()`) takes the
+        // positional rule like any other.
+        if (sb.id !== g.fin.id) continue;
         // A finally block runs before every exit of its try, and before any
         // later exit its try's level reaches.
         if (e.line >= g.tryB.open && e.line < g.fin.open) return true;
@@ -1225,7 +1243,7 @@ function makeCoverage(shape: Shape, fn: Block): Coverage | string {
     },
     from(s) {
       const sb = blockFor(s.line, false);
-      for (const g of guards) if (isWithin(st, sb, g.fin)) return g.tryB.open;
+      for (const g of guards) if (sb.id === g.fin.id) return g.tryB.open;
       return s.line;
     },
   };
@@ -1910,6 +1928,8 @@ interface Changed {
   runs: { removed: { line: number; text: string }[]; added: { line: number; text: string }[] }[];
   head: Shape | null;
   headWhy?: string;
+  /** Why the patch was not read (over `MAX_PATCH_CHARS`): its lines are empty. */
+  patchWhy?: string;
   base: Shape | null;
   baseWhy?: string;
   code: boolean;
@@ -1990,7 +2010,8 @@ function changedFiles(diff: readonly PrFileEntry[]): Changed[] {
     const removed = new Map<number, string>();
     const touched = new Set<number>();
     const runs: Changed["runs"] = [];
-    for (const h of parsePatch(entry.patch)) {
+    const over = entry.patch.length > MAX_PATCH_CHARS;
+    for (const h of over ? [] : parsePatch(entry.patch)) {
       let pending = false;
       let lastHead = 0;
       let run: Changed["runs"][number] | null = null;
@@ -2027,8 +2048,11 @@ function changedFiles(diff: readonly PrFileEntry[]): Changed[] {
       touched,
       runs,
       head: null,
+      ...(over
+        ? { patchWhy: `its patch is over ${MAX_PATCH_CHARS / (1024 * 1024)} MiB, not read` }
+        : {}),
       base: null,
-      code: dialectOf(entry.filename) !== null || CODE_FILE_RE.test(entry.filename),
+      code: isCodePath(entry.filename),
       test: isTestFile(entry.filename),
     });
   });
@@ -2500,17 +2524,19 @@ const BUILTIN_CLASSES: ReadonlySet<string> = new Set([
   "Set",
 ]);
 
-/** Whether a statement after `line` in the same block leaves `loop` (a
- * `break` or `return`): the loop runs the write until it succeeds once. */
-function leavesAfter(shape: Shape, line: number, loop: Block): boolean {
-  const own = blockOfLine(shape, line);
-  for (let k = line + 1; k <= loop.end; k++) {
+/** The last line of each block in a function that leaves a loop (a `break`
+ * or `return`), by block id (-1 at file level). One walk per function: a
+ * write is left right after when its own block's last exit lies below it,
+ * and the own block of a write in a loop sits inside that loop, so the
+ * lookup is the same as a rescan of the loop after each write. */
+function lastExits(shape: Shape, fn: Block): Map<number, number> {
+  const out = new Map<number, number>();
+  for (let k = fn.body; k <= fn.end; k++) {
     const sl = shape.lines[k - 1];
-    if (!sl || sl.kind !== "code") continue;
-    if (blockOfLine(shape, k)?.id !== own?.id) continue;
-    if (LOOP_EXIT_RE.test(sl.code)) return true;
+    if (!sl || sl.kind !== "code" || !LOOP_EXIT_RE.test(sl.code)) continue;
+    out.set(blockOfLine(shape, k)?.id ?? -1, k);
   }
-  return false;
+  return out;
 }
 
 /** The class a function sits in, by its head's name, or null. */
@@ -2535,6 +2561,7 @@ function writesNoTx(run: AnchorRun, c: Changed, fns: readonly Block[]): void {
     let tx = false;
     let stmt = 0;
     let lastStmt = -1;
+    let exits: Map<number, number> | undefined;
     for (let L = Math.max(1, fn.open - 3); L <= fn.end; L++) {
       const sl = head.lines[L - 1]!;
       if (sl.kind === "comment" || sl.kind === "blank") continue;
@@ -2559,7 +2586,10 @@ function writesNoTx(run: AnchorRun, c: Changed, fns: readonly Block[]): void {
       let loop: Block | null =
         chainOf(head, L, fn).find((b) => LOOP_WORDS.has(b.keyword)) ??
         (PER_ITEM_CALLBACK_RE.test(fn.name ?? "") ? fn : null);
-      if (loop !== null && leavesAfter(head, L, loop)) loop = null;
+      if (loop !== null) {
+        exits ??= lastExits(head, fn);
+        if ((exits.get(blockOfLine(head, L)?.id ?? -1) ?? 0) > L) loop = null;
+      }
       // A container's verb in a loop is an in-memory write unless the
       // receiver is named for a store.
       const stored =
@@ -3352,6 +3382,11 @@ async function runAnchors(ctx: Ctx): Promise<string[]> {
   const all = changedFiles(diff);
   const changed = all.filter((c) => !c.test);
   const codeChanged = changed.filter((c) => c.code);
+  // A patch too long to read clears no kind its lines feed: each says so.
+  for (const c of changed)
+    if (c.patchWhy !== undefined)
+      for (const k of c.code ? ANCHOR_KINDS : (["persisted-shape"] as const))
+        addUnknown(run, k, `${c.path}: ${c.patchWhy}`);
   if (codeChanged.length > EXPLORE_MAX_CHANGED_FILES)
     run.notes.push(
       `[cut: the anchors read ${EXPLORE_MAX_CHANGED_FILES} of ${codeChanged.length} changed code files whole]`,
@@ -3387,6 +3422,7 @@ async function runAnchors(ctx: Ctx): Promise<string[]> {
 
   // Structural kinds over the changed files.
   let fnBudget = MAX_FUNCTIONS;
+  let fnsLeft = 0;
   for (const c of read) {
     if (ctx.late()) break;
     await yieldTurn();
@@ -3404,13 +3440,21 @@ async function runAnchors(ctx: Ctx): Promise<string[]> {
       structural("writes-no-tx", c);
       continue;
     }
-    const fns = changedFunctions(c).slice(0, Math.max(0, fnBudget));
+    const every = changedFunctions(c);
+    const fns = every.slice(0, fnBudget);
     fnBudget -= fns.length;
+    fnsLeft += every.length - fns.length;
     exitGaps(run, c, fns);
     writesNoTx(run, c, fns);
   }
-  if (fnBudget < 0)
-    run.notes.push(`[cut: the structural anchors walked ${MAX_FUNCTIONS} changed functions]`);
+  // Functions past the walk's cap clear neither structural kind.
+  if (fnsLeft > 0)
+    for (const k of ["exit-gap", "writes-no-tx"] as const)
+      addUnknown(
+        run,
+        k,
+        `${fnsLeft} changed functions past the first ${MAX_FUNCTIONS} were not walked`,
+      );
 
   // Persisted shapes: diff-wide facts first.
   const p: PersistCtx = {
@@ -3455,27 +3499,35 @@ async function runAnchors(ctx: Ctx): Promise<string[]> {
       );
     }
   }
+  // A field is swept once per language family (the anchor reads only its
+  // own family's hits), and a field one file's quota turned away stays open
+  // to a later file that writes it.
   const seenField = new Set<string>();
+  const leftPerFile = new Set<string>();
   const aliasFlags = { aliasCut: false };
   let writersCut = 0;
-  let writersCutPerFile = 0;
   for (const c of read) {
     if (ctx.late()) break;
     await yieldTurn();
     let fromFile = 0;
     for (const f of newWriterFields(c, writerBudget)) {
-      if (seenField.has(f.field) || genericField(f.field)) continue;
-      seenField.add(f.field);
+      const key = `${familyKey(c.path)}\0${f.field}`;
+      if (seenField.has(key) || genericField(f.field)) continue;
       const forms = nameFormsOf(f.field);
-      if (!forms) continue;
+      if (!forms) {
+        seenField.add(key);
+        continue;
+      }
       if (writers.length >= MAX_NEW_WRITERS) {
+        seenField.add(key);
         writersCut++;
         continue;
       }
       if (fromFile >= MAX_NEW_WRITERS_PER_FILE) {
-        writersCutPerFile++;
+        leftPerFile.add(key);
         continue;
       }
+      seenField.add(key);
       fromFile++;
       const hits: NameHit[] = [];
       const book = newBook();
@@ -3646,6 +3698,7 @@ async function runAnchors(ctx: Ctx): Promise<string[]> {
     run.notes.push(
       `[cut: ${writersCut} written fields past the first ${MAX_NEW_WRITERS} not swept]`,
     );
+  const writersCutPerFile = [...leftPerFile].filter((k) => !seenField.has(k)).length;
   if (writersCutPerFile > 0)
     run.notes.push(
       `[cut: ${writersCutPerFile} written fields past the first ${MAX_NEW_WRITERS_PER_FILE} of their changed file not swept]`,

@@ -2606,3 +2606,251 @@ describe("cowrite-gap passes over logging", () => {
     );
   });
 });
+
+describe("writes-no-tx at the changed-file cap", () => {
+  // A timing bound, not a fence: a write in a loop asks once whether its own
+  // block leaves the loop below it, from a per-function table of each
+  // block's last exit, so a 1 MiB loop of writes is linear. MUTATION: rescan
+  // the loop after every write (the old `leavesAfter`) — about a minute, and
+  // this fails.
+  it(
+    "a 1 MiB added loop of writes is anchored within a bound (TS)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const parts = ["export async function run(items) {", "  for (const x of items) {"];
+      for (let size = 0; size < 1000 * 1024;) {
+        const l = "    db.save(x);";
+        parts.push(l);
+        size += l.length + 1;
+      }
+      parts.push("  }", "}");
+      const w = world(
+        [],
+        { "src/hot.ts": src(...parts) },
+        {
+          readBase: async () => null,
+          diff: async () => [
+            {
+              filename: "src/hot.ts",
+              additions: parts.length,
+              deletions: 0,
+              status: "added",
+              patch: [`@@ -0,0 +1,${parts.length} @@`, ...parts.map((l) => `+${l}`)].join("\n"),
+            },
+          ],
+        },
+      );
+      const started = performance.now();
+      const out = await run({ action: "anchors" }, w, { deadlineMs: 600_000, maxChars: 100_000 });
+      expect(out).toMatch(/\[writes-no-tx\] src\/hot\.ts:\d+ \(run\)/);
+      expect(out).not.toContain("deadline");
+      expect(performance.now() - started).toBeLessThan(20_000);
+    },
+  );
+});
+
+describe("anchors: what a cap leaves out is unknown, never silent", () => {
+  // MUTATION: drop the patch-length check in changedFiles — the patch is
+  // parsed, the file's few readable lines clear exit-gap, and the unknown
+  // line this asserts is never said.
+  it(
+    "a patch over 4 MiB is not parsed, and every kind its lines feed says so",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const head = src("export function f(a) {", "  a.ok = 1;", "  return 1;", "}");
+      const n = 2_200_000;
+      const patch = `@@ -0,0 +1,${n} @@\n${"+\n".repeat(n)}`;
+      expect(patch.length).toBeGreaterThan(4 * 1024 * 1024);
+      const w = world(
+        [],
+        { "src/big.ts": head },
+        {
+          readBase: async () => null,
+          diff: async () => [
+            { filename: "src/big.ts", additions: n, deletions: 0, status: "added", patch },
+          ],
+        },
+      );
+      const out = await run({ action: "anchors" }, w, { maxChars: 100_000 });
+      expect(out).toContain("[exit-gap] unknown: src/big.ts: its patch is over 4 MiB, not read");
+      expect(out).toContain(
+        "[writes-no-tx] unknown: src/big.ts: its patch is over 4 MiB, not read",
+      );
+      expect(out).not.toMatch(/no anchor: [^\n]*exit-gap/);
+    },
+  );
+
+  // MUTATION: slice the functions to the budget and then subtract, with the
+  // old `fnBudget < 0` note (never true) — the 71st function's writes go
+  // unwalked, both kinds read as "no anchor", and this fails.
+  it("changed functions past the walk's cap leave the structural kinds unknown", async () => {
+    const fns: string[] = [];
+    for (let i = 0; i < 70; i++) fns.push(`export function f${i}(a) {`, `  a.v${i} = ${i};`, "}");
+    const base = src(...fns, "export async function last(db, a) {", "  return a;", "}");
+    const head = src(
+      ...fns.map((l) => (l.startsWith("  a.v") ? l.replace(";", " + 1;") : l)),
+      "export async function last(db, a) {",
+      "  await db.save(a);",
+      "  await db.update(a);",
+      "  return a;",
+      "}",
+    );
+    const out = await run({ action: "anchors" }, world([{ path: "src/many.ts", base, head }]), {
+      maxChars: 100_000,
+    });
+    expect(out).toContain(
+      "[exit-gap] unknown: 11 changed functions past the first 60 were not walked",
+    );
+    expect(out).toContain(
+      "[writes-no-tx] unknown: 11 changed functions past the first 60 were not walked",
+    );
+    expect(out).not.toMatch(/no anchor: [^\n]*(?:exit-gap|writes-no-tx)/);
+  });
+});
+
+describe("new-writer: one sweep per field and language family", () => {
+  // MUTATION: key the seen-field set by the field alone — the Python write
+  // of the same name is never swept and its anchor disappears.
+  it("the same field written in two languages is swept for each (TS, Py)", async () => {
+    const a = {
+      path: "web/a.ts",
+      base: src("export function a(o) {", "  o.x = 1;", "}"),
+      head: src("export function a(o) {", "  o.x = 1;", "  o.status = 'done';", "}"),
+    };
+    const b = {
+      path: "svc/b.py",
+      base: src("def b(o):", "    o.x = 1"),
+      head: src("def b(o):", "    o.x = 1", "    o.status = 'done'"),
+    };
+    const tree = {
+      "web/other.ts": src(
+        "export function other(o) {",
+        "  o.status = 'new';",
+        "  if (o.status) go();",
+        "}",
+      ),
+      "svc/other.py": src(
+        "def other(o):",
+        "    o.status = 'new'",
+        "    if o.status:",
+        "        go()",
+      ),
+    };
+    const out = await run({ action: "anchors" }, world([a, b], tree), { maxChars: 100_000 });
+    expect(out).toContain("[new-writer] web/a.ts:3");
+    expect(out).toContain("[new-writer] svc/b.py:3");
+  });
+
+  // MUTATION: mark a field seen before the per-file quota check — the field
+  // the first file's quota turned away is never swept for the second file
+  // that writes it, and this fails.
+  it("a field one file's quota turned away is swept for a later file that writes it", async () => {
+    const a = {
+      path: "src/a.ts",
+      base: src("export function a(o) {", "  o.x = 1;", "}"),
+      head: src(
+        "export function a(o) {",
+        "  o.x = 1;",
+        "  o.alpha = 1;",
+        "  o.bravo = 1;",
+        "  o.charlie = 1;",
+        "  o.delta = 1;",
+        "}",
+      ),
+    };
+    const b = {
+      path: "src/b.ts",
+      base: src("export function b(o) {", "}"),
+      head: src("export function b(o) {", "  o.delta = 2;", "}"),
+    };
+    const tree = {
+      "src/other.ts": src(
+        "export function other(o) {",
+        "  o.delta = 3;",
+        "  if (o.delta) go();",
+        "}",
+      ),
+    };
+    const out = await run({ action: "anchors" }, world([a, b], tree), { maxChars: 100_000 });
+    expect(out).toContain("[new-writer] src/b.ts:2 (b) — `delta` written here");
+    expect(out).not.toContain("written fields past the first 3 of their changed file");
+  });
+});
+
+describe("identifiers with a `$` in them", () => {
+  const tree = {
+    "src/a.ts": src(
+      "export class Store {",
+      "  load() {",
+      "    loading$ = next;",
+      "    loading = false;",
+      "    load$state = 1;",
+      "    this.loading$ = other;",
+      "    this.loading = true;",
+      "    this.load$state = 2;",
+      "  }",
+      "}",
+    ),
+    "src/b.php": src("<?php", "function bump() {", "    $count = 1;", "    $this->count = 2;", "}"),
+  };
+
+  // MUTATIONS, each fails this: strip every `$` in nameFormsOf (`/\$/g`);
+  // drop `$` from tokensOf's word characters; drop `$` from statetokens'
+  // WORD_CHAR. The name with a `$` is another identifier from the one
+  // without, and a leading `$` stays a sigil.
+  it("a `$` inside a name is part of it; a leading one is a sigil (TS, PHP)", async () => {
+    const one = await run({ action: "writes", name: "loading$" }, world([], tree));
+    expect(one).toContain("src/a.ts:6");
+    expect(one).toContain("this.loading$ = other;");
+    expect(one).not.toContain("src/a.ts:7");
+    const two = await run({ action: "writes", name: "load$state" }, world([], tree));
+    expect(two).toContain("src/a.ts:8");
+    const php = await run({ action: "writes", name: "count" }, world([], tree));
+    expect(php).toContain("$count = 1;");
+    expect(php).toContain("$this->count = 2;");
+  });
+});
+
+describe("code files the shape has a dialect for", () => {
+  // MUTATION: filter the sweep with CODE_FILE_RE alone (sweepOrder) — the
+  // Objective-C file is never searched and this fails.
+  it("a sweep searches an Objective-C file (.m)", async () => {
+    const out = await run(
+      { action: "writes", name: "status" },
+      world([], { "src/Conn.m": src("- (void)fail {", "  self.status = 2;", "}") }),
+    );
+    expect(out).toContain("src/Conn.m:2");
+  });
+});
+
+describe("exits: a finally block's condition", () => {
+  // MUTATION: credit any statement within the finally block (`isWithin` on
+  // `g.fin` in covers) — the conditional reset counts for every exit, the
+  // gap before `return 2` is hidden, and this fails.
+  it("a statement under a condition in a finally block guards no exit", async () => {
+    const f = {
+      path: "src/save.ts",
+      head: src(
+        "export function save(bad: boolean, ok: boolean) {",
+        "  setSaving(true);",
+        "  try {",
+        "    if (bad) {",
+        "      setSaving(false);",
+        "      return 1;",
+        "    }",
+        "    api.save();",
+        "    return 2;",
+        "  } finally {",
+        "    if (ok) {",
+        "      setSaving(false);",
+        "    }",
+        "  }",
+        "}",
+      ),
+    };
+    const out = await run({ action: "exits", file: "src/save.ts", line: 2 }, world([f]));
+    expect(out).toContain(
+      "- `setSaving(false)` (L5, L12): before return@L6; missing before return@L9, end@L15",
+    );
+  });
+});

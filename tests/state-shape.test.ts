@@ -706,3 +706,100 @@ describe("the token scanner state_explore reads files with", () => {
     expect(performance.now() - started).toBeLessThan(1000);
   });
 });
+
+describe("exits: a guarded return leaves on some paths only", () => {
+  // MUTATION: drop the GUARD_LEAD_RE clause from exitsOf — the function
+  // whose last statement is `if (flag) return;` loses its fall-through end
+  // and this fails. MUTATION: drop the PENDING_HEAD_RE clause — the
+  // condition on the line before is read as no condition, and this fails.
+  it("a last statement under a condition still reaches the end (TS, C, Python)", () => {
+    const ts = shapeOf(
+      "a.ts",
+      lines("function f(flag) {", "  doWork();", "  if (flag) return;", "}"),
+    );
+    expect(exits(ts, "f")).toEqual(["return@3", "end@4"]);
+    const pending = shapeOf(
+      "a.ts",
+      lines("function f(flag) {", "  doWork();", "  if (flag)", "    return;", "}"),
+    );
+    expect(exits(pending, "f")).toEqual(["return@4", "end@5"]);
+    const c = shapeOf(
+      "a.c",
+      lines("void f(int flag)", "{", "  work();", "  if (flag) return;", "}"),
+    );
+    expect(exits(c, "f")).toEqual(["return@4", "end@5"]);
+    const braced = shapeOf(
+      "a.ts",
+      lines("function f(a) {", "  work();", "  if (a) { return 1; }", "}"),
+    );
+    expect(exits(braced, "f")).toEqual(["return@3", "end@4"]);
+    const py = shapeOf("a.py", lines("def f(flag):", "    work()", "    if flag: return"));
+    expect(exits(py, "f")).toEqual(["return@3", "end@3"]);
+    // A guarded return then a plain one: every path leaves, no end.
+    const both = shapeOf(
+      "a.ts",
+      lines("function f(a) {", "  if (a) return 1;", "  return 2;", "}"),
+    );
+    expect(exits(both, "f")).toEqual(["return@2", "return@3"]);
+  });
+});
+
+describe("blocks: callbacks in an object, return types in a head (TS)", () => {
+  // MUTATION: drop the `=>`/`)` exemption (BODY_HEAD_END_RE) from the
+  // open-pattern rule — the callback's body is read as the object's, its
+  // return is credited to `outer`, and this fails.
+  it("a callback inside an object literal argument is its own function", () => {
+    const s = shapeOf(
+      "a.ts",
+      lines(
+        "function outer() {",
+        "  register({",
+        "    onSuccess: () => {",
+        "      return 1;",
+        "    },",
+        "  });",
+        "  done();",
+        "}",
+      ),
+    );
+    expect(functionAt(s, 4)?.name).toBe("onSuccess");
+    expect(exits(s, "outer")).toEqual(["end@8"]);
+    // A default object in a pattern is still the pattern's.
+    const d = shapeOf("b.ts", lines("function g({ a = {}, b = { c: 1 } }) {", "  return a;", "}"));
+    expect(exits(d, "g")).toEqual(["return@2"]);
+  });
+
+  // MUTATION: drop the return-type branch (opensReturnType) from the brace
+  // walk — the annotation is read as `f`'s body, the real body as another
+  // block, and this fails.
+  it("an object return type is a type, not the function's body", () => {
+    for (const ret of ["{ ok: boolean }", "Promise<{ ok: boolean }>"]) {
+      const s = shapeOf("a.ts", lines(`function f(): ${ret} {`, "  return { ok: true };", "}"));
+      const f = fn(s, "f");
+      expect([f.open, f.end], ret).toEqual([1, 3]);
+      expect(functionAt(s, 2)?.name, ret).toBe("f");
+      expect(exits(s, "f"), ret).toEqual(["return@2"]);
+    }
+    // A plain generic return type opens the body as before.
+    const plain = shapeOf(
+      "b.ts",
+      lines("async function load(id): Promise<void> {", "  return;", "}"),
+    );
+    expect(exits(plain, "load")).toEqual(["return@2"]);
+  });
+});
+
+describe("statements: a store through a dereference", () => {
+  // MUTATION: move the `*` back outside WRITE_STMT_RE's first group — the
+  // dereference has no key, and this fails.
+  it("keeps its star, and a plain local is still no statement (C++)", () => {
+    expect(stmtKey("  *ptr = nullptr;")).toMatchObject({
+      key: "*ptr = nullptr",
+      token: "ptr",
+      kind: "write",
+      members: ["ptr"],
+    });
+    expect(stmtKey("  *this->p = 0;")?.key).toBe("*p = 0");
+    expect(stmtKey("  ptr = nullptr;")).toBeNull();
+  });
+});

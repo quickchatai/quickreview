@@ -869,6 +869,18 @@ const PARAM_LIST_HEAD_RE =
  * after them is a block. */
 const PATTERN_AFTER: ReadonlySet<number> = new Set([40, 44, 60, 58, 124, 38, 61]);
 
+/** A head that ends where a function body opens: after `=>` or `)`. */
+const BODY_HEAD_END_RE = /(?:=>|\))\s{0,8}$/;
+/** A head that ends in a TypeScript return-type position: `):`, or `):`
+ * then a type still open at a `<`, `|`, `&` or `,`. */
+const RETURN_TYPE_END_RE = /\)\s{0,8}:(?:[^;=]{0,200}[<|&,])?\s{0,8}$/;
+
+/** Whether the brace after `head` opens a return type, not a body; a
+ * `case x():` label opens a block. */
+function opensReturnType(head: string): boolean {
+  return RETURN_TYPE_END_RE.test(head) && !/^\s{0,200}(?:case|default)\b/.test(head);
+}
+
 function opensObjectPattern(head: string): boolean {
   const t = head.trimEnd();
   const last = t.charCodeAt(t.length - 1);
@@ -978,8 +990,12 @@ function braceStructure(
         c === 123 &&
         d === "js" &&
         pd > 0 &&
-        // inside an open pattern every brace is the pattern's (`{ b = {} }`)
-        ((pats.length > 0 && pats[pats.length - 1]!.depth === stack.length) ||
+        // inside an open pattern every brace is the pattern's (`{ b = {} }`),
+        // except a function body: a brace after `=>` or `)` (`{ onDone: () => {`,
+        // `{ onDone() {`) opens the callback's own block
+        ((pats.length > 0 &&
+          pats[pats.length - 1]!.depth === stack.length &&
+          !BODY_HEAD_END_RE.test(segs.map((g) => g.text).join(" ") + " " + s.slice(segStart, j))) ||
           opensObjectPattern(segs.map((g) => g.text).join(" ") + " " + s.slice(segStart, j)))
       ) {
         pats.push({ pd, depth: stack.length });
@@ -994,6 +1010,14 @@ function braceStructure(
         pd--;
       } else if (c === 123) {
         const headText = segs.map((g) => g.text).join(" ") + " " + s.slice(segStart, j);
+        // A TypeScript return type (`f(): { ok: boolean } {`,
+        // `f(): Promise<{ ok: boolean }> {`) is a type, not the body: the
+        // pattern rule closes it, and the brace after it opens the body.
+        if (d === "js" && pd === 0 && opensReturnType(headText)) {
+          pats.push({ pd, depth: stack.length });
+          pd++;
+          continue;
+        }
         const headLine = segs.find((g) => g.text.trim() !== "")?.line ?? L;
         const head = clipHead(headText);
         const cls = classifyHead(head, d);
@@ -1445,13 +1469,23 @@ const STRAIGHT_BLOCKS: ReadonlySet<string> = new Set([
   "unsafe",
 ]);
 
+/** A last statement led by a control word runs on some paths only:
+ * `if (c) return;` leaves on one, and the others reach the end. */
+const GUARD_LEAD_RE = /^\s{0,200}(?:\}\s{0,8})?(?:if|else|for|while|do|elif|guard)\b/;
+/** A control head whose statement is on the next line (`if (c)` then
+ * `return;`). */
+const PENDING_HEAD_RE =
+  /^\s{0,200}(?:\}\s{0,8})?(?:(?:(?:else\s{1,8})?if|for|while)\b[^\n]{0,400}\)|else|do)\s{0,8}$/;
+
 /** Every exit of `fn`, in line order: lines whose own function is `fn`, and
- * the fall-off at its end when its last statement does not leave. */
+ * the fall-off at its end when its last statement does not leave (a last
+ * statement under a condition does not). */
 export function exitsOf(shape: Shape, fn: Block): Exit[] {
   const d = shape.dialect;
   if (!d || !shape.structure) return [];
   const out: Exit[] = [];
   let lastStmt: { line: number; leaves: boolean } | null = null;
+  let prevCode = "";
   for (let L = fn.body; L <= fn.end; L++) {
     const sl = shape.lines[L - 1]!;
     if (sl.kind !== "code") continue;
@@ -1479,8 +1513,11 @@ export function exitsOf(shape: Shape, fn: Block): Exit[] {
           k !== null &&
           LEAVING.has(k.kind) &&
           !k.handler &&
+          !GUARD_LEAD_RE.test(code) &&
+          !PENDING_HEAD_RE.test(prevCode) &&
           (L === fn.body || chainOf(shape, L, fn).every((b) => STRAIGHT_BLOCKS.has(b.keyword))),
       };
+    if (!sl.cont) prevCode = code;
   }
   if (!(lastStmt?.leaves ?? false)) out.push({ kind: "end", line: fn.end, handler: false });
   return out;
@@ -1582,7 +1619,7 @@ const NOT_CALLEE = new Set([
 
 /** An assignment that starts the line: group 1 the target, group 2 the operator. */
 export const WRITE_STMT_RE =
-  /^\s{0,200}(?:\*\s{0,4})?((?:this|self|[A-Za-z_$][\w$]{0,80})(?:\s{0,4}(?:\.|->|::|\?\.)\s{0,4}[A-Za-z_$][\w$]{0,80}|\[[^\]\n]{0,60}\]){0,8})\s{0,4}([-+*/%|&^]|<<|>>|\?\?|\|\||&&)?=(?![=>])/;
+  /^\s{0,200}((?:\*\s{0,4})?(?:this|self|[A-Za-z_$][\w$]{0,80})(?:\s{0,4}(?:\.|->|::|\?\.)\s{0,4}[A-Za-z_$][\w$]{0,80}|\[[^\]\n]{0,60}\]){0,8})\s{0,4}([-+*/%|&^]|<<|>>|\?\?|\|\||&&)?=(?![=>])/;
 const INCR_STMT_RE =
   /^\s{0,200}(?:(?:\+\+|--)\s{0,4}((?:this|self|[A-Za-z_$][\w$]{0,80})(?:(?:\.|->|\?\.)[A-Za-z_$][\w$]{0,80}){0,8})|((?:this|self|[A-Za-z_$][\w$]{0,80})(?:(?:\.|->|\?\.)[A-Za-z_$][\w$]{0,80}){0,8})\s{0,4}(?:\+\+|--))/;
 /** A call: group 1 the callee chain. The lookbehind keeps a match at the
@@ -1615,11 +1652,14 @@ function argsAt(code: string, open: number): string | null {
   return null;
 }
 
+/** An assignment target as a key compares it: blanks and `this.`/`self.`
+ * dropped, indexes abstracted. A dereference keeps its star: a store
+ * through `*p` is not a store to `p`. */
 function bareTarget(lhs: string): string {
   return lhs
     .replace(/\s+/g, "")
     .replace(/\?\./g, ".")
-    .replace(/^(?:this|self)(?:\.|->)/, "")
+    .replace(/^(\*?)(?:this|self)(?:\.|->)/, "$1")
     .replace(/\[[^\]]{0,60}\]/g, "[…]");
 }
 
@@ -1755,6 +1795,10 @@ export const STATE_SHAPE_PROBES: readonly { id: string; re: RegExp }[] = [
   { id: "incr-stmt", re: INCR_STMT_RE },
   { id: "call", re: CALL_RE },
   { id: "param-list-head", re: PARAM_LIST_HEAD_RE },
+  { id: "body-head-end", re: BODY_HEAD_END_RE },
+  { id: "return-type-end", re: RETURN_TYPE_END_RE },
+  { id: "guard-lead", re: GUARD_LEAD_RE },
+  { id: "pending-head", re: PENDING_HEAD_RE },
   { id: "literal", re: LITERAL_RE },
   { id: "ident-value", re: IDENT_VALUE_RE },
   { id: "defer", re: DEFER_RE },

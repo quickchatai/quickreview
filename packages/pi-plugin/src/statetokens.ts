@@ -2,7 +2,8 @@
 // it finds a schema's columns by.
 //
 // `scanLines` makes one pass over a text and calls back only for the lines
-// that hold a wanted token. A token is `[A-Za-z0-9_]+`, tested first by its
+// that hold a wanted token. A token is `[A-Za-z0-9_$]+` read past a single
+// leading `$` (a sigil: PHP `$count` is `count`), tested first by its
 // outline (first character, last character, length) against a table of 4096
 // bytes, so a token of no interest costs no string. What lies past a line's
 // `LINE_MAX` characters is skipped, not read: the cost is linear in the text,
@@ -11,7 +12,7 @@
 
 import { LINE_MAX } from "./statetriggers.js";
 
-const WORD_RE = /\w+/;
+const WORD_RE = /[\w$]+/;
 
 /** A column declaration; group 1 is the column's name. `ext` limits a shape
  * to files of one extension. In the Sequelize shape a run of blanks is read
@@ -42,7 +43,7 @@ function cut(line: string): string {
 }
 
 const WORD_CHAR = new Uint8Array(128);
-for (const c of "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+for (const c of "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$")
   WORD_CHAR[c.charCodeAt(0)] = 1;
 
 /** A letter's lower-case code; any other code as it is. */
@@ -100,8 +101,8 @@ export class TokenTable {
 
 /** One pass over `text`: `onLine` for each line that holds a wanted token,
  * with its head line number, the cut line and the bits of its tokens. A
- * token is `[A-Za-z0-9_]+`; what lies past a line's `LINE_MAX` characters
- * is skipped, not read. Linear in the text. */
+ * token is `[A-Za-z0-9_$]+`, read past a single leading `$`; what lies past
+ * a line's `LINE_MAX` characters is skipped, not read. Linear in the text. */
 export function scanLines(
   text: string,
   table: TokenTable,
@@ -121,7 +122,8 @@ export function scanLines(
       continue;
     }
     if (tokenStart >= 0) {
-      bits |= table.bitsAt(text, tokenStart, i);
+      const from = text.charCodeAt(tokenStart) === 36 ? tokenStart + 1 : tokenStart;
+      if (from < i) bits |= table.bitsAt(text, from, i);
       tokenStart = -1;
     }
     if (c === 10) {
