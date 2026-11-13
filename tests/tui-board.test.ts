@@ -708,7 +708,7 @@ describe("adaptive layout", () => {
       ...snapshot.prs[0]!,
       last_verdict: "APPROVE",
       approval_withheld: {
-        head_sha: "ad84dbbcdd9c",
+        head_sha: "68b8040aaaaa",
         ci_state: "red",
         since: "2026-11-13T09:46:37Z",
       },
