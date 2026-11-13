@@ -36,17 +36,23 @@ import { fsDeniedLine } from "./fsdenied.js";
 import { MissingConfigError } from "./missingconfig.js";
 import { parseSchemaFlag } from "./schemaflag.js";
 
+/** What QuickReview is, in one line: package.json's `description`, word for
+ * word (tests/descriptions.test.ts holds the two together). */
+export const TAGLINE =
+  "An open-source AI code reviewer for your coding agent, your terminal and your GitHub pull requests.";
+
 /** The bin's own lines on top of the app's usage (`qcr help`). */
 export const BIN_HELP = [
   "qcr — QuickReview",
+  TAGLINE,
   "",
-  "  qcr                     open the home: pi with the plugin and your pull requests",
+  "  qcr                     open the home: sign in, connect GitHub, choose a repository, review its pull requests",
   "  qcr tui                 open the admin TUI",
-  "  qcr review [target]     review code here, with no daemon (`qcr review --help`)",
-  "  qcr scan <subcommand>   scan the whole repository for findings (`qcr scan` prints its usage)",
-  "  qcr login [provider]    log in with pi's own /login, for the review sessions",
+  "  qcr review [target]     review this branch, your uncommitted changes or a pull request (`qcr review --help`)",
+  "  qcr scan <subcommand>   scan the whole repository for defects (`qcr scan` prints its usage)",
+  "  qcr login [provider]    sign in to a model provider, through pi's own /login",
   "  qcr model [use|reset]   which model reviews run on here, and how to change it (`qcr model --help`)",
-  "  qcr pi [args]           pi with the qcr plugin (/qcr-review, /qcr-scan, /qcr-setup) and /selfimprove",
+  "  qcr pi [args]           open pi, the coding agent QuickReview runs on, with /qcr-review, /qcr-scan, /qcr-setup and /selfimprove",
   "  qcr update              update qcr with the package manager that installed it",
   "  qcr plugin <subcommand> install QuickReview into your coding-agent CLIs (`qcr plugin --help`)",
   "  qcr version [--json]    this install's version, schemas and pi pin",

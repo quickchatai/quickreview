@@ -165,8 +165,9 @@ $E/judge-gpt.sh stop
 
 ## The published judgments
 
-The judgments behind the README's Elo chart (plan `martian-hard20-all-gpt`)
-and its smoke plan are published in the Hugging Face dataset
+The judgments behind the Elo chart of the repository's `BENCHMARKS.md` (plan
+`martian-hard20-all-gpt`) and its smoke plan are published in the Hugging Face
+dataset
 [quickchatai/quickreview-bench](https://huggingface.co/datasets/quickchatai/quickreview-bench):
 - **`elo_judgments`:** one row per judgment, every attempt, with both judges'
   reasoning and the prompt's sha256. `used_in_ratings` marks the 596 that the

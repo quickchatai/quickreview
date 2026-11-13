@@ -278,6 +278,15 @@ RUN install -d -m 1777 /home/qcr /home/qcr/.pi && install -d -m 0777 /home/qcr/.
 RUN install -d -m 1777 /run/qcr-tmux
 ENV HOME=/home/qcr
 
+# What a registry page and `docker inspect` say the image is: its name, the
+# one-line description (package.json's, word for word:
+# tests/descriptions.test.ts) and QuickReview's own license. The release
+# workflow adds the source, the revision and the version
+# (.github/workflows/release.yml).
+LABEL org.opencontainers.image.title="QuickReview" \
+      org.opencontainers.image.description="An open-source AI code reviewer for your coding agent, your terminal and your GitHub pull requests." \
+      org.opencontainers.image.licenses="MIT"
+
 # A default for a bare `docker run`; the wrapper always passes --user. A per-call
 # run that reaches a model starts as root instead (--user 0:0 --cap-drop ALL
 # --cap-add SETUID --cap-add SETGID): the entrypoint drops to QCR_RUN_UID and

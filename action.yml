@@ -1,4 +1,4 @@
-# The qcr review Action.
+# The QuickReview Action.
 #
 # A composite: it checks that the release image can be pulled (it is public, so
 # anonymously; a private mirror logs in with registry-token), and runs the
@@ -16,8 +16,8 @@
 # environment name pi reads a credential from, whatever the provider, so a key
 # is set with the workflow's own `env:` on the step that uses this Action. The
 # four key inputs below are the same route under older names.
-name: qcr review
-description: Review a pull request with qcr and post the findings as a comment-only review.
+name: QuickReview
+description: Review a pull request with QuickReview, an open-source AI code reviewer, and post the findings as one comment-only review.
 
 inputs:
   pr:

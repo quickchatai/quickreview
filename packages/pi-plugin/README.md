@@ -1,67 +1,148 @@
 # QuickReview for pi
 
-The QuickReview code reviewer as a pi package: the same review core the
-QuickReview bot runs, in your own pi session.
+QuickReview is an open-source AI code reviewer. This package runs it inside
+your own [pi](https://github.com/earendil-works/pi) session.
 
 ```sh
 pi install npm:@quickchatai/pi-quickreview
 ```
 
-## Commands
+That adds three commands:
+
+| Command       | What it does                                                                   |
+| ------------- | ------------------------------------------------------------------------------ |
+| `/qcr-review` | reviews this branch with your uncommitted changes, a pull request, or a branch |
+| `/qcr-scan`   | scans the whole repository, or one folder of it, for defects                   |
+| `/qcr-setup`  | checks what a review needs, and sets up the model and this repo's profile      |
 
 Each command is also a skill of the same name, so the model in your session
 knows the command and can tell you the line to type.
 
-- `/qcr-review [preset] [target]` reviews in the background: the command
-  returns at once, you keep chatting, the status line shows the review's
-  progress, and the result arrives in the session as a message (and is kept
-  as markdown and JSON under the qcr state home).
-  - The target: nothing reviews the current branch against its base together
-    with its uncommitted changes, as one review; `123`, `#123` or a pull
-    request URL reviews a PR; a branch name reviews that branch;
-    `--uncommitted` reviews the uncommitted changes alone.
-  - The preset, first when given: `quick` (lower reasoning, about half the
-    cost), `full` (the whole target again at the highest reasoning) or
-    `security` (the whole `pass-sec-*` security family, planned as a
-    request whatever the change's signals say, and the validator; every
-    other lens is skipped).
-  - `--security` asks for a security review on top of the plan: all
-    fourteen `pass-sec-*` lenses are planned, at the risk tier, except any
-    your profile switched off. The `security` preset already asks for it.
-    The profile that reviews only security on every review is `security`
-    (`--profile security`).
-  - `--preview` shows the plan and the price without running anything;
-    `--stop` stops the review that is running. One review runs per session
-    at a time, and ending the session stops it.
-  - `--model MODEL` names the model the whole review runs on, for this run:
-    `provider/id`, an id pi knows, or either with a `:level`, read the way
-    pi's own `--model` reads it. It replaces every tier and lens model your
-    config pins. `/qcr-setup model` keeps a choice instead.
-  - After a PR review, your posting rule decides whether it goes to the PR
-    as a comment-only review (see Settings).
-- `/qcr-scan [--delta] [--sha REF] [--path DIR] [--model M] [--preview]` scans
-  the whole repo, or with `--path` one folder of it, for defects, priced first
-  and started only on your yes. A scan runs on one model, the same way a
-  review picks its own (`--model` names it for one run). It runs in the
-  background in this pi, like a review: a status line while it runs, the new
-  findings as a message when it ends, `/qcr-scan stop` to stop it. Its cases
-  are SDK sessions of this pi behind the same read-only bash guard as the
-  review's lenses. `/qcr-scan findings`, `status`, `units` and the other
-  scan subcommands pass through as typed. The scan sandbox (a container) and
-  dismissing a finding are the `qcr` app's (`qcr scan`).
-- `/qcr-setup` checks the pi version, the model credential, git and GitHub
-  access for PR targets, and shows the model reviews run on and why. It then
-  offers to set up this repo's profile (`.qcr/`), No first: on your yes, your
-  agent in the session surveys the repo, reads its review history, interviews
-  you and writes the profile for you to commit. `/qcr-setup profile` starts
-  that straight away. `/qcr-setup model` picks the provider reviews run on
-  (see Which model). Its checks are steps on a
-  setup checklist (`src/setupchecklist.ts`) that the `qcr` app extends with
-  its own steps.
+It is the same review core the QuickReview bot runs. What a review looks like,
+how it works and how it was measured are in
+[the project's README](https://github.com/quickchatai/quickreview#readme).
 
-`/review`, `/scan` and `/selfimprove` are gone: pi's command namespace is
-shared with every other extension, so the commands carry the `qcr-` prefix.
-`/review` is `/qcr-review`, `/scan` is `/qcr-scan`, and `/selfimprove` is a
+## Your first review
+
+Type `/qcr-review` inside a git repository. It reviews the current branch
+against its base, together with your uncommitted changes, as one review.
+
+- **What you need.** pi 1.4.0 or a later 1.x, and a model credential in pi: a
+  login made with `/login`, or a provider key in the environment. Any provider
+  pi supports works. With no credential, `/qcr-review` stops and names
+  `/login`.
+- **Look before you spend.** `/qcr-review --preview` shows the plan and the
+  price, and runs nothing.
+- **It runs in the background.** The command returns at once and you keep
+  chatting. The status line shows the review's progress, and the result
+  arrives in the session as a message.
+- **It is slow and it costs money.** A review reads the change through many
+  *lenses*, each a narrow reviewer that looks for one kind of problem, and a
+  *validator* then re-checks every finding against the code. On the one model
+  with a measured price, that took about two dollars and more than fifteen
+  minutes per pull request
+  ([Benchmarks](https://github.com/quickchatai/quickreview#benchmarks)).
+  `/qcr-review quick` runs at lower reasoning for about half the cost.
+- **It reads your code and runs none of it.** It never writes to your
+  checkout either.
+- **It posts nothing unless you say yes.** After a pull request review it
+  asks, with "No, keep it here" offered first. On the shipped defaults a yes
+  is recorded and nothing is sent, because `dry_run` is on until you turn it
+  off in a qcr config.
+
+`/qcr-setup` checks what a review needs here and lists what is missing.
+
+## Commands
+
+### `/qcr-review [preset] [target]`
+
+The review runs in the background: the command returns at once, you keep
+chatting, the status line shows the review's progress, and the result arrives
+in the session as a message. It is also kept as markdown and JSON under the
+qcr state home. One review runs per session at a time, and ending the session
+stops it.
+
+The target:
+
+| You type                            | It reviews                                                                                |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- |
+| nothing                             | the current branch against its base, together with its uncommitted changes, as one review |
+| `123`, `#123` or a pull request URL | that pull request                                                                         |
+| a branch name                       | that branch                                                                               |
+| `--uncommitted`                     | the uncommitted changes alone                                                             |
+
+The preset goes first when you give one:
+
+- `quick`: lower reasoning, about half the cost.
+- `full`: the whole target again, at the highest reasoning.
+- `security`: the whole `pass-sec-*` security family, planned as a request
+  whatever the change's signals say, and the validator. Every other lens is
+  skipped.
+
+The flags:
+
+- `--preview` shows the plan and the price without running anything.
+- `--stop` stops the review that is running.
+- `--security` asks for a security review on top of the plan: all fourteen
+  `pass-sec-*` lenses are planned, at the risk tier, except any your profile
+  switched off. The `security` preset already asks for it. The profile that
+  reviews only security on every review is `security` (`--profile security`).
+- `--model MODEL` names the model the whole review runs on, for this run:
+  `provider/id`, an id pi knows, or either with a `:level`, read the way pi's
+  own `--model` reads it. It replaces every tier and lens model your config
+  pins. `/qcr-setup model` keeps a choice instead.
+- `--base REF` names the base a branch is reviewed against.
+- `--repo OWNER/NAME` names the pull request's repository when it is not the
+  one you are in.
+- `--profile NAME` reviews under that profile.
+- `--limit USD` sets this run's limit (see [Which model](#which-model)).
+- `--json` gives the result as JSON, for pi's print mode.
+
+After a pull request review, your posting rule decides whether it goes to the
+pull request as a comment-only review (see [Settings](#settings)).
+
+### `/qcr-scan [--delta] [--sha REF] [--path DIR] [--model M] [--preview]`
+
+The scan reads the whole repo for defects, or with `--path` one folder of it.
+It is priced first and starts only on your yes. `--preview` shows the price
+and starts nothing.
+
+- `--delta` scans only the files that changed since the last scan, and
+  `--sha REF` scans the tree at `REF`.
+- It runs on one model, picked the same way a review picks its own. `--model`
+  names it for one run.
+- It runs in the background in this pi, like a review: a status line while it
+  runs, the new findings as a message when it ends, and `/qcr-scan stop` to
+  stop it.
+- Its cases are SDK sessions of this pi, behind the same read-only bash guard
+  as the review's lenses.
+- `/qcr-scan findings`, `status`, `units` and the other scan subcommands pass
+  through as typed.
+- The scan sandbox (a container) and dismissing a finding belong to the `qcr`
+  app (`qcr scan`).
+
+### `/qcr-setup`
+
+`/qcr-setup` checks the pi version, the model credential, git, and GitHub
+access for pull request targets. It also shows the model reviews run on and
+why.
+
+It then offers to set up this repo's profile (`.qcr/`), with No offered
+first. On your yes, your agent in the session surveys the repo, reads its
+review history, interviews you and writes the profile for you to commit.
+
+- `/qcr-setup profile` starts the profile setup straight away.
+- `/qcr-setup model` picks the provider reviews run on (see
+  [Which model](#which-model)).
+
+Its checks are steps on a setup checklist (`src/setupchecklist.ts`) that the
+`qcr` app extends with its own steps.
+
+### Commands that are gone
+
+`/review`, `/scan` and `/selfimprove` are gone. pi's command namespace is
+shared with every other extension, so the commands carry the `qcr-` prefix:
+`/review` is `/qcr-review` and `/scan` is `/qcr-scan`. `/selfimprove` is a
 command of the `qcr` app's own pi (`qcr pi`).
 
 ## Settings
@@ -78,9 +159,9 @@ project's `.pi/settings.json`), under `quickreview`:
 }
 ```
 
-- `posting` decides what happens after a PR review: `ask` (the default)
-  asks, with "No, keep it here" offered first; `never` keeps every review in
-  the session; `always` posts without asking.
+- `posting` decides what happens after a pull request review: `ask` (the
+  default) asks, with "No, keep it here" offered first; `never` keeps every
+  review in the session; `always` posts without asking.
 - `preset` is the preset a `/qcr-review` without one runs under.
 
 Rules for one repository live in its profile, not here.
@@ -105,10 +186,13 @@ the environment. Nothing names a provider for you.
 - `--model` on `/qcr-review` or `/qcr-scan` names the model for one run, and
   `[models] model` in a qcr config pins it for every run. `--model` is the
   whole run's model: it replaces every tier and lens a config pinned.
-- The dollar estimate was measured on one model. On any other, the preview
-  shows no estimate and the review stops at a spend limit ($15, or
-  `--limit`); the first review on such a model asks once. A model pi has no
-  price for has no dollar stop, and its spend shows as unknown.
+- The dollar estimate was measured on one model. There, a review whose
+  estimate is within your limit ($2 by default, or `--limit`) starts without
+  asking, a dearer one asks first, and the review stops at twice its
+  estimate. On any other model, the preview shows no estimate and the review
+  stops at a spend limit ($15, or `--limit`); the first review on such a
+  model asks once. A model pi has no price for has no dollar stop, and its
+  spend shows as unknown.
 - A login whose tokens are shorter than a review runs here, because this pi
   renews it while the review goes.
 
@@ -138,8 +222,8 @@ exactly instead; `qcr pi` starts that pinned pi with this plugin preloaded.
   runs on and no other: pi renews it when needed, and the review only ever
   holds a copy that cannot refresh. With no credential at all, `/qcr-review`
   stops and names `/login`. The scan borrows it the same way.
-- For a PR: the App when a qcr install configures one, else `GITHUB_TOKEN`,
-  `GH_TOKEN` or `gh auth login`, in that order.
+- For a pull request: the App when a qcr install configures one, else
+  `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth login`, in that order.
 - For posting: a qcr config with `dry_run = false`. The shipped defaults keep
   `dry_run` on, and then a post is recorded under the qcr state home
   (`review/dryrun/`) and nothing is sent; the post question says so.
@@ -166,13 +250,14 @@ exactly instead; `qcr pi` starts that pinned pi with this plugin preloaded.
 
 ## What ships in the package
 
-The compiled review core and the plugin (`dist/`), one skill per command
-(`skills/`, rendered at pack time from the same skill source as QuickReview's
-plugins for other coding-agent CLIs, and checked against it), and under
-`assets/` the
-data the core reads: the agents, prompts and seeds, the schemas, the
-profiles and the shipped config defaults. `assets/` is copied from the
-repository at pack time and checked file by file against its source, so the
-prompts in the package are byte-identical to the ones the bot runs. They sit
-under `assets/`, not at the package root, so pi never offers them as your
-slash commands.
+- `dist/`: the compiled review core and the plugin.
+- `skills/`: one skill per command, rendered at pack time from the same skill
+  source as QuickReview's plugins for other coding-agent CLIs, and checked
+  against it.
+- `assets/`: the data the core reads, which is the agents, prompts and seeds,
+  the schemas, the profiles and the shipped config defaults.
+
+`assets/` is copied from the repository at pack time and checked file by file
+against its source, so the prompts in the package are byte-identical to the
+ones the bot runs. They sit under `assets/`, not at the package root, so pi
+never offers them as your slash commands.

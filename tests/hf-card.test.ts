@@ -208,6 +208,7 @@ describe("judge coverage", () => {
 describe("public pages that cite run data link the published dataset", () => {
   const PAGES = [
     "README.md",
+    "BENCHMARKS.md",
     "bench/aacr/README.md",
     "bench/aacr/docs/DIGITALOCEAN.md",
     "bench/aacr/docs/METHODOLOGY.md",
@@ -445,6 +446,7 @@ describe("the reproduction docs work on a fresh machine", () => {
     "bench/aacr/README.md",
     "bench/aacr/docs/DIGITALOCEAN.md",
     "README.md",
+    "BENCHMARKS.md",
   ];
   const read = (p: string) => readFileSync(p, "utf8");
 
@@ -551,15 +553,17 @@ describe("the reproduction docs work on a fresh machine", () => {
     for (const d of dirs) expect(verify).toContain(`\`${d}/\``);
   });
 
-  // MUTATION: rename the README Martian table's "Mean min/PR" back to "min/PR" — this fails
-  // MUTATION: rename the README AACR table's "Median min/PR" to "Mean min/PR" — this fails
+  // MUTATION: rename BENCHMARKS.md's Martian table's "Mean min/PR" back to "min/PR" — this fails
+  // MUTATION: rename BENCHMARKS.md's AACR table's "Median min/PR" to "Mean min/PR" — this fails
   it("labels each per-PR cost and time column with the statistic its claims compute", () => {
-    const text = read("README.md").split("\n");
+    const text = read("BENCHMARKS.md").split("\n");
     const claims = (
       JSON.parse(read("bench/aacr/claims.json")) as {
         claims: { file: string; anchor: string; q?: string }[];
       }
-    ).claims.filter((c) => c.file === "README.md" && /:(usd|min_mean|min_median)$/.test(c.q ?? ""));
+    ).claims.filter(
+      (c) => c.file === "BENCHMARKS.md" && /:(usd|min_mean|min_median)$/.test(c.q ?? ""),
+    );
     const want: Record<string, string> = {
       usd: "Mean $/PR",
       min_mean: "Mean min/PR",

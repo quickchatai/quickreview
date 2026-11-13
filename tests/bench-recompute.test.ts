@@ -16,8 +16,8 @@
 //      or failed last is LOST, one that ran but the session did not record is
 //      UNRECORDED;
 //   5. do_speed: a reply counts (and is timed) only when a message follows it;
-//   6. the committed data behind the README: the Elo chart's file is what the
-//      README's alt text and prose say, the held-out Qodo set is 31 PRs of
+//   6. the committed data behind BENCHMARKS.md: the Elo chart's file is what
+//      the page's alt text and prose say, the held-out Qodo set is 31 PRs of
 //      qodo-pr100 in no validation set, and final/score.sh prints tab:copilot2025
 //      on its 19 PRs from the arms the other tables use;
 //   7. another judge's verdicts: score_verdicts, qodo_scores, martian_scores and
@@ -502,8 +502,8 @@ describe("do_speed", () => {
   });
 });
 
-describe("the committed data behind the README", () => {
-  const README = readFileSync(join(ROOT, "README.md"), "utf8");
+describe("the committed data behind BENCHMARKS.md", () => {
+  const PAGE = readFileSync(join(ROOT, "BENCHMARKS.md"), "utf8");
   const elo = JSON.parse(
     readFileSync(
       join(ROOT, "bench", "aacr", "showcase", "data", "elo-martian-hard20.json"),
@@ -512,12 +512,12 @@ describe("the committed data behind the README", () => {
   );
 
   // MUTATION: change one row's "elo" in bench/aacr/showcase/data/elo-martian-hard20.json by 1 — this fails
-  it("the Elo chart's data is what the README's alt text and prose say", () => {
-    const alt = /<img src="docs\/media\/bench-elo\.png" alt="([^"]+)"/.exec(README)?.[1] ?? "";
+  it("the Elo chart's data is what BENCHMARKS.md's alt text and prose say", () => {
+    const alt = /<img src="docs\/media\/bench-elo\.png" alt="([^"]+)"/.exec(PAGE)?.[1] ?? "";
     const printed = [...alt.matchAll(/\b1[0-9]{3}\b/g)].map((m) => Number(m[0]));
     expect(printed).toEqual(elo.rows.map((r: { elo: number }) => Math.round(r.elo)));
-    expect(README).toContain(`their ${elo.games} verdicts`);
-    expect(README).toContain(
+    expect(PAGE).toContain(`their ${elo.games} verdicts`);
+    expect(PAGE).toContain(
       `same winner only ${Math.round(100 * elo.agreement_overall)}% of the time`,
     );
     const pair = elo.pairs.find(
@@ -525,7 +525,7 @@ describe("the committed data behind the README", () => {
         p.upper === "ccvq-hard20-qr-opus55" && p.lower === "ccvq-hard20-cc-high-opus55",
     );
     const { w, t, l } = pair.direct;
-    expect(README).toContain(`in ${w} of ${w + t + l} verdicts`);
+    expect(PAGE).toContain(`in ${w} of ${w + t + l} verdicts`);
   });
 
   // MUTATION: drop the tab:copilot2025 call from bench/aacr/final/score.sh — this fails

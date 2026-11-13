@@ -1478,8 +1478,13 @@ describe("rule 5 fence: `claude` runs only inside the benchmark sandbox", () => 
     expect(docker.indexOf("@anthropic-ai/claude-code")).toBeGreaterThan(
       docker.indexOf("FROM runtime AS claude"),
     );
-    const pkg = readFileSync(join(ROOT, "package.json"), "utf8");
-    expect(pkg).not.toContain("claude-code");
+    // The package may name Claude Code as a host its plugin installs into (a
+    // keyword), and nowhere else: no dependency, script, bin or file entry.
+    // MUTATION: add "@anthropic-ai/claude-code" to devDependencies — this fails.
+    const { keywords: _keywords, ...pkg } = JSON.parse(
+      readFileSync(join(ROOT, "package.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(JSON.stringify(pkg)).not.toContain("claude-code");
   });
 
   it("nothing reads, copies or mounts the host's ~/.claude login", () => {

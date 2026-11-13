@@ -19,6 +19,9 @@
   "README.md": {
    "lint": "complete"
   },
+  "BENCHMARKS.md": {
+   "lint": "complete"
+  },
   "bench/aacr/docs/DIGITALOCEAN.md": {
    "lint": "complete"
   },
@@ -1920,7 +1923,7 @@
   },
   {
    "id": "readme.readme:aacr.26",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "so we built a key of 520 defects, each verified in",
    "value": "520",
    "group": "readme:aacr",
@@ -1928,7 +1931,7 @@
   },
   {
    "id": "readme.readme:aacr.27",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "The chart at the top is this key. QuickReview misses 2.5",
    "value": "2.5",
    "group": "readme:aacr",
@@ -1936,7 +1939,7 @@
   },
   {
    "id": "readme.readme:aacr.28",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "of the 90 high-severity defects, 10.5 of the 145 medium and 46 of the 285 low",
    "value": "90",
    "group": "readme:aacr",
@@ -1944,7 +1947,7 @@
   },
   {
    "id": "readme.readme:aacr.29",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "of the 90 high-severity defects, 10.5 of the 145 medium and 46 of the 285 low",
    "value": "10.5",
    "group": "readme:aacr",
@@ -1952,7 +1955,7 @@
   },
   {
    "id": "readme.readme:aacr.30",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "of the 90 high-severity defects, 10.5 of the 145 medium and 46 of the 285 low",
    "value": "145",
    "group": "readme:aacr",
@@ -1960,7 +1963,7 @@
   },
   {
    "id": "readme.readme:aacr.31",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "of the 90 high-severity defects, 10.5 of the 145 medium and 46 of the 285 low",
    "value": "46",
    "group": "readme:aacr",
@@ -1968,7 +1971,7 @@
   },
   {
    "id": "readme.readme:aacr.32",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "of the 90 high-severity defects, 10.5 of the 145 medium and 46 of the 285 low",
    "value": "285",
    "group": "readme:aacr",
@@ -1976,7 +1979,7 @@
   },
   {
    "id": "readme.readme:aacr.33",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "severity misses 9, 26 and 136.5.",
    "value": "9",
    "group": "readme:aacr",
@@ -1984,7 +1987,7 @@
   },
   {
    "id": "readme.readme:aacr.34",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "severity misses 9, 26 and 136.5.",
    "value": "26",
    "group": "readme:aacr",
@@ -1992,7 +1995,7 @@
   },
   {
    "id": "readme.readme:aacr.35",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "severity misses 9, 26 and 136.5.",
    "value": "136.5",
    "group": "readme:aacr",
@@ -2000,7 +2003,7 @@
   },
   {
    "id": "readme.readme:aacr-ci.1",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "high-severity lead holds under a paired bootstrap (+8.3 points",
    "value": "+8.3",
    "group": "readme:aacr-ci",
@@ -2008,7 +2011,7 @@
   },
   {
    "id": "readme.readme:aacr-ci.2",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "high-severity lead holds under a paired bootstrap (+8.3 points",
    "value": "+1.9",
    "group": "readme:aacr-ci",
@@ -2016,7 +2019,7 @@
   },
   {
    "id": "readme.readme:aacr-ci.3",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "high-severity lead holds under a paired bootstrap (+8.3 points",
    "value": "+14.6",
    "group": "readme:aacr-ci",
@@ -2024,7 +2027,7 @@
   },
   {
    "id": "readme.readme:aacr.36",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "The price: 6.9 comments per PR, 42% of them true but minor.",
    "value": "6.9",
    "group": "readme:aacr",
@@ -2032,7 +2035,7 @@
   },
   {
    "id": "readme.readme:aacr.37",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "The price: 6.9 comments per PR, 42% of them true but minor.",
    "value": "42%",
    "group": "readme:aacr",
@@ -2040,7 +2043,7 @@
   },
   {
    "id": "readme.readme:same-model.1",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "40",
    "group": "readme:same-model",
@@ -2048,7 +2051,7 @@
   },
   {
    "id": "readme.readme:same-model.2",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "94%",
    "group": "readme:same-model",
@@ -2056,7 +2059,7 @@
   },
   {
    "id": "readme.readme:same-model.3",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "98%",
    "group": "readme:same-model",
@@ -2064,7 +2067,7 @@
   },
   {
    "id": "readme.readme:same-model.4",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "93%",
    "group": "readme:same-model",
@@ -2072,7 +2075,7 @@
   },
   {
    "id": "readme.readme:same-model.5",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "75%",
    "group": "readme:same-model",
@@ -2080,7 +2083,7 @@
   },
   {
    "id": "readme.readme:same-model.6",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "71%",
    "group": "readme:same-model",
@@ -2088,7 +2091,7 @@
   },
   {
    "id": "readme.readme:same-model.7",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "45%",
    "group": "readme:same-model",
@@ -2096,7 +2099,7 @@
   },
   {
    "id": "readme.readme:same-model.8",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "185",
    "group": "readme:same-model",
@@ -2104,7 +2107,7 @@
   },
   {
    "id": "readme.readme:same-model.9",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "97%",
    "group": "readme:same-model",
@@ -2112,7 +2115,7 @@
   },
   {
    "id": "readme.readme:same-model.10",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "93%",
    "group": "readme:same-model",
@@ -2120,7 +2123,7 @@
   },
   {
    "id": "readme.readme:same-model.11",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "84%",
    "group": "readme:same-model",
@@ -2128,7 +2131,7 @@
   },
   {
    "id": "readme.readme:same-model.12",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "90%",
    "group": "readme:same-model",
@@ -2136,7 +2139,7 @@
   },
   {
    "id": "readme.readme:same-model.13",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "70%",
    "group": "readme:same-model",
@@ -2144,7 +2147,7 @@
   },
   {
    "id": "readme.readme:same-model.14",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "37%",
    "group": "readme:same-model",
@@ -2152,7 +2155,7 @@
   },
   {
    "id": "readme.readme:same-model.15",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "185",
    "group": "readme:same-model",
@@ -2160,7 +2163,7 @@
   },
   {
    "id": "readme.readme:same-model.16",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "96%",
    "group": "readme:same-model",
@@ -2168,7 +2171,7 @@
   },
   {
    "id": "readme.readme:same-model.17",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "86%",
    "group": "readme:same-model",
@@ -2176,7 +2179,7 @@
   },
   {
    "id": "readme.readme:same-model.18",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "80%",
    "group": "readme:same-model",
@@ -2184,7 +2187,7 @@
   },
   {
    "id": "readme.readme:same-model.19",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "78%",
    "group": "readme:same-model",
@@ -2192,7 +2195,7 @@
   },
   {
    "id": "readme.readme:same-model.20",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "61%",
    "group": "readme:same-model",
@@ -2200,7 +2203,7 @@
   },
   {
    "id": "readme.readme:same-model.21",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"AACR-Bench, the same base model in two reviewers",
    "value": "31%",
    "group": "readme:same-model",
@@ -2208,7 +2211,7 @@
   },
   {
    "id": "readme.readme:same-model.22",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "where we ran both, at 11 to 20 times the cost ($3.24 against $0.16 per PR on",
    "value": "11",
    "group": "readme:same-model",
@@ -2216,7 +2219,7 @@
   },
   {
    "id": "readme.readme:same-model.23",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "where we ran both, at 11 to 20 times the cost ($3.24 against $0.16 per PR on",
    "value": "20",
    "group": "readme:same-model",
@@ -2224,7 +2227,7 @@
   },
   {
    "id": "readme.readme:same-model.24",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "where we ran both, at 11 to 20 times the cost ($3.24 against $0.16 per PR on",
    "value": "3.24",
    "group": "readme:same-model",
@@ -2232,7 +2235,7 @@
   },
   {
    "id": "readme.readme:same-model.25",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "where we ran both, at 11 to 20 times the cost ($3.24 against $0.16 per PR on",
    "value": "0.16",
    "group": "readme:same-model",
@@ -2240,7 +2243,7 @@
   },
   {
    "id": "readme.readme:martian.1",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "50",
    "group": "readme:martian",
@@ -2248,7 +2251,7 @@
   },
   {
    "id": "readme.readme:martian.2",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "65.8%",
    "group": "readme:martian",
@@ -2256,7 +2259,7 @@
   },
   {
    "id": "readme.readme:martian.3",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "16.2%",
    "group": "readme:martian",
@@ -2264,7 +2267,7 @@
   },
   {
    "id": "readme.readme:martian.4",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "60.1%",
    "group": "readme:martian",
@@ -2272,7 +2275,7 @@
   },
   {
    "id": "readme.readme:martian.5",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "56.2%",
    "group": "readme:martian",
@@ -2280,7 +2283,7 @@
   },
   {
    "id": "readme.readme:martian.6",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "60.1%",
    "group": "readme:martian",
@@ -2288,7 +2291,7 @@
   },
   {
    "id": "readme.readme:martian.7",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "54.3%",
    "group": "readme:martian",
@@ -2296,7 +2299,7 @@
   },
   {
    "id": "readme.readme:martian.8",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "58.9%",
    "group": "readme:martian",
@@ -2304,7 +2307,7 @@
   },
   {
    "id": "readme.readme:martian.9",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "26.7%",
    "group": "readme:martian",
@@ -2312,7 +2315,7 @@
   },
   {
    "id": "readme.readme:martian.10",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "41.1%",
    "group": "readme:martian",
@@ -2320,7 +2323,7 @@
   },
   {
    "id": "readme.readme:martian.11",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "36.5%",
    "group": "readme:martian",
@@ -2328,7 +2331,7 @@
   },
   {
    "id": "readme.readme:martian.12",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "36.1%",
    "group": "readme:martian",
@@ -2336,7 +2339,7 @@
   },
   {
    "id": "readme.readme:martian.13",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "41.9%",
    "group": "readme:martian",
@@ -2344,7 +2347,7 @@
   },
   {
    "id": "readme.readme:martian.14",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "33.5%",
    "group": "readme:martian",
@@ -2352,7 +2355,7 @@
   },
   {
    "id": "readme.readme:martian.15",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Martian Code Review Bench, 50 PRs",
    "value": "32.7%",
    "group": "readme:martian",
@@ -2360,7 +2363,7 @@
   },
   {
    "id": "readme.readme:martian.16",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "**Martian, 50 PRs.** Martian scores against",
    "value": "50",
    "group": "readme:martian",
@@ -2368,7 +2371,7 @@
   },
   {
    "id": "readme.readme:martian.17",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "12.8 issues per PR from QuickReview's reviews",
    "value": "12.8",
    "group": "readme:martian",
@@ -2377,7 +2380,7 @@
   },
   {
    "id": "readme.readme:martian.18",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "audited the goldens: of the 86 that describe",
    "value": "86",
    "group": "readme:martian",
@@ -2385,7 +2388,7 @@
   },
   {
    "id": "readme.readme:martian.19",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "introduces, it finds 75 (87%), the most of the seven",
    "value": "75",
    "group": "readme:martian",
@@ -2393,7 +2396,7 @@
   },
   {
    "id": "readme.readme:martian.20",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "introduces, it finds 75 (87%), the most of the seven",
    "value": "87%",
    "group": "readme:martian",
@@ -2401,7 +2404,7 @@
   },
   {
    "id": "readme.readme:qodo.1",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Qodo PR-Review-Bench, 100 PRs, 580 injected issues",
    "value": "100",
    "group": "readme:qodo",
@@ -2409,7 +2412,7 @@
   },
   {
    "id": "readme.readme:qodo.2",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Qodo PR-Review-Bench, 100 PRs, 580 injected issues",
    "value": "580",
    "group": "readme:qodo",
@@ -2417,7 +2420,7 @@
   },
   {
    "id": "readme.readme:qodo.3",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Qodo PR-Review-Bench, 100 PRs, 580 injected issues",
    "value": "45.3%",
    "group": "readme:qodo",
@@ -2425,7 +2428,7 @@
   },
   {
    "id": "readme.readme:qodo.4",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Qodo PR-Review-Bench, 100 PRs, 580 injected issues",
    "value": "37.3%",
    "group": "readme:qodo",
@@ -2433,7 +2436,7 @@
   },
   {
    "id": "readme.readme:qodo.5",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Qodo PR-Review-Bench, 100 PRs, 580 injected issues",
    "value": "46.4%",
    "group": "readme:qodo",
@@ -2441,7 +2444,7 @@
   },
   {
    "id": "readme.readme:qodo.6",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "**Qodo PR-Review-Bench, 100 PRs.** 580 injected issues: 309 functional bugs",
    "value": "100",
    "group": "readme:qodo",
@@ -2449,7 +2452,7 @@
   },
   {
    "id": "readme.readme:qodo.7",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "**Qodo PR-Review-Bench, 100 PRs.** 580 injected issues: 309 functional bugs",
    "value": "580",
    "group": "readme:qodo",
@@ -2457,7 +2460,7 @@
   },
   {
    "id": "readme.readme:qodo.8",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "**Qodo PR-Review-Bench, 100 PRs.** 580 injected issues: 309 functional bugs",
    "value": "309",
    "group": "readme:qodo",
@@ -2465,7 +2468,7 @@
   },
   {
    "id": "readme.readme:qodo.9",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "and 271 violations of rules written in the repo.",
    "value": "271",
    "group": "readme:qodo",
@@ -2473,7 +2476,7 @@
   },
   {
    "id": "readme.readme:qodo.10",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "functional bugs of the thirteen tools (52.1%)",
    "value": "52.1%",
    "group": "readme:qodo",
@@ -2481,7 +2484,7 @@
   },
   {
    "id": "readme.readme:elo.1",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "20",
    "group": "readme:elo",
@@ -2489,7 +2492,7 @@
   },
   {
    "id": "readme.readme:elo.2",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1666",
    "group": "readme:elo",
@@ -2500,7 +2503,7 @@
   },
   {
    "id": "readme.readme:elo.3",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1628",
    "group": "readme:elo",
@@ -2511,7 +2514,7 @@
   },
   {
    "id": "readme.readme:elo.4",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1566",
    "group": "readme:elo",
@@ -2522,7 +2525,7 @@
   },
   {
    "id": "readme.readme:elo.5",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1518",
    "group": "readme:elo",
@@ -2533,7 +2536,7 @@
   },
   {
    "id": "readme.readme:elo.6",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1489",
    "group": "readme:elo",
@@ -2544,7 +2547,7 @@
   },
   {
    "id": "readme.readme:elo.7",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1406",
    "group": "readme:elo",
@@ -2555,7 +2558,7 @@
   },
   {
    "id": "readme.readme:elo.8",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1398",
    "group": "readme:elo",
@@ -2566,7 +2569,7 @@
   },
   {
    "id": "readme.readme:elo.9",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "value": "1329",
    "group": "readme:elo",
@@ -2577,7 +2580,7 @@
   },
   {
    "id": "readme.readme:elo.10",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "and a Bradley-Terry fit over their 596 verdicts gives Elo",
    "value": "596",
    "group": "readme:elo",
@@ -2589,7 +2592,7 @@
   },
   {
    "id": "readme.readme:elo.11",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "judges pick the same winner only 56% of the time",
    "value": "56%",
    "group": "readme:elo",
@@ -2600,7 +2603,7 @@
   },
   {
    "id": "readme.readme:elo.12",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "pooled. On the 20 Martian PRs where QuickReview",
    "value": "20",
    "group": "readme:elo",
@@ -2608,7 +2611,7 @@
   },
   {
    "id": "readme.readme:elo.13",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "at high effort on Opus 5.5 in 29 of 40 verdicts",
    "value": "29",
    "group": "readme:elo",
@@ -2616,7 +2619,7 @@
   },
   {
    "id": "readme.readme:elo.14",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "at high effort on Opus 5.5 in 29 of 40 verdicts",
    "value": "40",
    "group": "readme:elo",
@@ -2624,7 +2627,7 @@
   },
   {
    "id": "readme.readme:elo.15",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "than ten times its cost ($4.61 per PR on average)",
    "value": "4.61",
    "group": "readme:elo",
@@ -2633,7 +2636,7 @@
   },
   {
    "id": "readme.readme:elo.16",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "5.5 directing Sonnet 5.5 agents, about $20 per PR",
    "value": "20",
    "group": "readme:elo",
@@ -2642,7 +2645,7 @@
   },
   {
    "id": "readme.readme:other-models.1",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | Mean $/PR | Judge |",
    "value": "90",
    "group": "readme:other-models",
@@ -2650,7 +2653,7 @@
   },
   {
    "id": "readme.readme:other-models.2",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | Mean $/PR | Judge |",
    "value": "145",
    "group": "readme:other-models",
@@ -2658,7 +2661,7 @@
   },
   {
    "id": "readme.readme:other-models.3",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | Mean $/PR | Judge |",
    "value": "285",
    "group": "readme:other-models",
@@ -2666,7 +2669,7 @@
   },
   {
    "id": "readme.readme:other-models.4",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| QuickReview on | PRs | High (90) | Medium (145) | Low (285) | All (520) | Mean $/PR | Judge |",
    "value": "520",
    "group": "readme:other-models",
@@ -2674,7 +2677,7 @@
   },
   {
    "id": "readme.readme:other-models.5",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6.1 Sol (frozen build) | 185 |",
    "value": "185",
    "group": "readme:other-models",
@@ -2682,7 +2685,7 @@
   },
   {
    "id": "readme.readme:other-models.6",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6.1 Sol (frozen build) | 185 |",
    "value": "87.5",
    "group": "readme:other-models",
@@ -2690,7 +2693,7 @@
   },
   {
    "id": "readme.readme:other-models.7",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6.1 Sol (frozen build) | 185 |",
    "value": "97%",
    "group": "readme:other-models",
@@ -2698,7 +2701,7 @@
   },
   {
    "id": "readme.readme:other-models.8",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6.1 Sol (frozen build) | 185 |",
    "value": "134.5",
    "group": "readme:other-models",
@@ -2706,7 +2709,7 @@
   },
   {
    "id": "readme.readme:other-models.9",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6.1 Sol (frozen build) | 185 |",
    "value": "93%",
    "group": "readme:other-models",
@@ -2714,7 +2717,7 @@
   },
   {
    "id": "readme.readme:other-models.10",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6.1 Sol (frozen build) | 185 |",
    "value": "239",
    "group": "readme:other-models",
@@ -2722,7 +2725,7 @@
   },
   {
    "id": "readme.readme:other-models.11",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6.1 Sol (frozen build) | 185 |",
    "value": "84%",
    "group": "readme:other-models",
@@ -2730,7 +2733,7 @@
   },
   {
    "id": "readme.readme:other-models.12",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6.1 Sol (frozen build) | 185 |",
    "value": "461",
    "group": "readme:other-models",
@@ -2738,7 +2741,7 @@
   },
   {
    "id": "readme.readme:other-models.13",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6.1 Sol (frozen build) | 185 |",
    "value": "89%",
    "group": "readme:other-models",
@@ -2746,7 +2749,7 @@
   },
   {
    "id": "readme.readme:other-models.14",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6.1 Sol (frozen build) | 185 |",
    "value": "2.06",
    "group": "readme:other-models",
@@ -2754,7 +2757,7 @@
   },
   {
    "id": "readme.readme:other-models.15",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| DeepSeek V4.1 Flash (mostly low effort) | 185 |",
    "value": "185",
    "group": "readme:other-models",
@@ -2762,7 +2765,7 @@
   },
   {
    "id": "readme.readme:other-models.16",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| DeepSeek V4.1 Flash (mostly low effort) | 185 |",
    "value": "83",
    "group": "readme:other-models",
@@ -2773,7 +2776,7 @@
   },
   {
    "id": "readme.readme:other-models.17",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| DeepSeek V4.1 Flash (mostly low effort) | 185 |",
    "value": "92%",
    "group": "readme:other-models",
@@ -2781,7 +2784,7 @@
   },
   {
    "id": "readme.readme:other-models.18",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| DeepSeek V4.1 Flash (mostly low effort) | 185 |",
    "value": "131",
    "group": "readme:other-models",
@@ -2792,7 +2795,7 @@
   },
   {
    "id": "readme.readme:other-models.19",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| DeepSeek V4.1 Flash (mostly low effort) | 185 |",
    "value": "90%",
    "group": "readme:other-models",
@@ -2800,7 +2803,7 @@
   },
   {
    "id": "readme.readme:other-models.20",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| DeepSeek V4.1 Flash (mostly low effort) | 185 |",
    "value": "237.5",
    "group": "readme:other-models",
@@ -2811,7 +2814,7 @@
   },
   {
    "id": "readme.readme:other-models.21",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| DeepSeek V4.1 Flash (mostly low effort) | 185 |",
    "value": "83%",
    "group": "readme:other-models",
@@ -2819,7 +2822,7 @@
   },
   {
    "id": "readme.readme:other-models.22",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| DeepSeek V4.1 Flash (mostly low effort) | 185 |",
    "value": "451.5",
    "group": "readme:other-models",
@@ -2830,7 +2833,7 @@
   },
   {
    "id": "readme.readme:other-models.23",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| DeepSeek V4.1 Flash (mostly low effort) | 185 |",
    "value": "87%",
    "group": "readme:other-models",
@@ -2838,7 +2841,7 @@
   },
   {
    "id": "readme.readme:other-models.24",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| DeepSeek V4.1 Flash (mostly low effort) | 185 |",
    "value": "0.74",
    "group": "readme:other-models",
@@ -2849,7 +2852,7 @@
   },
   {
    "id": "readme.readme:other-models.25",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GLM-5.3 Flash | 185 |",
    "value": "185",
    "group": "readme:other-models",
@@ -2857,7 +2860,7 @@
   },
   {
    "id": "readme.readme:other-models.26",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GLM-5.3 Flash | 185 |",
    "value": "83",
    "group": "readme:other-models",
@@ -2868,7 +2871,7 @@
   },
   {
    "id": "readme.readme:other-models.27",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GLM-5.3 Flash | 185 |",
    "value": "92%",
    "group": "readme:other-models",
@@ -2876,7 +2879,7 @@
   },
   {
    "id": "readme.readme:other-models.28",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GLM-5.3 Flash | 185 |",
    "value": "120.5",
    "group": "readme:other-models",
@@ -2887,7 +2890,7 @@
   },
   {
    "id": "readme.readme:other-models.29",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GLM-5.3 Flash | 185 |",
    "value": "83%",
    "group": "readme:other-models",
@@ -2895,7 +2898,7 @@
   },
   {
    "id": "readme.readme:other-models.30",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GLM-5.3 Flash | 185 |",
    "value": "231.5",
    "group": "readme:other-models",
@@ -2906,7 +2909,7 @@
   },
   {
    "id": "readme.readme:other-models.31",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GLM-5.3 Flash | 185 |",
    "value": "81%",
    "group": "readme:other-models",
@@ -2914,7 +2917,7 @@
   },
   {
    "id": "readme.readme:other-models.32",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GLM-5.3 Flash | 185 |",
    "value": "435",
    "group": "readme:other-models",
@@ -2925,7 +2928,7 @@
   },
   {
    "id": "readme.readme:other-models.33",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GLM-5.3 Flash | 185 |",
    "value": "84%",
    "group": "readme:other-models",
@@ -2933,7 +2936,7 @@
   },
   {
    "id": "readme.readme:other-models.34",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GLM-5.3 Flash | 185 |",
    "value": "0.52",
    "group": "readme:other-models",
@@ -2944,7 +2947,7 @@
   },
   {
    "id": "readme.readme:other-models.35",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6 Luna | 185 |",
    "value": "185",
    "group": "readme:other-models",
@@ -2952,7 +2955,7 @@
   },
   {
    "id": "readme.readme:other-models.36",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6 Luna | 185 |",
    "value": "39",
    "group": "readme:other-models",
@@ -2960,7 +2963,7 @@
   },
   {
    "id": "readme.readme:other-models.37",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6 Luna | 185 |",
    "value": "43%",
    "group": "readme:other-models",
@@ -2968,7 +2971,7 @@
   },
   {
    "id": "readme.readme:other-models.38",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6 Luna | 185 |",
    "value": "44",
    "group": "readme:other-models",
@@ -2976,7 +2979,7 @@
   },
   {
    "id": "readme.readme:other-models.39",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6 Luna | 185 |",
    "value": "30%",
    "group": "readme:other-models",
@@ -2984,7 +2987,7 @@
   },
   {
    "id": "readme.readme:other-models.40",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6 Luna | 185 |",
    "value": "64",
    "group": "readme:other-models",
@@ -2992,7 +2995,7 @@
   },
   {
    "id": "readme.readme:other-models.41",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6 Luna | 185 |",
    "value": "22%",
    "group": "readme:other-models",
@@ -3000,7 +3003,7 @@
   },
   {
    "id": "readme.readme:other-models.42",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6 Luna | 185 |",
    "value": "147",
    "group": "readme:other-models",
@@ -3008,7 +3011,7 @@
   },
   {
    "id": "readme.readme:other-models.43",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6 Luna | 185 |",
    "value": "28%",
    "group": "readme:other-models",
@@ -3016,7 +3019,7 @@
   },
   {
    "id": "readme.readme:other-models.44",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| GPT-6 Luna | 185 |",
    "value": "0.04",
    "group": "readme:other-models",
@@ -3024,7 +3027,7 @@
   },
   {
    "id": "readme.readme:other-models.45",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "40",
    "group": "readme:other-models",
@@ -3032,7 +3035,7 @@
   },
   {
    "id": "readme.readme:other-models.46",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "32",
    "group": "readme:other-models",
@@ -3040,7 +3043,7 @@
   },
   {
    "id": "readme.readme:other-models.47",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "34",
    "group": "readme:other-models",
@@ -3048,7 +3051,7 @@
   },
   {
    "id": "readme.readme:other-models.48",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "94%",
    "group": "readme:other-models",
@@ -3056,7 +3059,7 @@
   },
   {
    "id": "readme.readme:other-models.49",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "30.5",
    "group": "readme:other-models",
@@ -3064,7 +3067,7 @@
   },
   {
    "id": "readme.readme:other-models.50",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "31",
    "group": "readme:other-models",
@@ -3072,7 +3075,7 @@
   },
   {
    "id": "readme.readme:other-models.51",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "98%",
    "group": "readme:other-models",
@@ -3080,7 +3083,7 @@
   },
   {
    "id": "readme.readme:other-models.52",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "57",
    "group": "readme:other-models",
@@ -3088,7 +3091,7 @@
   },
   {
    "id": "readme.readme:other-models.53",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "61",
    "group": "readme:other-models",
@@ -3096,7 +3099,7 @@
   },
   {
    "id": "readme.readme:other-models.54",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "93%",
    "group": "readme:other-models",
@@ -3104,7 +3107,7 @@
   },
   {
    "id": "readme.readme:other-models.55",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "119.5",
    "group": "readme:other-models",
@@ -3112,7 +3115,7 @@
   },
   {
    "id": "readme.readme:other-models.56",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "126",
    "group": "readme:other-models",
@@ -3120,7 +3123,7 @@
   },
   {
    "id": "readme.readme:other-models.57",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "95%",
    "group": "readme:other-models",
@@ -3128,7 +3131,7 @@
   },
   {
    "id": "readme.readme:other-models.58",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Opus 5.5 | 40 |",
    "value": "3.24",
    "group": "readme:other-models",
@@ -3136,7 +3139,7 @@
   },
   {
    "id": "readme.readme:other-models.59",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "The best third-party reviewer at each severity finds 81 of 90 high",
    "value": "81",
    "group": "readme:other-models",
@@ -3144,7 +3147,7 @@
   },
   {
    "id": "readme.readme:other-models.60",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "The best third-party reviewer at each severity finds 81 of 90 high",
    "value": "90",
    "group": "readme:other-models",
@@ -3152,7 +3155,7 @@
   },
   {
    "id": "readme.readme:other-models.61",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "CLI), 119 of 145 medium and 148.5 of 285 low",
    "value": "119",
    "group": "readme:other-models",
@@ -3160,7 +3163,7 @@
   },
   {
    "id": "readme.readme:other-models.62",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "CLI), 119 of 145 medium and 148.5 of 285 low",
    "value": "145",
    "group": "readme:other-models",
@@ -3168,7 +3171,7 @@
   },
   {
    "id": "readme.readme:other-models.63",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "CLI), 119 of 145 medium and 148.5 of 285 low",
    "value": "148.5",
    "group": "readme:other-models",
@@ -3176,7 +3179,7 @@
   },
   {
    "id": "readme.readme:other-models.64",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "CLI), 119 of 145 medium and 148.5 of 285 low",
    "value": "285",
    "group": "readme:other-models",
@@ -3184,7 +3187,7 @@
   },
   {
    "id": "readme.readme:other-models.65",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "DeepSeek ran at low reasoning effort on 143 of",
    "value": "143",
    "group": "readme:other-models",
@@ -3195,7 +3198,7 @@
   },
   {
    "id": "readme.readme:other-models.66",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "and the validator on 2, and on 7 more a lens pass ran but is missing from the",
    "value": "7",
    "group": "readme:other-models",
@@ -3207,7 +3210,7 @@
   },
   {
    "id": "readme.readme:other-models.74",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "its PRs and lost one lens pass on 5 PRs. On GLM, one lens pass was lost on 1 PR",
    "value": "5",
    "group": "readme:other-models",
@@ -3219,7 +3222,7 @@
   },
   {
    "id": "readme.readme:other-models.75",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "its PRs and lost one lens pass on 5 PRs. On GLM, one lens pass was lost on 1 PR",
    "value": "1",
    "group": "readme:other-models",
@@ -3230,7 +3233,7 @@
   },
   {
    "id": "readme.readme:other-models.76",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "and the validator on 2, and on 7 more a lens pass ran but is missing from the",
    "value": "2",
    "group": "readme:other-models",
@@ -3241,7 +3244,7 @@
   },
   {
    "id": "readme.readme:other-models.67",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "Opus rows ran a September build; on the same 40 PRs as Opus",
    "value": "40",
    "group": "readme:other-models",
@@ -3249,7 +3252,7 @@
   },
   {
    "id": "readme.readme:other-models.68",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "GPT-6.1 Sol build finds 33 of 34 high, 28 of 31 medium and 44 of 61 low.",
    "value": "33",
    "group": "readme:other-models",
@@ -3257,7 +3260,7 @@
   },
   {
    "id": "readme.readme:other-models.69",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "GPT-6.1 Sol build finds 33 of 34 high, 28 of 31 medium and 44 of 61 low.",
    "value": "34",
    "group": "readme:other-models",
@@ -3265,7 +3268,7 @@
   },
   {
    "id": "readme.readme:other-models.70",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "GPT-6.1 Sol build finds 33 of 34 high, 28 of 31 medium and 44 of 61 low.",
    "value": "28",
    "group": "readme:other-models",
@@ -3273,7 +3276,7 @@
   },
   {
    "id": "readme.readme:other-models.71",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "GPT-6.1 Sol build finds 33 of 34 high, 28 of 31 medium and 44 of 61 low.",
    "value": "31",
    "group": "readme:other-models",
@@ -3281,7 +3284,7 @@
   },
   {
    "id": "readme.readme:other-models.72",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "GPT-6.1 Sol build finds 33 of 34 high, 28 of 31 medium and 44 of 61 low.",
    "value": "44",
    "group": "readme:other-models",
@@ -3289,7 +3292,7 @@
   },
   {
    "id": "readme.readme:other-models.73",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "GPT-6.1 Sol build finds 33 of 34 high, 28 of 31 medium and 44 of 61 low.",
    "value": "61",
    "group": "readme:other-models",
@@ -3297,7 +3300,7 @@
   },
   {
    "id": "readme.readme:aacr.38",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "**AACR-Bench** (185 PRs, 10 languages, 520 verified defects",
    "value": "185",
    "group": "readme:aacr",
@@ -3305,7 +3308,7 @@
   },
   {
    "id": "readme.readme:aacr.39",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "**AACR-Bench** (185 PRs, 10 languages, 520 verified defects",
    "value": "10",
    "group": "readme:aacr",
@@ -3313,7 +3316,7 @@
   },
   {
    "id": "readme.readme:aacr.40",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "**AACR-Bench** (185 PRs, 10 languages, 520 verified defects",
    "value": "520",
    "group": "readme:aacr",
@@ -3321,7 +3324,7 @@
   },
   {
    "id": "readme.readme:aacr.41",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Reviewer | High (90) | Medium (145) | Low (285) | All (520) | Comments correct |",
    "value": "90",
    "group": "readme:aacr",
@@ -3329,7 +3332,7 @@
   },
   {
    "id": "readme.readme:aacr.42",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Reviewer | High (90) | Medium (145) | Low (285) | All (520) | Comments correct |",
    "value": "145",
    "group": "readme:aacr",
@@ -3337,7 +3340,7 @@
   },
   {
    "id": "readme.readme:aacr.43",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Reviewer | High (90) | Medium (145) | Low (285) | All (520) | Comments correct |",
    "value": "285",
    "group": "readme:aacr",
@@ -3345,7 +3348,7 @@
   },
   {
    "id": "readme.readme:aacr.44",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Reviewer | High (90) | Medium (145) | Low (285) | All (520) | Comments correct |",
    "value": "520",
    "group": "readme:aacr",
@@ -3353,7 +3356,7 @@
   },
   {
    "id": "readme.readme:aacr.45",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | **87.5 (97%)**",
    "value": "87.5",
    "group": "readme:aacr",
@@ -3364,7 +3367,7 @@
   },
   {
    "id": "readme.readme:aacr.46",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | **87.5 (97%)**",
    "value": "97%",
    "group": "readme:aacr",
@@ -3372,7 +3375,7 @@
   },
   {
    "id": "readme.readme:aacr.47",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | **87.5 (97%)**",
    "value": "134.5",
    "group": "readme:aacr",
@@ -3383,7 +3386,7 @@
   },
   {
    "id": "readme.readme:aacr.48",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | **87.5 (97%)**",
    "value": "93%",
    "group": "readme:aacr",
@@ -3391,7 +3394,7 @@
   },
   {
    "id": "readme.readme:aacr.49",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | **87.5 (97%)**",
    "value": "239",
    "group": "readme:aacr",
@@ -3402,7 +3405,7 @@
   },
   {
    "id": "readme.readme:aacr.50",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | **87.5 (97%)**",
    "value": "84%",
    "group": "readme:aacr",
@@ -3410,7 +3413,7 @@
   },
   {
    "id": "readme.readme:aacr.51",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | **87.5 (97%)**",
    "value": "461",
    "group": "readme:aacr",
@@ -3421,7 +3424,7 @@
   },
   {
    "id": "readme.readme:aacr.52",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | **87.5 (97%)**",
    "value": "89%",
    "group": "readme:aacr",
@@ -3432,7 +3435,7 @@
   },
   {
    "id": "readme.readme:aacr.53",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | **87.5 (97%)**",
    "value": "92%",
    "group": "readme:aacr",
@@ -3443,7 +3446,7 @@
   },
   {
    "id": "readme.readme:aacr.54",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | **87.5 (97%)**",
    "value": "2.06",
    "group": "readme:aacr",
@@ -3454,7 +3457,7 @@
   },
   {
    "id": "readme.readme:aacr.55",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | **87.5 (97%)**",
    "value": "17.5",
    "group": "readme:aacr",
@@ -3465,7 +3468,7 @@
   },
   {
    "id": "readme.readme:aacr.56",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| pi-review panel (high) | 80 (89%)",
    "value": "80",
    "group": "readme:aacr",
@@ -3476,7 +3479,7 @@
   },
   {
    "id": "readme.readme:aacr.57",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| pi-review panel (high) | 80 (89%)",
    "value": "89%",
    "group": "readme:aacr",
@@ -3484,7 +3487,7 @@
   },
   {
    "id": "readme.readme:aacr.58",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| pi-review panel (high) | 80 (89%)",
    "value": "119",
    "group": "readme:aacr",
@@ -3495,7 +3498,7 @@
   },
   {
    "id": "readme.readme:aacr.59",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| pi-review panel (high) | 80 (89%)",
    "value": "82%",
    "group": "readme:aacr",
@@ -3503,7 +3506,7 @@
   },
   {
    "id": "readme.readme:aacr.60",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| pi-review panel (high) | 80 (89%)",
    "value": "148.5",
    "group": "readme:aacr",
@@ -3514,7 +3517,7 @@
   },
   {
    "id": "readme.readme:aacr.61",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| pi-review panel (high) | 80 (89%)",
    "value": "52%",
    "group": "readme:aacr",
@@ -3522,7 +3525,7 @@
   },
   {
    "id": "readme.readme:aacr.62",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| pi-review panel (high) | 80 (89%)",
    "value": "347.5",
    "group": "readme:aacr",
@@ -3533,7 +3536,7 @@
   },
   {
    "id": "readme.readme:aacr.63",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| pi-review panel (high) | 80 (89%)",
    "value": "67%",
    "group": "readme:aacr",
@@ -3544,7 +3547,7 @@
   },
   {
    "id": "readme.readme:aacr.64",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| pi-review panel (high) | 80 (89%)",
    "value": "89%",
    "group": "readme:aacr",
@@ -3555,7 +3558,7 @@
   },
   {
    "id": "readme.readme:aacr.65",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| pi-review panel (high) | 80 (89%)",
    "value": "0.27",
    "group": "readme:aacr",
@@ -3566,7 +3569,7 @@
   },
   {
    "id": "readme.readme:aacr.66",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| pi-review panel (high) | 80 (89%)",
    "value": "1.8",
    "group": "readme:aacr",
@@ -3577,7 +3580,7 @@
   },
   {
    "id": "readme.readme:aacr.67",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Code (Opus 5.5) | 72.5 (81%)",
    "value": "72.5",
    "group": "readme:aacr",
@@ -3588,7 +3591,7 @@
   },
   {
    "id": "readme.readme:aacr.68",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Code (Opus 5.5) | 72.5 (81%)",
    "value": "81%",
    "group": "readme:aacr",
@@ -3596,7 +3599,7 @@
   },
   {
    "id": "readme.readme:aacr.69",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Code (Opus 5.5) | 72.5 (81%)",
    "value": "105",
    "group": "readme:aacr",
@@ -3607,7 +3610,7 @@
   },
   {
    "id": "readme.readme:aacr.70",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Code (Opus 5.5) | 72.5 (81%)",
    "value": "72%",
    "group": "readme:aacr",
@@ -3615,7 +3618,7 @@
   },
   {
    "id": "readme.readme:aacr.71",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Code (Opus 5.5) | 72.5 (81%)",
    "value": "147",
    "group": "readme:aacr",
@@ -3626,7 +3629,7 @@
   },
   {
    "id": "readme.readme:aacr.72",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Code (Opus 5.5) | 72.5 (81%)",
    "value": "52%",
    "group": "readme:aacr",
@@ -3634,7 +3637,7 @@
   },
   {
    "id": "readme.readme:aacr.73",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Code (Opus 5.5) | 72.5 (81%)",
    "value": "324.5",
    "group": "readme:aacr",
@@ -3645,7 +3648,7 @@
   },
   {
    "id": "readme.readme:aacr.74",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Code (Opus 5.5) | 72.5 (81%)",
    "value": "62%",
    "group": "readme:aacr",
@@ -3656,7 +3659,7 @@
   },
   {
    "id": "readme.readme:aacr.75",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Code (Opus 5.5) | 72.5 (81%)",
    "value": "81%",
    "group": "readme:aacr",
@@ -3667,7 +3670,7 @@
   },
   {
    "id": "readme.readme:aacr.76",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Code (Opus 5.5) | 72.5 (81%)",
    "value": "0.20",
    "group": "readme:aacr",
@@ -3678,7 +3681,7 @@
   },
   {
    "id": "readme.readme:aacr.77",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Claude Code (Opus 5.5) | 72.5 (81%)",
    "value": "0.7",
    "group": "readme:aacr",
@@ -3689,7 +3692,7 @@
   },
   {
    "id": "readme.readme:aacr.78",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review (high) | 63.5 (71%)",
    "value": "63.5",
    "group": "readme:aacr",
@@ -3700,7 +3703,7 @@
   },
   {
    "id": "readme.readme:aacr.79",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review (high) | 63.5 (71%)",
    "value": "71%",
    "group": "readme:aacr",
@@ -3708,7 +3711,7 @@
   },
   {
    "id": "readme.readme:aacr.80",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review (high) | 63.5 (71%)",
    "value": "102",
    "group": "readme:aacr",
@@ -3719,7 +3722,7 @@
   },
   {
    "id": "readme.readme:aacr.81",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review (high) | 63.5 (71%)",
    "value": "70%",
    "group": "readme:aacr",
@@ -3727,7 +3730,7 @@
   },
   {
    "id": "readme.readme:aacr.82",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review (high) | 63.5 (71%)",
    "value": "133",
    "group": "readme:aacr",
@@ -3738,7 +3741,7 @@
   },
   {
    "id": "readme.readme:aacr.83",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review (high) | 63.5 (71%)",
    "value": "47%",
    "group": "readme:aacr",
@@ -3746,7 +3749,7 @@
   },
   {
    "id": "readme.readme:aacr.84",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review (high) | 63.5 (71%)",
    "value": "298.5",
    "group": "readme:aacr",
@@ -3757,7 +3760,7 @@
   },
   {
    "id": "readme.readme:aacr.85",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review (high) | 63.5 (71%)",
    "value": "57%",
    "group": "readme:aacr",
@@ -3768,7 +3771,7 @@
   },
   {
    "id": "readme.readme:aacr.86",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review (high) | 63.5 (71%)",
    "value": "86%",
    "group": "readme:aacr",
@@ -3779,7 +3782,7 @@
   },
   {
    "id": "readme.readme:aacr.87",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review (high) | 63.5 (71%)",
    "value": "0.53",
    "group": "readme:aacr",
@@ -3790,7 +3793,7 @@
   },
   {
    "id": "readme.readme:aacr.88",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review (high) | 63.5 (71%)",
    "value": "1.8",
    "group": "readme:aacr",
@@ -3801,7 +3804,7 @@
   },
   {
    "id": "readme.readme:aacr.89",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Codex CLI (high) | 81 (90%)",
    "value": "81",
    "group": "readme:aacr",
@@ -3812,7 +3815,7 @@
   },
   {
    "id": "readme.readme:aacr.90",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Codex CLI (high) | 81 (90%)",
    "value": "90%",
    "group": "readme:aacr",
@@ -3820,7 +3823,7 @@
   },
   {
    "id": "readme.readme:aacr.91",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Codex CLI (high) | 81 (90%)",
    "value": "101.5",
    "group": "readme:aacr",
@@ -3831,7 +3834,7 @@
   },
   {
    "id": "readme.readme:aacr.92",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Codex CLI (high) | 81 (90%)",
    "value": "70%",
    "group": "readme:aacr",
@@ -3839,7 +3842,7 @@
   },
   {
    "id": "readme.readme:aacr.93",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Codex CLI (high) | 81 (90%)",
    "value": "104.5",
    "group": "readme:aacr",
@@ -3850,7 +3853,7 @@
   },
   {
    "id": "readme.readme:aacr.94",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Codex CLI (high) | 81 (90%)",
    "value": "37%",
    "group": "readme:aacr",
@@ -3858,7 +3861,7 @@
   },
   {
    "id": "readme.readme:aacr.95",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Codex CLI (high) | 81 (90%)",
    "value": "287",
    "group": "readme:aacr",
@@ -3869,7 +3872,7 @@
   },
   {
    "id": "readme.readme:aacr.96",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Codex CLI (high) | 81 (90%)",
    "value": "55%",
    "group": "readme:aacr",
@@ -3880,7 +3883,7 @@
   },
   {
    "id": "readme.readme:aacr.97",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Codex CLI (high) | 81 (90%)",
    "value": "93%",
    "group": "readme:aacr",
@@ -3891,7 +3894,7 @@
   },
   {
    "id": "readme.readme:aacr.98",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Codex CLI (high) | 81 (90%)",
    "value": "0.14",
    "group": "readme:aacr",
@@ -3902,7 +3905,7 @@
   },
   {
    "id": "readme.readme:aacr.99",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Codex CLI (high) | 81 (90%)",
    "value": "2.1",
    "group": "readme:aacr",
@@ -3913,7 +3916,7 @@
   },
   {
    "id": "readme.readme:aacr.100",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode (+ PR text) | 76 (84%)",
    "value": "76",
    "group": "readme:aacr",
@@ -3924,7 +3927,7 @@
   },
   {
    "id": "readme.readme:aacr.101",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode (+ PR text) | 76 (84%)",
    "value": "84%",
    "group": "readme:aacr",
@@ -3932,7 +3935,7 @@
   },
   {
    "id": "readme.readme:aacr.102",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode (+ PR text) | 76 (84%)",
    "value": "99",
    "group": "readme:aacr",
@@ -3943,7 +3946,7 @@
   },
   {
    "id": "readme.readme:aacr.103",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode (+ PR text) | 76 (84%)",
    "value": "68%",
    "group": "readme:aacr",
@@ -3951,7 +3954,7 @@
   },
   {
    "id": "readme.readme:aacr.104",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode (+ PR text) | 76 (84%)",
    "value": "88.5",
    "group": "readme:aacr",
@@ -3962,7 +3965,7 @@
   },
   {
    "id": "readme.readme:aacr.105",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode (+ PR text) | 76 (84%)",
    "value": "31%",
    "group": "readme:aacr",
@@ -3970,7 +3973,7 @@
   },
   {
    "id": "readme.readme:aacr.106",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode (+ PR text) | 76 (84%)",
    "value": "263.5",
    "group": "readme:aacr",
@@ -3981,7 +3984,7 @@
   },
   {
    "id": "readme.readme:aacr.107",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode (+ PR text) | 76 (84%)",
    "value": "51%",
    "group": "readme:aacr",
@@ -3992,7 +3995,7 @@
   },
   {
    "id": "readme.readme:aacr.108",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode (+ PR text) | 76 (84%)",
    "value": "93%",
    "group": "readme:aacr",
@@ -4003,7 +4006,7 @@
   },
   {
    "id": "readme.readme:aacr.109",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode (+ PR text) | 76 (84%)",
    "value": "0.17",
    "group": "readme:aacr",
@@ -4014,7 +4017,7 @@
   },
   {
    "id": "readme.readme:aacr.110",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode (+ PR text) | 76 (84%)",
    "value": "2.3",
    "group": "readme:aacr",
@@ -4025,7 +4028,7 @@
   },
   {
    "id": "readme.readme:aacr.111",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 55.5 (62%)",
    "value": "55.5",
    "group": "readme:aacr",
@@ -4036,7 +4039,7 @@
   },
   {
    "id": "readme.readme:aacr.112",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 55.5 (62%)",
    "value": "62%",
    "group": "readme:aacr",
@@ -4044,7 +4047,7 @@
   },
   {
    "id": "readme.readme:aacr.113",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 55.5 (62%)",
    "value": "70",
    "group": "readme:aacr",
@@ -4055,7 +4058,7 @@
   },
   {
    "id": "readme.readme:aacr.114",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 55.5 (62%)",
    "value": "48%",
    "group": "readme:aacr",
@@ -4063,7 +4066,7 @@
   },
   {
    "id": "readme.readme:aacr.115",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 55.5 (62%)",
    "value": "68.5",
    "group": "readme:aacr",
@@ -4074,7 +4077,7 @@
   },
   {
    "id": "readme.readme:aacr.116",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 55.5 (62%)",
    "value": "24%",
    "group": "readme:aacr",
@@ -4082,7 +4085,7 @@
   },
   {
    "id": "readme.readme:aacr.117",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 55.5 (62%)",
    "value": "194",
    "group": "readme:aacr",
@@ -4093,7 +4096,7 @@
   },
   {
    "id": "readme.readme:aacr.118",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 55.5 (62%)",
    "value": "37%",
    "group": "readme:aacr",
@@ -4104,7 +4107,7 @@
   },
   {
    "id": "readme.readme:aacr.119",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 55.5 (62%)",
    "value": "76%",
    "group": "readme:aacr",
@@ -4115,7 +4118,7 @@
   },
   {
    "id": "readme.readme:aacr.120",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 55.5 (62%)",
    "value": "0.07",
    "group": "readme:aacr",
@@ -4126,7 +4129,7 @@
   },
   {
    "id": "readme.readme:aacr.121",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 55.5 (62%)",
    "value": "1.9",
    "group": "readme:aacr",
@@ -4137,7 +4140,7 @@
   },
   {
    "id": "readme.readme:martian.21",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "**Martian** (50 PRs, Core; one `gpt-6.1-sol` judge",
    "value": "50",
    "group": "readme:martian",
@@ -4145,7 +4148,7 @@
   },
   {
    "id": "readme.readme:martian.22",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| Tool | Precision | Recall | F1 | F2 | Real goldens (86) |",
    "value": "86",
    "group": "readme:martian",
@@ -4153,7 +4156,7 @@
   },
   {
    "id": "readme.readme:martian.23",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 16.2 | **65.8**",
    "value": "16.2",
    "group": "readme:martian",
@@ -4164,7 +4167,7 @@
   },
   {
    "id": "readme.readme:martian.24",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 16.2 | **65.8**",
    "value": "65.8",
    "group": "readme:martian",
@@ -4175,7 +4178,7 @@
   },
   {
    "id": "readme.readme:martian.25",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 16.2 | **65.8**",
    "value": "26.1",
    "group": "readme:martian",
@@ -4186,7 +4189,7 @@
   },
   {
    "id": "readme.readme:martian.26",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 16.2 | **65.8**",
    "value": "40.9",
    "group": "readme:martian",
@@ -4197,7 +4200,7 @@
   },
   {
    "id": "readme.readme:martian.27",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 16.2 | **65.8**",
    "value": "75",
    "group": "readme:martian",
@@ -4205,7 +4208,7 @@
   },
   {
    "id": "readme.readme:martian.28",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 16.2 | **65.8**",
    "value": "87%",
    "group": "readme:martian",
@@ -4213,7 +4216,7 @@
   },
   {
    "id": "readme.readme:martian.29",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 16.2 | **65.8**",
    "value": "2.84",
    "group": "readme:martian",
@@ -4224,7 +4227,7 @@
   },
   {
    "id": "readme.readme:martian.30",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 16.2 | **65.8**",
    "value": "26.1",
    "group": "readme:martian",
@@ -4235,7 +4238,7 @@
   },
   {
    "id": "readme.readme:martian.31",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-extended-v2 | 56.2 |",
    "value": "56.2",
    "group": "readme:martian",
@@ -4246,7 +4249,7 @@
   },
   {
    "id": "readme.readme:martian.32",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-extended-v2 | 56.2 |",
    "value": "60.1",
    "group": "readme:martian",
@@ -4257,7 +4260,7 @@
   },
   {
    "id": "readme.readme:martian.33",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-extended-v2 | 56.2 |",
    "value": "58.1",
    "group": "readme:martian",
@@ -4268,7 +4271,7 @@
   },
   {
    "id": "readme.readme:martian.34",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-extended-v2 | 56.2 |",
    "value": "59.3",
    "group": "readme:martian",
@@ -4279,7 +4282,7 @@
   },
   {
    "id": "readme.readme:martian.35",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-extended-v2 | 56.2 |",
    "value": "68",
    "group": "readme:martian",
@@ -4287,7 +4290,7 @@
   },
   {
    "id": "readme.readme:martian.36",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-extended-v2 | 56.2 |",
    "value": "79%",
    "group": "readme:martian",
@@ -4295,7 +4298,7 @@
   },
   {
    "id": "readme.readme:martian.37",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| cubic-v2 | 54.3 |",
    "value": "54.3",
    "group": "readme:martian",
@@ -4306,7 +4309,7 @@
   },
   {
    "id": "readme.readme:martian.38",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| cubic-v2 | 54.3 |",
    "value": "60.1",
    "group": "readme:martian",
@@ -4317,7 +4320,7 @@
   },
   {
    "id": "readme.readme:martian.39",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| cubic-v2 | 54.3 |",
    "value": "57.1",
    "group": "readme:martian",
@@ -4328,7 +4331,7 @@
   },
   {
    "id": "readme.readme:martian.40",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| cubic-v2 | 54.3 |",
    "value": "58.9",
    "group": "readme:martian",
@@ -4339,7 +4342,7 @@
   },
   {
    "id": "readme.readme:martian.41",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| cubic-v2 | 54.3 |",
    "value": "58",
    "group": "readme:martian",
@@ -4347,7 +4350,7 @@
   },
   {
    "id": "readme.readme:martian.42",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| cubic-v2 | 54.3 |",
    "value": "67%",
    "group": "readme:martian",
@@ -4355,7 +4358,7 @@
   },
   {
    "id": "readme.readme:martian.43",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 26.7 | 58.9",
    "value": "26.7",
    "group": "readme:martian",
@@ -4366,7 +4369,7 @@
   },
   {
    "id": "readme.readme:martian.44",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 26.7 | 58.9",
    "value": "58.9",
    "group": "readme:martian",
@@ -4377,7 +4380,7 @@
   },
   {
    "id": "readme.readme:martian.45",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 26.7 | 58.9",
    "value": "36.8",
    "group": "readme:martian",
@@ -4388,7 +4391,7 @@
   },
   {
    "id": "readme.readme:martian.46",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 26.7 | 58.9",
    "value": "47.4",
    "group": "readme:martian",
@@ -4399,7 +4402,7 @@
   },
   {
    "id": "readme.readme:martian.47",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 26.7 | 58.9",
    "value": "67",
    "group": "readme:martian",
@@ -4407,7 +4410,7 @@
   },
   {
    "id": "readme.readme:martian.48",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 26.7 | 58.9",
    "value": "78%",
    "group": "readme:martian",
@@ -4415,7 +4418,7 @@
   },
   {
    "id": "readme.readme:martian.49",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 26.7 | 58.9",
    "value": "0.86",
    "group": "readme:martian",
@@ -4426,7 +4429,7 @@
   },
   {
    "id": "readme.readme:martian.50",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 26.7 | 58.9",
    "value": "3.3",
    "group": "readme:martian",
@@ -4437,7 +4440,7 @@
   },
   {
    "id": "readme.readme:martian.51",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 41.9 | 36.1",
    "value": "41.9",
    "group": "readme:martian",
@@ -4448,7 +4451,7 @@
   },
   {
    "id": "readme.readme:martian.52",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 41.9 | 36.1",
    "value": "36.1",
    "group": "readme:martian",
@@ -4459,7 +4462,7 @@
   },
   {
    "id": "readme.readme:martian.53",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 41.9 | 36.1",
    "value": "38.8",
    "group": "readme:martian",
@@ -4470,7 +4473,7 @@
   },
   {
    "id": "readme.readme:martian.54",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 41.9 | 36.1",
    "value": "37.1",
    "group": "readme:martian",
@@ -4481,7 +4484,7 @@
   },
   {
    "id": "readme.readme:martian.55",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 41.9 | 36.1",
    "value": "46",
    "group": "readme:martian",
@@ -4489,7 +4492,7 @@
   },
   {
    "id": "readme.readme:martian.56",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 41.9 | 36.1",
    "value": "53%",
    "group": "readme:martian",
@@ -4497,7 +4500,7 @@
   },
   {
    "id": "readme.readme:martian.57",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 41.9 | 36.1",
    "value": "0.09",
    "group": "readme:martian",
@@ -4508,7 +4511,7 @@
   },
   {
    "id": "readme.readme:martian.58",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 41.9 | 36.1",
    "value": "1.4",
    "group": "readme:martian",
@@ -4519,7 +4522,7 @@
   },
   {
    "id": "readme.readme:martian.59",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| claude-code | 36.5 | 41.1",
    "value": "36.5",
    "group": "readme:martian",
@@ -4530,7 +4533,7 @@
   },
   {
    "id": "readme.readme:martian.60",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| claude-code | 36.5 | 41.1",
    "value": "41.1",
    "group": "readme:martian",
@@ -4541,7 +4544,7 @@
   },
   {
    "id": "readme.readme:martian.61",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| claude-code | 36.5 | 41.1",
    "value": "38.7",
    "group": "readme:martian",
@@ -4552,7 +4555,7 @@
   },
   {
    "id": "readme.readme:martian.62",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| claude-code | 36.5 | 41.1",
    "value": "40.1",
    "group": "readme:martian",
@@ -4563,7 +4566,7 @@
   },
   {
    "id": "readme.readme:martian.63",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| claude-code | 36.5 | 41.1",
    "value": "45",
    "group": "readme:martian",
@@ -4571,7 +4574,7 @@
   },
   {
    "id": "readme.readme:martian.64",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| claude-code | 36.5 | 41.1",
    "value": "52%",
    "group": "readme:martian",
@@ -4579,7 +4582,7 @@
   },
   {
    "id": "readme.readme:martian.65",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 32.7 | 33.5",
    "value": "32.7",
    "group": "readme:martian",
@@ -4590,7 +4593,7 @@
   },
   {
    "id": "readme.readme:martian.66",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 32.7 | 33.5",
    "value": "33.5",
    "group": "readme:martian",
@@ -4601,7 +4604,7 @@
   },
   {
    "id": "readme.readme:martian.67",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 32.7 | 33.5",
    "value": "33.1",
    "group": "readme:martian",
@@ -4612,7 +4615,7 @@
   },
   {
    "id": "readme.readme:martian.68",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 32.7 | 33.5",
    "value": "33.4",
    "group": "readme:martian",
@@ -4623,7 +4626,7 @@
   },
   {
    "id": "readme.readme:martian.69",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 32.7 | 33.5",
    "value": "48",
    "group": "readme:martian",
@@ -4631,7 +4634,7 @@
   },
   {
    "id": "readme.readme:martian.70",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 32.7 | 33.5",
    "value": "56%",
    "group": "readme:martian",
@@ -4639,7 +4642,7 @@
   },
   {
    "id": "readme.readme:martian.71",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 32.7 | 33.5",
    "value": "0.19",
    "group": "readme:martian",
@@ -4650,7 +4653,7 @@
   },
   {
    "id": "readme.readme:martian.72",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 32.7 | 33.5",
    "value": "2.4",
    "group": "readme:martian",
@@ -4661,7 +4664,7 @@
   },
   {
    "id": "readme.readme:qodo.11",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "**Qodo PR-Review-Bench** (100 PRs; one `gpt-6.1-sol` judge",
    "value": "100",
    "group": "readme:qodo",
@@ -4669,7 +4672,7 @@
   },
   {
    "id": "readme.readme:qodo.12",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-exhaustive | 4.6 |",
    "value": "4.6",
    "group": "readme:qodo",
@@ -4680,7 +4683,7 @@
   },
   {
    "id": "readme.readme:qodo.13",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-exhaustive | 4.6 |",
    "value": "58.0",
    "group": "readme:qodo",
@@ -4691,7 +4694,7 @@
   },
   {
    "id": "readme.readme:qodo.14",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-exhaustive | 4.6 |",
    "value": "46.4",
    "group": "readme:qodo",
@@ -4702,7 +4705,7 @@
   },
   {
    "id": "readme.readme:qodo.15",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-exhaustive | 4.6 |",
    "value": "51.5",
    "group": "readme:qodo",
@@ -4713,7 +4716,7 @@
   },
   {
    "id": "readme.readme:qodo.16",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-exhaustive | 4.6 |",
    "value": "48.2",
    "group": "readme:qodo",
@@ -4724,7 +4727,7 @@
   },
   {
    "id": "readme.readme:qodo.17",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-exhaustive | 4.6 |",
    "value": "44.3",
    "group": "readme:qodo",
@@ -4735,7 +4738,7 @@
   },
   {
    "id": "readme.readme:qodo.18",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-precise | 3.1 |",
    "value": "3.1",
    "group": "readme:qodo",
@@ -4746,7 +4749,7 @@
   },
   {
    "id": "readme.readme:qodo.19",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-precise | 3.1 |",
    "value": "68.0",
    "group": "readme:qodo",
@@ -4757,7 +4760,7 @@
   },
   {
    "id": "readme.readme:qodo.20",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-precise | 3.1 |",
    "value": "35.9",
    "group": "readme:qodo",
@@ -4768,7 +4771,7 @@
   },
   {
    "id": "readme.readme:qodo.21",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-precise | 3.1 |",
    "value": "47.0",
    "group": "readme:qodo",
@@ -4779,7 +4782,7 @@
   },
   {
    "id": "readme.readme:qodo.22",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-precise | 3.1 |",
    "value": "36.2",
    "group": "readme:qodo",
@@ -4790,7 +4793,7 @@
   },
   {
    "id": "readme.readme:qodo.23",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| qodo-precise | 3.1 |",
    "value": "35.4",
    "group": "readme:qodo",
@@ -4801,7 +4804,7 @@
   },
   {
    "id": "readme.readme:qodo.24",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| augment | 2.5 |",
    "value": "2.5",
    "group": "readme:qodo",
@@ -4812,7 +4815,7 @@
   },
   {
    "id": "readme.readme:qodo.25",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| augment | 2.5 |",
    "value": "67.5",
    "group": "readme:qodo",
@@ -4823,7 +4826,7 @@
   },
   {
    "id": "readme.readme:qodo.26",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| augment | 2.5 |",
    "value": "29.7",
    "group": "readme:qodo",
@@ -4834,7 +4837,7 @@
   },
   {
    "id": "readme.readme:qodo.27",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| augment | 2.5 |",
    "value": "41.2",
    "group": "readme:qodo",
@@ -4845,7 +4848,7 @@
   },
   {
    "id": "readme.readme:qodo.28",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| augment | 2.5 |",
    "value": "49.2",
    "group": "readme:qodo",
@@ -4856,7 +4859,7 @@
   },
   {
    "id": "readme.readme:qodo.29",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| augment | 2.5 |",
    "value": "7.4",
    "group": "readme:qodo",
@@ -4867,7 +4870,7 @@
   },
   {
    "id": "readme.readme:qodo.30",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 7.1 |",
    "value": "7.1",
    "group": "readme:qodo",
@@ -4878,7 +4881,7 @@
   },
   {
    "id": "readme.readme:qodo.31",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 7.1 |",
    "value": "37.3",
    "group": "readme:qodo",
@@ -4889,7 +4892,7 @@
   },
   {
    "id": "readme.readme:qodo.32",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 7.1 |",
    "value": "45.3",
    "group": "readme:qodo",
@@ -4900,7 +4903,7 @@
   },
   {
    "id": "readme.readme:qodo.33",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 7.1 |",
    "value": "40.9",
    "group": "readme:qodo",
@@ -4911,7 +4914,7 @@
   },
   {
    "id": "readme.readme:qodo.34",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 7.1 |",
    "value": "52.1",
    "group": "readme:qodo",
@@ -4922,7 +4925,7 @@
   },
   {
    "id": "readme.readme:qodo.35",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 7.1 |",
    "value": "37.6",
    "group": "readme:qodo",
@@ -4933,7 +4936,7 @@
   },
   {
    "id": "readme.readme:qodo.36",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 7.1 |",
    "value": "2.48",
    "group": "readme:qodo",
@@ -4944,7 +4947,7 @@
   },
   {
    "id": "readme.readme:qodo.37",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| **QuickReview** | 7.1 |",
    "value": "19.6",
    "group": "readme:qodo",
@@ -4955,7 +4958,7 @@
   },
   {
    "id": "readme.readme:qodo.38",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 2.6 |",
    "value": "2.6",
    "group": "readme:qodo",
@@ -4966,7 +4969,7 @@
   },
   {
    "id": "readme.readme:qodo.39",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 2.6 |",
    "value": "64.9",
    "group": "readme:qodo",
@@ -4977,7 +4980,7 @@
   },
   {
    "id": "readme.readme:qodo.40",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 2.6 |",
    "value": "29.0",
    "group": "readme:qodo",
@@ -4988,7 +4991,7 @@
   },
   {
    "id": "readme.readme:qodo.41",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 2.6 |",
    "value": "40.0",
    "group": "readme:qodo",
@@ -4999,7 +5002,7 @@
   },
   {
    "id": "readme.readme:qodo.42",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 2.6 |",
    "value": "43.7",
    "group": "readme:qodo",
@@ -5010,7 +5013,7 @@
   },
   {
    "id": "readme.readme:qodo.43",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 2.6 |",
    "value": "12.2",
    "group": "readme:qodo",
@@ -5021,7 +5024,7 @@
   },
   {
    "id": "readme.readme:qodo.44",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 2.6 |",
    "value": "0.20",
    "group": "readme:qodo",
@@ -5032,7 +5035,7 @@
   },
   {
    "id": "readme.readme:qodo.45",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| OpenCode | 2.6 |",
    "value": "2.3",
    "group": "readme:qodo",
@@ -5043,7 +5046,7 @@
   },
   {
    "id": "readme.readme:qodo.46",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| copilot | 4.2 |",
    "value": "4.2",
    "group": "readme:qodo",
@@ -5054,7 +5057,7 @@
   },
   {
    "id": "readme.readme:qodo.47",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| copilot | 4.2 |",
    "value": "46.8",
    "group": "readme:qodo",
@@ -5065,7 +5068,7 @@
   },
   {
    "id": "readme.readme:qodo.48",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| copilot | 4.2 |",
    "value": "33.6",
    "group": "readme:qodo",
@@ -5076,7 +5079,7 @@
   },
   {
    "id": "readme.readme:qodo.49",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| copilot | 4.2 |",
    "value": "39.1",
    "group": "readme:qodo",
@@ -5087,7 +5090,7 @@
   },
   {
    "id": "readme.readme:qodo.50",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| copilot | 4.2 |",
    "value": "46.3",
    "group": "readme:qodo",
@@ -5098,7 +5101,7 @@
   },
   {
    "id": "readme.readme:qodo.51",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| copilot | 4.2 |",
    "value": "19.2",
    "group": "readme:qodo",
@@ -5109,7 +5112,7 @@
   },
   {
    "id": "readme.readme:qodo.52",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 3.5 |",
    "value": "3.5",
    "group": "readme:qodo",
@@ -5120,7 +5123,7 @@
   },
   {
    "id": "readme.readme:qodo.53",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 3.5 |",
    "value": "47.1",
    "group": "readme:qodo",
@@ -5131,7 +5134,7 @@
   },
   {
    "id": "readme.readme:qodo.54",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 3.5 |",
    "value": "28.1",
    "group": "readme:qodo",
@@ -5142,7 +5145,7 @@
   },
   {
    "id": "readme.readme:qodo.55",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 3.5 |",
    "value": "35.2",
    "group": "readme:qodo",
@@ -5153,7 +5156,7 @@
   },
   {
    "id": "readme.readme:qodo.56",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 3.5 |",
    "value": "45.6",
    "group": "readme:qodo",
@@ -5164,7 +5167,7 @@
   },
   {
    "id": "readme.readme:qodo.57",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 3.5 |",
    "value": "8.1",
    "group": "readme:qodo",
@@ -5175,7 +5178,7 @@
   },
   {
    "id": "readme.readme:qodo.58",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 3.5 |",
    "value": "0.46",
    "group": "readme:qodo",
@@ -5186,7 +5189,7 @@
   },
   {
    "id": "readme.readme:qodo.59",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| open-code-review | 3.5 |",
    "value": "1.9",
    "group": "readme:qodo",
@@ -5197,7 +5200,7 @@
   },
   {
    "id": "readme.readme:qodo.60",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 3.4 |",
    "value": "3.4",
    "group": "readme:qodo",
@@ -5208,7 +5211,7 @@
   },
   {
    "id": "readme.readme:qodo.61",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 3.4 |",
    "value": "47.2",
    "group": "readme:qodo",
@@ -5219,7 +5222,7 @@
   },
   {
    "id": "readme.readme:qodo.62",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 3.4 |",
    "value": "27.2",
    "group": "readme:qodo",
@@ -5230,7 +5233,7 @@
   },
   {
    "id": "readme.readme:qodo.63",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 3.4 |",
    "value": "34.5",
    "group": "readme:qodo",
@@ -5241,7 +5244,7 @@
   },
   {
    "id": "readme.readme:qodo.64",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 3.4 |",
    "value": "43.7",
    "group": "readme:qodo",
@@ -5252,7 +5255,7 @@
   },
   {
    "id": "readme.readme:qodo.65",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 3.4 |",
    "value": "8.5",
    "group": "readme:qodo",
@@ -5263,7 +5266,7 @@
   },
   {
    "id": "readme.readme:qodo.66",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 3.4 |",
    "value": "0.10",
    "group": "readme:qodo",
@@ -5274,7 +5277,7 @@
   },
   {
    "id": "readme.readme:qodo.67",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "| PR-Agent | 3.4 |",
    "value": "1.2",
    "group": "readme:qodo",
@@ -5285,7 +5288,7 @@
   },
   {
    "id": "readme.readme:heldout-aacr.1",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "part of each benchmark, including 145 of the 185 AACR-Bench PRs. The 40 PRs",
    "value": "145",
    "group": "readme:heldout-aacr",
@@ -5293,7 +5296,7 @@
   },
   {
    "id": "readme.readme:heldout-aacr.2",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "part of each benchmark, including 145 of the 185 AACR-Bench PRs. The 40 PRs",
    "value": "185",
    "group": "readme:heldout-aacr",
@@ -5301,7 +5304,7 @@
   },
   {
    "id": "readme.readme:heldout-aacr.3",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "part of each benchmark, including 145 of the 185 AACR-Bench PRs. The 40 PRs",
    "value": "40",
    "group": "readme:heldout-aacr",
@@ -5309,7 +5312,7 @@
   },
   {
    "id": "readme.readme:heldout-aacr.4",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "kept out of the last tuning round, the frozen build finds 83% of AACR-Bench's",
    "value": "83%",
    "group": "readme:heldout-aacr",
@@ -5317,7 +5320,7 @@
   },
   {
    "id": "readme.readme:heldout-aacr.5",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "defects (20 PRs), against the next best 72%",
    "value": "20",
    "group": "readme:heldout-aacr",
@@ -5325,7 +5328,7 @@
   },
   {
    "id": "readme.readme:heldout-aacr.6",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "defects (20 PRs), against the next best 72%",
    "value": "72%",
    "group": "readme:heldout-aacr",
@@ -5333,7 +5336,7 @@
   },
   {
    "id": "readme.readme:heldout-martian.1",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "real goldens (43 of 52, 30 PRs), and on Qodo (31 PRs) reaches 60.3% recall and",
    "value": "43",
    "group": "readme:heldout-martian",
@@ -5341,7 +5344,7 @@
   },
   {
    "id": "readme.readme:heldout-martian.2",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "real goldens (43 of 52, 30 PRs), and on Qodo (31 PRs) reaches 60.3% recall and",
    "value": "52",
    "group": "readme:heldout-martian",
@@ -5349,7 +5352,7 @@
   },
   {
    "id": "readme.readme:heldout-martian.3",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "real goldens (43 of 52, 30 PRs), and on Qodo (31 PRs) reaches 60.3% recall and",
    "value": "30",
    "group": "readme:heldout-martian",
@@ -5357,7 +5360,7 @@
   },
   {
    "id": "readme.readme:heldout-qodo.1",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "real goldens (43 of 52, 30 PRs), and on Qodo (31 PRs) reaches 60.3% recall and",
    "value": "31",
    "group": "readme:heldout-qodo",
@@ -5365,7 +5368,7 @@
   },
   {
    "id": "readme.readme:heldout-qodo.2",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "real goldens (43 of 52, 30 PRs), and on Qodo (31 PRs) reaches 60.3% recall and",
    "value": "60.3%",
    "group": "readme:heldout-qodo",
@@ -5373,7 +5376,7 @@
   },
   {
    "id": "readme.readme:heldout-qodo.3",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "F1 53.0, level with qodo-exhaustive's 51.3.",
    "value": "53.0",
    "group": "readme:heldout-qodo",
@@ -5381,7 +5384,7 @@
   },
   {
    "id": "readme.readme:heldout-qodo.4",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "F1 53.0, level with qodo-exhaustive's 51.3.",
    "value": "51.3",
    "group": "readme:heldout-qodo",
@@ -5389,7 +5392,7 @@
   },
   {
    "id": "readme.readme:cost.1",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "On AACR-Bench a review averaged $2.06 per PR at list prices (median",
    "value": "2.06",
    "group": "readme:cost",
@@ -5400,7 +5403,7 @@
   },
   {
    "id": "readme.readme:cost.2",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "$1.87); on Martian's and Qodo's PRs, $2.84 and $2.48.",
    "value": "1.87",
    "group": "readme:cost",
@@ -5408,7 +5411,7 @@
   },
   {
    "id": "readme.readme:cost.3",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "$1.87); on Martian's and Qodo's PRs, $2.84 and $2.48.",
    "value": "2.84",
    "group": "readme:cost",
@@ -5419,7 +5422,7 @@
   },
   {
    "id": "readme.readme:cost.4",
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "$1.87); on Martian's and Qodo's PRs, $2.84 and $2.48.",
    "value": "2.48",
    "group": "readme:cost",
@@ -57712,14 +57715,6 @@
  "not_claims": [
   {
    "file": "README.md",
-   "anchor": "since mid-August 2026 on",
-   "tokens": [
-    "2026"
-   ],
-   "why": "a date"
-  },
-  {
-   "file": "README.md",
    "anchor": "1. **Plan the lenses by rule.**",
    "tokens": [
     "1"
@@ -57744,7 +57739,7 @@
   },
   {
    "file": "README.md",
-   "anchor": "4. **Validate.** `pass-validate`",
+   "anchor": "4. **Validate.**",
    "tokens": [
     "4"
    ],
@@ -57759,39 +57754,7 @@
    "why": "list numbering"
   },
   {
-   "file": "README.md",
-   "anchor": "1. **Sign in to a model provider, or have a provider key in the",
-   "tokens": [
-    "1"
-   ],
-   "why": "list numbering"
-  },
-  {
-   "file": "README.md",
-   "anchor": "2. **Connect GitHub**",
-   "tokens": [
-    "2"
-   ],
-   "why": "list numbering"
-  },
-  {
-   "file": "README.md",
-   "anchor": "3. **Choose a repository.**",
-   "tokens": [
-    "3"
-   ],
-   "why": "list numbering"
-  },
-  {
-   "file": "README.md",
-   "anchor": "trigger and severity cap, is \u00a73.3 of the",
-   "tokens": [
-    "3.3"
-   ],
-   "why": "a section number"
-  },
-  {
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Qodo PR-Review-Bench, 100 PRs, 580 injected issues",
    "tokens": [
     "13"
@@ -57799,7 +57762,7 @@
    "why": "design: how many reviewers the chart shows"
   },
   {
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "alt=\"Pairwise Elo on the 20 Martian PRs",
    "tokens": [
     "95%"
@@ -57807,7 +57770,7 @@
    "why": "method: the intervals' confidence level"
   },
   {
-   "file": "README.md",
+   "file": "BENCHMARKS.md",
    "anchor": "5.5 directing Sonnet 5.5 agents, about $20 per PR",
    "tokens": [
     "5.5"
@@ -57816,23 +57779,7 @@
   },
   {
    "file": "README.md",
-   "anchor": "PR. Your token reaches the daemon only as the 0600 file",
-   "tokens": [
-    "0600"
-   ],
-   "why": "a file mode"
-  },
-  {
-   "file": "README.md",
-   "anchor": "not blocked, but only 22.19+ is supported",
-   "tokens": [
-    "22.19"
-   ],
-   "why": "a version (Node)"
-  },
-  {
-   "file": "README.md",
-   "anchor": "qcr review 123 ",
+   "anchor": "`qcr review 123`, or a pull request",
    "tokens": [
     "123"
    ],
@@ -57863,6 +57810,32 @@
     "11598"
    ],
    "why": "a citation (year, pages, volume, DOI, arXiv id)"
+  },
+  {
+   "file": "BENCHMARKS.md",
+   "anchor": "(DOI [10.57967/hf/11598](https://doi.org/10.57967/hf/11598)), and each number can be recomputed from it.",
+   "tokens": [
+    "10.57967",
+    "11598"
+   ],
+   "why": "a citation (year, pages, volume, DOI, arXiv id)"
+  },
+  {
+   "file": "README.md",
+   "anchor": "> **Verdict: Changes requested**",
+   "tokens": [
+    "2",
+    "2"
+   ],
+   "why": "a worked example: the verdict line quoted from one review (its own count of its blockers and nits), not a measurement"
+  },
+  {
+   "file": "README.md",
+   "anchor": "> _P0 \u00b7 confidence 0.99 \u00b7 lens pass-security",
+   "tokens": [
+    "0.99"
+   ],
+   "why": "a worked example: the footer quoted from one review comment (the confidence the reviewer gave that finding), not a measurement"
   },
   {
    "file": "bench/aacr/docs/DIGITALOCEAN.md",

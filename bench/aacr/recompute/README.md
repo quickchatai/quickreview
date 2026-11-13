@@ -9,10 +9,10 @@ given as `<name>.jsonl`, which is how the tests feed small fixtures.
 
 | Published numbers | Where | Script | Data |
 |---|---|---|---|
-| Bootstrap intervals and paired differences; $ per defect found | `tab:ci` in both papers, benchmark.tex "Uncertainty" and §"The frozen build", README "+8.3 points [+1.9, +14.6]" | `aacr_bootstrap.py --data <hf-dataset>` (with `--seed 20260928 --halves smoke10+dev10+holdout10+fresh10:rest145`, the earlier study's halves test, benchmark.tex §"Tuned and unseen PRs") | HF `prs`, `defects`, `defect_verdicts`, `reviews` |
-| Held-out PRs: AACR holdout10 + fresh10, Martian test30, Qodo's 31 never-mined PRs | README "Tuning and held-out PRs", `tab:finalbuild`, the Martian audit paragraph, the Qodo caveats, "Development sets (disclosure)" | `heldout.py --data <hf-dataset>` | HF `prs`, `defects`, `defect_verdicts`, `martian_goldens`, `martian_verdicts`, `qodo_issues`, `qodo_verdicts`, `qodo_reviews`; `sets/` |
-| Pairwise Elo, judge agreement, head-to-head record; $ per PR of each configuration | README "Judged side by side" and its chart | `elo_ratings.py <archive>/elo/martian-hard20-all-gpt [--check-ratings] [--runs-dir <archive runs> ...]` | the Elo run's `plan.json`, `units.jsonl`, `judgments/` |
-| "Other models" rows, DeepSeek's effort mix, GLM's missing passes | README "Other models" | `open_models.py --runs-dir <open-model runs>` | the open-model runs; `final/arms-open-models.txt` |
+| Bootstrap intervals and paired differences; $ per defect found | `tab:ci` in both papers, benchmark.tex "Uncertainty" and §"The frozen build", the repository's `BENCHMARKS.md` "+8.3 points [+1.9, +14.6]" | `aacr_bootstrap.py --data <hf-dataset>` (with `--seed 20260928 --halves smoke10+dev10+holdout10+fresh10:rest145`, the earlier study's halves test, benchmark.tex §"Tuned and unseen PRs") | HF `prs`, `defects`, `defect_verdicts`, `reviews` |
+| Held-out PRs: AACR holdout10 + fresh10, Martian test30, Qodo's 31 never-mined PRs | `BENCHMARKS.md` "Tuning and held-out PRs", `tab:finalbuild`, the Martian audit paragraph, the Qodo caveats, "Development sets (disclosure)" | `heldout.py --data <hf-dataset>` | HF `prs`, `defects`, `defect_verdicts`, `martian_goldens`, `martian_verdicts`, `qodo_issues`, `qodo_verdicts`, `qodo_reviews`; `sets/` |
+| Pairwise Elo, judge agreement, head-to-head record; $ per PR of each configuration | `BENCHMARKS.md` "Judged side by side" and its chart | `elo_ratings.py <archive>/elo/martian-hard20-all-gpt [--check-ratings] [--runs-dir <archive runs> ...]` | the Elo run's `plan.json`, `units.jsonl`, `judgments/` |
+| "Other models" rows, DeepSeek's effort mix, GLM's missing passes | `BENCHMARKS.md` "Other models" | `open_models.py --runs-dir <open-model runs>` | the open-model runs; `final/arms-open-models.txt` |
 | Speed table, smoke figures, slowest reviews, the Qwen3.8-Max cost projection | `docs/DIGITALOCEAN.md` | `do_speed.py --runs-dir <open-model runs> --gpt-runs-dir <runs>` | the open-model smoke and full runs; `final1-*` |
 | How the answer key was built: candidates by run and reviewer, hunt drafts, exclusions, tab:prov, the hunt's grade, the saturation curve, leave-one-reviewer-out, the key without QuickReview-only defects | benchmark.tex §"The answer key", THREATS-TO-VALIDITY.md §1, METHODOLOGY.md §5 | `key_build.py --archive <archive> --data <hf-dataset>` | archive `answer-key` (`rest145-code/`, `orig40-code/`); HF `prs`, `defects`, `defect_verdicts` |
 | Tokens per PR (tab:costfinal, the gpt-6-sol study's budget table, the panel comparison, passes per PR and output per pass) | both papers, THREATS-TO-VALIDITY.md §5 | `tokens.py --archive <archive> --data <hf-dataset>` | archive `runs/<run>/cases/<id>/` (`pi-events.pruned.jsonl`, `case-summary.json`); HF `reviews`, `runs` |
@@ -135,9 +135,10 @@ run's own `ratings.json`.
 
 ## Every published number: the claims manifest
 
-`bench/aacr/claims.json` lists every benchmark number the README, the bench
-docs, the Elo README, the dataset card and both papers print: the line it is
-on (an anchor), the value as printed, and the check that recomputes it, or,
+`bench/aacr/claims.json` lists every benchmark number the README,
+`BENCHMARKS.md`, the bench docs, the Elo README, the dataset card and both
+papers print: the line it is on (an anchor), the value as printed, and the
+check that recomputes it, or,
 where no check does yet, the reason and the data that holds it. Numbers on
 those lines that are not benchmark claims (versions, dates, list prices,
 method parameters, identifiers) are listed too, with the reason, so that every
