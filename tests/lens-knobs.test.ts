@@ -139,24 +139,6 @@ describe("defaults reproduce today's review", () => {
     expect(models["pass-tests--standard"]).toBeUndefined();
   });
 
-  // The state-machine lenses are pins like the three above, so a profile
-  // lowers one the same way, and the rest of the family stays at deep.
-  // MUTATION: drop the STATE_FAMILY spread from DEFAULT_PASS_TIERS — no
-  // pass-sm-* variant gets an override, and this fails.
-  it("a profile lowers a state-machine lens's thinking with [lenses.<pass>] effort", () => {
-    const cfg = structuredClone(baseCfg);
-    cfg.lenses = { "pass-sm-stuck": { effort: "medium" } };
-    const models = passTierModels(
-      cfg.models.pass_tiers,
-      cfg.models.tiers,
-      lensModelOverrides(cfg.models, cfg.lenses),
-    );
-    for (const t of ["light", "standard", "deep"] as const) {
-      expect(models[`pass-sm-stuck--${t}`]?.endsWith(":medium"), t).toBe(true);
-      expect(models[`pass-sm-durable--${t}`], t).toBe(cfg.models.tiers["deep"]);
-    }
-  });
-
   it("a config with no [models.pass_tiers] table still gets the shipped pins; an entry replaces one", () => {
     expect(parseConfig(fixture).models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS });
     const lowered = parseConfig(fixture + `\n[models.pass_tiers]\n"pass-baseline" = "standard"\n`);

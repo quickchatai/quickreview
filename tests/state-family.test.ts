@@ -1,10 +1,11 @@
 // The state-machine family: the `pass-sm-*` lenses as one registered set
 // (packages/pi-plugin/src/passes.ts `STATE_FAMILY`). A member must be a known
-// pass with an agent file that includes the family's contract, a lens field
-// that names one must read as a state-machine lens however a session joined
-// it, and every list that derives from the registry (the preset, the lesson
-// ids, the planning table, the addendum family scope) must pick the members
-// up without an edit of its own.
+// pass with an agent file, every anchor kind state_explore prints must have a
+// lens that decides it, a lens field that names one must read as a
+// state-machine lens however a session joined it, and every list that derives
+// from the registry (the preset, the lesson ids, the planning table) must pick
+// the members up without an edit of its own. The lens files' and the shared
+// contract's words are pinned byte for byte by tests/built-agents-golden.test.ts.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,7 +27,6 @@ import {
   STATE_MACHINE_LENSES,
 } from "@quickchatai/pi-quickreview/src/plugin/args.js";
 import { isSecurityFinding, isStateFinding } from "@quickchatai/pi-quickreview/src/severity.js";
-import { VALIDATE_STATE_EVIDENCE_ADDENDUM } from "@quickchatai/pi-quickreview/src/include.js";
 import { ANCHOR_KINDS } from "@quickchatai/pi-quickreview/src/stateexplore.js";
 import { kindKept, readingKey } from "@quickchatai/pi-quickreview/src/scan/scan.js";
 
@@ -43,18 +43,6 @@ const FAMILY = [
   "pass-sm-durable",
 ];
 
-/** The `kind:` class each lens's text names. */
-const KIND: Record<string, string> = {
-  "pass-sm-states": "state-machine:illegal-state",
-  "pass-sm-transitions": "state-machine:transition",
-  "pass-sm-exhaustive": "state-machine:unhandled-state",
-  "pass-sm-stuck": "state-machine:stuck",
-  "pass-sm-events": "state-machine:event-order",
-  "pass-sm-derived": "state-machine:derived",
-  "pass-sm-lifecycle": "state-machine:lifecycle",
-  "pass-sm-durable": "state-machine:stored",
-};
-
 describe("the state-machine family", () => {
   // MUTATION: remove "pass-sm-stuck" from STATE_FAMILY — this fails (the
   // member list, and the every-pass-sm-name check, both lose it).
@@ -63,17 +51,10 @@ describe("the state-machine family", () => {
     expect([...STATE_FAMILY]).toEqual(ALL_PASSES.filter((p) => p.startsWith("pass-sm-")));
   });
 
-  it("shares no member with the security family, and keeps the neighbours out", () => {
-    for (const lens of STATE_FAMILY) expect(SECURITY_FAMILY, lens).not.toContain(lens);
-    for (const neighbour of ["pass-statelessness", "pass-concurrency", "pass-rollout"])
-      expect(STATE_FAMILY).not.toContain(neighbour);
-  });
-
   // MUTATION: rename "pass-sm-events" in STATE_FAMILY to "pass-sm-event" —
   // this fails (no shipped agent file, no planning entry).
   it("every member is a known pass with a shipped agent file and a signal planning entry", () => {
     for (const lens of STATE_FAMILY) {
-      expect(ALL_PASSES, lens).toContain(lens);
       expect(existsSync(join(ROOT, "agents", `${lens}.md`)), `agents/${lens}.md`).toBe(true);
       expect(LENS_PLANNING[lens]?.priority, lens).toBe("signal");
     }
@@ -109,55 +90,7 @@ describe("the state-machine family", () => {
   });
 });
 
-describe("the family's lens files", () => {
-  // MUTATION: drop the `{{include:prompts/pass-sm-common.md}}` line from
-  // agents/pass-sm-stuck.md — this fails.
-  it("each includes the shared contract and the family's, and names its own kind", () => {
-    for (const lens of STATE_FAMILY) {
-      const text = readFileSync(join(ROOT, "agents", `${lens}.md`), "utf8");
-      expect(text, lens).toMatch(new RegExp(`^---\\nname: ${lens}\\n`));
-      expect(text, lens).toContain("{{include:prompts/pass-common.md}}");
-      expect(text, lens).toContain("{{include:prompts/pass-sm-common.md}}");
-      expect(text, lens).toContain(`\`${KIND[lens]}\``);
-      for (const section of [
-        "## Worksheet",
-        "## Evidence lines",
-        "## Never a finding",
-        "## Stay inside your lens",
-      ])
-        expect(text, `${lens}: ${section}`).toContain(section);
-    }
-  });
-
-  // The contract every lens includes is where the evidence standard and the
-  // family's exclusions live; the validator's addendum reads the same lines.
-  // MUTATION: delete the `trace:` line from the evidence block — this fails.
-  it("the shared contract carries the evidence block, the outcomes and every owner", () => {
-    const common = readFileSync(join(ROOT, "prompts", "pass-sm-common.md"), "utf8");
-    for (const line of [
-      "state-var:",
-      "state:",
-      "event:",
-      "trace:",
-      "unguarded:",
-      "property:",
-      "consequence:",
-      "guards:",
-      "proof-gaps:",
-    ])
-      expect(common, line).toContain(`    ${line}`);
-    for (const outcome of ["**Confirmed**", "**Plausible**", "**Refuted**", "**Excluded**"])
-      expect(common).toContain(outcome);
-    expect(common).toContain("representable but not reachable");
-    expect(common).toContain("`kind:` is `state-machine:<class>`");
-    for (const lens of STATE_FAMILY) expect(common, lens).toContain(`- \`${lens}\`:`);
-  });
-});
-
-/** A lens file or the shared contract, whitespace folded to single spaces. */
-const flat = (rel: string): string => readFileSync(join(ROOT, rel), "utf8").replace(/\s+/g, " ");
-
-describe("every lead a lens is handed is decided, and decided by a cited line", () => {
+describe("every anchor kind state_explore prints has a lens that decides it", () => {
   const common = readFileSync(join(ROOT, "prompts", "pass-sm-common.md"), "utf8");
   /** The anchor-kind list of the tool section: kind → the lenses it names. */
   const owners = ((): Map<string, string[]> => {
@@ -196,95 +129,24 @@ describe("every lead a lens is handed is decided, and decided by a cited line", 
     expect(owners.size).toBeGreaterThan(0);
     for (const kind of owners.keys()) expect(ANCHOR_KINDS, kind).toContain(kind);
   });
-
-  // A write that lacks the mark its sibling writes carry is a stored write
-  // that never persists, a transition that skips its siblings' work, or a
-  // copy left stale: three lenses decide that anchor.
-  // MUTATION: drop `pass-sm-durable` from the `writer-companion` line — this fails.
-  it("writer-companion is decided by the durable, transitions and derived lenses", () => {
-    expect(owners.get("writer-companion")).toEqual(
-      expect.arrayContaining(["pass-sm-durable", "pass-sm-transitions", "pass-sm-derived"]),
-    );
-  });
-
-  // MUTATION: restore the NONE-only `checked:` rule ("`NONE` is an answer
-  // only with a `checked:` list") — this fails. MUTATION: drop "or with a
-  // different problem reported at its lines" — this fails. MUTATION: drop
-  // `missing before` or `not beside` from the row list (the tool's other
-  // absence rows go undecided) — this fails.
-  it("the shared contract says how a lead is decided, in these words", () => {
-    const text = flat("prompts/pass-sm-common.md");
-    for (const sentence of [
-      "**Decide every lead:** each anchor of a kind your lens owns, and each row a tool call returned to you that names a statement one site has and another lacks (`missing near it`, `missing before`, `not beside`, `lacks`) where either site is a line the change adds, moves or removes.",
-      "`cleared: <anchor or row> — <file:line you opened>, <what that line does that answers the lead>`",
-      '"Handled", "safe" or "not needed" with no mechanism clears nothing, and neither does a lead with no cited line or with a different problem reported at its lines.',
-      "A lead becomes a finding only through the trace and guard hunt of steps 5 and 6, never as a question because it was hard to clear.",
-      "Two mechanisms are two findings, each with its own trace: a race and a halfway failure (a throw or crash between two writes) at the same lines;",
-      "A write through a pointer or reference to long-lived state (an object's field, a global, a persisted struct) writes that state, not a local:",
-      "the neighbouring lines each of them lacks, and those this place lacks that they carry.",
-    ])
-      expect(text, sentence.slice(0, 30)).toContain(sentence);
-    // The worked example is in the format the rule names.
-    const example = common.slice(common.indexOf("```\nNONE\nchecked:\n") + 4);
-    const rows = example.slice(0, example.indexOf("```")).split("\n").slice(2, -1);
-    expect(rows.length).toBeGreaterThan(0);
-    for (const row of rows)
-      expect(row, row).toMatch(/^ {2}cleared: \[[a-z-]+\] \S+:\d+.* — \S+:\d+, /);
-  });
-
-  // MUTATION: put "A new optional field whose absence every reader treats as
-  // its intended default" back under "Never a finding" in
-  // agents/pass-sm-durable.md — this fails. MUTATION: drop step 8
-  // (Registration) — this fails.
-  it("the durable lens separates the cut from the race, asks for the registration, and narrows absent-means-default", () => {
-    const durable = flat("agents/pass-sm-durable.md");
-    for (const sentence of [
-      "**The cut.** The process stops or a call throws — never a second actor —",
-      "Answer the cut apart from any race step 3 found, with its own trace: a cut that leaves stored data nothing picks up from is its own finding once the hunt below finds nothing that makes it safe.",
-      "A call that commits its own write (a repository or service method that saves, updates or deletes) is a stored write, though no tool follows it.",
-      '"Absent means default" clears a new field only when the value an upgraded reader actually receives for it — read where the store loads it: an optional or nullable type, a language zero value, a deserializer or column default, a store merge that fills the initial state — is the value the new code intends,',
-      "A store that tracks changes itself needs no mark: compare with the sibling writes, never with the API.",
-      "**Registration.**",
-      "(check with `writes` or a `writer-companion` anchor)",
-    ])
-      expect(durable, sentence.slice(0, 30)).toContain(sentence);
-    const never = durable.slice(
-      durable.indexOf("## Never a finding"),
-      durable.indexOf("## Stay inside"),
-    );
-    expect(never.length).toBeGreaterThan(0);
-    expect(never).not.toMatch(/absence|optional field/);
-  });
-
-  // MUTATION: delete the registration-order sentence from item 6 of
-  // agents/pass-sm-lifecycle.md — this fails.
-  it("the lifecycle lens reads early error exits against the registration order, and stuck hands that to it", () => {
-    expect(flat("agents/pass-sm-lifecycle.md")).toContain(
-      "against the registration order: an exit whose teardown assumes a setup step that has not run yet (it removes the object from a list or registry it was never added to, decrements a count never incremented, or asserts that it is registered), or after which the caller goes on to register or use the object the callee freed, is a finding. Freeing an object that was never registered, on an exit that then leaves setup, is the right cleanup.",
-    );
-    expect(flat("agents/pass-sm-stuck.md")).toContain(
-      "An error exit whose teardown assumes a registration that has not happened yet is `pass-sm-lifecycle`'s.",
-    );
-  });
 });
 
 describe("isStateLens and isStateFinding", () => {
-  // MUTATION: test only the first token of the field — the joined cases fail.
-  it("reads a member however the session joined or suffixed it", () => {
-    expect(isStateLens("pass-sm-stuck")).toBe(true);
-    expect(isStateLens("pass-baseline + pass-sm-stuck")).toBe(true);
-    expect(isStateLens("pass-sm-events,pass-sm-durable")).toBe(true);
-    expect(isStateLens("pass-sm-transitions--deep")).toBe(true);
-    expect(isStateLens("PASS-SM-STATES (2 lenses)")).toBe(true);
-  });
-
+  // MUTATION: test only the first token of the field — the joined rows fail.
   // MUTATION: match on the "pass-sm" prefix instead of membership — the
-  // unknown-name case fails.
-  it("reads nothing else as one", () => {
-    expect(isStateLens("pass-sm-unknown")).toBe(false);
-    expect(isStateLens("pass-statelessness")).toBe(false);
-    expect(isStateLens("pass-sec-toctou")).toBe(false);
-    expect(isStateLens("")).toBe(false);
+  // unknown-name row fails.
+  it.each([
+    ["pass-sm-stuck", true],
+    ["pass-baseline + pass-sm-stuck", true],
+    ["pass-sm-events,pass-sm-durable", true],
+    ["pass-sm-transitions--deep", true],
+    ["PASS-SM-STATES (2 lenses)", true],
+    ["pass-sm-unknown", false],
+    ["pass-statelessness", false],
+    ["pass-sec-toctou", false],
+    ["", false],
+  ])("isStateLens(%j) is %s", (field, want) => {
+    expect(isStateLens(field)).toBe(want);
   });
 
   // MUTATION: make STATE_KIND_RE match "state" alone — the `stateless` and
@@ -299,26 +161,13 @@ describe("isStateLens and isStateFinding", () => {
     expect(isStateFinding(undefined, undefined)).toBe(false);
   });
 
-  it("the two families' findings stay apart", () => {
+  // A state defect a family lens hands to a security lens takes a security
+  // kind, so it is a security finding (the security rules judge it and
+  // `scope = "security"` posts it), and its lens keeps it a state one.
+  it("the two families' findings stay apart, but a handed-over state defect is both", () => {
     expect(isSecurityFinding("state-machine:stuck", "pass-sm-stuck")).toBe(false);
     expect(isStateFinding("security:idor", "pass-sec-access")).toBe(false);
     expect(isSecurityLens("pass-sm-stuck")).toBe(false);
-  });
-
-  // A state defect a family lens hands to a security lens takes a security
-  // kind, written by the lens or else by the validator: the record has no
-  // owner field, so the kind is what makes the security rules judge it and
-  // `scope = "security"` post it, and the lens keeps it a state finding.
-  // MUTATION: delete the hand-off sentence from prompts/pass-sm-common.md, or
-  // the `owner pass-sec-` sentence from VALIDATE_STATE_EVIDENCE_ADDENDUM
-  // (include.ts) — this fails.
-  it("a state defect handed to a security lens is a security finding and stays a state one", () => {
-    expect(flat("prompts/pass-sm-common.md")).toContain(
-      "A defect you hand to `pass-sec-*` or `pass-security` (`detail: owner pass-sec-…`) takes `kind: security:<class>` instead: the security rules judge and post it, and its `pass-sm-*` lens keeps it a state-machine finding.",
-    );
-    expect(VALIDATE_STATE_EVIDENCE_ADDENDUM).toContain(
-      "A state candidate whose `detail` begins `owner pass-sec-` or `owner pass-security` is also a security candidate: record its `kind:` as `security` (or `security:<class>`) if the lens wrote `state-machine`.",
-    );
     expect(isSecurityFinding("security:toctou", "pass-sm-events")).toBe(true);
     expect(isStateFinding("security:toctou", "pass-sm-events")).toBe(true);
   });

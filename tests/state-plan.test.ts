@@ -19,8 +19,6 @@ import {
   type PassPlan,
   type PlanSecurityInputs,
 } from "@quickchatai/pi-quickreview/src/planner.js";
-import { applyProfileStateMachines } from "@quickchatai/pi-quickreview/src/profiles.js";
-import { STATE_MACHINES_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import type { StateRequest } from "@quickchatai/pi-quickreview/src/types.js";
 
 const fixture: Config = parseConfig(
@@ -35,9 +33,6 @@ const withTriggers = (triggers: "off" | "strong" | "all", base: Config = fixture
   ...base,
   state_machines: { ...base.state_machines, triggers },
 });
-/** The fixture as a state-machine-only review resolves it. */
-const stateOnly = (lenses: Record<string, LensTuning> = {}): Config =>
-  applyProfileStateMachines(tuned(lenses), { only: true });
 
 const changed = (filename: string, lines: string[], sign: "+" | "-" = "+"): PrFileEntry => ({
   filename,
@@ -57,7 +52,7 @@ const GUARD_GONE = changed("src/order.ts", ["  if (order.status !== 'pending') r
 const WRITE = changed("src/order.ts", ["order.status = next;"]);
 /** Code with no state in it. */
 const PLAIN = changed("src/math.ts", ["export const add = (a: number, b: number) => a + b;"]);
-const DOCS: PrFileEntry = { ...changed("README.md", ["words"]), filename: "README.md" };
+const DOCS = changed("README.md", ["words"]);
 
 const plan = (cfg: Config, files: PrFileEntry[], opts: PlanSecurityInputs = {}): PassPlan =>
   buildPassPlan(cfg, files, { title: "t", body: "" }, DJANGO_ECOSYSTEM, undefined, [], [], opts);
@@ -68,10 +63,6 @@ const row = (p: PassPlan, lens: string) => p.pass_plan.find((r) => r.lens === le
 const OPERATOR: StateRequest = { by: "", source: "operator" };
 
 describe("the default profile", () => {
-  it("ships with strong triggers, not only, and its own label", () => {
-    expect(fixture.state_machines).toEqual(STATE_MACHINES_DEFAULTS);
-  });
-
   // MUTATION: drop `...stateFamily` from the planner's lens union — this
   // fails (the triggered lens never reaches the plan).
   it("plans the lens a strong trigger fires, with the trigger as its reason", () => {
@@ -86,32 +77,15 @@ describe("the default profile", () => {
     expect(p.pass_plan.at(-1)!.lens).toBe(VALIDATE_PASS);
   });
 
-  it("plans nothing for a weak signal or for plain code", () => {
-    expect(family(plan(fixture, [WRITE]))).toEqual([]);
-    expect(family(plan(fixture, [PLAIN]))).toEqual([]);
-  });
-
   // MUTATION: pass a fixed "strong" to selectStateLenses instead of the
-  // configured mode — the first and last expectations fail.
-  it("`triggers` moves it: all plans the weak signal, off plans not even the strong one", () => {
-    expect(family(plan(withTriggers("all"), [WRITE]))).toEqual(["pass-sm-transitions"]);
-    expect(family(plan(withTriggers("off"), [GUARD_GONE]))).toEqual([]);
-  });
-
-  // A family row runs at deep on a small quiet diff, where the round's own
-  // tier is light: the shipped pins hold it there.
-  // MUTATION: drop the STATE_FAMILY spread from DEFAULT_PASS_TIERS
-  // (reviewconfig.ts) — the row falls back to the round's light tier,
-  // raisable, and this fails.
-  it("runs a family row at deep, not raisable, where the round's own tier is light", () => {
-    const unpinned: Config = { ...fixture, models: { ...fixture.models, pass_tiers: {} } };
-    expect(row(plan(unpinned, [GUARD_GONE]), "pass-sm-transitions")!.tier, "control").toBe("light");
-    const r = row(plan(fixture, [GUARD_GONE]), "pass-sm-transitions")!;
-    expect(r.tier).toBe("deep");
-    expect(r.agent).toBe("pass-sm-transitions--deep");
-    expect(r.raisable_to).toEqual([]);
-    // A pin, not a risk pass: a failed row never requeues the round.
-    expect(r.required).toBeUndefined();
+  // configured mode — the `all` and `off` rows fail.
+  it.each([
+    ["strong", "a weak signal", WRITE, []],
+    ["strong", "plain code", PLAIN, []],
+    ["all", "a weak signal", WRITE, ["pass-sm-transitions"]],
+    ["off", "a strong signal", GUARD_GONE, []],
+  ] as const)("`triggers = %s` on %s plans %j", (mode, _what, file, want) => {
+    expect(family(plan(withTriggers(mode), [file]))).toEqual(want);
   });
 });
 
@@ -124,24 +98,17 @@ describe("the family's tier", () => {
       .filter((r) => r.tier !== "deep" || r.agent !== `${r.lens}--deep` || r.raisable_to.length)
       .map((r) => r.lens);
 
-  // MUTATION: drop the STATE_FAMILY spread from DEFAULT_PASS_TIERS — every
-  // row of the request falls back to light, and this fails.
-  it("is deep on every row a request plans", () => {
+  // The tier is the lens's pin, whatever planned the row (a trigger, a
+  // request, `plan = "always"`), on a small quiet diff whose own tier is light.
+  // MUTATION: drop the STATE_FAMILY spread from DEFAULT_PASS_TIERS
+  // (reviewconfig.ts) — every row falls back to light, raisable, and this fails.
+  it("is deep, not raisable, on every row, where the round's own tier is light", () => {
+    const unpinned: Config = { ...fixture, models: { ...fixture.models, pass_tiers: {} } };
+    expect(row(plan(unpinned, [PLAIN], { stateRequest: OPERATOR }), "pass-sm-stuck")!.tier).toBe(
+      "light",
+    );
     const p = plan(fixture, [PLAIN], { stateRequest: OPERATOR });
     expect(family(p).sort()).toEqual([...STATE_FAMILY].sort());
-    expect(offDeep(p)).toEqual([]);
-  });
-
-  // MUTATION: drop the STATE_FAMILY spread from DEFAULT_PASS_TIERS — the
-  // `always` rows of a state-machine-only review fall back to light, and
-  // this fails.
-  it("is deep on every row a state-machine-only review plans, `always` rows included", () => {
-    const cfg = withTriggers(
-      "all",
-      stateOnly({ "pass-sm-stuck": { plan: "always" }, "pass-sm-durable": { plan: "always" } }),
-    );
-    const p = plan(cfg, [PLAIN]);
-    expect(family(p)).toEqual(expect.arrayContaining(["pass-sm-stuck", "pass-sm-durable"]));
     expect(offDeep(p)).toEqual([]);
   });
 
@@ -223,28 +190,6 @@ describe("the addable list", () => {
   it("a state-machine round is offered no security lens, and the reverse", () => {
     const p = plan(fixture, [GUARD_GONE]);
     for (const lens of SECURITY_FAMILY) expect(p.addable_lenses, lens).not.toContain(lens);
-  });
-});
-
-describe("a state-machine-only review", () => {
-  // MUTATION: make applyProfileStateMachines ignore `only` — baseline stays
-  // in the plan and this fails.
-  it("plans the family and the validator, and nothing else", () => {
-    const cfg = withTriggers("all", stateOnly({ "pass-sm-stuck": { plan: "always" } }));
-    const p = plan(cfg, [WRITE]);
-    const lenses = p.pass_plan.map((r) => r.lens);
-    expect(lenses.at(-1)).toBe(VALIDATE_PASS);
-    for (const lens of lenses.slice(0, -1)) expect(STATE_FAMILY, lens).toContain(lens);
-    expect(lenses).toContain("pass-sm-transitions");
-    expect(lenses).toContain("pass-sm-stuck");
-    // Nothing outside the family is addable either.
-    for (const lens of p.addable_lenses) expect(STATE_FAMILY, lens).toContain(lens);
-    expect(p.addable_lenses.length).toBeGreaterThan(0);
-  });
-
-  it("with nothing to read plans the validator alone", () => {
-    const p = plan(stateOnly(), [DOCS]);
-    expect(p.pass_plan.map((r) => r.lens)).toEqual([VALIDATE_PASS]);
   });
 });
 

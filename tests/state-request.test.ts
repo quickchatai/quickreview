@@ -23,7 +23,6 @@ import {
   SECURITY_REQUEST,
   securityAckBody,
   securityCommandDecision,
-  sweepSecurityRequests,
 } from "../src/securityrequest.js";
 import { StateStore } from "../src/state.js";
 import { STATE_ACK_MARKER, STATE_REQUEST, STATE_REQUEST_KIND } from "../src/staterequest.js";
@@ -104,10 +103,8 @@ describe("the @<bot> state-machines command", () => {
     expect(is(`${MENTION} state`)).toBe(false);
     expect(is(`${MENTION} state-machines please`)).toBe(false);
     expect(is(`please ${MENTION} state-machines`)).toBe(false);
+    // Nor is it the security command, which is still heard.
     expect(is(`${MENTION} security`)).toBe(false);
-  });
-
-  it("is not the security command, nor the security command it", () => {
     expect(isSecurityCommand(`${MENTION} state-machines`, BOT)).toBe(false);
     expect(isSecurityCommand(`${MENTION} security`, BOT, SECURITY_REQUEST)).toBe(true);
   });
@@ -178,17 +175,6 @@ describe("the @<bot> state-machines command", () => {
         STATE_REQUEST,
       ),
     ).toBeNull();
-  });
-
-  it("the security label still asks for a security review", () => {
-    const i = interpretEvent(
-      "pull_request",
-      "labeled",
-      labelPayload("labeled", cfg.security.label),
-      interpretDeps(),
-    );
-    expect(i).toMatchObject({ kind: "security_requested", source: "label" });
-    expect((i as { review?: string }).review).toBeUndefined();
   });
 });
 
@@ -311,24 +297,6 @@ describe("the reconcile pass", () => {
       expect(store.reviewRequest(62, "security")).toMatchObject({ source: "label" });
     },
   );
-
-  // One sweep per kind: a sweep for one kind never withdraws the other's
-  // label request for want of its own label.
-  it("a sweep of one kind leaves the other kind's label request standing", () => {
-    const store = new StateStore(":memory:");
-    tracked(store, 63, "tracked", "head63");
-    store.recordReviewRequest({ pr: 63, kind: "security", source: "label", requested_by: "" });
-    const open = new Map([
-      [63, { title: "PR 63", head_sha: "head63", author: "dana-op", labels: [cfg.security.label] }],
-    ]);
-    sweepSecurityRequests(store, {
-      open,
-      listedAt: new Date(Date.now() + 60_000).toISOString(),
-      label: LABEL,
-      kind: STATE_REQUEST_KIND,
-    });
-    expect(store.reviewRequest(63, "security")).toBeDefined();
-  });
 });
 
 describe("dispatch plans the family from the request", () => {

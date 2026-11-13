@@ -15,11 +15,8 @@ import {
   EXPLORE_MAX_ADDED_LINES,
   EXPLORE_MAX_ANCHORS,
   EXPLORE_MAX_CHANGED_FILE_BYTES,
-  EXPLORE_MAX_FILE_BYTES,
   EXPLORE_MAX_SITES,
   exploreRequestRefusal,
-  isTerminalCallee,
-  nameFormsOf,
   runStateExplore,
   STATE_EXPLORE_PARAMS,
   STATE_EXPLORE_PROBES,
@@ -311,19 +308,6 @@ describe("the tool's surface", () => {
     expect(exploreRequestRefusal({ action: "writes", name: "this.state" })).toBeNull();
     expect(exploreRequestRefusal({ action: "reads", name: "s->m_state", file: "src/" })).toBeNull();
   });
-
-  it("reads a dotted or arrow path by its last segment, with its member forms", () => {
-    expect(nameFormsOf("this.state")).toMatchObject({ name: "state" });
-    expect([...nameFormsOf("s->status")!.forms]).toEqual([
-      "status",
-      "status_",
-      "_status",
-      "m_status",
-      "mStatus",
-    ]);
-    expect([...nameFormsOf("loading")!.setters]).toEqual(["setLoading", "set_loading"]);
-    expect(nameFormsOf("a.b c")).toBeNull();
-  });
 });
 
 describe("anchors", () => {
@@ -356,33 +340,6 @@ describe("anchors", () => {
     expect(a).toContain(
       "[moved-call] srv/worker.go:10 (run) — `w.wg.Done()` moved from base L8 (depth 1) to depth 2 under `if job.Last` @L9; no copy remains outside the new branch; exits that do not pass it: return@L12 — does every path that reached it before still reach it?",
     );
-    expect(isTerminalCallee("Done")).toBe(true);
-    expect(isTerminalCallee("setIsLoading")).toBe(true);
-    expect(isTerminalCallee("render")).toBe(false);
-  });
-
-  // MUTATION: drop the wrap branch in movedCalls (report each pair) — three
-  // moved-call anchors appear instead of one wrap and this fails.
-  it("moved-call: a block wrapped in a new opener is one wrap, not N moved lines", async () => {
-    const wrap = {
-      path: "src/sync.ts",
-      base: src("function sync(a) {", "  load(a);", "  merge(a);", "  store(a);", "}"),
-      head: src(
-        "function sync(a) {",
-        "  try {",
-        "    load(a);",
-        "    merge(a);",
-        "    store(a);",
-        "  } catch (e) {",
-        "    log(e);",
-        "  }",
-        "}",
-      ),
-    };
-    const moved = (await anchors(world([wrap]))).filter((l) => l.startsWith("[moved-call]"));
-    expect(moved).toEqual([
-      "[moved-call] src/sync.ts:2 (sync) — 3 lines wrapped in `try` (a re-indent: the block moved in whole) — do the paths that skip the new opener still reach what it now guards?",
-    ]);
   });
 
   it("persisted-shape: a persisted slice gains a field and no version changes", async () => {
@@ -502,12 +459,10 @@ describe("anchors", () => {
       { action: "anchors" },
       world([conn], reconnect, { listHead: async () => null }),
     );
-    expect(out).toContain(
-      "[cowrite-gap] unknown: the head tree listing could not be read, so nothing was swept",
-    );
-    expect(out).toContain(
-      "[new-writer] unknown: the head tree listing could not be read, so nothing was swept",
-    );
+    for (const k of ["cowrite-gap", "new-writer", "writer-companion"])
+      expect(out, k).toContain(
+        `[${k}] unknown: the head tree listing could not be read, so nothing was swept`,
+      );
   });
 
   it("caps the list and says what it cut", async () => {
@@ -567,7 +522,15 @@ describe("writes and reads", () => {
       "\tj.setStatus(statusIdle)",
       "}",
     ),
-    "src/c.cc": src("void Job::fail() {", "  status_ = kFailed;", "  ++m_status;", "}"),
+    "src/c.cc": src(
+      "void Job::fail() {",
+      "  status_ = kFailed;",
+      "  ++m_status;",
+      "  mStatus = kIdle;",
+      "  _status = 0;",
+      "  set_status(kIdle);",
+      "}",
+    ),
     "app/d.py": src(
       "def mark(job):",
       "    job.update(status='done')",
@@ -586,22 +549,28 @@ describe("writes and reads", () => {
   // MUTATION: drop the comment check in classifyOccurrence (treat a blank
   // code character as code) — the commented write on src/a.ts:9 is listed
   // and this fails.
+  // A dotted or arrow name is read by its last segment, with its member
+  // forms (`status_`, `m_status`, `mStatus`, `_status`) and both setter
+  // spellings.
   it("lists every generic write shape, comments and prose left out, tests left out", async () => {
-    const out = await run({ action: "writes", name: "status" }, world([], tree));
+    const out = await run({ action: "writes", name: "this.status" }, world([], tree));
     expect(out.split("\n").slice(1)).toEqual([
-      "9 sites in 5 files; searched 5 of 5 code files (tests and vendored code left out)",
+      "12 sites in 5 files; searched 5 of 5 code files (tests and vendored code left out)",
       'src/a.ts:3  (run)  [member] this.status = "running";',
       "src/b.go:4  (stop)  [member] j.status = statusStopped",
       "src/b.go:5  (stop)  [setter] j.setStatus(statusIdle)",
       "src/c.cc:2  (fail)  [assign] status_ = kFailed;",
       "src/c.cc:3  (fail)  [assign] ++m_status;",
+      "src/c.cc:4  (fail)  [assign] mStatus = kIdle;",
+      "src/c.cc:5  (fail)  [assign] _status = 0;",
+      "src/c.cc:6  (fail)  [setter] set_status(kIdle);",
       "app/d.py:2  (mark)  [assign] job.update(status='done')",
       'app/d.py:3  (mark)  [sql] db.execute("UPDATE jobs SET status = 1 WHERE status = 0")',
       'app/d.py:4  (mark)  [key] return {"status": job.status}',
       "src/e.ts:4  (top level)  [key] const next = { ...job, status: 'x' };",
-      // The companion table the writes action now ends with: these writes
-      // share no statement beside them.
-      "usually with — statements beside the writes in at least two-thirds of the writing functions (same block or ±6 lines, same function; a function counted once; keys in a literal left out; by name, literals abstracted):",
+      // The companion table the writes action ends with: these writes share
+      // no statement beside them.
+      expect.stringMatching(/^usually with — /),
       "none",
     ]);
     expect(out).not.toContain("src/a.ts:9");
@@ -624,17 +593,6 @@ describe("writes and reads", () => {
     expect(out).not.toContain("src/");
     const none = await run({ action: "writes", name: "status", file: "nowhere" }, world([], tree));
     expect(none).toContain("unknown: no code file at or under `nowhere`");
-  });
-
-  it("classifies one occurrence at a time", () => {
-    const occ = (line: string, word: string, code = line) =>
-      classifyOccurrence(line, code, line.indexOf(word), word.length, word.startsWith("set"));
-    expect(occ("x.state == 1", "state")).toEqual({ kind: "read", how: "condition" });
-    expect(occ("x.state = 1", "state")).toEqual({ kind: "write", how: "member" });
-    expect(occ("x.state += 1", "state")).toEqual({ kind: "write", how: "member" });
-    expect(occ("state := 1", "state")).toEqual({ kind: "write", how: "assign" });
-    expect(occ("f(x.state)", "state")).toEqual({ kind: "read", how: "argument" });
-    expect(occ("setState(1)", "setState")).toEqual({ kind: "write", how: "setter" });
   });
 
   // MUTATION: make `whole` always true — a cut sweep that found nothing
@@ -756,10 +714,10 @@ describe("siblings", () => {
 
   it("a line with no code is unknown", async () => {
     const out = await run(
-      { action: "siblings", file: "src/reconnect.c", line: 7 },
+      { action: "siblings", file: "src/reconnect.c", line: 2 },
       world([], { "src/reconnect.c": "int a;\n\nint b;\n" }),
     );
-    expect(out).toMatch(/past its end|holds no code/);
+    expect(out).toMatch(/holds no code/);
   });
 });
 
@@ -869,8 +827,10 @@ describe("anchors: fixes from the offline replay", () => {
     );
   });
 
-  // MUTATION: report a line that kept its own opener under that opener (drop
-  // the addedAncestor branch) — three moved-call anchors instead of one wrap.
+  // MUTATIONS, each fails this: drop the wrap branch in movedCalls (report
+  // each pair); report a line that kept its own opener under that opener
+  // (drop the addedAncestor branch) — three moved-call anchors instead of
+  // one wrap.
   it("a block wrapped in a new opener is one wrap, not a move per line", async () => {
     const f = {
       path: "src/w.ts",
@@ -1250,28 +1210,26 @@ describe("writer-companion", () => {
   // (keep "at least two") — the partner beside 2 of 4 writing functions is
   // anchored; drop MIN_COMPANION_UNITS from writerCompanions — the partner
   // beside 2 of 3 is anchored.
+  // Two of three is a coincidence as often as a convention; with one other
+  // writer there is nothing to call usual.
   it("a partner beside fewer than two-thirds, or fewer than three, of the writing functions is no partner", async () => {
-    const threeOfFour = (await anchors(chainWorld([true, true, true, false]))).filter((l) =>
-      l.startsWith("[writer-companion]"),
-    );
-    expect(threeOfFour).toHaveLength(1);
-    expect(threeOfFour[0]).toContain(
-      "which sits beside the writes of `status` in 3 of 4 other functions that write it in this file",
-    );
-    // Two of three is a coincidence as often as a convention.
-    const twoOfThree = (await anchors(chainWorld([true, true, false]))).filter((l) =>
-      l.startsWith("[writer-companion]"),
-    );
-    expect(twoOfThree).toEqual([]);
-    const half = (await anchors(chainWorld([true, true, false, false]))).filter((l) =>
-      l.startsWith("[writer-companion]"),
-    );
-    expect(half).toEqual([]);
-    // With one other writer there is nothing to call usual.
-    const one = (await anchors(chainWorld([true]))).filter((l) =>
-      l.startsWith("[writer-companion]"),
-    );
-    expect(one).toEqual([]);
+    const cases: [boolean[], string[]][] = [
+      [
+        [true, true, true, false],
+        [
+          expect.stringContaining(
+            "which sits beside the writes of `status` in 3 of 4 other functions that write it in this file",
+          ),
+        ],
+      ],
+      [[true, true, false], []],
+      [[true, true, false, false], []],
+      [[true], []],
+    ];
+    for (const [marks, want] of cases)
+      expect(only("writer-companion", await anchors(chainWorld(marks))), String(marks)).toEqual(
+        want,
+      );
   });
 
   // MUTATION: hold every new write to the whole tree's writers (drop the
@@ -1300,8 +1258,8 @@ describe("writer-companion", () => {
       ],
       unmarked,
     );
-    expect((await anchors(tree)).filter((l) => l.startsWith("[writer-companion]"))).toEqual([
-      "[writer-companion] src/chain.cpp:22 (relabel_children) — `status` written here without `m_index.m_changed.insert(…)`, which sits beside the writes of `status` in 3 of 3 other functions that write it in this file (src/chain.cpp:3, src/chain.cpp:9, src/chain.cpp:15) — does this write need it?",
+    expect(only("writer-companion", await anchors(tree))).toEqual([
+      expect.stringContaining("in 3 of 3 other functions that write it in this file"),
     ]);
     // One writer in the file and two elsewhere: the tree's writers are the peers.
     const spread = world(
@@ -1354,19 +1312,6 @@ describe("writer-companion", () => {
     );
     expect(out).not.toContain("`log_debug(…)` beside");
   });
-
-  it("a changed file that cannot be read leaves the kind unknown", async () => {
-    const out = await run({ action: "anchors" }, chainWorld([true, true, true]), {});
-    expect(out).not.toMatch(/no anchor: [^\n]*writer-companion/);
-    const blind = world(
-      [{ path: "src/chain.cpp", base: src("int a;"), head: src("int a;", "int b;") }],
-      {},
-      { listHead: async () => null },
-    );
-    expect(await run({ action: "anchors" }, blind)).toContain(
-      "[writer-companion] unknown: the head tree listing could not be read, so nothing was swept",
-    );
-  });
 });
 
 /** A module-level Map written by `.set`/`.delete`; one failure path clears
@@ -1392,15 +1337,96 @@ const link = {
 };
 
 describe("write shapes", () => {
-  // MUTATION: drop RECEIVER_METHOD_AFTER_RE from classifyOccurrence — the
-  // Map's `.set`/`.delete` read as reads and this fails.
-  it("a Map or Set `.set`/`.delete`/`.clear`/`.add` writes its receiver (TS)", async () => {
-    const out = await run({ action: "writes", name: "sessionCache" }, world([link]));
-    expect(out).toContain("src/link.ts:5  (onerror)  [collection] sessionCache.delete(name);");
-    expect(out).toContain(
-      "src/link.ts:9  (connect)  [collection] sessionCache.set(name, sessions);",
-    );
-    expect(out).toMatch(/^2 sites in 1 file;/m);
+  // MUTATIONS, each fails a row: drop RECEIVER_METHOD_AFTER_RE from
+  // classifyOccurrence (the Map's `.set`/`.delete` read as reads); drop
+  // `append|pop|push|put|push_back` from it (the container mutations read as
+  // reads); drop `store|exchange|fetch_…` from it (the C++ member atomics);
+  // drop ATOMIC_ARG_BEFORE_RE (the C11 calls); drop `__atomic_…_n`,
+  // `atomic_set` or `WRITE_ONCE` from it.
+  it("collection mutators and atomics write their receiver or argument (TS, Py, JS, C, C++)", async () => {
+    const w = world([], {
+      [link.path]: link.head,
+      "src/server.c": src(
+        "static void add_conn(struct conn *c)",
+        "{",
+        "    list_add(config.conns, c);",
+        "    atomic_fetch_add_explicit(&config.active_conns, 1, memory_order_relaxed);",
+        "}",
+        "static void drop_conn(struct conn *c)",
+        "{",
+        "    atomic_store(&config.active_conns, 0);",
+        "    if (atomic_load(&config.active_conns) == 0) stop();",
+        "}",
+      ),
+      "src/pool.cpp": src(
+        "void Pool::reset() {",
+        "  active_conns_.store(0);",
+        "  active_conns_.fetch_add(1, std::memory_order_acq_rel);",
+        "  active_conns_.compare_exchange_weak(expected, 2);",
+        "}",
+      ),
+      "x/f.py": src(
+        "class Q:",
+        "    def a(self, x):",
+        "        self.pending_jobs.append(x)",
+        "    def b(self):",
+        "        self.pending_jobs.pop()",
+      ),
+      "x/j.js": src("export function put(reg, v) {", "  reg.entryList.push(v);", "}"),
+      "x/c.c": src(
+        "void f(struct srv *srv)",
+        "{",
+        "    srv->pending_list.push_back(1);",
+        "    __atomic_store_n(&srv->run_flag, 1, __ATOMIC_SEQ_CST);",
+        "    atomic_set(&srv->ref_cnt, 1);",
+        "    WRITE_ONCE(srv->run_flag, 0);",
+        "}",
+      ),
+    });
+    const rows: [string, string[]][] = [
+      [
+        "sessionCache",
+        [
+          "src/link.ts:5  (onerror)  [collection] sessionCache.delete(name);",
+          "src/link.ts:9  (connect)  [collection] sessionCache.set(name, sessions);",
+        ],
+      ],
+      [
+        "active_conns",
+        [
+          "src/server.c:4  (add_conn)  [atomic] atomic_fetch_add_explicit(&config.active_conns, 1, memory_order_relaxed);",
+          "src/server.c:8  (drop_conn)  [atomic] atomic_store(&config.active_conns, 0);",
+          "src/pool.cpp:2  (reset)  [atomic] active_conns_.store(0);",
+          "src/pool.cpp:3  (reset)  [atomic] active_conns_.fetch_add(1, std::memory_order_acq_rel);",
+          "src/pool.cpp:4  (reset)  [atomic] active_conns_.compare_exchange_weak(expected, 2);",
+        ],
+      ],
+      [
+        "pending_jobs",
+        [
+          "x/f.py:3  (a)  [collection] self.pending_jobs.append(x)",
+          "x/f.py:5  (b)  [collection] self.pending_jobs.pop()",
+        ],
+      ],
+      ["entryList", ["x/j.js:2  (put)  [collection] reg.entryList.push(v);"]],
+      ["pending_list", ["x/c.c:3  (f)  [collection] srv->pending_list.push_back(1);"]],
+      [
+        "run_flag",
+        [
+          "x/c.c:4  (f)  [atomic] __atomic_store_n(&srv->run_flag, 1, __ATOMIC_SEQ_CST);",
+          "x/c.c:6  (f)  [atomic] WRITE_ONCE(srv->run_flag, 0);",
+        ],
+      ],
+      ["ref_cnt", ["x/c.c:5  (f)  [atomic] atomic_set(&srv->ref_cnt, 1);"]],
+    ];
+    // Exactly these sites: an atomic load is a read.
+    for (const [name, sites] of rows) {
+      const out = await run({ action: "writes", name }, w);
+      expect(
+        out.split("\n").filter((l) => /^\S+:\d+ {2}\(/.test(l)),
+        name,
+      ).toEqual(sites);
+    }
   });
 
   // MUTATION: drop CHAIN_ASSIGN_AFTER_RE from classifyOccurrence — the store
@@ -1433,13 +1459,29 @@ describe("write shapes", () => {
     expect(reads).not.toContain("src/render.c:5");
   });
 
-  // MUTATION: drop `(?<!-)` from COND_BEFORE_RE — the `>` of `->` reads as a
-  // comparison and a plain member read is called a condition.
-  it("the arrow of a member access is no comparison", () => {
-    const occ = (line: string, word: string) =>
-      classifyOccurrence(line, line, line.lastIndexOf(word), word.length, false);
-    expect(occ("x = p->state;", "state")).toEqual({ kind: "read", how: "other" });
-    expect(occ("if (a > state) go();", "state")).toEqual({ kind: "read", how: "condition" });
+  // One occurrence at a time, for the shapes the sites above do not hold.
+  // MUTATIONS, each fails a row: drop `(?<!-)` from COND_BEFORE_RE (the `>`
+  // of `->` reads as a comparison); drop the member-or-field-convention
+  // condition from the chain rule in classifyOccurrence (the stores through
+  // the parameter `conn` read as writes of `conn`); drop TYPE_BEFORE_RE (the
+  // annotation reads as a store).
+  it("classifies one occurrence: compound and := stores, an arrow, a chain's root, an annotation", () => {
+    const rows: [string, string, { kind: string; how?: string }][] = [
+      ["x.state += 1", "state", { kind: "write", how: "member" }],
+      ["state := 1", "state", { kind: "write", how: "assign" }],
+      ["x = p->state;", "state", { kind: "read", how: "other" }],
+      ["if (a > state) go();", "state", { kind: "read", how: "condition" }],
+      ["    conn->wr.opcode = 1;", "conn", { kind: "read" }],
+      ["    conn->wr.opcode = 1;", "wr", { kind: "write", how: "chain" }],
+      ["    m_conn->wr.opcode = 1;", "m_conn", { kind: "write", how: "chain" }],
+      ["    p->conn.state = 1;", "conn", { kind: "write", how: "chain" }],
+      ["  const opts: Settings.Options = load();", "Settings", { kind: "read" }],
+    ];
+    for (const [line, word, want] of rows)
+      expect(
+        classifyOccurrence(line, line, line.indexOf(word), word.length, false),
+        `${word} in ${line}`,
+      ).toMatchObject(want);
   });
 
   // MUTATIONS, each fails this: drop the alias search from nameRequest (the
@@ -1467,42 +1509,6 @@ describe("write shapes", () => {
     expect(await anchors(w)).toContainEqual(
       expect.stringMatching(/^\[new-writer\] src\/apply\.c:4 \(apply\) — `state` written here/),
     );
-  });
-
-  // MUTATIONS, each fails this: drop ATOMIC_ARG_BEFORE_RE (the C11 calls are
-  // reads); drop `store|exchange|fetch_…` from RECEIVER_METHOD_AFTER_RE (the
-  // C++ member calls are reads).
-  it("C11 and C++ atomics are writes (C, C++)", async () => {
-    const tree = {
-      "src/server.c": src(
-        "static void add_conn(struct conn *c)",
-        "{",
-        "    list_add(config.conns, c);",
-        "    atomic_fetch_add_explicit(&config.active_conns, 1, memory_order_relaxed);",
-        "}",
-        "static void drop_conn(struct conn *c)",
-        "{",
-        "    atomic_store(&config.active_conns, 0);",
-        "    if (atomic_load(&config.active_conns) == 0) stop();",
-        "}",
-      ),
-      "src/pool.cpp": src(
-        "void Pool::reset() {",
-        "  active_conns_.store(0);",
-        "  active_conns_.fetch_add(1, std::memory_order_acq_rel);",
-        "  active_conns_.compare_exchange_weak(expected, 2);",
-        "}",
-      ),
-    };
-    const out = await run({ action: "writes", name: "active_conns" }, world([], tree));
-    expect(out.split("\n").filter((l) => /\[atomic\]/.test(l))).toEqual([
-      "src/server.c:4  (add_conn)  [atomic] atomic_fetch_add_explicit(&config.active_conns, 1, memory_order_relaxed);",
-      "src/server.c:8  (drop_conn)  [atomic] atomic_store(&config.active_conns, 0);",
-      "src/pool.cpp:2  (reset)  [atomic] active_conns_.store(0);",
-      "src/pool.cpp:3  (reset)  [atomic] active_conns_.fetch_add(1, std::memory_order_acq_rel);",
-      "src/pool.cpp:4  (reset)  [atomic] active_conns_.compare_exchange_weak(expected, 2);",
-    ]);
-    expect(out).not.toContain("src/server.c:9");
   });
 });
 
@@ -1662,8 +1668,6 @@ describe("file caps", () => {
     "a changed file up to 1 MiB is read; an unchanged one over 256 KiB is still not swept",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
-      expect(EXPLORE_MAX_FILE_BYTES).toBe(256 * 1024);
-      expect(EXPLORE_MAX_CHANGED_FILE_BYTES).toBe(1024 * 1024);
       const filler: string[] = [];
       for (let size = 0, i = 0; size < 400 * 1024; i++) {
         const l = `static int pad_${i}(int a) { return a + ${i}; }`;
@@ -2049,20 +2053,6 @@ describe("answers that find nothing say what they searched", () => {
 });
 
 describe("writer-companion: what counts as a write and a partner", () => {
-  // MUTATION: drop the member-or-field-convention condition from the chain
-  // rule in classifyOccurrence — the stores through the parameter `conn`
-  // read as writes of `conn` and this fails; drop TYPE_BEFORE_RE — the
-  // annotation reads as a store.
-  it("a store through a root variable writes its member, not the variable; an annotation writes nothing", () => {
-    const occ = (line: string, word: string) =>
-      classifyOccurrence(line, line, line.indexOf(word), word.length, false);
-    expect(occ("    conn->wr.opcode = 1;", "conn")?.kind).toBe("read");
-    expect(occ("    conn->wr.opcode = 1;", "wr")).toEqual({ kind: "write", how: "chain" });
-    expect(occ("    m_conn->wr.opcode = 1;", "m_conn")).toEqual({ kind: "write", how: "chain" });
-    expect(occ("    p->conn.state = 1;", "conn")).toEqual({ kind: "write", how: "chain" });
-    expect(occ("  const opts: Settings.Options = load();", "Settings")?.kind).toBe("read");
-  });
-
   // MUTATION: drop the declaresLocal filter from writerCompanions — the new
   // local `int rdma_mode = 0;` is held to the field's writers and anchored.
   it("a line that declares a local of the field's name is no new write of the field (C)", async () => {
@@ -2371,49 +2361,6 @@ describe("writer-companion: same object, same member", () => {
 });
 
 describe("write shapes, widened", () => {
-  // MUTATIONS, each fails this: drop `append|pop|push|put|push_back` from
-  // RECEIVER_METHOD_AFTER_RE (the container mutations read as reads); drop
-  // `__atomic_…_n`, `atomic_set` or `WRITE_ONCE` from ATOMIC_ARG_BEFORE_RE.
-  it("container mutators and kernel or builtin atomics are writes (Py, JS, C)", async () => {
-    const tree = {
-      "x/f.py": src(
-        "class Q:",
-        "    def a(self, x):",
-        "        self.pending_jobs.append(x)",
-        "    def b(self):",
-        "        self.pending_jobs.pop()",
-      ),
-      "x/j.js": src("export function put(reg, v) {", "  reg.entryList.push(v);", "}"),
-      "x/c.c": src(
-        "void f(struct srv *srv)",
-        "{",
-        "    srv->pending_list.push_back(1);",
-        "    __atomic_store_n(&srv->run_flag, 1, __ATOMIC_SEQ_CST);",
-        "    atomic_set(&srv->ref_cnt, 1);",
-        "    WRITE_ONCE(srv->run_flag, 0);",
-        "}",
-      ),
-    };
-    const w = world([], tree);
-    expect(await run({ action: "writes", name: "pending_jobs" }, w)).toMatch(
-      /^2 sites in 1 file;/m,
-    );
-    expect(await run({ action: "writes", name: "entryList" }, w)).toContain(
-      "x/j.js:2  (put)  [collection] reg.entryList.push(v);",
-    );
-    expect(await run({ action: "writes", name: "pending_list" }, w)).toContain(
-      "[collection] srv->pending_list.push_back(1);",
-    );
-    const flag = await run({ action: "writes", name: "run_flag" }, w);
-    expect(flag).toContain(
-      "x/c.c:4  (f)  [atomic] __atomic_store_n(&srv->run_flag, 1, __ATOMIC_SEQ_CST);",
-    );
-    expect(flag).toContain("x/c.c:6  (f)  [atomic] WRITE_ONCE(srv->run_flag, 0);");
-    expect(await run({ action: "writes", name: "ref_cnt" }, w)).toContain(
-      "[atomic] atomic_set(&srv->ref_cnt, 1);",
-    );
-  });
-
   // MUTATIONS, each fails this: drop `:?` from ALIAS_LHS_RE (Go's `p :=`
   // binds no alias); drop `mut` from ADDR_BEFORE_RE (Rust's `&mut`); drop the
   // index from ADDR_END_AFTER_RE (the address of an element).

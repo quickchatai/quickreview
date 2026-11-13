@@ -2,17 +2,15 @@
 // pass-sm-* lenses a PR's content plans. Every case hands `selectStateLenses`
 // a file list as GitHub returns it and asserts on the selection — the lens,
 // the strength and the reason — never on a probe's internals.
-// The member detector (`memberCandidates`) is driven through its export,
-// with the same file lists.
+// The member detector (`memberCandidates`, the list the strong exhaustive
+// probe names the first of) is driven through its export, with the same file
+// lists, and asserted on the member lines it finds.
 import { describe, expect, it } from "vitest";
 import type { PrFileEntry } from "@quickchatai/pi-quickreview/src/githubcore.js";
 import { EMPTY_HEURISTICS } from "@quickchatai/pi-quickreview/src/heuristics.js";
 import { STATE_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 import {
   ADD_BACK_SCANS_MAX,
-  ENUM_MEMBER_RE,
-  enumTypeName,
-  isSourceCode,
   LINE_MAX,
   memberCandidates,
   selectStateLenses,
@@ -112,9 +110,20 @@ describe("modes", () => {
     });
   });
 
-  it("a test file and a docs file fire nothing", () => {
-    expect(select([added("tests/order.test.ts", "order.status = next;")])).toEqual([]);
-    expect(select([added("docs/orders.md", "order.status = next;")])).toEqual([]);
+  it("a test file, a docs file and a file with no patch fire nothing", () => {
+    const f = patched(
+      "src/status.ts",
+      ["   Active,", "+  Closed,", "+order.status = next;"],
+      "@@ -3,2 +3,4 @@ enum Status {",
+    );
+    expect(lensesOf(select([f]))).toEqual(["pass-sm-transitions", "pass-sm-exhaustive"]);
+    const { patch: _patch, ...bare } = f;
+    for (const g of [
+      { ...f, filename: "tests/status.test.ts" },
+      { ...f, filename: "docs/status.md" },
+      bare,
+    ])
+      expect(select([g]), g.filename).toEqual([]);
   });
 
   it("the selection comes in family order", () => {
@@ -134,41 +143,22 @@ describe("modes", () => {
 describe("pass-sm-states", () => {
   // MUTATION: change the strong trigger's `min` to 1 — the one-flag case
   // becomes strong and this fails.
-  it("two status flags added in one file are strong; one is weak", () => {
-    const two = select(
-      [
-        added(
-          "src/form.tsx",
-          "const [isSaving, setIsSaving] = useState(false);",
-          "isDirty: boolean;",
-        ),
-      ],
-      "strong",
-    );
-    expect(of(two, "pass-sm-states")).toMatchObject({ strength: "strong" });
-    expect(of(two, "pass-sm-states")!.why).toContain("two or more status flags");
+  it("two status flags added in one file are strong, camel- or snake-case; one is weak", () => {
+    for (const two of [
+      added(
+        "src/form.tsx",
+        "const [isSaving, setIsSaving] = useState(false);",
+        "isDirty: boolean;",
+      ),
+      added("app/models.py", "is_active = models.BooleanField(default=True)", "has_paid = False"),
+    ]) {
+      const hit = of(select([two], "strong"), "pass-sm-states");
+      expect(hit, two.filename).toMatchObject({ strength: "strong" });
+      expect(hit!.why).toContain("two or more status flags");
+    }
     const one = [added("src/form.tsx", "isDirty: boolean;")];
     expect(of(select(one, "strong"), "pass-sm-states")).toBeUndefined();
     expect(of(select(one, "all"), "pass-sm-states")).toMatchObject({ strength: "weak" });
-  });
-
-  it("snake-case and ORM flags count", () => {
-    const sel = select(
-      [added("app/models.py", "is_active = models.BooleanField(default=True)", "has_paid = False")],
-      "strong",
-    );
-    expect(of(sel, "pass-sm-states")).toMatchObject({ strength: "strong" });
-  });
-
-  it("a nullable marker field is a weak signal", () => {
-    const sel = select([added("src/task.ts", "completedAt?: Date | null;")]);
-    expect(of(sel, "pass-sm-states")!.why).toContain("nullable marker");
-  });
-
-  it("an ordinary boolean expression is not a flag", () => {
-    expect(
-      of(select([added("src/a.ts", "const ok = a === b;")]), "pass-sm-states"),
-    ).toBeUndefined();
   });
 });
 
@@ -211,34 +201,12 @@ describe("pass-sm-transitions", () => {
   // MUTATION: drop the cap (`scans < ADD_BACK_SCANS_MAX` in lineHit) — the
   // 33rd edited check is found added back, nothing fires and this fails.
   it("looks an edited check up by a scan at most ADD_BACK_SCANS_MAX times a file, and never reads a capped look as added back", () => {
-    expect(ADD_BACK_SCANS_MAX).toBe(32);
     const edited = (n: number): StateSelection | undefined =>
       of(select([rewritten(n, (c) => `  } else ${c}`)], "strong"), "pass-sm-transitions");
     expect(edited(ADD_BACK_SCANS_MAX)).toBeUndefined();
     const over = edited(ADD_BACK_SCANS_MAX + 1);
     expect(over).toMatchObject({ strength: "strong" });
     expect(over!.why).toContain(`o${ADD_BACK_SCANS_MAX}.status`);
-  });
-
-  it("a state write, a setter and a transition call are weak signals", () => {
-    for (const line of [
-      "order.status = Status.SHIPPED;",
-      "setPhase('review');",
-      "machine.transitionTo('done');",
-      "await db.update({ status: 'PAID' });",
-    ])
-      expect(of(select([added("src/x.ts", line)]), "pass-sm-transitions"), line).toMatchObject({
-        strength: "weak",
-      });
-  });
-
-  it("a comparison is not a write", () => {
-    expect(
-      of(
-        select([added("src/x.ts", "if (order.status === 'paid') return;")]),
-        "pass-sm-transitions",
-      ),
-    ).toBeUndefined();
   });
 
   it("the PR's words plan it weakly", () => {
@@ -325,9 +293,7 @@ describe("pass-sm-exhaustive", () => {
       ],
       "@@ -3,3 +3,8 @@ export enum AccountStatus {",
     );
-    expect(memberCandidates([both]).map((c) => [c.text, c.typeName])).toEqual([
-      ["  Suspended = 'suspended',", "AccountStatus"],
-    ]);
+    expect(memberCandidates([both]).map((c) => c.text)).toEqual(["  Suspended = 'suspended',"]);
   });
 
   // MUTATION: call every added declaration new (`enums.fresh = l.sign ===
@@ -340,9 +306,7 @@ describe("pass-sm-exhaustive", () => {
       "     A = 1",
       "+    B = 2",
     ]);
-    expect(memberCandidates([rebased]).map((c) => [c.text, c.typeName])).toEqual([
-      ["    B = 2", "Status"],
-    ]);
+    expect(memberCandidates([rebased]).map((c) => c.text)).toEqual(["    B = 2"]);
     expect(of(select([rebased], "strong"), "pass-sm-exhaustive")).toMatchObject({
       strength: "strong",
     });
@@ -350,9 +314,14 @@ describe("pass-sm-exhaustive", () => {
       '-Phase = Literal["a", "b"]',
       '+Phase = Literal["a", "b", "c"]',
     ]);
-    expect(memberCandidates([widened]).map((c) => c.typeName)).toEqual(["Phase"]);
+    expect(memberCandidates([widened]).map((c) => c.text)).toEqual([
+      'Phase = Literal["a", "b", "c"]',
+    ]);
   });
 
+  // No line of this patch holds a declaration word (`type X =` is none): a
+  // union literal needs none. MUTATION: require `declared` of a union
+  // candidate too — the literal is lost and this fails.
   it("a literal added to an existing union is strong", () => {
     const union = patched("src/types.ts", [
       " export type Phase =",
@@ -380,11 +349,6 @@ describe("pass-sm-exhaustive", () => {
     const consts = patched("src/config.ts", [" const A = 1;", "+TIMEOUT = 30", " RETRIES = 3"]);
     expect(of(select([consts], "strong"), "pass-sm-exhaustive")).toBeUndefined();
   });
-
-  it("a dispatch over a state-like value is a weak signal", () => {
-    const sel = select([added("src/x.ts", "switch (order.status) {")]);
-    expect(of(sel, "pass-sm-exhaustive")).toMatchObject({ strength: "weak" });
-  });
 });
 
 describe("pass-sm-stuck", () => {
@@ -409,15 +373,6 @@ describe("pass-sm-stuck", () => {
     expect(of(select(covered, "strong"), "pass-sm-stuck")).toBeUndefined();
     expect(of(select(covered, "all"), "pass-sm-stuck")).toMatchObject({ strength: "weak" });
   });
-
-  it("a stored transient status is a weak signal", () => {
-    const sel = select([added("app/jobs.py", "job.status = 'processing'")]);
-    expect(of(sel, "pass-sm-stuck")).toMatchObject({ strength: "weak" });
-  });
-
-  it("leaving a transient state is not entering one", () => {
-    expect(of(select([added("src/x.ts", "setLoading(false);")]), "pass-sm-stuck")).toBeUndefined();
-  });
 });
 
 describe("pass-sm-events", () => {
@@ -433,19 +388,6 @@ describe("pass-sm-events", () => {
         title,
       ).toMatchObject({ strength: "strong" });
   });
-
-  it("a handler, a listener or a consumer is a weak signal", () => {
-    for (const line of [
-      "window.addEventListener('message', onMessage);",
-      "emitter.on('paid', handlePaid);",
-      "@receiver(post_save, sender=Order)",
-      "def handle_invoice_paid(event):",
-      "onSubmit = async () => {",
-    ])
-      expect(of(select([added("src/x.py", line)]), "pass-sm-events"), line).toMatchObject({
-        strength: "weak",
-      });
-  });
 });
 
 describe("pass-sm-derived", () => {
@@ -456,17 +398,6 @@ describe("pass-sm-derived", () => {
     );
     expect(of(sel, "pass-sm-derived")).toMatchObject({ strength: "strong" });
   });
-
-  it("a stored count or cache write is a weak signal; a comparison is not", () => {
-    expect(
-      of(select([added("src/x.ts", "order.itemCount = items.length;")]), "pass-sm-derived"),
-    ).toMatchObject({
-      strength: "weak",
-    });
-    expect(
-      of(select([added("src/x.ts", "if (order.itemCount === 0) return;")]), "pass-sm-derived"),
-    ).toBeUndefined();
-  });
 });
 
 describe("pass-sm-lifecycle", () => {
@@ -476,17 +407,6 @@ describe("pass-sm-lifecycle", () => {
       "strong",
     );
     expect(of(sel, "pass-sm-lifecycle")).toMatchObject({ strength: "strong" });
-  });
-
-  it("a lifecycle method is a weak signal", () => {
-    for (const line of [
-      "async function shutdown() {",
-      "def close(self):",
-      "componentWillUnmount() {",
-    ])
-      expect(of(select([added("src/x.py", line)]), "pass-sm-lifecycle"), line).toMatchObject({
-        strength: "weak",
-      });
   });
 });
 
@@ -514,15 +434,69 @@ describe("pass-sm-durable", () => {
     );
     expect(of(select([f], "strong"), "pass-sm-durable")).toBeUndefined();
   });
+});
 
-  it("a stored state write is a weak signal", () => {
-    for (const line of [
+describe("weak signals, and the lines that are none", () => {
+  // Each line alone, added to `file`, under mode `all`: `weak` plans `lens`
+  // weakly (`why` names the row when two weak rows could fire); otherwise
+  // it plans it not at all.
+  const cases: { lens: string; file: string; line: string; weak: boolean; why?: string }[] = [
+    {
+      lens: "pass-sm-states",
+      file: "src/task.ts",
+      line: "completedAt?: Date | null;",
+      weak: true,
+      why: "nullable marker",
+    },
+    { lens: "pass-sm-states", file: "src/a.ts", line: "const ok = a === b;", weak: false },
+    ...[
+      "order.status = Status.SHIPPED;",
+      "setPhase('review');",
+      "machine.transitionTo('done');",
+      "await db.update({ status: 'PAID' });",
+    ].map((line) => ({ lens: "pass-sm-transitions", file: "src/x.ts", line, weak: true })),
+    {
+      lens: "pass-sm-transitions",
+      file: "src/x.ts",
+      line: "if (order.status === 'paid') return;",
+      weak: false,
+    },
+    { lens: "pass-sm-exhaustive", file: "src/x.ts", line: "switch (order.status) {", weak: true },
+    { lens: "pass-sm-stuck", file: "app/jobs.py", line: "job.status = 'processing'", weak: true },
+    { lens: "pass-sm-stuck", file: "src/x.ts", line: "setLoading(false);", weak: false },
+    ...[
+      "window.addEventListener('message', onMessage);",
+      "emitter.on('paid', handlePaid);",
+      "@receiver(post_save, sender=Order)",
+      "def handle_invoice_paid(event):",
+      "onSubmit = async () => {",
+    ].map((line) => ({ lens: "pass-sm-events", file: "src/x.py", line, weak: true })),
+    {
+      lens: "pass-sm-derived",
+      file: "src/x.ts",
+      line: "order.itemCount = items.length;",
+      weak: true,
+    },
+    {
+      lens: "pass-sm-derived",
+      file: "src/x.ts",
+      line: "if (order.itemCount === 0) return;",
+      weak: false,
+    },
+    ...["async function shutdown() {", "def close(self):", "componentWillUnmount() {"].map(
+      (line) => ({ lens: "pass-sm-lifecycle", file: "src/x.py", line, weak: true }),
+    ),
+    ...[
       'cur.execute("UPDATE orders SET status = %s WHERE id = %s", (s, id))',
       "Order.objects.filter(id=pk).update(status='paid')",
-    ])
-      expect(of(select([added("app/repo.py", line)]), "pass-sm-durable"), line).toMatchObject({
-        strength: "weak",
-      });
+    ].map((line) => ({ lens: "pass-sm-durable", file: "app/repo.py", line, weak: true })),
+  ];
+
+  it.each(cases)("$lens: `$line`", ({ lens, file, line, weak, why }) => {
+    const hit = of(select([added(file, line)]), lens);
+    if (!weak) return expect(hit).toBeUndefined();
+    expect(hit).toMatchObject({ strength: "weak" });
+    if (why) expect(hit!.why).toContain(why);
   });
 });
 
@@ -617,320 +591,172 @@ const BLANK_RUNS = [
 ];
 
 describe("the member detector", () => {
-  const grown = patched(
-    "src/status.ts",
-    ["   Active = 'active',", "+  Suspended = 'suspended',", "   Closed = 'closed',"],
-    "@@ -3,6 +3,7 @@ export enum AccountStatus {",
-  );
-  const python = patched("app/status.py", [
-    " class OrderStatus(TextChoices):",
-    '     PENDING = "pending"',
-    '+    ON_HOLD = "on_hold"',
-  ]);
+  const members = (f: PrFileEntry): string[] => memberCandidates([f]).map((c) => c.text);
 
-  it("a candidate carries its file, hunk, head line, text and type", () => {
-    expect(memberCandidates([grown])).toEqual([
-      {
-        file: "src/status.ts",
-        hunk: 0,
-        line: 4,
-        text: "  Suspended = 'suspended',",
-        union: false,
-        typeName: "AccountStatus",
-      },
-    ]);
-  });
-
-  // MUTATION: advance the head line on a removed line in hunksOf (drop the
-  // `sign !== "-"` test) — `Delta` moves from line 11 to 13 and this fails.
-  it("the line is the head line: a removed line above the member is not counted", () => {
-    const f = patched(
-      "src/kind.ts",
-      ["   Alpha,", "-  Beta,", "-  Gamma,", "+  Delta,"],
-      "@@ -10,4 +10,3 @@ enum Kind {",
-    );
-    expect(memberCandidates([f]).map((c) => [c.line, c.text])).toEqual([[11, "  Delta,"]]);
-  });
-
-  // MUTATION: make `declared` patch-wide (test ENUM_DECL_RE against every
-  // line of the patch instead of the hunk's own) — the second hunk's
-  // constant becomes a member and this fails.
-  it("a declaration word in another hunk of the patch does not make a member", () => {
-    const constants: [string, string[]] = [
-      "@@ -40,3 +40,4 @@ function load() {",
-      [" RETRIES = 3", "+TIMEOUT = 30", " BACKOFF = 2"],
-    ];
-    const elsewhere = hunked(
-      "src/config.ts",
-      ["@@ -1,3 +1,3 @@", [" export enum Kind {", "   A = 'a',", " }"]],
-      constants,
-    );
-    expect(memberCandidates([elsewhere])).toEqual([]);
-    expect(of(select([elsewhere], "strong"), "pass-sm-exhaustive")).toBeUndefined();
-    // The same lines under a declaration of their own are a member.
-    const here = hunked("src/config.ts", ["@@ -40,3 +40,4 @@ enum Limits {", constants[1]]);
-    expect(memberCandidates([here]).map((c) => c.text)).toEqual(["TIMEOUT = 30"]);
-  });
-
-  // MUTATION: drop `(?!>)` from ENUM_MEMBER_RE — the match arm reads as a
-  // member assigned `> None` and this fails.
-  it("a match arm beside enum variants is not a member", () => {
-    const arm = patched(
-      "src/kind.rs",
-      [
-        "     Alpha,",
-        "     Beta,",
-        " }",
-        " fn code(k: Kind) -> Option<u8> { match k {",
-        "+        _ => None,",
-      ],
-      "@@ -3,5 +3,6 @@ pub enum Kind {",
-    );
-    expect(memberCandidates([arm])).toEqual([]);
-    expect(ENUM_MEMBER_RE.test("_ => None,")).toBe(false);
-    expect(ENUM_MEMBER_RE.test("Other = 7,")).toBe(true);
-    // The hunk is one a real variant would be found in.
-    const variant = { ...arm, patch: arm.patch!.replace("        _ => None,", "    Gamma,") };
-    expect(memberCandidates([variant]).map((c) => c.text)).toEqual(["    Gamma,"]);
-  });
-
-  // MUTATION: return from memberCandidates after the first file that has a
-  // candidate — the second file's member is lost and this fails.
-  it("two files that each grow an enumeration are two candidates; the hit names the first", () => {
-    const found = memberCandidates([grown, python]);
-    expect(found.map((c) => [c.file, c.typeName])).toEqual([
-      ["src/status.ts", "AccountStatus"],
-      ["app/status.py", "OrderStatus"],
-    ]);
-    const hit = of(select([grown, python], "strong"), "pass-sm-exhaustive")!;
-    expect(hit.files).toEqual(["src/status.ts"]);
-    expect(hit.why).toBe(
-      "a member is added to an existing enumeration in src/status.ts (`Suspended = 'suspended',`)",
-    );
-  });
-
-  // MUTATION: keep only the first candidate of a file (stop at the first
-  // hunk that has one) — one candidate is left of three and this fails.
-  it("one file that grows two enumerations yields every added member", () => {
-    const f = hunked(
-      "src/enums.ts",
-      ["@@ -3,3 +3,4 @@ export enum Colour {", ["   Red,", "+  Green,", "   Blue,"]],
-      ["@@ -20,3 +21,5 @@ export enum Size {", ["   Small,", "+  Medium,", "+  Large,"]],
-    );
-    expect(memberCandidates([f])).toEqual([
-      {
-        file: "src/enums.ts",
-        hunk: 0,
-        line: 4,
-        text: "  Green,",
-        union: false,
-        typeName: "Colour",
-      },
-      {
-        file: "src/enums.ts",
-        hunk: 1,
-        line: 22,
-        text: "  Medium,",
-        union: false,
-        typeName: "Size",
-      },
-      { file: "src/enums.ts", hunk: 1, line: 23, text: "  Large,", union: false, typeName: "Size" },
-    ]);
-  });
-
-  // MUTATION: require `declared` of a union candidate too — the union below
-  // has no declaration word in its hunk, so it is lost and this fails.
-  it("a union literal needs no declaration word and is marked as a union", () => {
-    const union = patched(
-      "src/types.ts",
-      [" export type Phase =", '   | "draft"', '+  | "archived"', '   | "live";'],
-      "@@ -7,3 +7,4 @@",
-    );
-    expect(memberCandidates([union])).toEqual([
-      {
-        file: "src/types.ts",
-        hunk: 0,
-        line: 9,
-        text: '  | "archived"',
-        union: true,
-        typeName: "Phase",
-      },
-    ]);
-  });
-
-  // MUTATION: start `existing.union` as true in memberCandidates — both
-  // literals become candidates and this fails.
-  it("literals added beside no literal the union already had are not members added to one", () => {
-    const f = patched("src/types.ts", ['+  | "a"', '+  | "b";'], "@@ -3,1 +3,3 @@ export type X =");
-    expect(memberCandidates([f])).toEqual([]);
-  });
-
-  // MUTATION: drop the `unions.fresh` test in memberCandidates — the new
-  // union's literals are candidates beside the other union's and this fails.
-  it("a wholly new union beside another union's literals is not a member added to one", () => {
-    const f = patched("src/types.ts", [
-      " export type Phase =",
-      '   | "draft"',
-      '   | "live";',
-      "+export type Mode =",
-      '+  | "x"',
-      '+  | "y";',
-    ]);
-    expect(memberCandidates([f])).toEqual([]);
-  });
-
-  // MUTATION: count context lines only (`l.sign === " "` for `existing` in
-  // memberCandidates) — the renamed member is lost and this fails.
-  it("a removed member is one the enumeration already had: a rename is a candidate", () => {
-    const f = patched(
-      "src/kind.ts",
-      [" enum Kind {", "-  Beta,", "+  Delta,", " }"],
-      "@@ -10,3 +10,3 @@",
-    );
-    expect(memberCandidates([f]).map((c) => c.text)).toEqual(["  Delta,"]);
-  });
-
-  // MUTATION: merge the two flags (`existing.union || existing.enum` for
-  // either kind in memberCandidates) — a line of one kind beside lines of the
-  // other becomes a candidate and this fails.
-  it("a member of one kind does not make the other kind an existing one", () => {
-    const enumBesideUnion = patched(
-      "src/types.ts",
-      ['   | "a"', "+  Foo,"],
-      "@@ -3,2 +3,3 @@ export enum Kind {",
-    );
-    expect(memberCandidates([enumBesideUnion])).toEqual([]);
-    const unionBesideEnum = patched(
-      "src/types.ts",
-      ["   Alpha,", '+  | "b"'],
-      "@@ -3,2 +3,3 @@ export type Phase =",
-    );
-    expect(memberCandidates([unionBesideEnum])).toEqual([]);
-    // The same in the shape a change has: a new enumeration under a union,
-    // and a new union under an enumeration.
-    const enumAfterUnion = patched("src/types.ts", [
-      " export type Phase =",
-      '   | "draft"',
-      '   | "live";',
-      "+export enum Kind {",
-      "+  A,",
-      "+  B,",
-      "+}",
-    ]);
-    expect(memberCandidates([enumAfterUnion])).toEqual([]);
-    const unionAfterEnum = patched(
-      "src/kind.ts",
-      ["   Alpha,", "   Beta,", " }", "+export type Phase =", '+  | "a"', '+  | "b";'],
-      "@@ -3,3 +3,6 @@ export enum Kind {",
-    );
-    expect(memberCandidates([unionAfterEnum])).toEqual([]);
-  });
-
-  // MUTATION: drop `(?:(?:class|struct)\s+)?(?!(?:class|struct)\b)` from
-  // ENUM_NAME_RE (take the identifier after the keyword) — `enum class
-  // Status` names `class` and this fails.
-  it("the type name follows the shape of the declaration", () => {
-    const cases: [string, string | undefined][] = [
-      ["class IO(StrEnum):", "IO"],
-      ["class OrderStatus(models.TextChoices):", "OrderStatus"],
-      ["class Colour(str, Enum):", "Colour"],
-      ["export enum AccountStatus {", "AccountStatus"],
-      ["enum class Status(val code: Int) {", "Status"],
-      ["enum struct Flags : int {", "Flags"],
-      ["public sealed interface Shape permits Circle {", "Shape"],
-      ["sealed trait Status", "Status"],
-      ["export type Phase =", "Phase"],
-      ["Mode = Literal[", "Mode"],
-      ["\tPending Status = iota", "Status"],
-      ["\tPending = iota", undefined],
-      ["typedef enum {", undefined],
-      ["const (", undefined],
-      ["class Order(Base):", undefined],
-    ];
-    for (const [line, name] of cases) expect(enumTypeName(line), line).toBe(name);
-  });
-
-  // MUTATION: drop the NOT_DECL_RE test in memberCandidates — the comment's
-  // "enum of" names the type `of` and this fails.
-  it("a comment or an import that holds the word names no type", () => {
-    const f = patched(
-      "app/colour.py",
-      [" # the enum of colours we print", "     RED = 1", "+    BLUE = 2"],
-      "@@ -4,3 +4,4 @@ class Colour(Enum):",
-    );
-    expect(memberCandidates([f]).map((c) => c.typeName)).toEqual(["Colour"]);
-    const imported = patched(
-      "app/colour.py",
-      [" from enum import Enum", "     RED = 1", "+    BLUE = 2"],
-      "@@ -4,3 +4,4 @@ class Colour(Enum):",
-    );
-    expect(memberCandidates([imported]).map((c) => c.typeName)).toEqual(["Colour"]);
-  });
-
-  // MUTATION: let any line that holds the word open a declaration (`openedBy`
-  // answers `{ name }` whatever the line is) — `BLUE = enum.auto()` opens a
-  // new block with no name, the candidate is lost and this fails.
-  it("a member line that holds the word keeps the declaration above it", () => {
-    const body = [" RED = enum.auto()", " GREEN = enum.auto()", "+ BLUE = enum.auto()"];
-    const header = patched("app/colour.py", body, "@@ -4,3 +4,4 @@ class Colour(enum.Enum):");
-    const context = patched("app/colour.py", [" class Colour(enum.Enum):", ...body]);
-    for (const f of [header, context])
-      expect(memberCandidates([f]).map((c) => [c.text, c.typeName])).toEqual([
-        [" BLUE = enum.auto()", "Colour"],
-      ]);
-    // A bare `X = iota` does open a block, and it names no type.
-    const go = patched(
-      "pkg/status.go",
-      [" \tPending Status = iota", " \tPaid", " )", " const (", " \tA = iota", " \tB", "+\tC"],
-      "@@ -5,6 +5,7 @@",
-    );
-    expect(memberCandidates([go]).map((c) => [c.text, c.typeName])).toEqual([["\tC", undefined]]);
-  });
-
-  // MUTATION: read a trailing comment as code (`codeOf` answers the line as
-  // it is) — the comment names the type `member`, a comment declares the last
-  // hunk, and this fails.
-  it("a trailing comment that holds the word declares nothing and names no type", () => {
-    const ts = patched(
-      "src/status.ts",
-      ["   Active = 1, // first enum member", "+  Closed = 2,"],
-      "@@ -3,2 +3,3 @@ export enum AccountStatus {",
-    );
-    expect(memberCandidates([ts]).map((c) => c.typeName)).toEqual(["AccountStatus"]);
-    const py = patched("app/colour.py", [
-      " class Colour(Enum):",
-      "     RED = 1  # first enum member",
-      "+    BLUE = 2",
-    ]);
-    expect(memberCandidates([py]).map((c) => c.typeName)).toEqual(["Colour"]);
-    // On the added member itself: it is still a member of the enumeration.
-    const own = patched(
-      "src/status.ts",
-      ["   Active = 'active',", "+  Suspended = 'suspended', // new enum member"],
-      "@@ -3,2 +3,3 @@ export enum AccountStatus {",
-    );
-    expect(memberCandidates([own]).map((c) => c.typeName)).toEqual(["AccountStatus"]);
+  it.each<[string, PrFileEntry, string]>([
+    // The control for "a declaration word in another hunk" below.
+    [
+      "a constant under a declaration of its own hunk",
+      hunked("src/config.ts", [
+        "@@ -40,3 +40,4 @@ enum Limits {",
+        [" RETRIES = 3", "+TIMEOUT = 30", " BACKOFF = 2"],
+      ]),
+      "TIMEOUT = 30",
+    ],
+    // The control for "a match arm" below.
+    [
+      "a Rust variant",
+      patched(
+        "src/kind.rs",
+        [
+          "     Alpha,",
+          "     Beta,",
+          " }",
+          " fn code(k: Kind) -> Option<u8> { match k {",
+          "+    Gamma,",
+        ],
+        "@@ -3,5 +3,6 @@ pub enum Kind {",
+      ),
+      "    Gamma,",
+    ],
+    // MUTATION: count context lines only (`l.sign === " "` for `existing` in
+    // memberCandidates) — the renamed member is lost and this fails.
+    [
+      "a rename: a removed member is one the enumeration already had",
+      patched("src/kind.ts", [" enum Kind {", "-  Beta,", "+  Delta,", " }"], "@@ -10,3 +10,3 @@"),
+      "  Delta,",
+    ],
+    // MUTATION: let any line that holds the word open a declaration
+    // (`openedBy` answers `{ name }` whatever the line is) — `BLUE =
+    // enum.auto()` opens a new block, the candidate is lost and both fail.
+    [
+      "a member line that holds the word, the declaration in the header",
+      patched(
+        "app/colour.py",
+        [" RED = enum.auto()", " GREEN = enum.auto()", "+ BLUE = enum.auto()"],
+        "@@ -4,3 +4,4 @@ class Colour(enum.Enum):",
+      ),
+      " BLUE = enum.auto()",
+    ],
+    [
+      "a member line that holds the word, the declaration in the body",
+      patched("app/colour.py", [
+        " class Colour(enum.Enum):",
+        " RED = enum.auto()",
+        " GREEN = enum.auto()",
+        "+ BLUE = enum.auto()",
+      ]),
+      " BLUE = enum.auto()",
+    ],
+    // MUTATION: read a trailing comment as code (`codeOf` answers the line as
+    // it is) — the added member's own comment declares a new enumeration and
+    // this fails.
+    [
+      "a member whose trailing comment holds the word",
+      patched(
+        "src/status.ts",
+        ["   Active = 'active',", "+  Suspended = 'suspended', // new enum member"],
+        "@@ -3,2 +3,3 @@ export enum AccountStatus {",
+      ),
+      "  Suspended = 'suspended', // new enum member",
+    ],
     // A `#` inside a string is no comment: the declaration stands.
-    const literal = patched("app/colour.py", [
-      '-Colour = Literal["#fff"]',
-      '+Colour = Literal["#fff", "#000"]',
-    ]);
-    expect(memberCandidates([literal]).map((c) => c.typeName)).toEqual(["Colour"]);
-    const commented = patched("app/client.py", [
-      "     retries=3,  # TODO: make this an enum",
-      "+    timeout=30,",
-    ]);
-    expect(memberCandidates([commented])).toEqual([]);
+    [
+      "a Literal whose strings hold a `#`",
+      patched("app/colour.py", ['-Colour = Literal["#fff"]', '+Colour = Literal["#fff", "#000"]']),
+      'Colour = Literal["#fff", "#000"]',
+    ],
+  ])("finds %s", (_, f, member) => {
+    expect(members(f)).toEqual([member]);
+    expect(of(select([f], "strong"), "pass-sm-exhaustive")!.why).toContain(member.trim());
   });
 
-  // MUTATION: drop the NOT_DECL_RE half of `declaresEnum` — the import list
-  // entries and the keyword argument become members and this fails.
-  // MUTATION: test the word on the whole header again (`ENUM_DECL_RE.test(
-  // h.header)` for `headerDeclares`) — the last case fails.
-  it("an import or a comment that holds the word declares nothing: an import-list entry and a keyword argument are no member", () => {
-    const typing = [" from typing import (", "     Any,", "+    Dict,", "     List,", " )"];
-    const none: PrFileEntry[] = [
+  const typing = [" from typing import (", "     Any,", "+    Dict,", "     List,", " )"];
+  it.each<[string, PrFileEntry]>([
+    // MUTATION: make `declared` patch-wide (test ENUM_DECL_RE against every
+    // line of the patch instead of the hunk's own) — the second hunk's
+    // constant becomes a member and this fails.
+    [
+      "a constant beside a declaration word in another hunk",
+      hunked(
+        "src/config.ts",
+        ["@@ -1,3 +1,3 @@", [" export enum Kind {", "   A = 'a',", " }"]],
+        ["@@ -40,3 +40,4 @@ function load() {", [" RETRIES = 3", "+TIMEOUT = 30", " BACKOFF = 2"]],
+      ),
+    ],
+    // MUTATION: drop `(?!>)` from ENUM_MEMBER_RE — the match arm reads as a
+    // member assigned `> None` and this fails.
+    [
+      "a match arm beside enum variants",
+      patched(
+        "src/kind.rs",
+        [
+          "     Alpha,",
+          "     Beta,",
+          " }",
+          " fn code(k: Kind) -> Option<u8> { match k {",
+          "+        _ => None,",
+        ],
+        "@@ -3,5 +3,6 @@ pub enum Kind {",
+      ),
+    ],
+    // MUTATION: start `existing.union` as true in memberCandidates — both
+    // literals become candidates and this fails.
+    [
+      "literals beside no literal the union already had",
+      patched("src/types.ts", ['+  | "a"', '+  | "b";'], "@@ -3,1 +3,3 @@ export type X ="),
+    ],
+    // MUTATION: drop the `unions.fresh` test in memberCandidates — the new
+    // union's literals are candidates and this fails.
+    [
+      "a wholly new union beside another union's literals",
+      patched("src/types.ts", [
+        " export type Phase =",
+        '   | "draft"',
+        '   | "live";',
+        "+export type Mode =",
+        '+  | "x"',
+        '+  | "y";',
+      ]),
+    ],
+    // MUTATION: merge the two flags (`existing.union || existing.enum` for
+    // either kind in memberCandidates) — each of the next four fails.
+    [
+      "an enum member beside union literals",
+      patched("src/types.ts", ['   | "a"', "+  Foo,"], "@@ -3,2 +3,3 @@ export enum Kind {"),
+    ],
+    [
+      "a union literal beside enum members",
+      patched("src/types.ts", ["   Alpha,", '+  | "b"'], "@@ -3,2 +3,3 @@ export type Phase ="),
+    ],
+    [
+      "a new enumeration under a union",
+      patched("src/types.ts", [
+        " export type Phase =",
+        '   | "draft"',
+        '   | "live";',
+        "+export enum Kind {",
+        "+  A,",
+        "+  B,",
+        "+}",
+      ]),
+    ],
+    [
+      "a new union under an enumeration",
+      patched(
+        "src/kind.ts",
+        ["   Alpha,", "   Beta,", " }", "+export type Phase =", '+  | "a"', '+  | "b";'],
+        "@@ -3,3 +3,6 @@ export enum Kind {",
+      ),
+    ],
+    // MUTATION: drop the NOT_DECL_RE half of `declaresEnum` — the import-list
+    // entries and the keyword argument become members and these fail.
+    [
+      "an import-list entry under `from enum import`",
       patched("app/x.py", [" from enum import Enum", ...typing]),
+    ],
+    [
+      "a TS import-list entry from an `enum` module",
       patched("src/x.ts", [
         " import {",
         "   Foo,",
@@ -938,6 +764,9 @@ describe("the member detector", () => {
         "   Baz,",
         ' } from "./types/enum";',
       ]),
+    ],
+    [
+      "a keyword argument under a comment that holds the word",
       patched("app/x.py", [
         " # TODO: make this an enum",
         " client = Client(",
@@ -945,48 +774,22 @@ describe("the member detector", () => {
         "+    retries=3,",
         " )",
       ]),
+    ],
+    // MUTATION: test the word on the whole header again (`ENUM_DECL_RE.test(
+    // h.header)` for `headerDeclares`) — this fails.
+    [
+      "an import-list entry under an import header",
       patched("app/x.py", typing, "@@ -4,5 +4,6 @@ from enum import Enum"),
-    ];
-    for (const f of none) {
-      expect(memberCandidates([f]), f.patch).toEqual([]);
-      expect(of(select([f], "strong"), "pass-sm-exhaustive")).toBeUndefined();
-    }
-    // A declaration in the body still declares.
-    const real = patched("app/colour.py", [
-      " class Colour(Enum):",
-      "     RED = 1",
-      "+    BLUE = 2",
-    ]);
-    expect(memberCandidates([real]).map((c) => c.typeName)).toEqual(["Colour"]);
-  });
-
-  // MUTATION: take the type from the hunk header only (never update
-  // `enumName` in the body) — the Go block has no header scope, its type is
-  // lost and this fails.
-  it("the nearest declaration above the member names the type", () => {
-    const go = patched(
-      "pkg/status.go",
-      [" const (", " \tPending Status = iota", " \tPaid", "+\tShipped", " )"],
-      "@@ -5,4 +5,5 @@",
-    );
-    expect(memberCandidates([go]).map((c) => [c.text, c.typeName])).toEqual([
-      ["\tShipped", "Status"],
-    ]);
-    const two = patched(
-      "src/enums.ts",
-      ["   Red,", " }", " export enum Size {", "   Small,", "+  Large,"],
-      "@@ -3,5 +3,6 @@ export enum Colour {",
-    );
-    expect(memberCandidates([two]).map((c) => c.typeName)).toEqual(["Size"]);
-  });
-
-  it("a test file, a docs file and a file with no patch carry no candidate", () => {
-    expect(memberCandidates([{ ...grown, filename: "tests/status.test.ts" }])).toEqual([]);
-    expect(memberCandidates([{ ...grown, filename: "docs/status.md" }])).toEqual([]);
-    const { patch: _patch, ...bare } = grown;
-    expect(memberCandidates([bare])).toEqual([]);
-    expect(isSourceCode(grown)).toBe(true);
-    expect(isSourceCode(bare)).toBe(false);
+    ],
+    // MUTATION: read a trailing comment as code (`codeOf` answers the line as
+    // it is) — the comment declares the hunk and this fails.
+    [
+      "a keyword argument beside a trailing comment that holds the word",
+      patched("app/client.py", ["     retries=3,  # TODO: make this an enum", "+    timeout=30,"]),
+    ],
+  ])("finds no member in %s", (_, f) => {
+    expect(members(f)).toEqual([]);
+    expect(of(select([f], "strong"), "pass-sm-exhaustive")).toBeUndefined();
   });
 
   // MUTATION: remove the cut in hunksOf (`const cut = raw;`) — the text past

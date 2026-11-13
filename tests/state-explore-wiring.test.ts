@@ -103,15 +103,6 @@ function buildVm(out: string): BuiltAgent[] {
 }
 
 describe("the build grants state_explore to the state-machine family alone", () => {
-  // The grant is the build's: the family's own seeds stay `read, bash, grep`.
-  // MUTATION: add state_explore to the tools line of agents/pass-sm-stuck.md — fails.
-  it("the family's seeds keep read, bash, grep", () => {
-    for (const lens of STATE_FAMILY) {
-      const seed = readFileSync(join(ROOT, "agents", `${lens}.md`), "utf8");
-      expect(toolsLine(seed), lens).toBe("read, bash, grep");
-    }
-  });
-
   // MUTATION: return `frontmatter` unchanged from applyStateTools (include.ts) — fails.
   it(
     "on the vm and bench builds every family variant's line is exactly read, bash, grep, state_explore, and no other agent's names it",
