@@ -141,6 +141,7 @@ export function reviewHelp(): string {
     "  --model MODEL     the model the whole review runs on, for this run: provider/id, an id pi\n                    knows, or either with a :level (as pi's own --model reads it). It replaces\n                    every tier and lens model the config pins; `qcr model use` keeps a choice",
     "  --full            review the whole branch again, ignoring what an earlier review left",
     "  --security        ask for a security review on top of the plan: every lens of the security family\n                    is planned (never one the profile switched off), as /qcr-review --security asks",
+    "  --state-machines  ask for a state-machine review on top of the plan: every lens of the state-machine\n                    family is planned (never one the profile switched off)",
     "  --json            one JSON object instead of text (the agent destination)",
     "  --to DEST         where the result goes, for this run: terminal, file, json, pr (comma-separated;\n                    pr posts a comment-only review to the PR and needs a PR target)",
     "  --out FILE        write the markdown report to FILE (implies file)",
@@ -705,6 +706,8 @@ export async function runReviewCli(
     // family, as `/qcr-review --security` does; the terminal knows no login
     // to name, so the plan says who asked by role.
     ...(cmd.securityRequest ? { securityRequest: { by: "", source: "operator" as const } } : {}),
+    // `--state-machines`, the same way for the state-machine family.
+    ...(cmd.stateRequest ? { stateRequest: { by: "", source: "operator" as const } } : {}),
     limits: {
       ...(deps.route !== undefined ? { route: deps.route } : {}),
       ...(cmd.limit !== undefined ? { limitUsd: cmd.limit } : {}),

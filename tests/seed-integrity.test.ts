@@ -111,6 +111,16 @@ const NON_SEEDED = [
   "agents/pass-sec-variant.md",
   "agents/pass-sec-exploit-chain.md",
   "prompts/pass-sec-common.md",
+  // The state-machine family and the contract every one of them includes.
+  "agents/pass-sm-states.md",
+  "agents/pass-sm-transitions.md",
+  "agents/pass-sm-exhaustive.md",
+  "agents/pass-sm-stuck.md",
+  "agents/pass-sm-events.md",
+  "agents/pass-sm-derived.md",
+  "agents/pass-sm-lifecycle.md",
+  "agents/pass-sm-durable.md",
+  "prompts/pass-sm-common.md",
   // Scan stage 1's lens, built only into the companion's scan build
   // (agents/scan/, never a PR round's).
   "agents/scan/pass-scan.md",

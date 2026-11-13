@@ -28,7 +28,7 @@
 import type { Verdict as VerdictType } from "./types.js";
 
 import { SEVERITIES } from "./severityrank.js";
-import { isSecurityLens, lensToken } from "./passes.js";
+import { isSecurityLens, isStateLens, lensToken } from "./passes.js";
 export { SEVERITIES };
 export type Severity = (typeof SEVERITIES)[number];
 
@@ -335,6 +335,24 @@ export function isSecurityFinding(kind?: string | null, lens?: string | null): b
     .toLowerCase()
     .split(/[+,/&;|]/)
     .some((part) => lensToken(part) === GENERAL_SECURITY_LENS);
+}
+
+// ---- state-machine findings ---------------------------------------------
+
+/** The `kind:` prefix that makes a finding a state-machine finding, whatever
+ * lens raised it (`state-machine:stuck`). */
+const STATE_KIND_RE = /^state-machine(?![a-z0-9])/;
+
+/**
+ * Is this a state-machine finding? Its lens field names a state-machine-family
+ * lens (`pass-sm-*`, joined fields read as `isStateLens` reads them), or its
+ * `kind` begins `state-machine`. What `[posting] scope = "state"` posts and
+ * what a scan under `[scan] kinds = ["state-machine"]` keeps. Its severity and
+ * tag are every finding's: there is no state-machine branch in `postTag`.
+ */
+export function isStateFinding(kind?: string | null, lens?: string | null): boolean {
+  if (STATE_KIND_RE.test((kind ?? "").trim().toLowerCase())) return true;
+  return isStateLens(lens ?? "");
 }
 
 /** What a security finding lets an attacker do: **A** acts on other users or

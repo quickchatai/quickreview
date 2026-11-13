@@ -186,6 +186,41 @@ export const LENS_PLANNING: Readonly<Record<string, LensPlanning>> = {
     priority: "risk",
     when: "one row per strategy: delta when a guard is removed, two or more family lenses are planned, the threat model is hit or a security review is requested; forward and backward on a request or a large server change under a threat model; compose after discovery when any family row ran",
   },
+  // The state-machine family (passes.ts STATE_FAMILY): each planned on its
+  // own triggers (statetriggers.ts) or on a request; addable otherwise. A
+  // weak trigger plans only under `[state_machines] triggers = "all"`.
+  "pass-sm-states": {
+    priority: "signal",
+    when: "two or more status flags are added side by side; or a status flag or a nullable marker field is added (weak)",
+  },
+  "pass-sm-transitions": {
+    priority: "signal",
+    when: "a check of the current state is removed; or a status, state, phase or stage is written, or the PR text speaks of a state machine or a transition (weak)",
+  },
+  "pass-sm-exhaustive": {
+    priority: "signal",
+    when: "a member is added to an existing enumeration or union of literals; or a dispatch over a state-like value is added or changed (weak)",
+  },
+  "pass-sm-stuck": {
+    priority: "signal",
+    when: "a transient state (loading, processing, locked, in progress) is entered and no added line of the file handles a failure after it; or any transient state is entered, or the PR text speaks of something stuck (weak)",
+  },
+  "pass-sm-events": {
+    priority: "signal",
+    when: "the PR text speaks of a duplicate, late, re-entrant or out-of-order event; or an event handler, listener or consumer is added or changed (weak)",
+  },
+  "pass-sm-derived": {
+    priority: "signal",
+    when: "an effect whose body only sets state is added; or a stored count, total, cache or last-value field is written (weak)",
+  },
+  "pass-sm-lifecycle": {
+    priority: "signal",
+    when: "a check of an object's lifecycle phase (initialized, closed, disposed, …) is removed; or a lifecycle method is added or changed (weak)",
+  },
+  "pass-sm-durable": {
+    priority: "signal",
+    when: "a migration or schema adds or changes a stored state; or a stored state is written (weak)",
+  },
   "pass-validate": {
     priority: "core",
     when: "every round, last, unless the profile switches it off",

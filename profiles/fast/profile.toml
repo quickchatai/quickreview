@@ -3,8 +3,8 @@
 #
 # Select it with `[review] profile = "fast"` AND `[review] preset = "low"` —
 # the preset lowers the main session's reasoning and every tier, which a
-# profile cannot reach; the `effort = "low"` lines below make the lenses that
-# are pinned high by default (and the validator) low even without the preset.
+# profile cannot reach; the `effort = "low"` lines below make every lens that
+# is pinned high by default (and the validator) low even without the preset.
 #
 # Everything the review posts is still judged exactly as `default` judges it —
 # the blocker bar, the reachability gate, red CI, NIT SCOPE and the
@@ -16,8 +16,9 @@ extends = "default"
 [posting]
 comment_style = "concise"
 
-# The lenses that read every changed line, pinned at deep by default
-# (DEFAULT_PASS_TIERS), and the validator: low thinking.
+# Every lens pinned at deep by default (DEFAULT_PASS_TIERS: the lenses that
+# read every changed line, and the state-machine family whenever a trigger,
+# a request or a profile plans one), and the validator: low thinking.
 [lenses.pass-baseline]
 effort = "low"
 
@@ -28,6 +29,30 @@ effort = "low"
 effort = "low"
 
 [lenses.pass-validate]
+effort = "low"
+
+[lenses.pass-sm-states]
+effort = "low"
+
+[lenses.pass-sm-transitions]
+effort = "low"
+
+[lenses.pass-sm-exhaustive]
+effort = "low"
+
+[lenses.pass-sm-stuck]
+effort = "low"
+
+[lenses.pass-sm-events]
+effort = "low"
+
+[lenses.pass-sm-derived]
+effort = "low"
+
+[lenses.pass-sm-lifecycle]
+effort = "low"
+
+[lenses.pass-sm-durable]
 effort = "low"
 
 # Off: the lenses that find true but non-bug issues (quality, style,

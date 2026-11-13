@@ -53,6 +53,7 @@ function config(over: Partial<LensRunConfig> = {}): LensRunConfig {
     cwd: dir,
     env: { PATH: process.env["PATH"], HOME: dir },
     bashGuard: createBashGuard({ sandboxRoot: dir, replay: false, secretDirs: [] }),
+    leafTools: () => [],
     ledgerPath: join(round(), "lens-ledger.jsonl"),
     sessionsDir: join(round(), LENS_SESSIONS_DIR),
     sessionGapMs: 0,

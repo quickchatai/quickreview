@@ -17,6 +17,7 @@ import {
   LENS_FAMILIES,
   SCAN_DEEP_LENSES,
   SECURITY_FAMILY,
+  STATE_FAMILY,
 } from "@quickchatai/pi-quickreview/src/passes.js";
 import {
   parseReviewCommand,
@@ -66,11 +67,14 @@ describe("the security family", () => {
     }
   });
 
-  it("sits in one block after the lint lens and before the validator", () => {
+  it("sits in one block after the lint lens and before the state-machine family", () => {
     const at = ALL_PASSES.indexOf(FAMILY[0]!);
     expect(ALL_PASSES[at - 1]).toBe("pass-lint-conformance");
     expect(ALL_PASSES.slice(at, at + FAMILY.length)).toEqual(FAMILY);
-    expect(ALL_PASSES[at + FAMILY.length]).toBe("pass-validate");
+    // The state-machine family follows it; the validator stays last
+    // (tests/state-family.test.ts).
+    expect(ALL_PASSES[at + FAMILY.length]).toBe(STATE_FAMILY[0]);
+    expect(ALL_PASSES.at(-1)).toBe("pass-validate");
   });
 
   // Membership is declared once: ALL_PASSES places the family by spreading

@@ -2,10 +2,12 @@
 // for a native `subagent` child process.
 //
 // What a pass is, by construction:
-//   - A leaf. It gets the tools its agent file lists, plus the bash-guard
-//     factory, and never a lens tool: the runner hands the host no customTools
-//     and refuses an agent file that names one (include.ts checks the same at
-//     build time). The runner cannot be asked to nest.
+//   - A leaf. It gets the tools its agent file lists, the bash-guard factory
+//     and the leaf tools of its family (config.leafTools: `state_explore` for
+//     a state-machine family variant whose allowlist names it, nothing for any
+//     other lens), and never a lens tool: the runner hands the host no
+//     customTools and refuses an agent file that names one (include.ts checks
+//     the same at build time). The runner cannot be asked to nest.
 //   - Capped. A Permits port bounds the passes in flight: one WeightedSemaphore
 //     per PiHost on a one-shot route, the daemon's central broker in a bot worker
 //    . A pass holds its permit from before its session exists until the
@@ -18,7 +20,8 @@
 //     context files ride as data; the pass reads the same bytes a native child
 //     reads (tests/lens-prompt-parity.test.ts).
 //   - Cache-grouped, when asked (config.cache). The passes of one group, per
-//     model, share ONE session id, which is what routes their requests to one
+//     model and tool list (cacheGroupKey: the request's `tools` field is part
+//     of the cached prefix), share ONE session id, which is what routes their requests to one
 //     provider cache. Disposing a session closes the transports held for its id,
 //     so a grouped session is kept until the group's last pass is done and the
 //     group is disposed together (cache-run.ts): one pass finishing never ends
@@ -38,9 +41,10 @@
 //     retried once on a FRESH session; a second timeout answers timedOut.
 //   - On the host's route, unless its agent names a model. An agent file with
 //     no `model:` (an unpinned tier's) runs on the model the host resolved for
-//     the run (PiHost.route): asked once per runner, that model's spec is the
-//     pass's cache group and the model it reports, and the session is made with
-//     no model of its own. A host with no route fails the pass with the reason.
+//     the run (PiHost.route): asked once per runner, that model's spec keys the
+//     pass's cache group (with its tools) and is the model it reports, and the
+//     session is made with no model of its own. A host with no route fails the
+//     pass with the reason.
 //   - Never fatal. runLens does not reject. A host that cannot build the
 //     session, an extension that throws, a provider that fails, a caller's
 //     abort: each is a failed LensResult, with the spend so far in its usage,
@@ -76,6 +80,7 @@ import type { AgentsFile } from "../port.js";
 import {
   CacheGroups,
   WARMUP_REPLY_TASK,
+  cacheGroupKey,
   WARMUP_WAIT_MS,
   delay,
   settledWithin,
@@ -103,7 +108,7 @@ export interface LensProgressSink {
 
 /** Lens cache groups. */
 export interface LensCacheConfig {
-  /** Passes per group, per model; below 1 there are no groups. */
+  /** Passes per group, per model and tool list; below 1 there are no groups. */
   size: number;
   /** How long the later passes of a group that is not packed start after its first. */
   staggerMs: number;
@@ -137,6 +142,12 @@ export interface LensRunConfig {
   /** The bash-guard factory, attached to every pass. Required: there is no
    * lens without it. */
   bashGuard: ExtensionFactory;
+  /** The extension factories that give `agent`'s session its leaf tools,
+   * attached after the bash guard to the agent's passes and to a warm-up its
+   * pass starts. Required, as the guard is, so a route that forgets it does
+   * not typecheck; a route with none says `() => []`. Each call returns fresh
+   * factories: a tool's per-session state is never shared between passes. */
+  leafTools: (agent: LensAgent) => ExtensionFactory[];
   /** Append-only `lens-ledger.jsonl`; one line per pass. */
   ledgerPath: string;
   /** context files. Omitted: the host's. */
@@ -432,7 +443,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     }
   };
 
-  /** Whether the groups of a model are packed, by the spec that names their
+  /** Whether the groups of a model are packed, by the spec that keys their
    * group: asked once per model of the run, so every pass of a group, and
    * every group of a model, takes one path. */
   const packedSpecs = new Map<string, Promise<boolean>>();
@@ -563,7 +574,10 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     // group stay one step: a group's first pass has started the warm-up
     // before any other pass of the group looks for it.
     const pack = groups !== undefined ? await packFor(on) : undefined;
-    const lease = groups !== undefined ? groups.join(on.spec, now()) : undefined;
+    // Keyed by tool list too: a warm-up warms the prefix of its first pass's
+    // tools, and the request's `tools` field is part of that prefix.
+    const lease =
+      groups !== undefined ? groups.join(cacheGroupKey(on.spec, agent.tools), now()) : undefined;
     try {
       return await executeIn(id, agent, request, on, lease, pack);
     } finally {
@@ -616,6 +630,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       session = await config.host.makeSession({
         ...baseSpec(agent, on, [
           config.bashGuard,
+          ...config.leafTools(agent),
           leafCache({ pack, cacheKey: lease.key, onUnexpected: () => (unexpected = true) }),
         ]),
         sessionId: lease.key,
@@ -768,6 +783,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         const spec: HostSessionSpec = {
           ...baseSpec(agent, on, [
             config.bashGuard,
+            ...config.leafTools(agent),
             // The rewrite hook is a packed group's alone.
             ...(lease !== undefined && pack !== undefined
               ? [

@@ -124,7 +124,7 @@ qcr_locate_config() { # qcr_locate_config [checkout-root]
 }
 
 # The generic profiles the checkout ships — the only ones read from there.
-QCR_EXAMPLE_PROFILES=(default example-django minimal snappy fast security)
+QCR_EXAMPLE_PROFILES=(default example-django minimal snappy fast security state-machines)
 
 qcr_is_example_profile() { # qcr_is_example_profile <name>
   local p

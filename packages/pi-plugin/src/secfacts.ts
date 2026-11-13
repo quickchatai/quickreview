@@ -121,19 +121,19 @@ function isTest(path: string): boolean {
   return TEST_RE.test(path);
 }
 
-interface DiffLine {
+export interface DiffLine {
   kind: "+" | "-" | " ";
   text: string;
   /** The head line for "+" and " ", the base line for "-". */
   line: number;
 }
-interface Hunk {
+export interface Hunk {
   /** The text after the `@@ … @@` header (git's enclosing-scope hint). */
   scope: string;
   lines: DiffLine[];
 }
 
-function parsePatch(patch: string): Hunk[] {
+export function parsePatch(patch: string): Hunk[] {
   const hunks: Hunk[] = [];
   let cur: Hunk | null = null;
   let oldN = 0;
@@ -573,7 +573,7 @@ const UNIQUE_CHECKS: readonly { shape: string; re: RegExp; needsCreate: boolean 
 const CREATE_RE = /\b(?:create|insert|save|add)\w*\s*\(|\bnew\s+[A-Z]\w*\(/i;
 const KEY_COLUMNS = new Set(["id", "pk", "uuid", "where"]);
 
-const SCHEMA_PATH_RE =
+export const SCHEMA_PATH_RE =
   /(?:^|\/)(?:migrations?|migrate|alembic|db|database|schemas?|models?|entities|entity|prisma)(?:\/|\.[A-Za-z]+$)|\.sql$|\.prisma$/i;
 const SCHEMA_EXT_RE = /\.(?:py|rb|ts|js|mjs|cjs|go|java|kt|cs|php|ex|exs|scala|sql|prisma)$/;
 

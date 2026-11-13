@@ -186,8 +186,10 @@ export type Command =
   | { command: "archive-restore"; pr: number }
   /** The operator's "review this PR now" (`OPERATOR_COMMANDS`): never valid
    * in a session's file. `security: true` also asks for a security review
-   * (src/securityrequest.ts): every round of the PR plans the security family. */
-  | { command: "review-now"; pr: number; security?: true }
+   * (src/securityrequest.ts): every round of the PR plans the security family.
+   * `state_machines: true` asks for a state-machine review the same way
+   * (src/staterequest.ts). */
+  | { command: "review-now"; pr: number; security?: true; state_machines?: true }
   /** The operator's round controls (`CONTROL_COMMANDS`): never valid in a
    * session's file. */
   | { command: "steer"; pr: number; text: string }
@@ -277,7 +279,7 @@ export interface CommandDeps {
   reviewNow?(
     pr: number,
     file: string,
-    opts?: { security?: boolean },
+    opts?: { security?: boolean; stateMachines?: boolean },
   ): Promise<FileOutcome | void> | FileOutcome | void;
   /** The operator's round controls (`CONTROL_COMMANDS`), forwarded to the PR's
    * host. Reached only for an operator-issued command; optional like `drain`,
@@ -626,15 +628,23 @@ function validateOperatorCommand(
       return { ok: true, command: { command: "archive-restore", pr: obj["pr"] } };
     }
     case "review-now": {
-      const err = fieldError(obj, ["pr", "security"]);
+      const err = fieldError(obj, ["pr", "security", "state_machines"]);
       if (err) return { ok: false, reason: err };
       if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
       const security = obj["security"];
       if (security !== undefined && typeof security !== "boolean")
         return { ok: false, reason: "'security' must be a boolean" };
+      const stateMachines = obj["state_machines"];
+      if (stateMachines !== undefined && typeof stateMachines !== "boolean")
+        return { ok: false, reason: "'state_machines' must be a boolean" };
       return {
         ok: true,
-        command: { command: "review-now", pr: obj["pr"], ...(security ? { security: true } : {}) },
+        command: {
+          command: "review-now",
+          pr: obj["pr"],
+          ...(security ? { security: true } : {}),
+          ...(stateMachines ? { state_machines: true } : {}),
+        },
       };
     }
     case "steer":
@@ -1008,11 +1018,10 @@ export async function executeCommand(
         };
       if (!deps.reviewNow) return { ok: false, reason: "review-now is not wired on this daemon" };
       return normalize(
-        await deps.reviewNow(
-          command.pr,
-          ctx.delivery_key ?? ctx.file,
-          command.security ? { security: true } : {},
-        ),
+        await deps.reviewNow(command.pr, ctx.delivery_key ?? ctx.file, {
+          ...(command.security ? { security: true } : {}),
+          ...(command.state_machines ? { stateMachines: true } : {}),
+        }),
       );
     }
     case "steer":

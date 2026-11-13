@@ -16,6 +16,7 @@
 //   comment_style = "concise" # full (default) | concise (one claim, ≤3 sentences)
 //   security_max = 8          # security findings' own slots; 0 = none (default)
 //   scope = "security"        # all (default) | security (only security findings post)
+//                             # | state (only state-machine findings post)
 //
 // Inherited through `extends` like every scalar (per key, the nearest profile
 // that sets it wins — packages/pi-plugin/src/profiles.ts `loadProfilePosting`) and overlaid on the
@@ -52,6 +53,10 @@
 // the round prompt alone, and a partial chain it posts is counted after the
 // fact (findingsrecord.ts `security_outcome_mismatch`).
 //
+// `scope = "state"` is the same rule for the state-machine family: every
+// finding that is not a state-machine finding (severity.ts `isStateFinding`)
+// is withheld (`state-scope`), a blocker included.
+//
 // The security keys. `scope = "security"` withholds every non-security
 // finding (`security-scope`), a blocker included. `security_max = N` (> 0) gives security
 // findings (severity.ts `isSecurityFinding`) a channel of their own: they
@@ -69,7 +74,7 @@ export type NitsPolicy = "post" | "off";
 export type QuestionsPolicy = "post" | "blocking" | "off";
 export type BodyPolicy = "full" | "verdict";
 export type CommentStyle = "full" | "concise";
-export type PostingScope = "all" | "security";
+export type PostingScope = "all" | "security" | "state";
 
 export interface PostingPolicy {
   /** Findings posted per round (inline + body together, one root cause
@@ -138,9 +143,14 @@ const BASE_WITHHOLD_WORDS = [
 ] as const;
 
 /** The words a withheld finding carries in the findings record: the base
- * five, `security-scope` (a non-security finding under `scope =
+ * five, `state-scope` (the same for `scope = "state"`), `security-scope` (a non-security finding under `scope =
  * "security"`) and `partial-chain` (a partial exploit chain, never posted). */
-export const WITHHOLD_WORDS = [...BASE_WITHHOLD_WORDS, "security-scope", "partial-chain"] as const;
+export const WITHHOLD_WORDS = [
+  ...BASE_WITHHOLD_WORDS,
+  "security-scope",
+  "state-scope",
+  "partial-chain",
+] as const;
 export type WithholdWord = (typeof WITHHOLD_WORDS)[number];
 
 /** The withhold words the validator may write under a policy: the base five,
@@ -148,10 +158,15 @@ export type WithholdWord = (typeof WITHHOLD_WORDS)[number];
  * `partial-chain` is the validator's DOUBTED word, never a withhold it
  * chooses, so it is never listed. */
 export function withholdWordsFor(p: PostingPolicy): readonly WithholdWord[] {
-  return postingScope(p) === "security"
-    ? [...BASE_WITHHOLD_WORDS, "security-scope"]
-    : BASE_WITHHOLD_WORDS;
+  const scope = postingScope(p);
+  return scope === "all" ? BASE_WITHHOLD_WORDS : [...BASE_WITHHOLD_WORDS, SCOPE_WORD[scope]];
 }
+
+/** The word a finding outside a one-family scope is withheld with. */
+const SCOPE_WORD: Record<Exclude<PostingScope, "all">, "security-scope" | "state-scope"> = {
+  security: "security-scope",
+  state: "state-scope",
+};
 
 /** Ids the compiled posting addenda take — a profile pack may not claim them. */
 export const POSTING_ADDENDUM_IDS = ["posting-policy-validate"] as const;
@@ -226,7 +241,7 @@ export function parsePostingTable(where: string, raw: unknown): Partial<PostingP
         out.security_max = value;
         break;
       case "scope":
-        out.scope = oneOf(at, key, value, ["all", "security"] as const);
+        out.scope = oneOf(at, key, value, ["all", "security", "state"] as const);
         break;
       default:
         throw new Error(`${at} unknown key "${key}" — allowed: ${POSTING_KEYS.join(", ")}`);
@@ -310,6 +325,10 @@ function policyLines(p: PostingPolicy, who: "session" | "validator"): string[] {
     L.push(
       `- **Security findings only.** Only a security finding posts — one raised by a \`pass-sec-*\` lens or \`pass-security\`, or whose \`kind:\` begins \`security\` or \`exploit-chain\`. Every other survivor is recorded \`withheld\` (word \`security-scope\`), a \`[blocker]\` included: this review posts nothing that is not a security finding. A survivor that is a security defect although its lens says nothing of security is recorded with a \`kind:\` of \`security\` (or \`security:<class>\`), so it posts.`,
     );
+  if (postingScope(p) === "state")
+    L.push(
+      `- **State-machine findings only.** Only a state-machine finding posts — one raised by a \`pass-sm-*\` lens, or whose \`kind:\` begins \`state-machine\`. Every other survivor is recorded \`withheld\` (word \`state-scope\`), a \`[blocker]\` included: this review posts nothing that is not a state-machine finding. A survivor that is a state-machine defect although its lens is not a \`pass-sm-*\` lens is recorded with a \`kind:\` of \`state-machine\` (or \`state-machine:<class>\`), so it posts.`,
+    );
   const securityMax = postingSecurityMax(p);
   if (securityMax > 0)
     L.push(
@@ -368,7 +387,11 @@ export function postingPolicyAddenda(p: PostingPolicy | undefined): PassAddendum
       .join(
         ", ",
       )}): the session records each one in the findings record as \`withheld\` — never posted, never deleted. Withholding is not a kill: do not move a withheld finding's severity or confidence, and never withhold a \`[blocker]\`${
-      postingScope(p) === "security" ? " but a non-security one (word `security-scope`)" : ""
+      postingScope(p) === "security"
+        ? " but a non-security one (word `security-scope`)"
+        : postingScope(p) === "state"
+          ? " but one that is not a state-machine finding (word `state-scope`)"
+          : ""
     }.`,
     ...(p.comment_style === "concise"
       ? [
@@ -403,6 +426,9 @@ export interface PolicyView {
   /** Is it a security finding (severity.ts `isSecurityFinding`)? Absent =
    * no: it posts under `scope = "all"` and shares the one budget. */
   security?: boolean;
+  /** Is it a state-machine finding (severity.ts `isStateFinding`)? Absent =
+   * no: under `scope = "state"` it is withheld. */
+  stateMachine?: boolean;
   /** Is it a partial exploit chain (secevidence.ts `isPartialChain`)? One is
    * never posted, under any policy. */
   partialChain?: boolean;
@@ -432,7 +458,8 @@ export interface Selection<T> {
  *   0. a partial exploit chain is withheld (`partial-chain`) under ANY policy,
  *      the default included — the one rule that runs with no policy;
  *   1. scope and tag rules — `scope = security` (`security-scope`, a
- *      non-security blocker included), `nits = off`,
+ *      non-security blocker included), `scope = state` (`state-scope`, the
+ *      same for the state-machine family), `nits = off`,
  *      `questions = off | blocking` (a question of unknown severity is kept:
  *      it cannot be shown non-blocking; a security item is exempt from both
  *      question rules while `security_max > 0`);
@@ -447,7 +474,7 @@ export interface Selection<T> {
  *      the security items are budgeted the same way in a channel of their
  *      own, `security_max` slots, and never count toward `max_comments`.
  * A blocker is never withheld by any rule but a repeat site of itself, being
- * out of a security scope — or being a partial chain, which is a doubt and
+ * out of a security or state-machine scope — or being a partial chain, which is a doubt and
  * not a survivor at all.
  */
 export function selectPosted<T>(
@@ -470,6 +497,10 @@ export function selectPosted<T>(
     const { item, v } = e;
     if (postingScope(p) === "security" && v.security !== true) {
       withheld.push({ item, word: "security-scope" });
+      continue;
+    }
+    if (postingScope(p) === "state" && v.stateMachine !== true) {
+      withheld.push({ item, word: "state-scope" });
       continue;
     }
     if (v.cls === "nit" && p.nits === "off") {

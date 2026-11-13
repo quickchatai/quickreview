@@ -92,7 +92,19 @@ export class CacheLease {
   }
 }
 
-/** Per model, cache groups of `size`; each live group's lifetime. */
+/**
+ * The key a pass's cache group is shared under: its model spec and its tool
+ * allowlist, in order. Two passes on one model whose sessions hold different
+ * tools send different `tools` fields, which are part of the cached prefix
+ * (leaf-cache.ts), so they share no prefix; a group that mixed them would
+ * warm the prefix of whichever pass came first. Undefined tools (no allowlist)
+ * is its own key, never the same as an empty list.
+ */
+export function cacheGroupKey(spec: string, tools: readonly string[] | undefined): string {
+  return `${spec}\u0000${tools === undefined ? "\u0000*" : tools.join(",")}`;
+}
+
+/** Per group key (cacheGroupKey), cache groups of `size`; each live group's lifetime. */
 export class CacheGroups {
   private readonly grouper: CacheGrouper;
   private readonly lives = new Map<string, Lifetime>();
@@ -108,9 +120,9 @@ export class CacheGroups {
     this.grouper = new CacheGrouper(size, staggerMs, newKey);
   }
 
-  /** Join the group for `model`'s next lens. */
-  join(model: string, nowMs: number): CacheLease {
-    const slot: CacheSlot = this.grouper.next(nowMs, model);
+  /** Join the group for `key`'s next lens (cacheGroupKey: model spec and tool list). */
+  join(key: string, nowMs: number): CacheLease {
+    const slot: CacheSlot = this.grouper.next(nowMs, key);
     let life = this.lives.get(slot.key);
     if (life === undefined) {
       life = new Lifetime();

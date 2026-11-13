@@ -1113,7 +1113,8 @@ CREATE TABLE IF NOT EXISTS trigger_edges (
   PRIMARY KEY (pr, kind)
 );
 -- A maintainer's or the operator's request for a kind of review (a PR
--- label, an @<bot> security comment, qcr review-now --security): every
+-- label, an @<bot> security comment, qcr review-now --security — or the
+-- state-machine request's label, comment and flag, kind state-machines): every
 -- round of the PR plans that review while the row stands. served_at is
 -- when the request reached the queue (new evidence noted at the reviewed
 -- head, the PR triggered); NULL while a running round settles first. The

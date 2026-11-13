@@ -129,7 +129,7 @@ import type { RoundSpec } from "./engine/round.js";
 import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
 import { AuthError, AuthExpiring } from "./engine/auth.js";
 import type { Runtime } from "./engine/port.js";
-import type { SecurityRequest } from "./types.js";
+import type { SecurityRequest, StateRequest } from "./types.js";
 import { computeSecurityFacts, SECURITY_TRIGGER_CHECKS, type SecurityFact } from "./secfacts.js";
 import { localGitFactsIo, workTreeFactsIo } from "./secfactsgit.js";
 import { SECURITY_FAMILY } from "./passes.js";
@@ -279,6 +279,11 @@ export interface ReviewOptions {
    * A run with a request reviews the whole target, as `full` does: an earlier
    * review's state is neither shortcut nor delta base for it. */
   securityRequest?: SecurityRequest;
+  /** A state-machine review asked for on this run (`/qcr-review
+   * --state-machines`): the whole state-machine family is planned, never a
+   * lens the profile switched off. Like a security request, it reviews the
+   * whole target. */
+  stateRequest?: StateRequest;
   /** Builds the runtime that hosts one run's review session. Called once per
    * run, when the round is about to start (a preview, a refusal or an
    * unchanged head builds none), and the runtime is disposed when the run
@@ -847,7 +852,11 @@ async function runPipeline(
       : (openReviewStoreIn(opts.storeDir, repoDir)?.statePath(targetKey) ?? null);
   const postsToPr = prInfo !== null && sends("pr");
   const prev =
-    opts.full || opts.securityRequest !== undefined || !keepsState || postsToPr
+    opts.full ||
+    opts.securityRequest !== undefined ||
+    opts.stateRequest !== undefined ||
+    !keepsState ||
+    postsToPr
       ? null
       : loadState(statePath, targetKey);
   const short = (sha: string): string => sha.slice(0, 7);
@@ -1018,6 +1027,7 @@ async function runPipeline(
       ...profileArgs,
       ...securityArgs,
       ...(opts.securityRequest ? { securityRequest: opts.securityRequest } : {}),
+      ...(opts.stateRequest ? { stateRequest: opts.stateRequest } : {}),
     };
     let why = fallback;
     if (prev !== null && delta !== null) {

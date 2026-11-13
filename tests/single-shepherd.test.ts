@@ -548,8 +548,9 @@ describe("buildAgents — built passes cannot launch agents", () => {
   });
 
   // Leaves hold no memory tool: no route's lens leaf loads the memory
-  // extension (LENS_LEAVES_LOAD_MEMORY; runlens gives a leaf the bash guard and
-  // the leaf cache only), so an allowlisted `viking_*` name would grant nothing
+  // extension (LENS_LEAVES_LOAD_MEMORY; runlens gives a leaf the bash guard,
+  // its family's leaf tools — state_explore for the state-machine family —
+  // and the leaf cache only), so an allowlisted `viking_*` name would grant nothing
   // and its rule would describe a tool the pass never has. A build that says its
   // leaves have memory gets exactly the two read-only tools — never a write.
   it("gives a leaf no memory tool by default, and never a way to author anything", () => {

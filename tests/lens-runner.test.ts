@@ -16,6 +16,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
+import { stateLeafTools } from "@quickchatai/pi-quickreview/extensions/lens.js";
 import {
   createLensRunner,
   lensSemaphoreFor,
@@ -96,6 +97,9 @@ function config(over: Partial<LensRunConfig> = {}): LensRunConfig {
     cwd: dir,
     env: { PATH: process.env["PATH"], HOME: dir },
     bashGuard: guard(),
+    // The production gate (lensRunConfigFromEnv's): a state-machine family
+    // variant whose line names state_explore holds it, no other lens does.
+    leafTools: stateLeafTools(dir, process.env["PATH"] ?? ""),
     ledgerPath: join(dir, "round", "lens-ledger.jsonl"),
     ...over,
   };
@@ -768,9 +772,13 @@ describe("[runLens] a throwing extension is contained", () => {
 // allowlisted name nothing registers — so a name the leaf never has (a memory
 // tool with no memory extension, a `glob` pi has no tool for) costs nothing at
 // runtime and says something false. The truth is what the runner's session
-// holds: it loads the bash guard and the leaf cache, never the memory
-// extension (LENS_LEAVES_LOAD_MEMORY), so every name a default build of the
-// real agents/ puts on a tools line must be a tool its session carries.
+// holds: it loads the bash guard, its family's leaf tools (config.leafTools:
+// state_explore on the state-machine family's lines, applyStateTools) and the
+// leaf cache, never the memory extension (LENS_LEAVES_LOAD_MEMORY), so every
+// name a default build of the real agents/ puts on a tools line must be a tool
+// its session carries.
+// MUTATION: return [] from stateLeafTools in extensions/lens.ts — the
+// pass-sm-* lines name state_explore and their sessions lack it; this fails.
 describe("[runLens] a built lens names only tools its leaf holds", () => {
   it(
     "every name on a default-built agent's tools line is a tool its session has; no memory tool",
@@ -840,5 +848,43 @@ describe("[canary] every lens session carries bash-guard", () => {
     // @ts-expect-error a LensRunConfig without bashGuard does not typecheck
     const bad: LensRunConfig = { ...config(), bashGuard: undefined };
     expect(bad.bashGuard).toBeUndefined();
+  });
+});
+
+describe("[canary] every lens session carries its agent's leaf tools", () => {
+  // MUTATION: drop `...config.leafTools(agent)` from the pass's extensions in
+  // attemptsOf (runlens.ts) — no spec carries the marked factory; this fails.
+  // (The warm-up's half is tests/lens-cache.test.ts, on a packed group.)
+  it("in every session the runner makes for an agent, after the guard; asked once per session", async () => {
+    const leaf: ExtensionFactory = () => {};
+    const asked: string[] = [];
+    const leafTools = (agent: { name: string }): ExtensionFactory[] => {
+      asked.push(agent.name);
+      return [leaf];
+    };
+    rig.faux.setResponses(Array.from({ length: 6 }, () => () => fauxAssistantMessage("fine")));
+    const runner = createLensRunner(
+      config({ leafTools, cache: { size: 2, staggerMs: 0, pack: "PACK" } }),
+    );
+    await runner.run({ agent: "pass-a", task: "go" });
+    await runner.run({ agent: "pass-a", task: "again" });
+    const plain = createLensRunner(config({ leafTools }));
+    await plain.run({ agent: "pass-a", task: "plain" });
+    const made = vi.mocked(rig.host.makeSession).mock.calls.map(([spec]) => spec);
+    // the plain pass, two cached passes and the warm-up
+    expect(made.length).toBeGreaterThanOrEqual(3);
+    // After the guard, never before it: the guard stays first.
+    for (const spec of made)
+      expect(spec.extensions?.slice(0, 2)).toEqual([expect.any(Function), leaf]);
+    expect(new Set(asked)).toEqual(new Set(["pass-a"]));
+    expect(asked.length).toBe(made.length);
+  });
+
+  // MUTATION: make `leafTools` optional on LensRunConfig (runlens.ts) — the
+  // expect-error directive below goes unused and tsconfig.tests.json fails.
+  it("the runner config has no way to leave them out: leafTools is required", () => {
+    // @ts-expect-error a LensRunConfig without leafTools does not typecheck
+    const bad: LensRunConfig = { ...config(), leafTools: undefined };
+    expect(bad.leafTools).toBeUndefined();
   });
 });

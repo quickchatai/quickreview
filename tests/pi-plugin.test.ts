@@ -407,7 +407,7 @@ describe("/qcr-review's arguments", () => {
   // preset first and then the target. MUTATION: read the preset from any
   // position — "12 quick" stops failing.
   it("a preset is the first word when it names one, in front of any target", () => {
-    expect(REVIEW_PRESET_NAMES).toEqual(["quick", "full", "security"]);
+    expect(REVIEW_PRESET_NAMES).toEqual(["quick", "full", "security", "state-machines"]);
     expect(parseReviewCommand("quick")).toMatchObject({
       preset: "quick",
       target: { kind: "branch", uncommitted: true },

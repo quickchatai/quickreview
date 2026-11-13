@@ -263,8 +263,20 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 // The default profile's built agents with `[review] dedup_merge = false` and no
 // posting policy. These hashes move only when an agent body, an addendum or the
 // agent build changes on purpose; `[posting]` must never move them.
-const GOLDEN_AGENTS_NO_DEDUP = "edb68acb315f800ea04bf91fba849eed70e5f59d947f9ec70184ad3abc59f049";
+//
+// The state-machine family moved these two: the eight `pass-sm-*` lenses
+// join the build (their shared contract, their own-lens addendum, the deep
+// spec of the shipped pin and `state_explore` on their tools lines), and the
+// validator gains its two state rules, `validate-state-evidence` and
+// `validate-state-keep`. All of it is agent text or an agent's frontmatter,
+// and none of it is `[posting]`. A round with no state-machine signal, as
+// this fixture's is, plans and is offered none of the family, so no order
+// moves for it.
+// MUTATION: delete a sentence of prompts/pass-sm-common.md, or the
+// `validate-state-keep` entry of PASS_ADDENDA (include.ts) — both "built
+// agents" cases fail, and no "rendered round orders" case does.
+const GOLDEN_AGENTS_NO_DEDUP = "b3616b9dc81b176a6d6103c4788a489c3fe71ed73ff4961ab359434828c608fe";
 // The default build: as GOLDEN_AGENTS_NO_DEDUP plus `dedup-group-validate`
 // (pass-validate, `[review] dedup_merge` on by default) and the default
 // profile's posting addendum for `repeat_sites = false`.
-const GOLDEN_AGENTS = "b4443fb79bca314e1bcadadb24571ab527f340c8b4b08ce22986131a6c931487";
+const GOLDEN_AGENTS = "352c0390d941fc4b31676a0de5654e491d685f2a72151d6b04de09f30726cf62";

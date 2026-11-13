@@ -25,6 +25,7 @@ import {
   CHECK_THIS_TAG,
   DEFERRED_TAG,
   isSecurityFinding,
+  isStateFinding,
   ordinaryPostTag,
   SANCTIONED_TAGS,
   type SanctionedTagWord,
@@ -504,6 +505,11 @@ export function securityEntry(entry: Record<string, unknown>): boolean {
   return isSecurityFinding(str(entry.kind), str(entry.lens) ?? str(entry.name));
 }
 
+/** Is a record entry a state-machine finding (severity.ts `isStateFinding`)? */
+export function stateEntry(entry: Record<string, unknown>): boolean {
+  return isStateFinding(str(entry.kind), str(entry.lens) ?? str(entry.name));
+}
+
 /** Is a record entry a partial exploit chain (secevidence.ts)? */
 export function partialChainEntry(entry: Record<string, unknown>): boolean {
   return isPartialChain({
@@ -672,6 +678,7 @@ export function applyPostingPolicyToRecord(
         severity: str(e.severity),
         key: keys.get(e)!,
         security: securityEntry(e),
+        stateMachine: stateEntry(e),
         partialChain: partialChainEntry(e),
       };
     },

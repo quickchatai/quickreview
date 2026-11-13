@@ -111,6 +111,8 @@ export function renderDeltaRound(i: {
   memory?: FollowUpOneShotArgs["memory"];
   /** A security review asked for on this run (`/qcr-review --security`). */
   securityRequest?: FollowUpOneShotArgs["securityRequest"];
+  /** A state-machine review asked for on this run. */
+  stateRequest?: FollowUpOneShotArgs["stateRequest"];
   /** The repository's threat model at the base commit (it wins over the
    * profile's copy). */
   readRepoThreatModel?: FollowUpOneShotArgs["readRepoThreatModel"];
@@ -136,6 +138,7 @@ export function renderDeltaRound(i: {
     ...(i.profileLookup ? { profileLookup: i.profileLookup } : {}),
     ...(i.memory ? { memory: i.memory } : {}),
     ...(i.securityRequest ? { securityRequest: i.securityRequest } : {}),
+    ...(i.stateRequest ? { stateRequest: i.stateRequest } : {}),
     ...(i.readRepoThreatModel ? { readRepoThreatModel: i.readRepoThreatModel } : {}),
     ...(i.securityFacts ? { securityFacts: i.securityFacts } : {}),
     ...(i.securityInventory ? { securityInventory: i.securityInventory } : {}),

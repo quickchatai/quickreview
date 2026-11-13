@@ -51,6 +51,30 @@ import type { RoundFindingRow } from "@quickchatai/pi-quickreview/src/storerows.
 /** The `pr_review_requests` kind a security request is recorded under. */
 export const SECURITY_REQUEST_KIND = "security";
 
+/**
+ * One kind of on-demand review: the row kind it is recorded under, the word
+ * its comment command takes (`@<bot> <word>`), and how its acknowledgement
+ * reads. Every function below serves the security kind unless it is handed
+ * another (src/staterequest.ts hands the state-machine one), so two kinds of
+ * request live side by side on one PR, each with its own row, label and
+ * serving.
+ */
+export interface ReviewRequestKind {
+  /** The `pr_review_requests.kind` value. */
+  kind: string;
+  /** The command word, as a regex source (`security`, `state[- ]machines?`). */
+  commandWord: string;
+  /** The command as a person reads it, for the event log. */
+  commandName: string;
+  /** The config key that switches the command off, for the event log. */
+  commandKey: string;
+  /** The hidden marker on the acknowledgement. */
+  ackMarker: string;
+  /** The acknowledgement's sentence, before the asker and the marker. */
+  ackTitle: string;
+  ackBody: string;
+}
+
 /** The `author_association` values whose `@<bot> security` is accepted. */
 export const SECURITY_REQUEST_ASSOCIATIONS: ReadonlySet<string> = new Set([
   "OWNER",
@@ -61,6 +85,17 @@ export const SECURITY_REQUEST_ASSOCIATIONS: ReadonlySet<string> = new Set([
 /** The hidden marker on the acknowledgement, so it reads as the reviewer's
  * own content (packages/pi-plugin/src/identity.ts) on every route. */
 export const SECURITY_ACK_MARKER = "<!-- qcr-security-request -->";
+
+/** The security request, as a `ReviewRequestKind`. */
+export const SECURITY_REQUEST: ReviewRequestKind = {
+  kind: SECURITY_REQUEST_KIND,
+  commandWord: "security",
+  commandName: "security",
+  commandKey: "[security] command",
+  ackMarker: SECURITY_ACK_MARKER,
+  ackTitle: "Security review requested",
+  ackBody: "The next review round of this pull request runs the security lenses.",
+};
 
 // ---- the comment grammar ---------------------------------------------------
 
@@ -74,12 +109,19 @@ function escapeRegExp(s: string): string {
  * `<bot>` is the bot login without its `[bot]` suffix. Anything after the
  * first line is free text. False for an empty login.
  */
-export function isSecurityCommand(body: unknown, botLogin: string): boolean {
+export function isSecurityCommand(
+  body: unknown,
+  botLogin: string,
+  k: ReviewRequestKind = SECURITY_REQUEST,
+): boolean {
   if (typeof body !== "string") return false;
   const mention = botLogin.replace(/\[bot\]$/i, "").trim();
   if (mention === "") return false;
   const first = (body.replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0] ?? "").trim();
-  return new RegExp(`^@${escapeRegExp(mention)}\\s+security(?:\\s+review)?\\s*$`, "i").test(first);
+  return new RegExp(
+    `^@${escapeRegExp(mention)}\\s+(?:${k.commandWord})(?:\\s+review)?\\s*$`,
+    "i",
+  ).test(first);
 }
 
 /**
@@ -92,15 +134,17 @@ export function isSecurityCommand(body: unknown, botLogin: string): boolean {
 export function securityCommandDecision(
   comment: { body: unknown; author_association?: unknown },
   opts: { botLogin: string; command: boolean },
+  k: ReviewRequestKind = SECURITY_REQUEST,
 ): null | { ok: true } | { ok: false; reason: string } {
-  if (!isSecurityCommand(comment.body, opts.botLogin)) return null;
-  if (!opts.command) return { ok: false, reason: "security command is off ([security] command)" };
+  if (!isSecurityCommand(comment.body, opts.botLogin, k)) return null;
+  if (!opts.command)
+    return { ok: false, reason: `${k.commandName} command is off (${k.commandKey})` };
   const association =
     typeof comment.author_association === "string" ? comment.author_association : "";
   if (!SECURITY_REQUEST_ASSOCIATIONS.has(association))
     return {
       ok: false,
-      reason: `security command from a non-collaborator (author_association ${association || "unknown"})`,
+      reason: `${k.commandName} command from a non-collaborator (author_association ${association || "unknown"})`,
     };
   return { ok: true };
 }
@@ -134,10 +178,11 @@ export function staleSecurityCommand(
     isOwn: (user: string, body: string) => boolean;
     trackedAt?: string;
   },
+  k: ReviewRequestKind = SECURITY_REQUEST,
 ): "acknowledged" | "predates-tracking" | null {
   if (
     ctx.comments.some(
-      (d) => d.id > c.id && d.body.includes(SECURITY_ACK_MARKER) && ctx.isOwn(d.user, d.body),
+      (d) => d.id > c.id && d.body.includes(k.ackMarker) && ctx.isOwn(d.user, d.body),
     )
   )
     return "acknowledged";
@@ -151,9 +196,9 @@ export function staleSecurityCommand(
 }
 
 /** The acknowledgement of a fresh comment request. */
-export function securityAckBody(by: string): string {
+export function securityAckBody(by: string, k: ReviewRequestKind = SECURITY_REQUEST): string {
   const who = by ? ` (asked by @${by})` : "";
-  return `Security review requested${who}. The next review round of this pull request runs the security lenses.\n\n${SECURITY_ACK_MARKER}`;
+  return `${k.ackTitle}${who}. ${k.ackBody}\n\n${k.ackMarker}`;
 }
 
 // ---- applying and serving a request ----------------------------------------
@@ -186,12 +231,13 @@ export function applySecurityRequest(
   store: StateStore,
   req: SecurityRequestInput,
   opts: { meta?: PrMeta; botLogin?: string; now?: () => Date } = {},
+  kind: string = SECURITY_REQUEST_KIND,
 ): SecurityRequestOutcome {
   return store.db
     .transaction((): SecurityRequestOutcome => {
       if (store.getPr(req.pr)?.state === "closed") {
         store.logEvent("review_request_ignored", req.pr, {
-          kind: SECURITY_REQUEST_KIND,
+          kind,
           source: req.source,
           by: req.by,
           reason: "pr-closed",
@@ -200,7 +246,7 @@ export function applySecurityRequest(
       }
       const row = {
         pr: req.pr,
-        kind: SECURITY_REQUEST_KIND,
+        kind,
         source: req.source,
         requested_by: req.by,
         ...(req.comment_id !== undefined ? { comment_id: req.comment_id } : {}),
@@ -211,7 +257,7 @@ export function applySecurityRequest(
           fresh: false,
           reason: store.upgradeLabelReviewRequest(row) ? "upgraded" : "already-requested",
         };
-      return { fresh: true, served: serveInTransaction(store, req.pr, opts) };
+      return { fresh: true, served: serveInTransaction(store, req.pr, opts, kind) };
       // Reads, then writes: IMMEDIATE takes the write lock up front, so a busy
       // writer elsewhere is waited for rather than failing the upgrade.
     })
@@ -232,9 +278,10 @@ export function serveSecurityRequest(
   store: StateStore,
   pr: number,
   opts: { meta?: PrMeta; botLogin?: string; now?: () => Date } = {},
+  kind: string = SECURITY_REQUEST_KIND,
 ): boolean {
   // Reads, then writes: IMMEDIATE, as above.
-  return store.db.transaction(() => serveInTransaction(store, pr, opts)).immediate();
+  return store.db.transaction(() => serveInTransaction(store, pr, opts, kind)).immediate();
 }
 
 /** `serveSecurityRequest`'s body, for a caller already holding the write
@@ -243,8 +290,9 @@ function serveInTransaction(
   store: StateStore,
   pr: number,
   opts: { meta?: PrMeta; botLogin?: string; now?: () => Date },
+  kind: string,
 ): boolean {
-  const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
+  const req = store.reviewRequest(pr, kind);
   if (!req || req.served_at !== null) return false;
   const row = store.getPr(pr);
   if (row?.state === "reviewing" || row?.state === "closed") return false;
@@ -254,14 +302,14 @@ function serveInTransaction(
   const result = applyEvent(store, pr, { type: "trigger", source: "manual" }, opts.meta ?? {}, {
     ...(opts.botLogin !== undefined ? { botLogin: opts.botLogin } : {}),
     now,
-    reason: `security-request:${req.source}`,
+    reason: `${kind}-request:${req.source}`,
   });
   if (result.skipped) {
-    store.clearReviewRequests(pr, "bot-author", SECURITY_REQUEST_KIND);
+    store.clearReviewRequests(pr, "bot-author", kind);
     return false;
   }
   store.noteNewEvidence(pr, now().toISOString());
-  store.markReviewRequestServed(pr, SECURITY_REQUEST_KIND);
+  store.markReviewRequestServed(pr, kind);
   return true;
 }
 
@@ -282,10 +330,11 @@ export function deferUncoveredSecurityRequest(
   store: StateStore,
   pr: number,
   seen: string | undefined,
+  kind: string = SECURITY_REQUEST_KIND,
 ): boolean {
-  const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
+  const req = store.reviewRequest(pr, kind);
   if (!req || req.served_at === null || req.requested_at === seen) return false;
-  return store.unserveReviewRequest(pr, SECURITY_REQUEST_KIND, "served-during-preparation");
+  return store.unserveReviewRequest(pr, kind, "served-during-preparation");
 }
 
 /**
@@ -299,8 +348,12 @@ export function deferUncoveredSecurityRequest(
  * False with no recorded request (a label GitHub shows that the reconcile
  * pass has not recorded yet is new as far as anything here knows).
  */
-export function securityRequestCovered(store: StateStore, pr: number): boolean {
-  const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
+export function securityRequestCovered(
+  store: StateStore,
+  pr: number,
+  kind: string = SECURITY_REQUEST_KIND,
+): boolean {
+  const req = store.reviewRequest(pr, kind);
   if (!req || req.served_at === null) return false;
   const servedAt = req.served_at;
   return store
@@ -324,9 +377,13 @@ export function securityRequestCovered(store: StateStore, pr: number): boolean {
  * request one of those took over) stands on the asker's word and is kept.
  * True when a row went.
  */
-export function withdrawLabelSecurityRequest(store: StateStore, pr: number): boolean {
-  if (store.reviewRequest(pr, SECURITY_REQUEST_KIND)?.source !== "label") return false;
-  return store.clearReviewRequests(pr, "label-removed", SECURITY_REQUEST_KIND);
+export function withdrawLabelSecurityRequest(
+  store: StateStore,
+  pr: number,
+  kind: string = SECURITY_REQUEST_KIND,
+): boolean {
+  if (store.reviewRequest(pr, kind)?.source !== "label") return false;
+  return store.clearReviewRequests(pr, "label-removed", kind);
 }
 
 /**
@@ -362,12 +419,16 @@ export function sweepSecurityRequests(
     label: string;
     botLogin?: string;
     now?: () => Date;
+    /** The request kind this sweep serves; absent ⇒ security. The pass runs
+     * once per kind, each with its own label. */
+    kind?: string;
   },
 ): { served: number[]; cleared: number[] } {
+  const kind = a.kind ?? SECURITY_REQUEST_KIND;
   const served: number[] = [];
   const cleared: number[] = [];
   for (const pr of store.reviewRequestPrs()) {
-    const req = store.reviewRequest(pr, SECURITY_REQUEST_KIND);
+    const req = store.reviewRequest(pr, kind);
     const listed = req !== undefined && req.requested_at <= a.listedAt;
     if (store.getPr(pr)?.state === "closed" || (a.open !== null && listed && !a.open.has(pr))) {
       if (store.clearReviewRequests(pr, "pr-closed")) cleared.push(pr);
@@ -380,7 +441,7 @@ export function sweepSecurityRequests(
       ref !== undefined &&
       (a.label === "" || !ref.labels.includes(a.label))
     ) {
-      if (store.clearReviewRequests(pr, "label-removed", SECURITY_REQUEST_KIND)) cleared.push(pr);
+      if (store.clearReviewRequests(pr, "label-removed", kind)) cleared.push(pr);
     }
   }
   const meta = (ref: { title: string; head_sha: string; author: string }): PrMeta => ({
@@ -395,7 +456,7 @@ export function sweepSecurityRequests(
   if (a.open !== null && a.label !== "") {
     for (const [pr, ref] of a.open) {
       if (!ref.labels.includes(a.label)) continue;
-      if (store.reviewRequest(pr, SECURITY_REQUEST_KIND) !== undefined) continue;
+      if (store.reviewRequest(pr, kind) !== undefined) continue;
       if (a.botLogin !== undefined && isBotAuthor(ref.author, a.botLogin)) continue;
       const local = store.getPr(pr);
       if (local?.state === "closed" || local?.paused) continue;
@@ -403,14 +464,15 @@ export function sweepSecurityRequests(
         store,
         { pr, source: "label", by: "" },
         { meta: meta(ref), ...opts },
+        kind,
       );
       if (outcome.fresh && outcome.served) served.push(pr);
     }
   }
   for (const req of store.unservedReviewRequests()) {
-    if (req.kind !== SECURITY_REQUEST_KIND) continue;
+    if (req.kind !== kind) continue;
     const ref = a.open?.get(req.pr);
-    if (serveSecurityRequest(store, req.pr, { ...(ref ? { meta: meta(ref) } : {}), ...opts }))
+    if (serveSecurityRequest(store, req.pr, { ...(ref ? { meta: meta(ref) } : {}), ...opts }, kind))
       served.push(req.pr);
   }
   return { served, cleared };

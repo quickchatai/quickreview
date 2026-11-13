@@ -45,6 +45,7 @@ import { SCAN_DEEP_LENSES } from "../passes.js";
 import {
   REACHABILITY_VALUES,
   isSecurityFinding,
+  isStateFinding,
   reachabilityCappedSeverity,
   type Reachability,
 } from "../severity.js";
@@ -671,6 +672,12 @@ function isSecurityKind(kind: string): boolean {
   return isSecurityFinding(normalizeKind(kind), null);
 }
 
+/** A `[scan] kinds` entry that names the state-machine family:
+ * `state-machine`, or a kind it prefixes. */
+function isStateKind(kind: string): boolean {
+  return isStateFinding(normalizeKind(kind), null);
+}
+
 /**
  * Whether a scan keeps a candidate its `lens` reported under `[scan] kinds`:
  * `kindAllowed`, or — when `kinds` names a security kind — any security
@@ -678,10 +685,12 @@ function isSecurityKind(kind: string): boolean {
  * share). A security-family lens's findings are kept whatever kind it wrote
  * (`sqli`, `idor`, none at all), so a security-only scan never drops the
  * findings it exists to produce over a spelling; a general lens's are kept
- * by their kind alone. Pure.
+ * by their kind alone. The state-machine family is kept the same way under
+ * a kinds list naming `state-machine`. Pure.
  */
 export function kindKept(kind: string, lens: string, kinds: readonly string[]): boolean {
   if (kindAllowed(kind, kinds)) return true;
+  if (kinds.some(isStateKind) && isStateFinding(kind, lens)) return true;
   return kinds.some(isSecurityKind) && isSecurityFinding(kind, lens);
 }
 
@@ -708,7 +717,11 @@ export function readingKey(
   strategy?: string | null,
 ): string {
   const key = strategy ? `${lens}:${strategy}` : lens;
-  if (kinds.length === 0 || (kinds.some(isSecurityKind) && isSecurityFinding(null, lens)))
+  if (
+    kinds.length === 0 ||
+    (kinds.some(isSecurityKind) && isSecurityFinding(null, lens)) ||
+    (kinds.some(isStateKind) && isStateFinding(null, lens))
+  )
     return key;
   return `${key}${KINDS_MARK}${[...new Set(kinds.map(normalizeKind))].sort().join(",")}`;
 }

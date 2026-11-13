@@ -38,12 +38,18 @@ import type { OpenPrSummary, RoundRow, StateStore } from "./state.js";
 import type { OvSessionSweepReport, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
 import { performance } from "node:perf_hooks";
 import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
-import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  SECURITY_DEFAULTS,
+  STATE_MACHINES_DEFAULTS,
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { STATE_REQUEST } from "./staterequest.js";
 import {
   applySecurityRequest,
+  SECURITY_REQUEST,
   securityCommandDecision,
   staleSecurityCommand,
   sweepSecurityRequests,
+  type ReviewRequestKind,
 } from "./securityrequest.js";
 
 export interface ReconcileSearchItem {
@@ -128,7 +134,12 @@ export interface ReconcileDeps {
   /** Acknowledge a fresh `@<bot> security` request the comment sweep found
    * (its webhook was missed, or the install polls) — the daemon posts it
    * through the gate, as the webhook route does. Absent ⇒ no reply. */
-  ackSecurityRequest?: (pr: number, by: string) => Promise<unknown> | void;
+  ackSecurityRequest?: (
+    pr: number,
+    by: string,
+    /** Which request is acknowledged; absent ⇒ the security one. */
+    kind?: ReviewRequestKind,
+  ) => Promise<unknown> | void;
   /** The undelivered-recheck sweep. `false` skips it for this pass — the
    * daemon's boot pass, whose health lifts a deploy drain and which must not
    * wait on reading session transcripts. */
@@ -934,6 +945,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         )
         .slice(0, COMMENT_SWEEP_MAX_PRS);
       const security = cfg.security ?? SECURITY_DEFAULTS;
+      const stateMachines = cfg.state_machines ?? STATE_MACHINES_DEFAULTS;
       for (const local of candidates) {
         const n = local.number;
         // A PR's first sweep captures its whole comment history: when this
@@ -982,61 +994,78 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
             if (c.source === "issue_comment") freshTop.add(c.comment_id);
           }
         }
+        // Each fresh top-level comment may be a request command: `@<bot>
+        // security`, or `@<bot> state-machines` (src/staterequest.ts) — the
+        // same decision, staleness rule and acknowledgement under two kinds.
+        const requestKinds = [
+          { k: SECURITY_REQUEST, command: security.command },
+          { k: STATE_REQUEST, command: stateMachines.command },
+        ];
         for (const c of topFetched) {
           if (!freshTop.has(c.id)) continue;
-          const decision = securityCommandDecision(c, {
-            botLogin: cfg.github.bot_login,
-            command: security.command,
-          });
-          if (decision === null) continue;
-          if (!decision.ok) {
-            store.logEvent("review_request_ignored", n, {
-              kind: "security",
-              source: "comment",
-              comment_id: c.id,
-              by: c.user,
-              reason: decision.reason,
-            });
-            continue;
-          }
-          // Captured for the first time is not new: a fresh database, or a
-          // PR first tracked late, sweeps history, and an old command must
-          // not ask again or be acknowledged twice.
-          const stale = staleSecurityCommand(c, {
-            comments: topFetched,
-            isOwn: (user, body) => isOwnContent(cfg.github, user, body),
-            ...(trackedAt !== undefined ? { trackedAt } : {}),
-          });
-          if (stale !== null) {
-            store.logEvent("review_request_ignored", n, {
-              kind: "security",
-              source: "comment",
-              comment_id: c.id,
-              by: c.user,
-              reason: "stale-comment",
-              stale,
-            });
-            continue;
-          }
-          const ref = open.get(n);
-          const outcome = applySecurityRequest(
-            store,
-            { pr: n, source: "comment", by: c.user, comment_id: c.id },
-            {
-              botLogin,
-              now,
-              ...(ref
-                ? { meta: { title: ref.title, head_sha: ref.head_sha, author: ref.author } }
-                : {}),
-            },
-          );
-          // A fresh request is acknowledged, and so is one that took over a
-          // label request (it now stands on this comment's word).
-          if ((outcome.fresh || outcome.reason === "upgraded") && deps.ackSecurityRequest) {
-            try {
-              await deps.ackSecurityRequest(n, c.user);
-            } catch (err) {
-              report.errors.push(`security-ack #${n}: ${String(err)}`);
+          for (const { k, command } of requestKinds) {
+            const decision = securityCommandDecision(
+              c,
+              { botLogin: cfg.github.bot_login, command },
+              k,
+            );
+            if (decision === null) continue;
+            if (!decision.ok) {
+              store.logEvent("review_request_ignored", n, {
+                kind: k.kind,
+                source: "comment",
+                comment_id: c.id,
+                by: c.user,
+                reason: decision.reason,
+              });
+              continue;
+            }
+            // Captured for the first time is not new: a fresh database, or a
+            // PR first tracked late, sweeps history, and an old command must
+            // not ask again or be acknowledged twice.
+            const stale = staleSecurityCommand(
+              c,
+              {
+                comments: topFetched,
+                isOwn: (user, body) => isOwnContent(cfg.github, user, body),
+                ...(trackedAt !== undefined ? { trackedAt } : {}),
+              },
+              k,
+            );
+            if (stale !== null) {
+              store.logEvent("review_request_ignored", n, {
+                kind: k.kind,
+                source: "comment",
+                comment_id: c.id,
+                by: c.user,
+                reason: "stale-comment",
+                stale,
+              });
+              continue;
+            }
+            const ref = open.get(n);
+            const outcome = applySecurityRequest(
+              store,
+              { pr: n, source: "comment", by: c.user, comment_id: c.id },
+              {
+                botLogin,
+                now,
+                ...(ref
+                  ? { meta: { title: ref.title, head_sha: ref.head_sha, author: ref.author } }
+                  : {}),
+              },
+              k.kind,
+            );
+            // A fresh request is acknowledged, and so is one that took over a
+            // label request (it now stands on this comment's word).
+            if ((outcome.fresh || outcome.reason === "upgraded") && deps.ackSecurityRequest) {
+              try {
+                // The security kind is the default: only another kind is named.
+                if (k === SECURITY_REQUEST) await deps.ackSecurityRequest(n, c.user);
+                else await deps.ackSecurityRequest(n, c.user, k);
+              } catch (err) {
+                report.errors.push(`${k.kind}-ack #${n}: ${String(err)}`);
+              }
             }
           }
         }
@@ -1107,17 +1136,25 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // has settled — new evidence at the head it reviewed, and the PR queued.
   await step("security-requests", async () => {
     const security = cfg.security ?? SECURITY_DEFAULTS;
-    const swept = sweepSecurityRequests(store, {
-      open: openListed ? open : null,
-      listedAt,
-      label: security.label,
-      botLogin,
-      now,
-    });
-    if (swept.served.length > 0 || swept.cleared.length > 0)
-      (deps.log ?? (() => {}))(
-        `reconcile: security requests served ${JSON.stringify(swept.served)} cleared ${JSON.stringify(swept.cleared)}`,
-      );
+    const stateMachines = cfg.state_machines ?? STATE_MACHINES_DEFAULTS;
+    // One sweep per request kind, each against its own label.
+    for (const [kind, label] of [
+      [SECURITY_REQUEST.kind, security.label],
+      [STATE_REQUEST.kind, stateMachines.label],
+    ] as const) {
+      const swept = sweepSecurityRequests(store, {
+        open: openListed ? open : null,
+        listedAt,
+        label,
+        botLogin,
+        now,
+        kind,
+      });
+      if (swept.served.length > 0 || swept.cleared.length > 0)
+        (deps.log ?? (() => {}))(
+          `reconcile: ${kind} requests served ${JSON.stringify(swept.served)} cleared ${JSON.stringify(swept.cleared)}`,
+        );
+    }
   });
 
   // ---- outcome capture -------------------------------------------------------

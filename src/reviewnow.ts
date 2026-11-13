@@ -12,14 +12,20 @@
 // number that is not a PR of the reviewed repo, is refused with its reason
 // instead of being adopted into the state store.
 //
-// `--security` also records the operator's request for a security review
+// `--state-machines` records the same request for the state-machine family
+// (src/staterequest.ts). `--security` also records the operator's request for a security review
 // (src/securityrequest.ts): every round of the PR then plans the security
 // family, and the request is new evidence, so a PR already reviewed at its
 // head is reviewed again rather than skipped. A request that lands while a
 // round runs is served once that round settles.
 import type { PrRef } from "./github.js";
 import type { FileOutcome } from "./improvements.js";
-import { applySecurityRequest, type SecurityRequestOutcome } from "./securityrequest.js";
+import {
+  applySecurityRequest,
+  SECURITY_REQUEST_KIND,
+  type SecurityRequestOutcome,
+} from "./securityrequest.js";
+import { STATE_REQUEST_KIND } from "./staterequest.js";
 import { applyEvent } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 
@@ -38,23 +44,24 @@ export interface ReviewNowDeps {
 /** The login an operator request is recorded under. */
 export const OPERATOR_REQUESTER = "operator";
 
-/** What `--security` did, for the operator's receipt. */
-function securityOutcome(o: SecurityRequestOutcome): string {
+/** What `--security` (or `--state-machines`: `what` names the review) did,
+ * for the operator's receipt. */
+function securityOutcome(o: SecurityRequestOutcome, what = "security"): string {
   if (!o.fresh)
     return o.reason === "closed"
-      ? "security review not requested: closed"
+      ? `${what} review not requested: closed`
       : o.reason === "upgraded"
-        ? "security review already requested by label; it now stands until the PR closes"
-        : "security review already requested";
+        ? `${what} review already requested by label; it now stands until the PR closes`
+        : `${what} review already requested`;
   return o.served
-    ? "security review requested"
-    : "security review requested; it runs once the round in flight settles";
+    ? `${what} review requested`
+    : `${what} review requested; it runs once the round in flight settles`;
 }
 
 export async function reviewNow(
   deps: ReviewNowDeps,
   pr: number,
-  opts: { security?: boolean } = {},
+  opts: { security?: boolean; stateMachines?: boolean } = {},
 ): Promise<FileOutcome> {
   let ref: PrRef;
   try {
@@ -77,9 +84,15 @@ export async function reviewNow(
   if (deps.store.clearWorkerBreaker(pr))
     deps.store.logEvent("worker_unparked", pr, { by: "review-now" });
   const meta = { title: ref.title, head_sha: ref.head_sha, author: ref.author };
-  let security: SecurityRequestOutcome | undefined;
-  if (opts.security) {
-    security = applySecurityRequest(
+  // The reviews asked for with the round: `--security`, `--state-machines`
+  // (src/staterequest.ts), or both — one request row per kind.
+  const asked: Array<{ kind: string; what: string }> = [
+    ...(opts.security ? [{ kind: SECURITY_REQUEST_KIND, what: "security" }] : []),
+    ...(opts.stateMachines ? [{ kind: STATE_REQUEST_KIND, what: "state-machine" }] : []),
+  ];
+  const outcomes: Array<{ o: SecurityRequestOutcome; what: string }> = [];
+  for (const { kind, what } of asked) {
+    const o = applySecurityRequest(
       deps.store,
       { pr, source: "operator", by: OPERATOR_REQUESTER },
       {
@@ -87,14 +100,17 @@ export async function reviewNow(
         ...(deps.botLogin ? { botLogin: deps.botLogin } : {}),
         ...(deps.now ? { now: deps.now } : {}),
       },
+      kind,
     );
-    // Served: the request's own trigger queued the round. A bot-authored PR
-    // withdraws the request and falls through to the refusal below.
-    if (security.fresh && security.served) {
-      await deps.pump();
-      const state = deps.store.getPr(pr)?.state ?? "queued";
-      return { ok: true, pr, state, head_sha: ref.head_sha, outcome: securityOutcome(security) };
-    }
+    outcomes.push({ o, what });
+  }
+  const receipt = (): string => outcomes.map(({ o, what }) => securityOutcome(o, what)).join("; ");
+  // Served: a request's own trigger queued the round. A bot-authored PR
+  // withdraws the request and falls through to the refusal below.
+  if (outcomes.some(({ o }) => o.fresh && o.served)) {
+    await deps.pump();
+    const state = deps.store.getPr(pr)?.state ?? "queued";
+    return { ok: true, pr, state, head_sha: ref.head_sha, outcome: receipt() };
   }
   const result = applyEvent(
     deps.store,
@@ -124,6 +140,6 @@ export async function reviewNow(
     pr,
     state,
     head_sha: ref.head_sha,
-    ...(security ? { outcome: securityOutcome(security) } : {}),
+    ...(outcomes.length > 0 ? { outcome: receipt() } : {}),
   };
 }

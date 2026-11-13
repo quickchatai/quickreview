@@ -5,7 +5,7 @@
 import { parseDestinations, type Destination } from "@quickchatai/pi-quickreview/src/reviewdest.js";
 
 export const REVIEW_USAGE =
-  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--model MODEL] [--full] [--security] [--to DEST] [--out FILE] [--debug-pi] [--json] | --help";
+  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--model MODEL] [--full] [--security] [--state-machines] [--to DEST] [--out FILE] [--debug-pi] [--json] | --help";
 
 export type ReviewCommand =
   | { help: true }
@@ -28,6 +28,10 @@ export type ReviewCommand =
        * `/qcr-review --security` asks it — the whole security family is
        * planned (never a lens the profile switched off). Set only when given. */
       securityRequest?: true;
+      /** `--state-machines`: a state-machine review asked for on top of the
+       * plan — the whole state-machine family is planned (never a lens the
+       * profile switched off). Set only when given. */
+      stateRequest?: true;
       to?: Destination[];
       out?: string;
       /** `--debug-pi`: the round runs inside interactive pi. */
@@ -45,6 +49,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
   let preview = false;
   let full = false;
   let security = false;
+  let stateMachines = false;
   let base: string | undefined;
   let pr: string | undefined;
   let repo: string | undefined;
@@ -65,6 +70,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     else if (a === "--preview") preview = true;
     else if (a === "--full") full = true;
     else if (a === "--security") security = true;
+    else if (a === "--state-machines") stateMachines = true;
     else if (a === "--debug-pi") debugPi = true;
     else if (a === "--base") base = value(i++, a);
     else if (a === "--diff") {
@@ -121,6 +127,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     preview,
     full,
     ...(security ? { securityRequest: true as const } : {}),
+    ...(stateMachines ? { stateRequest: true as const } : {}),
     debugPi,
     ...(base !== undefined ? { base } : {}),
     ...(key !== undefined ? { key } : {}),

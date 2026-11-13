@@ -52,7 +52,11 @@ import { agentDirSettings } from "../src/engine/agentdir.js";
 import { borrowedCredentials } from "../src/engine/auth.js";
 import { LENS_LEDGER_FILE, LENS_SESSIONS_DIR } from "../src/engine/openable.js";
 import { resolvePassDeadlineMs } from "../src/engine/lens/deadline.js";
-import { loadBuiltAgents, type AgentRegistry } from "../src/engine/lens/registry.js";
+import {
+  loadBuiltAgents,
+  type AgentRegistry,
+  type LensAgent,
+} from "../src/engine/lens/registry.js";
 import {
   createLensRunner,
   type LensRunConfig,
@@ -69,6 +73,8 @@ import { PiHost, type PiHostOptions } from "../src/engine/pisdk.js";
 import { listPrice } from "../src/modelpick.js";
 import type { ModelRoute, SkippedLogin } from "../src/modelroute.js";
 import { bashGuardConfigFromEnv, createBashGuard } from "./bash-guard.js";
+import { STATE_FAMILY } from "../src/passes.js";
+import { STATE_EXPLORE_TOOL, createStateExplore } from "./state-explore.js";
 import { toPiTool } from "./pi-tool.js";
 import { registryInventory, type RouteRegistry } from "./route-registry.js";
 import {
@@ -89,6 +95,32 @@ export function createLens(deps: LensToolDeps): ExtensionFactory {
   return (pi: ExtensionAPI): void => {
     for (const tool of lensTools(deps)) pi.registerTool(tool);
   };
+}
+
+/**
+ * The leaf tools a lens session is given beside the bash guard: `state_explore`
+ * for a state-machine family variant whose own allowlist names it or that
+ * carries no allowlist, nothing for any other agent. Two gates, each enough
+ * alone to keep the tool off a lens: the agent's name (its pass, the
+ * variant's tier suffix dropped, must be in STATE_FAMILY, so a profile that
+ * puts the name on another lens's line grants nothing) and the agent's
+ * `tools:` line (a family variant built without the tool, as a scan or replay
+ * build is, gets none). A family variant with no `tools:` line at all — a
+ * profile layer's or a repository's own `agents/pass-sm-*.md` that the build
+ * leaves alone — has every tool the harness gives, so it is given this one
+ * too; a scan or replay build always writes a line, so none of its leaves
+ * reaches that case. Each call of the returned function makes a fresh
+ * factory, so each pass's session has a memory of its own.
+ */
+export function stateLeafTools(
+  cwd: string,
+  path: string,
+): (agent: LensAgent) => ExtensionFactory[] {
+  return (agent) =>
+    STATE_FAMILY.includes(agent.name.replace(/--.*$/, "")) &&
+    (agent.tools === undefined || agent.tools.includes(STATE_EXPLORE_TOOL))
+      ? [createStateExplore({ cwd, path })]
+      : [];
 }
 
 /** How long a lens session has before its login must not expire: the
@@ -124,6 +156,7 @@ export function lensRunConfigFromEnv(
     cwd,
     env,
     bashGuard: createBashGuard(bashGuardConfigFromEnv(env, cwd)),
+    leafTools: stateLeafTools(cwd, env["PATH"] ?? ""),
     ledgerPath: join(ledger ? dirname(ledger) : agentDir, LENS_LEDGER_FILE),
     // A round's lens sessions are kept beside its ledger; an interactive pi
     // with no round keeps none, and never writes into its own agent dir.

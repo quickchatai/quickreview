@@ -36,7 +36,7 @@ Run from inside the repository.
 | a diff on stdin or in a file | `git diff main... \| qcr --schema 2 review --diff - --preview` |
 | a PR | `qcr --schema 2 review <number or URL> --preview` |
 
-Add `--base REF` to name the base and `--repo OWNER/NAME` when the remote is ambiguous. When the user asks for a security review, add `--security`: the usual plan plus all fourteen `pass-sec-*` security lenses, which a change with no strong security signal would otherwise not plan.
+Add `--base REF` to name the base and `--repo OWNER/NAME` when the remote is ambiguous. When the user asks for a security review, add `--security`: the usual plan plus all fourteen `pass-sec-*` security lenses, which a change with no strong security signal would otherwise not plan. When the user asks for a review of state handling, state machines or lifecycle bugs, add `--state-machines`: the usual plan plus all eight `pass-sm-*` lenses.
 
 ## Preview, then run
 

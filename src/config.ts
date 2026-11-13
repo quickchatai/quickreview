@@ -33,6 +33,7 @@ import {
   parseReviewSection,
   parseScan,
   parseSecurity,
+  parseStateMachines,
   presetOf,
   req,
   requireGithubKeys,
@@ -1899,6 +1900,7 @@ export function parseConfig(toml: string): Config {
     owner: parseOwnerSection(raw),
     scan: parseScan(raw.scan),
     security: parseSecurity(raw.security),
+    state_machines: parseStateMachines(raw.state_machines),
     scan_sandbox: parseScanSandbox(raw.scan, companion),
     archive: parseArchive((raw.archive ?? {}) as Record<string, unknown>),
     login_refresh: parseLoginRefresh(

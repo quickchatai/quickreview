@@ -267,12 +267,15 @@ validate_tier = "deep"
 # Diffs under this many changed lines (additions+deletions) start at light.
 small_diff_lines = 150
 # [models.pass_tiers] — per-lens tier pins: pass name → tier
-# name (a key of [models.tiers]). SHIPPED DEFAULT (src/config.ts
-# DEFAULT_PASS_TIERS): pass-baseline, pass-sweep and
-# pass-behaviour-delta at "deep" (the review's model at high effort) — measured
-# +6 defects on 18 AACR PRs for +18% cost per PR. An entry here replaces that
-# lens's default pin (e.g. "pass-baseline" = "standard"); a repo profile lowers
-# one lens's thinking with [lenses.<pass>] effort = "medium". A pinned lens
+# name (a key of [models.tiers]). SHIPPED DEFAULT
+# (packages/pi-plugin/src/reviewconfig.ts DEFAULT_PASS_TIERS): at "deep"
+# (the review's model at high effort), pass-baseline, pass-sweep and
+# pass-behaviour-delta — measured +6 defects on 18 AACR PRs for +18% cost per
+# PR — and the eight state-machine lenses
+# (pass-sm-*) whenever a trigger, a request or a profile plans one. An entry
+# here replaces that lens's default pin (e.g. "pass-baseline" = "standard",
+# "pass-sm-stuck" = "standard"); a repo profile lowers one lens's thinking
+# with [lenses.<pass>] effort = "medium". A pinned lens
 # runs at that tier on every PR whatever the diff size — the plan names it, it
 # is not raisable, and every built variant of it carries that tier's spec. The
 # validator never follows a pinned lens (it runs at validate_tier).
@@ -955,6 +958,24 @@ fold = false                   # true: a security candidate the validator could 
                                # question naming the proof gap, instead of being doubted
 label = "qcr:security"         # the PR label that asks for a security review; "" = no label requests
 command = true                 # "@<bot> security" from an owner, member or collaborator asks for one
+
+# The state-machine family: eight single-concern lenses (pass-sm-*) over
+# implicit state machines — state spread over flags, nullable fields, a
+# status value, a stored column, a lifecycle phase or the order of calls.
+# Each is planned on its own signals and runs at the deep tier, a default
+# pin a [models.pass_tiers] entry lowers per lens. A profile's
+# [state_machines] table wins over this one for triggers and only;
+# label and command are this file's alone.
+[state_machines]
+triggers = "strong"            # which signals plan the family: "off" | "strong" (a state check removed,
+                               # a member added to an existing enum, two status flags added side by side,
+                               # a migration that changes a stored state, …) | "all" (weak ones too: any
+                               # status write, event handler or lifecycle method)
+only = false                   # true: a state-machine-only review — every other lens off but pass-validate,
+                               # only state-machine findings post, and an APPROVE means "no state-machine
+                               # finding" (never together with [security] only)
+label = "qcr:state-machines"   # the PR label that asks for a state-machine review; "" = no label requests
+command = true                 # "@<bot> state-machines" from an owner, member or collaborator asks for one
 
 # ---------------------------------------------------------------------------
 # [escalation] — OPTIONAL, OFF BY DEFAULT.
