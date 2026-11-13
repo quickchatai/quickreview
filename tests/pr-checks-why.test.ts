@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyCi } from "@quickchatai/pi-quickreview/src/cigate.js";
+import { SUPERSESSION_CASES } from "./helpers/superseded-run-fixture.js";
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,6 +27,11 @@ let logStatus: number;
 let pagedRuns: unknown[] | null;
 /** The combined-status endpoint's `statuses` rows at the head. */
 let statusRows: unknown[];
+/** When set, `GET /actions/runs?head_sha=` serves these workflow runs;
+ * otherwise it answers 404 like a repo without Actions. */
+let workflowRuns: unknown[] | null;
+/** The `total_count` the runs endpoint advertises; null: the true count. */
+let workflowTotal: number | null;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "qcr-prchecks-"));
@@ -43,6 +49,8 @@ beforeEach(async () => {
   logStatus = 200;
   pagedRuns = null;
   statusRows = [];
+  workflowRuns = null;
+  workflowTotal = null;
   server = createServer((req, res) => {
     methods.push(req.method ?? "?");
     const url = req.url ?? "";
@@ -55,6 +63,11 @@ beforeEach(async () => {
       return res.end("write attempted");
     }
     if (url === "/repos/o/r/pulls/7") return json({ head: { sha: HEAD } });
+    if (url.startsWith(`/repos/o/r/actions/runs?head_sha=${HEAD}`) && workflowRuns)
+      return json({
+        total_count: workflowTotal ?? workflowRuns.length,
+        workflow_runs: workflowRuns,
+      });
     if (url.startsWith(`/repos/o/r/commits/${HEAD}/check-runs`) && pagedRuns) {
       const q = new URL(url, "http://stub").searchParams;
       const per = Number(q.get("per_page") ?? 30);
@@ -276,5 +289,21 @@ describe("pr-checks.sh --why", () => {
     expect(err.code).not.toBe(0);
     expect(err.stderr).toContain("check-runs page");
     expect(err.stdout ?? "").not.toContain("CLASSIFIED");
+  });
+});
+
+describe("pr-checks.sh — a workflow run superseded by a newer run of its workflow", () => {
+  // The session's half of the gate, driven with the same case table as the
+  // adapter (tests/cigate.test.ts), so the two cannot drift.
+  it.each(SUPERSESSION_CASES.map((c) => [c.name, c] as const))("%s", async (_name, c) => {
+    pagedRuns = c.checkRuns();
+    workflowRuns = c.runs(HEAD);
+    workflowTotal = c.totalCount ?? null;
+    const { stdout } = await checks();
+    expect(stdout.trim().split("\n").pop()).toBe(`CLASSIFIED: ${c.want}`);
+    if (c.want === "green")
+      expect(stdout).toMatch(
+        /pre_checks \/ detect_changes: completed\/cancelled .*\[superseded run — run \d+ replaced it; does not count\]/,
+      );
   });
 });

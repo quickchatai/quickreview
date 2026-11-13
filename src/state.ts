@@ -8654,7 +8654,21 @@ export interface StatusSnapshot {
         /** What hosts this PR's session now. Absent: `tmux`. */
         runtime?: PrRuntime;
         rounds?: number;
+        /** The last round's code verdict. NOT what GitHub shows: an APPROVE
+         * here with `approval_withheld` set never reached GitHub as an
+         * approval. */
         last_verdict?: string | null;
+        /** An approval decided and withheld for CI at this head — the code
+         * verdict is APPROVE, GitHub holds only the COMMENT — including while
+         * a retry round re-decides it, or null when none is outstanding. Absent: a snapshot from an older daemon, unknown. */
+        approval_withheld?: {
+          head_sha: string;
+          ci_state: string | null;
+          since: string;
+          /** Set while a retry round re-decides it: the round's number. The
+           * approval is still not on GitHub until that round posts one. */
+          retry_round?: number;
+        } | null;
         /** The authoritative running plan/timing. Live lens activity is a
          * separate ephemeral sidecar; neither source impersonates the other. */
         current_round?: Pick<
@@ -9004,12 +9018,51 @@ export function buildStatusSnapshot(
   const failureByPr = new Map(failures.map((failure) => [failure.pr, failure]));
   const pipeline = pipelineFrom(store, at, failures, roundStageSupervisor);
   const crashByPr = new Map(store.workerBreakerRows().map((row) => [row.pr, row]));
+  // An approval decided but not on GitHub: the withheld mark, read once for
+  // every PR — or, while a retry round re-decides it, the spend dispatch
+  // recorded for that running round (dispatch clears the mark at handoff,
+  // and spending it posts nothing).
+  const withheldByPr = new Map(
+    (store.db.prepare("SELECT * FROM approval_withheld").all() as ApprovalWithheldRow[]).map(
+      (row) => [row.pr, row],
+    ),
+  );
+  const retrySpend = store.db.prepare(
+    "SELECT ts, payload FROM events WHERE pr = ? AND kind = 'approval_retry_dispatched' ORDER BY id DESC LIMIT 1",
+  );
+  const outstandingApproval = (pr: number): StatusSnapshot["prs"][number]["approval_withheld"] => {
+    const mark = withheldByPr.get(pr);
+    if (mark) return { head_sha: mark.head_sha, ci_state: mark.ci_state, since: mark.created_at };
+    const running = runningByPr.get(pr);
+    // A retry round whose APPROVE is confirmed posted owes nothing any more,
+    // though it keeps running while its verdict and ledger are written.
+    if (!running || (running.posted_event ?? "").toUpperCase() === "APPROVE") return null;
+    const spend = retrySpend.get(pr) as { ts: string; payload: string | null } | undefined;
+    if (!spend?.payload) return null;
+    try {
+      const p = JSON.parse(spend.payload) as {
+        round_id?: unknown;
+        head_sha?: unknown;
+        ci_state?: unknown;
+      };
+      if (p.round_id !== running.id || typeof p.head_sha !== "string") return null;
+      return {
+        head_sha: p.head_sha,
+        ci_state: typeof p.ci_state === "string" ? p.ci_state : null,
+        since: spend.ts,
+        retry_round: running.round_no,
+      };
+    } catch {
+      return null;
+    }
+  };
   return {
     written_at: at.toISOString(),
     dry_run: dryRun,
     prs: store.allPrs().map((p) => ({
       rounds: byPr.get(p.number)?.c ?? 0,
       last_verdict: byPr.get(p.number)?.v ?? null,
+      approval_withheld: outstandingApproval(p.number),
       ...(runningByPr.get(p.number)
         ? {
             current_round: {

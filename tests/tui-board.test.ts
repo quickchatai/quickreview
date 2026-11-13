@@ -700,6 +700,33 @@ describe("adaptive layout", () => {
     expect(stripAnsi(text)).toContain("fix[2J[Hcleared over next");
   });
 
+  // An APPROVE verdict whose approval is withheld for CI never reached GitHub
+  // as an approval: the row says so instead of painting an approval.
+  // MUTATION: drop the withheld branch from rowChip — the row reads "APPROVE".
+  it("paints a withheld approval as withheld, never as an approval", () => {
+    const pr = {
+      ...snapshot.prs[0]!,
+      last_verdict: "APPROVE",
+      approval_withheld: {
+        head_sha: "68b8040aaaaa",
+        ci_state: "red",
+        since: "2026-11-13T09:46:37Z",
+      },
+    };
+    const text = stripAnsi(
+      renderBoard(view({ snapshot: { ...snapshot, prs: [pr] } }), 160, 40).lines.join("\n"),
+    );
+    expect(text).toContain("APPROVE·withheld");
+    const plain = stripAnsi(
+      renderBoard(
+        view({ snapshot: { ...snapshot, prs: [{ ...pr, approval_withheld: null }] } }),
+        160,
+        40,
+      ).lines.join("\n"),
+    );
+    expect(plain).not.toContain("withheld");
+  });
+
   it("measures a verdict the board has no short chip for as it paints it — by its own name", async () => {
     const { listWidth } = await import("../src/tui/board.js");
     const base = { ...snapshot.prs[0]!, title: "t", author: "a", rounds: 0 };

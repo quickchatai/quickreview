@@ -165,7 +165,12 @@ export interface TuiView {
     state?: string;
     head_sha?: string;
     rounds?: number;
+    /** The code verdict — not what GitHub shows (see `approval_withheld`). */
     last_verdict?: string | null;
+    /** An APPROVE verdict whose approval is withheld for CI: GitHub holds
+     * only the COMMENT. null: none withheld. Absent: the snapshot does not
+     * report it (an older daemon) — unknown. */
+    approval_withheld?: StatusSnapshot["prs"][number]["approval_withheld"];
     author?: string | null;
     stale_recheck?: boolean;
   };
@@ -353,6 +358,9 @@ export function buildTuiView(src: ViewSource): TuiView {
             head_sha: sel.head_sha,
             rounds: sel.rounds,
             last_verdict: sel.last_verdict ?? null,
+            ...(sel.approval_withheld !== undefined
+              ? { approval_withheld: sel.approval_withheld }
+              : {}),
             author: sel.author ?? null,
             stale_recheck: Boolean(sel.stale_recheck),
           },

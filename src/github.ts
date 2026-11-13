@@ -12,7 +12,11 @@ import {
   type ReadRetryOptions,
 } from "@quickchatai/pi-quickreview/src/githubcore.js";
 import { ThreadResolutionRefusal } from "./thread-resolution-refusal.js";
-import type { CheckSummary } from "@quickchatai/pi-quickreview/src/cigate.js";
+import {
+  supersededSuites,
+  type CheckSummary,
+  type WorkflowRunSummary,
+} from "@quickchatai/pi-quickreview/src/cigate.js";
 import { reviewTeamSlug, type Config } from "./config.js";
 import { CHECK_THIS_RE, DEFERRED_RE } from "@quickchatai/pi-quickreview/src/severity.js";
 import {
@@ -1033,18 +1037,29 @@ export class GitHubAdapter {
   async listChecks(ref: string): Promise<CheckSummary[]> {
     const out: CheckSummary[] = [];
     const enc = encodeURIComponent(ref);
+    // The workflow runs are read BEFORE the check-runs: a run this read sees
+    // completed already has every check-run it will ever have, so the read
+    // below holds them, and a husk is never dropped for a result not seen.
+    const workflowRuns = await this.workflowRunsAt(ref);
     const runs = await this.completeCheckPages<any>(
       `/repos/${this.owner}/${this.repo}/commits/${enc}/check-runs`,
       "check_runs",
     );
-    for (const r of runs)
+    const present = new Set<number>();
+    for (const r of runs) if (typeof r.check_suite?.id === "number") present.add(r.check_suite.id);
+    const superseded = supersededSuites(workflowRuns, present);
+    for (const r of runs) {
+      const suite: unknown = r.check_suite?.id;
+      const by = typeof suite === "number" ? superseded.get(suite) : undefined;
       out.push({
         name: r.name ?? "check",
         source: "check_run",
         status: r.status ?? "",
         conclusion: r.conclusion ?? null,
         started_at: r.started_at ?? null,
+        ...(by !== undefined ? { superseded_by_run: by } : {}),
       });
+    }
     const statuses = await this.completeCheckPages<any>(
       `/repos/${this.owner}/${this.repo}/commits/${enc}/status`,
       "statuses",
@@ -1057,6 +1072,46 @@ export class GitHubAdapter {
         conclusion: s.state === "pending" ? null : s.state === "success" ? "success" : "failure",
       });
     return out;
+  }
+
+  /**
+   * The workflow runs at a head, for `supersededSuites` (cigate.ts states
+   * the rule). Read from
+   * `GET /actions/runs?head_sha=`, the one source that ties a check suite to
+   * its workflow. Any failure to read it — no Actions permission, Actions off,
+   * a transient error, an inconsistent snapshot — answers no runs, so nothing
+   * is superseded: every check-run then counts, which can only read CI
+   * stricter, never greener.
+   */
+  private async workflowRunsAt(ref: string): Promise<WorkflowRunSummary[]> {
+    if (!/^[0-9a-f]{40}$/i.test(ref)) return [];
+    let rows: any[];
+    try {
+      rows = await this.completeCheckPages<any>(
+        `/repos/${this.owner}/${this.repo}/actions/runs?head_sha=${ref}`,
+        "workflow_runs",
+      );
+    } catch {
+      return [];
+    }
+    const runs: WorkflowRunSummary[] = [];
+    for (const r of rows) {
+      if (typeof r?.id !== "number" || typeof r.workflow_id !== "number") continue;
+      if (typeof r.created_at !== "string") continue;
+      // A run of another commit is never this head's evidence.
+      if (typeof r.head_sha === "string" && r.head_sha.toLowerCase() !== ref.toLowerCase())
+        continue;
+      runs.push({
+        id: r.id,
+        workflow_id: r.workflow_id,
+        event: typeof r.event === "string" ? r.event : "",
+        check_suite_id: typeof r.check_suite_id === "number" ? r.check_suite_id : null,
+        status: typeof r.status === "string" ? r.status : "",
+        conclusion: typeof r.conclusion === "string" ? r.conclusion : null,
+        created_at: r.created_at,
+      });
+    }
+    return runs;
   }
 
   /**
@@ -1090,7 +1145,7 @@ export class GitHubAdapter {
     for (let page = 1; page <= 10; page++) {
       const result = await this.request<Record<string, unknown>>(
         "GET",
-        `${path}?per_page=100&page=${page}`,
+        `${path}${path.includes("?") ? "&" : "?"}per_page=100&page=${page}`,
       );
       const count = result.total_count;
       if (count !== undefined) {
