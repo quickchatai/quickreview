@@ -139,6 +139,7 @@
       "files": {
         "packages/pi-plugin/extensions/lens.ts": 1,
         "packages/pi-plugin/extensions/finding-clusters.ts": 1,
+        "packages/pi-plugin/extensions/state-explore.ts": 1,
         "extensions/tui-view.ts": 2,
         "extensions/vendor/openviking-pi/qcr-leaf.ts": 1
       },

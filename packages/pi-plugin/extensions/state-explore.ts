@@ -91,7 +91,7 @@ export interface StateExploreConfig {
   /** The lens session's working directory: a worktree must be this or under it,
    * or be `worktree`. */
   cwd: string;
-  /** The round's own worktree (the host's `QCR_WORKTREE`), accepted wherever
+  /** The round's own worktree (the host passes it in), accepted wherever
    * it sits; unset, only `cwd` and what lies under it. */
   worktree?: string;
   /** The `PATH` git is found on (the host's; the reader builds the rest of git's env itself). */
