@@ -583,4 +583,45 @@ describe("a session verifies its target once", () => {
     await call(tool, { action: "writes", name: "saving", base: head });
     expect(count(verbs, "rev-parse")).toBe(6);
   });
+
+  // What a session reuses belongs to the target it verified: a later call
+  // that names a worktree whose `.git` lends another repository is checked
+  // from the start and refused, and the session keeps the target it had.
+  // MUTATION: drop `reuse = { cache: newExploreGitCache() };` from the
+  // changed-target branch of stateExploreTool — the new worktree inherits
+  // the first target's accepted git directory, skips the own-repository
+  // check, and the refusal this expects never comes.
+  it("a reused verification never carries over to another worktree", async () => {
+    const foreign = join(root, "session-foreign");
+    mkdirSync(foreign);
+    git(["init", "-q"], foreign);
+    writeFileSync(join(foreign, "f.ts"), "export const token = 'FOREIGN';\n");
+    git(["add", "-A"], foreign);
+    git(["-c", "user.email=f@example.invalid", "-c", "user.name=f", "commit", "-qm", "f"], foreign);
+    const foreignHead = git(["rev-parse", "HEAD"], foreign);
+    const plant = join(root, "session-plant");
+    mkdirSync(plant);
+    writeFileSync(join(plant, ".git"), `gitdir: ${join(foreign, ".git")}\n`);
+
+    const tool = stateExploreTool({ cwd: root, path: PATH });
+    const first = await call(tool, {
+      action: "writes",
+      name: "saving",
+      worktree: repo,
+      base,
+      head,
+    });
+    expect(first).not.toMatch(/refused|failed/);
+    const moved = await call(tool, {
+      action: "writes",
+      name: "token",
+      worktree: plant,
+      base: foreignHead,
+      head: foreignHead,
+    });
+    expect(moved).toMatch(/refused: .*is not that worktree's own/);
+    expect(moved).not.toContain("FOREIGN");
+    // The refused change keeps the verified target, still reused.
+    expect(await call(tool, { action: "writes", name: "saving" })).toBe(first);
+  });
 });

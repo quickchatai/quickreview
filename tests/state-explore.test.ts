@@ -2319,6 +2319,55 @@ describe("writer-companion: same object, same member", () => {
       ),
     ]);
   });
+
+  // A deferred closure whose own statement cannot be read as a store (the
+  // last brace opens a nested closure) has no member to hold it to: the
+  // write is reported unknown, not held to every writer of the field and
+  // not passed over in silence.
+  // MUTATION: drop the addUnknown call in writerCompanions' `deferred &&
+  // sub === null` branch (keep its `continue`) — writer-companion reads as
+  // "no anchor", and this fails.
+  it("a deferred write whose member cannot be read is unknown, not anchored (Go)", async () => {
+    const tree = {
+      "app/ext.go": src(
+        "package app",
+        "",
+        ...[0, 1, 2].flatMap((i) => [
+          `func (a *App) Add${i}(db Store) {`,
+          "\tdb.connect()",
+          "\ta.container = db",
+          "}",
+        ]),
+      ),
+    };
+    const io = world(
+      [
+        {
+          path: "app/handler.go",
+          base: src("package app", ""),
+          head: src(
+            "package app",
+            "",
+            "func (h *H) Serve(db Store) {",
+            "\tdb.connect()",
+            "\th.container = db",
+            "}",
+            "",
+            "func (h *H) Swap(old Logger) {",
+            "\tdefer func() { h.container.Logger = pick(func() { return old }) }()",
+            "\th.run()",
+            "}",
+          ),
+        },
+      ],
+      tree,
+    );
+    const out = await run({ action: "anchors" }, io);
+    expect(only("writer-companion", out.split("\n"))).toEqual([
+      "[writer-companion] unknown: `container` at app/handler.go:9: a write in a deferred closure whose member could not be read",
+    ]);
+    expect(out).not.toMatch(/no anchor: .*writer-companion/);
+  });
 });
 
 describe("write shapes, widened", () => {
