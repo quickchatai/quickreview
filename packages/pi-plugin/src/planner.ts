@@ -116,12 +116,14 @@ export function validatorTier(cfg: Pick<CoreConfig, "lenses" | "models">): PassT
 /**
  * The tier a lens ADDED by the session runs at (the round templates' add
  * rule): a risk pass exists only as `deep`; every other lens at `standard`,
- * or at the profile's `min_tier` for it when that is higher.
+ * or at its `[models.pass_tiers]` pin (a shipped default pin included), and
+ * at the profile's `min_tier` for it when that is higher — the tier the plan
+ * would have given the same lens.
  */
 export function addTierOf(cfg: CoreConfig, lens: string): PassTier {
   return cfg.models.risk_passes.includes(lens)
     ? RISK_TIER
-    : flooredTier(cfg.lenses, lens, ADD_TIER);
+    : flooredTier(cfg.lenses, lens, cfg.models.pass_tiers?.[lens] ?? ADD_TIER);
 }
 
 /** The facts a prepared worktree hands the round — the tree's own, less
@@ -1411,8 +1413,8 @@ export function buildRoundOrder(args: {
       securityInputsOf(args),
     );
   const headSha = reviewedHeadOf(args.tree, args.row);
-  // An addable lens the profile floors above the add rule's own
-  // variant is named with its variant in the prompt.
+  // An addable lens a pin or the profile's floor puts above the add rule's
+  // own variant is named with its variant in the prompt.
   const addable_tiers = Object.fromEntries(
     addable_lenses
       .filter((l) => !args.cfg.models.risk_passes.includes(l))

@@ -1,9 +1,9 @@
 // The state-machine family in the plan (packages/pi-plugin/src/planner.ts):
 // which pass-sm-* rows a round plans and why, what a request and
 // `plan = "always"` add (and never add), when the family is offered as
-// addable, and what a state-machine-only review does to a follow-up. Every
-// case asserts on what the planner hands its consumers — rows, reasons, the
-// addable list — never on its internals.
+// addable and at which tier, and what a state-machine-only review does to a
+// follow-up. Every case asserts on what the planner hands its consumers —
+// rows, reasons, the addable list, the round order — never on its internals.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -15,6 +15,7 @@ import type { LensTuning } from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import { SECURITY_FAMILY, STATE_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 import {
   buildPassPlan,
+  buildRoundOrder,
   type PassPlan,
   type PlanSecurityInputs,
 } from "@quickchatai/pi-quickreview/src/planner.js";
@@ -247,3 +248,39 @@ describe("a state-machine-only review", () => {
   });
 });
 
+// A lens the session adds runs at the tier the plan would have given it: a
+// state-machine lens is pinned deep, so the round order names its deep
+// variant for the session to add.
+// MUTATION: drop `pass_tiers?.[lens] ??` from addTierOf (planner.ts) — the
+// added pass-sm-stuck falls back to the add rule's standard, and this fails.
+describe("a family lens the session adds", () => {
+  const order = (cfg: Config) =>
+    buildRoundOrder({
+      cfg,
+      row: { number: 7, head_sha: "c".repeat(40), title: "Rework the checkout" },
+      files: [GUARD_GONE],
+      roundId: 1,
+      roundNo: 1,
+      roundType: "first",
+      worktree: "/wt",
+      settledDigest: "",
+      issuedAt: "2026-11-01T00:00:00Z",
+    });
+
+  it("is offered at its deep pin, and at the add rule's tier once a pin lowers it", () => {
+    const pinned = order(fixture);
+    expect(pinned.pass_plan.map((r) => r.lens)).not.toContain("pass-sm-stuck");
+    expect(pinned.addable_lenses).toContain("pass-sm-stuck");
+    expect(pinned.addable_tiers?.["pass-sm-stuck"]).toBe("deep");
+    const lowered: Config = {
+      ...fixture,
+      models: {
+        ...fixture.models,
+        pass_tiers: { ...fixture.models.pass_tiers, "pass-sm-stuck": "standard" },
+      },
+    };
+    const o = order(lowered);
+    expect(o.addable_lenses).toContain("pass-sm-stuck");
+    expect(o.addable_tiers?.["pass-sm-stuck"]).toBeUndefined();
+  });
+});
