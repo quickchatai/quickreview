@@ -9034,7 +9034,9 @@ export function buildStatusSnapshot(
     const mark = withheldByPr.get(pr);
     if (mark) return { head_sha: mark.head_sha, ci_state: mark.ci_state, since: mark.created_at };
     const running = runningByPr.get(pr);
-    if (!running) return null;
+    // A retry round whose APPROVE is confirmed posted owes nothing any more,
+    // though it keeps running while its verdict and ledger are written.
+    if (!running || (running.posted_event ?? "").toUpperCase() === "APPROVE") return null;
     const spend = retrySpend.get(pr) as { ts: string; payload: string | null } | undefined;
     if (!spend?.payload) return null;
     try {

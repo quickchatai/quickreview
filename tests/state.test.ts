@@ -657,6 +657,20 @@ describe("status.json", () => {
       last_verdict: "APPROVE",
       approval_withheld: { head_sha: "abc1234567", ci_state: "red", retry_round: 2 },
     });
+    // Its APPROVE confirmed posted while the round still runs: owed no more.
+    // MUTATION: drop the posted_event test from outstandingApproval — this fails.
+    const key = "v1:7:2:abc1234567";
+    store.db.prepare("UPDATE rounds SET posting_key = ? WHERE id = ?").run(key, retry);
+    expect(
+      store.confirmRoundPosting(retry, {
+        posting_key: key,
+        actual_event: "APPROVE",
+        gh_review_id: 77,
+        gh_commit_id: "abc1234567",
+        confirmed_at: "2026-11-13T10:00:00Z",
+      }),
+    ).toBe(true);
+    expect(buildStatusSnapshot(store, false, undefined, now).prs[0]?.approval_withheld).toBeNull();
     // Once that round ends, the spend describes nothing running.
     store.finishRound(retry, "APPROVE", 1);
     expect(buildStatusSnapshot(store, false, undefined, now).prs[0]?.approval_withheld).toBeNull();
