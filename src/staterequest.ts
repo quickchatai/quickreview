@@ -11,7 +11,7 @@
 // request never plans a lens the profile switched off. Who may ask, how a
 // request waits for a running round, and what withdraws it are the security
 // request's rules, unchanged. A PR may carry both requests at once.
-import { SECURITY_REQUEST_ASSOCIATIONS, type ReviewRequestKind } from "./securityrequest.js";
+import type { ReviewRequestKind } from "./securityrequest.js";
 
 /** The `pr_review_requests` kind a state-machine request is recorded under. */
 export const STATE_REQUEST_KIND = "state-machines";
@@ -32,6 +32,3 @@ export const STATE_REQUEST: ReviewRequestKind = {
   ackTitle: "State-machine review requested",
   ackBody: "The next review round of this pull request runs the state-machine lenses.",
 };
-
-/** Who may ask in a comment: the security request's list. */
-export const STATE_REQUEST_ASSOCIATIONS = SECURITY_REQUEST_ASSOCIATIONS;

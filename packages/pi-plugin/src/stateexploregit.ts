@@ -113,20 +113,39 @@ const DIFF_MAX_BYTES = 32 * 1024 * 1024;
 /** A child's wall time. */
 export const EXPLORE_GIT_TIMEOUT_MS = 20_000;
 
+/** Whether `realWt` is the round's own worktree, by real path. An unset,
+ * empty, relative or unresolvable `roundWorktree` names nothing. */
+async function isRoundWorktree(
+  realWt: string,
+  roundWorktree: string | undefined,
+): Promise<boolean> {
+  if (roundWorktree === undefined || roundWorktree === "" || !isAbsolute(roundWorktree))
+    return false;
+  try {
+    return (await realpath(roundWorktree)) === realWt;
+  } catch {
+    return false;
+  }
+}
+
 export type ExploreTargetCheck =
   { ok: true; worktree: string; base: string; head: string } | { ok: false; refusal: string };
 
 /**
  * The worktree and the two commits a call names, checked before any git
  * runs: an absolute path whose real path is the session's `cwd` or lies
- * under it, an existing directory, and two 40-hex (or 64-hex) ids. Whether
- * the ids resolve to commits is `GitExploreIo.verify`'s question.
+ * under it, or is the real path of the round's own worktree (`roundWorktree`,
+ * the host's `QCR_WORKTREE`: the one-shot routes check the tree out beside
+ * the session's directory, not under it); an existing directory; and two
+ * 40-hex (or 64-hex) ids. Whether the ids resolve to commits is
+ * `GitExploreIo.verify`'s question.
  */
 export async function checkExploreTarget(
   cwd: string,
   worktree: unknown,
   base: unknown,
   head: unknown,
+  roundWorktree?: string,
 ): Promise<ExploreTargetCheck> {
   if (
     typeof worktree !== "string" ||
@@ -159,7 +178,7 @@ export async function checkExploreTarget(
   } catch {
     return { ok: false, refusal: "refused: `worktree` does not exist" };
   }
-  if (!isInside(realWt, realCwd))
+  if (!isInside(realWt, realCwd) && !(await isRoundWorktree(realWt, roundWorktree)))
     return {
       ok: false,
       refusal: "refused: `worktree` is not inside this session's working directory",

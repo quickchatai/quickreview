@@ -110,16 +110,18 @@ export function createLens(deps: LensToolDeps): ExtensionFactory {
  * leaves alone — has every tool the harness gives, so it is given this one
  * too; a scan or replay build always writes a line, so none of its leaves
  * reaches that case. Each call of the returned function makes a fresh
- * factory, so each pass's session has a memory of its own.
+ * factory, so each pass's session has a memory of its own. `worktree` is the
+ * round's own (`QCR_WORKTREE`), which the tool reads wherever it sits.
  */
 export function stateLeafTools(
   cwd: string,
   path: string,
+  worktree?: string,
 ): (agent: LensAgent) => ExtensionFactory[] {
   return (agent) =>
     STATE_FAMILY.includes(agent.name.replace(/--.*$/, "")) &&
     (agent.tools === undefined || agent.tools.includes(STATE_EXPLORE_TOOL))
-      ? [createStateExplore({ cwd, path })]
+      ? [createStateExplore({ cwd, path, ...(worktree ? { worktree } : {}) })]
       : [];
 }
 
@@ -156,7 +158,7 @@ export function lensRunConfigFromEnv(
     cwd,
     env,
     bashGuard: createBashGuard(bashGuardConfigFromEnv(env, cwd)),
-    leafTools: stateLeafTools(cwd, env["PATH"] ?? ""),
+    leafTools: stateLeafTools(cwd, env["PATH"] ?? "", env["QCR_WORKTREE"]),
     ledgerPath: join(ledger ? dirname(ledger) : agentDir, LENS_LEDGER_FILE),
     // A round's lens sessions are kept beside its ledger; an interactive pi
     // with no round keeps none, and never writes into its own agent dir.

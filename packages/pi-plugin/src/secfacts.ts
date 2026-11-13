@@ -121,7 +121,7 @@ function isTest(path: string): boolean {
   return TEST_RE.test(path);
 }
 
-export interface DiffLine {
+interface DiffLine {
   kind: "+" | "-" | " ";
   text: string;
   /** The head line for "+" and " ", the base line for "-". */

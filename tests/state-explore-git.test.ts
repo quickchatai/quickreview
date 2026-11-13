@@ -529,6 +529,49 @@ describe("checkExploreTarget", () => {
     expect(await refusal(session, base, null)).toMatch(/required on the first call/);
     rmSync(outside, { recursive: true, force: true });
   });
+
+  // The one-shot routes (`qcr review`, `/qcr-review`) run the session in
+  // `<run>/out` and check the review tree out at `<run>/tree`, beside it.
+  // MUTATION: drop the isRoundWorktree test from checkExploreTarget — the
+  // round's own tree is refused and this fails.
+  // MUTATION: accept a path under the round's worktree instead of the
+  // worktree itself — the subdirectory passes and this fails.
+  it("accepts the round's own worktree beside the session's directory, and nothing else there", async () => {
+    const run = mkdtempSync(join(tmpdir(), "qcr-explore-run-"));
+    const out = join(run, "out");
+    const tree = join(run, "tree");
+    const other = join(run, "other");
+    for (const d of [out, join(tree, "sub"), other]) mkdirSync(d, { recursive: true });
+    symlinkSync(tree, join(run, "tree-link"));
+    expect(await checkExploreTarget(out, tree, base, head)).toMatchObject({ ok: false });
+    expect(await checkExploreTarget(out, tree, base, head, tree)).toEqual({
+      ok: true,
+      worktree: realpathSync(tree),
+      base,
+      head,
+    });
+    // By real path on both sides.
+    expect(await checkExploreTarget(out, join(run, "tree-link"), base, head, tree)).toMatchObject({
+      ok: true,
+    });
+    expect(await checkExploreTarget(out, tree, base, head, join(run, "tree-link"))).toMatchObject({
+      ok: true,
+    });
+    for (const [wt, round] of [
+      [other, tree],
+      [join(tree, "sub"), tree],
+      [tree, ""],
+      [tree, "tree"],
+      [tree, join(run, "missing")],
+    ] as const) {
+      const r = await checkExploreTarget(out, wt, base, head, round);
+      expect(r, `${wt} / ${round}`).toEqual({
+        ok: false,
+        refusal: "refused: `worktree` is not inside this session's working directory",
+      });
+    }
+    rmSync(run, { recursive: true, force: true });
+  });
 });
 
 describe("a session verifies its target once", () => {

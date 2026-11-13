@@ -1615,17 +1615,13 @@ export const VALIDATE_STATE_EVIDENCE_ADDENDUM =
   'Three shapes are never a finding, whatever their evidence: an **inventory or a refactor proposal** ("this module holds several implicit state machines", "introduce an enum", "use a state-machine library", "add a default case") — `below-bar`; a combination that is **representable but has no writer that produces it and no reader that mishandles it** — `below-bar`; and a machine that was implicit **before this change and that no changed line adds a state, a writer or an event to, or removes a guard from** — `out-of-scope`. A race with no named second actor is `unverifiable`.\n\n' +
   "A state candidate whose `detail` begins `owner pass-sec-` or `owner pass-security` is also a security candidate: record its `kind:` as `security` (or `security:<class>`) if the lens wrote `state-machine`.\n";
 
-// Where the validator cost a state finding its weight, it was never by a
-// refutation: a regression the local code proved was cut to a P3 question
-// because a dependency's source was not at hand, though the code's own
-// branch showed the case exists; a lens fact about an absence was restated
-// without the search that settles it, and so a false one was affirmed; and
-// two transitions that one scenario showed together were merged, though each
-// needs its own fix. This entry keeps such a finding at its weight. It turns
-// one kind of step — a branch whose value comes from outside the repository —
-// from plausible into valid; it adds no kill word and loosens no refutation
-// question or never-a-finding shape. It composes after the external-semantics
-// rule, so it has the last word for state-machine candidates on its points.
+// Keeps a state-machine finding the local code proves at its weight: a
+// branch on a value from outside the repository is a valid step, not a
+// plausible one; an absence is affirmed only after a search for the other
+// writers, readers or exits; candidates merge by event, write and fix, never
+// by scenario. It adds no kill word and loosens no refutation question or
+// never-a-finding shape. It composes after the external-semantics rule, so
+// it has the last word for state-machine candidates on these points.
 export const VALIDATE_STATE_KEEP_ADDENDUM =
   "\n## State-machine candidates — keep what the code proves (sandbox rule)\n" +
   `This section binds ${STATE_CANDIDATE}. On the three points below it has the last word over every other rule in this prompt, before or after it, and changes nothing else about them.\n\n` +

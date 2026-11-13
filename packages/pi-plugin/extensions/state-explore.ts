@@ -15,7 +15,7 @@
 // it holds the exec boundary itself (docs/exec-boundary.md, "The in-process
 // state reader"): it reads committed git objects only, through plumbing verbs
 // with git's configuration pinned (stateexploregit.ts), and only inside the
-// session's `cwd`. It writes nothing, starts no session and reaches no
+// session's `cwd` or the round's own worktree. It writes nothing, starts no session and reaches no
 // network.
 //
 // Session memory: `worktree`, `base` and `head` are required on a session's
@@ -86,8 +86,12 @@ export interface ExploreReuse {
 }
 
 export interface StateExploreConfig {
-  /** The lens session's working directory: a worktree must be this or under it. */
+  /** The lens session's working directory: a worktree must be this or under it,
+   * or be `worktree`. */
   cwd: string;
+  /** The round's own worktree (the host's `QCR_WORKTREE`), accepted wherever
+   * it sits; unset, only `cwd` and what lies under it. */
+  worktree?: string;
   /** The `PATH` git is found on (the host's; the reader builds the rest of git's env itself). */
   path: string;
   /** How the default reader starts its git children. Default: node's spawn. A test seam. */
@@ -101,6 +105,7 @@ export interface StateExploreConfig {
     worktree: string,
     base: string,
     head: string,
+    roundWorktree?: string,
   ) => ExploreCheck | Promise<ExploreCheck>;
 }
 
@@ -216,7 +221,13 @@ export function stateExploreTool(config: StateExploreConfig): QcrTool {
         const fresh =
           memory.asked === undefined || resolved === undefined || !sameTarget(memory.asked, target);
         if (fresh) {
-          const verdict = await check(config.cwd, target.worktree, target.base, target.head);
+          const verdict = await check(
+            config.cwd,
+            target.worktree,
+            target.base,
+            target.head,
+            config.worktree,
+          );
           // A refused change keeps the target the session had.
           if (!verdict.ok) return refused(verdict.refusal);
           resolved = { worktree: verdict.worktree, base: verdict.base, head: verdict.head };

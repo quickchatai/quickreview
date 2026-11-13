@@ -127,20 +127,15 @@ reasoning), whatever the diff size: a `[models.pass_tiers]` entry lowers
 one (`"pass-sm-stuck" = "standard"`), `[lenses.<pass>] effort` in a child
 profile lowers its thinking, and `[models] effort` lowers every tier at
 once. Every re-review is a full round: a state-machine-only review has no
-follow-up delta yet.
+follow-up delta.
 
 ## Without this profile
 
 The default profile already runs part of the family: a strong trigger plans
 its lens (`[state_machines] triggers = "strong"`), and a state-machine
-review can be asked for on any PR, on top of the default plan:
-
-- the `qcr:state-machines` label (`[state_machines] label` in config.toml);
-- a `@<bot> state-machines` comment from an owner, member or collaborator
-  (`[state_machines] command`);
-- `qcr review-now <pr> --state-machines` from the operator;
-- `/qcr-review --state-machines` in pi, or `qcr review --state-machines` in
-  the terminal. `/qcr-review state-machines` (the preset) is this profile's
-  lens set for one run.
-
-A request plans the whole family, but never a lens a profile switched off.
+review can be asked for on any PR, on top of the default plan: the
+`qcr:state-machines` label, a `@<bot> state-machines` comment, or the
+`--state-machines` flag of `qcr review-now`, `qcr review` and `/qcr-review`
+([`docs/profiles.md`](../../docs/profiles.md), "Asking for a state-machine
+review"). A request plans the whole family, but never a lens a profile
+switched off.

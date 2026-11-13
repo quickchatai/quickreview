@@ -487,7 +487,10 @@ code, and a change to it is reviewed under the discipline below:
   `objects/info/alternates` pointing elsewhere) lends the tool another
   repository's objects, and its own `config`.
 - **Contained.** The worktree must be absolute and its realpath equal to or
-  under the session's `cwd`; `base` and `head` must be full hex commit ids that
+  under the session's `cwd`, or equal to the realpath of the round's own
+  worktree, which the host names in the session's env (`QCR_WORKTREE`; the
+  one-shot routes check the tree out beside the session's directory), never
+  a path under it; `base` and `head` must be full hex commit ids that
   resolve to commits. Anything else is a refusal text, never a throw and never
   a git call over an unchecked path.
 - **Nothing else.** No write, no network, no GitHub client, no inject file, no

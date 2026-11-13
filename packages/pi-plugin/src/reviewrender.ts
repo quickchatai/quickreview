@@ -506,7 +506,7 @@ export function securityEntry(entry: Record<string, unknown>): boolean {
 }
 
 /** Is a record entry a state-machine finding (severity.ts `isStateFinding`)? */
-export function stateEntry(entry: Record<string, unknown>): boolean {
+function stateEntry(entry: Record<string, unknown>): boolean {
   return isStateFinding(str(entry.kind), str(entry.lens) ?? str(entry.name));
 }
 

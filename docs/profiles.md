@@ -1081,14 +1081,6 @@ command = true          # config.toml only; "@<bot> security"
   posts as a question naming the proof gap (`security-demoted`) instead of
   being doubted; the findings record counts any it still doubted
   (`security_doubted`).
-- **Each family lens session holds `state_explore`**, a read-only tool over
-  the PR's committed objects: `anchors` (lines where something may be
-  missing, from the diff's shape), and the `writes`, `reads`, `exits` and
-  `siblings` of a name. It runs no code and reaches no network, holds the
-  exec boundary itself, and is given to a `pass-sm-*` session and no other
-  ([`docs/exec-boundary.md`](exec-boundary.md), "The in-process state
-  reader"). What it prints is where to look; a finding still rests on lines
-  the lens read.
 - **`only = true`**: every lens outside the family and `pass-validate` is
   switched off through the same `enabled = false` a profile writes by hand
   (`pass-baseline`, `pass-bounds`, `pass-security`, the sweep, tests and the
@@ -1198,22 +1190,21 @@ finding is a claim that **a sequence of events reaches a state the code
 mishandles**, so its evidence block names the state variable, the state,
 the event, a numbered trace with one `file:line` per step, the line that
 acts with no check, the property broken (absence, precedence or response),
-the consequence and the guards hunted. Most of the defects the family
-misses are absences, so the procedure has a comparison step: each write,
-call or exit the change adds, moves or removes is compared with its
-siblings (the other exits of the function, the other writers of the field,
-the old place of a moved call, a persisted shape against a migration,
-writes against a transaction), and an absence finding may rest on a
+the consequence and the guards hunted. The defects are often absences, so
+the procedure has a comparison step: each write, call or exit the change
+adds, moves or removes is compared with its siblings (the other exits of
+the function, the other writers of the field, the old place of a moved
+call, a persisted shape against a migration, writes against a
+transaction), and an absence finding may rest on a
 `compare:` line, the place the line is present against the place it is
 missing. A lens answers `NONE` only with a `checked:` list of the sites it
 opened and the line that clears each, and a state defect another lens owns
 is reported anyway with `owner <lens>` in `detail`, never dropped. The
-contract also says what is never a finding: an inventory of the machines a module holds, a proposal to
-introduce a state machine or an enum, a combination that is representable
-but that nothing writes, independent flags, a derived boolean, a dispatch
-the build already proves exhaustive, "add a default case", and a race with
-no named second actor. The reviewer reads code and never runs it, so a
-finding says "by reading" and recommends the test that would confirm it.
+contract also says what is never a finding (an inventory, a proposal to
+introduce a state machine, a combination nothing writes, among others;
+`profiles/state-machines/README.md`, "What it does not post"). The
+reviewer reads code and never runs it, so a finding says "by reading" and
+recommends the test that would confirm it.
 
 `pass-statelessness`, `pass-concurrency`, `pass-rollout` and
 `pass-sec-toctou` are not members and keep what is theirs.
@@ -1245,7 +1236,7 @@ command = true                 # config.toml only; "@<bot> state-machines"
   `added_lines`, always strong), a request (below), and `[lenses.<pass>] plan = "always"`. `off` leaves the
   requests and `always`.
   A wholly new enumeration plans nothing: every dispatch over it is written
-  in the same change. The trigger rates are unmeasured.
+  in the same change.
 - **A family row runs at the `deep` tier on every route** — a trigger, a
   request, `plan = "always"` — because the eight lenses are shipped pins
   (`DEFAULT_PASS_TIERS`, see "The lenses pinned at high effort" above), so
@@ -1259,29 +1250,14 @@ command = true                 # config.toml only; "@<bot> state-machines"
   state-machine work** (a family row planned, a request, `only`), so a
   round with no state signal is offered what it was before the family
   existed.
-- **The validator** replays a state-machine candidate's trace
-  (`validate-state-evidence`, in every build): each line and step is valid,
-  plausible or contradicted; then five refutation questions — is the state
-  unrepresentable or the dispatch proven exhaustive, is the guard somewhere
-  else, is it the same object on every step, is each step feasible, does
-  something restore the state. A contradicted step or a found guard is
-  `refuted` with the line cited; a candidate already written as a question
-  naming its gap (confidence 0.6 or less) survives as that question; an
-  inventory, a refactor proposal and a representable-only combination are
-  `below-bar`; a machine the change did not touch is `out-of-scope`. No
-  word is added to the kill vocabulary. A state defect a family lens hands
-  to a security lens (`detail: owner pass-sec-…`) is written with a
-  `security:<class>` kind, by the lens or else by the validator, so the
-  security rules judge it and `scope = "security"` posts it, while its
-  `pass-sm-*` lens keeps it a state-machine finding. A second rule (`validate-state-keep`, after the
-  external-semantics rule) keeps such a finding at its weight: a regression
-  the local code proves (a removed fallback, guard or terminal transition,
-  or an exit the code distinguishes that misses the state its siblings
-  reach) keeps its severity and confidence when a dependency's source is
-  missing, with the open premise as a caveat; an absence is affirmed only
-  after a search for the other writers, readers or exits; and two state
-  candidates merge only when they name the same transition and one fix
-  closes both.
+- **The validator** replays a state-machine candidate's trace and asks five
+  refutation questions (`validate-state-evidence`); a candidate written as
+  a question naming its gap (confidence 0.6 or less) survives as that
+  question; an inventory, a refactor proposal and a representable-only
+  combination are `below-bar`; a hand-off to a security lens is written
+  with a `security:<class>` kind. A regression the local code proves keeps
+  its weight when a dependency's source is missing (`validate-state-keep`).
+  No word is added to the kill vocabulary.
 - **Each family lens session holds `state_explore`**, a read-only tool over
   the PR's committed objects: `anchors` (lines where something may be
   missing, from the diff's shape), and the `writes`, `reads`, `exits` and
@@ -1296,7 +1272,7 @@ command = true                 # config.toml only; "@<bot> state-machines"
   (`[posting] scope = "state"`). `[security] only` and `[state_machines]
   only` together are refused at load: a review keeps one family alone.
   With no baseline, every re-review is a full round (`baseline-unplanned`):
-  there is no follow-up delta in a state-machine-only review yet.
+  a state-machine-only review has no follow-up delta.
 
 The shipped profile `state-machines` is that review, with every trigger on
 and all eight lenses planned on every change to code or config

@@ -79,6 +79,7 @@ describe("the state-machine family", () => {
     }
   });
 
+  // MUTATION: move `...STATE_FAMILY,` after "pass-validate" in ALL_PASSES — this fails.
   it("sits in one block after the security family and before the validator", () => {
     const at = ALL_PASSES.indexOf(FAMILY[0]!);
     expect(ALL_PASSES[at - 1]).toBe(SECURITY_FAMILY.at(-1));
@@ -99,6 +100,7 @@ describe("the state-machine family", () => {
     expect(LENS_FAMILIES.state).toBe(STATE_FAMILY);
   });
 
+  // MUTATION: add "pass-sm-events" to DIFF_ONLY_LENSES — this fails.
   it("every member is a scan deep lens", () => {
     for (const lens of STATE_FAMILY) {
       expect(DIFF_ONLY_LENSES, lens).not.toContain(lens);

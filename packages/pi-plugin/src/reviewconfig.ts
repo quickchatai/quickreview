@@ -1440,7 +1440,7 @@ export function parseSecurity(raw: unknown): SecurityConfig {
  * on their own. `off`: none (a request or a profile's `plan = "always"` still
  * does); `strong`: only the strong ones (a state check removed, a member
  * added to an existing enumeration, …); `all`: the weak ones too. */
-export const STATE_TRIGGER_MODES = ["off", "strong", "all"] as const;
+const STATE_TRIGGER_MODES = ["off", "strong", "all"] as const;
 export type StateTriggerMode = (typeof STATE_TRIGGER_MODES)[number];
 
 /**

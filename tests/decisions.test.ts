@@ -368,9 +368,8 @@ describe("the decisions-validation plans", () => {
     const b = plan("decisions-validation-hi");
     const base = parseConfig(readFile(resolvePath("tests/fixtures/config.toml"), "utf8"));
     const c = applyConfigOverrides(base, b.config);
-    // The arm's three pins, on top of the shipped ones: since the
-    // state-machine family joined DEFAULT_PASS_TIERS, its eight lenses are
-    // pinned at deep in every config, this arm's included.
+    // The arm's three pins, on top of the shipped ones: DEFAULT_PASS_TIERS
+    // pins the eight state-machine lenses at deep in every config.
     // MUTATION: drop the STATE_FAMILY spread from DEFAULT_PASS_TIERS — this
     // fails.
     expect(c.models.pass_tiers).toEqual({

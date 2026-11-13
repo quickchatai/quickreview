@@ -8,9 +8,9 @@
 //     route's LensRunConfig comes from) attaches the tool's factory only when
 //     the agent is a family variant AND its own line names the tool or it
 //     carries no allowlist at all;
-//   - the extension itself refuses a target outside the session's cwd or a
-//     malformed sha with a text result, never a throw, and keeps its memory
-//     per session.
+//   - the extension itself refuses a target outside the session's cwd that
+//     is not the round's own worktree, or a malformed sha, with a text
+//     result, never a throw, and keeps its memory per session.
 // The reader behind the tool (packages/pi-plugin/src/stateexplore.ts) is
 // stubbed through the extension's io seam wherever a call would reach git.
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -25,7 +25,10 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
-import { stateLeafTools } from "@quickchatai/pi-quickreview/extensions/lens.js";
+import {
+  lensRunConfigFromEnv,
+  stateLeafTools,
+} from "@quickchatai/pi-quickreview/extensions/lens.js";
 import {
   STATE_EXPLORE_TOOL,
   createStateExplore,
@@ -427,6 +430,52 @@ describe("the extension: refusals are text, memory is per session", () => {
     });
     expect(text).toMatch(new RegExp(`^${STATE_EXPLORE_TOOL} refused: `));
     expect(made).toEqual([]);
+  });
+
+  // The one-shot routes run the session in `<run>/out` and check the review
+  // tree out beside it, at `<run>/tree`, which both routes name in the
+  // session's env as QCR_WORKTREE. The production runner config passes it
+  // through to the tool's real check. PATH is empty, so the reader that
+  // follows an accepted check finds no git and answers with a text result.
+  // MUTATION: drop `env["QCR_WORKTREE"]` from lensRunConfigFromEnv's
+  // stateLeafTools call — the tree is refused and this fails.
+  // MUTATION: drop `config.worktree` from the check call in stateExploreTool
+  // (extensions/state-explore.ts) — this fails.
+  it("reads the round's own worktree on the one-shot layout, beside the session's cwd", async () => {
+    const run = mkdtempSync(join(tmpdir(), "qcr-sm-explore-run-"));
+    const out = join(run, "out");
+    const tree = join(run, "tree");
+    const agentDir = join(run, "agent");
+    for (const d of [out, tree, join(agentDir, "agents")]) mkdirSync(d, { recursive: true });
+    const family: LensAgent = {
+      name: "pass-sm-events--deep",
+      description: "",
+      model: undefined,
+      modelId: undefined,
+      thinking: null,
+      tools: undefined,
+      body: "",
+      filePath: "/agents/pass-sm-events--deep.md",
+      origin: "built",
+      overrides: null,
+    };
+    const toolFor = (env: Record<string, string>): ToolDefinition => {
+      const cfg = lensRunConfigFromEnv(
+        { PI_CODING_AGENT_DIR: agentDir, HOME: run, PATH: "", ...env },
+        {} as never,
+        out,
+      );
+      const factories = cfg.leafTools(family);
+      expect(factories).toHaveLength(1);
+      return session(factories[0]!);
+    };
+    const target = { action: "anchors", worktree: tree, base: SHA_A, head: SHA_B };
+    const notInside = /not inside this session's working directory/;
+    expect(await call(toolFor({}), target)).toMatch(notInside);
+    const text = await call(toolFor({ QCR_WORKTREE: tree }), target);
+    expect(text).toMatch(new RegExp(`^${STATE_EXPLORE_TOOL} `));
+    expect(text).not.toMatch(notInside);
+    rmSync(run, { recursive: true, force: true });
   });
 
   // MUTATION: drop the SHA_RE tests from readTarget — the check is asked; this fails.

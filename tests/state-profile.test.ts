@@ -29,6 +29,7 @@ import {
   SCAN_PASS,
   VALIDATE_PASS,
 } from "@quickchatai/pi-quickreview/src/include.js";
+import { isKnownVocabularyWord } from "@quickchatai/pi-quickreview/src/findingsrecord.js";
 import { alwaysPlannedLenses } from "@quickchatai/pi-quickreview/src/lenstuning.js";
 import { ALL_PASSES, STATE_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 import {
@@ -294,6 +295,7 @@ describe("the state posting scope", () => {
 });
 
 describe("the shipped state-machines profile", () => {
+  // MUTATION: drop "state-machines" from EXAMPLE_PROFILES (profilelookup.ts) — this fails.
   it("is a generic example the locator finds in the checkout, and loads", () => {
     expect(EXAMPLE_PROFILES).toContain(PROFILE);
     expect(locateProfile({ root, profile: PROFILE })?.dir).toBe(PROFILE_DIR);
@@ -483,8 +485,12 @@ describe("the registry's state-machine addenda", () => {
     }
   });
 
-  // The validator's rule adds no word to the closed kill vocabulary: every
-  // outcome it names is one the vocabulary already has.
+  // The validator's rules add no word to the closed vocabulary: every
+  // backticked disposition-shaped word (kebab-case, not a lens name and not
+  // the finding kind `state-machine`) and every outcome they name is one the
+  // vocabulary already has.
+  // MUTATION: add "label it `trace-broken`" to VALIDATE_STATE_EVIDENCE_ADDENDUM — this fails.
+  // MUTATION: add "it is `restored-elsewhere`" to VALIDATE_STATE_KEEP_ADDENDUM — this fails.
   it("the validator's rule names the five refutation questions and only existing kill words", () => {
     const rule = PASS_ADDENDA.find((a) => a.id === "validate-state-evidence")!.text;
     for (const q of [
@@ -498,6 +504,15 @@ describe("the registry's state-machine addenda", () => {
     for (const word of ["`refuted`", "`unverifiable`", "`below-bar`", "`out-of-scope`"])
       expect(rule, word).toContain(word);
     expect(rule).not.toMatch(/adds? (ONE|a) word/i);
+    const keep = PASS_ADDENDA.find((a) => a.id === "validate-state-keep")!.text;
+    const words = [rule, keep].flatMap((t) =>
+      [...t.matchAll(/`([a-z]+(?:-[a-z]+)+)`/g)]
+        .map((m) => m[1]!)
+        .filter((w) => !w.startsWith("pass-") && w !== "state-machine"),
+    );
+    expect(words).toEqual(expect.arrayContaining(["below-bar", "external-assumption"]));
+    for (const w of [...words, "refuted", "unverifiable"])
+      expect(isKnownVocabularyWord(w), w).toBe(true);
   });
 
   // MUTATION: change validate-state-keep's scope to "lenses" — this fails.
