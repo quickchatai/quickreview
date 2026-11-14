@@ -455,6 +455,80 @@ describe("review state", () => {
     expect(two.fresh.map((e) => e.title)).toEqual(["unrelated null deref"]);
     expect(two.repeats).toHaveLength(1);
   });
+
+  const round = (n: number, scope: "full" | "delta") => ({
+    round_no: n,
+    head_sha: `h${n}`,
+    base_sha: "b",
+    merge_base: "b",
+    reviewed_at: "2026-01-01T00:00:00Z",
+    verdict: null,
+    scope,
+    cost_usd: null,
+  });
+
+  // A candidate the validator doubted was never raised: it is kept as its own
+  // row for the audit, and the next round never lists it as still open.
+  // MUTATION: put "doubted" back in reviewstate.ts SHOWN_AS_POSTED — this fails.
+  it("keeps a doubted candidate out of the new and the open findings", () => {
+    const one = state.recordRound(null, "t", round(1, "full"), {
+      findings: [
+        f("f1", "src/a.ts", 3, "P0", "c breaks the build"),
+        {
+          id: "f2",
+          lens: "pass-baseline",
+          path: "src/a.ts",
+          line: 2,
+          severity: "P1",
+          disposition: "doubted",
+          word: "refuted",
+          reason: "b is a const",
+        },
+      ],
+    });
+    expect(one.fresh.map((e) => e.key)).toEqual(["f1"]);
+    const row = one.state.rows.find((r) => r.finding_key === "f2");
+    expect(row?.disposition).toBe("doubted");
+    expect(row?.posted_as).toBeNull();
+    expect(state.openFindings(one.state).findings.map((p) => p.finding_key)).toEqual(["f1"]);
+  });
+
+  // Legacy fold: a state saved while a doubted candidate was stored as a
+  // posted row still loads, and that row is still open, as it was.
+  // MUTATION: refuse a state with a posted row whose word is a doubt word in
+  // loadState — this fails.
+  it("loads a saved state whose doubted candidate was stored as posted", () => {
+    const path = join(tmp, "legacy-doubted-state.json");
+    const one = state.recordRound(null, "t", round(1, "full"), {
+      findings: [f("f1", "src/a.ts", 3, "P0", "c breaks the build")],
+    });
+    const legacy = {
+      ...one.state,
+      rows: [
+        ...one.state.rows,
+        {
+          ...one.state.rows[0]!,
+          id: 2,
+          finding_key: "f2",
+          line: 2,
+          title: null,
+          disposition: "posted",
+          word: "refuted",
+          reason: "b is a const",
+          posted_as: "P1",
+        },
+      ],
+    };
+    writeFileSync(path, JSON.stringify(legacy));
+    const s = state.loadState(path, "t");
+    expect(s).not.toBeNull();
+    expect(
+      state
+        .openFindings(s)
+        .findings.map((p) => p.finding_key)
+        .sort(),
+    ).toEqual(["f1", "f2"]);
+  });
 });
 
 describe("qcr review: a delta review with memory", () => {

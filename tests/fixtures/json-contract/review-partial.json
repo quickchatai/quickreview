@@ -67,6 +67,7 @@
     "key": "0000000000000000"
   },
   "findings": {},
+  "doubted": [],
   "still_open": [],
   "repeats_suppressed": 0,
   "already_posted_skipped": 0,

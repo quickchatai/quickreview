@@ -18,7 +18,12 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { TerminalFinding } from "./localreview.js";
+import {
+  doubtWhy,
+  doubtedHeading,
+  type DoubtedFinding,
+  type TerminalFinding,
+} from "./localreview.js";
 import { openReviewStoreIn } from "./reviewstore.js";
 
 export type Destination = "terminal" | "file" | "json" | "pr";
@@ -30,6 +35,9 @@ export const FALLBACK_DESTINATIONS: readonly Destination[] = ["terminal", "json"
 
 /** The keys of one finding in the JSON (and the facts of one markdown bullet). */
 export const FINDINGS_JSON_KEYS = ["path", "line", "severity", "title", "lens"] as const;
+
+/** The keys of one doubted candidate in the JSON's `doubted` list. */
+export const DOUBTED_JSON_KEYS = [...FINDINGS_JSON_KEYS, "word", "reason"] as const;
 
 export interface DestinationChoice {
   value: Destination;
@@ -184,10 +192,12 @@ export function saveDefaultDestinationsIn(
 }
 
 /** The markdown report: the same findings the JSON carries, worst first. One
- * bullet per finding. */
+ * bullet per finding. The candidates the validator doubted follow in their
+ * own section, outside the count. */
 export function renderMarkdown(
   meta: { title: string; verdict: string | null; notes: readonly string[] },
   groups: Record<string, TerminalFinding[]>,
+  doubted: readonly DoubtedFinding[] = [],
 ): string {
   const count = Object.values(groups).reduce((n, l) => n + l.length, 0);
   const out = [`# ${meta.title}`, ""];
@@ -200,6 +210,18 @@ export function renderMarkdown(
         ? `\`${f.path}${f.line !== null ? `:${f.line}` : ""}\``
         : "(no location)";
       out.push(`- ${where} — ${f.title}${f.lens ? ` _(${f.lens})_` : ""}`);
+    }
+    out.push("");
+  }
+  if (doubted.length > 0) {
+    out.push(`## ${doubtedHeading(doubted.length)}`, "");
+    out.push("Not counted above, and never posted on a pull request.", "");
+    for (const d of doubted) {
+      const where = d.path
+        ? `\`${d.path}${d.line !== null ? `:${d.line}` : ""}\``
+        : "(no location)";
+      const why = doubtWhy(d);
+      out.push(`- ${where} — ${d.title}${why ? ` — ${why}` : ""}`);
     }
     out.push("");
   }

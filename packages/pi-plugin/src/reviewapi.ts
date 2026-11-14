@@ -66,11 +66,13 @@ import {
   addReviewTree,
   addUncommittedTree,
   contractOneNoPrice,
+  doubtedFindings,
   groupFindings,
   loadReviewSettings,
   hardStopFor,
   priceReview,
   removeReviewTree,
+  renderDoubted,
   renderGrouped,
   repoRates,
   originRepo,
@@ -108,6 +110,7 @@ import { MEMORY_NOT_SET_UP, type ReviewMemoryPort, type RoundMemory } from "./me
 import type { ProfilePlace } from "./profilelookup.js";
 import type { ProfileLookup } from "./profiles.js";
 import { assemblePostReview, loadPostIdentity, securityRowsNotReturned } from "./reviewpost.js";
+import { applySecurityFoldToRecord } from "./reviewrender.js";
 import {
   fetchPrTarget,
   parsePrTarget,
@@ -1521,7 +1524,12 @@ async function runPipeline(
     cost_usd: spent,
     coverage: lensCoverage,
   };
-  const recorded = recordRound(scope === "delta" ? prev : null, targetKey, round, shot.findings);
+  // The report reads the record as the post does: under the security fold a
+  // security candidate the validator could not verify is asked as a
+  // question, a finding, rather than doubted.
+  const reportRecord =
+    cfg.security?.fold === true ? applySecurityFoldToRecord(shot.findings).record : shot.findings;
+  const recorded = recordRound(scope === "delta" ? prev : null, targetKey, round, reportRecord);
   const replaces = !asked || stored === null || coversRound(lensCoverage, lastRound(stored));
   if (finished && keepsState && replaces) saveState(statePath, recorded.state);
   const open = finished ? stillOpen(recorded.state, round.round_no) : [];
@@ -1529,11 +1537,16 @@ async function runPipeline(
   const groups = groupFindings({ findings: finished ? skipped.fresh : [] });
   const unfinishedGroups = finished
     ? groups
-    : groupFindings(rawWithout(shot.findings, bot.findings));
+    : groupFindings(rawWithout(reportRecord, bot.findings));
   const count = Object.values(unfinishedGroups).reduce((n, l) => n + l.length, 0);
+  // The candidates the validator doubted: listed apart, never counted, never
+  // posted.
+  const doubted = doubtedFindings(reportRecord);
+  const doubtedLines = renderDoubted(doubted);
   const data = {
     preview: previewData,
     findings: unfinishedGroups,
+    doubted,
     still_open: open,
     repeats_suppressed: recorded.repeats.length,
     already_posted_skipped: skipped.skipped,
@@ -1556,6 +1569,7 @@ async function runPipeline(
         (coverage.not_reached.length ? `; not reached: ${coverage.not_reached.join(", ")}` : "") +
         ".",
       ...(count > 0 ? body : ["No findings were written before the stop."]),
+      ...doubtedLines,
       ...customNotes,
       `Files: ${outDir}`,
     ].join("\n");
@@ -1573,6 +1587,7 @@ async function runPipeline(
           ],
         },
         unfinishedGroups,
+        doubted,
       ),
     );
   }
@@ -1599,6 +1614,7 @@ async function runPipeline(
     "",
     `Review done${verdict ? `: ${verdict}` : ""}${spentWords}`,
     ...(count > 0 ? body.slice(1) : [scope === "delta" ? "No new findings." : "No findings."]),
+    ...doubtedLines,
     ...renderStillOpen(open),
     ...(recorded.repeats.length
       ? [
@@ -1622,7 +1638,7 @@ async function runPipeline(
   let postFailed = false;
   let postLine = "";
   let postReady: string | null = null;
-  const markdown = renderMarkdown(mdMeta, groups);
+  const markdown = renderMarkdown(mdMeta, groups, doubted);
   let post = sends("pr");
   if (!post && prInfo !== null && io.offerPost) {
     const offerPost = io.offerPost;

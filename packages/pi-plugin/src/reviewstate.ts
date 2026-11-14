@@ -170,8 +170,10 @@ export function openFindings(s: ReviewState | null, nextRound?: number): PriorFi
 
 /** The dispositions a reader sees as findings (the terminal hides the
  * review's own kills): carried as open findings, whatever the record called
- * them. */
-const SHOWN_AS_POSTED = new Set<FindingDisposition>(["posted", "downgraded", "doubted", "unknown"]);
+ * them. A candidate the validator doubted is not one: it is kept as its own
+ * row and never listed as open. A state saved while it was stored as posted
+ * still loads, and that row stays open as it was. */
+const SHOWN_AS_POSTED = new Set<FindingDisposition>(["posted", "downgraded", "unknown"]);
 
 const norm = (s: string | null): string =>
   (s ?? "")
