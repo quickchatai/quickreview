@@ -83,6 +83,8 @@ describe("the trigger table", () => {
     for (const t of STATE_TRIGGERS) {
       expect(t.re.global, t.id).toBe(false);
       expect(t.re.sticky, t.id).toBe(false);
+      expect(t.next?.global ?? false, t.id).toBe(false);
+      expect(t.next?.sticky ?? false, t.id).toBe(false);
     }
   });
 });
@@ -234,6 +236,29 @@ describe("pass-sm-transitions", () => {
     const over = edited(ADD_BACK_SCANS_MAX + 1);
     expect(over).toMatchObject({ strength: "strong" });
     expect(over!.why).toContain(`o${ADD_BACK_SCANS_MAX}.status`);
+  });
+
+  // MUTATION: drop the operand suffix from the state-check-removed pattern —
+  // the edit reads as added back and this fails.
+  it("a check edited to compare another state is removed", () => {
+    for (const [file, before, after, state] of [
+      [
+        "src/order.ts",
+        "  if (order.status === 'closed') return;",
+        "  if (order.status === 'deleted') return;",
+        "'closed'",
+      ],
+      [
+        "app/order.py",
+        "    if order.status in ('closed', 'void'):",
+        "    if order.status in ('void',):",
+        "'closed'",
+      ],
+    ] as const) {
+      const sel = select([patched(file, [`-${before}`, `+${after}`])], "strong");
+      expect(of(sel, "pass-sm-transitions"), file).toMatchObject({ strength: "strong" });
+      expect(of(sel, "pass-sm-transitions")!.why, file).toContain(state);
+    }
   });
 
   it("the PR's words plan it weakly", () => {
@@ -425,6 +450,21 @@ describe("pass-sm-derived", () => {
     );
     expect(of(sel, "pass-sm-derived")).toMatchObject({ strength: "strong" });
   });
+
+  // MUTATION: drop the t.next check in lineHit — the negative case fires and
+  // this fails.
+  it("an effect split over lines whose body sets state is strong; one that only fetches is none", () => {
+    const sets = select(
+      [added("src/c.tsx", "  useEffect(() => {", "    setTotal(items.length);", "  }, [items]);")],
+      "strong",
+    );
+    expect(of(sets, "pass-sm-derived")).toMatchObject({ strength: "strong" });
+    const fetches = select(
+      [added("src/c.tsx", "  useEffect(() => {", "    fetchItems().then(setItems);", "  }, []);")],
+      "strong",
+    );
+    expect(fetches).toEqual([]);
+  });
 });
 
 describe("pass-sm-lifecycle", () => {
@@ -561,6 +601,7 @@ describe("linear probes", () => {
       `UPDATE ${"SET ".repeat(3000)}`,
       `${"(".repeat(4000)}${")".repeat(4000)}`,
       "| ".repeat(5000),
+      `useEffect(() => {${" ".repeat(3000)}`,
     ];
     const files = [
       patched(

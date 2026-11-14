@@ -119,6 +119,10 @@ export interface Block {
   body: number;
   /** The line of the closing `}` (or the last line of a Python block). */
   end: number;
+  /** The column of the body's `{` on `body` (brace family). */
+  bodyCol?: number;
+  /** The column of the closing `}` on `end` (brace family). */
+  endCol?: number;
   /** The head's code, trimmed and cut. */
   head: string;
   /** Parent block id, or -1 at file level. */
@@ -972,6 +976,16 @@ function braceStructure(
     if (ASI.has(d) && !sl.cont && !trimmed.startsWith("{")) segs = [];
     const s = fullCode[li]!;
     let segStart = 0;
+    // The head a brace reads is bounded: its first and last HEAD_MAX
+    // characters, which is all any head test reads, so a pattern brace that
+    // leaves segStart in place costs a constant, never the line's length.
+    const headAt = (j: number): string => {
+      const cur =
+        j - segStart <= 2 * HEAD_MAX
+          ? s.slice(segStart, j)
+          : `${s.slice(segStart, segStart + HEAD_MAX)} ${s.slice(j - HEAD_MAX, j)}`;
+      return `${segs.map((g) => g.text).join(" ")} ${cur}`;
+    };
     for (let j = 0; j < s.length; j++) {
       const c = s.charCodeAt(j);
       if (c === 40 || c === 91) pd++;
@@ -995,8 +1009,8 @@ function braceStructure(
         // `{ onDone() {`) opens the callback's own block
         ((pats.length > 0 &&
           pats[pats.length - 1]!.depth === stack.length &&
-          !BODY_HEAD_END_RE.test(segs.map((g) => g.text).join(" ") + " " + s.slice(segStart, j))) ||
-          opensObjectPattern(segs.map((g) => g.text).join(" ") + " " + s.slice(segStart, j)))
+          !BODY_HEAD_END_RE.test(headAt(j))) ||
+          opensObjectPattern(headAt(j)))
       ) {
         pats.push({ pd, depth: stack.length });
         pd++;
@@ -1009,7 +1023,7 @@ function braceStructure(
         pats.pop();
         pd--;
       } else if (c === 123) {
-        const headText = segs.map((g) => g.text).join(" ") + " " + s.slice(segStart, j);
+        const headText = headAt(j);
         // A TypeScript return type (`f(): { ok: boolean } {`,
         // `f(): Promise<{ ok: boolean }> {`) is a type, not the body: the
         // pattern rule closes it, and the brace after it opens the body.
@@ -1030,6 +1044,7 @@ function braceStructure(
           open: head === "" ? L : headLine,
           body: L,
           end: 0,
+          bodyCol: j,
           head,
           parent: stack.length > 0 ? stack[stack.length - 1]! : -1,
         });
@@ -1045,6 +1060,7 @@ function braceStructure(
         if (id === undefined)
           return { structure: null, unknown: `a closing brace at line ${L} has no opener`, notes };
         blocks[id]!.end = L;
+        blocks[id]!.endCol = j;
         pd = pds.pop() ?? 0;
         segs = [];
         segStart = j + 1;
@@ -1418,9 +1434,11 @@ const EXIT_PROBES: readonly {
   only?: readonly Dialect[];
   not?: readonly Dialect[];
 }[] = [
-  { kind: "return", re: /\breturn\b/ },
-  { kind: "throw", re: /\bthrow\b/, not: ["py", "go"] },
-  { kind: "raise", re: /\braise\b/, only: ["py"] },
+  // a member named by the keyword (`it.return()`, `g?.throw(e)`,
+  // `$gen->throw($e)`) is a call, not the statement
+  { kind: "return", re: /(?<![.$\w]|->|::)\breturn\b/ },
+  { kind: "throw", re: /(?<![.$\w]|->|::)\bthrow\b/, not: ["py", "go"] },
+  { kind: "raise", re: /(?<![.$\w]|->|::)\braise\b/, only: ["py"] },
   { kind: "goto", re: /\bgoto\s{1,8}[A-Za-z_]/, only: ["c", "go", "cs", "php"] },
   { kind: "panic", re: /\bpanic!?\s{0,4}\(/, only: ["go", "rust"] },
   {
@@ -1486,23 +1504,52 @@ export function exitsOf(shape: Shape, fn: Block): Exit[] {
   const out: Exit[] = [];
   let lastStmt: { line: number; leaves: boolean } | null = null;
   let prevCode = "";
+  const st = shape.structure;
+  const brace = familyOf(d) === "brace";
+  // A function nested in `fn` whose body opens on a line `fn` owns (a
+  // one-line callback) is its own: its span on that line is no code of `fn`.
+  const nested = new Map<number, Block[]>();
+  const inside = new Set<number>([fn.id]);
+  if (brace)
+    for (let i = fn.id + 1; i < st.blocks.length && st.blocks[i]!.body <= fn.end; i++) {
+      const g = st.blocks[i]!;
+      // a child's parent precedes it, so one walk in id order finds them all
+      if (!inside.has(g.parent)) continue;
+      inside.add(g.id);
+      if (g.kind !== "function" || g.bodyCol === undefined) continue;
+      const list = nested.get(g.body);
+      if (list) list.push(g);
+      else nested.set(g.body, [g]);
+    }
   for (let L = fn.body; L <= fn.end; L++) {
     const sl = shape.lines[L - 1]!;
     if (sl.kind !== "code") continue;
     const own = functionOfLine(shape, L);
-    const headHere = L === fn.body && familyOf(d) === "brace";
+    const headHere = L === fn.body && brace;
     if (own?.id !== fn.id && !headHere) continue;
     let code = sl.code;
+    for (const g of nested.get(L) ?? []) {
+      const from = Math.min(g.bodyCol!, code.length);
+      const to = Math.min(
+        g.end === L && g.endCol !== undefined ? g.endCol + 1 : code.length,
+        code.length,
+      );
+      code = code.slice(0, from) + " ".repeat(to - from) + code.slice(to);
+    }
+    // only what lies between the function's own `{` and `}`
+    let from = 0;
+    let to = code.length;
     if (L === fn.body) {
-      if (familyOf(d) === "indent") continue;
-      // only what follows the function's own `{`
-      const at = code.indexOf("{");
-      code = at >= 0 ? code.slice(at + 1) : "";
+      if (!brace) continue;
+      const at = fn.bodyCol ?? code.indexOf("{");
+      if (at >= 0) from = at + 1;
+      else to = 0;
     }
-    if (L === fn.end && familyOf(d) === "brace") {
-      const at = code.lastIndexOf("}");
-      code = at >= 0 ? code.slice(0, at) : code;
+    if (L === fn.end && brace) {
+      const at = fn.endCol ?? code.lastIndexOf("}");
+      if (at >= from && at < to) to = at;
     }
+    code = code.slice(from, to);
     if (code.trim() === "" || code.trim() === "}") continue;
     const k = exitKindOf(code, d);
     if (k) out.push({ kind: k.kind, line: L, handler: k.handler });

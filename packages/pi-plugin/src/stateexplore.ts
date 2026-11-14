@@ -157,6 +157,10 @@ export const EXPLORE_MAX_CHANGED_FILE_BYTES = 1024 * 1024;
 const MAX_PATCH_CHARS = 4 * EXPLORE_MAX_CHANGED_FILE_BYTES;
 /** Text read in one call. */
 export const EXPLORE_MAX_BYTES = 64 * 1024 * 1024;
+/** Lines read in one call: a shape keeps an object per line, so a file of
+ * short lines costs far more than its bytes. Ordinary code reaches the
+ * byte budget first. */
+export const EXPLORE_MAX_LINES = 4_000_000;
 /** Characters of one answer. */
 export const EXPLORE_MAX_CHARS = 12_000;
 /** Sites listed per answer or per anchor list. */
@@ -286,6 +290,7 @@ class Ctx {
   readonly started: number;
   readonly deadline: number;
   bytes = 0;
+  lines = 0;
   spent = false;
   timedOut = false;
   private listing: readonly { path: string; size: number }[] | null | undefined;
@@ -396,6 +401,13 @@ class Ctx {
       this.spent = true;
       return { ok: false, why: "budget" };
     }
+    let lines = 0;
+    for (let at = text.indexOf("\n"); at >= 0; at = text.indexOf("\n", at + 1)) lines++;
+    if (this.lines + lines > EXPLORE_MAX_LINES) {
+      this.spent = true;
+      return { ok: false, why: "budget" };
+    }
+    this.lines += lines;
     this.bytes += bytes;
     keep?.(text);
     return { ok: true, text };
@@ -421,7 +433,8 @@ function whyText(why: Why, cap: number = EXPLORE_MAX_FILE_BYTES): string {
     return cap >= 1024 * 1024
       ? `it is over ${cap / (1024 * 1024)} MiB`
       : `it is over ${cap / 1024} KiB`;
-  if (why === "budget") return `the call had read its ${EXPLORE_MAX_BYTES / (1024 * 1024)} MiB`;
+  if (why === "budget")
+    return `the call had read its ${EXPLORE_MAX_BYTES / (1024 * 1024)} MiB or ${EXPLORE_MAX_LINES} lines`;
   if (why === "deadline") return "the deadline passed";
   if (why === "unread-base")
     return `it could not be read at the base (absent, or over ${EXPLORE_MAX_CHANGED_FILE_BYTES / (1024 * 1024)} MiB there)`;
@@ -776,6 +789,8 @@ interface NameHit {
 const ALIAS_SCAN_LINES = 200;
 /** Address-taking lines one sweep request follows. */
 const ALIAS_MAX_SCANS = 64;
+/** A store through an alias past `ALIAS_SCAN_LINES` is not looked for: said. */
+const ALIAS_WINDOW_NOTE = `[cut: writes through an alias were followed for ${ALIAS_SCAN_LINES} lines after its address was taken; later ones not seen]`;
 
 /** The token closes an address-of expression through at least one member:
  * `&a->f`, `&a.b.f` (the address of a local is no long-lived state). */
@@ -806,20 +821,24 @@ function aliasOf(code: string, at: number, len: number): { name: string; member:
 }
 
 /** The later lines of the same function that store through the alias
- * (`p->g = x`, `p->g.h[i] = x`, `*p = x`, `p->m.set(…)`), up to three; the
- * search stops where the alias is bound again. Lexical: a copy of the alias,
- * a call that writes through it and another function's writes are not seen. */
+ * (`p->g = x`, `p->g.h[i] = x`, `*p = x`, `p->m.set(…)`), every one within
+ * `ALIAS_SCAN_LINES`; the search stops where the alias is bound again.
+ * `windowCut`: the function goes on past the window with the alias unbound,
+ * so a later store was not looked for. Lexical: a copy of the alias, a call
+ * that writes through it and another function's writes are not seen. */
 function writesThroughAlias(
   shape: Shape,
   line: number,
   alias: { name: string; member: boolean },
-): number[] {
-  if (!shape.structure) return [];
+): { lines: number[]; windowCut: boolean } {
+  const none = { lines: [], windowCut: false };
+  if (!shape.structure) return none;
   const fn = functionOfLine(shape, line);
-  if (!fn) return [];
+  if (!fn) return none;
   const out: number[] = [];
-  const end = Math.min(fn.end, line + ALIAS_SCAN_LINES, shape.lines.length);
-  for (let L = line + 1; L <= end && out.length < 3; L++) {
+  const last = Math.min(fn.end, shape.lines.length);
+  const end = Math.min(last, line + ALIAS_SCAN_LINES);
+  for (let L = line + 1; L <= end; L++) {
     const code = shape.lines[L - 1]!.code;
     if (shape.lines[L - 1]!.kind !== "code" || !holdsWord(code, alias.name)) continue;
     if (functionOfLine(shape, L)?.id !== fn.id) continue;
@@ -843,9 +862,9 @@ function writesThroughAlias(
         break;
       }
     }
-    if (rebound) break;
+    if (rebound) return { lines: out, windowCut: false };
   }
-  return out;
+  return { lines: out, windowCut: end < last };
 }
 
 // Companions: the statements around a write ---------------------------------
@@ -1056,7 +1075,7 @@ function usualPartners(
 function nameRequest(
   forms: NameForms,
   out: NameHit[],
-  opts: { book?: CompanionBook; flags?: { aliasCut: boolean } } = {},
+  opts: { book?: CompanionBook; flags?: { aliasCut: boolean; aliasWindowCut?: boolean } } = {},
 ): SweepReq {
   const index = new Map<string, number>();
   let aliasScans = 0;
@@ -1116,7 +1135,9 @@ function nameRequest(
         return;
       }
       aliasScans++;
-      for (const L of writesThroughAlias(shape, line, alias))
+      const via = writesThroughAlias(shape, line, alias);
+      if (via.windowCut && opts.flags) opts.flags.aliasWindowCut = true;
+      for (const L of via.lines)
         put(shape, {
           path,
           line: L,
@@ -1378,7 +1399,7 @@ async function runName(ctx: Ctx, req: ExploreRequest, mode: "writes" | "reads"):
   const pos = new Map(order.map((p, i) => [p, i]));
   const hits: NameHit[] = [];
   const book = mode === "writes" ? newBook() : undefined;
-  const flags = { aliasCut: false };
+  const flags = { aliasCut: false, aliasWindowCut: false };
   const stats = await sweep(
     ctx,
     [nameRequest(forms, hits, { ...(book ? { book } : {}), flags })],
@@ -1422,6 +1443,7 @@ async function runName(ctx: Ctx, req: ExploreRequest, mode: "writes" | "reads"):
     out.push(
       `[cut: writes through an address-taking alias were followed for the first ${ALIAS_MAX_SCANS} such lines]`,
     );
+  if (flags.aliasWindowCut) out.push(ALIAS_WINDOW_NOTE);
   return out;
 }
 
@@ -2837,20 +2859,85 @@ function persistedShapes(run: AnchorRun, c: Changed, p: PersistCtx, headText: st
   }
 }
 
-function protoShapes(run: AnchorRun, c: Changed): void {
-  if (!c.path.endsWith(".proto")) return;
-  const removed = new Map<string, string>();
+/** The highest protobuf field number, what `max` means in a reservation. */
+const PROTO_MAX_FIELD = 536_870_911;
+const PROTO_SCOPE_RE = /\b(message|enum|service|extend)\s{1,8}([\w.]{1,120})\s{0,8}$/;
+
+/** Each line's protobuf scope, 1-based: the enclosing `message`/`enum`
+ * names dot-joined (`Outer.Inner`), taken where the line's first statement
+ * ends. A `oneof` or option block adds no name: its fields are the message's. */
+function protoScopes(text: string): string[] {
+  const out: string[] = [""];
+  const stack: (string | null)[] = [];
+  const now = (): string => stack.filter((n) => n !== null).join(".");
+  for (const raw of text.split("\n")) {
+    const code = raw.slice(0, LINE_MAX);
+    let at: string | null = null;
+    let quote = "";
+    for (let i = 0; i < code.length; i++) {
+      const ch = code[i]!;
+      if (quote) {
+        if (ch === "\\") i++;
+        else if (ch === quote) quote = "";
+        continue;
+      }
+      if (ch === '"' || ch === "'") quote = ch;
+      else if (ch === "/" && code[i + 1] === "/") break;
+      else if (ch === "{") {
+        const m = PROTO_SCOPE_RE.exec(code.slice(0, i));
+        stack.push(m ? (m[1] === "extend" ? `(extend ${m[2]!})` : m[2]!) : null);
+      } else if (ch === "}") stack.pop();
+      else if (ch === ";" && at === null) at = now();
+    }
+    out.push(at ?? now());
+  }
+  return out;
+}
+
+/** The field numbers a `reserved` statement covers, as closed ranges; quoted
+ * names cover none. Null when the line reserves nothing. */
+function protoReserved(text: string): [number, number][] | null {
+  const m = /^\s{0,40}reserved\b([^;]{0,400})/.exec(text.slice(0, LINE_MAX));
+  if (!m) return null;
+  const out: [number, number][] = [];
+  for (const part of m[1]!.split(",")) {
+    const r = /^\s{0,8}(\d{1,10})(?:\s{1,8}to\s{1,8}(\d{1,10}|max))?\s{0,8}$/.exec(part);
+    if (!r) continue;
+    const lo = Number(r[1]);
+    out.push([lo, r[2] === undefined ? lo : r[2] === "max" ? PROTO_MAX_FIELD : Number(r[2])]);
+  }
+  return out;
+}
+
+/** A removed or renumbered protobuf field. Field numbers are unique within
+ * one message, so a removal pairs with an addition, and a reservation covers
+ * it, only within the same message: `baseText`/`headText` give the scopes. */
+function protoShapes(run: AnchorRun, c: Changed, baseText: string, headText: string): void {
+  const baseScope = protoScopes(baseText);
+  const headScope = protoScopes(headText);
+  const removed = new Map<string, { num: string; was: string }>();
   const addedNums = new Map<string, { name: string; line: number }>();
-  for (const [, t] of c.removed) {
+  const reserved = new Map<string, [number, number][]>();
+  for (const [L, t] of c.removed) {
     const m = PROTO_FIELD_RE.exec(t.slice(0, LINE_MAX));
-    if (m) removed.set(m[3]!, `${m[1]!.trim()} ${m[2]!}`);
+    if (m)
+      removed.set(`${baseScope[L] ?? ""}\0${m[3]!}`, {
+        num: m[3]!,
+        was: `${m[1]!.trim()} ${m[2]!}`,
+      });
   }
   for (const [L, t] of c.added) {
+    const scope = headScope[L] ?? "";
+    const r = protoReserved(t);
+    if (r) {
+      reserved.set(scope, [...(reserved.get(scope) ?? []), ...r]);
+      continue;
+    }
     const m = PROTO_FIELD_RE.exec(t.slice(0, LINE_MAX));
-    if (m) addedNums.set(m[3]!, { name: `${m[1]!.trim()} ${m[2]!}`, line: L });
+    if (m) addedNums.set(`${scope}\0${m[3]!}`, { name: `${m[1]!.trim()} ${m[2]!}`, line: L });
   }
-  for (const [num, was] of removed) {
-    const now = addedNums.get(num);
+  for (const [key, { num, was }] of removed) {
+    const now = addedNums.get(key);
     if (now && now.name !== was) {
       anchor(
         run,
@@ -2862,7 +2949,9 @@ function protoShapes(run: AnchorRun, c: Changed): void {
       );
       return;
     }
-    if (!now && ![...c.added.values()].some((t) => /\breserved\b/.test(t) && t.includes(num))) {
+    const n = Number(num);
+    const scope = key.slice(0, key.indexOf("\0"));
+    if (!now && !(reserved.get(scope) ?? []).some(([lo, hi]) => n >= lo && n <= hi)) {
       anchor(
         run,
         c,
@@ -2874,6 +2963,29 @@ function protoShapes(run: AnchorRun, c: Changed): void {
       return;
     }
   }
+}
+
+/** Reads the sides a `.proto` change needs (its removed fields the base,
+ * its added lines the head) and checks its field numbers; a side that cannot
+ * be read leaves the file unknown. */
+async function protoFile(ctx: Ctx, run: AnchorRun, c: Changed): Promise<void> {
+  if (!c.path.endsWith(".proto")) return;
+  if (![...c.removed.values()].some((t) => PROTO_FIELD_RE.test(t.slice(0, LINE_MAX)))) return;
+  const b = await ctx.base(c.basePath);
+  if (!b.ok) {
+    addUnknown(run, "persisted-shape", `${c.path}: not read (${whyText(b.why, b.cap)})`);
+    return;
+  }
+  let headText = "";
+  if (c.added.size > 0) {
+    const h = await ctx.head(c.path, true);
+    if (!h.ok) {
+      addUnknown(run, "persisted-shape", `${c.path}: not read (${whyText(h.why, h.cap)})`);
+      return;
+    }
+    headText = h.text;
+  }
+  protoShapes(run, c, b.text, headText);
 }
 
 // call-to-cache ------------------------------------------------------------
@@ -3504,7 +3616,7 @@ async function runAnchors(ctx: Ctx): Promise<string[]> {
   // to a later file that writes it.
   const seenField = new Set<string>();
   const leftPerFile = new Set<string>();
-  const aliasFlags = { aliasCut: false };
+  const aliasFlags = { aliasCut: false, aliasWindowCut: false };
   let writersCut = 0;
   for (const c of read) {
     if (ctx.late()) break;
@@ -3602,7 +3714,7 @@ async function runAnchors(ctx: Ctx): Promise<string[]> {
       break;
     }
     persistedShapes(run, c, p, heads.get(c.path) ?? null);
-    protoShapes(run, c);
+    await protoFile(ctx, run, c);
   }
 
   const busyCowrites: string[] = [];
@@ -3711,6 +3823,7 @@ async function runAnchors(ctx: Ctx): Promise<string[]> {
     run.notes.push(
       `[cut: writes through an address-taking alias were followed for the first ${ALIAS_MAX_SCANS} such lines per field]`,
     );
+  if (aliasFlags.aliasWindowCut) run.notes.push(ALIAS_WINDOW_NOTE);
   if (busyCompanionFields.length > 0)
     run.notes.push(
       `[writer-companion: fields with ${BUSY_FIELD_WRITERS} or more writers left out: ${busyCompanionFields.slice(0, 6).join(", ")}]`,

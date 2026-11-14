@@ -2854,3 +2854,183 @@ describe("exits: a finally block's condition", () => {
     );
   });
 });
+
+describe("writes through an alias: no store is dropped in silence", () => {
+  // MUTATION: restore the `out.length < 3` stop in writesThroughAlias — the
+  // fourth store through `p` is not listed, and this fails.
+  it("every store through the alias within the window is listed", async () => {
+    const f = {
+      path: "src/set.c",
+      head: src(
+        "void set(struct obj *o)",
+        "{",
+        "    int *p = &o->count;",
+        "    *p = 1;",
+        "    *p = 2;",
+        "    *p = 3;",
+        "    *p = 4;",
+        "}",
+      ),
+    };
+    const out = await run({ action: "writes", name: "count" }, world([f]));
+    expect(out).toContain("src/set.c:7  (set)  [via p] *p = 4;");
+    expect(out).not.toContain("[cut: writes through an alias");
+  });
+
+  // MUTATION: never set aliasWindowCut — the store past the window is gone
+  // with no note, and this fails.
+  it("a store past the scan window is named as a cut", async () => {
+    const filler = Array.from({ length: 201 }, () => "    noop();");
+    const f = {
+      path: "src/set.c",
+      head: src(
+        "void set(struct obj *o)",
+        "{",
+        "    int *p = &o->count;",
+        ...filler,
+        "    *p = 5;",
+        "}",
+      ),
+    };
+    const out = await run({ action: "writes", name: "count" }, world([f]));
+    expect(out).toContain(
+      "[cut: writes through an alias were followed for 200 lines after its address was taken; later ones not seen]",
+    );
+  });
+
+  // MUTATION: drop the aliasWindowCut note from runAnchors — the new-writer
+  // sweep of `count` passes the window with no note, and this fails.
+  it("the anchors' writer sweep names the same cut", async () => {
+    const filler = Array.from({ length: 201 }, () => "    noop();");
+    const tree = {
+      "src/set.c": src(
+        "void set(struct obj *o)",
+        "{",
+        "    int *p = &o->count;",
+        ...filler,
+        "    *p = 5;",
+        "}",
+      ),
+    };
+    const base = src("void reset(struct obj *o)", "{", "    o->mode = 0;", "}");
+    const head = src(
+      "void reset(struct obj *o)",
+      "{",
+      "    o->mode = 0;",
+      "    o->count = 0;",
+      "}",
+    );
+    const out = await run(
+      { action: "anchors" },
+      world([{ path: "src/reset.c", base, head }], tree),
+    );
+    expect(out).toContain(
+      "[cut: writes through an alias were followed for 200 lines after its address was taken; later ones not seen]",
+    );
+  });
+});
+
+describe("persisted-shape: protobuf fields by message, reservations by number", () => {
+  const protoAnchors = async (base: string, head: string): Promise<string[]> =>
+    (await anchors(world([{ path: "api/m.proto", base, head }]))).filter((l) =>
+      l.startsWith("[persisted-shape]"),
+    );
+
+  // MUTATION: key the removed and added maps in protoShapes by the bare
+  // number again — the two `legacy = 1` declarations pair across messages
+  // (no anchor), and the A and B numbers 1 pair as a type change; both fail.
+  it("a field number pairs only within its own message", async () => {
+    const moved = await protoAnchors(
+      src("message A {", "  string legacy = 1;", "  string id = 2;", "}"),
+      src("message A {", "  string id = 2;", "}", "message B {", "  string legacy = 1;", "}"),
+    );
+    expect(moved).toContainEqual(
+      expect.stringContaining(
+        "protobuf field `string legacy` = 1 removed and its number not reserved",
+      ),
+    );
+    const reused = await protoAnchors(
+      src("message A {", "  string a = 1;", "}"),
+      src("message A {", "  reserved 1;", "}", "message B {", "  int64 b = 1;", "}"),
+    );
+    expect(reused).toEqual([]);
+  });
+
+  it("a reservation in another message does not cover a removal", async () => {
+    const out = await protoAnchors(
+      src("message A {", "  string a = 1;", "  string id = 2;", "}", "message B {", "}"),
+      src("message A {", "  string id = 2;", "}", "message B {", "  reserved 1;", "}"),
+    );
+    expect(out).toContainEqual(
+      expect.stringContaining("protobuf field `string a` = 1 removed and its number not reserved"),
+    );
+  });
+
+  // MUTATION: put back the substring test (`t.includes(num)`) — `reserved 10`
+  // covers field 1, and `reserved 2 to 10` does not cover field 5; both fail.
+  it("a reservation covers the numbers and ranges it names, nothing else", async () => {
+    const substring = await protoAnchors(
+      src("message M {", "  string a = 1;", "  string b = 10;", "}"),
+      src("message M {", "  reserved 10;", "}"),
+    );
+    expect(substring).toContainEqual(
+      expect.stringContaining("protobuf field `string a` = 1 removed and its number not reserved"),
+    );
+    const range = await protoAnchors(
+      src("message M {", "  string id = 1;", "  int32 e = 5;", "}"),
+      src("message M {", "  string id = 1;", "  reserved 2 to 10;", "}"),
+    );
+    expect(range).toEqual([]);
+    const named = await protoAnchors(
+      src("message M {", "  string a = 1;", "  string id = 2;", "}"),
+      src("message M {", "  string id = 2;", '  reserved "v1";', "}"),
+    );
+    expect(named).toContainEqual(
+      expect.stringContaining("protobuf field `string a` = 1 removed and its number not reserved"),
+    );
+    const max = await protoAnchors(
+      src("message M {", "  string id = 1;", "  int32 e = 900;", "}"),
+      src("message M {", "  string id = 1;", "  reserved 2, 100 to max;", "}"),
+    );
+    expect(max).toEqual([]);
+  });
+
+  it("a .proto side that cannot be read is unknown, never a clear", async () => {
+    const base = src("message M {", "  string a = 1;", "  string id = 2;", "}");
+    const head = src("message M {", "  string id = 2;", "}");
+    const w = world([{ path: "api/m.proto", base, head }], {}, { readBase: async () => null });
+    const out = (await anchors(w)).filter((l) => l.startsWith("[persisted-shape]"));
+    expect(out).toContainEqual(
+      expect.stringMatching(/^\[persisted-shape\] unknown: .*api\/m\.proto: not read/),
+    );
+    expect(out.some((l) => l.includes("removed and its number not reserved"))).toBe(false);
+  });
+});
+
+describe("anchors: the per-call line budget", () => {
+  // Each shaped line is an object the call keeps, so a call reads a bounded
+  // number of lines as well as bytes: nine 1 MB files of 500 000 lines each
+  // (4.5 million, far under the byte budget) read the first eight whole and
+  // name the ninth unknown. MUTATION: drop the line charge from Ctx.admit —
+  // every file is read, and this fails.
+  it(
+    "a file past the call's line budget is not read and says so",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const body = "x\n".repeat(500_000);
+      const files = Array.from({ length: 9 }, (_, i) => ({ path: `s/f${i}.c`, head: body }));
+      const diff: PrFileEntry[] = files.map((f) => ({
+        filename: f.path,
+        additions: 1,
+        deletions: 0,
+        status: "added",
+        patch: "@@ -0,0 +1,1 @@\n+x",
+      }));
+      const out = await run({ action: "anchors" }, world(files, {}, { diff: async () => diff }), {
+        maxChars: 1_000_000,
+      });
+      expect(out).toMatch(/s\/f8\.c: not read \(the call had read its 64 MiB or [\d,]+ lines\)/);
+      for (let i = 0; i < 8; i++) expect(out).not.toContain(`s/f${i}.c: not read`);
+    },
+  );
+});

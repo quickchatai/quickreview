@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   dialectOf,
+  exitKindOf,
   exitsOf,
   functionAt,
   lineFunctions,
@@ -24,6 +25,7 @@ import {
   scanLines,
   TokenTable,
 } from "@quickchatai/pi-quickreview/src/statetokens.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const lines = (...l: string[]): string => `${l.join("\n")}\n`;
 
@@ -801,5 +803,92 @@ describe("statements: a store through a dereference", () => {
     });
     expect(stmtKey("  *this->p = 0;")?.key).toBe("*p = 0");
     expect(stmtKey("  ptr = nullptr;")).toBeNull();
+  });
+});
+
+describe("linear and capped: braces inside one argument (TS)", () => {
+  // A timing bound, not a fence: every brace inside a call argument or a
+  // parameter pattern reads a head of bounded length, so a 1 MiB line of
+  // object-valued properties shapes in milliseconds; a head built from the
+  // whole segment makes it quadratic (tens of seconds).
+  it(
+    "a one-line 1 MiB call argument of object-valued properties shapes within a bound",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const props: string[] = [];
+      let size = 12;
+      for (let i = 0; size < 1000 * 1024; i++) {
+        const p = `k${i}: {}`;
+        props.push(p);
+        size += p.length + 2;
+      }
+      const text = `f({ ${props.join(", ")} });\n`;
+      expect(text.length).toBeLessThanOrEqual(1024 * 1024);
+      const started = performance.now();
+      const s = shapeOf("big.ts", text);
+      expect(performance.now() - started).toBeLessThan(5000);
+      expect(s.structure).not.toBeNull();
+    },
+  );
+
+  // MUTATION: cut the head to its tail only (drop the HEAD_MAX prefix in
+  // braceStructure's headAt) — PARAM_LIST_HEAD_RE stops matching, the
+  // pattern `{ x = {} }` opens blocks, and this fails.
+  it("a parameter list longer than the head cap still reads its pattern as a pattern", () => {
+    const s = shapeOf(
+      "long.ts",
+      lines(`function F(${"a, ".repeat(400)}{ x = {} }) {`, "  return x;", "}"),
+    );
+    const blocks = s.structure?.blocks ?? [];
+    expect(blocks.map((b) => `${b.kind}:${b.open}-${b.end}`)).toEqual(["function:1-3"]);
+  });
+});
+
+describe("exits: a callback on one line is its own function", () => {
+  // MUTATION: drop the nested-function blanking in exitsOf — outer reads
+  // the callback's return as its own (return@2) and loses end@3, and this
+  // fails.
+  it("a same-line callback's return is not the enclosing function's exit (TS)", () => {
+    const s = shapeOf("a.ts", lines("function outer() {", "  register(() => { return; });", "}"));
+    expect(exits(s, "outer")).toEqual(["end@3"]);
+    const cb = fns(s).find((b) => b.body === 2);
+    expect(cb).toBeDefined();
+    expect(exitsOf(s, cb!).map((e) => `${e.kind}@${e.line}`)).toContain("return@2");
+    const then = shapeOf(
+      "b.ts",
+      lines("function outer(p) {", "  p.then(() => { return 1; });", "}"),
+    );
+    expect(exits(then, "outer")).toEqual(["end@3"]);
+    const each = shapeOf(
+      "c.ts",
+      lines("function outer(xs) {", "  xs.forEach((x) => { if (x) return; }); done();", "}"),
+    );
+    expect(exits(each, "outer")).toEqual(["end@3"]);
+    const one = shapeOf("d.ts", lines("function outer() { register(() => { return; }); }"));
+    expect(exits(one, "outer")).toEqual(["end@1"]);
+  });
+
+  it("a same-line control block's return is still the function's exit", () => {
+    const s = shapeOf(
+      "a.ts",
+      lines("function outer(x) {", "  if (x) { return; }", "  done();", "}"),
+    );
+    expect(exits(s, "outer")).toEqual(["return@2", "end@4"]);
+  });
+});
+
+describe("exits: a member named like a keyword is a call", () => {
+  // MUTATION: drop the member lookbehind from the return probe in
+  // EXIT_PROBES — `it.return()` reads as an exit, and this fails.
+  it("iterator.return() and generator.throw() are no exits; the statements are", () => {
+    expect(exitKindOf("it.return();", "js")).toBeNull();
+    expect(exitKindOf("g.throw(e);", "js")).toBeNull();
+    expect(exitKindOf("it?.return();", "js")).toBeNull();
+    expect(exitKindOf("$gen->throw($e);", "php")).toBeNull();
+    expect(exitKindOf("return x;", "js")?.kind).toBe("return");
+    expect(exitKindOf("throw e;", "js")?.kind).toBe("throw");
+    expect(exitKindOf("  raise ValueError()", "py")?.kind).toBe("raise");
+    const s = shapeOf("a.ts", lines("function outer(it) {", "  it.return();", "}"));
+    expect(exits(s, "outer")).toEqual(["end@3"]);
   });
 });

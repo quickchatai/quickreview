@@ -24,8 +24,9 @@
 // `selectStateLenses` never plans a lens a profile switched off; the planner
 // applies `enabled = false` and `skip_lenses` after it, as for every lens.
 //
-// Linear by construction: every probe reads ONE line at a time, cut to
-// `LINE_MAX` characters, and no pattern nests an unbounded scan in another.
+// Linear by construction: every probe reads ONE line at a time (a row with
+// `next` reads the next added line too), cut to `LINE_MAX` characters, and no
+// pattern nests an unbounded scan in another.
 // The text is the PR author's, of any length, and a probe runs synchronously
 // in the dispatch pump (tests/state-triggers.test.ts times every probe
 // against pathological input).
@@ -65,6 +66,10 @@ export interface StateTrigger {
   /** Tested against one line (sign stripped, cut to `LINE_MAX`). Never
    * global, never sticky. */
   re: RegExp;
+  /** The line after a match must match this too: a statement split over two
+   * lines. Read on the same side, so after an added line it is the next added
+   * one. Never global, never sticky. */
+  next?: RegExp;
   /** How many lines of one file must match (default 1). */
   min?: number;
   /** The file does not fire when any of its added lines matches this: the
@@ -129,7 +134,7 @@ export const STATE_TRIGGERS: readonly StateTrigger[] = [
     strength: "strong",
     probe: "removed",
     re: new RegExp(
-      String.raw`\b(?:if|elif|else if|unless|when|while|guard|assert|require|ensure|raise|throw|return)\b.{0,120}\b\w{0,40}${STATE_NAME}\w{0,20}\b\s*(?:===?|!==?|\bnot in\b|\bin\b|\bis not\b|\bis\b|\.equals\(|\.includes\()`,
+      String.raw`\b(?:if|elif|else if|unless|when|while|guard|assert|require|ensure|raise|throw|return)\b.{0,120}\b\w{0,40}${STATE_NAME}\w{0,20}\b\s*(?:===?|!==?|\bnot in\b|\bin\b|\bis not\b|\bis\b|\.equals\(|\.includes\()\s*(?:['"][^'"]{0,60}['"]|\([^()]{0,80}\)|\[[^\[\]]{0,80}\]|[\w.]{1,60})?`,
       "i",
     ),
     why: "a check of the current state is removed",
@@ -225,6 +230,15 @@ export const STATE_TRIGGERS: readonly StateTrigger[] = [
     strength: "strong",
     probe: "added",
     re: /\buseEffect\(\s*\(\s*\)\s*=>\s*\{?\s*set[A-Z]\w{0,40}\(/,
+    why: "an effect whose body only sets state is added (a value kept in step by hand)",
+  },
+  {
+    id: "effect-syncs-state-block",
+    lens: "pass-sm-derived",
+    strength: "strong",
+    probe: "added",
+    re: /\buseEffect\(\s*\(\s*\)\s*=>\s*\{\s*$/,
+    next: /^\s*set[A-Z]\w{0,40}\(/,
     why: "an effect whose body only sets state is added (a value kept in step by hand)",
   },
   {
@@ -342,9 +356,11 @@ function lineHit(files: readonly PrFileEntry[], t: StateTrigger): Hit | null {
     // moved block of checks costs one lookup a line.
     let addedBack: Set<string> | null = null;
     let scans = 0;
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
       const m = t.re.exec(line);
       if (!m) continue;
+      if (t.next && !t.next.test(lines[i + 1] ?? "")) continue;
       // removed: only what the file does not add back.
       if (t.probe === "removed") {
         const needle = m[0].trim();
