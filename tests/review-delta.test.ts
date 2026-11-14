@@ -510,6 +510,33 @@ describe("review state: a round's coverage", () => {
     expect(state.coversRound(narrow, state.lastRound(s!))).toBe(false);
   });
 
+  // A last round whose coverage is not a coverage (a hand edit, another
+  // build's shape) is a state that cannot be trusted: the run reviews in full
+  // rather than throwing inside covers().
+  // MUTATION: drop the coverage-shape check in loadState — this fails.
+  it("refuses a saved round whose coverage has the wrong shape", () => {
+    for (const coverage of [{ profile: "" }, { profile: "", lenses: "pass-baseline" }, "all"]) {
+      const path = join(tmp, "odd-coverage-state.json");
+      writeFileSync(
+        path,
+        JSON.stringify({
+          version: 1,
+          target: "t",
+          rounds: [{ ...round(), coverage }],
+          rows: [],
+          checks: [],
+        }),
+      );
+      expect(state.loadState(path, "t"), JSON.stringify(coverage)).toBeNull();
+    }
+    const path = join(tmp, "good-coverage-state.json");
+    writeFileSync(
+      path,
+      JSON.stringify({ version: 1, target: "t", rounds: [round(wide)], rows: [], checks: [] }),
+    );
+    expect(state.loadState(path, "t")).not.toBeNull();
+  });
+
   // MUTATION: drop the profile comparison in reviewstate.ts `within` — the
   // other-profile cases fail.
   it("covers only a run whose lenses it read, under the same profile", () => {

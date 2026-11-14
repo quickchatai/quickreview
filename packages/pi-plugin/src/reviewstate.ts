@@ -65,6 +65,15 @@ export function coverageOf(config: Pick<CoreConfig, "review" | "lenses">): Round
   };
 }
 
+/** A coverage as a saved state holds it: a profile name and a list of lens
+ * names. Anything else (a hand-edited file, another build's shape) is not one. */
+const isCoverage = (c: unknown): c is RoundCoverage =>
+  typeof c === "object" &&
+  c !== null &&
+  typeof (c as RoundCoverage).profile === "string" &&
+  Array.isArray((c as RoundCoverage).lenses) &&
+  (c as RoundCoverage).lenses.every((l) => typeof l === "string");
+
 const within = (inner: RoundCoverage, outer: RoundCoverage): boolean =>
   inner.profile === outer.profile && inner.lenses.every((l) => outer.lenses.includes(l));
 
@@ -118,6 +127,9 @@ export function loadState(path: string | null, target: string): ReviewState | nu
       return null;
     const last = s.rounds[s.rounds.length - 1];
     if (typeof last?.head_sha !== "string" || typeof last.round_no !== "number") return null;
+    // The last round's coverage decides what the next run may build on: one
+    // that is present but not a coverage cannot be trusted.
+    if (last.coverage !== undefined && !isCoverage(last.coverage)) return null;
     return s as ReviewState;
   } catch {
     return null;

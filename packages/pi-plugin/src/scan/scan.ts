@@ -972,7 +972,10 @@ function closeBlock(b: OpenBlock): void {
   const lines = b.lines;
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   if (!b.into || lines.length === 0) return;
-  const depth = Math.min(...lines.filter((l) => l !== "").map((l) => /^\s*/.exec(l)![0].length));
+  // A loop, not Math.min(...lines): a spread of a block of a few hundred
+  // thousand lines overflows the call stack and loses the whole answer.
+  let depth = Infinity;
+  for (const l of lines) if (l !== "") depth = Math.min(depth, /^\s*/.exec(l)![0].length);
   b.into.set(b.key, lines.map((l) => l.slice(depth)).join("\n"));
 }
 

@@ -8,6 +8,7 @@ import {
   evidenceQuotesAnchor,
   parseScanAnswer,
 } from "@quickchatai/pi-quickreview/src/scan/scan.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const HEAD = "FINDINGS pass-sm-lifecycle SCAN c1 @abc123";
 
@@ -101,6 +102,29 @@ describe("scan evidence block scalar", () => {
       ].join("\n"),
     );
   });
+
+  // MUTATION: compute closeBlock's indent with Math.min(...lines) — the
+  // spread overflows the call stack, and this fails.
+  it(
+    "a block of hundreds of thousands of lines is read, not thrown",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const body = Array.from({ length: 300_000 }, (_, i) => `    trace: ${i}`);
+      const answer = [
+        HEAD,
+        "- path: src/orders.ts",
+        "  line: 42",
+        "  claim: a cancelled order can still be shipped",
+        "  evidence: |",
+        ...body,
+        "  detail: ship() never reads status",
+      ].join("\n");
+      const c = parseScanAnswer(answer).candidates[0]!;
+      expect(c.evidence!.split("\n")).toHaveLength(300_000);
+      expect(c.evidence!.startsWith("trace: 0\n")).toBe(true);
+      expect(c.detail).toBe("ship() never reads status");
+    },
+  );
 
   it("a single-line evidence keeps its legacy shape, continuation lines joined", () => {
     const answer = [
