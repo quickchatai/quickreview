@@ -152,3 +152,50 @@ describe("qcr config check", () => {
     expect(r.ok).toBe(false);
   });
 });
+
+// The boot does not stop at each profile loader: it applies the resolved
+// family overlays (applyProfileOverlays), which refuse two one-family
+// reviews at once. The check runs that same combination, profile or none.
+// MUTATION: delete the family-overlay check in checkConfigHome — both cases fail.
+describe("qcr config check — the family overlays the boot applies", () => {
+  const securityOnly = (body: string): string =>
+    body.replace(/^(\[security\][\s\S]*?^)only = false/m, "$1only = true");
+  const bothOnly = (body: string): string =>
+    securityOnly(body).replace(/^(\[state_machines\][\s\S]*?^)only = false/m, "$1only = true");
+
+  it("refuses [security] only and [state_machines] only both true in config.toml, no profile", () => {
+    const cfg = bothOnly(GOOD);
+    expect(cfg).not.toBe(securityOnly(GOOD));
+    const r = checkConfigHome({ home: home({ "config.toml": cfg }), root });
+    expect(r.ok).toBe(false);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]!.where).toContain("config.toml");
+    expect(r.errors[0]!.message).toMatch(
+      /\[security\] only and \[state_machines\] only are both true/,
+    );
+  });
+
+  it("refuses the pair when one comes from config.toml and the other from the profile chain", () => {
+    const cfg = securityOnly(withProfile("house"));
+    expect(cfg).not.toBe(withProfile("house"));
+    const r = checkConfigHome({
+      home: home({
+        "config.toml": cfg,
+        "profiles/house/profile.toml": 'extends = "default"\n[state_machines]\nonly = true\n',
+      }),
+      root,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]!.where).toBe("profile house (family overlays)");
+    expect(r.errors[0]!.message).toMatch(
+      /\[security\] only and \[state_machines\] only are both true/,
+    );
+  });
+
+  it("one family alone still checks clean", () => {
+    expect(checkConfigHome({ home: home({ "config.toml": securityOnly(GOOD) }), root }).ok).toBe(
+      true,
+    );
+  });
+});

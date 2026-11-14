@@ -7,7 +7,9 @@
 // A config home is `config.toml` plus the `profiles/` beside it. The check is
 // the daemon's own boot reading, without a daemon: `parseConfig` and
 // `validateSlackConfig`, then every profile loader the boot runs over the
-// profile the config names (its `extends` chain included). Profiles resolve
+// profile the config names (its `extends` chain included), then the family
+// overlays the boot applies to the resolved whole (`applyProfileOverlays`),
+// which refuse what no single loader can see. Profiles resolve
 // from that home and the image's generic examples only, never the operator's
 // own XDG home, so the answer is the VM's.
 import { existsSync, readFileSync } from "node:fs";
@@ -15,6 +17,7 @@ import { join, resolve } from "node:path";
 import { parseConfig, sandboxRoot, validateSlackConfig } from "./config.js";
 import { homeProfileLookup } from "./install.js";
 import {
+  applyProfileOverlays,
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileHeuristics,
@@ -56,18 +59,17 @@ export function checkConfigHome(opts: { home: string; root?: string }): ConfigCh
     errors.push({ where: file, message: `no ${CONFIG_FILE_NAME} in the config home` });
     return result();
   }
-  let profile = "";
+  let cfg: ReturnType<typeof parseConfig>;
   try {
-    const cfg = parseConfig(readFileSync(file, "utf8"));
+    cfg = parseConfig(readFileSync(file, "utf8"));
     validateSlackConfig(cfg);
-    profile = cfg.review.profile;
   } catch (err) {
     // The config did not load: its profile name is unknown, so no profile
     // loader can run. This is the one error there is.
     errors.push({ where: file, message: messageOf(err) });
     return result();
   }
-  if (profile === "") return result();
+  const profile = cfg.review.profile;
 
   // Only this home's profiles/ and the image's generic examples are searched:
   // an XDG home that does not exist keeps the operator's own out of the answer.
@@ -76,6 +78,25 @@ export function checkConfigHome(opts: { home: string; root?: string }): ConfigCh
     QCR_CONFIG: file,
     XDG_CONFIG_HOME: join(home, ".no-xdg-home"),
   });
+  const seen = new Set<string>();
+  // The boot applies the family overlays with or without a profile: two
+  // one-family reviews at once (`[security] only` and `[state_machines] only`,
+  // from config.toml or the chain) are refused there, so they are refused here.
+  const overlays = (where: string): void => {
+    try {
+      applyProfileOverlays(root, cfg, lookup);
+    } catch (err) {
+      const message = messageOf(err);
+      if (seen.has(message)) return;
+      seen.add(message);
+      errors.push({ where, message });
+    }
+  };
+  if (profile === "") {
+    overlays(file);
+    return result();
+  }
+
   const loaders: Array<[string, () => unknown]> = [
     ["addenda", () => loadProfileAddenda(root, profile, lookup)],
     ["ecosystem", () => loadProfileEcosystem(root, profile, lookup)],
@@ -87,7 +108,6 @@ export function checkConfigHome(opts: { home: string; root?: string }): ConfigCh
     ["threat model", () => loadProfileThreatModel(root, profile, lookup)],
     ["heuristics", () => loadProfileHeuristics(root, profile, lookup)],
   ];
-  const seen = new Set<string>();
   for (const [what, load] of loaders) {
     try {
       load();
@@ -99,6 +119,8 @@ export function checkConfigHome(opts: { home: string; root?: string }): ConfigCh
       errors.push({ where: `profile ${profile} (${what})`, message });
     }
   }
+  // A loader error the overlays repeat is already reported above.
+  overlays(`profile ${profile} (family overlays)`);
   return result();
 }
 
