@@ -14,7 +14,7 @@ import { parsePrLeverArgs } from "../src/cli.js";
 import { executeCommand, validateCommand, type CommandDeps } from "../src/commands.js";
 import { parseConfig, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
-import type { PrFileEntry, PrRef } from "../src/github.js";
+import type { IssueCommentFull, PrFileEntry, PrRef } from "../src/github.js";
 import { reconcileOnce, type ReconcileAdapter } from "../src/reconcile.js";
 import { reviewNow } from "../src/reviewnow.js";
 import {
@@ -23,6 +23,7 @@ import {
   SECURITY_REQUEST,
   securityAckBody,
   securityCommandDecision,
+  sweepSecurityRequests,
 } from "../src/securityrequest.js";
 import { StateStore } from "../src/state.js";
 import { STATE_ACK_MARKER, STATE_REQUEST, STATE_REQUEST_KIND } from "../src/staterequest.js";
@@ -297,6 +298,63 @@ describe("the reconcile pass", () => {
       expect(store.reviewRequest(62, "security")).toMatchObject({ source: "label" });
     },
   );
+
+  // A captured command is never captured again, so a stop between capture and
+  // apply would lose it for good: every command of the sweep is applied before
+  // the first acknowledgement awaits the network.
+  // MUTATION: await ackSecurityRequest inside the apply loop again — the first
+  // ack runs before the state-machine request is recorded and this fails.
+  it(
+    "records every command of a sweep before the first acknowledgement goes out",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = new StateStore(":memory:");
+      tracked(store, 63, "tracked", "head63");
+      const comment = (id: number, word: string): IssueCommentFull => ({
+        id,
+        user: "maya-dev",
+        user_type: "User",
+        body: `${MENTION} ${word}`,
+        created_at: "2026-11-01T10:00:00Z",
+        author_association: "COLLABORATOR",
+      });
+      const comments = [comment(1, "security"), comment(2, "state-machines")];
+      const open = [ref(63, [])];
+      const adapter: ReconcileAdapter = {
+        searchLabelTriggered: async () => [],
+        searchTeamTriggered: async () => [],
+        listOpenPrs: async () => open,
+        getPr: async () => open[0]!,
+        listBotReviewComments: async () => [],
+        listReviewCommentsFull: async () => [],
+        listIssueComments: async () => comments,
+        listReviewsFull: async () => [],
+      };
+      const hooks = {
+        async dispatchRound() {},
+        async inject() {},
+        async archiveAndClose() {},
+      } as SessionHooks;
+      const atFirstAck: Array<string | undefined> = [];
+      const ack = vi.fn(async () => {
+        if (ack.mock.calls.length === 1)
+          for (const kind of ["security", STATE_REQUEST_KIND])
+            atFirstAck.push(store.reviewRequest(63, kind)?.source);
+      });
+      await reconcileOnce({
+        cfg: POLLING,
+        store,
+        adapter,
+        hooks,
+        ackSecurityRequest: ack,
+        log: () => {},
+      });
+      expect(atFirstAck).toEqual(["comment", "comment"]);
+      expect(ack).toHaveBeenCalledTimes(2);
+      expect(ack.mock.calls[0]).toEqual([63, "maya-dev"]);
+      expect(ack.mock.calls[1]).toEqual([63, "maya-dev", STATE_REQUEST]);
+    },
+  );
 });
 
 describe("dispatch plans the family from the request", () => {
@@ -474,5 +532,52 @@ describe("qcr review-now --state-machines", () => {
     expect(again).toMatchObject({ ok: true });
     expect(again.ok && again.outcome).toContain("state-machine review already requested");
     expect(store.reviewRequest(17, "security")?.source).toBe("operator");
+  });
+});
+
+describe("the request sweep across the two kinds", () => {
+  const t0 = "2026-11-01T10:00:00.000Z";
+  const listedAt = "2026-11-01T10:01:00.000Z";
+  const t2 = "2026-11-01T10:02:00.000Z";
+  /** PR 7 with an `older` request listed before `listedAt` and a `newer`
+   * one recorded after it. */
+  const store = (older: string, newer: string, state = "tracked"): StateStore => {
+    let time = t0;
+    const s = new StateStore(":memory:", () => new Date(time));
+    tracked(s, 7, state, "head7");
+    s.recordReviewRequest({ pr: 7, kind: older, source: "comment", requested_by: "maya-dev" });
+    time = t2;
+    s.recordReviewRequest({ pr: 7, kind: newer, source: "comment", requested_by: "maya-dev" });
+    return s;
+  };
+  const sweep = (s: StateStore, kind: string) =>
+    sweepSecurityRequests(s, { open: new Map(), listedAt, label: "", kind });
+
+  // A snapshot that omits an open PR may only be listing lag: each kind's
+  // sweep withdraws its own request, judged by its own time; only a confirmed
+  // closure drops every kind.
+  // MUTATION: drop the kind argument from the snapshot-omitted clear — the
+  // other family's newer request is deleted and this fails.
+  it.each([
+    ["security", STATE_REQUEST_KIND],
+    [STATE_REQUEST_KIND, "security"],
+  ])(
+    "a snapshot without the PR withdraws the listed %s request and keeps the newer %s one",
+    (older, newer) => {
+      const s = store(older, newer);
+      expect(sweep(s, older).cleared).toEqual([7]);
+      expect(s.reviewRequest(7, older)).toBeUndefined();
+      expect(s.reviewRequest(7, newer)).toBeDefined();
+      // Its own sweep does not judge it by a list read before it was made.
+      expect(sweep(s, newer).cleared).toEqual([]);
+      expect(s.reviewRequest(7, newer)).toBeDefined();
+    },
+  );
+
+  it("a PR closed here drops every kind of request", () => {
+    const s = store("security", STATE_REQUEST_KIND, "closed");
+    expect(sweep(s, "security").cleared).toEqual([7]);
+    expect(s.reviewRequest(7, "security")).toBeUndefined();
+    expect(s.reviewRequest(7, STATE_REQUEST_KIND)).toBeUndefined();
   });
 });

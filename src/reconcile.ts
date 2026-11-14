@@ -1001,6 +1001,11 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           { k: SECURITY_REQUEST, command: security.command },
           { k: STATE_REQUEST, command: stateMachines.command },
         ];
+        // A captured comment is never fresh again, so capture and apply stay
+        // in one synchronous span: the acknowledgements wait until every
+        // command of this sweep is recorded. A stop during an ack leaves a
+        // request standing unacknowledged, never a command lost.
+        const acks: Array<{ by: string; k: ReviewRequestKind }> = [];
         for (const c of topFetched) {
           if (!freshTop.has(c.id)) continue;
           for (const { k, command } of requestKinds) {
@@ -1058,15 +1063,17 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
             );
             // A fresh request is acknowledged, and so is one that took over a
             // label request (it now stands on this comment's word).
-            if ((outcome.fresh || outcome.reason === "upgraded") && deps.ackSecurityRequest) {
-              try {
-                // The security kind is the default: only another kind is named.
-                if (k === SECURITY_REQUEST) await deps.ackSecurityRequest(n, c.user);
-                else await deps.ackSecurityRequest(n, c.user, k);
-              } catch (err) {
-                report.errors.push(`${k.kind}-ack #${n}: ${String(err)}`);
-              }
-            }
+            if (outcome.fresh || outcome.reason === "upgraded") acks.push({ by: c.user, k });
+          }
+        }
+        for (const { by, k } of acks) {
+          if (!deps.ackSecurityRequest) break;
+          try {
+            // The security kind is the default: only another kind is named.
+            if (k === SECURITY_REQUEST) await deps.ackSecurityRequest(n, by);
+            else await deps.ackSecurityRequest(n, by, k);
+          } catch (err) {
+            report.errors.push(`${k.kind}-ack #${n}: ${String(err)}`);
           }
         }
         // ---- the exec boundary's OUTCOME layer ------------------------------

@@ -388,11 +388,11 @@ export function withdrawLabelSecurityRequest(
 
 /**
  * The reconcile pass's half (GitHub wins): withdraw a label request whose
- * label is no longer on the PR, drop every request of a PR that closed or is
- * not open any more, record a label request for an open PR that carries the
- * label with no request standing, and serve each waiting request whose PR has
- * no round running — adopting a PR this daemon does not track from the open
- * list.
+ * label is no longer on the PR, drop every request of a PR that closed and
+ * this kind's request of a PR the open list omits, record a label request
+ * for an open PR that carries the label with no request standing, and serve
+ * each waiting request whose PR has no round running — adopting a PR this
+ * daemon does not track from the open list.
  *
  * The label is read here because a polling install has no `labeled` webhook
  * at all, and a webhook install can miss one: without this, a label added to
@@ -430,8 +430,15 @@ export function sweepSecurityRequests(
   for (const pr of store.reviewRequestPrs()) {
     const req = store.reviewRequest(pr, kind);
     const listed = req !== undefined && req.requested_at <= a.listedAt;
-    if (store.getPr(pr)?.state === "closed" || (a.open !== null && listed && !a.open.has(pr))) {
+    // A confirmed closure drops every kind. A snapshot that merely omits the
+    // PR may be listing lag, so it withdraws only this kind's request, judged
+    // by its own time: another kind's newer request is not this list's to judge.
+    if (store.getPr(pr)?.state === "closed") {
       if (store.clearReviewRequests(pr, "pr-closed")) cleared.push(pr);
+      continue;
+    }
+    if (a.open !== null && listed && !a.open.has(pr)) {
+      if (store.clearReviewRequests(pr, "pr-closed", kind)) cleared.push(pr);
       continue;
     }
     const ref = a.open?.get(pr);
