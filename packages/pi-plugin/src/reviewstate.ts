@@ -14,7 +14,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname } from "node:path";
 import { normalizeDisposition, recordString, type FindingDisposition } from "./findingkey.js";
 import { parseFindingsRecord, type FindingsRecordEntry } from "./findingsrecord.js";
+import { lensEnabled } from "./lenstuning.js";
+import { ALL_PASSES } from "./passes.js";
 import { computePriorFindings, type PriorFindingsList } from "./priorfindings.js";
+import type { CoreConfig } from "./reviewconfig.js";
 import type { RoundFindingRow } from "./storerows.js";
 
 export const STATE_VERSION = 1;
@@ -39,6 +42,43 @@ export interface ReviewRound {
   verdict: string | null;
   scope: "full" | "delta";
   cost_usd: number | null;
+  /** The lenses the round could plan. Absent on a round saved before rounds
+   * recorded it: such a round keeps the behaviour it was saved under. */
+  coverage?: RoundCoverage;
+}
+
+/** What a round could read the target with: the profile it ran under and
+ * the lenses its config let through, in name order. A family-only profile
+ * narrows its plan through overlays read later in the run, so the profile
+ * name stands in for them. */
+export interface RoundCoverage {
+  profile: string;
+  lenses: string[];
+}
+
+/** The run's coverage, from its config alone: pure, read before any plan. */
+export function coverageOf(config: Pick<CoreConfig, "review" | "lenses">): RoundCoverage {
+  const skip = new Set(config.review.skip_lenses ?? []);
+  return {
+    profile: config.review.profile,
+    lenses: ALL_PASSES.filter((p) => !skip.has(p) && lensEnabled(config.lenses, p)).sort(),
+  };
+}
+
+const within = (inner: RoundCoverage, outer: RoundCoverage): boolean =>
+  inner.profile === outer.profile && inner.lenses.every((l) => outer.lenses.includes(l));
+
+/** Did `round` read the target with every lens `cur` would? Only then may a
+ * run take it as "nothing new" or review only the change since it. A round
+ * with no recorded coverage is taken as covering. */
+export function covers(round: ReviewRound, cur: RoundCoverage): boolean {
+  return round.coverage === undefined || within(cur, round.coverage);
+}
+
+/** Does `cur` read the target with every lens `round` did? A round with no
+ * recorded coverage is taken as wider than any. */
+export function coversRound(cur: RoundCoverage, round: ReviewRound): boolean {
+  return round.coverage !== undefined && within(round.coverage, cur);
 }
 
 /** A status a round reported for a prior finding. */

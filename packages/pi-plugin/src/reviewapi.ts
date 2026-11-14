@@ -149,6 +149,9 @@ import {
 } from "./profileoverrides.js";
 import {
   branchTargetKey,
+  coverageOf,
+  covers,
+  coversRound,
   prTargetKey,
   lastRound,
   loadState,
@@ -842,6 +845,11 @@ async function runPipeline(
   // for on this run reviews in full too: the earlier review it would build on
   // ran no security family, so neither "nothing new" nor a follow-up over the
   // change since it answers the request.
+  // A round is built on only when it read the target with every lens this run
+  // would (its coverage: the profile and the lenses the config lets through),
+  // and a run asked for a lens family (a preset that skips every other lens)
+  // never replaces a round it does not cover itself. A narrower run therefore
+  // never hides code from a wider one, and the wider one's open findings stay.
   const targetKey = prInfo
     ? prTargetKey(prInfo.repo, prInfo.number)
     : branchTargetKey(t.repo, t.branch);
@@ -851,14 +859,13 @@ async function runPipeline(
       ? null
       : (openReviewStoreIn(opts.storeDir, repoDir)?.statePath(targetKey) ?? null);
   const postsToPr = prInfo !== null && sends("pr");
+  const lensCoverage = coverageOf(opts.config);
+  const asked = opts.securityRequest !== undefined || opts.stateRequest !== undefined;
+  const stored = keepsState ? loadState(statePath, targetKey) : null;
   const prev =
-    opts.full ||
-    opts.securityRequest !== undefined ||
-    opts.stateRequest !== undefined ||
-    !keepsState ||
-    postsToPr
+    opts.full || asked || postsToPr || stored === null || !covers(lastRound(stored), lensCoverage)
       ? null
-      : loadState(statePath, targetKey);
+      : stored;
   const short = (sha: string): string => sha.slice(0, 7);
   const stillOpen = (s: ReviewState | null, before?: number): StillOpen[] =>
     openFindings(s)
@@ -1512,9 +1519,11 @@ async function runPipeline(
     verdict,
     scope,
     cost_usd: spent,
+    coverage: lensCoverage,
   };
   const recorded = recordRound(scope === "delta" ? prev : null, targetKey, round, shot.findings);
-  if (finished && keepsState) saveState(statePath, recorded.state);
+  const replaces = !asked || stored === null || coversRound(lensCoverage, lastRound(stored));
+  if (finished && keepsState && replaces) saveState(statePath, recorded.state);
   const open = finished ? stillOpen(recorded.state, round.round_no) : [];
   const skipped = skipPosted(recorded.fresh, bot.findings);
   const groups = groupFindings({ findings: finished ? skipped.fresh : [] });

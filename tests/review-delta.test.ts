@@ -478,3 +478,58 @@ describe("qcr review: a delta review with memory", () => {
     expect(order).toContain("CONTEXT-BLOCK-MARK");
   });
 });
+
+describe("review state: a round's coverage", () => {
+  const round = (coverage?: { profile: string; lenses: string[] }) => ({
+    round_no: 1,
+    head_sha: "h1",
+    base_sha: "b",
+    merge_base: "b",
+    reviewed_at: "2026-01-01T00:00:00Z",
+    verdict: null,
+    scope: "full" as const,
+    cost_usd: null,
+    ...(coverage ? { coverage } : {}),
+  });
+  const wide = { profile: "", lenses: ["pass-baseline", "pass-sm-guards", "pass-validate"] };
+  const narrow = { profile: "", lenses: ["pass-sm-guards", "pass-validate"] };
+
+  // Legacy fold: a state saved before rounds recorded their coverage loads,
+  // and its round is built on as before, never replaced by a narrower run.
+  // MUTATION: return false from covers() for a round with no coverage — this
+  // fails.
+  it("loads a round with no coverage and takes it as covering", () => {
+    const path = join(tmp, "legacy-state.json");
+    writeFileSync(
+      path,
+      JSON.stringify({ version: 1, target: "t", rounds: [round()], rows: [], checks: [] }),
+    );
+    const s = state.loadState(path, "t");
+    expect(s).not.toBeNull();
+    expect(state.covers(state.lastRound(s!), wide)).toBe(true);
+    expect(state.coversRound(narrow, state.lastRound(s!))).toBe(false);
+  });
+
+  // MUTATION: drop the profile comparison in reviewstate.ts `within` — the
+  // other-profile cases fail.
+  it("covers only a run whose lenses it read, under the same profile", () => {
+    expect(state.covers(round(wide), narrow)).toBe(true);
+    expect(state.covers(round(narrow), wide)).toBe(false);
+    expect(state.covers(round(wide), { ...wide, profile: "state-machines" })).toBe(false);
+    expect(state.coversRound(wide, round(narrow))).toBe(true);
+    expect(state.coversRound(narrow, round(wide))).toBe(false);
+    expect(state.coversRound({ ...wide, profile: "security" }, round(narrow))).toBe(false);
+  });
+
+  it("reads coverage off the config: skipped and disabled lenses are out", () => {
+    const cov = state.coverageOf({
+      review: { profile: "p", skip_lenses: ["pass-ui"] } as never,
+      lenses: { "pass-intent": { enabled: false } },
+    });
+    expect(cov.profile).toBe("p");
+    expect(cov.lenses).toContain("pass-baseline");
+    expect(cov.lenses).not.toContain("pass-ui");
+    expect(cov.lenses).not.toContain("pass-intent");
+    expect(cov.lenses).toEqual([...cov.lenses].sort());
+  });
+});
