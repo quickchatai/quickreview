@@ -764,13 +764,63 @@ function identBefore(head: string, at: number): string {
   return head.slice(k + 1, end);
 }
 
+/** The last `)` of a head (arrows already masked) that sits outside any
+ * `{…}`, `<…>` or `[…]` group, scanning back from the end; -1 when none. */
+function paramsClose(masked: string): number {
+  let depth = 0;
+  for (let k = masked.length - 1; k >= 0; k--) {
+    const c = masked.charCodeAt(k);
+    // A closer (`}`, `>`, `]`) opens a group when read backward.
+    if (c === 125 || c === 62 || c === 93) depth++;
+    else if (c === 123 || c === 60 || c === 91) {
+      if (depth > 0) depth--;
+    } else if (c === 41 && depth === 0) return k;
+  }
+  return -1;
+}
+
+/** Whether `masked` from `from` holds a `=` or `;` outside `{…}`, `<…>`
+ * and `[…]` groups. */
+function topLevelAssignOrStatement(masked: string, from: number): boolean {
+  let depth = 0;
+  for (let k = from; k < masked.length; k++) {
+    const c = masked.charCodeAt(k);
+    if (c === 123 || c === 60 || c === 91) depth++;
+    else if (c === 125 || c === 62 || c === 93) {
+      if (depth > 0) depth--;
+    } else if ((c === 61 || c === 59) && depth === 0) return true; // = ;
+  }
+  return false;
+}
+
+/** The head with every `{…}`, `<…>` and `[…]` group after the parameter
+ * list's `)` blanked to spaces of equal length. */
+function withoutReturnTypeGroups(head: string): string {
+  const masked = head.replace(/=>|->/g, "  ");
+  const close = paramsClose(masked);
+  if (close < 0) return head;
+  let out = head.slice(0, close + 1);
+  let depth = 0;
+  for (let k = close + 1; k < head.length; k++) {
+    const c = masked.charCodeAt(k);
+    if (c === 123 || c === 60 || c === 91) depth++;
+    const inGroup = depth > 0;
+    if ((c === 125 || c === 62 || c === 93) && depth > 0) depth--;
+    out += inGroup ? " " : head[k];
+  }
+  return out;
+}
+
 /** A C-like function head: `ident(…) qualifiers {`, the identifier not a
  * control word, nothing assigned after the parameters. */
 function cLikeFunction(head: string): boolean {
-  const close = head.lastIndexOf(")");
+  // The parameter list's `)` is the last one outside a return type's
+  // brackets (`): { a; b }`, `): Promise<{ a; b }>`), and only a `=` or `;`
+  // outside those brackets means an assignment or a statement.
+  const masked = head.replace(/=>|->/g, "  ");
+  const close = paramsClose(masked);
   if (close < 0) return false;
-  const tail = head.slice(close + 1).replace(/=>|->/g, "");
-  if (/[=;]/.test(tail)) return false;
+  if (topLevelAssignOrStatement(masked, close + 1)) return false;
   const open = openOf(head, close);
   if (open < 0) return false;
   let k = open - 1;
@@ -789,6 +839,8 @@ function functionName(head: string, d: Dialect): string {
     const m = GO_FUNC_NAME_RE.exec(head.trim());
     if (m) return m[1]!;
   }
+  // A name is never read from inside a return type (`): { cb: () => void }`).
+  head = withoutReturnTypeGroups(head);
   const kw = KEYWORD_NAME_RE.exec(head);
   if (kw && kw[1] !== undefined) return kw[1];
   const assigned = ASSIGNED_NAME_RE.exec(head);

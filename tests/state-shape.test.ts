@@ -789,6 +789,31 @@ describe("blocks: callbacks in an object, return types in a head (TS)", () => {
     );
     expect(exits(plain, "load")).toEqual(["return@2"]);
   });
+
+  // MUTATION: restore head.lastIndexOf(')') and the plain /[=;]/ tail test,
+  // and this fails. MUTATION: drop withoutReturnTypeGroups from
+  // functionName — the third method is named `cb`, and this fails.
+  it("a method whose object return type holds a ; is still a function", () => {
+    for (const ret of [
+      "{ events: MouseEvent[]; rest: Buffer }",
+      "Promise<{ a: number; b: string }>",
+      "{ cb: () => void; x: T }",
+    ]) {
+      const s = shapeOf(
+        "a.ts",
+        lines(
+          "class D {",
+          `  feed(buf: Buffer): ${ret} {`,
+          "    if (x) return a;",
+          "    return b;",
+          "  }",
+          "}",
+        ),
+      );
+      expect(functionAt(s, 3)?.name, ret).toBe("feed");
+      expect(exits(s, "feed"), ret).toEqual(["return@3", "return@4"]);
+    }
+  });
 });
 
 describe("statements: a store through a dereference", () => {

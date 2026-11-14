@@ -587,7 +587,28 @@ describe("writes and reads", () => {
     expect(out).toContain("src/a.ts:5  (run)  [argument] report(this.status);");
   });
 
-  it("filters to a path or directory, and lists the diff's files first", async () => {
+  // MUTATION: drop the `first` loop in sweepOrder — the unchanged peer is
+  // listed first, and this fails.
+  it("lists the diff's files before an unchanged peer in the same directory", async () => {
+    const out = await run(
+      { action: "writes", name: "status" },
+      world(
+        [
+          {
+            path: "src/z.ts",
+            base: "export let a = 0;\n",
+            head: "export function f(j) {\n  j.status = 1;\n}\n",
+          },
+        ],
+        { "src/a.ts": "export function g(j) {\n  j.status = 2;\n}\n" },
+      ),
+    );
+    const changed = out.indexOf("src/z.ts:2");
+    expect(changed, out).toBeGreaterThan(-1);
+    expect(changed, out).toBeLessThan(out.indexOf("src/a.ts:2"));
+  });
+
+  it("filters to a path or directory", async () => {
     const out = await run({ action: "writes", name: "status", file: "app" }, world([], tree));
     expect(out).toContain("searched 1 of 1 code files");
     expect(out).not.toContain("src/");
