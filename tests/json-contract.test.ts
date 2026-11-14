@@ -289,6 +289,16 @@ const findings = [
     disposition: "posted",
   },
   { path: "src/a.ts", line: 3, severity: "P0", title: "c breaks the build", disposition: "posted" },
+  // a candidate the validator doubted: the payload's `doubted` list, never a finding
+  {
+    path: "src/a.ts",
+    line: 2,
+    severity: "P1",
+    evidence: "b may be read before it is set",
+    disposition: "doubted",
+    word: "refuted",
+    reason: "b is a const assigned at its declaration",
+  },
 ];
 const record = JSON.stringify({ findings, verdict: "REQUEST_CHANGES" });
 const outcome = JSON.stringify({ verdict: "REQUEST_CHANGES", passes: [] });
@@ -437,6 +447,13 @@ describe("qcr review --json", () => {
     const [c2, done] = await reviewJson(mkRepo("done"), happy, ["--limit", "5"]);
     expect(c2).toBe(0);
     expectContract(review, "review-done", REVIEW_SCHEMA_VERSION, done);
+    // The doubted candidate is in the schema-checked payload, apart from the
+    // findings. MUTATION: require a "body" in $defs/doubted of
+    // schemas/review-result.v2.json — this fails.
+    expect(Object.values(done["findings"] as Json).flat()).toHaveLength(2);
+    expect(done["doubted"]).toEqual([
+      expect.objectContaining({ title: "b may be read before it is set", word: "refuted" }),
+    ]);
     // a finished review repeats the preview it ran under, model and all
     if (!UPDATE) expect(previewKeys(done)).toEqual(previewKeys(golden("review-done")));
     expect(done["preview"]).toMatchObject({ estimate_usd: null, cap_usd: 5, auto: true });
