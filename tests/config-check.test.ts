@@ -110,6 +110,18 @@ describe("qcr config check", () => {
     expect(r.out[0]).toContain("profile house");
   });
 
+  // MUTATION: drop the "state machines" loader from checkConfigHome — the
+  // malformed table passes the check (exit 0) and this fails.
+  it("reports a profile whose [state_machines] table the daemon would refuse", () => {
+    const h = home({
+      "config.toml": withProfile("house"),
+      "profiles/house/profile.toml": 'extends = "default"\n[state_machines]\nonly = "yes"\n',
+    });
+    const r = check(h, true);
+    expect(r.code).toBe(1);
+    expect(r.out[0]).toContain("profile house (state machines)");
+  });
+
   it("is wired into qcr as `config check` (exit code, --json, --config-home)", async () => {
     const h = home({ "config.toml": GOOD.replace(/^\[slack\]$/m, "[slack]\ninbound = true") });
     const logs: string[] = [];
