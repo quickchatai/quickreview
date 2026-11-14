@@ -23,6 +23,8 @@ import { applyProfilePosting } from "@quickchatai/pi-quickreview/src/postingpoli
 import {
   loadProfilePosting,
   loadProfileSecurity,
+  loadProfileStateMachines,
+  onlyPostingScope,
 } from "@quickchatai/pi-quickreview/src/profiles.js";
 import {
   postedRenderOptions,
@@ -94,6 +96,8 @@ export function renderConfig(
     profilePosting: typeof loadProfilePosting;
     /** The profile's `[security]`; the real chain when not given. */
     profileSecurity?: typeof loadProfileSecurity;
+    /** The profile's `[state_machines]`; the real chain when not given. */
+    profileStateMachines?: typeof loadProfileStateMachines;
   } = { config: loadConfig, profilePosting: loadProfilePosting },
 ): { cfg: PostedRenderConfig; unread?: string } {
   let review: PostedRenderConfig["review"] = { dedup_merge: REVIEW_DEFAULTS.dedup_merge };
@@ -107,18 +111,28 @@ export function renderConfig(
     // The profile's `[posting]` policy, overlaid exactly as the daemon does
     // (wire.ts buildParts) — so this route enforces the cut the bench does.
     const profilePosting = load.profilePosting(root, loaded.review.profile, lookup);
-    // The profile's `[security]` over config.toml's, as the daemon resolves
-    // it (profiles.ts applyProfileOverlays): `fold` drives the render
-    // route's security fold, and a security-only review scopes what posts.
+    // The profile's `[security]` and `[state_machines]` over config.toml's,
+    // as the daemon resolves them (profiles.ts applyProfileOverlays): `fold`
+    // drives the render route's security fold, and a one-family review
+    // scopes what posts to that family.
     const security = {
       ...loaded.security,
       ...(load.profileSecurity ?? loadProfileSecurity)(root, loaded.review.profile, lookup),
     };
+    const state_machines = {
+      ...loaded.state_machines,
+      ...(load.profileStateMachines ?? loadProfileStateMachines)(
+        root,
+        loaded.review.profile,
+        lookup,
+      ),
+    };
     fold = security.fold === true;
+    const only = onlyPostingScope({ security, state_machines });
     posting = applyProfilePosting(
       loaded,
-      security.only === true && profilePosting.scope === undefined
-        ? { ...profilePosting, scope: "security" }
+      only !== undefined && profilePosting.scope === undefined
+        ? { ...profilePosting, scope: only }
         : profilePosting,
     ).posting;
   } catch (err) {

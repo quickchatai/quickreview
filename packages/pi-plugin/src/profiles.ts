@@ -868,6 +868,48 @@ export function applyProfileStateMachines<
 }
 
 /**
+ * A tuned config with the profile's two family tables overlaid — `[security]`
+ * (`applyProfileSecurity`), then `[state_machines]`
+ * (`applyProfileStateMachines`). `explicit` is the named chain's own tuning,
+ * so a repository's `.qcr/profile.toml` cannot switch a lens back on in a
+ * one-family review. Every route that resolves a config — the daemon's
+ * overlays and the scan's — applies both through this one function.
+ */
+export function applyProfileFamilies<
+  C extends {
+    review: { profile: string };
+    lenses?: Record<string, LensTuning>;
+    security?: SecurityConfig;
+    state_machines?: StateMachinesConfig;
+    models: Pick<ModelsConfig, "risk_passes" | "pass_tiers" | "pass_models">;
+  },
+>(root: string, cfg: C, lookup: ProfileLookup = {}): C {
+  const profile = cfg.review.profile;
+  const explicit = loadProfileLensTuning(root, profile, { ...lookup, repoProfile: undefined });
+  return applyProfileStateMachines(
+    applyProfileSecurity(cfg, loadProfileSecurity(root, profile, lookup), ALL_PASSES, explicit),
+    loadProfileStateMachines(root, profile, lookup),
+    ALL_PASSES,
+    explicit,
+  );
+}
+
+/**
+ * The posting scope a one-family review implies: `security` for a
+ * security-only review, `state` for a state-machine-only one, none
+ * otherwise. Applies only where the named chain sets no `[posting] scope`;
+ * the daemon's overlays and the shell render route both read it.
+ */
+export function onlyPostingScope(families: {
+  security?: Pick<SecurityConfig, "only">;
+  state_machines?: Pick<StateMachinesConfig, "only">;
+}): PostingScope | undefined {
+  if (families.security?.only === true) return "security";
+  if (families.state_machines?.only === true) return "state";
+  return undefined;
+}
+
+/**
  * A parsed config with its profile's overlays applied — the per-lens tuning,
  * then the `[security]` table (`applyProfileSecurity`), then the `[posting]`
  * policy — so `cfg.lenses`, `cfg.security`, `cfg.models.risk_passes` and
@@ -895,27 +937,15 @@ export function applyProfileOverlays<
 >(root: string, cfg: C, lookup: ProfileLookup = {}): C {
   const profile = cfg.review.profile;
   const named: ProfileLookup = { ...lookup, repoProfile: undefined };
-  const explicit = loadProfileLensTuning(root, profile, named);
-  const secured = applyProfileStateMachines(
-    applyProfileSecurity(
-      applyProfileTuning(cfg, loadProfileLensTuning(root, profile, lookup)),
-      loadProfileSecurity(root, profile, lookup),
-      ALL_PASSES,
-      explicit,
-    ),
-    loadProfileStateMachines(root, profile, lookup),
-    ALL_PASSES,
-    explicit,
+  const secured = applyProfileFamilies(
+    root,
+    applyProfileTuning(cfg, loadProfileLensTuning(root, profile, lookup)),
+    lookup,
   );
   const posting = loadProfilePosting(root, profile, lookup);
   // A one-family review posts that family's findings alone, unless the named
   // chain says what posts.
-  const only: PostingScope | undefined =
-    secured.security?.only === true
-      ? "security"
-      : secured.state_machines?.only === true
-        ? "state"
-        : undefined;
+  const only = onlyPostingScope(secured);
   return applyProfilePosting(
     secured,
     only !== undefined && loadProfilePosting(root, profile, named).scope === undefined
