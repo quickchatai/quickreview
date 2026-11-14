@@ -27,6 +27,26 @@ export const SECURITY_FAMILY: readonly string[] = [
   "pass-sec-exploit-chain",
 ];
 
+/** The state-machine family: the `pass-sm-*` lenses, in plan order. Declared
+ * once, here, as the security family is (tests/state-family.test.ts holds it
+ * equal to every `pass-sm-*` name in `ALL_PASSES`). Each reads a change for
+ * one class of defect an IMPLICIT state machine produces — a machine nobody
+ * wrote down, spread over flags, nullable fields, status values, call order
+ * and stored rows. `pass-statelessness` (in-process state across replicas),
+ * `pass-concurrency` (two actors interleaving) and `pass-rollout` (two
+ * versions running at once) are not members: none of them asks which state
+ * a thing is in. */
+export const STATE_FAMILY: readonly string[] = [
+  "pass-sm-states",
+  "pass-sm-transitions",
+  "pass-sm-exhaustive",
+  "pass-sm-stuck",
+  "pass-sm-events",
+  "pass-sm-derived",
+  "pass-sm-lifecycle",
+  "pass-sm-durable",
+];
+
 /** Every pass the system knows: the lenses selectLenses can emit plus the
  * always-appended validator. addable_lenses derives from this set (∪ the
  * configured risk passes, which today are a subset of it). */
@@ -103,13 +123,18 @@ export const ALL_PASSES: readonly string[] = [
   // SUBLENS_TRIGGERS, and always at the risk tier. pass-security and
   // pass-bounds stay where they are and are not members.
   ...SECURITY_FAMILY,
+  // The state-machine family (STATE_FAMILY above): single-concern lenses
+  // over implicit state machines, planned on their own triggers
+  // (statetriggers.ts), never in SUBLENS_TRIGGERS; addable otherwise.
+  ...STATE_FAMILY,
   "pass-validate",
 ];
 
 /** Named lens families — what a profile's `only`, an addendum scope or a
  * request names in place of a list of lenses that would go stale. */
-export const LENS_FAMILIES: Readonly<Record<"security", readonly string[]>> = {
+export const LENS_FAMILIES: Readonly<Record<"security" | "state", readonly string[]>> = {
   security: SECURITY_FAMILY,
+  state: STATE_FAMILY,
 };
 
 /** The exploit-chain lens: one row per strategy, never one row for all. */
@@ -140,10 +165,24 @@ export function lensToken(part: string): string {
  * `pass-security` is not a member; a caller that counts it as security
  * says so itself. */
 export function isSecurityLens(lensField: string): boolean {
-  for (const part of lensField.toLowerCase().split(/[+,/&;|]/)) {
-    if (SECURITY_FAMILY.includes(lensToken(part))) return true;
-  }
-  return false;
+  return lensFieldTokens(lensField).some((t) => SECURITY_FAMILY.includes(t));
+}
+
+/** Whether a recorded lens field names a state-machine-family lens, read as
+ * `isSecurityLens` reads one: joined fields, a `#n` or `@ site` after the
+ * name and the agent's tier suffix all count. */
+export function isStateLens(lensField: string): boolean {
+  return lensFieldTokens(lensField).some((t) => STATE_FAMILY.includes(t));
+}
+
+/** The lens names a recorded lens field holds, lower-cased: the field split
+ * at `+ , / & ; |` (how sessions join lenses), each part read by
+ * `lensToken`. Every family test reads a field through this one split. */
+export function lensFieldTokens(lensField: string): string[] {
+  return lensField
+    .toLowerCase()
+    .split(/[+,/&;|]/)
+    .map(lensToken);
 }
 
 /** Lenses the whole-repo scan never runs: each needs a diff, a PR body or a

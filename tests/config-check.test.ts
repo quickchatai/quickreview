@@ -110,6 +110,18 @@ describe("qcr config check", () => {
     expect(r.out[0]).toContain("profile house");
   });
 
+  // MUTATION: drop the "state machines" loader from checkConfigHome — the
+  // malformed table passes the check (exit 0) and this fails.
+  it("reports a profile whose [state_machines] table the daemon would refuse", () => {
+    const h = home({
+      "config.toml": withProfile("house"),
+      "profiles/house/profile.toml": 'extends = "default"\n[state_machines]\nonly = "yes"\n',
+    });
+    const r = check(h, true);
+    expect(r.code).toBe(1);
+    expect(r.out[0]).toContain("profile house (state machines)");
+  });
+
   it("is wired into qcr as `config check` (exit code, --json, --config-home)", async () => {
     const h = home({ "config.toml": GOOD.replace(/^\[slack\]$/m, "[slack]\ninbound = true") });
     const logs: string[] = [];
@@ -138,5 +150,52 @@ describe("qcr config check", () => {
   it("checkConfigHome is total over a missing directory", () => {
     const r = checkConfigHome({ home: join(tmpdir(), "qcr-no-such-home"), root });
     expect(r.ok).toBe(false);
+  });
+});
+
+// The boot does not stop at each profile loader: it applies the resolved
+// family overlays (applyProfileOverlays), which refuse two one-family
+// reviews at once. The check runs that same combination, profile or none.
+// MUTATION: delete the family-overlay check in checkConfigHome — both cases fail.
+describe("qcr config check — the family overlays the boot applies", () => {
+  const securityOnly = (body: string): string =>
+    body.replace(/^(\[security\][\s\S]*?^)only = false/m, "$1only = true");
+  const bothOnly = (body: string): string =>
+    securityOnly(body).replace(/^(\[state_machines\][\s\S]*?^)only = false/m, "$1only = true");
+
+  it("refuses [security] only and [state_machines] only both true in config.toml, no profile", () => {
+    const cfg = bothOnly(GOOD);
+    expect(cfg).not.toBe(securityOnly(GOOD));
+    const r = checkConfigHome({ home: home({ "config.toml": cfg }), root });
+    expect(r.ok).toBe(false);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]!.where).toContain("config.toml");
+    expect(r.errors[0]!.message).toMatch(
+      /\[security\] only and \[state_machines\] only are both true/,
+    );
+  });
+
+  it("refuses the pair when one comes from config.toml and the other from the profile chain", () => {
+    const cfg = securityOnly(withProfile("house"));
+    expect(cfg).not.toBe(withProfile("house"));
+    const r = checkConfigHome({
+      home: home({
+        "config.toml": cfg,
+        "profiles/house/profile.toml": 'extends = "default"\n[state_machines]\nonly = true\n',
+      }),
+      root,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]!.where).toBe("profile house (family overlays)");
+    expect(r.errors[0]!.message).toMatch(
+      /\[security\] only and \[state_machines\] only are both true/,
+    );
+  });
+
+  it("one family alone still checks clean", () => {
+    expect(checkConfigHome({ home: home({ "config.toml": securityOnly(GOOD) }), root }).ok).toBe(
+      true,
+    );
   });
 });

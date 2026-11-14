@@ -37,6 +37,7 @@ import {
   isDeferredFinding,
   isFirstPartyDirectiveInjection,
   isSecurityFinding,
+  isStateFinding,
   postTag,
   stripUngrammaticalTag,
   type PostTag,
@@ -306,6 +307,7 @@ export function assembleReview(full: ReviewInput): AssembledReview {
       // Security findings may have their own channel or the whole scope
       // (`[posting] security_max`, `scope`); a partial chain never posts.
       security: isSecurityFinding(f.kind, f.lens),
+      stateMachine: isStateFinding(f.kind, f.lens),
       partialChain: isPartialChain({ kind: f.kind ?? null }),
       ...(runs && f.line !== undefined
         ? {

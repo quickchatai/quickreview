@@ -23,8 +23,8 @@
 //
 //   * `id`    — stable kebab-case id (what tests and commit messages cite).
 //   * `scope` — `all` | `lenses` | a comma-separated list of pass names and
-//     lens families (`family:security`, every lens of
-//     packages/pi-plugin/src/passes.ts `LENS_FAMILIES.security`).
+//     lens families (`family:security`, `family:state`: every lens of that
+//     entry of packages/pi-plugin/src/passes.ts `LENS_FAMILIES`).
 //   * `mode`  — optional: `review` (a PR round's build only), `scan` (a
 //     whole-repo scan's build only) or `both`, the default.
 //
@@ -68,8 +68,9 @@
 //     sets it wins (a list, `exclude`, is replaced whole, never appended);
 //   * the posting policy (`[posting]`) — per key, the nearest
 //     profile that sets it wins;
-//   * the security table (`[security]`) — per key, the nearest profile
-//     that sets it wins, over config.toml's;
+//   * the security table (`[security]`) and the state-machine table
+//     (`[state_machines]`) — per key, the nearest profile that sets it wins,
+//     over config.toml's;
 //   * the threat model (`threat-model.md`) — the nearest profile that
 //     carries one wins whole; the repository's own (`.qcr/threat-model.md`,
 //     packages/pi-plugin/src/profileoverrides.ts) wins over every profile's.
@@ -82,17 +83,22 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import {
+  DEFAULT_PASS_TIERS,
   parseScanTable,
   parseSecurityTable,
+  parseStateMachinesTable,
   SCAN_PROFILE_KEYS,
   SECURITY_DEFAULTS,
   SECURITY_PROFILE_KEYS,
+  STATE_MACHINES_DEFAULTS,
+  STATE_MACHINES_PROFILE_KEYS,
   type ModelsConfig,
   type ScanConfig,
   type SecurityConfig,
+  type StateMachinesConfig,
 } from "./reviewconfig.js";
 import type { EcosystemName } from "./ecosystem.js";
-import { ALL_PASSES, LENS_FAMILIES, SECURITY_FAMILY } from "./passes.js";
+import { ALL_PASSES, LENS_FAMILIES, SECURITY_FAMILY, STATE_FAMILY } from "./passes.js";
 import { PROFILE_THREAT_MODEL_FILE } from "./threatmodel.js";
 import { RISK_TIER } from "./types.js";
 import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
@@ -117,6 +123,7 @@ import {
   parsePostingTable,
   POSTING_ADDENDUM_IDS,
   type PostingPolicy,
+  type PostingScope,
 } from "./postingpolicy.js";
 import {
   applyProfileTuning,
@@ -190,6 +197,8 @@ interface ProfileLayer {
   posting?: unknown;
   /** The raw `[security]` table, when this profile has one. */
   security?: unknown;
+  /** The raw `[state_machines]` table, when this profile has one. */
+  state_machines?: unknown;
   /** The layer may omit `addenda/` without extending anything (the repo
    * profile: a `.qcr/` that only tunes). */
   optionalPack?: boolean;
@@ -233,6 +242,7 @@ function readLayer(name: string, dir: string): ProfileLayer {
   if ("scan" in doc) layer.scan = doc["scan"];
   if ("posting" in doc) layer.posting = doc["posting"];
   if ("security" in doc) layer.security = doc["security"];
+  if ("state_machines" in doc) layer.state_machines = doc["state_machines"];
   const addenda = doc["addenda"];
   if (addenda !== undefined) {
     if (typeof addenda !== "object" || addenda === null || Array.isArray(addenda)) {
@@ -378,7 +388,7 @@ function parseScope(raw: string, file: string): PassAddendumScope {
   for (const n of names) {
     if (!PASS_NAME_RE.test(n)) {
       throw new Error(
-        `profile addendum ${file}: unknown scope "${raw}" — use "all", "lenses", or a comma-separated list of pass names (pass-…) and lens families (family:security)`,
+        `profile addendum ${file}: unknown scope "${raw}" — use "all", "lenses", or a comma-separated list of pass names (pass-…) and lens families (family:security, family:state)`,
       );
     }
     // A well-shaped name no pass carries matches nothing at composition
@@ -683,9 +693,25 @@ export function loadProfileSecurity(
   return merged;
 }
 
-/** The lenses a security-only review keeps: the family and the validator. */
-function keptBySecurityOnly(lens: string): boolean {
-  return SECURITY_FAMILY.includes(lens) || lens === VALIDATE_PASS;
+/**
+ * The tuning map a review of ONE family runs with: every lens of `passes`
+ * outside `family` and the validator is `enabled = false`. What
+ * `securityOnlyLenses` says of the security family holds for any family
+ * passed here; `explicit` is read the same way.
+ */
+export function familyOnlyLenses(
+  family: readonly string[],
+  lenses: Readonly<Record<string, LensTuning>> | undefined,
+  passes: readonly string[] = ALL_PASSES,
+  explicit: Readonly<Record<string, LensTuning>> | undefined = lenses,
+): Record<string, LensTuning> {
+  const out: Record<string, LensTuning> = { ...(lenses ?? {}) };
+  for (const lens of passes) {
+    if (family.includes(lens) || lens === VALIDATE_PASS) continue;
+    const written = explicit?.[lens]?.enabled;
+    out[lens] = { ...out[lens], enabled: written ?? false };
+  }
+  return out;
 }
 
 /**
@@ -706,13 +732,7 @@ export function securityOnlyLenses(
   passes: readonly string[] = ALL_PASSES,
   explicit: Readonly<Record<string, LensTuning>> | undefined = lenses,
 ): Record<string, LensTuning> {
-  const out: Record<string, LensTuning> = { ...(lenses ?? {}) };
-  for (const lens of passes) {
-    if (keptBySecurityOnly(lens)) continue;
-    const written = explicit?.[lens]?.enabled;
-    out[lens] = { ...out[lens], enabled: written ?? false };
-  }
-  return out;
+  return familyOnlyLenses(SECURITY_FAMILY, lenses, passes, explicit);
 }
 
 /**
@@ -747,10 +767,17 @@ export function applyProfileSecurity<
   const risky = profileRiskLenses(cfg.lenses);
   for (const lens of risky) {
     const where = `[review] profile "${cfg.review.profile}": [lenses.${lens}] risk = true`;
-    if (Object.hasOwn(cfg.models.pass_tiers, lens))
+    if (Object.hasOwn(cfg.models.pass_tiers, lens)) {
+      // A shipped default pin cannot be removed, only replaced: say so.
+      const shipped = DEFAULT_PASS_TIERS[lens];
+      if (shipped !== undefined && cfg.models.pass_tiers[lens] === shipped)
+        throw new Error(
+          `${where}, but ${lens} is pinned to ${shipped} by the shipped default ([models.pass_tiers] in code) — it already runs pinned, so drop risk = true from the profile`,
+        );
       throw new Error(
         `${where}, but [models.pass_tiers] pins ${lens} — a risk pass always runs at ${RISK_TIER}; remove one of the two`,
       );
+    }
     if (Object.hasOwn(cfg.models.pass_models, lens))
       throw new Error(
         `${where}, but [models.pass_models] moves ${lens} — a risk pass always runs on the ${RISK_TIER} tier's model; remove one of the two`,
@@ -767,14 +794,131 @@ export function applyProfileSecurity<
   };
 }
 
+// ---- the state-machine table --------------------------------------------------
+
+/**
+ * The named profile's overrides of `config.toml [state_machines]` —
+ * `[state_machines]` in `profile.toml`, the whole `extends` chain merged (per
+ * key, the nearest profile that sets it wins). Only
+ * `STATE_MACHINES_PROFILE_KEYS` may appear: `triggers` and `only`. `label`
+ * and `command` are refused as config.toml only. A repository's
+ * `.qcr/profile.toml` never carries the table
+ * (packages/pi-plugin/src/profileoverrides.ts cuts it), so a repository
+ * cannot make its own review state-machine-only or switch its triggers off.
+ *
+ * `""`, a profile found nowhere and a chain with no `[state_machines]` all
+ * mean `{}`; anything malformed in any layer throws with the file named.
+ */
+export function loadProfileStateMachines(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup = {},
+): Partial<StateMachinesConfig> {
+  let merged: Partial<StateMachinesConfig> = {};
+  for (const layer of chainOf(root, profile, lookup, true)) {
+    if (layer.state_machines === undefined) continue;
+    const where = `[review] profile "${layer.name}": ${layer.toml}`;
+    merged = {
+      ...merged,
+      ...parseStateMachinesTable(where, layer.state_machines, STATE_MACHINES_PROFILE_KEYS),
+    };
+  }
+  return merged;
+}
+
+/**
+ * The config with the profile's `[state_machines]` overlaid — the profile
+ * wins over config.toml for `triggers` and `only`. `only` switches every lens
+ * outside the state-machine family and the validator off in `cfg.lenses`
+ * (`familyOnlyLenses`), read as the security table's `only` is. Two families
+ * cannot each be the only one: `[security] only` beside `[state_machines]
+ * only` would leave the validator alone, with no lens to hand it anything,
+ * so it is refused. Run after `applyProfileSecurity` (it reads
+ * `cfg.security`).
+ */
+export function applyProfileStateMachines<
+  C extends {
+    review: { profile: string };
+    lenses?: Record<string, LensTuning>;
+    security?: SecurityConfig;
+    state_machines?: StateMachinesConfig;
+  },
+>(
+  cfg: C,
+  overrides: Partial<StateMachinesConfig>,
+  passes: readonly string[] = ALL_PASSES,
+  explicit: Readonly<Record<string, LensTuning>> | undefined = cfg.lenses,
+): C {
+  const state_machines: StateMachinesConfig = {
+    ...STATE_MACHINES_DEFAULTS,
+    ...cfg.state_machines,
+    ...overrides,
+  };
+  if (state_machines.only && cfg.security?.only === true)
+    throw new Error(
+      `[review] profile "${cfg.review.profile}": [security] only and [state_machines] only are both true — a review can keep one family alone, never two; set one of them false`,
+    );
+  return {
+    ...cfg,
+    state_machines,
+    ...(state_machines.only
+      ? { lenses: familyOnlyLenses(STATE_FAMILY, cfg.lenses, passes, explicit) }
+      : {}),
+  };
+}
+
+/**
+ * A tuned config with the profile's two family tables overlaid — `[security]`
+ * (`applyProfileSecurity`), then `[state_machines]`
+ * (`applyProfileStateMachines`). `explicit` is the named chain's own tuning,
+ * so a repository's `.qcr/profile.toml` cannot switch a lens back on in a
+ * one-family review. Every route that resolves a config — the daemon's
+ * overlays and the scan's — applies both through this one function.
+ */
+export function applyProfileFamilies<
+  C extends {
+    review: { profile: string };
+    lenses?: Record<string, LensTuning>;
+    security?: SecurityConfig;
+    state_machines?: StateMachinesConfig;
+    models: Pick<ModelsConfig, "risk_passes" | "pass_tiers" | "pass_models">;
+  },
+>(root: string, cfg: C, lookup: ProfileLookup = {}): C {
+  const profile = cfg.review.profile;
+  const explicit = loadProfileLensTuning(root, profile, { ...lookup, repoProfile: undefined });
+  return applyProfileStateMachines(
+    applyProfileSecurity(cfg, loadProfileSecurity(root, profile, lookup), ALL_PASSES, explicit),
+    loadProfileStateMachines(root, profile, lookup),
+    ALL_PASSES,
+    explicit,
+  );
+}
+
+/**
+ * The posting scope a one-family review implies: `security` for a
+ * security-only review, `state` for a state-machine-only one, none
+ * otherwise. Applies only where the named chain sets no `[posting] scope`;
+ * the daemon's overlays and the shell render route both read it.
+ */
+export function onlyPostingScope(families: {
+  security?: Pick<SecurityConfig, "only">;
+  state_machines?: Pick<StateMachinesConfig, "only">;
+}): PostingScope | undefined {
+  if (families.security?.only === true) return "security";
+  if (families.state_machines?.only === true) return "state";
+  return undefined;
+}
+
 /**
  * A parsed config with its profile's overlays applied — the per-lens tuning,
  * then the `[security]` table (`applyProfileSecurity`), then the `[posting]`
  * policy — so `cfg.lenses`, `cfg.security`, `cfg.models.risk_passes` and
  * `cfg.posting` are the one resolved answer (the profile wins over
- * config.toml, the preset and the defaults). A security-only review posts
- * only security findings: `[posting] scope` becomes `security` unless the
- * named profile chain sets it. What a security-only review keeps is the
+ * config.toml, the preset and the defaults). The `[state_machines]` table
+ * follows the security one (`applyProfileStateMachines`). A security-only
+ * review posts only security findings: `[posting] scope` becomes `security`
+ * unless the named profile chain sets it; a state-machine-only review's
+ * becomes `state` the same way. What a security-only review keeps is the
  * named chain's to say, never the repo layer's: a repository's
  * `[lenses.<pass>] enabled = true` on a non-security lens, or its
  * `[posting] scope`, cannot widen it. The daemon's assembly, the one-shot review and the
@@ -787,22 +931,25 @@ export function applyProfileOverlays<
     lenses?: Record<string, LensTuning>;
     posting?: PostingPolicy;
     security?: SecurityConfig;
+    state_machines?: StateMachinesConfig;
     models: Pick<ModelsConfig, "risk_passes" | "pass_tiers" | "pass_models">;
   },
 >(root: string, cfg: C, lookup: ProfileLookup = {}): C {
   const profile = cfg.review.profile;
   const named: ProfileLookup = { ...lookup, repoProfile: undefined };
-  const secured = applyProfileSecurity(
+  const secured = applyProfileFamilies(
+    root,
     applyProfileTuning(cfg, loadProfileLensTuning(root, profile, lookup)),
-    loadProfileSecurity(root, profile, lookup),
-    ALL_PASSES,
-    loadProfileLensTuning(root, profile, named),
+    lookup,
   );
   const posting = loadProfilePosting(root, profile, lookup);
+  // A one-family review posts that family's findings alone, unless the named
+  // chain says what posts.
+  const only = onlyPostingScope(secured);
   return applyProfilePosting(
     secured,
-    secured.security?.only === true && loadProfilePosting(root, profile, named).scope === undefined
-      ? { ...posting, scope: "security" }
+    only !== undefined && loadProfilePosting(root, profile, named).scope === undefined
+      ? { ...posting, scope: only }
       : posting,
   );
 }

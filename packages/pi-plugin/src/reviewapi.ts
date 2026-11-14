@@ -66,11 +66,13 @@ import {
   addReviewTree,
   addUncommittedTree,
   contractOneNoPrice,
+  doubtedFindings,
   groupFindings,
   loadReviewSettings,
   hardStopFor,
   priceReview,
   removeReviewTree,
+  renderDoubted,
   renderGrouped,
   repoRates,
   originRepo,
@@ -108,6 +110,7 @@ import { MEMORY_NOT_SET_UP, type ReviewMemoryPort, type RoundMemory } from "./me
 import type { ProfilePlace } from "./profilelookup.js";
 import type { ProfileLookup } from "./profiles.js";
 import { assemblePostReview, loadPostIdentity, securityRowsNotReturned } from "./reviewpost.js";
+import { applySecurityFoldToRecord } from "./reviewrender.js";
 import {
   fetchPrTarget,
   parsePrTarget,
@@ -129,7 +132,7 @@ import type { RoundSpec } from "./engine/round.js";
 import { renderOneShotPrompts, type OneShotPrompts } from "./engine/prompts.js";
 import { AuthError, AuthExpiring } from "./engine/auth.js";
 import type { Runtime } from "./engine/port.js";
-import type { SecurityRequest } from "./types.js";
+import type { SecurityRequest, StateRequest } from "./types.js";
 import { computeSecurityFacts, SECURITY_TRIGGER_CHECKS, type SecurityFact } from "./secfacts.js";
 import { localGitFactsIo, workTreeFactsIo } from "./secfactsgit.js";
 import { SECURITY_FAMILY } from "./passes.js";
@@ -149,6 +152,9 @@ import {
 } from "./profileoverrides.js";
 import {
   branchTargetKey,
+  coverageOf,
+  covers,
+  coversRound,
   prTargetKey,
   lastRound,
   loadState,
@@ -279,6 +285,11 @@ export interface ReviewOptions {
    * A run with a request reviews the whole target, as `full` does: an earlier
    * review's state is neither shortcut nor delta base for it. */
   securityRequest?: SecurityRequest;
+  /** A state-machine review asked for on this run (`/qcr-review
+   * --state-machines`): the whole state-machine family is planned, never a
+   * lens the profile switched off. Like a security request, it reviews the
+   * whole target. */
+  stateRequest?: StateRequest;
   /** Builds the runtime that hosts one run's review session. Called once per
    * run, when the round is about to start (a preview, a refusal or an
    * unchanged head builds none), and the runtime is disposed when the run
@@ -837,6 +848,11 @@ async function runPipeline(
   // for on this run reviews in full too: the earlier review it would build on
   // ran no security family, so neither "nothing new" nor a follow-up over the
   // change since it answers the request.
+  // A round is built on only when it read the target with every lens this run
+  // would (its coverage: the profile and the lenses the config lets through),
+  // and a run asked for a lens family (a preset that skips every other lens)
+  // never replaces a round it does not cover itself. A narrower run therefore
+  // never hides code from a wider one, and the wider one's open findings stay.
   const targetKey = prInfo
     ? prTargetKey(prInfo.repo, prInfo.number)
     : branchTargetKey(t.repo, t.branch);
@@ -846,10 +862,13 @@ async function runPipeline(
       ? null
       : (openReviewStoreIn(opts.storeDir, repoDir)?.statePath(targetKey) ?? null);
   const postsToPr = prInfo !== null && sends("pr");
+  const lensCoverage = coverageOf(opts.config);
+  const asked = opts.securityRequest !== undefined || opts.stateRequest !== undefined;
+  const stored = keepsState ? loadState(statePath, targetKey) : null;
   const prev =
-    opts.full || opts.securityRequest !== undefined || !keepsState || postsToPr
+    opts.full || asked || postsToPr || stored === null || !covers(lastRound(stored), lensCoverage)
       ? null
-      : loadState(statePath, targetKey);
+      : stored;
   const short = (sha: string): string => sha.slice(0, 7);
   const stillOpen = (s: ReviewState | null, before?: number): StillOpen[] =>
     openFindings(s)
@@ -1018,6 +1037,7 @@ async function runPipeline(
       ...profileArgs,
       ...securityArgs,
       ...(opts.securityRequest ? { securityRequest: opts.securityRequest } : {}),
+      ...(opts.stateRequest ? { stateRequest: opts.stateRequest } : {}),
     };
     let why = fallback;
     if (prev !== null && delta !== null) {
@@ -1502,19 +1522,31 @@ async function runPipeline(
     verdict,
     scope,
     cost_usd: spent,
+    coverage: lensCoverage,
   };
-  const recorded = recordRound(scope === "delta" ? prev : null, targetKey, round, shot.findings);
-  if (finished && keepsState) saveState(statePath, recorded.state);
+  // The report reads the record as the post does: under the security fold a
+  // security candidate the validator could not verify is asked as a
+  // question, a finding, rather than doubted.
+  const reportRecord =
+    cfg.security?.fold === true ? applySecurityFoldToRecord(shot.findings).record : shot.findings;
+  const recorded = recordRound(scope === "delta" ? prev : null, targetKey, round, reportRecord);
+  const replaces = !asked || stored === null || coversRound(lensCoverage, lastRound(stored));
+  if (finished && keepsState && replaces) saveState(statePath, recorded.state);
   const open = finished ? stillOpen(recorded.state, round.round_no) : [];
   const skipped = skipPosted(recorded.fresh, bot.findings);
   const groups = groupFindings({ findings: finished ? skipped.fresh : [] });
   const unfinishedGroups = finished
     ? groups
-    : groupFindings(rawWithout(shot.findings, bot.findings));
+    : groupFindings(rawWithout(reportRecord, bot.findings));
   const count = Object.values(unfinishedGroups).reduce((n, l) => n + l.length, 0);
+  // The candidates the validator doubted: listed apart, never counted, never
+  // posted.
+  const doubted = doubtedFindings(reportRecord);
+  const doubtedLines = renderDoubted(doubted);
   const data = {
     preview: previewData,
     findings: unfinishedGroups,
+    doubted,
     still_open: open,
     repeats_suppressed: recorded.repeats.length,
     already_posted_skipped: skipped.skipped,
@@ -1537,6 +1569,7 @@ async function runPipeline(
         (coverage.not_reached.length ? `; not reached: ${coverage.not_reached.join(", ")}` : "") +
         ".",
       ...(count > 0 ? body : ["No findings were written before the stop."]),
+      ...doubtedLines,
       ...customNotes,
       `Files: ${outDir}`,
     ].join("\n");
@@ -1554,6 +1587,7 @@ async function runPipeline(
           ],
         },
         unfinishedGroups,
+        doubted,
       ),
     );
   }
@@ -1580,6 +1614,7 @@ async function runPipeline(
     "",
     `Review done${verdict ? `: ${verdict}` : ""}${spentWords}`,
     ...(count > 0 ? body.slice(1) : [scope === "delta" ? "No new findings." : "No findings."]),
+    ...doubtedLines,
     ...renderStillOpen(open),
     ...(recorded.repeats.length
       ? [
@@ -1603,7 +1638,7 @@ async function runPipeline(
   let postFailed = false;
   let postLine = "";
   let postReady: string | null = null;
-  const markdown = renderMarkdown(mdMeta, groups);
+  const markdown = renderMarkdown(mdMeta, groups, doubted);
   let post = sends("pr");
   if (!post && prInfo !== null && io.offerPost) {
     const offerPost = io.offerPost;

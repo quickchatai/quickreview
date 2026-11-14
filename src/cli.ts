@@ -1293,12 +1293,14 @@ async function cmdDrain(rest: string[]): Promise<number> {
 // pauses every tracked PR but one with it before the drain is lifted.
 
 export const PR_LEVER_USAGE =
-  "usage: qcr pause-pr <pr> [--reason <text>] | qcr resume-pr <pr> | qcr review-now <pr> [--security]";
+  "usage: qcr pause-pr <pr> [--reason <text>] | qcr resume-pr <pr> | qcr review-now <pr> [--security] [--state-machines]";
 
 /** `qcr pause-pr|resume-pr|review-now`'s arguments: one PR number; for a
  * pause an optional `--reason <text>` (the reason the board and `qcr status`
  * show); for review-now an optional `--security`, which also asks for a
- * security review of the PR (src/securityrequest.ts). */
+ * security review of the PR (src/securityrequest.ts), and an optional
+ * `--state-machines`, which asks for a state-machine review of it
+ * (src/staterequest.ts). */
 export function parsePrLeverArgs(
   verb: "pause-pr" | "resume-pr" | "review-now",
   rest: readonly string[],
@@ -1306,9 +1308,12 @@ export function parsePrLeverArgs(
   let pr: number | undefined;
   let reason: string | undefined;
   let security = false;
+  let stateMachines = false;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
     if (a === "--security" && verb === "review-now" && !security) security = true;
+    else if (a === "--state-machines" && verb === "review-now" && !stateMachines)
+      stateMachines = true;
     else if (a === "--reason" && verb === "pause-pr" && reason === undefined) {
       const v = rest[++i];
       if (v === undefined || v.trim() === "") throw new Error(PR_LEVER_USAGE);
@@ -1319,7 +1324,12 @@ export function parsePrLeverArgs(
   if (pr === undefined) throw new Error(PR_LEVER_USAGE);
   if (verb === "resume-pr") return { command: "resume-pr", pr };
   if (verb === "review-now")
-    return { command: "review-now", pr, ...(security ? { security: true as const } : {}) };
+    return {
+      command: "review-now",
+      pr,
+      ...(security ? { security: true as const } : {}),
+      ...(stateMachines ? { state_machines: true as const } : {}),
+    };
   return { command: "pause-pr", pr, reason: reason ?? "paused by the operator (qcr pause-pr)" };
 }
 

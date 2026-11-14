@@ -9,7 +9,7 @@
 // nothing but its arguments, and a follow-up decision reads the PR's history
 // through `FollowUpHistory`, a port the bot fills from its state store.
 import type { CoreConfig } from "./reviewconfig.js";
-import { REVIEW_DEFAULTS, SECURITY_DEFAULTS } from "./reviewconfig.js";
+import { REVIEW_DEFAULTS, SECURITY_DEFAULTS, STATE_MACHINES_DEFAULTS } from "./reviewconfig.js";
 import { coverageEligible } from "./coverage.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import { promptTargetsFor } from "./escalationprompt.js";
@@ -42,7 +42,14 @@ import { alwaysPlannedLenses, flooredTier, lensEnabled } from "./lenstuning.js";
 import { lintersForFiles, type CiLinter } from "./lintconfig.js";
 import { detectLoosenedAssertions, loosenedReason } from "./loosenedtests.js";
 import type { MigrationCollision } from "./migrations.js";
-import { ALL_PASSES, CHAIN_PASS, SECURITY_FAMILY, type ChainStrategy } from "./passes.js";
+import {
+  ALL_PASSES,
+  CHAIN_PASS,
+  SECURITY_FAMILY,
+  STATE_FAMILY,
+  type ChainStrategy,
+} from "./passes.js";
+import { selectStateLenses } from "./statetriggers.js";
 import { isDefaultPosting } from "./postingpolicy.js";
 import { roundPostingKey } from "./postingkey.js";
 import { deltaAsPrFiles, type PrOwnedDelta, type PrOwnedDeltaFile } from "./prdelta.js";
@@ -67,6 +74,7 @@ import type {
   RoundRecoveryContext,
   RoundType,
   SecurityRequest,
+  StateRequest,
 } from "./types.js";
 
 /** A plan's lens names, each once, in plan order — the compatibility list
@@ -108,12 +116,14 @@ export function validatorTier(cfg: Pick<CoreConfig, "lenses" | "models">): PassT
 /**
  * The tier a lens ADDED by the session runs at (the round templates' add
  * rule): a risk pass exists only as `deep`; every other lens at `standard`,
- * or at the profile's `min_tier` for it when that is higher.
+ * or at its `[models.pass_tiers]` pin (a shipped default pin included), and
+ * at the profile's `min_tier` for it when that is higher — the tier the plan
+ * would have given the same lens.
  */
 export function addTierOf(cfg: CoreConfig, lens: string): PassTier {
   return cfg.models.risk_passes.includes(lens)
     ? RISK_TIER
-    : flooredTier(cfg.lenses, lens, ADD_TIER);
+    : flooredTier(cfg.lenses, lens, cfg.models.pass_tiers?.[lens] ?? ADD_TIER);
 }
 
 /** The facts a prepared worktree hands the round — the tree's own, less
@@ -157,6 +167,11 @@ export interface PlanSecurityInputs {
    * calls it only when a security-family row is planned, so a round with
    * none reads nothing for them. Appended to `securityFacts`. */
   securityInventory?: () => readonly SecurityFact[];
+  /** A maintainer's or the operator's request for a state-machine review:
+   * the whole state-machine family (passes.ts `STATE_FAMILY`) is planned.
+   * It rides with the security inputs because every route that carries one
+   * carries the other. */
+  stateRequest?: StateRequest;
 }
 
 /** What `buildPassPlan` returns. */
@@ -200,7 +215,16 @@ export interface PassPlan {
  * it: `delta`, `forward` and `backward` in the discovery plan, and
  * `compose` in `post_plan`, after the wave, whenever another family row is
  * planned. A family row runs at the risk tier and is not required — except
- * the chain's `delta` row. */
+ * the chain's `delta` row.
+ *
+ * The state-machine family (`STATE_FAMILY`) joins the union the same way:
+ * the lenses its content triggers select (`[state_machines] triggers`,
+ * packages/pi-plugin/src/statetriggers.ts), the whole family on a request,
+ * and every lens the profile plans `always`. Its rows run at the `deep`
+ * tier on every route, through the shipped pins (`DEFAULT_PASS_TIERS`,
+ * reviewconfig.ts), so they are not raisable; a config's own
+ * `[models.pass_tiers]` entry lowers one. They are not required, and are
+ * offered as addable only to a round already doing state-machine work. */
 export function buildPassPlan(
   cfg: CoreConfig,
   files: PrFileEntry[],
@@ -338,6 +362,20 @@ export function buildPassPlan(
   for (const sel of securitySel) reasonOnce(sel.lens, sel.why);
   if (opts.securityRequest)
     for (const l of SECURITY_FAMILY) reasonOnce(l, requestReason(opts.securityRequest));
+  // The state-machine family: its content triggers, the whole family on a
+  // request, and what the profile plans `always`.
+  const stateSel = selectStateLenses(files, {
+    mode: (cfg.state_machines ?? STATE_MACHINES_DEFAULTS).triggers,
+    ...(heuristics ? { extension: heuristics } : {}),
+    ...(intent ? { intent } : {}),
+  });
+  for (const sel of stateSel) reasonOnce(sel.lens, sel.why);
+  if (opts.stateRequest)
+    for (const l of STATE_FAMILY) reasonOnce(l, stateRequestReason(opts.stateRequest));
+  const stateTriggered = new Set(stateSel.map((sel) => sel.lens));
+  const stateFamily = STATE_FAMILY.filter(
+    (l) => opts.stateRequest !== undefined || stateTriggered.has(l),
+  );
   for (const l of always) reasonOnce(l, ALWAYS_REASON);
   const triggered = new Set(securitySel.map((sel) => sel.lens));
   const family = SECURITY_FAMILY.filter(
@@ -370,6 +408,7 @@ export function buildPassPlan(
         ...lint,
         ...alwaysOther,
         ...family,
+        ...stateFamily,
       ].filter((l) => !skip.has(l)),
     ),
     VALIDATE_PASS,
@@ -566,13 +605,21 @@ export function buildPassPlan(
     requested ||
     security.only ||
     [...pass_plan, ...post_plan].some((p) => SECURITY_FAMILY.includes(p.lens));
+  // The state-machine family is offered the same way: only to a round
+  // already doing state-machine work (a family row planned, a request, a
+  // state-machine-only profile).
+  const stateRound =
+    opts.stateRequest !== undefined ||
+    (cfg.state_machines ?? STATE_MACHINES_DEFAULTS).only ||
+    pass_plan.some((p) => STATE_FAMILY.includes(p.lens));
   const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter(
     (l) =>
       !selected.has(l) &&
       on(l) &&
       !skip.has(l) &&
       l !== CHAIN_PASS &&
-      (securityRound || !SECURITY_FAMILY.includes(l)),
+      (securityRound || !SECURITY_FAMILY.includes(l)) &&
+      (stateRound || !STATE_FAMILY.includes(l)),
   );
   return {
     pass_plan: slowestFirst(pass_plan, files, risk),
@@ -594,6 +641,13 @@ function requestReason(r: SecurityRequest): string {
   // plugin's person) is left out, never rendered as a bare "@".
   const by = r.by.trim() === "" ? "" : ` by @${r.by.trim()}`;
   return `a security review was requested${by} ${how[r.source]}`;
+}
+
+/** Why a requested state-machine lens is in the plan: who asked, and how. */
+function stateRequestReason(r: StateRequest): string {
+  const how = { label: "with a PR label", comment: "in a PR comment", operator: "as the operator" };
+  const by = r.by.trim() === "" ? "" : ` by @${r.by.trim()}`;
+  return `a state-machine review was requested${by} ${how[r.source]}`;
 }
 
 /** The lenses `slowestFirst` launches last within their tier: conditional
@@ -1020,6 +1074,7 @@ function securityInputsOf(a: PlanSecurityInputs): PlanSecurityInputs {
     ...(a.securityRequest !== undefined ? { securityRequest: a.securityRequest } : {}),
     ...(a.threatModel !== undefined ? { threatModel: a.threatModel } : {}),
     ...(a.securityFacts !== undefined ? { securityFacts: a.securityFacts } : {}),
+    ...(a.stateRequest !== undefined ? { stateRequest: a.stateRequest } : {}),
   };
 }
 
@@ -1311,6 +1366,9 @@ export function buildRoundOrder(args: {
    * `SecurityRequest`): the plan carries the whole family, and the order
    * names who asked. */
   securityRequest?: SecurityRequest;
+  /** A state-machine review was asked for (`StateRequest`): a plan built
+   * here carries the whole state-machine family. */
+  stateRequest?: StateRequest;
   /** The threat model the round reads; null or absent ⇒ none. The order
    * carries its excerpt when a security-family row is planned. */
   threatModel?: ThreatModel | null;
@@ -1355,8 +1413,8 @@ export function buildRoundOrder(args: {
       securityInputsOf(args),
     );
   const headSha = reviewedHeadOf(args.tree, args.row);
-  // An addable lens the profile floors above the add rule's own
-  // variant is named with its variant in the prompt.
+  // An addable lens a pin or the profile's floor puts above the add rule's
+  // own variant is named with its variant in the prompt.
   const addable_tiers = Object.fromEntries(
     addable_lenses
       .filter((l) => !args.cfg.models.risk_passes.includes(l))

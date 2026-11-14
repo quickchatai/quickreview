@@ -14,7 +14,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname } from "node:path";
 import { normalizeDisposition, recordString, type FindingDisposition } from "./findingkey.js";
 import { parseFindingsRecord, type FindingsRecordEntry } from "./findingsrecord.js";
+import { lensEnabled } from "./lenstuning.js";
+import { ALL_PASSES } from "./passes.js";
 import { computePriorFindings, type PriorFindingsList } from "./priorfindings.js";
+import type { CoreConfig } from "./reviewconfig.js";
 import type { RoundFindingRow } from "./storerows.js";
 
 export const STATE_VERSION = 1;
@@ -39,6 +42,52 @@ export interface ReviewRound {
   verdict: string | null;
   scope: "full" | "delta";
   cost_usd: number | null;
+  /** The lenses the round could plan. Absent on a round saved before rounds
+   * recorded it: such a round keeps the behaviour it was saved under. */
+  coverage?: RoundCoverage;
+}
+
+/** What a round could read the target with: the profile it ran under and
+ * the lenses its config let through, in name order. A family-only profile
+ * narrows its plan through overlays read later in the run, so the profile
+ * name stands in for them. */
+export interface RoundCoverage {
+  profile: string;
+  lenses: string[];
+}
+
+/** The run's coverage, from its config alone: pure, read before any plan. */
+export function coverageOf(config: Pick<CoreConfig, "review" | "lenses">): RoundCoverage {
+  const skip = new Set(config.review.skip_lenses ?? []);
+  return {
+    profile: config.review.profile,
+    lenses: ALL_PASSES.filter((p) => !skip.has(p) && lensEnabled(config.lenses, p)).sort(),
+  };
+}
+
+/** A coverage as a saved state holds it: a profile name and a list of lens
+ * names. Anything else (a hand-edited file, another build's shape) is not one. */
+const isCoverage = (c: unknown): c is RoundCoverage =>
+  typeof c === "object" &&
+  c !== null &&
+  typeof (c as RoundCoverage).profile === "string" &&
+  Array.isArray((c as RoundCoverage).lenses) &&
+  (c as RoundCoverage).lenses.every((l) => typeof l === "string");
+
+const within = (inner: RoundCoverage, outer: RoundCoverage): boolean =>
+  inner.profile === outer.profile && inner.lenses.every((l) => outer.lenses.includes(l));
+
+/** Did `round` read the target with every lens `cur` would? Only then may a
+ * run take it as "nothing new" or review only the change since it. A round
+ * with no recorded coverage is taken as covering. */
+export function covers(round: ReviewRound, cur: RoundCoverage): boolean {
+  return round.coverage === undefined || within(cur, round.coverage);
+}
+
+/** Does `cur` read the target with every lens `round` did? A round with no
+ * recorded coverage is taken as wider than any. */
+export function coversRound(cur: RoundCoverage, round: ReviewRound): boolean {
+  return round.coverage !== undefined && within(round.coverage, cur);
 }
 
 /** A status a round reported for a prior finding. */
@@ -78,6 +127,9 @@ export function loadState(path: string | null, target: string): ReviewState | nu
       return null;
     const last = s.rounds[s.rounds.length - 1];
     if (typeof last?.head_sha !== "string" || typeof last.round_no !== "number") return null;
+    // The last round's coverage decides what the next run may build on: one
+    // that is present but not a coverage cannot be trusted.
+    if (last.coverage !== undefined && !isCoverage(last.coverage)) return null;
     return s as ReviewState;
   } catch {
     return null;
@@ -118,8 +170,10 @@ export function openFindings(s: ReviewState | null, nextRound?: number): PriorFi
 
 /** The dispositions a reader sees as findings (the terminal hides the
  * review's own kills): carried as open findings, whatever the record called
- * them. */
-const SHOWN_AS_POSTED = new Set<FindingDisposition>(["posted", "downgraded", "doubted", "unknown"]);
+ * them. A candidate the validator doubted is not one: it is kept as its own
+ * row and never listed as open. A state saved while it was stored as posted
+ * still loads, and that row stays open as it was. */
+const SHOWN_AS_POSTED = new Set<FindingDisposition>(["posted", "downgraded", "unknown"]);
 
 const norm = (s: string | null): string =>
   (s ?? "")

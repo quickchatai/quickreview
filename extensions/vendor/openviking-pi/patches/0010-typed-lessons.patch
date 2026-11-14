@@ -241,7 +241,7 @@ diff --git a/extensions/vendor/openviking-pi/qcr-lesson.ts b/extensions/vendor/o
 new file mode 100644
 --- /dev/null
 +++ b/extensions/vendor/openviking-pi/qcr-lesson.ts
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,226 @@
 +// QCR FORK — file added by PATCH 10 (typed lessons). Not upstream.
 +// a curated lesson carries a machine header, written by the tool.
 +//
@@ -315,6 +315,14 @@ new file mode 100644
 +  "pass-sec-infra",
 +  "pass-sec-variant",
 +  "pass-sec-exploit-chain",
++  "pass-sm-states",
++  "pass-sm-transitions",
++  "pass-sm-exhaustive",
++  "pass-sm-stuck",
++  "pass-sm-events",
++  "pass-sm-derived",
++  "pass-sm-lifecycle",
++  "pass-sm-durable",
 +  "pass-validate",
 +];
 +

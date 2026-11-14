@@ -339,29 +339,38 @@ describe("blocked author's PR conversation", () => {
   });
 
   // MUTATION: drop the `isSecurityCommand` clause from `PrConversation.accept`
-  // — the recovery sweep claims the command and this fails.
-  it("never claims the author's `@<bot> security` command as a reply, on intake or recovery", async () => {
-    const command = { ...objection, comment_id: 300, body: "@review security\nplease" };
-    expect(await conversation.accept(command)).toBe(false);
-    advance(1000);
-    store.recordPrComment({ ...command, source: "issue_comment", created_at: time.toISOString() });
-    await conversation.sweep();
-    expect(inject).not.toHaveBeenCalled();
-    expect(post).not.toHaveBeenCalled();
-    expect(store.reviewedHead(77)?.last_author_reply_at).toBeNull();
-    expect(
-      store.db.prepare("SELECT COUNT(*) AS n FROM pr_conversation WHERE comment_id = 300").get(),
-    ).toEqual({ n: 0 });
-    // The control: an ordinary author comment beside it is still recovered.
-    store.recordPrComment({
-      ...objection,
-      source: "issue_comment",
-      created_at: time.toISOString(),
-    });
-    await conversation.sweep();
-    expect(inject).toHaveBeenCalledOnce();
-    expect(inject.mock.calls[0]?.[1]).toContain("comment 100");
-  });
+  // — the recovery sweep claims the security command and this fails.
+  // MUTATION: drop the STATE_REQUEST clause from `PrConversation.accept` — the
+  // recovery sweep claims the state-machines command and this fails.
+  it.each(["@review security\nplease", "@review state-machines\nplease"])(
+    "never claims the author's review-request command %j as a reply, on intake or recovery",
+    async (body) => {
+      const command = { ...objection, comment_id: 300, body };
+      expect(await conversation.accept(command)).toBe(false);
+      advance(1000);
+      store.recordPrComment({
+        ...command,
+        source: "issue_comment",
+        created_at: time.toISOString(),
+      });
+      await conversation.sweep();
+      expect(inject).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+      expect(store.reviewedHead(77)?.last_author_reply_at).toBeNull();
+      expect(
+        store.db.prepare("SELECT COUNT(*) AS n FROM pr_conversation WHERE comment_id = 300").get(),
+      ).toEqual({ n: 0 });
+      // The control: an ordinary author comment beside it is still recovered.
+      store.recordPrComment({
+        ...objection,
+        source: "issue_comment",
+        created_at: time.toISOString(),
+      });
+      await conversation.sweep();
+      expect(inject).toHaveBeenCalledOnce();
+      expect(inject.mock.calls[0]?.[1]).toContain("comment 100");
+    },
+  );
 
   it("pre-review chatter cannot starve the bounded recovery batch", async () => {
     for (let i = 0; i < 30; i++)

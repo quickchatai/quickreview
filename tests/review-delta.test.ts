@@ -455,6 +455,80 @@ describe("review state", () => {
     expect(two.fresh.map((e) => e.title)).toEqual(["unrelated null deref"]);
     expect(two.repeats).toHaveLength(1);
   });
+
+  const round = (n: number, scope: "full" | "delta") => ({
+    round_no: n,
+    head_sha: `h${n}`,
+    base_sha: "b",
+    merge_base: "b",
+    reviewed_at: "2026-01-01T00:00:00Z",
+    verdict: null,
+    scope,
+    cost_usd: null,
+  });
+
+  // A candidate the validator doubted was never raised: it is kept as its own
+  // row for the audit, and the next round never lists it as still open.
+  // MUTATION: put "doubted" back in reviewstate.ts SHOWN_AS_POSTED — this fails.
+  it("keeps a doubted candidate out of the new and the open findings", () => {
+    const one = state.recordRound(null, "t", round(1, "full"), {
+      findings: [
+        f("f1", "src/a.ts", 3, "P0", "c breaks the build"),
+        {
+          id: "f2",
+          lens: "pass-baseline",
+          path: "src/a.ts",
+          line: 2,
+          severity: "P1",
+          disposition: "doubted",
+          word: "refuted",
+          reason: "b is a const",
+        },
+      ],
+    });
+    expect(one.fresh.map((e) => e.key)).toEqual(["f1"]);
+    const row = one.state.rows.find((r) => r.finding_key === "f2");
+    expect(row?.disposition).toBe("doubted");
+    expect(row?.posted_as).toBeNull();
+    expect(state.openFindings(one.state).findings.map((p) => p.finding_key)).toEqual(["f1"]);
+  });
+
+  // Legacy fold: a state saved while a doubted candidate was stored as a
+  // posted row still loads, and that row is still open, as it was.
+  // MUTATION: refuse a state with a posted row whose word is a doubt word in
+  // loadState — this fails.
+  it("loads a saved state whose doubted candidate was stored as posted", () => {
+    const path = join(tmp, "legacy-doubted-state.json");
+    const one = state.recordRound(null, "t", round(1, "full"), {
+      findings: [f("f1", "src/a.ts", 3, "P0", "c breaks the build")],
+    });
+    const legacy = {
+      ...one.state,
+      rows: [
+        ...one.state.rows,
+        {
+          ...one.state.rows[0]!,
+          id: 2,
+          finding_key: "f2",
+          line: 2,
+          title: null,
+          disposition: "posted",
+          word: "refuted",
+          reason: "b is a const",
+          posted_as: "P1",
+        },
+      ],
+    };
+    writeFileSync(path, JSON.stringify(legacy));
+    const s = state.loadState(path, "t");
+    expect(s).not.toBeNull();
+    expect(
+      state
+        .openFindings(s)
+        .findings.map((p) => p.finding_key)
+        .sort(),
+    ).toEqual(["f1", "f2"]);
+  });
 });
 
 describe("qcr review: a delta review with memory", () => {
@@ -476,5 +550,87 @@ describe("qcr review: a delta review with memory", () => {
     expect(order).toMatch(/PRIOR FINDINGS TO VERIFY/);
     expect(order).toContain("PINNED-HEAD-MARK");
     expect(order).toContain("CONTEXT-BLOCK-MARK");
+  });
+});
+
+describe("review state: a round's coverage", () => {
+  const round = (coverage?: { profile: string; lenses: string[] }) => ({
+    round_no: 1,
+    head_sha: "h1",
+    base_sha: "b",
+    merge_base: "b",
+    reviewed_at: "2026-01-01T00:00:00Z",
+    verdict: null,
+    scope: "full" as const,
+    cost_usd: null,
+    ...(coverage ? { coverage } : {}),
+  });
+  const wide = { profile: "", lenses: ["pass-baseline", "pass-sm-guards", "pass-validate"] };
+  const narrow = { profile: "", lenses: ["pass-sm-guards", "pass-validate"] };
+
+  // Legacy fold: a state saved before rounds recorded their coverage loads,
+  // and its round is built on as before, never replaced by a narrower run.
+  // MUTATION: return false from covers() for a round with no coverage — this
+  // fails.
+  it("loads a round with no coverage and takes it as covering", () => {
+    const path = join(tmp, "legacy-state.json");
+    writeFileSync(
+      path,
+      JSON.stringify({ version: 1, target: "t", rounds: [round()], rows: [], checks: [] }),
+    );
+    const s = state.loadState(path, "t");
+    expect(s).not.toBeNull();
+    expect(state.covers(state.lastRound(s!), wide)).toBe(true);
+    expect(state.coversRound(narrow, state.lastRound(s!))).toBe(false);
+  });
+
+  // A last round whose coverage is not a coverage (a hand edit, another
+  // build's shape) is a state that cannot be trusted: the run reviews in full
+  // rather than throwing inside covers().
+  // MUTATION: drop the coverage-shape check in loadState — this fails.
+  it("refuses a saved round whose coverage has the wrong shape", () => {
+    for (const coverage of [{ profile: "" }, { profile: "", lenses: "pass-baseline" }, "all"]) {
+      const path = join(tmp, "odd-coverage-state.json");
+      writeFileSync(
+        path,
+        JSON.stringify({
+          version: 1,
+          target: "t",
+          rounds: [{ ...round(), coverage }],
+          rows: [],
+          checks: [],
+        }),
+      );
+      expect(state.loadState(path, "t"), JSON.stringify(coverage)).toBeNull();
+    }
+    const path = join(tmp, "good-coverage-state.json");
+    writeFileSync(
+      path,
+      JSON.stringify({ version: 1, target: "t", rounds: [round(wide)], rows: [], checks: [] }),
+    );
+    expect(state.loadState(path, "t")).not.toBeNull();
+  });
+
+  // MUTATION: drop the profile comparison in reviewstate.ts `within` — the
+  // other-profile cases fail.
+  it("covers only a run whose lenses it read, under the same profile", () => {
+    expect(state.covers(round(wide), narrow)).toBe(true);
+    expect(state.covers(round(narrow), wide)).toBe(false);
+    expect(state.covers(round(wide), { ...wide, profile: "state-machines" })).toBe(false);
+    expect(state.coversRound(wide, round(narrow))).toBe(true);
+    expect(state.coversRound(narrow, round(wide))).toBe(false);
+    expect(state.coversRound({ ...wide, profile: "security" }, round(narrow))).toBe(false);
+  });
+
+  it("reads coverage off the config: skipped and disabled lenses are out", () => {
+    const cov = state.coverageOf({
+      review: { profile: "p", skip_lenses: ["pass-ui"] } as never,
+      lenses: { "pass-intent": { enabled: false } },
+    });
+    expect(cov.profile).toBe("p");
+    expect(cov.lenses).toContain("pass-baseline");
+    expect(cov.lenses).not.toContain("pass-ui");
+    expect(cov.lenses).not.toContain("pass-intent");
+    expect(cov.lenses).toEqual([...cov.lenses].sort());
   });
 });

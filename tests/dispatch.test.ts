@@ -20,7 +20,7 @@ import { dispatchBackoffHold, noteDispatchFailure } from "../src/dispatchbackoff
 import { recheckFingerprint } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
-import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
+import { SECURITY_FAMILY, STATE_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 import { PASS_TIER_ORDER } from "@quickchatai/pi-quickreview/src/types.js";
 import { renderRoundPrompt, roundTemplateFile } from "@quickchatai/pi-quickreview/src/templates.js";
 import type { RoundOrder, SessionHooks } from "@quickchatai/pi-quickreview/src/types.js";
@@ -1045,14 +1045,20 @@ describe("buildPassPlan", () => {
     expect(gated.pass_plan[0]!.tier).toBe("standard");
   });
 
-  it("addable_lenses = every known pass not already planned, the security family aside", () => {
+  it("addable_lenses = every known pass not already planned, the security and state-machine families aside", () => {
     const { pass_plan, addable_lenses } = buildPassPlan(planCfg, [file("README.md", 3, 1)]);
     expect(pass_plan.map((p) => p.lens)).toEqual(["pass-baseline", "pass-validate"]);
     // A round with no security signal is offered no security lens
     // (tests/security-plan.test.ts pins when the family is offered).
+    // Nor a state-machine lens, to a round with no state-machine work
+    // (tests/state-plan.test.ts).
     expect(addable_lenses).toEqual(
       ALL_PASSES.filter(
-        (l) => l !== "pass-baseline" && l !== "pass-validate" && !SECURITY_FAMILY.includes(l),
+        (l) =>
+          l !== "pass-baseline" &&
+          l !== "pass-validate" &&
+          !SECURITY_FAMILY.includes(l) &&
+          !STATE_FAMILY.includes(l),
       ),
     );
     expect(addable_lenses).not.toContain("pass-validate");
@@ -1462,7 +1468,10 @@ describe("dispatchOnce", () => {
       // planned, and no security lens on a round with no security signal.
       expect([...new Set(order!.pass_plan.map((p) => p.lens))]).toEqual(order!.lenses);
       expect(order!.addable_lenses).toEqual(
-        ALL_PASSES.filter((l) => !order!.lenses.includes(l) && !SECURITY_FAMILY.includes(l)),
+        ALL_PASSES.filter(
+          (l) =>
+            !order!.lenses.includes(l) && !SECURITY_FAMILY.includes(l) && !STATE_FAMILY.includes(l),
+        ),
       );
 
       const row = store.getPr(31)!;

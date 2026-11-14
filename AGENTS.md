@@ -240,7 +240,7 @@ the fence.
 |---|---|
 | Ingress | `src/webhook.ts` (HMAC, delivery dedupe), `src/reconcile.ts` (the authoritative poll — GitHub always wins) |
 | Lifecycle | `src/statemachine.ts` (transition table in the module header), `src/state.ts` (SQLite + `status.json` snapshot) |
-| Round planning | `src/dispatch.ts` (FIFO, concurrency cap), `packages/pi-plugin/src/planner.ts` (the lens plan, follow-up rounds, the round order), `packages/pi-plugin/src/heuristics.ts` (lens selection), `packages/pi-plugin/src/ecosystem.ts` + `packages/pi-plugin/src/migrations.ts` (framework pre-checks), `packages/pi-plugin/src/profiles.ts` |
+| Round planning | `src/dispatch.ts` (FIFO, concurrency cap), `packages/pi-plugin/src/planner.ts` (the lens plan, follow-up rounds, the round order), `packages/pi-plugin/src/heuristics.ts` (lens selection), `packages/pi-plugin/src/securitytriggers.ts` and `packages/pi-plugin/src/statetriggers.ts` (the content triggers of the two lens families, `pass-sec-*` and `pass-sm-*`), `packages/pi-plugin/src/ecosystem.ts` + `packages/pi-plugin/src/migrations.ts` (framework pre-checks), `packages/pi-plugin/src/profiles.ts` |
 | Prompt assembly | `packages/pi-plugin/src/include.ts` (`{{include:}}`, tier rewriting, `PASS_ADDENDA`), `packages/pi-plugin/src/templates.ts` (round templates) |
 | Sessions | `src/sessions.ts`, `src/tmux.ts`, `src/worktrees.ts`, `src/wakes.ts`, `extensions/inject-bridge.ts` |
 | Verdict + posting | `src/verdicts.ts`, `packages/pi-plugin/src/gate.ts`, `packages/pi-plugin/src/guards.ts`, `packages/pi-plugin/src/cigate.ts`, `packages/pi-plugin/src/standing-review.ts`, `src/posting.ts`, `packages/pi-plugin/src/anchors.ts`, `src/postops.ts`, the session shims `scripts/post-review.sh`, `approve-pr.sh`, `reply-thread.sh` |
@@ -248,6 +248,7 @@ the fence.
 | Security review | `packages/pi-plugin/src/passes.ts` (`SECURITY_FAMILY`, the fourteen `pass-sec-*` lenses), `packages/pi-plugin/src/securitytriggers.ts` (what plans a family lens), `packages/pi-plugin/src/threatmodel.ts` (the threat model, read from the base), `packages/pi-plugin/src/secfacts.ts` (deterministic facts through read-only git), `packages/pi-plugin/src/secevidence.ts` (a chain's outcome from its hop labels), `src/securityrequest.ts` (the label, `@<bot> security`, `--security`), `profiles/security/` |
 | Learning | `src/feedback.ts`, `src/eod.ts`, `src/digest.ts`, `packages/pi-plugin/src/findingsrecord.ts`, `src/improvements.ts` |
 | Memory | `src/memory/` (the seam), `src/openviking/` (the engine, supervised on loopback) |
+| On-demand reviews | `src/securityrequest.ts` (a label, an `@<bot>` comment or `review-now` flag asks for a lens family on a PR; one row per PR and kind), `src/staterequest.ts` (the state-machine kind over the same machinery) |
 | Operator surfaces | `src/tui/` (board, tabs, companion column), `src/cli.ts` (`qcr`), `src/slack/`, `src/commands.ts` + `src/levers.ts` |
 | Assembly | `src/daemon.ts` (stub-wired core, test-friendly) vs `src/wire.ts` (production wiring) |
 | Onboarding | `src/onboard/`, `extensions/onboarding.ts`, [`docs/onboarding.md`](docs/onboarding.md) |

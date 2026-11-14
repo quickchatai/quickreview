@@ -184,6 +184,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/setup-replay.test.ts",
   "tests/shellquote.test.ts",
   "tests/slack-setup-wizard-run.test.ts",
+  "tests/state-explore-git.test.ts", // the state_explore reader over a scratch repo with hostile git config
   "tests/sweprbench-export.test.ts",
   "tests/temp-root.test.ts",
   "tests/tool-fence.test.ts",

@@ -66,6 +66,13 @@
       },
       "description": "This round's findings by severity (P0, P1, P2, \u2026 nit, other), worst first."
     },
+    "doubted": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/doubted"
+      },
+      "description": "This round's candidates the validator doubted (refuted, unverifiable, \u2026): they may not be valid, are never posted, and are not in findings or its count."
+    },
     "still_open": {
       "type": "array",
       "items": {
@@ -464,6 +471,36 @@
         },
         "lens": {
           "type": ["string", "null"]
+        }
+      }
+    },
+    "doubted": {
+      "type": "object",
+      "required": ["path", "line", "severity", "title", "lens", "word", "reason"],
+      "properties": {
+        "path": {
+          "type": ["string", "null"]
+        },
+        "line": {
+          "type": ["integer", "null"]
+        },
+        "severity": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string",
+          "description": "The candidate's own title, else its evidence's first line; never the validator's reason."
+        },
+        "lens": {
+          "type": ["string", "null"]
+        },
+        "word": {
+          "type": ["string", "null"],
+          "description": "The validator's closed-vocabulary word (refuted, unverifiable, bad-anchor, partial-chain)."
+        },
+        "reason": {
+          "type": ["string", "null"],
+          "description": "The validator's reason, in its own words."
         }
       }
     },

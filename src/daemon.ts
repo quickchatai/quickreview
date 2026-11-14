@@ -84,7 +84,13 @@ import { applyInterpretation, createWebhookServer, type Interpretation } from ".
 import { wakeOrHold, withRepoFacts } from "./wakes.js";
 import { prWorktreeRel } from "./worktrees.js";
 import { PrConversation, type ConversationAdapter } from "./pr-conversation.js";
-import { securityAckBody, type RepoGitReader } from "./securityrequest.js";
+import {
+  SECURITY_REQUEST,
+  securityAckBody,
+  type RepoGitReader,
+  type ReviewRequestKind,
+} from "./securityrequest.js";
+import { STATE_REQUEST } from "./staterequest.js";
 import {
   PostingOutbox,
   jobPath as postingJobPath,
@@ -487,12 +493,16 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   const gh: DaemonAdapter = deps.adapter ?? buildGitHubAdapter(cfg, stateDir);
   /** The acknowledgement of a fresh security request, through the gate's
    * `create_issue_comment`; an adapter without it (a stub) posts nothing. */
-  const ackSecurityRequest = async (pr: number, by: string): Promise<void> => {
+  const ackSecurityRequest = async (
+    pr: number,
+    by: string,
+    kind: ReviewRequestKind = SECURITY_REQUEST,
+  ): Promise<void> => {
     if (!gh.createIssueComment) return;
     await gh.createIssueComment(
       pr,
-      securityAckBody(by),
-      `acknowledge the security review requested on #${pr}`,
+      securityAckBody(by, kind),
+      `acknowledge the ${kind.commandName} review requested on #${pr}`,
     );
   };
 
@@ -790,7 +800,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         // A fresh `@<bot> security` request is acknowledged once, through the
         // gate (dry-run suppresses it).
         onSecurityAck: async (req) => {
-          await ackSecurityRequest(req.pr, req.by);
+          await ackSecurityRequest(
+            req.pr,
+            req.by,
+            req.review === "state-machines" ? STATE_REQUEST : SECURITY_REQUEST,
+          );
         },
         // A push after an approve: the recheck audits the new delta.
         onSynchronize: async (sync) => {
@@ -951,7 +965,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           );
         },
         // The polling route of `@<bot> security`: the same acknowledgement.
-        ackSecurityRequest: (pr, by) => ackSecurityRequest(pr, by),
+        ackSecurityRequest: (pr, by, kind) => ackSecurityRequest(pr, by, kind),
         // Feedback backstop: merged-over-block for closes the webhook missed.
         onMergedOverBlock: async (pr) => {
           await guard(`feedback #${pr}`, async () =>

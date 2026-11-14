@@ -7,6 +7,7 @@ import type { StateStore } from "./state.js";
 import { standingVerdict } from "@quickchatai/pi-quickreview/src/standing-review.js";
 import { isFeedbackBody } from "./feedback.js";
 import { isSecurityCommand } from "./securityrequest.js";
+import { STATE_REQUEST } from "./staterequest.js";
 import { DEFAULT_PARTIAL_WRITE_POLICY } from "@quickchatai/pi-quickreview/src/settledread.js";
 import { wakeOrHold } from "./wakes.js";
 import {
@@ -152,10 +153,12 @@ export class PrConversation {
       author.toLowerCase() !== comment.author.toLowerCase() ||
       !comment.body.trim() ||
       isFeedbackBody(comment.body) ||
-      // `@<bot> security` is a request, never a conversation reply — on the
-      // webhook route and on the recovery sweep, which reads it back from
-      // `pr_comments` like any other author comment.
+      // Every review-request command (`@<bot> security`,
+      // `@<bot> state-machines`) is a request, never a conversation reply —
+      // on the webhook route and on the recovery sweep, which reads it back
+      // from `pr_comments` like any other author comment.
       isSecurityCommand(comment.body, this.deps.botLogin) ||
+      isSecurityCommand(comment.body, this.deps.botLogin, STATE_REQUEST) ||
       !Number.isSafeInteger(comment.comment_id) ||
       comment.comment_id <= 0 ||
       !this.deps.adapter.createIssueComment ||

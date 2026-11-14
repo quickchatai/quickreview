@@ -14,12 +14,17 @@ import { interpretReviewEvent, isFeedbackBody, ledgerFeedbackSignal } from "./fe
 import { applyEvent as applyEventFor, mergedOverBlock } from "./statemachine.js";
 import { WORKER_FAILURES_DRAIN_REASON, type StateStore, type StatusSnapshot } from "./state.js";
 import { blockedPrAuthor } from "./pr-conversation.js";
-import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  SECURITY_DEFAULTS,
+  STATE_MACHINES_DEFAULTS,
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import {
   applySecurityRequest,
+  SECURITY_REQUEST_KIND,
   securityCommandDecision,
   withdrawLabelSecurityRequest,
 } from "./securityrequest.js";
+import { STATE_REQUEST, STATE_REQUEST_KIND } from "./staterequest.js";
 
 // ---- signature -----------------------------------------------------------
 
@@ -116,11 +121,15 @@ export type Interpretation =
       source: "label" | "comment";
       comment_id?: number;
       meta?: EventPrMeta;
+      /** Which review was asked for; absent ⇒ a security review. A
+       * state-machine request (src/staterequest.ts) rides the same
+       * interpretation, with its own label and command. */
+      review?: "state-machines";
     }
   /** The `[security] label` came off the PR: a request standing on the label
    * alone is withdrawn, so putting it back asks again (src/securityrequest.ts
    * `withdrawLabelSecurityRequest`). */
-  | { kind: "security_withdrawn"; pr: number; by: string }
+  | { kind: "security_withdrawn"; pr: number; by: string; review?: "state-machines" }
   /** CI finished at a head (check_suite / workflow_run). Never a transition
    * here; its consumers are the post-approval delta recheck and the
    * withheld-approval retry, which re-queues a PR whose approval red CI held
@@ -149,6 +158,12 @@ export interface InterpretDeps {
   /** `[security] command`: whether `@<bot> security` asks for one. Absent ⇒
    * off. */
   securityCommand?: boolean;
+  /** `[state_machines] label`: the PR label that asks for a state-machine
+   * review. Absent or "" ⇒ no label requests. */
+  stateLabel?: string;
+  /** `[state_machines] command`: whether `@<bot> state-machines` asks for
+   * one. Absent ⇒ off. */
+  stateCommand?: boolean;
 }
 
 function prMeta(pr: any): EventPrMeta {
@@ -258,6 +273,15 @@ function interpretPullRequest(
           meta,
         };
       }
+      if (deps.stateLabel && name === deps.stateLabel)
+        return {
+          kind: "security_requested",
+          review: "state-machines",
+          pr: meta.number,
+          by: payload?.sender?.login ?? "",
+          source: "label",
+          meta,
+        };
       return { kind: "ignored", reason: `non-trigger label: ${name}`, pr: meta.number };
     }
     case "review_requested": {
@@ -283,6 +307,13 @@ function interpretPullRequest(
       // review asked for and then not wanted says nothing of the reviews.
       if (deps.securityLabel && name === deps.securityLabel && name !== deps.triggerLabel)
         return { kind: "security_withdrawn", pr: meta.number, by: payload?.sender?.login ?? "" };
+      if (deps.stateLabel && name === deps.stateLabel && name !== deps.triggerLabel)
+        return {
+          kind: "security_withdrawn",
+          review: "state-machines",
+          pr: meta.number,
+          by: payload?.sender?.login ?? "",
+        };
       if (name !== deps.triggerLabel)
         return { kind: "ignored", reason: `non-trigger label removed: ${name}`, pr: meta.number };
       if (isBotUser(payload?.sender, deps.botLogin))
@@ -440,6 +471,29 @@ function interpretIssueComment(
       return { kind: "ignored", reason: "security request on a bot-authored PR", pr };
     return {
       kind: "security_requested",
+      pr,
+      by: comment.user?.login ?? "",
+      source: "comment",
+      comment_id: comment.id,
+    };
+  }
+
+  // `@<bot> state-machines`: the same request for the state-machine family,
+  // heard from the same people (src/staterequest.ts).
+  const stateCommand = securityCommandDecision(
+    comment,
+    { botLogin: deps.botLogin, command: deps.stateCommand ?? false },
+    STATE_REQUEST,
+  );
+  if (stateCommand !== null) {
+    if (!stateCommand.ok) return { kind: "ignored", reason: stateCommand.reason, pr };
+    if (!Number.isSafeInteger(comment.id) || comment.id <= 0)
+      return { kind: "ignored", reason: "state-machines command without a comment id", pr };
+    if (isBotUser(issue.user, deps.botLogin))
+      return { kind: "ignored", reason: "state-machine request on a bot-authored PR", pr };
+    return {
+      kind: "security_requested",
+      review: "state-machines",
       pr,
       by: comment.user?.login ?? "",
       source: "comment",
@@ -653,6 +707,7 @@ function foreignRepository(deps: WebhookDeps, payload: any): boolean {
 /** What the interpreter reads off the daemon's config and store. */
 function interpretDepsOf(deps: WebhookDeps): InterpretDeps {
   const security = deps.cfg.security ?? SECURITY_DEFAULTS;
+  const stateMachines = deps.cfg.state_machines ?? STATE_MACHINES_DEFAULTS;
   return {
     botLogin: deps.cfg.github.bot_login,
     triggerLabel: deps.cfg.github.trigger_label,
@@ -661,6 +716,8 @@ function interpretDepsOf(deps: WebhookDeps): InterpretDeps {
     blockedPrAuthor: (pr) => blockedPrAuthor(deps.store, pr),
     securityLabel: security.label,
     securityCommand: security.command,
+    stateLabel: stateMachines.label,
+    stateCommand: stateMachines.command,
   };
 }
 
@@ -1027,6 +1084,7 @@ export async function applyInterpretation(
             ...(i.comment_id !== undefined ? { comment_id: i.comment_id } : {}),
           },
           { botLogin: opts.botLogin, ...(i.meta ? { meta: i.meta } : {}) },
+          i.review === "state-machines" ? STATE_REQUEST_KIND : SECURITY_REQUEST_KIND,
         ),
       );
       if (!outcome.fresh) {
@@ -1042,7 +1100,13 @@ export async function applyInterpretation(
       // Withdrawn here, not only on the next reconcile pass: the label put
       // back before that pass would find the old row standing and ask for
       // nothing.
-      local(() => withdrawLabelSecurityRequest(store, i.pr));
+      local(() =>
+        withdrawLabelSecurityRequest(
+          store,
+          i.pr,
+          i.review === "state-machines" ? STATE_REQUEST_KIND : SECURITY_REQUEST_KIND,
+        ),
+      );
       return;
     // Pure tuning-loop signals — no state-machine event, no session
     // wake, no reviewed_heads mark. The engine (wired by the daemon) owns

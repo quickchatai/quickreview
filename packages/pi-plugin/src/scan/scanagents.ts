@@ -49,17 +49,15 @@ import {
   lensModelOverrides,
   lensTuningAddenda,
 } from "../lenstuning.js";
-import { ALL_PASSES } from "../passes.js";
 import type { CoreConfig } from "../reviewconfig.js";
 import { BASE_TIER } from "../types.js";
 import {
+  applyProfileFamilies,
   applyProfileScan,
-  applyProfileSecurity,
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileLensTuning,
   loadProfileScan,
-  loadProfileSecurity,
   type ProfileLookup,
 } from "../profiles.js";
 import { SCAN_PASS } from "./scan.js";
@@ -74,7 +72,8 @@ export const SCAN_AGENTS_SRC = "agents/scan";
 /** The config a scan runs with: `parsed` (a config.toml, or the shipped
  * defaults) with the profile's per-lens tuning, `[security]` (a
  * security-only profile switches every lens outside the family off; `fold`
- * reaches the skeptic) and `[scan]` overrides applied (the profile wins).
+ * reaches the skeptic), `[state_machines]` (a state-only one does the same
+ * for its family) and `[scan]` overrides applied (the profile wins).
  * Throws on a bad profile — the caller reports it. */
 export function scanConfigOf<C extends CoreConfig>(
   parsed: C,
@@ -83,15 +82,10 @@ export function scanConfigOf<C extends CoreConfig>(
 ): C {
   const profile = parsed.review.profile;
   const tuned = applyProfileTuning(parsed, loadProfileLensTuning(root, profile, lookup));
-  // A security-only scan keeps what the named chain says, never what a
-  // repository's .qcr/profile.toml switched back on (profiles.ts
-  // `securityOnlyLenses`).
-  const secured = applyProfileSecurity(
-    tuned,
-    loadProfileSecurity(root, profile, lookup),
-    ALL_PASSES,
-    loadProfileLensTuning(root, profile, { ...lookup, repoProfile: undefined }),
-  );
+  // A one-family scan keeps what the named chain says, never what a
+  // repository's .qcr/profile.toml switched back on — resolved as the
+  // daemon's overlays resolve it (profiles.ts `applyProfileFamilies`).
+  const secured = applyProfileFamilies(root, tuned, lookup);
   return applyProfileScan(secured, loadProfileScan(root, profile, lookup));
 }
 

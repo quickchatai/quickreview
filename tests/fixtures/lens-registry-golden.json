@@ -694,6 +694,246 @@
       ]
     },
     {
+      "name": "pass-sm-derived--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-derived--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-derived--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-durable--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-durable--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-durable--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-events--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-events--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-events--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-exhaustive--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-exhaustive--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-exhaustive--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-lifecycle--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-lifecycle--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-lifecycle--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-states--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-states--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-states--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-stuck--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-stuck--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-stuck--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-transitions--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-transitions--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-transitions--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
       "name": "pass-statelessness--deep",
       "model": "openai-codex/gpt-5.6-sol:high",
       "tools": [
@@ -1557,6 +1797,246 @@
         "read",
         "bash",
         "grep"
+      ]
+    },
+    {
+      "name": "pass-sm-derived--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-derived--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-derived--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-durable--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-durable--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-durable--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-events--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-events--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-events--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-exhaustive--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-exhaustive--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-exhaustive--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-lifecycle--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-lifecycle--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-lifecycle--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-states--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-states--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-states--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-stuck--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-stuck--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-stuck--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-transitions--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-transitions--light",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
+      ]
+    },
+    {
+      "name": "pass-sm-transitions--standard",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "state_explore"
       ]
     },
     {
@@ -2514,6 +2994,246 @@
     },
     {
       "name": "pass-simplicity--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-derived--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-derived--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-derived--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-durable--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-durable--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-durable--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-events--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-events--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-events--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-exhaustive--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-exhaustive--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-exhaustive--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-lifecycle--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-lifecycle--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-lifecycle--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-states--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-states--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-states--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-stuck--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-stuck--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-stuck--standard",
+      "model": "openai-codex/gpt-5.6-sol:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-transitions--deep",
+      "model": "openai-codex/gpt-5.6-sol:high",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-transitions--light",
+      "model": "openai-codex/gpt-5.6-terra:medium",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    {
+      "name": "pass-sm-transitions--standard",
       "model": "openai-codex/gpt-5.6-sol:medium",
       "tools": [
         "read",

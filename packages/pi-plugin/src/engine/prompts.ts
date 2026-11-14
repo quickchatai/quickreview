@@ -43,7 +43,7 @@ import {
   templateFileForOrder,
 } from "../templates.js";
 import { resolveThreatModel, type ThreatModel } from "../threatmodel.js";
-import type { PassPlanEntry, RoundOrder, SecurityRequest } from "../types.js";
+import type { PassPlanEntry, RoundOrder, SecurityRequest, StateRequest } from "../types.js";
 import { findCiLinters } from "../lintconfig.js";
 import { findStyleGuide } from "../styleguide.js";
 import { benchAppendix } from "./caseout.js";
@@ -98,11 +98,15 @@ export function benchContextPack(
 
 // ---- the security inputs -------------------------------------------------------
 
-/** What a host hands a one-shot round about security beyond the files. */
+/** What a host hands a one-shot round beyond the files: the family requests
+ * (security, state-machine), the threat-model reader and the security facts. */
 export interface OneShotSecurity {
   /** A security review was asked for (`/qcr-review --security`): the whole
    * security family is planned. */
   securityRequest?: SecurityRequest;
+  /** A state-machine review was asked for (`/qcr-review --state-machines`):
+   * the whole state-machine family is planned. */
+  stateRequest?: StateRequest;
   /** Reads the reviewed repository's threat model (`.qcr/threat-model.md`
    * at the base commit) — the host's reader, since only the host knows how
    * to read the base. Absent ⇒ the host has none, and the profile's copy is
@@ -135,6 +139,7 @@ export function oneShotThreatModel(
 function planSecurityOf(sec: OneShotSecurity, threatModel: ThreatModel | null): PlanSecurityInputs {
   return {
     ...(sec.securityRequest ? { securityRequest: sec.securityRequest } : {}),
+    ...(sec.stateRequest ? { stateRequest: sec.stateRequest } : {}),
     threatModel,
     ...(sec.securityFacts ? { securityFacts: sec.securityFacts } : {}),
     ...(sec.securityInventory ? { securityInventory: sec.securityInventory } : {}),

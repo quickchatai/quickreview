@@ -45,6 +45,7 @@ import { SCAN_DEEP_LENSES } from "../passes.js";
 import {
   REACHABILITY_VALUES,
   isSecurityFinding,
+  isStateFinding,
   reachabilityCappedSeverity,
   type Reachability,
 } from "../severity.js";
@@ -671,6 +672,12 @@ function isSecurityKind(kind: string): boolean {
   return isSecurityFinding(normalizeKind(kind), null);
 }
 
+/** A `[scan] kinds` entry that names the state-machine family:
+ * `state-machine`, or a kind it prefixes. */
+function isStateKind(kind: string): boolean {
+  return isStateFinding(normalizeKind(kind), null);
+}
+
 /**
  * Whether a scan keeps a candidate its `lens` reported under `[scan] kinds`:
  * `kindAllowed`, or — when `kinds` names a security kind — any security
@@ -678,10 +685,12 @@ function isSecurityKind(kind: string): boolean {
  * share). A security-family lens's findings are kept whatever kind it wrote
  * (`sqli`, `idor`, none at all), so a security-only scan never drops the
  * findings it exists to produce over a spelling; a general lens's are kept
- * by their kind alone. Pure.
+ * by their kind alone. The state-machine family is kept the same way under
+ * a kinds list naming `state-machine`. Pure.
  */
 export function kindKept(kind: string, lens: string, kinds: readonly string[]): boolean {
   if (kindAllowed(kind, kinds)) return true;
+  if (kinds.some(isStateKind) && isStateFinding(kind, lens)) return true;
   return kinds.some(isSecurityKind) && isSecurityFinding(kind, lens);
 }
 
@@ -708,7 +717,11 @@ export function readingKey(
   strategy?: string | null,
 ): string {
   const key = strategy ? `${lens}:${strategy}` : lens;
-  if (kinds.length === 0 || (kinds.some(isSecurityKind) && isSecurityFinding(null, lens)))
+  if (
+    kinds.length === 0 ||
+    (kinds.some(isSecurityKind) && isSecurityFinding(null, lens)) ||
+    (kinds.some(isStateKind) && isStateFinding(null, lens))
+  )
     return key;
   return `${key}${KINDS_MARK}${[...new Set(kinds.map(normalizeKind))].sort().join(",")}`;
 }
@@ -801,7 +814,13 @@ export function candidateItem(f: ScanCandidate): string {
     ...(f.confidence !== null ? [`  confidence: ${f.confidence}`] : []),
     ...(f.reachability !== null ? [`  reachability: ${f.reachability}`] : []),
     `  claim: ${f.claim}`,
-    ...(f.evidence ? [`  evidence: ${f.evidence}`] : []),
+    // A multi-line evidence (a family evidence block) travels as a block
+    // scalar, so the validator's answer re-reads it whole.
+    ...(f.evidence
+      ? f.evidence.includes("\n")
+        ? ["  evidence: |", ...f.evidence.split("\n").map((l) => (l === "" ? "" : `    ${l}`))]
+        : [`  evidence: ${f.evidence}`]
+      : []),
     // The failure mechanism: the validator judges with it, and a survivor
     // is re-read from the validator's answer, so it must travel both ways.
     ...(f.detail ? [`  detail: ${f.detail}`] : []),
@@ -916,15 +935,76 @@ export { SCAN_DEEP_MAX_SUGGESTIONS };
 
 const ITEM_FIELD = /^(\s*)(-\s+)?([a-z][a-z0-9_-]{0,40}):(?:\s(.*)|$)/i;
 
+/** A block-scalar marker as a field's whole value: `|`, `>`, with an optional
+ * chomping sign. */
+const BLOCK_SCALAR = /^[|>][-+]?$/;
+
+/** A block scalar being read: the map it lands in (null when its key was a
+ * repeat, so its lines are swallowed and never leak out as fields), its key,
+ * the indent of its field, and its raw lines. */
+interface OpenBlock {
+  into: Map<string, string> | null;
+  key: string;
+  indent: number;
+  lines: string[];
+}
+
+/** Store one field: the first occurrence of a key wins. A block-scalar marker
+ * opens a block for the lines that follow. */
+function setField(
+  into: Map<string, string>,
+  key: string,
+  value: string,
+  indent: number,
+): OpenBlock | null {
+  const fresh = !into.has(key);
+  if (BLOCK_SCALAR.test(value)) {
+    if (fresh) into.set(key, "");
+    return { into: fresh ? into : null, key, indent, lines: [] };
+  }
+  if (fresh) into.set(key, value);
+  return null;
+}
+
+/** Close a block: trailing blank lines dropped, the lines dedented by their
+ * least indent and joined with "\n". */
+function closeBlock(b: OpenBlock): void {
+  const lines = b.lines;
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  if (!b.into || lines.length === 0) return;
+  // A loop, not Math.min(...lines): a spread of a block of a few hundred
+  // thousand lines overflows the call stack and loses the whole answer.
+  let depth = Infinity;
+  for (const l of lines) if (l !== "") depth = Math.min(depth, /^\s*/.exec(l)![0].length);
+  b.into.set(b.key, lines.map((l) => l.slice(depth)).join("\n"));
+}
+
 /** Parse the `- key: value` items of one block (continuation lines join the
- * previous field; the first occurrence of a key wins). */
+ * previous field; the first occurrence of a key wins). A field whose value is
+ * a block-scalar marker (`evidence: |`, the family evidence blocks) takes
+ * every following line indented deeper than the field as its value, verbatim
+ * and dedented, lines joined with "\n": its nested `name:` lines are the
+ * value, never sibling fields. */
 function parseItems(text: string): Array<Map<string, string>> {
   const items: Array<Map<string, string>> = [];
   let cur: Map<string, string> | null = null;
   let last = "";
   let itemIndent = -1;
+  let block: OpenBlock | null = null;
   for (const raw of text.split("\n")) {
     const line = raw.replace(/\s+$/, "");
+    if (block) {
+      if (line === "") {
+        if (block.lines.length > 0) block.lines.push("");
+        continue;
+      }
+      if (/^\s*/.exec(line)![0].length > block.indent) {
+        block.lines.push(line);
+        continue;
+      }
+      closeBlock(block);
+      block = null;
+    }
     if (/^\s*```/.test(line) || line.trim() === "") continue;
     const indent = /^\s*/.exec(line)![0].length;
     const m = ITEM_FIELD.exec(line);
@@ -933,7 +1013,9 @@ function parseItems(text: string): Array<Map<string, string>> {
       items.push(cur);
       itemIndent = indent;
       last = m[3]!.toLowerCase();
-      cur.set(last, (m[4] ?? "").trim());
+      // A block opened on the item's own line nests deeper than its key.
+      block = setField(cur, last, (m[4] ?? "").trim(), indent + m[2].length);
+      if (block) last = "";
       continue;
     }
     if (!cur || indent <= itemIndent) {
@@ -942,12 +1024,14 @@ function parseItems(text: string): Array<Map<string, string>> {
     }
     if (m) {
       last = m[3]!.toLowerCase();
-      if (!cur.has(last)) cur.set(last, (m[4] ?? "").trim());
-      else last = "";
+      const fresh = !cur.has(last);
+      block = setField(cur, last, (m[4] ?? "").trim(), indent);
+      if (!fresh || block) last = "";
       continue;
     }
     if (last) cur.set(last, `${cur.get(last) ?? ""} ${line.trim()}`.trim());
   }
+  if (block) closeBlock(block);
   return items;
 }
 

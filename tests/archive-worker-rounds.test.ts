@@ -132,6 +132,7 @@ async function workerPr(over: { pr?: number; bigLog?: boolean } = {}): Promise<W
     cwd: f.root,
     env: { PATH: process.env["PATH"], HOME: f.root },
     bashGuard: createBashGuard({ sandboxRoot: f.root, replay: false, secretDirs: [] }),
+    leafTools: () => [],
     ledgerPath: join(lensDir, "lens-ledger.jsonl"),
     sessionsDir: join(lensDir, LENS_SESSIONS_DIR),
     sessionGapMs: 0,

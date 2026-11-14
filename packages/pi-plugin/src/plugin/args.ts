@@ -2,7 +2,8 @@
 //
 //   /qcr-review [preset] [target] [flags]
 //
-//   preset    quick | full | security: the first word, when it names one
+//   preset    quick | full | security | state-machines: the first word,
+//             when it names one
 //             (else the `quickreview.preset` pi setting, else none)
 //   target    nothing         this branch against its base, with its
 //                             uncommitted changes, as one review
@@ -23,12 +24,18 @@
 //   --stop          stop the review running in this session
 //   --security      ask for a security review on top of the plan: the
 //                   security family's lenses are planned as if requested
+//   --state-machines  ask for a state-machine review on top of the plan: the
+//                   state-machine family's lenses are planned as if requested
 //
 // `security` the preset and `--security` the flag differ: the preset skips
 // every lens outside the security family and plans the whole family as a
 // request, so a change with no security signal is still read by every family
 // lens (an APPROVE then means "no security finding"); the flag keeps the plan
 // and adds the family to it.
+//
+// `state-machines` the preset and `--state-machines` the flag differ the same
+// way: the preset is the review mode (the state-machine family and the
+// validator, nothing else), the flag adds the family to the plan.
 //
 // A preset is the review options the core already takes, named: a lens plan
 // (`[review] preset`, `skip_lenses`), a scope (`full`) and a security request
@@ -39,7 +46,7 @@
 // preset, `--branch` the bare command's branch, and `--to LIST` the old
 // destination list, of which only `json` still means anything (a result is
 // always shown and kept, and a post is the posting rule's).
-import { ALL_PASSES, SECURITY_FAMILY } from "../passes.js";
+import { ALL_PASSES, SECURITY_FAMILY, STATE_FAMILY } from "../passes.js";
 import type { ReviewTarget } from "../reviewtarget.js";
 
 /** The lenses the security preset keeps — the security family and the
@@ -51,13 +58,27 @@ function securitySkips(): string[] {
   return ALL_PASSES.filter((p) => !SECURITY_LENSES.includes(p));
 }
 
+/** The lenses the state-machines preset keeps — the state-machine family and
+ * the validator; every other lens is skipped, derived as the security
+ * preset's skips are. */
+export const STATE_MACHINE_LENSES: readonly string[] = [...STATE_FAMILY, "pass-validate"];
+
+function stateMachineSkips(): string[] {
+  return ALL_PASSES.filter((p) => !STATE_MACHINE_LENSES.includes(p));
+}
+
 /** The presets /qcr-review takes, each as the core's review options. */
 export const REVIEW_PRESETS = {
   /** The default plan at low reasoning: about half the cost and time. */
-  quick: { levers: "review.preset=low", full: false, securityRequest: false },
+  quick: {
+    levers: "review.preset=low",
+    full: false,
+    securityRequest: false,
+    stateRequest: false,
+  },
   /** The full lever plan at the highest reasoning, over the whole target
    * again (what an earlier review left is ignored). */
-  full: { levers: "review.preset=max", full: true, securityRequest: false },
+  full: { levers: "review.preset=max", full: true, securityRequest: false, stateRequest: false },
   /** The whole security family, planned as a request whatever the change's
    * triggers say, with the validator; every other lens is skipped. Without
    * the request a change with no strong security signal would plan the
@@ -66,6 +87,17 @@ export const REVIEW_PRESETS = {
     levers: `review.skip_lenses=${securitySkips().join("|")}`,
     full: false,
     securityRequest: true,
+    stateRequest: false,
+  },
+  /** The state-machine review mode: the whole state-machine family, planned
+   * as a request whatever the change's triggers say, with the validator;
+   * every other lens is skipped. An APPROVE then means "no state-machine
+   * finding". */
+  "state-machines": {
+    levers: `review.skip_lenses=${stateMachineSkips().join("|")}`,
+    full: false,
+    securityRequest: false,
+    stateRequest: true,
   },
 } as const;
 
@@ -88,11 +120,14 @@ export interface ReviewCommand {
   /** `--security`: a security review asked for on top of the plan. Set only
    * when the flag is given. */
   securityRequest?: true;
+  /** `--state-machines`: a state-machine review asked for on top of the
+   * plan. Set only when the flag is given. */
+  stateRequest?: true;
 }
 
 export const REVIEW_COMMAND_USAGE =
   `usage: /qcr-review [${REVIEW_PRESET_NAMES.join("|")}] [PR number or URL | BRANCH | --uncommitted] ` +
-  "[--base REF] [--preview] [--json] [--security] [--profile NAME] [--limit USD] [--model MODEL] [--repo OWNER/NAME] | /qcr-review --stop";
+  "[--base REF] [--preview] [--json] [--security] [--state-machines] [--profile NAME] [--limit USD] [--model MODEL] [--repo OWNER/NAME] | /qcr-review --stop";
 
 /** The words of a command line; double quotes group, nothing else is special. */
 export function splitArgs(line: string): string[] {
@@ -146,6 +181,9 @@ export function parseReviewCommand(
           break;
         case "--security":
           cmd.securityRequest = true;
+          break;
+        case "--state-machines":
+          cmd.stateRequest = true;
           break;
         case "--uncommitted":
           uncommitted = true;

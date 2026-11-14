@@ -493,6 +493,7 @@ describe("the lens runner's Permits port", () => {
     cwd: dir,
     env: { PATH: process.env["PATH"], HOME: dir },
     bashGuard: guard(),
+    leafTools: () => [],
     ledgerPath: join(dir, "round", "lens-ledger.jsonl"),
     sessionGapMs: 0,
     ...over,

@@ -341,6 +341,7 @@ describe("the loosened-test hint", () => {
 });
 
 import { applyConfigOverrides } from "../src/bench/runner.js";
+import { STATE_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 
 describe("the decisions-validation plans", () => {
   const plan = (n: string) =>
@@ -367,10 +368,15 @@ describe("the decisions-validation plans", () => {
     const b = plan("decisions-validation-hi");
     const base = parseConfig(readFile(resolvePath("tests/fixtures/config.toml"), "utf8"));
     const c = applyConfigOverrides(base, b.config);
+    // The arm's three pins, on top of the shipped ones: DEFAULT_PASS_TIERS
+    // pins the eight state-machine lenses at deep in every config.
+    // MUTATION: drop the STATE_FAMILY spread from DEFAULT_PASS_TIERS — this
+    // fails.
     expect(c.models.pass_tiers).toEqual({
       "pass-baseline": "deep",
       "pass-sweep": "deep",
       "pass-behaviour-delta": "deep",
+      ...Object.fromEntries(STATE_FAMILY.map((lens) => [lens, "deep"])),
     });
     expect(c.models.tiers["deep"]).toMatch(/:high$/);
     const { pass_plan } = buildPassPlan(c, [

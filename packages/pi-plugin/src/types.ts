@@ -191,6 +191,13 @@ export interface SecurityRequest {
   source: "label" | "comment" | "operator";
 }
 
+/** Who asked for a state-machine review of a PR, and how — read as a
+ * `SecurityRequest` is: a maintainer's PR label or `@<bot> state-machines`
+ * comment, or the operator (`qcr review-now --state-machines`, `/qcr-review
+ * --state-machines`). A request plans the whole state-machine family; it
+ * never plans a lens the profile switched off. */
+export type StateRequest = SecurityRequest;
+
 /** One prior open finding as a lens's task file carries it. */
 export interface PriorTaskEntry {
   /** `<round_no>:<finding_key>` — the ref the session reports. */

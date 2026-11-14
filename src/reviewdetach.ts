@@ -75,7 +75,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/contract.js";
 
 export const DETACHED_USAGE =
-  "usage: qcr review start [branch | --uncommitted | --diff FILE | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--model PROVIDER/MODEL] [--full] [--security] [--to DEST] [--out FILE] --json\n" +
+  "usage: qcr review start [branch | --uncommitted | --diff FILE | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--model PROVIDER/MODEL] [--full] [--security] [--state-machines] [--to DEST] [--out FILE] --json\n" +
   "       qcr review status [RUN_ID] [--wait [--timeout SECONDS]] --json\n" +
   "       qcr review stop [RUN_ID]";
 

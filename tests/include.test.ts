@@ -642,8 +642,10 @@ describe("the real seeded content", () => {
       // and pass-style × 3 = 73, + pass-consistency × 3 = 76,
       // + pass-behaviour-delta × 3 = 79, + pass-lint-conformance × 3 = 82,
       // + the 14 pass-sec-* lenses × 1 (the family always runs at the risk
-      // tier, so each builds one variant) = 96.
-      expect(built).toHaveLength(96);
+      // tier, so each builds one variant) = 96, + the 8 pass-sm-* lenses × 3
+      // (pinned at deep by default, like pass-baseline, but not risk passes,
+      // so every variant is built) = 120.
+      expect(built).toHaveLength(120);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
         // No lens file names a model and the shipped tiers pin none: the

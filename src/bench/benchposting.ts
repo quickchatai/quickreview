@@ -48,6 +48,7 @@ import {
   postedClassOf,
   recordPostingKeys,
   securityEntry,
+  stateEntry,
   withheldReason,
 } from "@quickchatai/pi-quickreview/src/reviewrender.js";
 import {
@@ -58,6 +59,7 @@ import {
 import {
   bareTag,
   isSecurityFinding,
+  isStateFinding,
   stripSanctionedTags,
 } from "@quickchatai/pi-quickreview/src/severity.js";
 import {
@@ -300,6 +302,7 @@ export function policeBenchOutput(args: {
       // As production reads them: the record entry's kind and lens, else the
       // comment's own trailer.
       security: it.entry ? securityEntry(it.entry) : isSecurityFinding(null, it.lens ?? null),
+      stateMachine: it.entry ? stateEntry(it.entry) : isStateFinding(null, it.lens ?? null),
       partialChain: it.entry ? partialChainEntry(it.entry) : false,
       // The whole anchor, span included, as production ranks it.
       ...(runs

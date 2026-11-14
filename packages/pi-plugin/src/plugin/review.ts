@@ -430,6 +430,10 @@ async function reviewJob(
     ...(cmd.securityRequest || preset?.securityRequest
       ? { securityRequest: { by: "", source: "operator" as const } }
       : {}),
+    // `--state-machines`, or the `state-machines` preset, the same way.
+    ...(cmd.stateRequest || preset?.stateRequest
+      ? { stateRequest: { by: "", source: "operator" as const } }
+      : {}),
     runtime: (req) => {
       runDir = req.runDir;
       return deps.runtime(config, {

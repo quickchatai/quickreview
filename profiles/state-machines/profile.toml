@@ -1,0 +1,87 @@
+# state-machines — a state-machine-only review: the eight pass-sm-* lenses
+# and the validator, nothing else (profiles/state-machines/README.md).
+#
+# What changes against `default`:
+#   * `[state_machines] only = true` switches off every lens outside the
+#     state-machine family and pass-validate — baseline, the sweep, tests,
+#     the security and quality lenses included — through the same
+#     `enabled = false` a profile writes by hand. A lens added to the code
+#     later is switched off too, with no edit here.
+#   * All eight lenses are planned on every PR that changes code or config,
+#     whatever its triggers say; every content trigger is on too, the weak
+#     ones included, so a lens's reason names what fired it.
+#   * The validator runs at deep whatever the preset says: every finding is
+#     a claimed sequence of events, and the validator replays it.
+#   * Only state-machine findings post; nothing else does, a [blocker]
+#     included (the validator kills every other candidate out-of-scope
+#     first, and posting withholds what it missed).
+#
+# An APPROVE from this profile means "no state-machine finding", never "this
+# PR is correct". Select it with `[review] profile = "state-machines"`.
+extends = "default"
+
+[state_machines]
+only = true
+# Every content trigger plans its lens, the weak ones too (default: strong).
+triggers = "all"
+
+# All eight are planned on every PR that changes code or config, whatever
+# its triggers say; a docs-only PR plans none of them. A state-machine
+# defect is most often an absence the diff does not show, so a lens is not
+# left to its triggers here.
+[lenses.pass-sm-states]
+plan = "always"
+
+[lenses.pass-sm-transitions]
+plan = "always"
+
+[lenses.pass-sm-exhaustive]
+plan = "always"
+
+[lenses.pass-sm-stuck]
+plan = "always"
+
+[lenses.pass-sm-events]
+plan = "always"
+
+[lenses.pass-sm-derived]
+plan = "always"
+
+[lenses.pass-sm-lifecycle]
+plan = "always"
+
+[lenses.pass-sm-durable]
+plan = "always"
+
+# The adversary every state-machine finding passes replays its trace.
+[lenses.pass-validate]
+min_tier = "deep"
+
+[posting]
+# Post state-machine findings only (only = true sets it too; said here so
+# the profile reads whole).
+scope = "state"
+
+[scan]
+depth = "deep"
+# A scan runs the family alone.
+lenses = [
+  "pass-sm-states",
+  "pass-sm-transitions",
+  "pass-sm-exhaustive",
+  "pass-sm-stuck",
+  "pass-sm-events",
+  "pass-sm-derived",
+  "pass-sm-lifecycle",
+  "pass-sm-durable",
+]
+# The deep floor: these read every file stage 1 reads.
+deep_lenses = [
+  "pass-sm-transitions",
+  "pass-sm-stuck",
+  "pass-sm-states",
+  "pass-sm-durable",
+]
+# State-machine findings only: `state-machine` keeps every
+# `state-machine:<class>`.
+kinds = ["state-machine"]

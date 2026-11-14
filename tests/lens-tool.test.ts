@@ -129,6 +129,7 @@ function config(over: Partial<LensRunConfig> = {}): LensRunConfig {
     cwd: dir,
     env,
     bashGuard: guard(),
+    leafTools: () => [],
     ledgerPath: ledgerPath(),
     sessionGapMs: 0,
     ...over,

@@ -53,6 +53,11 @@ export const EXTENSION_ENV: Readonly<Record<string, ExtensionEnvEntry>> = {
     readers: ["bash-guard.ts", "cli/bash-guard-ambient.ts", "inject-bridge.ts", "ledger-pin.ts"],
     note: "the sandbox the session runs in; also a relocator bash-guard refuses in a command",
   },
+  QCR_WORKTREE: {
+    kind: "extension-config",
+    readers: ["lens.ts"],
+    note: "the round's own worktree, the one state_explore may read on the one-shot routes",
+  },
   QCR_STATE_DB: {
     kind: "extension-config",
     readers: ["bash-guard.ts"],

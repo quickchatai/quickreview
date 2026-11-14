@@ -4,7 +4,7 @@
 
 import type { PrFileEntry } from "./githubcore.js";
 import { packByBudget } from "./packing.js";
-import { SECURITY_FAMILY } from "./passes.js";
+import { SECURITY_FAMILY, STATE_FAMILY } from "./passes.js";
 import { ADD_TIER, BASE_TIER } from "./types.js";
 
 export interface PrFile {
@@ -225,7 +225,8 @@ export const EMPTY_HEURISTICS: HeuristicsExtension = { paths: {}, addedLines: {}
 /** The lenses a profile may extend: exactly the shape-selected conditionals,
  * plus the security family, whose lenses are planned by content triggers
  * (`securitytriggers.ts`), which read a profile's probes for them the same
- * ADD-only way. Deliberately NOT extendable: `pass-baseline`/`pass-validate` (always in the
+ * ADD-only way, and the state-machine family (`statetriggers.ts`, the same
+ * way: its `paths` and `added_lines`). Deliberately NOT extendable: `pass-baseline`/`pass-validate` (always in the
  * plan already), `pass-intent` (keyed on the PR body, never the file shape),
  * `pass-placement`/`pass-simplicity` (computed from code-file status/size
  * signals, not path membership), and `pass-concurrency`/`pass-ask-human`
@@ -241,6 +242,7 @@ export const PROFILE_EXTENDABLE_LENSES: readonly string[] = [
   "pass-delivery",
   "pass-backcompat",
   ...SECURITY_FAMILY,
+  ...STATE_FAMILY,
 ];
 
 // Deterministic lens selection: baseline always; conditional lenses

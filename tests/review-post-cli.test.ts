@@ -536,6 +536,49 @@ describe("review(): the post offered after a finished PR review", () => {
     expect(r.data["post"]).toBeUndefined();
   });
 
+  // A candidate the validator doubted is no finding on this route either:
+  // the offer counts the findings alone, its markdown lists the doubt apart,
+  // and the post never carries it.
+  // MUTATION: put "doubted" back in reviewstate.ts SHOWN_AS_POSTED and drop
+  // it from localreview.ts HIDDEN — the offer counts 3 and this fails.
+  it("the offer counts no candidate the validator doubted, and the post never carries it", async () => {
+    const repo = cwdRepo("offer-doubted");
+    const api = stubApi();
+    const doubted = {
+      id: "f3",
+      path: "src/a.ts",
+      line: 3,
+      severity: "P0",
+      evidence: "c may be read before it is set",
+      lens: "correctness",
+      disposition: "doubted",
+      word: "refuted",
+      reason: "c is a const assigned at its declaration",
+    };
+    const withDoubt = JSON.stringify({ findings: [...findings, doubted], verdict: "APPROVE" });
+    const pi = fakePi("offer-doubted", [
+      `echo '{"type":"message_end","message":{"role":"assistant","usage":{"input":1,"output":1,"cost":{"total":0.25}}}}'`,
+      `printf '%s' ${JSON.stringify(withDoubt)} > "$cd/findings-record.json"`,
+      `printf '%s' ${JSON.stringify(outcome)} > "$cd/outcome.json"`,
+    ]);
+    const h = prHarness(repo, pi.bin, api);
+    const offers: PostOffer[] = [];
+    const r = await coreReview({ kind: "pr", pr: "7" }, coreOpts(h), {
+      offerPost: async (o) => (offers.push(o), true),
+    });
+    expect(r.exitCode, r.text).toBe(0);
+    expect(offers).toHaveLength(1);
+    expect(offers[0]).toMatchObject({ pr: 7, findings: 2 });
+    expect(offers[0]!.markdown).toMatch(/^2 findings\.$/m);
+    expect(offers[0]!.markdown).toMatch(/^## Doubted by the validator \(1\) — may not be valid$/m);
+    expect(offers[0]!.markdown).toMatch(/c may be read before it is set — refuted: c is a const/);
+    expect(api.posts).toHaveLength(1);
+    const sent = JSON.stringify(api.posts[0]!.body);
+    expect(sent).toMatch(/b is wrong/);
+    expect(sent).not.toMatch(/c may be read before it is set|assigned at its declaration/);
+    expect(r.text).toMatch(/Posted 2 comments/);
+  });
+
   // Invariant 6 holds on this route too: the yes goes through the gate with
   // the install's dry_run. MUTATION: post through postReviewToPr's fetch
   // around the gate — this fails.

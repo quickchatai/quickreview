@@ -39,7 +39,9 @@ import {
   type NitPolicy,
   type MemoryDelivery,
 } from "./reviewconfig.js";
-import { SCAN_DEEP_LENSES, SECURITY_FAMILY } from "./passes.js";
+import { SCAN_DEEP_LENSES, SECURITY_FAMILY, STATE_FAMILY } from "./passes.js";
+import { STATE_EXPLORE_TOOL } from "./stateexplore.js";
+import { DEFAULT_TOOLS } from "./pidefaulttools.js";
 import { flooredToMin, PASS_TIER_ORDER, RISK_TIER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";
 import type { EcosystemName } from "./ecosystem.js";
@@ -315,9 +317,10 @@ const MEMORY_TOOL_RE = /^viking_/i;
 /**
  * Whether a lens leaf session loads the OpenViking memory extension. It does
  * not, on any route: runLens (packages/pi-plugin/src/engine/lens/runlens.ts) gives a leaf the
- * bash guard and, in a cache group, the leaf cache — nothing else — and that
- * runner hosts every lens the built agents feed (a worker round, a debug round,
- * the `qcr review` route, the bench). The memory extension goes only to a PR's
+ * bash guard, its family's leaf tools (`state_explore` for a state-machine
+ * family variant, `applyStateTools` below) and, in a cache group, the leaf
+ * cache — nothing else — and that runner hosts every lens the built agents
+ * feed (a worker round, a debug round, the `qcr review` route, the bench). The memory extension goes only to a PR's
  * main and answer sessions (src/engine/botsdk.ts). So a build grants a leaf no
  * memory tool and no rule describing one unless its caller says the leaf has
  * them (`BuildAgentsOptions.memory`). tests/lens-runner.test.ts holds this to
@@ -369,6 +372,37 @@ export function applyMemoryTools(
   if (listed === null) return frontmatter;
   const kept = listed.filter((t) => !MEMORY_TOOL_RE.test(t));
   return frontmatter.replace(TOOLS_LINE_RE, `tools: ${[...kept, ...tools].join(", ")}`);
+}
+
+/**
+ * Put `state_explore` on the `tools:` line of a state-machine family variant
+ * (`pass` in STATE_FAMILY) and strip it from every other agent's line, so the
+ * built files say exactly which leaves hold the tool whatever a seed or a
+ * future edit says. The family's own seeds keep `read, bash, grep`: the grant
+ * is the build's, as the memory tools' is.
+ *
+ * Applied to a PR build's variants only (a worker round, `qcr review`, the
+ * bench). A scan or `readOnlyLeaves` build puts exactly `SCAN_LEAF_TOOLS` on
+ * every line instead, so its leaves never hold the tool: those leaves run on
+ * a case runner that loads no leaf tools. The line is only the allowlist; the
+ * runner's own gate (extensions/lens.ts `stateLeafTools`) attaches the tool to
+ * a session only when the name is a family variant AND its line names it.
+ *
+ * A family variant with no `tools:` line (a profile layer's or a
+ * repository's own `agents/pass-sm-*.md`) gets one: the harness gives a
+ * session with no allowlist pi's default tools as its allowlist, which holds
+ * no extension tool, so the line is pi's defaults and `state_explore`. Any
+ * other pass with no line is left alone.
+ */
+export function applyStateTools(frontmatter: string, pass: string): string {
+  const listed = toolsList(frontmatter);
+  if (listed === null)
+    return STATE_FAMILY.includes(pass)
+      ? applyField(frontmatter, "tools", [...DEFAULT_TOOLS, STATE_EXPLORE_TOOL].join(", "))
+      : frontmatter;
+  const kept = listed.filter((t) => t.toLowerCase() !== STATE_EXPLORE_TOOL);
+  const tools = STATE_FAMILY.includes(pass) ? [...kept, STATE_EXPLORE_TOOL] : kept;
+  return frontmatter.replace(TOOLS_LINE_RE, `tools: ${tools.join(", ")}`);
 }
 
 /** Split a "provider/model:thinking" spec into its model and thinking halves
@@ -1542,6 +1576,65 @@ export const VALIDATE_SEC_EVIDENCE_ADDENDUM =
   "Never merge a chain into one of its leads, nor a lead into the chain: they are different findings, even where they share lines; when candidate groups are in play, a chain stays in its leads' group as its own finding.\n\n" +
   "On every security candidate you judge, write `security_outcome: confirmed | question | partial-chain | refuted` beside your verdict — in its findings-block entry when it survives, after its DOUBTED or KILLED line otherwise, in the reason of its row when you answer with a decision table. On a chain also write `hop_labels: [<label of hop 1>, <label of hop 2>, …]`, one label per hop in order. The session carries both into the findings record, where the outcome is recomputed from the labels by the table above.\n";
 
+// ---- the state-machine family -------------------------------------------------
+//
+// What a state-machine candidate is, for the validator: the one test the
+// state-machine addenda apply (severity.ts `isStateFinding` is the same rule
+// as code).
+const STATE_CANDIDATE =
+  "a **state-machine candidate** — one whose lens tag names a `pass-sm-*` lens, or whose `kind:` begins `state-machine`";
+
+// Inside the family a lens reports for another lens only a defect about
+// which state a thing is in: a state-machine round must not grow back into a
+// general review through "report what another lens owns". A state defect is
+// reported whoever owns it, in the family or outside it, with the owner
+// named, because a defect dropped on ownership is lost.
+export const SM_FAMILY_OWN_LENS_ADDENDUM =
+  "\n## Inside the state-machine family, what you report for another lens is a state defect (sandbox rule; the last word on what you report for another lens)\n" +
+  "Wherever a rule above asks you to report a defect another lens owns — in a scan, the recall rule's **Report what another lens owns**; in a review, the rule to list every independent problem on the lines you read — it means, for you, a defect about which state a thing is in. Such a defect is reported when you traced it yourself, whichever lens owns it — another family lens, or one outside the family such as `pass-rollout` or `pass-data-safety` — beginning `detail` with `owner <lens>`, exactly as the shared contract says. A defect that is not about which state a thing is in — a crash on bad input, a wrong calculation, a slow path, a design or style point, however real — is not yours: leave it out, in a scan as in a review. The other lenses own it.\n";
+
+// The family's failure mode is the inventory: a list of machines that are
+// representable and never reached. A state-machine finding is a claim that a
+// SEQUENCE of events reaches a state, so the validator replays the sequence
+// step by step, as a counterexample trace is replayed, and hunts the guard
+// the lens may have missed — the two precision failures of every typestate
+// checker (aliasing and path feasibility) are its refutation questions. No
+// word is added to the closed vocabulary. A state defect a family lens hands
+// to a security lens is judged as security too: the record has no owner
+// field, so the kind carries it.
+export const VALIDATE_STATE_EVIDENCE_ADDENDUM =
+  "\n## State-machine evidence — replay the trace, then hunt the guard (sandbox rule)\n" +
+  `This section binds ${STATE_CANDIDATE}. Its \`evidence:\` block names a state variable, a state, an event, a numbered trace, an unguarded line, a property and a consequence. It claims that a sequence of events reaches a state, so check the sequence, not the description of it. Re-derive each line and each trace step from the code and label it:\n\n` +
+  "- **valid** — you read the cited `file:line` and it does what the step says;\n" +
+  "- **plausible** — nothing you read contradicts it, but one fact you could not settle by reading stands in the way (name it);\n" +
+  "- **contradicted** — a `file:line` you read says otherwise (cite it).\n\n" +
+  "A trace step with no `file:line` is not a step: treat it as plausible at best. An absence finding — a line present at one sibling and missing at another — may carry a `compare:` line (`<file:line where it is present> vs <file:line where it is missing>`) in place of, or beside, a numbered trace: read both sides, and label it as a step; it is valid when the line is present at the first and missing at the second, and the second is reached on a path the finding names. Lines its block marks `n/a` are not gaps. Then try to refute the finding with the five questions a state-machine finding most often fails on, and write which you asked and where you looked:\n\n" +
+  "1. **Is the state unrepresentable, or the dispatch proven exhaustive?** A type that excludes the combination; a build that fails on a missing member (read the compiler or lint configuration, not the code's intent).\n" +
+  "2. **Is the guard somewhere else?** A caller, a wrapper or decorator, a transition library, a transaction or row lock, a `WHERE` on the old state, a unique or check constraint, an assertion, an idempotency key.\n" +
+  "3. **Is it the same object or row on every step?** A trace that sets a flag on one instance and reads it on another reaches nothing.\n" +
+  "4. **Is each step feasible after the ones before it?** A branch the earlier steps already closed; an event that cannot be delivered in that state; for a second actor, a stretch with no yield point on a single-threaded runtime, or a lock held across it.\n" +
+  "5. **Does something restore the state?** A `finally`, a context manager, a destructor, a lease or timeout, a supervisor, a reaper job whose period fits what waits on it.\n\n" +
+  "The outcome, from the labels:\n\n" +
+  "- every line and step valid, and no question above finds a guard: it survives;\n" +
+  '- a load-bearing line or step contradicted, or a guard found: `refuted`, citing the `file:line`. **Absence is not refutation**: "I could not find a way to reach it" is a gap in your search. **The PR\'s words are not a guard**: "cannot happen" and "the UI prevents it" are claims to check against code;\n' +
+  "- nothing contradicted but a step plausible: when the candidate is already written as a question that names that gap, with `confidence` 0.6 or less, it survives as that question — the hole is in the code and the open fact is the author's to answer. When it is written as a confirmed defect, the DOUBTED rule above holds: list it under DOUBTED with the word `unverifiable`, naming the step. A gap one read could close is never either: do the read.\n\n" +
+  'Three shapes are never a finding, whatever their evidence: an **inventory or a refactor proposal** ("this module holds several implicit state machines", "introduce an enum", "use a state-machine library", "add a default case") — `below-bar`; a combination that is **representable but has no writer that produces it and no reader that mishandles it** — `below-bar`; and a machine that was implicit **before this change and that no changed line adds a state, a writer or an event to, or removes a guard from** — `out-of-scope`. A race with no named second actor is `unverifiable`.\n\n' +
+  "A state candidate whose `detail` begins `owner pass-sec-` or `owner pass-security` is also a security candidate: record its `kind:` as `security` (or `security:<class>`) if the lens wrote `state-machine`.\n";
+
+// Keeps a state-machine finding the local code proves at its weight: a
+// branch on a value from outside the repository is a valid step, not a
+// plausible one; an absence is affirmed only after a search for the other
+// writers, readers or exits; candidates merge by event, write and fix, never
+// by scenario. It adds no kill word and loosens no refutation question or
+// never-a-finding shape. It composes after the external-semantics rule, so
+// it has the last word for state-machine candidates on these points.
+export const VALIDATE_STATE_KEEP_ADDENDUM =
+  "\n## State-machine candidates — keep what the code proves (sandbox rule)\n" +
+  `This section binds ${STATE_CANDIDATE}. On the three points below it has the last word over every other rule in this prompt, before or after it, and changes nothing else about them.\n\n` +
+  "- **A regression the code proves keeps its weight.** This applies after the five refutation questions above found no guard: a guard the change moved to a caller, wrapper or callee is a guard found, not a removal. When the code you read shows the defect — a fallback, guard, reset or terminal transition the base had and the change removed; an exit the code itself distinguishes (a branch, a null, empty or error check) that no longer reaches the state its sibling exits reach; or a `compare:` you labelled valid, where the change gives one path a write or call that a sibling path handling the same case lacks — and the value that branch or path depends on comes from outside this repository (input, the network, the platform, a dependency's return), the case is real by the code's own account, whether or not a dependency's source says how often it arrives, and that step is valid, not plausible. When the value would have to come from a writer in this repository, find that writer: with none, the never-a-finding shape for a representable combination still holds. Keep the severity and confidence the local proof earns and audit reachability as for any candidate, never on the missing source; write the open premise as one caveat sentence in the body. A downgrade for an external premise (`external-assumption`) is only for a consequence that rests on the dependency's behaviour beyond what this code establishes.\n" +
+  '- **A fact you restate is a fact you read.** Before your reason affirms a step, read its cited line. An absence — "only a local copy changes", "nothing else writes it", "no other exit" — is valid only after you searched for the other writers, readers or exits, and your reason names where you looked.\n' +
+  "- **Merge by event, write and fix, not by scenario.** Two state candidates are one finding only when the same event (the same call, error, crash or second actor) reaches the same missing or wrong write and one fix closes both, however each lens names the state. A race and a halfway failure at the same lines are two events; two writes one scenario shows together, each needing its own fix, are two findings, whatever trigger or symptom they share. Audit a `MERGED` line in your task string the same way. Sites of one such write in several files stay one finding with every site listed, and a merged candidate goes into the survivor that names its write.\n";
+
 // The scan's false-positive classes turned trust-boundary doubts into P3
 // "hardening": a tenant's input read as "same principal", an attacker's
 // parallel requests read as "contrived concurrency". For security candidates
@@ -1977,6 +2070,14 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     mode: "scan",
     text: SCAN_SEC_PRECISION_ADDENDUM,
   },
+  // The state-machine addenda: the family's own-lens rule, the validator's
+  // replay of a state-machine candidate's trace, and what the validator keeps
+  // of one the code proves (after the external-semantics rule above, so it
+  // has the last word on it). Each binds only the family's lenses or
+  // state-machine candidates.
+  { id: "sm-family-own-lens", scope: STATE_FAMILY, text: SM_FAMILY_OWN_LENS_ADDENDUM },
+  { id: "validate-state-evidence", scope: [VALIDATE_PASS], text: VALIDATE_STATE_EVIDENCE_ADDENDUM },
+  { id: "validate-state-keep", scope: [VALIDATE_PASS], text: VALIDATE_STATE_KEEP_ADDENDUM },
   // The one corpus-derived rule that is generic review behaviour. Its
   // house-rule siblings ride the deployment's profile addenda pack (see the
   // banner above); wire.ts composes a profile pack after every entry in this
@@ -2307,11 +2408,16 @@ export function buildAgents(
       // Order matters: strip first (a tools line that named ONLY spawn tools is
       // removed entirely, and a removed line stays removed), then drop the
       // names pi has no tool for, then put exactly the memory tools the leaf
-      // has on what remains — the two read-only ones with memory, none without.
+      // has on what remains — the two read-only ones with memory, none without
+      // — then `state_explore` on the state-machine family's lines and on no
+      // other. A scan or replay leaf gets exactly SCAN_LEAF_TOOLS instead.
       frontmatter = stripAgentSpawnTools(frontmatter);
       frontmatter = extensionFree
         ? applyScanLeafTools(frontmatter)
-        : applyMemoryTools(dropNonPiTools(frontmatter), memory ? LEAF_MEMORY_TOOLS : []);
+        : applyStateTools(
+            applyMemoryTools(dropNonPiTools(frontmatter), memory ? LEAF_MEMORY_TOOLS : []),
+            pass,
+          );
       // A spec that names a model goes whole ("provider/model:thinking") into
       // `model:`: a reader that takes the field as written and hands it to
       // pi's `--model` keeps the level, since pi's CLI reads the `:<thinking>`

@@ -13,12 +13,13 @@ A slash command is the person's to type: you cannot run it yourself. To run the 
 /qcr-review [preset] [target]
 ```
 
-- **preset** (optional, first): `quick` (cheaper and faster), `full` (the whole change again at the highest effort) or `security` (the fourteen `pass-sec-*` security lenses and the validator, and no other lens: the general security and data-safety lenses are skipped too).
+- **preset** (optional, first): `quick` (cheaper and faster), `full` (the whole change again at the highest effort), `security` (the fourteen `pass-sec-*` security lenses and the validator, and no other lens: the general security and data-safety lenses are skipped too) or `state-machines` (the eight `pass-sm-*` lenses that look for implicit state machines gone wrong — flags that can disagree, a status written with no check of the old one, a state nothing handles, a transient state an error leaves set, an event delivered twice — and the validator, and no other lens).
 - **target** (optional): nothing for the current branch against its base together with its uncommitted changes; a PR number or URL (`123`, `#123`, `https://github.com/o/r/pull/123`); a branch name; or `--uncommitted` for the uncommitted changes alone.
 - `--security` keeps the usual plan and adds the fourteen security lenses to it, so the other lenses still run.
+- `--state-machines` keeps the usual plan and adds the eight state-machine lenses to it.
 - `--preview` prices the review and runs nothing. `--stop` stops the running one.
 
-For example, "review PR 42 quickly" is `/qcr-review quick 42`; "check my changes for security problems" is `/qcr-review security`, and "review my changes, security included" is `/qcr-review --security`.
+For example, "review PR 42 quickly" is `/qcr-review quick 42`; "check my changes for security problems" is `/qcr-review security`, and "review my changes, security included" is `/qcr-review --security`; "check the state handling in my changes" is `/qcr-review state-machines`.
 
 Do not review the code yourself in place of the command, and do not post anything to GitHub: after a PR review the command asks the person whether to post, and their posting rule decides.
 

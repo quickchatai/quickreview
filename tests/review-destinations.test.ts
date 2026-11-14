@@ -30,7 +30,7 @@ vi.stubEnv(
 );
 
 const { runReviewCli, parseReviewArgs } = await import("../src/reviewcli.js");
-const { destinationChoices, FINDINGS_JSON_KEYS } =
+const { destinationChoices, DOUBTED_JSON_KEYS, FINDINGS_JSON_KEYS } =
   await import("@quickchatai/pi-quickreview/src/reviewdest.js");
 const { loadDefaultDestinations, saveDefaultDestinations, openReviewStore } =
   await import("../src/reviewhome.js");
@@ -85,6 +85,16 @@ const findings = [
   },
   { path: "src/a.ts", line: 3, severity: "P0", title: "c breaks the build", disposition: "posted" },
   { path: "src/a.ts", line: 3, severity: "P1", title: "killed one", disposition: "killed" },
+  // the validator refuted it: no title, its reason is the refutation
+  {
+    path: "src/a.ts",
+    line: 2,
+    severity: "P0",
+    evidence: "b may be read before it is set",
+    disposition: "doubted",
+    word: "refuted",
+    reason: "b is a const assigned at its declaration",
+  },
 ];
 const record = JSON.stringify({ findings, verdict: "REQUEST_CHANGES" });
 const outcome = JSON.stringify({ verdict: "REQUEST_CHANGES", passes: [] });
@@ -285,15 +295,107 @@ describe("qcr review: destinations and the per-repo default", () => {
     const data = jsonLine(h.lines);
     const flat = Object.values(data.findings).flat() as Array<Record<string, any>>;
     expect(flat).toHaveLength(2);
-    const bullets = md.split("\n").filter((l) => l.startsWith("- "));
+    // the findings are the bullets above the doubted section
+    const graded = md.slice(0, md.indexOf("## Doubted"));
+    const bullets = graded.split("\n").filter((l) => l.startsWith("- "));
     expect(bullets).toHaveLength(flat.length);
     for (const f of flat) {
       expect(
         bullets.some((b) => b.includes(f["title"]) && b.includes(`${f["path"]}:${f["line"]}`)),
       ).toBe(true);
     }
+    expect(md).toMatch(/^2 findings\.$/m);
     expect(md).toMatch(/^## P0 \(1\)$/m);
     expect(md.indexOf("## P0")).toBeLessThan(md.indexOf("## P2"));
+  });
+
+  // A candidate the validator doubted is no finding: never counted, never
+  // titled by its refutation, and shown in its own section after the
+  // severity groups — in the terminal, the markdown report and the JSON.
+  // MUTATION: put "doubted" back in reviewstate.ts SHOWN_AS_POSTED and drop
+  // it from localreview.ts HIDDEN — the counts and the P0 group fail.
+  it("a doubted candidate is shown apart, outside the count", async () => {
+    const repo = mkRepo("doubted");
+    rich(repo);
+    const out = join(tmp, "report-doubted.md");
+    const h = harness({ repo, piBin: happyPi("doubted").bin, confirm: null });
+    expect(await runReviewCli(["--out", out, "--to", "terminal,json"], false, h.deps)).toBe(0);
+    const data = jsonLine(h.lines);
+    expect(data.findings.P0).toEqual([
+      { path: "src/a.ts", line: 3, severity: "P0", title: "c breaks the build", lens: null },
+    ]);
+    expect(data.doubted).toEqual([
+      {
+        path: "src/a.ts",
+        line: 2,
+        severity: "P0",
+        title: "b may be read before it is set",
+        lens: null,
+        word: "refuted",
+        reason: "b is a const assigned at its declaration",
+      },
+    ]);
+    expect(Object.keys(data.doubted[0]).sort()).toEqual([...DOUBTED_JSON_KEYS].sort());
+
+    const text = h.text();
+    expect(text).toMatch(/Findings \(2\)/);
+    expect(text).toMatch(/Doubted by the validator \(1\) — may not be valid/);
+    expect(text.indexOf("Doubted by the validator")).toBeGreaterThan(text.indexOf("P2 (1)"));
+    expect(text).toMatch(/src\/a\.ts:2 {2}b may be read before it is set \(refuted: b is a const/);
+
+    const md = readFileSync(out, "utf8");
+    expect(md).toMatch(/^2 findings\.$/m);
+    expect(md).toMatch(/^## Doubted by the validator \(1\) — may not be valid$/m);
+    expect(md.indexOf("## Doubted")).toBeGreaterThan(md.indexOf("## P2"));
+    const section = md.slice(md.indexOf("## Doubted"));
+    expect(section).toMatch(
+      /^- `src\/a\.ts:2` — b may be read before it is set — refuted: b is a const assigned at its declaration$/m,
+    );
+    // the refutation is never a finding's title
+    expect(md.slice(0, md.indexOf("## Doubted"))).not.toMatch(/assigned at its declaration/);
+  });
+
+  // The report reads the record as the post does: under the security fold a
+  // security candidate the validator could not verify is asked as a
+  // question, so it stays a finding, not a doubt. With `render_outputs` on
+  // the round's render step has folded the record already; off, the report
+  // folds it itself.
+  // MUTATION: drop the fold in reviewapi.ts `reportRecord` — this fails.
+  it("under the security fold an unverifiable security candidate stays a finding", async () => {
+    const repo = mkRepo("secfold");
+    rich(repo);
+    const sec = {
+      path: "src/a.ts",
+      line: 3,
+      severity: "P1",
+      title: "c is read from the request unchecked",
+      kind: "security",
+      lens: "pass-security",
+      disposition: "doubted",
+      word: "unverifiable",
+      reason: "no caller found",
+    };
+    const pi = fakePi("secfold", [
+      `echo '{"type":"message_end","message":{"role":"assistant","usage":{"input":1,"output":1,"cost":{"total":0.25}}}}'`,
+      `printf '%s' ${JSON.stringify(JSON.stringify({ findings: [sec] }))} > "$cd/findings-record.json"`,
+      `printf '%s' ${JSON.stringify(outcome)} > "$cd/outcome.json"`,
+    ]);
+    const folded = harness({ repo, piBin: pi.bin, confirm: null });
+    const cfg = {
+      ...ctx.cfg,
+      review: { ...ctx.cfg.review, render_outputs: false },
+      security: { ...ctx.cfg.security, fold: true },
+    };
+    expect(await runReviewCli(["--to", "json"], false, { ...folded.deps, cfg })).toBe(0);
+    const on = jsonLine(folded.lines);
+    expect(on.findings.P1?.map((f: { title: string }) => f.title)).toEqual([sec.title]);
+    expect(on.doubted).toEqual([]);
+
+    const plain = harness({ repo, piBin: pi.bin, confirm: null });
+    expect(await runReviewCli(["--to", "json", "--full"], false, plain.deps)).toBe(0);
+    const off = jsonLine(plain.lines);
+    expect(off.findings).toEqual({});
+    expect(off.doubted.map((f: { title: string }) => f.title)).toEqual([sec.title]);
   });
 
   it("a saved file destination writes the report in the run's files and says where", async () => {

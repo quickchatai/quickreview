@@ -21,6 +21,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import type { PrFileEntry } from "./githubcore.js";
 import { normalizeDisposition, recordNumber, recordString } from "./findingkey.js";
 import { severityRank } from "./severityrank.js";
+import { DOUBT_WORDS } from "./doubtwords.js";
 import { planKey } from "./plankey.js";
 import { roundAgentModels, type LensTuningMap } from "./lenstuning.js";
 import {
@@ -760,35 +761,90 @@ export interface TerminalFinding {
   lens: string | null;
 }
 
-/** Dispositions that never reach a reader: the review's own kills. */
-const HIDDEN = new Set(["killed", "withheld", "merged", "folded", "conceded"]);
+/** A candidate the validator doubted: never a finding, listed apart with
+ * the validator's word and reason. Its title is the candidate's own (or its
+ * evidence's first line), never the refutation. */
+export interface DoubtedFinding extends TerminalFinding {
+  word: string | null;
+  reason: string | null;
+}
+
+/** Dispositions that never reach a reader as findings: the review's own
+ * kills, and a candidate the validator doubted ("may not be valid", never
+ * posted — findingkey.ts), which `doubtedFindings` lists apart. */
+const HIDDEN = new Set(["killed", "withheld", "merged", "folded", "conceded", "doubted"]);
+
+/** A raw record's entries: `findings`, else the `candidates` alias. */
+function recordEntriesOf(record: unknown): Array<Record<string, unknown>> {
+  return record !== null &&
+    typeof record === "object" &&
+    Array.isArray((record as { findings?: unknown }).findings)
+    ? ((record as { findings: unknown[] }).findings as Array<Record<string, unknown>>)
+    : record !== null &&
+        typeof record === "object" &&
+        Array.isArray((record as { candidates?: unknown }).candidates)
+      ? ((record as { candidates: unknown[] }).candidates as Array<Record<string, unknown>>)
+      : [];
+}
+
+/** The severity a reader sees, with its rank on the scale (undefined off it). */
+function readerSeverity(raw: unknown): { severity: string; rank: number | undefined } {
+  const sev = typeof raw === "string" ? raw.trim() : "";
+  const rank = severityRank(sev);
+  return {
+    rank,
+    severity:
+      rank === undefined ? "other" : sev.toUpperCase() === "NIT" ? "nit" : sev.toUpperCase(),
+  };
+}
+
+/** The candidates the validator doubted, in record order. A validity veto
+ * recorded as a kill is a doubt too, as the findings record parser folds it
+ * (findingsrecord.ts). */
+export function doubtedFindings(record: unknown): DoubtedFinding[] {
+  const out: DoubtedFinding[] = [];
+  const str = recordString;
+  for (const e of recordEntriesOf(record)) {
+    if (e === null || typeof e !== "object") continue;
+    const d = normalizeDisposition(e["disposition"]);
+    const word = str(e["word"]) ?? str(e["reason_word"]);
+    const vetoed = d === "killed" && word !== null && DOUBT_WORDS.includes(word.toLowerCase());
+    if (d !== "doubted" && !vetoed) continue;
+    const evidence = str(e["evidence"])?.split("\n")[0]?.trim() ?? "";
+    out.push({
+      path: str(e["path"]),
+      line: recordNumber(e["line"]),
+      severity: readerSeverity(e["severity"]).severity,
+      title:
+        str(e["title"]) ??
+        (evidence === ""
+          ? "(untitled candidate)"
+          : evidence.length > 120
+            ? `${evidence.slice(0, 119)}…`
+            : evidence),
+      lens: str(e["lens"]) ?? str(e["name"]),
+      word,
+      reason: str(e["reason"]),
+    });
+  }
+  return out;
+}
 
 /** The findings a reader sees, grouped by severity, worst first (P0 … nit;
  * a spelling outside the scale after them, as "other"). */
 export function groupFindings(record: unknown): Record<string, TerminalFinding[]> {
-  const entries =
-    record !== null &&
-    typeof record === "object" &&
-    Array.isArray((record as { findings?: unknown }).findings)
-      ? ((record as { findings: unknown[] }).findings as Array<Record<string, unknown>>)
-      : record !== null &&
-          typeof record === "object" &&
-          Array.isArray((record as { candidates?: unknown }).candidates)
-        ? ((record as { candidates: unknown[] }).candidates as Array<Record<string, unknown>>)
-        : [];
+  const entries = recordEntriesOf(record);
   const rows: Array<TerminalFinding & { rank: number }> = [];
   for (const e of entries) {
     if (e === null || typeof e !== "object") continue;
     if (HIDDEN.has(normalizeDisposition(e["disposition"]))) continue;
-    const sev = typeof e["severity"] === "string" ? e["severity"].trim() : "";
-    const rank = severityRank(sev);
+    const { severity, rank } = readerSeverity(e["severity"]);
     const str = recordString;
     rows.push({
       rank: rank ?? 99,
       path: str(e["path"]),
       line: recordNumber(e["line"]),
-      severity:
-        rank === undefined ? "other" : sev.toUpperCase() === "NIT" ? "nit" : sev.toUpperCase(),
+      severity,
       title: str(e["title"]) ?? str(e["reason"]) ?? "(untitled finding)",
       lens: str(e["lens"]) ?? str(e["name"]),
     });
@@ -809,4 +865,27 @@ export function renderGrouped(groups: Record<string, TerminalFinding[]>): string
     }
   }
   return lines;
+}
+
+/** The heading of the doubted candidates' section, terminal and markdown alike. */
+export const doubtedHeading = (n: number): string =>
+  `Doubted by the validator (${n}) — may not be valid`;
+
+/** The validator's word and reason, as a doubted candidate's line ends. */
+export const doubtWhy = (d: DoubtedFinding): string =>
+  [d.word, d.reason].filter((x): x is string => x !== null).join(": ");
+
+/** The doubted candidates after the severity groups, outside their count:
+ * nothing when there are none. */
+export function renderDoubted(doubted: readonly DoubtedFinding[]): string[] {
+  if (doubted.length === 0) return [];
+  return [
+    "",
+    doubtedHeading(doubted.length),
+    ...doubted.map((d) => {
+      const where = d.path ? `${d.path}${d.line !== null ? `:${d.line}` : ""}` : "(no location)";
+      const why = doubtWhy(d);
+      return `  ${where}  ${d.title}${why ? ` (${why})` : ""}`;
+    }),
+  ];
 }

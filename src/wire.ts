@@ -1748,7 +1748,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             },
             pr,
             // `--security`: the operator's request for a security review.
-            opts?.security ? { security: true } : {},
+            // `--state-machines`: the same for a state-machine review.
+            {
+              ...(opts?.security ? { security: true } : {}),
+              ...(opts?.stateMachines ? { stateMachines: true } : {}),
+            },
           );
         },
         resolveTerminalFailure(payload) {

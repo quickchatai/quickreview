@@ -117,7 +117,11 @@ import type {
 import { preparePriorFindings } from "@quickchatai/pi-quickreview/src/priorfindings.js";
 import { type PrOwnedDelta, prWorktreeRel } from "./worktrees.js";
 import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
-import { SECURITY_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import {
+  SECURITY_DEFAULTS,
+  STATE_MACHINES_DEFAULTS,
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { STATE_REQUEST_KIND } from "./staterequest.js";
 import {
   computeSecurityFacts,
   SECURITY_TRIGGER_CHECKS,
@@ -1502,6 +1506,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // the tree is prepared) is never "seen", so a plan the stale labels
       // left it out of puts it back (deferUncoveredSecurityRequest).
       const requestSeen = store.reviewRequest(row.number, SECURITY_REQUEST_KIND)?.requested_at;
+      const stateRequestSeen = store.reviewRequest(row.number, STATE_REQUEST_KIND)?.requested_at;
       let ref: Awaited<ReturnType<DispatchAdapter["getPr"]>>;
       try {
         ref = await deps.adapter.getPr(row.number);
@@ -1557,8 +1562,16 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // earlier rounds' partial chains. Read once, before the plan, and
       // handed to the plan, the follow-up decision and the order alike.
       const sec = await securityInputsFor(deps, row.number, files, tree, labels);
+      // A state-machine review asked for on this PR (src/staterequest.ts):
+      // its recorded request or its label, read as the security request is.
+      const stateRequest = resolveSecurityRequest({
+        row: store.reviewRequest(row.number, STATE_REQUEST_KIND),
+        labels,
+        label: (cfg.state_machines ?? STATE_MACHINES_DEFAULTS).label,
+      });
       const planSecurity: PlanSecurityInputs = {
         ...(sec.securityRequest ? { securityRequest: sec.securityRequest } : {}),
+        ...(stateRequest ? { stateRequest } : {}),
         threatModel: sec.threatModel,
         securityFacts: sec.securityFacts,
       };
@@ -1584,7 +1597,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // lessons); only the plan and the coverage check read the delta.
       let followUp: FollowUpDecision | null = null;
       let fullRound: {
-        reason: FollowUpFullReason | "security-requested";
+        reason: FollowUpFullReason | "security-requested" | "state-machines-requested";
         detail?: Record<string, unknown>;
       } | null = null;
       if (
@@ -1596,6 +1609,14 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         // reviews the PR's own change, never only the change since a review
         // that did not run it (at the same head that delta is empty).
         fullRound = { reason: "security-requested" };
+      } else if (
+        roundType === "re-review" &&
+        planSecurity.stateRequest &&
+        !securityRequestCovered(store, row.number, STATE_REQUEST_KIND)
+      ) {
+        // The same for a state-machine review asked for since the last
+        // whole look.
+        fullRound = { reason: "state-machines-requested" };
       } else if (roundType === "re-review") {
         const decided = await decideFollowUp(
           {
@@ -1664,6 +1685,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         deferUncoveredSecurityRequest(store, row.number, requestSeen)
       )
         log(`dispatch: #${row.number} security request arrived during preparation — next round`);
+      if (
+        !planSecurity.stateRequest &&
+        deferUncoveredSecurityRequest(store, row.number, stateRequestSeen, STATE_REQUEST_KIND)
+      )
+        log(
+          `dispatch: #${row.number} state-machine request arrived during preparation — next round`,
+        );
       // Diffstat comes free off the files list dispatch already fetched — no
       // extra GitHub call in the hot path. trigger_ts is copied off pr_state
       // here because the `dispatched` transition clears it moments later.

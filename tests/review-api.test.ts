@@ -1668,3 +1668,122 @@ describe("workTreeFactsIo: an uncommitted head read off the working tree", () =>
     expect(workTreeFactsIo(repo, base).listHead()).not.toContain("src/a.ts");
   });
 });
+
+const { ALL_PASSES } = await import("@quickchatai/pi-quickreview/src/passes.js");
+const { STATE_MACHINE_LENSES } = await import("@quickchatai/pi-quickreview/src/plugin/args.js");
+
+describe("review(): a checkpoint is only as wide as the lenses that made it", () => {
+  /** The state-machines preset as the core's options take it. */
+  const statePreset = (opts: ReviewOptions): ReviewOptions => ({
+    ...opts,
+    config: {
+      ...opts.config,
+      review: {
+        ...opts.config.review,
+        skip_lenses: ALL_PASSES.filter((p) => !STATE_MACHINE_LENSES.includes(p)),
+      },
+    },
+    stateRequest: { by: "", source: "operator" },
+  });
+  const recordTitled = (title: string): string =>
+    JSON.stringify({
+      findings: [{ path: "src/a.ts", line: 2, severity: "P1", title, disposition: "posted" }],
+      verdict: "REQUEST_CHANGES",
+    });
+  /** The newest round's out dir: a run dir's name starts with its time. */
+  const latestOutDir = (runsDir: string): string => {
+    const run = join(
+      runsDir,
+      readdirSync(runsDir)
+        .filter((d) => /^\d/.test(d))
+        .sort()
+        .pop()!,
+    );
+    for (const e of readdirSync(run, { recursive: true }))
+      if (String(e).endsWith("round-order.md")) return dirname(join(run, String(e)));
+    throw new Error("no round started");
+  };
+  const answer = (opts: ReviewOptions, findings: string) => async () => {
+    const out = latestOutDir(opts.runsDir);
+    writeFileSync(join(out, "findings-record.json"), findings);
+    writeFileSync(join(out, "outcome.json"), outcome);
+    return fauxAssistantMessage("done");
+  };
+  const stillOpenTitles = (data: Record<string, unknown>): string[] =>
+    (data["still_open"] as { title: string }[]).map((f) => f.title);
+
+  // MUTATION: make `covers()` (packages/pi-plugin/src/reviewstate.ts) return
+  // true — the plain review is answered "Nothing new" off the state-only
+  // round, and this fails.
+  it(
+    "a plain review after a state-machines preset run is planned, not answered from its state",
+    { timeout: 60_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = options("cov-after-preset", runtime);
+      faux.appendResponses([answer(opts, recordTitled("a state finding"))]);
+      const first = await review({ kind: "branch" }, statePreset(opts), {});
+      expect(first.exitCode, first.text).toBe(0);
+      const plain = await preview({ kind: "branch" }, opts);
+      expect(plain.exitCode, plain.text).toBe(0);
+      expect(plain.data["unchanged"]).toBeUndefined();
+      const lenses = (plain.data["preview"] as { lenses: string[] }).lenses;
+      expect(lenses.some((l) => l.startsWith("pass-baseline--"))).toBe(true);
+    },
+  );
+
+  // MUTATION: drop the coverage condition on the save after a round in
+  // review() — the preset run replaces the plain review's state, its open
+  // finding is lost, and this fails.
+  it(
+    "a state-machines preset run never replaces a plain review's checkpoint",
+    { timeout: 60_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = options("cov-keep-plain", runtime);
+      faux.appendResponses([
+        answer(opts, recordTitled("plain finding A")),
+        answer(opts, recordTitled("state finding B")),
+      ]);
+      const plain = await review({ kind: "branch" }, opts, {});
+      expect(plain.exitCode, plain.text).toBe(0);
+      const asked = await review({ kind: "branch" }, statePreset(opts), {});
+      expect(asked.exitCode, asked.text).toBe(0);
+      const again = await preview({ kind: "branch" }, opts);
+      expect(again.data["unchanged"]).toBe(true);
+      expect(stillOpenTitles(again.data)).toContain("plain finding A");
+      expect(stillOpenTitles(again.data)).not.toContain("state finding B");
+    },
+  );
+
+  // A state saved before rounds recorded their coverage keeps today's
+  // behaviour: the same head again is nothing new.
+  // MUTATION: make `covers()` return false for a round with no coverage —
+  // this fails.
+  it(
+    "a saved round with no coverage still answers an unchanged head",
+    { timeout: 60_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = options("cov-legacy", runtime);
+      faux.appendResponses([answer(opts, recordTitled("plain finding A"))]);
+      const first = await review({ kind: "branch" }, opts, {});
+      expect(first.exitCode, first.text).toBe(0);
+      const stateDir = (readdirSync(opts.storeDir!, { recursive: true }) as string[])
+        .map((e) => join(opts.storeDir!, e))
+        .filter((p) => p.endsWith(".json") && dirname(p).endsWith("state"));
+      expect(stateDir).toHaveLength(1);
+      const path = stateDir[0]!;
+      const saved = JSON.parse(readFileSync(path, "utf8")) as { rounds: Record<string, unknown>[] };
+      expect(saved.rounds[0]!["coverage"]).toBeDefined();
+      for (const r of saved.rounds) delete r["coverage"];
+      writeFileSync(path, JSON.stringify(saved));
+      const again = await preview({ kind: "branch" }, opts);
+      expect(again.data["unchanged"]).toBe(true);
+      expect(stillOpenTitles(again.data)).toContain("plain finding A");
+    },
+  );
+});

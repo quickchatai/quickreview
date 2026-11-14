@@ -78,6 +78,9 @@ The preset goes first when you give one:
 - `security`: the whole `pass-sec-*` security family, planned as a request
   whatever the change's signals say, and the validator. Every other lens is
   skipped.
+- `state-machines`: the whole `pass-sm-*` state-machine family, planned as a
+  request whatever the change's signals say, and the validator. Every other
+  lens is skipped.
 
 The flags:
 
@@ -87,6 +90,12 @@ The flags:
   `pass-sec-*` lenses are planned, at the risk tier, except any your profile
   switched off. The `security` preset already asks for it. The profile that
   reviews only security on every review is `security` (`--profile security`).
+- `--state-machines` asks for a state-machine review on top of the plan: the
+  eight `pass-sm-*` lenses (implicit state machines gone wrong: flags that
+  can disagree, a status written with no check of the old one, a state a
+  dispatch does not handle, a transient state an error leaves set, an event
+  delivered twice or out of order). The profile that reviews only state
+  machines is `state-machines` (`--profile state-machines`).
 - `--model MODEL` names the model the whole review runs on, for this run:
   `provider/id`, an id pi knows, or either with a `:level`, read the way pi's
   own `--model` reads it. It replaces every tier and lens model your config

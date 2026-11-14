@@ -54,6 +54,7 @@ export const EXAMPLE_PROFILES: readonly string[] = [
   "snappy",
   "fast",
   "security",
+  "state-machines",
 ];
 
 /** Which search place a profile was found in. */

@@ -40,7 +40,7 @@ Run from inside the repository.
 | a diff on stdin or in a file | `git diff main... \| qcr --schema 2 review --diff - --preview` |
 | a PR | `qcr --schema 2 review <number or URL> --preview` |
 
-Add `--base REF` to name the base and `--repo OWNER/NAME` when the remote is ambiguous. When the user asks for a security review, add `--security`: the usual plan plus all fourteen `pass-sec-*` security lenses, which a change with no strong security signal would otherwise not plan.
+Add `--base REF` to name the base and `--repo OWNER/NAME` when the remote is ambiguous. When the user asks for a security review, add `--security`: the usual plan plus all fourteen `pass-sec-*` security lenses, which a change with no strong security signal would otherwise not plan. When the user asks for a review of state handling, state machines or lifecycle bugs, add `--state-machines`: the usual plan plus all eight `pass-sm-*` lenses.
 
 ## Preview, then run
 
@@ -63,6 +63,7 @@ A review can take many minutes. For a long one use the detached form: `qcr --sch
 - `ok: false` with `errors`: the call failed; report the errors as printed. An error that names `qcr login` means there is no model login: use the setup skill ($qcr:setup).
 - `ok: false` with `partial: true`: the review stopped at its limit. Report the findings it wrote and `coverage.not_reached`, the lenses that never ran. Say the review is incomplete.
 - `ok: true`: the findings are under `findings`. Report them by severity, with file and line, as qcr wrote them. Do not add findings of your own to the report, and do not soften or drop one.
+- `doubted` lists the candidates the validator doubted. They may not be valid, were never posted, and are not findings: never count them as findings or report them under a severity. If there are any, list them after the findings under their own heading, each with file and line, its `title`, and the validator's `word` and `reason`.
 
 If the payload says the output is `customised`, say so: a profile overrode a shipped default.
 

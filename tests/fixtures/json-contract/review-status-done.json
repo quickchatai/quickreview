@@ -80,6 +80,17 @@
         }
       ]
     },
+    "doubted": [
+      {
+        "path": "src/a.ts",
+        "line": 2,
+        "severity": "P1",
+        "title": "b may be read before it is set",
+        "lens": null,
+        "word": "refuted",
+        "reason": "b is a const assigned at its declaration"
+      }
+    ],
     "still_open": [],
     "repeats_suppressed": 0,
     "already_posted_skipped": 0,

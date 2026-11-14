@@ -21,7 +21,13 @@ import {
 import type { LensTuningMap } from "./lenstuning.js";
 import { splitProvider, type ModelRoute } from "./modelroute.js";
 import type { PostingPolicy } from "./postingpolicy.js";
-import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES, SCAN_DEEP_LENSES, SECURITY_FAMILY } from "./passes.js";
+import {
+  ALL_PASSES,
+  SCAN_DEEP_FLOOR_LENSES,
+  SCAN_DEEP_LENSES,
+  SECURITY_FAMILY,
+  STATE_FAMILY,
+} from "./passes.js";
 import {
   ADD_TIER,
   BASE_TIER,
@@ -773,7 +779,8 @@ export interface ModelsConfig {
    * A pinned lens runs at that tier on every PR whatever the diff size — the
    * plan names that tier, the lens is not raisable, and every built variant
    * of it carries that tier's spec. The default is `DEFAULT_PASS_TIERS`
-   * (baseline, sweep, behaviour-delta at deep); a config entry replaces
+   * (baseline, sweep, behaviour-delta and the state-machine family at
+   * deep); a config entry replaces
    * a lens's default pin. Not
    * for pass-validate (its knob is `validate_tier`) nor for a risk pass
    * (always deep). A profile `min_tier` still floors a pin, and the
@@ -897,18 +904,26 @@ function parseEffortMax(raw: unknown): ThinkingLevel {
 }
 
 /**
- * The shipped per-lens tier pins (measured: high effort on these lenses found
- * more defects with no high-severity loss, for ~18% more cost per PR). The
- * three lenses that read the whole diff line by line run at
- * the `deep` tier — gpt-6.1-sol at high effort — on every PR; every other
- * lens keeps its planned tier. A config's own `[models.pass_tiers]` entry for
- * one of them replaces its pin (e.g. `"pass-baseline" = "standard"`), and a
- * profile lowers its thinking with `[lenses.<pass>] effort = "medium"`.
+ * The shipped per-lens tier pins. Two groups run at the `deep` tier (high
+ * effort) on every PR, whatever the diff size:
+ * - the three lenses that read the whole diff line by line (measured: high
+ *   effort on these found more defects with no high-severity loss, for ~18%
+ *   more cost per PR);
+ * - the eight state-machine lenses (`STATE_FAMILY`), on every route that
+ *   plans them — a trigger, a request, a profile's `plan = "always"`. Their
+ *   defects are absences found by comparing sibling exits and writers, which
+ *   takes the reading budget the deep tier gives.
+ * Every other lens keeps its planned tier. Each pin is a default, not a
+ * floor: a config's own `[models.pass_tiers]` entry for one of them replaces
+ * it (e.g. `"pass-sm-stuck" = "standard"`), a profile lowers its thinking
+ * with `[lenses.<pass>] effort = "medium"`, and `[models] effort` lowers
+ * every tier at once.
  */
 export const DEFAULT_PASS_TIERS: Readonly<Record<string, PassTier>> = Object.freeze({
   "pass-baseline": RISK_TIER,
   "pass-sweep": RISK_TIER,
   "pass-behaviour-delta": RISK_TIER,
+  ...Object.fromEntries(STATE_FAMILY.map((lens) => [lens, RISK_TIER] as const)),
 });
 
 /** `[engine] lens_pass_deadline_min` when the file does not set it: a
@@ -1421,6 +1436,103 @@ export function parseSecurity(raw: unknown): SecurityConfig {
   return { ...SECURITY_DEFAULTS, ...parseSecurityTable("config.toml", raw ?? {}) };
 }
 
+/** `[state_machines] triggers`: which signals plan the state-machine family
+ * on their own. `off`: none (a request or a profile's `plan = "always"` still
+ * does); `strong`: only the strong ones (a state check removed, a member
+ * added to an existing enumeration, …); `all`: the weak ones too. */
+const STATE_TRIGGER_MODES = ["off", "strong", "all"] as const;
+export type StateTriggerMode = (typeof STATE_TRIGGER_MODES)[number];
+
+/**
+ * `[state_machines]`: how the state-machine family
+ * (packages/pi-plugin/src/passes.ts `STATE_FAMILY`) is planned and what a
+ * state-machine-only review means. config.toml sets every key; a profile's
+ * `[state_machines]` sets `triggers` and `only` and wins over config.toml for
+ * them (packages/pi-plugin/src/profiles.ts `applyProfileStateMachines`).
+ * `label` and `command` are the install's: they decide who may ask for a
+ * review, so no profile and no repository moves them.
+ */
+export interface StateMachinesConfig {
+  /** Which signals plan the family (`STATE_TRIGGER_MODES`). */
+  triggers: StateTriggerMode;
+  /** A state-machine-only review: every lens outside the family and the
+   * validator is switched off (`enabled = false`), and what posts is scoped
+   * to state-machine findings. An APPROVE then means "no state-machine
+   * finding". */
+  only: boolean;
+  /** The PR label that asks for a state-machine review; "" = no label
+   * requests. */
+  label: string;
+  /** Whether `@<bot> state-machines` from a collaborator asks for one. */
+  command: boolean;
+}
+
+export const STATE_MACHINES_DEFAULTS: StateMachinesConfig = {
+  triggers: "strong",
+  only: false,
+  label: "qcr:state-machines",
+  command: true,
+};
+
+/** The `[state_machines]` keys a profile may set. */
+export const STATE_MACHINES_PROFILE_KEYS = ["triggers", "only"] as const;
+
+/**
+ * Validate one `[state_machines]` table — config.toml's (every key) or a
+ * profile's (`STATE_MACHINES_PROFILE_KEYS` only). Returns just the keys it
+ * set; an unknown key, a config.toml-only key in a profile, or a bad value
+ * throws naming `where`.
+ */
+export function parseStateMachinesTable(
+  where: string,
+  raw: unknown,
+  allowed: readonly string[] = Object.keys(STATE_MACHINES_DEFAULTS),
+): Partial<StateMachinesConfig> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`${where} [state_machines] must be a table`);
+  }
+  const out: Partial<StateMachinesConfig> = {};
+  const fail = (key: string, what: string, v: unknown): never => {
+    throw new Error(`${where} [state_machines] ${key} ${what} (got ${JSON.stringify(v)})`);
+  };
+  for (const [key, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!allowed.includes(key)) {
+      if (Object.hasOwn(STATE_MACHINES_DEFAULTS, key))
+        throw new Error(
+          `${where} [state_machines] ${key} is config.toml only — it decides who may ask for a review, so a profile cannot set it`,
+        );
+      throw new Error(
+        `${where} [state_machines] unknown key "${key}" — allowed here: ${allowed.join(", ")}`,
+      );
+    }
+    switch (key) {
+      case "triggers":
+        if (typeof v === "string" && (STATE_TRIGGER_MODES as readonly string[]).includes(v))
+          out.triggers = v as StateTriggerMode;
+        else fail(key, `must be ${STATE_TRIGGER_MODES.map((m) => `"${m}"`).join(", ")}`, v);
+        break;
+      case "only":
+      case "command":
+        if (typeof v === "boolean") out[key] = v;
+        else fail(key, "must be true or false", v);
+        break;
+      case "label":
+        if (typeof v === "string" && v.length <= LABEL_MAX_CHARS && !/[\r\n]/.test(v))
+          out.label = v.trim();
+        else
+          fail(key, `must be a label name of at most ${LABEL_MAX_CHARS} characters ("" = none)`, v);
+        break;
+    }
+  }
+  return out;
+}
+
+/** `[state_machines]` from config.toml: the defaults, overlaid by what it
+ * sets. */
+export function parseStateMachines(raw: unknown): StateMachinesConfig {
+  return { ...STATE_MACHINES_DEFAULTS, ...parseStateMachinesTable("config.toml", raw ?? {}) };
+}
+
 /** A key the table must have: its value, or a throw naming it. */
 export function req(obj: Record<string, unknown>, key: string): unknown {
   const v = obj[key];
@@ -1738,6 +1850,8 @@ export interface CoreConfig {
    * profile's `[security]` overrides `triggers`, `only` and `fold`
    * (`applyProfileSecurity`, packages/pi-plugin/src/profiles.ts). */
   security: SecurityConfig;
+  /** `[state_machines]`: the state-machine family's planning and scope. */
+  state_machines: StateMachinesConfig;
 }
 
 /** `[github]`: base_branch/clone_dir default so older configs keep parsing.
@@ -1981,6 +2095,7 @@ export function parseCoreConfig(
     owner: parseOwnerSection(raw),
     scan: parseScan(raw.scan),
     security: parseSecurity(raw.security),
+    state_machines: parseStateMachines(raw.state_machines),
   };
   validateReviewSection(cfg);
   foldLegacyOwnerSlackId(raw, cfg.owner);

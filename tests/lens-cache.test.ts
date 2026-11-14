@@ -32,6 +32,7 @@ import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-gua
 import {
   CacheGroups,
   WARMUP_REPLY_TASK,
+  cacheGroupKey,
   settledWithin,
 } from "@quickchatai/pi-quickreview/src/engine/lens/cache-run.js";
 import {
@@ -132,6 +133,7 @@ function config(over: Partial<LensRunConfig> = {}): LensRunConfig {
     cwd: dir,
     env: { PATH: process.env["PATH"], HOME: dir },
     bashGuard: guard(),
+    leafTools: () => [],
     ledgerPath: join(dir, "round", "lens-ledger.jsonl"),
     sessionGapMs: 0,
     ...over,
@@ -292,6 +294,51 @@ describe("[cache groups] one shared session id per group", () => {
     expect(seen.every((s) => !JSON.stringify(s.payload["input"]).includes("PR CONTEXT"))).toBe(
       true,
     );
+  });
+});
+
+describe("[cache groups] keyed by model spec and tool list", () => {
+  // The request's `tools` field is part of the cached prefix, so a group that
+  // mixed tool lists would warm one list's prefix for the other's passes.
+  // MUTATION: join the group by `on.spec` alone in execute (runlens.ts) —
+  // pass-g joins pass-a's group, one warm-up serves both lists; this fails.
+  it("passes on one model with different tools never share a group, and each group warms with its own tools", async () => {
+    writeFileSync(join(dir, "agents", "pass-g.md"), agentFile("pass-g", "read, bash, grep"));
+    respondWith(5, codexLike([], new FakeTransport()));
+    const runner = createLensRunner(
+      config({ cache: { size: 3, staggerMs: 0, pack: PACK, warmupWaitMs: 5_000 } }),
+    );
+    const runs = await Promise.all(
+      ["pass-a", "pass-g", "pass-b"].map((agent) => runner.run({ agent, task: agent })),
+    );
+    expect(runs.every((r) => r.result.exitCode === 0)).toBe(true);
+    const made = vi.mocked(rig.host.makeSession).mock.calls.map(([spec]) => spec);
+    // three passes and two warm-ups
+    expect(made).toHaveLength(5);
+    const toolsById = new Map<string, Set<string>>();
+    for (const spec of made) {
+      const id = spec.sessionId ?? "";
+      const lists = toolsById.get(id) ?? new Set<string>();
+      lists.add((spec.tools ?? []).join(","));
+      toolsById.set(id, lists);
+    }
+    expect(toolsById.size).toBe(2);
+    for (const lists of toolsById.values()) expect(lists.size).toBe(1);
+    expect([...toolsById.values()].map((l) => [...l][0]).sort()).toEqual([
+      "read,bash",
+      "read,bash,grep",
+    ]);
+    expect(ledger().filter((l) => l.kind === "warmup")).toHaveLength(2);
+  });
+
+  // MUTATION: return `spec` alone from cacheGroupKey (cache-run.ts) — this fails.
+  it("cacheGroupKey: the spec and the tools in order; no allowlist is not an empty one", () => {
+    const key = cacheGroupKey(FAMILY_MODEL, ["read", "bash"]);
+    expect(key).toBe(cacheGroupKey(FAMILY_MODEL, ["read", "bash"]));
+    expect(key).not.toBe(cacheGroupKey(FAMILY_MODEL, ["read", "bash", "state_explore"]));
+    expect(key).not.toBe(cacheGroupKey(FAMILY_MODEL, ["bash", "read"]));
+    expect(key).not.toBe(cacheGroupKey(OUTSIDE_MODEL, ["read", "bash"]));
+    expect(cacheGroupKey(FAMILY_MODEL, undefined)).not.toBe(cacheGroupKey(FAMILY_MODEL, []));
   });
 });
 
@@ -514,6 +561,27 @@ describe("[cache groups] the warm-up", () => {
     // the pass and its group's warm-up
     expect(made).toHaveLength(2);
     for (const spec of made) expect(spec.extensions?.[0]).toBe(marked);
+  });
+
+  // MUTATION: drop `...config.leafTools(agent)` from the warm-up's extensions
+  // in warmUp (runlens.ts) — the warm-up's spec lacks the marked factory; this fails.
+  it("the warm-up's session carries its first pass's leaf tools, after the guard", async () => {
+    const marked = guard();
+    const leaf: ExtensionFactory = () => {};
+    respondWith(2, codexLike([], new FakeTransport()));
+    const runner = createLensRunner(
+      config({
+        bashGuard: marked,
+        leafTools: () => [leaf],
+        cache: { size: 2, staggerMs: 0, pack: PACK, warmupWaitMs: 5_000 },
+      }),
+    );
+    expect((await runner.run({ agent: "pass-a", task: "go" })).result.exitCode).toBe(0);
+    await waitFor(() => ledger().some((l) => l.kind === "warmup"), 4000, "the warm-up's line");
+    const made = vi.mocked(rig.host.makeSession).mock.calls.map(([spec]) => spec);
+    // the pass and its group's warm-up
+    expect(made).toHaveLength(2);
+    for (const spec of made) expect(spec.extensions?.slice(0, 2)).toEqual([marked, leaf]);
   });
 
   it("a caller's abort while the group warms ends the pass without waiting out the warm-up", async () => {

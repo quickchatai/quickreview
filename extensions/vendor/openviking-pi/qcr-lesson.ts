@@ -71,6 +71,14 @@ export const LESSON_LENS_IDS: readonly string[] = [
   "pass-sec-infra",
   "pass-sec-variant",
   "pass-sec-exploit-chain",
+  "pass-sm-states",
+  "pass-sm-transitions",
+  "pass-sm-exhaustive",
+  "pass-sm-stuck",
+  "pass-sm-events",
+  "pass-sm-derived",
+  "pass-sm-lifecycle",
+  "pass-sm-durable",
   "pass-validate",
 ];
 

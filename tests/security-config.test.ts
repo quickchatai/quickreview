@@ -444,6 +444,15 @@ describe("[lenses.<pass>] plan and risk", () => {
       ),
     ).toThrow(/\[lenses\.pass-ui\] risk = true, but \[models\.pass_models\] moves pass-ui/);
   });
+
+  // MUTATION: drop the shipped-default branch — the refusal tells the user
+  // to remove a pin that only exists in code, and this fails.
+  it("risk = true on a lens the shipped default pins names that pin, not a config entry to remove", () => {
+    profile("riskysm", "[lenses.pass-sm-stuck]\nrisk = true\n");
+    expect(() => applyProfileOverlays(root, under("riskysm"), lookup())).toThrow(
+      /pass-sm-stuck is pinned to deep by the shipped default .* drop risk = true/,
+    );
+  });
 });
 
 describe("[posting] security_max and scope", () => {
