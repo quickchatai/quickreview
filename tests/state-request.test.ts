@@ -300,10 +300,11 @@ describe("the reconcile pass", () => {
   );
 
   // A captured command is never captured again, so a stop between capture and
-  // apply would lose it for good: every command of the sweep is applied before
-  // the first acknowledgement awaits the network.
-  // MUTATION: await ackSecurityRequest inside the apply loop again — the first
-  // ack runs before the state-machine request is recorded and this fails.
+  // apply would lose it for good: every command of the sweep is applied, and
+  // committed, before the first acknowledgement goes to the network.
+  // MUTATION: call ackSecurityRequest from inside the command loop in
+  // reconcile.ts again — the first ack runs before the state-machine request
+  // is recorded and this fails.
   it(
     "records every command of a sweep before the first acknowledgement goes out",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -353,6 +354,74 @@ describe("the reconcile pass", () => {
       expect(ack).toHaveBeenCalledTimes(2);
       expect(ack.mock.calls[0]).toEqual([63, "maya-dev"]);
       expect(ack.mock.calls[1]).toEqual([63, "maya-dev", STATE_REQUEST]);
+    },
+  );
+
+  // A write that fails part-way (a busy store) must not leave a comment
+  // captured with its command unapplied: the capture is rolled back with it,
+  // so the next pass hears the command again.
+  // MUTATION: run the capture and command loops outside the transaction in
+  // reconcile.ts — the comments stay captured, the next pass finds nothing
+  // fresh, the state-machine request is never recorded and this fails.
+  it(
+    "a command whose write fails is heard again on the next pass",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = new StateStore(":memory:");
+      tracked(store, 64, "tracked", "head64");
+      const comment = (id: number, word: string): IssueCommentFull => ({
+        id,
+        user: "maya-dev",
+        user_type: "User",
+        body: `${MENTION} ${word}`,
+        created_at: "2026-11-01T10:00:00Z",
+        author_association: "COLLABORATOR",
+      });
+      const comments = [comment(1, "security"), comment(2, "state-machines")];
+      const open = [ref(64, [])];
+      const adapter: ReconcileAdapter = {
+        searchLabelTriggered: async () => [],
+        searchTeamTriggered: async () => [],
+        listOpenPrs: async () => open,
+        getPr: async () => open[0]!,
+        listBotReviewComments: async () => [],
+        listReviewCommentsFull: async () => [],
+        listIssueComments: async () => comments,
+        listReviewsFull: async () => [],
+      };
+      const hooks = {
+        async dispatchRound() {},
+        async inject() {},
+        async archiveAndClose() {},
+      } as SessionHooks;
+      const record = store.recordReviewRequest.bind(store);
+      let busy = true;
+      vi.spyOn(store, "recordReviewRequest").mockImplementation((row) => {
+        if (busy && row.kind === STATE_REQUEST_KIND) {
+          busy = false;
+          throw new Error("SQLITE_BUSY: database is locked");
+        }
+        return record(row);
+      });
+      const ack = vi.fn(async () => {});
+      const pass = () =>
+        reconcileOnce({
+          cfg: POLLING,
+          store,
+          adapter,
+          hooks,
+          ackSecurityRequest: ack,
+          log: () => {},
+        });
+      const first = await pass();
+      expect(first.errors.some((e) => e.startsWith("comment-capture #64:"))).toBe(true);
+      expect(store.reviewRequest(64, "security")).toBeUndefined();
+      expect(store.reviewRequest(64, STATE_REQUEST_KIND)).toBeUndefined();
+      expect(ack).not.toHaveBeenCalled();
+      await pass();
+      expect(store.reviewRequest(64, "security")).toMatchObject({ source: "comment" });
+      expect(store.reviewRequest(64, STATE_REQUEST_KIND)).toMatchObject({ source: "comment" });
+      expect(ack).toHaveBeenCalledTimes(2);
     },
   );
 });

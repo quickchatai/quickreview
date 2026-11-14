@@ -984,16 +984,6 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
             (deps.log ?? (() => {}))(`reconcile: outcome facts #${n} failed`, err);
           }
         }
-        const freshTop = new Set<number>();
-        for (const c of rows) {
-          if (!isHumanCapture(c, botLogin)) continue;
-          // Person mode: the reviewer's own words under the person's login.
-          if (isOwnContent(cfg.github, c.author, c.body)) continue;
-          if (recordCapturedComment(store, c, "reconcile")) {
-            report.captured_comments++;
-            if (c.source === "issue_comment") freshTop.add(c.comment_id);
-          }
-        }
         // Each fresh top-level comment may be a request command: `@<bot>
         // security`, or `@<bot> state-machines` (src/staterequest.ts) — the
         // same decision, staleness rule and acknowledgement under two kinds.
@@ -1001,71 +991,96 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           { k: SECURITY_REQUEST, command: security.command },
           { k: STATE_REQUEST, command: stateMachines.command },
         ];
-        // A captured comment is never fresh again, so capture and apply stay
-        // in one synchronous span: the acknowledgements wait until every
-        // command of this sweep is recorded. A stop during an ack leaves a
-        // request standing unacknowledged, never a command lost.
+        // A captured comment is never fresh again, so the capture and the
+        // commands it carries commit in one transaction: a write that fails
+        // part-way (a busy store, a stop) rolls the capture back with it, and
+        // the next pass hears the command again. The acknowledgements wait
+        // for the commit: a stop during an ack leaves a request standing
+        // unacknowledged, never a command lost.
         const acks: Array<{ by: string; k: ReviewRequestKind }> = [];
-        for (const c of topFetched) {
-          if (!freshTop.has(c.id)) continue;
-          for (const { k, command } of requestKinds) {
-            const decision = securityCommandDecision(
-              c,
-              { botLogin: cfg.github.bot_login, command },
-              k,
-            );
-            if (decision === null) continue;
-            if (!decision.ok) {
-              store.logEvent("review_request_ignored", n, {
-                kind: k.kind,
-                source: "comment",
-                comment_id: c.id,
-                by: c.user,
-                reason: decision.reason,
-              });
-              continue;
-            }
-            // Captured for the first time is not new: a fresh database, or a
-            // PR first tracked late, sweeps history, and an old command must
-            // not ask again or be acknowledged twice.
-            const stale = staleSecurityCommand(
-              c,
-              {
-                comments: topFetched,
-                isOwn: (user, body) => isOwnContent(cfg.github, user, body),
-                ...(trackedAt !== undefined ? { trackedAt } : {}),
-              },
-              k,
-            );
-            if (stale !== null) {
-              store.logEvent("review_request_ignored", n, {
-                kind: k.kind,
-                source: "comment",
-                comment_id: c.id,
-                by: c.user,
-                reason: "stale-comment",
-                stale,
-              });
-              continue;
-            }
-            const ref = open.get(n);
-            const outcome = applySecurityRequest(
-              store,
-              { pr: n, source: "comment", by: c.user, comment_id: c.id },
-              {
-                botLogin,
-                now,
-                ...(ref
-                  ? { meta: { title: ref.title, head_sha: ref.head_sha, author: ref.author } }
-                  : {}),
-              },
-              k.kind,
-            );
-            // A fresh request is acknowledged, and so is one that took over a
-            // label request (it now stands on this comment's word).
-            if (outcome.fresh || outcome.reason === "upgraded") acks.push({ by: c.user, k });
-          }
+        let captured = 0;
+        try {
+          store.db
+            .transaction(() => {
+              const freshTop = new Set<number>();
+              for (const c of rows) {
+                if (!isHumanCapture(c, botLogin)) continue;
+                // Person mode: the reviewer's own words under the person's login.
+                if (isOwnContent(cfg.github, c.author, c.body)) continue;
+                if (recordCapturedComment(store, c, "reconcile")) {
+                  captured++;
+                  if (c.source === "issue_comment") freshTop.add(c.comment_id);
+                }
+              }
+              for (const c of topFetched) {
+                if (!freshTop.has(c.id)) continue;
+                for (const { k, command } of requestKinds) {
+                  const decision = securityCommandDecision(
+                    c,
+                    { botLogin: cfg.github.bot_login, command },
+                    k,
+                  );
+                  if (decision === null) continue;
+                  if (!decision.ok) {
+                    store.logEvent("review_request_ignored", n, {
+                      kind: k.kind,
+                      source: "comment",
+                      comment_id: c.id,
+                      by: c.user,
+                      reason: decision.reason,
+                    });
+                    continue;
+                  }
+                  // Captured for the first time is not new: a fresh database, or a
+                  // PR first tracked late, sweeps history, and an old command must
+                  // not ask again or be acknowledged twice.
+                  const stale = staleSecurityCommand(
+                    c,
+                    {
+                      comments: topFetched,
+                      isOwn: (user, body) => isOwnContent(cfg.github, user, body),
+                      ...(trackedAt !== undefined ? { trackedAt } : {}),
+                    },
+                    k,
+                  );
+                  if (stale !== null) {
+                    store.logEvent("review_request_ignored", n, {
+                      kind: k.kind,
+                      source: "comment",
+                      comment_id: c.id,
+                      by: c.user,
+                      reason: "stale-comment",
+                      stale,
+                    });
+                    continue;
+                  }
+                  const ref = open.get(n);
+                  const outcome = applySecurityRequest(
+                    store,
+                    { pr: n, source: "comment", by: c.user, comment_id: c.id },
+                    {
+                      botLogin,
+                      now,
+                      ...(ref
+                        ? { meta: { title: ref.title, head_sha: ref.head_sha, author: ref.author } }
+                        : {}),
+                    },
+                    k.kind,
+                  );
+                  // A fresh request is acknowledged, and so is one that took over a
+                  // label request (it now stands on this comment's word).
+                  if (outcome.fresh || outcome.reason === "upgraded") acks.push({ by: c.user, k });
+                }
+              }
+            })
+            .immediate();
+        } catch (err) {
+          // Nothing of this PR's sweep committed and no watermark is set, so
+          // the next pass captures and applies it again.
+          report.errors.push(`comment-capture #${n}: ${String(err)}`);
+          continue;
         }
+        report.captured_comments += captured;
         for (const { by, k } of acks) {
           if (!deps.ackSecurityRequest) break;
           try {

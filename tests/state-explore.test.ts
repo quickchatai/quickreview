@@ -3005,6 +3005,88 @@ describe("persisted-shape: protobuf fields by message, reservations by number", 
     );
     expect(out.some((l) => l.includes("removed and its number not reserved"))).toBe(false);
   });
+
+  /** The anchors over one `.proto` change whose patch is given, not diffed:
+   * the files below are too long for the test's own LCS diff, so the world
+   * holds the head alone and the base comes from its own reader. */
+  const protoTimed = async (base: string, head: string, patch: string): Promise<string[]> => {
+    const path = "api/m.proto";
+    const diff: PrFileEntry[] = [
+      { filename: path, additions: 1, deletions: 1, status: "modified", patch },
+    ];
+    const w = world(
+      [{ path, head }],
+      {},
+      { diff: async () => diff, readBase: async (p) => (p === path ? base : null) },
+    );
+    const out = await run({ action: "anchors" }, w, { maxChars: 1_000_000 });
+    return out.split("\n").filter((l) => l.startsWith("[persisted-shape]"));
+  };
+
+  // A timing bound, not a fence: a line reads its scope in constant time and
+  // a key never grows with the nesting, so a 1 MiB file of nested blocks
+  // reads in milliseconds; joining the open blocks' names on every line makes
+  // it quadratic (two minutes for this file).
+  it(
+    "a file of blocks nested a quarter-million deep reads within a bound",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const depth = 250_000;
+      const base = `${"{\n".repeat(depth)}  string a = 1;\n${"}\n".repeat(depth)}`;
+      const head = `${"{\n".repeat(depth)}  reserved 1;\n${"}\n".repeat(depth)}`;
+      expect(base.length).toBeLessThanOrEqual(1024 * 1024);
+      const patch = `@@ -${depth + 1},1 +${depth + 1},1 @@\n-  string a = 1;\n+  reserved 1;`;
+      const started = performance.now();
+      const out = await protoTimed(base, head, patch);
+      expect(performance.now() - started).toBeLessThan(5000);
+      expect(out).toEqual([]);
+    },
+  );
+
+  // A timing bound, not a fence: a reservation is looked up by a binary
+  // search over the scope's merged ranges, so many removed fields against
+  // many reservations cost a log each; a scan of every reservation per
+  // removed field is quadratic (over ten seconds for this file).
+  it(
+    "many removed fields against many reservations read within a bound",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const n = 50_000;
+      const nums = Array.from({ length: n }, (_, i) => i + 1);
+      const fields = nums.map((i) => `  int32 f = ${i};`);
+      // in reverse, so a removal's reservation is the last one a scan reaches
+      const reserved = nums.map((i) => `  reserved ${n + 1 - i};`);
+      const base = src("message M {", ...fields, "}");
+      const head = src("message M {", ...reserved, "}");
+      expect(base.length).toBeLessThanOrEqual(1024 * 1024);
+      const patch = [
+        `@@ -1,${n + 2} +1,${n + 2} @@`,
+        " message M {",
+        ...fields.map((l) => `-${l}`),
+        ...reserved.map((l) => `+${l}`),
+        " }",
+      ].join("\n");
+      const started = performance.now();
+      const out = await protoTimed(base, head, patch);
+      expect(performance.now() - started).toBeLessThan(5000);
+      expect(out).toEqual([]);
+    },
+  );
+
+  it("touching and overlapping reservations merge, and a gap between them stays open", async () => {
+    const out = await protoAnchors(
+      src("message M {", "  string id = 1;", "  int32 a = 4;", "  int32 b = 9;", "}"),
+      src("message M {", "  string id = 1;", "  reserved 6 to 8, 2 to 3, 10 to 12, 7 to 9;", "}"),
+    );
+    expect(out).toContainEqual(
+      expect.stringContaining("protobuf field `int32 a` = 4 removed and its number not reserved"),
+    );
+    const covered = await protoAnchors(
+      src("message M {", "  string id = 1;", "  int32 b = 9;", "}"),
+      src("message M {", "  string id = 1;", "  reserved 6 to 8, 2 to 3, 10 to 12, 7 to 9;", "}"),
+    );
+    expect(covered).toEqual([]);
+  });
 });
 
 describe("anchors: the per-call line budget", () => {

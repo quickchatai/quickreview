@@ -2862,17 +2862,24 @@ function persistedShapes(run: AnchorRun, c: Changed, p: PersistCtx, headText: st
 /** The highest protobuf field number, what `max` means in a reservation. */
 const PROTO_MAX_FIELD = 536_870_911;
 const PROTO_SCOPE_RE = /\b(message|enum|service|extend)\s{1,8}([\w.]{1,120})\s{0,8}$/;
+/** The text before a `{` that `PROTO_SCOPE_RE` can read (its longest match
+ * plus the character its `\b` looks at), so a brace costs a constant. */
+const PROTO_SCOPE_HEAD = 160;
 
-/** Each line's protobuf scope, 1-based: the enclosing `message`/`enum`
- * names dot-joined (`Outer.Inner`), taken where the line's first statement
- * ends. A `oneof` or option block adds no name: its fields are the message's. */
-function protoScopes(text: string): string[] {
-  const out: string[] = [""];
-  const stack: (string | null)[] = [];
-  const now = (): string => stack.filter((n) => n !== null).join(".");
-  for (const raw of text.split("\n")) {
-    const code = raw.slice(0, LINE_MAX);
-    let at: string | null = null;
+/** Each line's protobuf scope, 1-based, as a number: the enclosing
+ * `message`/`enum` names, taken where the line's first statement ends. A
+ * `oneof` or option block adds no name: its fields are the message's.
+ *
+ * `ids` numbers each scope by its parent's number and its own name, shared
+ * by both sides of a file, so one nesting of names is one number wherever it
+ * opens: a line reads its scope in constant time and a key never grows with
+ * the nesting, however deep a file nests. 0 is file level. */
+function protoScopes(text: string, ids: Map<string, number>): number[] {
+  const out: number[] = [0];
+  const stack: number[] = [];
+  const now = (): number => stack[stack.length - 1] ?? 0;
+  for (const code of text.split("\n")) {
+    let at: number | null = null;
     let quote = "";
     for (let i = 0; i < code.length; i++) {
       const ch = code[i]!;
@@ -2884,12 +2891,44 @@ function protoScopes(text: string): string[] {
       if (ch === '"' || ch === "'") quote = ch;
       else if (ch === "/" && code[i + 1] === "/") break;
       else if (ch === "{") {
-        const m = PROTO_SCOPE_RE.exec(code.slice(0, i));
-        stack.push(m ? (m[1] === "extend" ? `(extend ${m[2]!})` : m[2]!) : null);
+        const m = PROTO_SCOPE_RE.exec(code.slice(Math.max(0, i - PROTO_SCOPE_HEAD), i));
+        if (!m) stack.push(now());
+        else {
+          const key = `${now()}\0${m[1] === "extend" ? `(extend ${m[2]!})` : m[2]!}`;
+          let id = ids.get(key);
+          if (id === undefined) ids.set(key, (id = ids.size + 1));
+          stack.push(id);
+        }
       } else if (ch === "}") stack.pop();
       else if (ch === ";" && at === null) at = now();
     }
     out.push(at ?? now());
+  }
+  return out;
+}
+
+/** Whether `n` lies in one of `ranges`, sorted by their low end and merged
+ * so none overlaps: a binary search, so many reservations cost a log each. */
+function inRanges(ranges: readonly [number, number][], n: number): boolean {
+  let lo = 0;
+  let hi = ranges.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const [a, b] = ranges[mid]!;
+    if (n < a) hi = mid - 1;
+    else if (n > b) lo = mid + 1;
+    else return true;
+  }
+  return false;
+}
+
+/** `ranges` sorted by their low end, overlapping and touching ones merged. */
+function mergedRanges(ranges: [number, number][]): [number, number][] {
+  const out: [number, number][] = [];
+  for (const [a, b] of [...ranges].sort((x, y) => x[0] - y[0])) {
+    const last = out[out.length - 1];
+    if (last && a <= last[1] + 1) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
   }
   return out;
 }
@@ -2913,30 +2952,36 @@ function protoReserved(text: string): [number, number][] | null {
  * one message, so a removal pairs with an addition, and a reservation covers
  * it, only within the same message: `baseText`/`headText` give the scopes. */
 function protoShapes(run: AnchorRun, c: Changed, baseText: string, headText: string): void {
-  const baseScope = protoScopes(baseText);
-  const headScope = protoScopes(headText);
-  const removed = new Map<string, { num: string; was: string }>();
+  const ids = new Map<string, number>();
+  const baseScope = protoScopes(baseText, ids);
+  const headScope = protoScopes(headText, ids);
+  const removed = new Map<string, { num: string; was: string; scope: number }>();
   const addedNums = new Map<string, { name: string; line: number }>();
-  const reserved = new Map<string, [number, number][]>();
+  const reserved = new Map<number, [number, number][]>();
   for (const [L, t] of c.removed) {
     const m = PROTO_FIELD_RE.exec(t.slice(0, LINE_MAX));
+    const scope = baseScope[L] ?? 0;
     if (m)
-      removed.set(`${baseScope[L] ?? ""}\0${m[3]!}`, {
+      removed.set(`${scope}\0${m[3]!}`, {
         num: m[3]!,
         was: `${m[1]!.trim()} ${m[2]!}`,
+        scope,
       });
   }
   for (const [L, t] of c.added) {
-    const scope = headScope[L] ?? "";
+    const scope = headScope[L] ?? 0;
     const r = protoReserved(t);
     if (r) {
-      reserved.set(scope, [...(reserved.get(scope) ?? []), ...r]);
+      const list = reserved.get(scope);
+      if (list) list.push(...r);
+      else reserved.set(scope, r);
       continue;
     }
     const m = PROTO_FIELD_RE.exec(t.slice(0, LINE_MAX));
     if (m) addedNums.set(`${scope}\0${m[3]!}`, { name: `${m[1]!.trim()} ${m[2]!}`, line: L });
   }
-  for (const [key, { num, was }] of removed) {
+  for (const [scope, list] of reserved) reserved.set(scope, mergedRanges(list));
+  for (const [key, { num, was, scope }] of removed) {
     const now = addedNums.get(key);
     if (now && now.name !== was) {
       anchor(
@@ -2949,9 +2994,7 @@ function protoShapes(run: AnchorRun, c: Changed, baseText: string, headText: str
       );
       return;
     }
-    const n = Number(num);
-    const scope = key.slice(0, key.indexOf("\0"));
-    if (!now && !(reserved.get(scope) ?? []).some(([lo, hi]) => n >= lo && n <= hi)) {
+    if (!now && !inRanges(reserved.get(scope) ?? [], Number(num))) {
       anchor(
         run,
         c,
