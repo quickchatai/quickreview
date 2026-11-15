@@ -44,7 +44,9 @@ and why". It comes in three parts, all in this repository:
 
 Beside them, {{SECOND_JUDGE_MD}} holds a second judge's verdicts on the
 reviewers of the repository README's full tables, on all three benchmarks,
-next to the published judge's ("Second judge").
+next to the published judge's ("Second judge"), and {{STATE_MACHINES_MD}}
+holds a study of QuickReview's state-machine review with every label it made
+("State-machine study").
 
 DOI: {{DOI_MD}}. The code, the benchmark definition and both papers are in the
 QuickReview repository, https://github.com/quickchatai/quickreview, under
@@ -144,6 +146,7 @@ The scripts are in the QuickReview repository under `bench/aacr/`.
 | QuickReview paper: tuning appendix (prompt iterations, levers, lenses) | `qr:app:tuning` | `arms`, `defect_verdicts` | `aacr-dev-iterations`, `aacr-dev-levers-presets` | `verify_claims.py` (its table checks, `recompute/claim_metrics.py`); `recompute/missed_defects.py` |
 | QuickReview paper: the max preset example | `qr:basemodel` | `arms` (`quickreview-max-g61`) | `aacr-g61-smokes` | `compare.py` |
 | The second judge beside the published judges (this card's "Second judge"; benchmark paper `tab:dsjudge` and its judge-reliability section; QuickReview paper's limits) | `second-judge` | none: the folder `second_judges/deepseek-v4.1-flash-1017/`, beside the published judge's rows in `defect_verdicts`, `comment_verdicts`, `martian_verdicts`, `martian_reviews`, `qodo_verdicts` | none | `recompute/score_verdicts.py`, `recompute/martian_scores.py`, `recompute/qodo_scores.py` (the folder README's commands); `recompute/second_judges.py`; `validation.json` |
+| The state-machine study (this card's "State-machine study"; the QuickReview write-up on implicit state machines) | `state-machines` | none: the folder `state_machines/`, beside the answer key's `defects` | none | `recompute/state_machines.py`; `validation.json` |
 
 `tab:copilot2025`'s rows are these arms, on the 19 PRs that have a
 `copilot-2025-upstream` review (`final/copilot19.txt`):
@@ -591,6 +594,43 @@ run bench/aacr/recompute/qodo_scores.py --data $D --verdicts $V/qodo --judge $L 
 number of this section from the folder (`second_judge` in
 `bench/aacr/claims.json`).
 
+## State-machine study
+
+{{STATE_MACHINES_MD}} holds a study of QuickReview's state-machine review: two
+runs on the 34 AACR-Bench pull requests whose answer-key defects include
+labelled state bugs, reviewer and judge `gpt-6.1-sol`, one run each. `sm4-p`
+is the state-machine review alone (`review.profile=state-machines`, the eight
+`pass-sm-*` lenses, built from public main). `sm1-c` is the default review
+with its automatic state lens off, on an earlier build from a branch that was
+never published, so its `qcr_commit` is not on public main. The folder holds
+both runs' posted comments and the judge's verdicts, every AI label the study
+made, the earlier builds' found flags and the write-up's charts; its README
+describes every table and how each number is recomputed. No config reads it.
+
+**What it found.** Two AI readers relabelled all 186 answer-key defects of
+these pull requests blind, by one rule (a state bug needs a named state and an
+event or sequence): 56 state, 2 borderline, 128 not; 55 of the 56 can happen
+at head. On those 55 the state review found 44 and the default review 45.
+Both reviews also posted real state bugs the answer key does not list. AI
+agents confirmed 50 of them in the code, for 105 known real state bugs. Of
+the 105 the state review found 89 (85%) and the default review 75 (71%), for
+$2.78 and $2.77 a pull request and with 4.7 against 11.7 comments a pull
+request; together they found 95. Of the state review's 159 comments, 96 are
+about state bugs, 31 are borderline and 32 are about something else.
+
+**Limits.** AI agents made the answer key, every state label and the checks
+of the bugs outside the key, and no person has checked them. The pool holds
+the state bugs known on these pull requests, so its shares overstate true
+recall. The judge is the reviewer's model, each arm ran once, the default
+arm's build is not the state arm's, and part of the answer key came from the
+default review's own earlier comments.
+
+{{STATE_MACHINES_FILES}}
+
+`bench/aacr/recompute/state_machines.py --data <this dataset>` recomputes
+every number of the folder's README from its tables, and `validation.json`
+holds the same checks of the folder (see "How to verify").
+
 ## What is not here, and why
 
 - **QuickReview reviewing the authors' own repositories.** A self-review run
@@ -808,7 +848,7 @@ without an input above, it fails on the claims that need it.
 On this release: {{VERIFY_RESULT}}
 
 Its release checks are the checks of `validation.json` (below) that need only
-the tables and the `second_judges/` folder, re-run on your download, and the
+the tables and the `second_judges/` and `state_machines/` folders, re-run on your download, and the
 slim bundle's own (every file's hash, no transcript text, every Martian and
 Qodo scoring dir re-scored, the Elo refit). `validation.json` also holds the checks the export ran against its
 own inputs (the source run directories, the commit remap, the archive's index,
@@ -829,7 +869,7 @@ a missing input fails.
 defects, 3,093 exclusions, 185 PRs per full arm, 1,418 references, 173
 Martian goldens, 580 Qodo issues), the papers' headline numbers (every arm's
 defects found by severity, comments correct, cost and time; the second judge;
-judge agreement; the AACR metric; Martian and Qodo scores), the open-model
+the state-machine study; judge agreement; the AACR metric; Martian and Qodo scores), the open-model
 rows, the Elo ratings (refit from `elo_judgments` and compared with the
 run's own `ratings.json`), the judge coverage above, and that every shipped
 run family has rows in the tables it should. This release passes {{CHECKS}}

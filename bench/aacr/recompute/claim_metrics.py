@@ -2,7 +2,7 @@
 
 bench/aacr/verify_claims.py asks this module for the value behind a claim of
 bench/aacr/claims.json whose check is `aacr`, `key`, `martian`, `qodo`, `elo`,
-`judges` or `second_judge`. No model call; the tables are read with
+`judges`, `second_judge` or `state_machines`. No model call; the tables are read with
 recompute/tables.py (parquet, or .jsonl fixtures). Every value is a plain number in the unit the papers print:
 percentages are already x100, money in dollars, time in minutes.
 
@@ -58,6 +58,8 @@ key      METRIC[~SEL]  the answer key alone: defects n_high n_medium n_low prs e
 judges   J1|J2|ARM+ARM+...[|sample=JUDGE]:METRIC   two defect judges on the same reviews (see Judges)
 second_judge  LABEL/aacr/ARM:METRIC | LABEL/martian/WORK|TOOL:METRIC | LABEL/qodo/WORK|TOOL:METRIC
          a second judge's numbers from the dataset's second_judges/LABEL/ through the scorers (see SecondJudge)
+state_machines  NAME
+         a number of the state-machine study, from the dataset's state_machines/ (state_machines.numbers)
 martian  WORK[+WORK...]|TOOL[@JUDGE][~HALF]:METRIC  (JUDGE default gpt-6.1-sol; a published judge is
          "published: <model>", and WORK "-" names Martian's own published scores over all 50 PRs). METRIC: {core,strict,all}_{tp,fp,fn,precision,recall,f1,f2},
          the stored scores of one dir; with HALF (a set file, martian-tune20 or martian-test30) recounted on that
@@ -976,6 +978,30 @@ class SecondJudge(Provider):
         return t
 
 
+class StateMachines(Provider):
+    """The state-machine study's numbers, by name, from the dataset's `state_machines/` (state_machines.numbers:
+    the tables alone, nothing else read). A folder the release does not hold is a missing source (the check
+    needs `state_machines`), and a name numbers() does not give is a fault, never a number."""
+
+    def __init__(self, tables: Tables):
+        super().__init__(tables)
+        self._numbers: Optional[Dict[str, Optional[float]]] = None
+
+    def compute(self, key: str) -> Optional[float]:
+        import state_machines as SM
+        if self._numbers is None:
+            d = SM.folder_of(self.t.data)
+            if not os.path.isdir(d):
+                raise KeyError_(f"no {SM.FOLDER}/ beside the tables")
+            try:
+                self._numbers = SM.numbers(d)
+            except SystemExit as e:  # a table missing from the folder: a fault, never a number
+                raise KeyError_(f"{SM.FOLDER}: {e}") from None
+        if key not in self._numbers:
+            raise KeyError_(f"unknown state_machines number {key!r}")
+        return self._numbers[key]
+
+
 SJ_DIR = "second_judges"
 PROVIDERS = {"aacr": Aacr, "key": Key, "martian": Martian, "qodo": Qodo, "elo": Elo, "judges": Judges,
-             "second_judge": SecondJudge}
+             "second_judge": SecondJudge, "state_machines": StateMachines}

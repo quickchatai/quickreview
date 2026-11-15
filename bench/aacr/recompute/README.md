@@ -172,3 +172,17 @@ read the label files the release ships (`analysis/relabel/`) with no model
 call. Numbers are compared the way Python's
 `format` prints the computed float (the manifest's `scope` states the
 rounding rule).
+
+## The state-machine study
+
+    state_machines.py --data <hf-dataset>   # the release's checks of its state_machines/ folder
+
+The dataset's `state_machines/` folder holds a study of the state-machine
+review: two runs' posted comments and judge verdicts, the study's labels and its
+pooled state bugs (its README describes each table). `state_machines.py` runs
+validation.json's checks of it: every file against the committed
+`bench/aacr/hf/state-machines.sha256`, the tables' columns, the rows against each
+other, and every number of the study (`POST`) recomputed from the tables alone
+(`numbers()`). `claim_metrics.py`'s `state_machines` keys are those numbers by
+name (`pool.sm4-p`, `key.sm1-c`, `comments.sm4-p.per_pr`, ...).
+`state_machines.py build` wrote the folder from the runs and the label files.

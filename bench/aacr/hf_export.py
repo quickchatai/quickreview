@@ -37,6 +37,13 @@ What it writes (no model call, nothing uploaded; the run dirs are only read):
                          validation.json checks it (the manifest, its judge column,
                          its coverage of the published judge's rows, the scorers
                          reproducing its scores/, its columns) and fails without it.
+  state_machines/        with --state-machines: the state-machine study (two runs'
+                         posted comments and verdicts, its labels; written by
+                         recompute/state_machines.py build), copied as is after every
+                         file is checked against bench/aacr/hf/state-machines.sha256
+                         (refused otherwise); no config reads it. validation.json
+                         checks it (the manifest, its columns, its rows, every number
+                         of the study recomputed from it) and fails without it.
 
 With --archive (the run archive folder, after `export_runs.py readme` wrote it) it
 also writes the runs table's derived fields (each Martian scoring dir's judge
@@ -84,6 +91,7 @@ import scrub_extra as SX  # noqa: E402
 
 sys.path.insert(0, os.path.join(HERE, "recompute"))
 import second_judges as SJ  # noqa: E402
+import state_machines as SM  # noqa: E402
 
 SETS = ("smoke10", "dev10", "holdout10", "fresh10", "rest145")
 AACR_V1_SHA256 = "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
@@ -639,9 +647,10 @@ def cited(check: str, key: str, arm_ids: set, units: set, martian_dirs: set) -> 
     elif check == "qodo":
         if head != "issues":
             runs |= _dirs_of(head.partition("|")[0], ".qodo", units)
-    elif check == "second_judge":
-        # a second judge's numbers are read from second_judges/, which neither `arms` nor the run index
-        # describes: they link no arm and no unit, so the tables its verdicts were made against keep their rows
+    elif check in ("second_judge", "state_machines"):
+        # a second judge's numbers are read from second_judges/ and the state-machine study's from
+        # state_machines/, which neither `arms` nor the run index describes: they link no arm and no unit,
+        # so the tables keep their rows
         pass
     elif check == "key":  # claim_metrics.Key: only its `arm=` selector reads an arm's reviews
         for part in key.partition("~")[2].split("&"):
@@ -2270,7 +2279,7 @@ def leak_scan(out: str) -> dict:
         blob = json.dumps(t.to_pylist(), ensure_ascii=False, default=str)
         for p in pats:
             bad[(n, p.pattern)] += len(p.findall(blob))
-    for rel, _ in SJ.file_rows(out):  # the second judges' verdict tables, read as the configs are
+    for rel, _ in SJ.file_rows(out) + SM.file_rows(out):  # the folders' tables, read as the configs are
         from tables import load_table
         blob = json.dumps(load_table(os.path.dirname(os.path.join(out, rel)), os.path.basename(rel).split(".")[0]),
                           ensure_ascii=False, default=str)
@@ -2536,8 +2545,27 @@ def second_judge_links(rows: list[tuple] | None, url: str) -> str:
     return ", ".join(f"[`{SJ.FOLDER}/{x}/`]({url}/tree/main/{SJ.FOLDER}/{x})" for x in labels)
 
 
+STATE_MACHINES_PENDING = "`<state_machines/ not in this build>`"
+
+
+def render_state_machine_files(rows: list[tuple] | None) -> str:
+    """The card's table of the state-machine study's tables (state_machines.file_rows): path and rows."""
+    if not rows:
+        return STATE_MACHINES_PENDING
+    return "\n".join(["| File | Rows |", "|---|---:|"] + [f"| `{p}` | {n:,} |" for p, n in rows])
+
+
+def state_machines_link(rows: list[tuple] | None, url: str) -> str:
+    """The card's link to the state-machine study's folder in this dataset, as a whole link; the pending
+    marker when the build has none."""
+    if not rows:
+        return STATE_MACHINES_PENDING
+    return f"[`{SM.FOLDER}/`]({url}/tree/main/{SM.FOLDER})"
+
+
 def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter, runs: list[dict] | None = None,
-                inventory: dict | None = None, second_judges: list[tuple] | None = None) -> dict:
+                inventory: dict | None = None, second_judges: list[tuple] | None = None,
+                state_machines: list[tuple] | None = None) -> dict:
     """Every {{NAME}} the card template holds, from the export's own facts. What
     is not known at export time (the DOI, the papers' arXiv ids) renders as an
     explicit pending marker, never as an empty string or a guess."""
@@ -2575,6 +2603,8 @@ def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter,
             "COMMENT_INVENTORY": render_inventory(inventory),
             "SECOND_JUDGE_FILES": render_second_judge_files(second_judges),
             "SECOND_JUDGE_MD": second_judge_links(second_judges, url),
+            "STATE_MACHINES_FILES": render_state_machine_files(state_machines),
+            "STATE_MACHINES_MD": state_machines_link(state_machines, url),
             "SIZE_CATEGORY": size_category(sum(sizes.values()))}
 
 
@@ -2611,11 +2641,16 @@ def verify_result(path: str | None) -> str:
         # the split, from what each check needs: a --partial run without the third-party inputs, and the
         # tables alone, re-run fewer of them
         tables = sum(1 for x in cons if not x["needs"])
-        # validation.json's checks of the second judges' folder: they need that folder beside the tables
-        folder = sum(1 for x in cons if x["needs"] == ["second_judges"])
+        # validation.json's checks of the dataset's folders: they need that folder beside the tables
+        sj = sum(1 for x in cons if x["needs"] == ["second_judges"])
+        sm = sum(1 for x in cons if x["needs"] == ["state_machines"])
+        folder = sj + sm
         third = sum(1 for x in cons if {"--martian", "--qodo-gt"} & set(x["needs"]))
-        rerun = (f"re-run on the dataset ({tables} on the tables and {folder} on its `second_judges/` folder)"
-                 if folder else "re-run on the tables")
+        parts = [f"{n} on its `{f}/` folder" for n, f in ((sj, SJ.FOLDER), (sm, SM.FOLDER)) if n]
+        rerun = (f"re-run on the dataset ({tables} on the tables and {' and '.join(parts)})"
+                 if len(parts) == 1 else
+                 f"re-run on the dataset ({tables} on the tables, {', '.join(parts[:-1])} and {parts[-1]})"
+                 if parts else "re-run on the tables")
         checks = (f"The release's own checks pass {ok} of {len(cons)}: {tables + folder} from `validation.json`, "
                   f"{rerun}, and {len(cons) - tables - folder} the slim bundle's. `--partial` without `--martian` "
                   f"and `--qodo-gt` re-runs {len(cons) - third} of them (the slim bundle's Martian and Qodo "
@@ -2661,7 +2696,7 @@ def render_card(a, out: str, sizes: dict, checks: list[dict], counts: collection
     # the inventory from the tables as written, so the card counts exactly what ships
     inv = comment_inventory({n: pq.read_table(os.path.join(out, "data", f"{n}.parquet")).to_pylist()
                              for n in ("reviews", "martian_reviews", "qodo_reviews")})
-    card = fill_card(tmpl, card_values(a, sizes, checks, counts, runs, inv, SJ.file_rows(out)))
+    card = fill_card(tmpl, card_values(a, sizes, checks, counts, runs, inv, SJ.file_rows(out), SM.file_rows(out)))
     open(os.path.join(out, "README.md"), "w").write(card)
 
 
@@ -2716,6 +2751,25 @@ def copy_second_judges(src: str, out: str, manifest: str = SJ.MANIFEST) -> None:
     shutil.copytree(os.path.abspath(os.path.expanduser(src)), os.path.join(out, SJ.FOLDER))
 
 
+def refuse_state_machines(src: str, manifest: str = SM.MANIFEST) -> None:
+    """--state-machines: every file of the folder must be the committed manifest's, none missing, extra or
+    differing, before anything is written (SystemExit naming them otherwise)."""
+    src = os.path.abspath(os.path.expanduser(src))
+    if os.path.basename(src.rstrip("/")) != SM.FOLDER:
+        raise SystemExit(f"--state-machines: give the `{SM.FOLDER}` folder itself, not {src}")
+    bad = SM.manifest_problems(src, SM.read_manifest(manifest))
+    if any(bad.values()):
+        raise SystemExit("--state-machines: the folder is not the committed manifest's "
+                         f"({os.path.relpath(manifest, os.path.dirname(os.path.dirname(HERE)))}): "
+                         + "; ".join(f"{k} {v}" for k, v in bad.items() if v))
+
+
+def copy_state_machines(src: str, out: str, manifest: str = SM.MANIFEST) -> None:
+    """The folder into the dataset at state_machines/, as is, only when it is the manifest's."""
+    refuse_state_machines(src, manifest)
+    shutil.copytree(os.path.abspath(os.path.expanduser(src)), os.path.join(out, SM.FOLDER))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs-dir", required=True)
@@ -2753,6 +2807,9 @@ def main():
     ap.add_argument("--second-judges", help="the second judges' folder (a `second_judges` dir): copied to the "
                     "dataset's second_judges/ when every file matches bench/aacr/hf/second-judges.sha256 (refused "
                     "otherwise); validation.json's second-judge checks fail without it")
+    ap.add_argument("--state-machines", help="the state-machine study's folder (a `state_machines` dir): copied to "
+                    "the dataset's state_machines/ when every file matches bench/aacr/hf/state-machines.sha256 "
+                    "(refused otherwise); validation.json's state-machine checks fail without it")
     a = ap.parse_args()
     if not (SCRUB_BOTS and SCRUB_OWNERS):
         sys.exit("set QCR_SCRUB_BOT and QCR_SCRUB_OWNER: the identities this export scrubs come from the exporter")
@@ -2767,6 +2824,8 @@ def main():
         return
     if a.second_judges:
         refuse_second_judges(a.second_judges)
+    if a.state_machines:
+        refuse_state_machines(a.state_machines)
     if os.path.exists(out):
         shutil.rmtree(out)
     os.makedirs(out)
@@ -2782,6 +2841,8 @@ def main():
     sizes = write_parquet(ex.tables, out)
     if a.second_judges:
         copy_second_judges(a.second_judges, out)
+    if a.state_machines:
+        copy_state_machines(a.state_machines, out)
     if not a.no_figures:
         print("figures, keys, reports …", flush=True)
         figures(a, out, ex.counts, ex.notes)
@@ -2789,6 +2850,7 @@ def main():
     checks = (validate(tables) + validate_release(tables, ex.cat, ex.elo_refits, a.elo_dir, ex.commits)
               + ex.raw_text_checks(tables))
     checks += SJ.checks(out)  # fails closed: without --second-judges the folder's checks fail
+    checks += SM.checks(out)  # fails closed: without --state-machines the folder's checks fail
     if not a.no_figures:
         checks += figure_checks(out)
     manifest = json.load(open(CLAIMS_MANIFEST))
