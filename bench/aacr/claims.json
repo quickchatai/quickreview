@@ -1303,6 +1303,28 @@
      "martian_variants/runs"
     ]
    }
+  },
+  "state_machines": {
+   "kind": "tables",
+   "provider": "state_machines",
+   "needs": "hf+state_machines",
+   "scripts": [
+    "bench/aacr/recompute/claim_metrics.py",
+    "bench/aacr/recompute/state_machines.py"
+   ],
+   "data": [
+    "state_machines:arms",
+    "state_machines:cases",
+    "state_machines:reviews",
+    "state_machines:defect_verdicts",
+    "state_machines:comment_verdicts",
+    "state_machines:state_labels",
+    "state_machines:comment_state_labels",
+    "state_machines:pooled_bugs",
+    "state_machines:misses",
+    "state_machines:earlier_arms"
+   ],
+   "doc": "the state-machine study's numbers, by name, from the dataset's state_machines/ folder alone (claim_metrics.StateMachines over state_machines.numbers)"
   }
  },
  "groups": {
@@ -1712,6 +1734,11 @@
   },
   "second-judge": {
    "what": "the second judge, DeepSeek V4.1 Flash (deepseek-v4.1-flash-1017), in the dataset's second_judges/ folder: the card's and the papers' account of it beside the published judges",
+   "families": [],
+   "archive": []
+  },
+  "state-machines": {
+   "what": "the state-machine study in the dataset's state_machines/ folder: two runs on 34 AACR-Bench pull requests, its state labels and pooled state bugs, as the card states them",
    "families": [],
    "archive": []
   }
@@ -57614,6 +57641,230 @@
    "value": "+0.9",
    "group": "readme:martian",
    "q": "{second_judge:deepseek-v4.1-flash-1017/martian/final1-martian50|quickreview-frozen:core_f1} - {martian:final1-martian50|quickreview-frozen:core_f1}"
+  },
+  {
+   "id": "card.state-machines.1",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "runs on the 34 AACR-Bench pull requests that hold an earlier list of 45",
+   "value": "34",
+   "group": "state-machines",
+   "q": "state_machines:prs"
+  },
+  {
+   "id": "card.state-machines.2",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "**What it found.** Two AI readers relabelled all 186 answer-key defects of",
+   "value": "186",
+   "group": "state-machines",
+   "q": "state_machines:relabel.total"
+  },
+  {
+   "id": "card.state-machines.3",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "event or sequence): 56 state, 2 borderline, 128 not; 55 of the 56 can happen",
+   "value": "56",
+   "group": "state-machines",
+   "q": "state_machines:relabel.state"
+  },
+  {
+   "id": "card.state-machines.4",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "event or sequence): 56 state, 2 borderline, 128 not; 55 of the 56 can happen",
+   "value": "2",
+   "group": "state-machines",
+   "q": "state_machines:relabel.borderline"
+  },
+  {
+   "id": "card.state-machines.5",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "event or sequence): 56 state, 2 borderline, 128 not; 55 of the 56 can happen",
+   "value": "128",
+   "group": "state-machines",
+   "q": "state_machines:relabel.not"
+  },
+  {
+   "id": "card.state-machines.6",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "event or sequence): 56 state, 2 borderline, 128 not; 55 of the 56 can happen",
+   "value": "55",
+   "group": "state-machines",
+   "q": "state_machines:relabel.reachable"
+  },
+  {
+   "id": "card.state-machines.7",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "event or sequence): 56 state, 2 borderline, 128 not; 55 of the 56 can happen",
+   "value": "56",
+   "group": "state-machines",
+   "q": "state_machines:relabel.state"
+  },
+  {
+   "id": "card.state-machines.8",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "at head. On those 55 the state review found 44 and the default review 45.",
+   "value": "55",
+   "group": "state-machines",
+   "q": "state_machines:relabel.reachable"
+  },
+  {
+   "id": "card.state-machines.9",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "at head. On those 55 the state review found 44 and the default review 45.",
+   "value": "44",
+   "group": "state-machines",
+   "q": "state_machines:key.sm4-p"
+  },
+  {
+   "id": "card.state-machines.10",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "at head. On those 55 the state review found 44 and the default review 45.",
+   "value": "45",
+   "group": "state-machines",
+   "q": "state_machines:key.sm1-c"
+  },
+  {
+   "id": "card.state-machines.11",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "agents confirmed 50 of them in the code, for 105 known real state bugs. Of",
+   "value": "50",
+   "group": "state-machines",
+   "q": "state_machines:pool.unlisted"
+  },
+  {
+   "id": "card.state-machines.12",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "agents confirmed 50 of them in the code, for 105 known real state bugs. Of",
+   "value": "105",
+   "group": "state-machines",
+   "q": "state_machines:pool.total"
+  },
+  {
+   "id": "card.state-machines.13",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "the 105 the state review found 89 (85%) and the default review 75 (71%), for",
+   "value": "105",
+   "group": "state-machines",
+   "q": "state_machines:pool.total"
+  },
+  {
+   "id": "card.state-machines.14",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "the 105 the state review found 89 (85%) and the default review 75 (71%), for",
+   "value": "89",
+   "group": "state-machines",
+   "q": "state_machines:pool.sm4-p"
+  },
+  {
+   "id": "card.state-machines.15",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "the 105 the state review found 89 (85%) and the default review 75 (71%), for",
+   "value": "85%",
+   "group": "state-machines",
+   "q": "state_machines:pool.sm4-p.pct"
+  },
+  {
+   "id": "card.state-machines.16",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "the 105 the state review found 89 (85%) and the default review 75 (71%), for",
+   "value": "75",
+   "group": "state-machines",
+   "q": "state_machines:pool.sm1-c"
+  },
+  {
+   "id": "card.state-machines.17",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "the 105 the state review found 89 (85%) and the default review 75 (71%), for",
+   "value": "71%",
+   "group": "state-machines",
+   "q": "state_machines:pool.sm1-c.pct"
+  },
+  {
+   "id": "card.state-machines.18",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "$2.78 and $2.77 a pull request and with 4.7 against 11.7 comments a pull",
+   "value": "2.78",
+   "group": "state-machines",
+   "q": "state_machines:cost.sm4-p.usd_per_pr"
+  },
+  {
+   "id": "card.state-machines.19",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "$2.78 and $2.77 a pull request and with 4.7 against 11.7 comments a pull",
+   "value": "2.77",
+   "group": "state-machines",
+   "q": "state_machines:cost.sm1-c.usd_per_pr"
+  },
+  {
+   "id": "card.state-machines.20",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "$2.78 and $2.77 a pull request and with 4.7 against 11.7 comments a pull",
+   "value": "4.7",
+   "group": "state-machines",
+   "q": "state_machines:comments.sm4-p.per_pr"
+  },
+  {
+   "id": "card.state-machines.21",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "$2.78 and $2.77 a pull request and with 4.7 against 11.7 comments a pull",
+   "value": "11.7",
+   "group": "state-machines",
+   "q": "state_machines:comments.sm1-c.per_pr"
+  },
+  {
+   "id": "card.state-machines.22",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "request; together they found 95. Of the state review's 159 comments, 96 are",
+   "value": "95",
+   "group": "state-machines",
+   "q": "state_machines:pool.union"
+  },
+  {
+   "id": "card.state-machines.23",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "request; together they found 95. Of the state review's 159 comments, 96 are",
+   "value": "159",
+   "group": "state-machines",
+   "q": "state_machines:comments.sm4-p"
+  },
+  {
+   "id": "card.state-machines.24",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "request; together they found 95. Of the state review's 159 comments, 96 are",
+   "value": "96",
+   "group": "state-machines",
+   "q": "state_machines:comments.sm4-p.state"
+  },
+  {
+   "id": "card.state-machines.25",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "about state bugs, 31 are borderline and 32 are about something else.",
+   "value": "31",
+   "group": "state-machines",
+   "q": "state_machines:comments.sm4-p.borderline"
+  },
+  {
+   "id": "card.state-machines.26",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "about state bugs, 31 are borderline and 32 are about something else.",
+   "value": "32",
+   "group": "state-machines",
+   "q": "state_machines:comments.sm4-p.not"
+  },
+  {
+   "id": "card.state-machines.27",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "runs on the 34 AACR-Bench pull requests that hold an earlier list of 45",
+   "value": "45",
+   "group": "state-machines",
+   "q": "state_machines:old45.total"
+  },
+  {
+   "id": "card.state-machines.28",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "labelled state defects (28 of them hold a state defect under the strict",
+   "value": "28",
+   "group": "state-machines",
+   "q": "state_machines:prs.with_strict_state"
   },
   {
    "id": "bench.second-judge.36",

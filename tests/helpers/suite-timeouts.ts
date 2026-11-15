@@ -112,6 +112,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/hf-card.test.ts",
   "tests/hf-export.test.ts",
   "tests/hf-second-judge.test.ts",
+  "tests/hf-state-machines.test.ts",
   "tests/host-isolation.test.ts",
   "tests/host-wrapper.test.ts",
   "tests/improvements-e2e.test.ts",
