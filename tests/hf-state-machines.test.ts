@@ -982,8 +982,14 @@ describe("state_machines: validation.json's checks", () => {
       ),
     );
     expect(failing(bad)).toEqual([C.cost]);
-    const cost = checks(bad, manifest(bad, join(bad, "m.sha256"))).find((c) => c.check.endsWith(C.cost))!;
-    expect(cost.got).toEqual({ usd_per_pr_state: 2.5, usd_per_pr_default: 1.5, usd_per_pr_both: 4.01 });
+    const cost = checks(bad, manifest(bad, join(bad, "m.sha256"))).find((c) =>
+      c.check.endsWith(C.cost),
+    )!;
+    expect(cost.got).toEqual({
+      usd_per_pr_state: 2.5,
+      usd_per_pr_default: 1.5,
+      usd_per_pr_both: 4.01,
+    });
   });
 
   // MUTATION: in state_machines.numbers, give prs from the state arm alone (drop the comparison with the default arm's) — this fails
@@ -1318,7 +1324,10 @@ describe("state_machines: the build", () => {
     })),
     checked: [{ pr: PR, index: 1, check: { verdict: "borderline", agree: false, reason: "s" } }],
     misses: [
-      { ...miss("D2", true), relabel_note: "Relabelled on review by Jordan: see /home/alice/notes" },
+      {
+        ...miss("D2", true),
+        relabel_note: "Relabelled on review by Jordan: see /home/alice/notes",
+      },
       miss("D3", false),
     ],
   });
