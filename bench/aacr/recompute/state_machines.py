@@ -4,7 +4,7 @@
     uv run --no-project --with pyarrow python bench/aacr/recompute/state_machines.py --data <hf-dataset> [--json OUT]
     uv run --no-project --with pyarrow python bench/aacr/recompute/state_machines.py build --runs-dir <runs> \\
         --labels <label dir> --positives <positives.json> --earlier <earlier arms' score.json> \\
-        --figures <figure dir> --repo <checkout> --out <dir>/state_machines
+        --figures <figure dir> --repo <checkout> [--key <answer key dir>] --out <dir>/state_machines
 
 The study compares two AACR-Bench runs on 34 pull requests that hold labelled state defects, reviewer and
 judge gpt-6.1-sol (judge effort high): the state-machine review (`sm4-p`, `review.profile=state-machines`
@@ -23,8 +23,13 @@ checks() is what the export's validation.json and the claims verifier's release 
   - every table has exactly its listed columns (ids, verdicts, our labels and reasons, QuickReview's own
     posted comments; never an answer-key defect's text);
   - the rows are whole: both arms reviewed and were judged on the same PRs, one verdict per arm on every
-    labelled answer-key defect, every labelled comment is a posted one, and the default review's labelled
-    comments are exactly its posted comments the judge matched to no answer-key defect;
+    labelled answer-key defect, every judged comment is a posted one (inline, or a finding in the review
+    body), every labelled comment is an inline one, the default review's labelled comments are exactly its
+    inline comments the judge matched to no answer-key defect, and every unlisted bug's found flags are its
+    listed inline comments;
+  - README.md is readme() of numbers(): every number the README prints, recomputed from the tables;
+  - no label text of ours repeats QUOTE_WORDS words in a row of an answer-key defect's own text (the
+    dataset's `defects`, beside the folder);
   - every number the study's write-up prints (POST), recomputed from the tables alone (numbers()).
 
 claim_metrics.StateMachines gives numbers() by name to the claims verifier (`state_machines` keys). Tables
@@ -38,6 +43,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -77,9 +83,11 @@ TABLES: Dict[str, tuple] = {
              "judge_model", "runs", "prs", "note"),
     "cases": ("arm_id", "instance_id", "set", "run", "status", "verdict", "usd", "minutes", "n_posted", "judged",
               "judge_input_tokens", "judge_output_tokens", "judge_cache_read_tokens"),
-    "reviews": ("arm_id", "instance_id", "index", "path", "line", "side", "body", "comment_id"),
-    "defect_verdicts": ("arm_id", "instance_id", "defect_id", "verdict", "comment_ids", "why"),
-    "comment_verdicts": ("arm_id", "instance_id", "comment_id", "index", "grade", "defect_id", "new_defect", "why"),
+    "reviews": ("arm_id", "instance_id", "index", "inline", "path", "line", "side", "body", "comment_id"),
+    "defect_verdicts": ("arm_id", "instance_id", "judge", "key_version", "defect_id", "verdict", "credit",
+                        "comment_ids", "why"),
+    "comment_verdicts": ("arm_id", "instance_id", "judge", "comment_id", "index", "grade", "defect_id", "new_defect",
+                         "why"),
     "state_labels": ("instance_id", "defect_id", "verdict", "klass", "how", "old45", "reachable", "votes"),
     "comment_state_labels": ("arm_id", "instance_id", "index", "title", "verdict", "klass", "reason",
                              "first_verdict", "second_read_verdict", "second_read_agrees", "second_read_reason",
@@ -92,24 +100,41 @@ TABLES: Dict[str, tuple] = {
     "earlier_arms": ("arm_id", "description", "instance_id", "defect_id", "found"),
 }
 
+# The label texts that are ours (a reader's words): none may repeat QUOTE_WORDS words in a row of an answer-key
+# defect's own text (its title, statement, evidence or notes), which the dataset's `defects` table holds. `build`
+# replaces such a run with QUOTED; checks() fails a folder that holds one. "votes.reason" is a field of each vote.
+LABEL_TEXT: Dict[str, tuple] = {
+    "state_labels": ("votes.reason",),
+    "comment_state_labels": ("reason", "second_read_reason"),
+    "pooled_bugs": ("statement", "check_reason", "blind_reason"),
+    "misses": ("what_would_have_caught_it", "second_read_reason"),
+}
+QUOTE_WORDS = 10
+QUOTED = "[words of the answer key's defect]"
+
 # The numbers the study's write-up prints, each recomputed by numbers() from the tables (checks() compares).
+# Percentages are rounded to whole numbers, comments per PR to one decimal, dollars to cents; the cost of both
+# runs is the sum of the two per-PR costs as rounded, as the write-up adds them.
 POST: Dict[str, object] = {
     "prs": 34,
-    "relabel": {"total": 186, "state": 56, "borderline": 2, "not": 128, "reachable": 55},
-    "old45": {"total": 45, "state": 35, "borderline": 2, "not": 8},
+    "relabel": {"total": 186, "state": 56, "borderline": 2, "not": 128, "reachable": 55, "state_not_old45": 21},
+    "old45": {"total": 45, "state": 35, "borderline": 2, "not": 8, "found_default": 36},
     "key_found": {STATE: 44, DEFAULT: 45, "sm1-s4": 38, "sm1-s8": 39, "sm1-s8d": 43, "sm1-r": 46},
-    "key_only": {"state_not_default": 0, "default_not_state": 1},
+    "key_only": {"state_not_default": 0, "default_not_state": 1,
+                 "default_not_state_ids": ["immich-app__immich@b7a1255#D2"]},
     "pool": {"total": 105, "key": 55, "unlisted": 50, STATE: 89, DEFAULT: 75, "union": 95},
     "unlisted": {"both": 25, "state_only": 20, "default_only": 5, "blind_checked": 25, "blind_agree": 25},
     "classes": {"event-order": [31, 29, 22], "stale-copy": [25, 18, 16], "lifecycle-order": [18, 17, 13],
                 "stored-state": [13, 8, 10], "stuck-state": [8, 7, 7], "unhandled-state": [4, 4, 3],
                 "unchecked-transition": [3, 3, 3], "impossible-states": [3, 3, 1]},
+    "shares": {"key": {STATE: 80, DEFAULT: 82, "sm1-s4": 69, "sm1-s8": 71, "sm1-s8d": 78},
+               "pool": {STATE: 85, DEFAULT: 71, "union": 90}, "state_comments_not": 20},
     "comments": {STATE: 159, "state": 96, "borderline": 31, "not": 32, "not_judged_correct": 28, DEFAULT: 397,
                  "per_pr_state": 4.7, "per_pr_default": 11.7, "per_pr_union": 16.4},
     "default_found_any": {"found": 161, "of": 186},
-    "misses": {"total": 12, "site_read_nothing_reported": 6, "reported_a_different_problem": 5,
+    "misses": {"total": 12, "real": 11, "site_read_nothing_reported": 6, "reported_a_different_problem": 5,
                "defect_not_real_or_unreachable": 1},
-    "cost": {"usd_per_pr_state": 2.78, "usd_per_pr_default": 2.77, "minutes_per_pr_state": 12.0},
+    "cost": {"usd_per_pr_state": 2.78, "usd_per_pr_default": 2.77, "usd_per_pr_both": 5.55},
 }
 
 
@@ -189,12 +214,21 @@ def file_rows(root: str) -> List[tuple]:
 
 # ---------------------------------------------------------------------------------------------------- numbers
 
-def numbers(path: str) -> Dict[str, float]:
+def numbers(path: str) -> Dict[str, object]:
     """Every number of the study, by name, from the folder's tables alone (`path`: the dataset root, its
     data/ dir or the folder itself). Percentages are x100, money in dollars, time in minutes."""
+    return numbers_of(tables_of(path))
+
+
+def tables_of(path: str) -> Dict[str, List[dict]]:
+    """Every table of the folder (`path`: the dataset root, its data/ dir or the folder itself)."""
     d = path if any(os.path.exists(os.path.join(path, f"pooled_bugs.{x}")) for x in ("parquet", "jsonl")) else folder_of(path)
-    t = {n: load_table(d, n) for n in TABLES}
-    out: Dict[str, float] = {}
+    return {n: load_table(d, n) for n in TABLES}
+
+
+def numbers_of(t: Dict[str, List[dict]]) -> Dict[str, object]:
+    """numbers() from the tables in hand. Every value is a number, except `key.default_not_state.ids` (a list)."""
+    out: Dict[str, object] = {}
 
     # the strict relabel of the answer-key defects
     labels = t["state_labels"]
@@ -209,6 +243,8 @@ def numbers(path: str) -> Dict[str, float]:
     out["relabel.tiebreak"] = sum(1 for r in labels if r["how"] == "tiebreak")
     out["relabel.state_not_old45"] = sum(1 for r in labels if r["verdict"] == "state_machine" and not r["old45"])
     out["old45.total"] = len(old)
+    out["prs.with_old45"] = len({r["instance_id"] for r in old})
+    out["prs.with_strict_state"] = len({r["instance_id"] for r in labels if r["verdict"] == "state_machine"})
 
     # the answer key: the judge's verdict `found` (a partial is not a find here)
     found = {a: {(r["instance_id"], r["defect_id"]) for r in t["defect_verdicts"]
@@ -222,6 +258,7 @@ def numbers(path: str) -> Dict[str, float]:
     out["defects.total"] = len(labels)
     out["key.state_not_default"] = len((found[STATE] - found[DEFAULT]) & reach)
     out["key.default_not_state"] = len((found[DEFAULT] - found[STATE]) & reach)
+    out["key.default_not_state.ids"] = sorted(f"{p}#{d}" for p, d in (found[DEFAULT] - found[STATE]) & reach)
     for a in EARLIER:
         f = {(r["instance_id"], r["defect_id"]) for r in t["earlier_arms"] if r["arm_id"] == a and r["found"]}
         out[f"key.{a}"] = len(f & reach)
@@ -263,8 +300,9 @@ def numbers(path: str) -> Dict[str, float]:
     # the comments
     prs = {a: {r["instance_id"] for r in t["cases"] if r["arm_id"] == a} for a in ARMS}
     out["prs"] = len(prs[STATE]) if prs[STATE] == prs[DEFAULT] else None
-    for a in ARMS:
-        out[f"comments.{a}"] = sum(1 for r in t["reviews"] if r["arm_id"] == a)
+    for a in ARMS:  # the inline comments; a finding posted in the review body is a row with `inline` false
+        out[f"comments.{a}"] = sum(1 for r in t["reviews"] if r["arm_id"] == a and r["inline"])
+        out[f"comments.{a}.body"] = sum(1 for r in t["reviews"] if r["arm_id"] == a and not r["inline"])
         out[f"comments.{a}.per_pr"] = out[f"comments.{a}"] / len(prs[a]) if prs[a] else None
     out["comments.union.per_pr"] = (out[f"comments.{STATE}"] + out[f"comments.{DEFAULT}"]) / out["prs"] if out["prs"] else None
     out["comments.state_share_of_default"] = (100.0 * out[f"comments.{STATE}"] / out[f"comments.{DEFAULT}"]
@@ -289,6 +327,7 @@ def numbers(path: str) -> Dict[str, float]:
     # the misses: the state review's, on the strict state defects
     miss = t["misses"]
     out["misses.total"] = len(miss)
+    out["misses.real"] = sum(1 for m in miss if m["cause"] != "defect_not_real_or_unreachable")
     for c in MISS_CAUSES:
         out[f"misses.{c}"] = sum(1 for m in miss if m["cause"] == c)
     out["misses.are_strict_not_found"] = float({(m["instance_id"], m["defect_id"]) for m in miss} == strict - found[STATE])
@@ -301,8 +340,10 @@ def numbers(path: str) -> Dict[str, float]:
         out[f"cost.{a}.usd_total"] = sum(usd) if rows and None not in usd else None
         out[f"cost.{a}.usd_per_pr"] = out[f"cost.{a}.usd_total"] / len(rows) if out[f"cost.{a}.usd_total"] is not None else None
         out[f"cost.{a}.minutes_per_pr"] = sum(mins) / len(rows) if rows and None not in mins else None
-    out["cost.union.usd_per_pr"] = (out[f"cost.{STATE}.usd_per_pr"] + out[f"cost.{DEFAULT}.usd_per_pr"]
-                                    if None not in (out[f"cost.{STATE}.usd_per_pr"], out[f"cost.{DEFAULT}.usd_per_pr"]) else None)
+    both = (out[f"cost.{STATE}.usd_per_pr"], out[f"cost.{DEFAULT}.usd_per_pr"])
+    out["cost.union.usd_per_pr"] = sum(both) if None not in both else None
+    # the write-up adds the two per-PR costs as it prints them, rounded to cents
+    out["cost.union.usd_per_pr_rounded_sum"] = round(sum(round(x, 2) for x in both), 2) if None not in both else None
     return out
 
 
@@ -310,20 +351,29 @@ def _r(x, n):
     return None if x is None else round(x, n)
 
 
-def post_values(n: Dict[str, float]) -> Dict[str, object]:
-    """numbers() in POST's shape and rounding (the write-up's one decimal for comments and minutes per PR,
-    two for dollars)."""
+def _pct(x):
+    return None if x is None else int(round(x))
+
+
+def post_values(n: Dict[str, object]) -> Dict[str, object]:
+    """numbers() in POST's shape and rounding (POST's comment)."""
     g = lambda k: n.get(k)  # noqa: E731
     return {
         "prs": g("prs"),
-        "relabel": {k: g(f"relabel.{k}") for k in ("total", "state", "borderline", "not", "reachable")},
-        "old45": {k: g(f"old45.{k}") for k in ("total", "state", "borderline", "not")},
+        "relabel": {k: g(f"relabel.{k}") for k in ("total", "state", "borderline", "not", "reachable", "state_not_old45")},
+        "old45": {**{k: g(f"old45.{k}") for k in ("total", "state", "borderline", "not")},
+                  "found_default": g(f"key_old45.{DEFAULT}")},
         "key_found": {a: g(f"key.{a}") for a in (STATE, DEFAULT, *EARLIER)},
-        "key_only": {"state_not_default": g("key.state_not_default"), "default_not_state": g("key.default_not_state")},
+        "key_only": {"state_not_default": g("key.state_not_default"), "default_not_state": g("key.default_not_state"),
+                     "default_not_state_ids": g("key.default_not_state.ids")},
         "pool": {"total": g("pool.total"), "key": g("pool.key"), "unlisted": g("pool.unlisted"), STATE: g(f"pool.{STATE}"),
                  DEFAULT: g(f"pool.{DEFAULT}"), "union": g("pool.union")},
         "unlisted": {k: g(f"unlisted.{k}") for k in ("both", "state_only", "default_only", "blind_checked", "blind_agree")},
         "classes": {k: [g(f"class.{k}.pool"), g(f"class.{k}.{STATE}"), g(f"class.{k}.{DEFAULT}")] for k in CLASSES},
+        "shares": {"key": {a: _pct(g(f"key.{a}.pct")) for a in (STATE, DEFAULT, "sm1-s4", "sm1-s8", "sm1-s8d")},
+                   "pool": {STATE: _pct(g(f"pool.{STATE}.pct")), DEFAULT: _pct(g(f"pool.{DEFAULT}.pct")),
+                            "union": _pct(g("pool.union.pct"))},
+                   "state_comments_not": _pct(g(f"comments.{STATE}.not.pct"))},
         "comments": {STATE: g(f"comments.{STATE}"), "state": g(f"comments.{STATE}.state"),
                      "borderline": g(f"comments.{STATE}.borderline"), "not": g(f"comments.{STATE}.not"),
                      "not_judged_correct": g(f"comments.{STATE}.not_judged_correct"), DEFAULT: g(f"comments.{DEFAULT}"),
@@ -331,10 +381,10 @@ def post_values(n: Dict[str, float]) -> Dict[str, object]:
                      "per_pr_default": _r(g(f"comments.{DEFAULT}.per_pr"), 1),
                      "per_pr_union": _r(g("comments.union.per_pr"), 1)},
         "default_found_any": {"found": g(f"defects.{DEFAULT}.found"), "of": g("defects.total")},
-        "misses": {"total": g("misses.total"), **{c: g(f"misses.{c}") for c in MISS_CAUSES}},
+        "misses": {"total": g("misses.total"), "real": g("misses.real"), **{c: g(f"misses.{c}") for c in MISS_CAUSES}},
         "cost": {"usd_per_pr_state": _r(g(f"cost.{STATE}.usd_per_pr"), 2),
                  "usd_per_pr_default": _r(g(f"cost.{DEFAULT}.usd_per_pr"), 2),
-                 "minutes_per_pr_state": _r(g(f"cost.{STATE}.minutes_per_pr"), 1)},
+                 "usd_per_pr_both": g("cost.union.usd_per_pr_rounded_sum")},
     }
 
 
@@ -343,22 +393,29 @@ def post_values(n: Dict[str, float]) -> Dict[str, object]:
 # What each POST group's check states (validation.json's `check` text), in order.
 NUMBER_CHECKS = (
     ("prs", "both arms reviewed the same pull requests"),
-    ("relabel", "the strict relabel of the answer-key defects: state, borderline and not, and the state ones "
-                "reachable at head"),
-    ("old45", "the earlier list of 45 state defects under the strict relabel"),
+    ("relabel", "the strict relabel of the answer-key defects: state, borderline and not, the state ones "
+                "reachable at head, and the state ones not on the earlier list of 45"),
+    ("old45", "the earlier list of 45 state defects under the strict relabel, and how many of them the default "
+              "review found"),
     ("key_found", "answer-key recall on the reachable strict state defects (judge verdict found), of the two runs "
                   "and the four earlier builds"),
-    ("key_only", "the reachable strict state defects one run found and the other did not"),
+    ("key_only", "the reachable strict state defects one run found and the other did not, and which"),
     ("pool", "the pool of known real state bugs (answer key + unlisted) and how many of them each run and either "
              "run found; the answer-key part's found flags are the judge's verdicts"),
     ("unlisted", "the unlisted bugs found by both runs or by one, and the one-sided ones re-checked blind"),
     ("classes", "per class of state bug: pool, state review, default review"),
-    ("comments", "the posted comments: the state review's by label after the second reads, its not-state ones the "
+    ("shares", "the percentages: answer-key recall, the pool found, and the state review's comments about "
+               "something else"),
+    ("comments", "the inline comments: the state review's by label after the second reads, its not-state ones the "
                  "judge graded correct, the default review's, and comments per pull request"),
     ("default_found_any", "the answer-key defects of every kind the default review found"),
     ("misses", "the state review's misses on the strict state defects, by cause"),
-    ("cost", "list-price dollars and minutes per pull request (compare.usd_and_minutes)"),
+    ("cost", "list-price dollars per pull request (compare.usd_and_minutes), and both runs' as the sum of the two "
+             "rounded"),
 )
+README_CHECK = "README.md is the README its tables give (state_machines.readme of numbers())"
+QUOTE_CHECK = (f"no label text of ours repeats {QUOTE_WORDS} words in a row of an answer-key defect's text "
+               "(the dataset's `defects`)")
 
 
 def checks(root: str, manifest_path: str = MANIFEST, post: Optional[Dict[str, object]] = None) -> List[dict]:
@@ -380,7 +437,9 @@ def checks(root: str, manifest_path: str = MANIFEST, post: Optional[Dict[str, ob
     if not os.path.isdir(folder):
         why = f"no {FOLDER}/ beside the tables"
         check("every table has exactly its listed columns (no answer-key defect text)", why, {})
-        check("the rows are whole", why, {})
+        check(WHOLE_CHECK, why, {})
+        check(README_CHECK, why, True)
+        check(QUOTE_CHECK, why, {})
         for key, what in NUMBER_CHECKS:
             check(what, why, post.get(key))
         return out
@@ -393,16 +452,36 @@ def checks(root: str, manifest_path: str = MANIFEST, post: Optional[Dict[str, ob
         whole = whole_problems(folder)
     except (SystemExit, OSError, ValueError, KeyError, TypeError) as e:
         whole = {"error": str(e)}
-    check("the rows are whole: both arms judged on the same pull requests, one verdict per arm on every "
-          "labelled answer-key defect, every labelled comment a posted one, and the default review's labelled "
-          "comments exactly its posted comments matched to no answer-key defect", whole, {})
+    check(WHOLE_CHECK, whole, {})
     try:
-        got = post_values(numbers(folder))
+        n = numbers(folder)
+    except (SystemExit, OSError, ValueError, KeyError, TypeError) as e:
+        n = {"error": str(e)}
+    try:
+        with open(os.path.join(folder, "README.md"), encoding="utf-8") as f:
+            same = f.read() == readme(n)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        same = {"error": str(e)}
+    check(README_CHECK, same, True)
+    try:
+        quoted = quote_problems(root)
+    except (SystemExit, OSError, ValueError, KeyError, TypeError) as e:
+        quoted = {"error": str(e)}
+    check(QUOTE_CHECK, quoted, {})
+    try:
+        got = post_values(n) if "error" not in n else {k: n for k, _ in NUMBER_CHECKS}
     except (SystemExit, OSError, ValueError, KeyError, TypeError) as e:
         got = {k: {"error": str(e)} for k, _ in NUMBER_CHECKS}
     for key, what in NUMBER_CHECKS:
         check(what, got.get(key), post.get(key))
     return out
+
+
+WHOLE_CHECK = ("the rows are whole: both arms judged on the same pull requests, one verdict per arm on every "
+               "labelled answer-key defect, every judged comment a posted one (inline or in the review body), every "
+               "labelled comment an inline one, the default review's labelled comments exactly its inline comments "
+               "matched to no answer-key defect, and every unlisted bug found exactly by the reviews whose inline "
+               "comments it lists")
 
 
 def whole_problems(folder: str) -> Dict[str, object]:
@@ -422,32 +501,37 @@ def whole_problems(folder: str) -> Dict[str, object]:
             bad[f"defect_verdicts: {a} is not one verdict on each labelled defect"] = {
                 "missing": len(set(labelled) - set(got)), "extra": len(set(got) - set(labelled)),
                 "repeated": len(got) - len(set(got))}
+    inline = [r for r in t["reviews"] if r["inline"]]
     posted = collections.defaultdict(list)
-    for r in t["reviews"]:
+    for r in inline:
         posted[(r["arm_id"], r["instance_id"])].append(r["index"])
     gaps = sorted(f"{a}/{p}" for (a, p), ix in posted.items() if sorted(ix) != list(range(len(ix))))
     if gaps:
-        bad["reviews: comment indices are not 0..n-1"] = gaps[:10]
-    counts = collections.Counter((r["arm_id"], r["instance_id"]) for r in t["reviews"])
+        bad["reviews: inline comment indices are not 0..n-1"] = gaps[:10]
+    body = sorted(f"{r['arm_id']}/{r['instance_id']}#{r['comment_id']}" for r in t["reviews"]
+                  if not r["inline"] and (r["index"] is not None or r["comment_id"] is None))
+    if body:
+        bad["reviews: a finding in the review body with an index, or without the judge's id"] = body[:10]
+    counts = collections.Counter((r["arm_id"], r["instance_id"]) for r in inline)
     off = sorted(f"{r['arm_id']}/{r['instance_id']}" for r in t["cases"] if counts[(r["arm_id"], r["instance_id"])] != r["n_posted"])
     if off:
-        bad["cases: n_posted differs from the posted comments"] = off[:10]
-    keys = {(r["arm_id"], r["instance_id"], r["index"]) for r in t["reviews"]}
+        bad["cases: n_posted differs from the inline comments"] = off[:10]
+    keys = {(r["arm_id"], r["instance_id"], r["index"]) for r in inline}
     lab = [(r["arm_id"], r["instance_id"], r["index"]) for r in t["comment_state_labels"]]
     stray = sorted(f"{a}/{p}#{i}" for a, p, i in set(lab) - keys)
     if stray or len(lab) != len(set(lab)):
-        bad["comment_state_labels: a label of no posted comment, or two labels of one"] = {
+        bad["comment_state_labels: a label of no inline comment, or two labels of one"] = {
             "stray": stray[:10], "repeated": len(lab) - len(set(lab))}
     state_posted = {k for k in keys if k[0] == STATE}
     if {k for k in lab if k[0] == STATE} != state_posted:
-        bad["comment_state_labels: the state review's labels are not every one of its posted comments"] = {
+        bad["comment_state_labels: the state review's labels are not every one of its inline comments"] = {
             "unlabelled": len(state_posted - set(lab))}
     unmatched = {(r["arm_id"], r["instance_id"], r["index"]) for r in t["comment_verdicts"]
                  if r["arm_id"] == DEFAULT and r["index"] is not None and not r["defect_id"]}
     if {k for k in lab if k[0] == DEFAULT} != unmatched:
-        bad["comment_state_labels: the default review's labels are not exactly its unmatched posted comments"] = {
+        bad["comment_state_labels: the default review's labels are not exactly its unmatched inline comments"] = {
             "missing": len(unmatched - set(lab)), "extra": len({k for k in lab if k[0] == DEFAULT} - unmatched)}
-    n = numbers(folder)
+    n = numbers_of(t)
     if not n["pool.key_is_reachable_strict"]:
         bad["pooled_bugs: the answer-key rows are not the reachable strict state defects"] = True
     if not n["pool.key_flags_agree"]:
@@ -456,12 +540,110 @@ def whole_problems(folder: str) -> Dict[str, object]:
         bad["misses: not exactly the strict state defects the state review did not find"] = True
     if n["class.other"]:
         bad["pooled_bugs: a class outside the eight"] = n["class.other"]
+    flags = []
+    for b in t["pooled_bugs"]:
+        if b["source"] != "unlisted":
+            continue
+        for a, flag, lst in ((STATE, "state_found", "state_review_comments"),
+                             (DEFAULT, "default_found", "default_review_comments")):
+            ix = b[lst] or []
+            if bool(b[flag]) != bool(ix) or any((a, b["instance_id"], i) not in keys for i in ix):
+                flags.append(f"{b['bug_id']} {flag}")
+    if flags:
+        bad["pooled_bugs: an unlisted bug's found flag is not its listed inline comments"] = sorted(flags)[:10]
     ids = {(r["arm_id"], r["instance_id"], r["comment_id"]) for r in t["comment_verdicts"]}
     unl = sorted(f"{r['arm_id']}/{r['instance_id']}#{r['index']}" for r in t["reviews"]
                  if r["comment_id"] is not None and (r["arm_id"], r["instance_id"], r["comment_id"]) not in ids)
     if unl:
         bad["reviews: a comment id the judge's verdicts lack"] = unl[:10]
+    row_of = {(r["arm_id"], r["instance_id"], r["comment_id"]): r["index"] for r in t["reviews"] if r["comment_id"]}
+    loose = sorted(f"{r['arm_id']}/{r['instance_id']}#{r['comment_id']}" for r in t["comment_verdicts"]
+                   if (r["arm_id"], r["instance_id"], r["comment_id"]) not in row_of
+                   or row_of[(r["arm_id"], r["instance_id"], r["comment_id"])] != r["index"])
+    if loose:
+        bad["comment_verdicts: a judged comment that is no reviews row, or another index than its row's"] = loose[:10]
     return bad
+
+
+# ---------------------------------------------------------------------------------------------------- quotes
+
+def _tokens(text: str) -> List[tuple]:
+    """(start, end, word) of every word of a text (a run of letters, digits and `_`), lower case: punctuation
+    and code marks between words do not hide a repeat."""
+    return [(m.start(), m.end(), m.group().lower()) for m in re.finditer(r"\w+", text or "")]
+
+
+def shingles(texts) -> set:
+    """Every run of QUOTE_WORDS words of the texts."""
+    out = set()
+    for x in texts:
+        ws = [w for _, _, w in _tokens(x if isinstance(x, str) else "")]
+        out |= {tuple(ws[i:i + QUOTE_WORDS]) for i in range(len(ws) - QUOTE_WORDS + 1)}
+    return out
+
+
+def _quoted_runs(text: str, key: set) -> List[tuple]:
+    """(start, end) of each stretch of a text made of runs of QUOTE_WORDS words that are in `key`."""
+    tok = _tokens(text)
+    hit = [False] * len(tok)
+    for i in range(len(tok) - QUOTE_WORDS + 1):
+        if tuple(w for _, _, w in tok[i:i + QUOTE_WORDS]) in key:
+            for k in range(i, i + QUOTE_WORDS):
+                hit[k] = True
+    runs, i = [], 0
+    while i < len(tok):
+        if hit[i]:
+            k = i
+            while k + 1 < len(tok) and hit[k + 1]:
+                k += 1
+            runs.append((tok[i][0], tok[k][1]))
+            i = k + 1
+        else:
+            i += 1
+    return runs
+
+
+def unquote(text: Optional[str], key: set) -> Optional[str]:
+    """The text with every stretch it shares with `key` (shingles()) replaced by QUOTED."""
+    if not isinstance(text, str):
+        return text
+    for a, b in reversed(_quoted_runs(text, key)):
+        text = text[:a] + QUOTED + text[b:]
+    return text
+
+
+def _label_texts(table: str, r: dict):
+    """(field, text) of a row's label texts (LABEL_TEXT)."""
+    for f in LABEL_TEXT.get(table, ()):
+        head, _, sub = f.partition(".")
+        if sub:
+            for i, v in enumerate(r.get(head) or []):
+                yield f"{head}[{i}].{sub}", v.get(sub)
+        else:
+            yield f, r.get(f)
+
+
+def key_text(d: dict) -> list:
+    """An answer-key defect's own texts: the dataset's `defects` columns (title, statement, evidence,
+    counts_if) or the key file's fields (notes for counts_if)."""
+    return [d.get("title"), d.get("statement"), d.get("evidence"), d.get("counts_if", d.get("notes"))]
+
+
+def quote_problems(root: str) -> Dict[str, object]:
+    """{table.field: [instance_id ...]} of the label texts that repeat an answer-key defect's words of the same
+    pull request (the dataset's `defects`, beside the folder); empty when none."""
+    root = root_of(root)
+    key: Dict[str, set] = collections.defaultdict(set)
+    for d in load_table(os.path.join(root, "data"), "defects"):
+        key[d["instance_id"]] |= shingles(key_text(d))
+    bad: Dict[str, list] = collections.defaultdict(list)
+    folder = os.path.join(root, FOLDER)
+    for table in LABEL_TEXT:
+        for r in load_table(folder, table):
+            for f, v in _label_texts(table, r):
+                if isinstance(v, str) and _quoted_runs(v, key[r["instance_id"]]):
+                    bad[f"{table}.{f.split('[')[0]}"].append(r["instance_id"])
+    return {k: sorted(v)[:10] for k, v in bad.items()}
 
 
 # ---------------------------------------------------------------------------------------------------- build
@@ -484,25 +666,35 @@ def _on_main(repo: str, commit: str) -> bool:
     return p.returncode == 0
 
 
-def build(a) -> None:
-    """Write the folder from the runs and the label files (`state_machines.py build --help`)."""
+def _key_texts(key_dir: str) -> Dict[str, set]:
+    """{instance_id: shingles of its answer-key defects' texts} from the key files (<set>.json)."""
+    out: Dict[str, set] = collections.defaultdict(set)
+    for s in SETS:
+        p = os.path.join(key_dir, f"{s}.json")
+        if os.path.exists(p):
+            for iid, c in json.load(open(p))["cases"].items():
+                for d in c["defects"]:
+                    out[iid] |= shingles(key_text(d))
+    return out
+
+
+BODY_MARK = "_posted in the body_"
+
+
+def collect(a) -> tuple:
+    """The folder's tables from the runs and the label files, and the scrub's counts: (tables, counts). Nothing
+    is written."""
     sys.path.insert(0, os.path.dirname(HERE))
     import compare
     import hf_export as H
     import release_catalogue as RC
 
-    out = os.path.abspath(a.out)
-    if os.path.basename(out) != FOLDER:
-        raise SystemExit(f"--out: the `{FOLDER}` folder itself, not {out}")
-    if os.path.exists(out):
-        raise SystemExit(f"--out {out} exists: give a new folder (nothing is overwritten)")
     counts = collections.Counter()
     S = lambda x: H.scrub_obj(x, counts)  # noqa: E731
     lab = a.labels
     pos = json.load(open(a.positives))
     bysub = pos["bysub"]
     pr_set = {pr: s for s, ps in bysub.items() for pr in ps}
-    rd = lambda arm, pr: os.path.join(a.runs_dir, f"{arm}-{pr_set[pr]}")  # noqa: E731
     tables: Dict[str, List[dict]] = {n: [] for n in TABLES}
 
     # arms
@@ -526,7 +718,9 @@ def build(a) -> None:
         tables["arms"].append({
             "arm_id": arm, "display_name": name, "image": one([x["image"] for x in aj], "image"),
             "image_id": one([x["image_id"] for x in aj], "image_id"), "config": one([x["config"] for x in aj], "config"),
-            "profile": one([r.get("profile") for r in rj], "profile"), **f, "pi": one([r.get("pi") for r in rj], "pi"),
+            # no profile is null, never an empty string
+            "profile": one([r.get("profile") or None for r in rj], "profile"), **f,
+            "pi": one([r.get("pi") for r in rj], "pi"),
             "reviewer_model": one([r["models"]["conversation"] for r in rj], "model"),
             "judge_model": "gpt-6.1-sol (effort high)", "runs": runs, "prs": len(pr_set), "note": note})
 
@@ -542,20 +736,36 @@ def build(a) -> None:
                 jf = _judge_file(os.path.join(a.runs_dir, run), pr)
                 j = json.load(open(jf)) if jf else None
                 j = j if isinstance(j, dict) and not j.get("error") else None
+                judge = re.sub(r"^v\d+-", "", os.path.basename(os.path.dirname(jf))) if j is not None else None
                 # the judge's ids C1..Cn number the result file's rows with text, in order
                 res = json.load(open(os.path.join(a.runs_dir, run, "results", "all", f"{pr}.json")))
                 rows = [r for r in (res.get("review") or {}).get("comments") or [] if (r.get("content") or "").strip()]
                 if j is not None and len(rows) != len(j["comments"]):
                     raise SystemExit(f"{run}/{pr}: {len(rows)} result rows, {len(j['comments'])} judged comments")
+                # an inline comment is the first unused row of the same text; two comments of one text take two rows
                 cid_of, used = {}, set()
                 for i, b in enumerate(posted):
                     ids = [f"C{k + 1}" for k, r in enumerate(rows) if r["content"] == b["body"] and f"C{k + 1}" not in used]
                     if ids:
                         used.add(ids[0])
                         cid_of[i] = ids[0]
-                    tables["reviews"].append({"arm_id": arm, "instance_id": pr, "index": i, "path": b.get("path"),
-                                              "line": b.get("line"), "side": b.get("side"), "body": b.get("body"),
+                    tables["reviews"].append({"arm_id": arm, "instance_id": pr, "index": i, "inline": True,
+                                              "path": b.get("path"), "line": b.get("line"), "side": b.get("side"),
+                                              "body": b.get("body"),
                                               "comment_id": cid_of.get(i) if j is not None else None})
+                # a row no inline comment took was posted in the review body (review.md says so for each one)
+                rest = [(f"C{k + 1}", r) for k, r in enumerate(rows) if f"C{k + 1}" not in used]
+                if rest:
+                    md = open(os.path.join(case, "review.md"), encoding="utf-8").read()
+                    title = lambda r: r["content"].split("\n", 1)[0].split("] ", 1)[-1].strip()  # noqa: E731
+                    lost = [c for c, r in rest if title(r) not in md]
+                    if lost or md.count(BODY_MARK) != len(rest):
+                        raise SystemExit(f"{run}/{pr}: result rows {[c for c, _ in rest]} are neither inline comments "
+                                         f"nor the review body's {md.count(BODY_MARK)} findings")
+                    for c, r in rest:
+                        tables["reviews"].append({"arm_id": arm, "instance_id": pr, "index": None, "inline": False,
+                                                  "path": r.get("path"), "line": r.get("end_line"), "side": None,
+                                                  "body": r["content"], "comment_id": c if j is not None else None})
                 u = (j or {}).get("usage") or {}
                 tables["cases"].append({"arm_id": arm, "instance_id": pr, "set": s, "run": run,
                                         "status": summ.get("status"), "verdict": summ.get("verdict"), "usd": usd,
@@ -566,15 +776,17 @@ def build(a) -> None:
                     continue
                 index_of = {c: i for i, c in cid_of.items()}
                 for d in j["defects"]:
-                    tables["defect_verdicts"].append({"arm_id": arm, "instance_id": pr, "defect_id": d["id"],
-                                                      "verdict": d.get("verdict"),
+                    tables["defect_verdicts"].append({"arm_id": arm, "instance_id": pr, "judge": judge,
+                                                      "key_version": str(j.get("defect_set_version")),
+                                                      "defect_id": d["id"], "verdict": d.get("verdict"),
+                                                      "credit": H.credit(d.get("verdict")),
                                                       "comment_ids": [str(x) for x in d.get("comments") or []],
                                                       "why": d.get("why")})
                 for c in j["comments"]:
-                    tables["comment_verdicts"].append({"arm_id": arm, "instance_id": pr, "comment_id": c["id"],
-                                                       "index": index_of.get(c["id"]), "grade": c.get("verdict"),
-                                                       "defect_id": c.get("defect"), "new_defect": c.get("new_defect"),
-                                                       "why": c.get("why")})
+                    tables["comment_verdicts"].append({"arm_id": arm, "instance_id": pr, "judge": judge,
+                                                       "comment_id": c["id"], "index": index_of.get(c["id"]),
+                                                       "grade": c.get("verdict"), "defect_id": c.get("defect"),
+                                                       "new_defect": c.get("new_defect"), "why": c.get("why")})
 
     # the labels
     sr = json.load(open(os.path.join(lab, "strict-relabel.json")))
@@ -582,6 +794,7 @@ def build(a) -> None:
     pu = json.load(open(os.path.join(lab, "pooled-unlisted.json")))
     res = json.load(open(os.path.join(lab, "results.json")))
     blind = {f"{x['pr']}#{x['bug_id']}": x for x in json.load(open(os.path.join(lab, "blind-result.json")))}
+    # a defect a second reader agreed cannot happen at head is not reachable
     unreachable = {m["key"] for m in cm["misses"] if m["cause"] == "defect_not_real_or_unreachable"
                    and (m.get("check") or {}).get("agree")}
     for k, v in sr.items():
@@ -620,6 +833,7 @@ def build(a) -> None:
             "default_review_comments": b["default_review_comments"] if b else None,
             "check_reason": b["check"]["reason"] if b else None,
             "blind_verdict": bl["blind"] if bl else None,
+            # a blind re-check holds when it names the review that found the bug and finds the bug real
             "blind_agrees": (bl["blind"] == bl["expected"] and bl["real"] == "real") if bl else None,
             "blind_reason": bl["reason"] if bl else None})
     for m in cm["misses"]:
@@ -648,20 +862,49 @@ def build(a) -> None:
         if mine != sorted(ea[DEFAULT]["found_strict"]):
             raise SystemExit("--earlier: its default-run found list differs from the judge files")
 
-    tables = {n: [S(r) for r in rows] for n, rows in tables.items()}
+    # our label texts never repeat an answer-key defect's own words (LABEL_TEXT)
+    key = _key_texts(a.key)
+    for table, fields in LABEL_TEXT.items():
+        for r in tables[table]:
+            for f in fields:
+                head, _, sub = f.partition(".")
+                for x in (r.get(head) or []) if sub else [r]:
+                    k = sub or head
+                    new = unquote(x.get(k), key[r["instance_id"]])
+                    if new != x.get(k):
+                        counts[f"quoted {table}.{head}"] += 1
+                        x[k] = new
+    return {n: [S(r) for r in rows] for n, rows in tables.items()}, counts
+
+
+def build(a) -> None:
+    """Write the folder from the runs and the label files (`state_machines.py build --help`)."""
+    sys.path.insert(0, os.path.dirname(HERE))
+    import hf_export as H
+
+    out = os.path.abspath(a.out)
+    if os.path.basename(out) != FOLDER:
+        raise SystemExit(f"--out: the `{FOLDER}` folder itself, not {out}")
+    if os.path.exists(out):
+        raise SystemExit(f"--out {out} exists: give a new folder (nothing is overwritten)")
     tmp = out + ".partial"
     if os.path.exists(tmp):
         raise SystemExit(f"{tmp} exists: move it away first")
+    for f in FIGURES:
+        txt = open(os.path.join(a.figures, f), encoding="utf-8").read()
+        if H.scrub_obj(txt, collections.Counter()) != txt:
+            raise SystemExit(f"figures/{f}: the scrub would rewrite it; fix the drawing")
+    tables, counts = collect(a)
     os.makedirs(os.path.join(tmp, "figures"))
     write_tables(tables, tmp)
     for f in FIGURES:
         shutil.copyfile(os.path.join(a.figures, f), os.path.join(tmp, "figures", f))
-        txt = open(os.path.join(tmp, "figures", f), encoding="utf-8").read()
-        if S(txt) != txt:
-            raise SystemExit(f"figures/{f}: the scrub would rewrite it; fix the drawing")
-    n = numbers(tmp)
-    with open(os.path.join(tmp, "README.md"), "w") as fh:
-        fh.write(S(readme(n)))
+    text = readme(numbers(tmp))
+    # checks() compares README.md with readme() of the tables, so the scrub may not change it
+    if H.scrub_obj(text, collections.Counter()) != text:
+        raise SystemExit(f"README.md: the scrub would rewrite it; {tmp} is left for a look")
+    with open(os.path.join(tmp, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write(text)
     os.rename(tmp, out)
     print(json.dumps({"rows": {k: len(v) for k, v in tables.items()}, "scrub_counts": dict(counts)}, indent=1))
 
@@ -678,68 +921,93 @@ def write_tables(tables: Dict[str, List[dict]], out: str) -> None:
         pq.write_table(t, os.path.join(out, f"{name}.parquet"), compression="zstd")
 
 
-def readme(n: Dict[str, float]) -> str:
-    """The folder's README, its numbers from numbers()."""
+def readme(n: Dict[str, object]) -> str:
+    """The folder's README, every number in it from numbers() (checks() compares the file with this)."""
     i = lambda k: f"{int(n[k]):,}"  # noqa: E731
     pct = lambda k: f"{n[k]:.0f}%"  # noqa: E731
     cls = "\n".join(f"| {k} | {i(f'class.{k}.pool')} | {i(f'class.{k}.{STATE}')} | {i(f'class.{k}.{DEFAULT}')} |"
                     for k in CLASSES)
     earlier = "\n".join(f"| `{a}` | {d} | {i(f'key.{a}')} ({pct(f'key.{a}.pct')}) |" for a, d in EARLIER.items())
+    only = ", ".join(f"`{x}`" for x in n["key.default_not_state.ids"]) or "none"
     return f"""# State-machine study
 
-A study of QuickReview's state-machine review on {i('prs')} AACR-Bench pull requests that hold labelled
-state defects, with the default review beside it. It holds the two runs' posted comments and judge
-verdicts, every label the study made, and the earlier builds' found flags on the answer key's state
-defects. No config of the card reads this folder, so `load_dataset` returns the same rows with or
-without it. `bench/aacr/recompute/state_machines.py --data <this dataset>` recomputes every number
-below from these tables alone and runs the release's checks of the folder (`validation.json` holds
-them).
+A study of QuickReview's state-machine review on the {i('prs')} AACR-Bench pull requests that hold the
+earlier list of {i('old45.total')} labelled state defects ({i('prs.with_strict_state')} of them hold a state
+defect under the strict relabel below), with the default review beside it. It holds the two runs'
+posted comments and judge verdicts, every label the study made, and the earlier builds' found flags on
+the answer key's state defects. No config of the card reads this folder, so `load_dataset` returns the
+same rows with or without it. `bench/aacr/recompute/state_machines.py --data <this dataset>` recomputes
+every number below from these tables alone, checks that this README is the one the tables give, and
+runs the release's other checks of the folder (`validation.json` holds them).
+
+The folder backs the write-up's sections on the merged build: the strict relabel, the two runs on all
+{i('prs')} pull requests, the bugs outside the answer key, and the cost of the two runs. It does not back
+the write-up's earlier tests on the list of {i('old45.total')} (their recall, costs and miss traces), the
+lookup tool's and the validator's audits, or the self-review of the change that adds the state lenses.
 
 ## The two runs
 
-| Arm | What ran | Comments | $ per PR | Minutes per PR |
+| Arm | What ran | Inline comments | $ per PR | Minutes per PR |
 |---|---|---|---|---|
 | `{STATE}` | the state-machine review: `review.profile=state-machines`, the eight `pass-sm-*` lenses alone, at deep on every change, on public main | {i(f'comments.{STATE}')} | {n[f'cost.{STATE}.usd_per_pr']:.2f} | {n[f'cost.{STATE}.minutes_per_pr']:.1f} |
 | `{DEFAULT}` | the default review with its automatic state lens off (`state_machines.triggers=off`), on an earlier build from a branch that was never published (`arms.qcr_commit_on_public_main` false) | {i(f'comments.{DEFAULT}')} | {n[f'cost.{DEFAULT}.usd_per_pr']:.2f} | {n[f'cost.{DEFAULT}.minutes_per_pr']:.1f} |
 
 Reviewer and judge gpt-6.1-sol, the judge at high effort; one run each. Cost is the list-price
 equivalent, priced per review as the dataset's `reviews.cost_usd` is (compare.usd_and_minutes).
+Every count of comments here is of inline comments; the default review also posted
+{i(f'comments.{DEFAULT}.body')} findings in its review body, and the state review
+{i(f'comments.{STATE}.body')}.
 
 ## Tables
 
 Every table is a `.parquet` file in this folder.
 
-- `arms`: the two runs: image, config, the build commit as the release states one (`qcr_commit`,
-  `qcr_commit_on_public_main`, `qcr_commit_match`, `qcr_commit_dirty`, see the card's `runs`), pi,
-  models, run directories.
-- `cases`: one row per arm and pull request: set, run, status, cost, minutes, posted comments, and
-  the judge's token usage.
-- `reviews`: every posted comment of both runs, as QuickReview posted it (`index` from 0 in posting
-  order, `path`, `line`, `side`, `body`), with the judge's id for it (`comment_id`, C1..Cn).
-- `defect_verdicts`, `comment_verdicts`: the judge's verdicts, shaped as the dataset's tables of the
-  same names; `comment_verdicts.index` is the posted comment the judged row is (null for a judged row
-  that was not posted). The answer-key defects themselves are in the dataset's `defects` table, by
-  `instance_id` and `defect_id`.
+- `arms`: the two runs: image, config, `profile` (null when the run set none), the build commit as the
+  release states one (`qcr_commit`, `qcr_commit_on_public_main`, `qcr_commit_match`, `qcr_commit_dirty`,
+  see the card's `runs`), pi, models, run directories.
+- `cases`: one row per arm and pull request: set, run, `status` (the case's run status), the
+  review's `verdict` (`APPROVE`, `COMMENT` or `REQUEST_CHANGES`), cost, minutes, `n_posted` (the inline
+  comments), whether the judge read it, and the judge's token usage.
+- `reviews`: every finding of both runs as QuickReview posted it, with the judge's id for it
+  (`comment_id`, C1..Cn). An inline comment has `inline` true, `index` from 0 in posting order, and the
+  `path`, `line`, `side` and `body` it was posted with. A finding posted in the review body instead has
+  `inline` false, `index` null, its `path` and last `line`, and its text as the judge read it.
+- `defect_verdicts`, `comment_verdicts`: the judge's verdicts, with the dataset's columns of the same
+  names (`judge`, `key_version`, `credit`, ...) except `run_family`, since these runs are not in its
+  `runs` table; `comment_verdicts.index` is the inline comment the judged row is (null for a finding
+  posted in the review body). The answer-key defects themselves are in the dataset's `defects` table,
+  by `instance_id` and `defect_id`.
 - `state_labels`: all {i('relabel.total')} answer-key defects of these pull requests, relabelled blind by
-  two AI readers (a third settled {i('relabel.tiebreak')} disagreements): `verdict` `state_machine`,
-  `borderline` or `not`, by the rule that a state bug needs a named state and an event or sequence, so
-  that a single call with fresh state would behave correctly; `klass`, the kind of state bug; `old45`,
-  whether the defect was on the earlier list of 45; `reachable`, false for the one state defect a second
-  reader found cannot happen at head; `votes`, each reader's verdict and reason.
-- `comment_state_labels`: every posted comment of the state review ({i(f'comments.{STATE}.labelled')}), and
-  every posted comment of the default review that the judge matched to no answer-key defect
-  ({i(f'comments.{DEFAULT}.labelled')}), labelled with the same rule. The state review's non-state calls
-  were read a second time (`second_read_*`), and `verdict` is the final one.
+  two AI readers (a third settled {i('relabel.tiebreak')} disagreements, `how` `tiebreak`): `verdict`
+  `state_machine`, `borderline` or `not`, by the rule that a state bug needs a named state and an event
+  or sequence, so that a single call with fresh state would behave correctly; `klass`, the kind of state
+  bug; `old45`, whether the defect was on the earlier list of {i('old45.total')}; `reachable`, false for a
+  state defect a second reader agreed cannot happen at head; `votes`, each reader's verdict, kind and
+  reason. Where a reason repeated {QUOTE_WORDS} or more words in a row of the defect's own text, those
+  words are replaced by `{QUOTED}`; the text is in `defects`.
+- `comment_state_labels`: every inline comment of the state review ({i(f'comments.{STATE}.labelled')}), and
+  every inline comment of the default review that the judge matched to no answer-key defect
+  ({i(f'comments.{DEFAULT}.labelled')}), labelled with the same rule: `title`, the comment's first line;
+  `verdict`, `klass` and `reason`. The state review's non-state calls were read a second time
+  ({i(f'comments.{STATE}.second_reads')} reads, {i(f'comments.{STATE}.second_read_changed')} changed): `first_verdict` is
+  the first reader's, `second_read_*` the second read's, and `verdict` the final one. `key_defect` is
+  the answer-key defect the judge matched a state-review comment to (null when none, and for the
+  default review's rows). `real_if_unlisted` is, for a state comment that matches no answer-key defect,
+  whether a reader found the bug real at head (`real` or `unsure`), and `n/a` for every other comment.
 - `pooled_bugs`: the {i('pool.total')} known real state bugs: the {i('pool.key')} reachable strict state
   defects of the answer key (`source` `answer-key`, `local_id` the defect id) and {i('pool.unlisted')}
   real state bugs either review posted that the key does not list (`source` `unlisted`, `local_id`
   U1..; `statement` is ours). An unlisted bug was confirmed in the code at head by an AI reader and
-  re-checked by a sceptical one (`check_reason`); the comments that raise it are listed by posted index;
-  each one only one review found was checked once more blind to which review posted it (`blind_*`).
-  The answer-key rows' found flags are the judge's verdicts (`found`); the unlisted rows' are the labels.
+  re-checked by a sceptical one (`check_reason`); a candidate the check rated unsure at head is left
+  out. The inline comments that raise it are listed by `index` (`state_review_comments`,
+  `default_review_comments`); each one only one review found was checked once more blind to which
+  review posted it (`blind_*`). The answer-key rows' found flags are the judge's verdicts (`found`);
+  the unlisted rows' are the labels, and each is true exactly when its list of comments is not empty.
 - `misses`: the state review's {i('misses.total')} misses on the strict state defects, each traced
   through the run's plan, lens transcripts and candidate findings (the trace itself is not here): the
-  cause, the lens that owned the defect, and what would have caught it.
+  `cause`, the lens that owned the defect (`owning_lens`), the lenses the run's plan held
+  (`planned_lenses`), and what would have caught it; `second_read_*` is a second reader's check of the
+  cause where one was made.
 - `earlier_arms`: whether each of four earlier builds found each strict state defect (judge verdict
   `found`); derived flags only, their reviews are not in this folder.
 - `figures/`: the write-up's four charts.
@@ -748,14 +1016,16 @@ Every table is a `.parquet` file in this folder.
 
 **The strict relabel** (`state_labels`): {i('relabel.state')} state, {i('relabel.borderline')} borderline,
 {i('relabel.not')} not, of {i('relabel.total')}; {i('relabel.reachable')} of the state ones are reachable at
-head. Of the earlier list of {i('old45.total')} (`old45`): {i('old45.state')} state, {i('old45.borderline')}
-borderline, {i('old45.not')} not.
+head, and {i('relabel.state_not_old45')} of them were not on the earlier list. Of the earlier list of
+{i('old45.total')} (`old45`): {i('old45.state')} state, {i('old45.borderline')} borderline, {i('old45.not')} not.
 
 **Answer-key recall** on the {i('relabel.reachable')} (`defect_verdicts.verdict` `found`, against the
 reachable state rows of `state_labels`): the state review {i(f'key.{STATE}')} ({pct(f'key.{STATE}.pct')}),
 the default review {i(f'key.{DEFAULT}')} ({pct(f'key.{DEFAULT}.pct')}). The state review found
 {i('key.state_not_default')} the default review did not; the default review found
-{i('key.default_not_state')} the state review did not. The earlier builds (`earlier_arms`):
+{i('key.default_not_state')} the state review did not ({only}). On the earlier list of
+{i('old45.total')} the state review found {i(f'key_old45.{STATE}')} and the default review
+{i(f'key_old45.{DEFAULT}')}. The earlier builds (`earlier_arms`):
 
 | Arm | Build | Found of {i('relabel.reachable')} |
 |---|---|---|
@@ -772,24 +1042,26 @@ state review, {i('unlisted.default_only')} only the default review; {i('unlisted
 |---|---|---|---|
 {cls}
 
-**Comments** (`reviews`, `comment_state_labels`, `comment_verdicts`): the state review posted
-{i(f'comments.{STATE}')} ({n[f'comments.{STATE}.per_pr']:.1f} per PR), {i(f'comments.{STATE}.state')} state,
-{i(f'comments.{STATE}.borderline')} borderline and {i(f'comments.{STATE}.not')} not after
-{i(f'comments.{STATE}.second_reads')} second reads changed {i(f'comments.{STATE}.second_read_changed')}; the
-judge graded {i(f'comments.{STATE}.not_judged_correct')} of the {i(f'comments.{STATE}.not')} not-state ones
-correct. The default review posted {i(f'comments.{DEFAULT}')} ({n[f'comments.{DEFAULT}.per_pr']:.1f} per PR),
+**Comments** (`reviews` with `inline` true, `comment_state_labels`, `comment_verdicts`): the state review
+posted {i(f'comments.{STATE}')} ({n[f'comments.{STATE}.per_pr']:.1f} per PR), {i(f'comments.{STATE}.state')} state
+({pct(f'comments.{STATE}.state.pct')}), {i(f'comments.{STATE}.borderline')} borderline and
+{i(f'comments.{STATE}.not')} not ({pct(f'comments.{STATE}.not.pct')}); the judge graded
+{i(f'comments.{STATE}.not_judged_correct')} of the {i(f'comments.{STATE}.not')} not-state ones correct. The
+default review posted {i(f'comments.{DEFAULT}')} ({n[f'comments.{DEFAULT}.per_pr']:.1f} per PR),
 {i(f'comments.{DEFAULT}.unmatched')} of them matched to no answer-key defect; together
 {n['comments.union.per_pr']:.1f} per PR. Of all {i('defects.total')} answer-key defects, of every kind, the
 default review found {i(f'defects.{DEFAULT}.found')} (`found`; {i(f'defects.{DEFAULT}.partial')} more partly) and
-the state review {i(f'defects.{STATE}.found')}.
+the state review {i(f'defects.{STATE}.found')} ({i(f'defects.{STATE}.partial')} more partly). A judge's credit
+for a finding posted in the review body counts: its text is the `reviews` row with `inline` false.
 
-**Misses** (`misses`): {i('misses.total')}: {i('misses.site_read_nothing_reported')} where a lens read the
-site and reported nothing, {i('misses.reported_a_different_problem')} where it reported a different problem
-at the site, {i('misses.defect_not_real_or_unreachable')} not real at head. They are exactly the strict state
-defects the state review did not find.
+**Misses** (`misses`): {i('misses.total')}, {i('misses.real')} of them real: {i('misses.site_read_nothing_reported')}
+where a lens read the site and reported nothing, {i('misses.reported_a_different_problem')} where it
+reported a different problem at the site, {i('misses.defect_not_real_or_unreachable')} not real at head.
+They are exactly the strict state defects the state review did not find.
 
-**Cost**: {n[f'cost.{STATE}.usd_per_pr']:.2f} and {n[f'cost.{DEFAULT}.usd_per_pr']:.2f} dollars per PR, so
-{n['cost.union.usd_per_pr']:.2f} for both runs (adding the two rounded costs gives one cent less).
+**Cost** (`cases.usd`): {n[f'cost.{STATE}.usd_per_pr']:.2f} and {n[f'cost.{DEFAULT}.usd_per_pr']:.2f} dollars
+per PR, rounded to cents as the write-up prints them; it gives both runs as their sum,
+{n['cost.union.usd_per_pr_rounded_sum']:.2f}, which is {n['cost.union.usd_per_pr']:.4f} before rounding.
 
 ## Limits
 
@@ -807,7 +1079,7 @@ defects the state review did not find.
   the default review on the key.
 - The pull requests were chosen because they hold labelled state defects, so state bugs are more common
   in them than in ordinary pull requests.
-- The costs of the earlier builds in the write-up's figure 3 are not in this folder; their found flags are.
+- The earlier builds' reviews and costs are not in this folder; their found flags are.
 """
 
 
@@ -823,6 +1095,8 @@ def main() -> None:
         ap.add_argument("--earlier", required=True, help="the earlier builds' score file (found_strict per arm)")
         ap.add_argument("--figures", required=True, help="the dir holding the write-up's four SVG charts")
         ap.add_argument("--repo", required=True, help="a QuickReview checkout with origin/main fetched")
+        ap.add_argument("--key", default=os.path.join(os.path.dirname(HERE), "defects"),
+                        help="the answer key's dir (<set>.json); label texts that repeat its words are cut")
         ap.add_argument("--out", required=True, help="the new `state_machines` folder")
         build(ap.parse_args(sys.argv[2:]))
         return

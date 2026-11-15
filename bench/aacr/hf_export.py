@@ -42,8 +42,10 @@ What it writes (no model call, nothing uploaded; the run dirs are only read):
                          recompute/state_machines.py build), copied as is after every
                          file is checked against bench/aacr/hf/state-machines.sha256
                          (refused otherwise); no config reads it. validation.json
-                         checks it (the manifest, its columns, its rows, every number
-                         of the study recomputed from it) and fails without it.
+                         checks it (the manifest, its columns, its rows, its README
+                         against its tables, no label repeating the answer key's
+                         words, every number of the study recomputed from it) and
+                         fails without it.
 
 With --archive (the run archive folder, after `export_runs.py readme` wrote it) it
 also writes the runs table's derived fields (each Martian scoring dir's judge

@@ -182,7 +182,9 @@ review: two runs' posted comments and judge verdicts, the study's labels and its
 pooled state bugs (its README describes each table). `state_machines.py` runs
 validation.json's checks of it: every file against the committed
 `bench/aacr/hf/state-machines.sha256`, the tables' columns, the rows against each
-other, and every number of the study (`POST`) recomputed from the tables alone
-(`numbers()`). `claim_metrics.py`'s `state_machines` keys are those numbers by
+other, the folder README against the one its tables give (`readme()`), no label
+of ours repeating ten words of an answer-key defect's text, and every number of
+the write-up (`POST`) recomputed from the tables alone (`numbers()`). `claim_metrics.py`'s `state_machines` keys are those numbers by
 name (`pool.sm4-p`, `key.sm1-c`, `comments.sm4-p.per_pr`, ...).
-`state_machines.py build` wrote the folder from the runs and the label files.
+`state_machines.py build` wrote the folder from the runs and the label files
+(`collect()` gives its tables without writing them).

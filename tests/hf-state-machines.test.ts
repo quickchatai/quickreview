@@ -7,11 +7,15 @@
 //   1. the manifest: a folder with a file missing, extra or changed is refused before anything is copied,
 //      and fails validation.json's manifest check; without the folder every check fails;
 //   2. validation.json's checks pass on a whole folder whose numbers are the expected ones, and each fails
-//      on what it guards (a column, a row that does not fit the others, every recomputed number);
+//      on what it guards (a column, each way a row can fail to fit the others, the README, a label that
+//      repeats the answer key's words, every recomputed number);
 //   3. the claims verifier: claim_metrics.StateMachines gives the numbers by name, discover finds the
 //      folder beside the tables, and its release checks carry needs ["state_machines"];
 //   4. the export and the card: the leak scan reads the folder's tables, a state_machines key links no arm,
-//      the card links the folder and lists its tables, and the release checks' split counts its checks.
+//      the card links the folder and lists its tables, and the release checks' split counts its checks;
+//   5. the build: the folder's rows from small run dirs and label files (the judge's ids of the posted
+//      comments, a finding posted in the review body, the class spellings, reachability, the blind
+//      re-checks, the answer key's words cut from a reason) and its refusals.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -167,12 +171,13 @@ function dataset(root: string): void {
     kase(D, "p1", 1, 20, 1),
     kase(D, "p2", 2, 30, 2),
   ]);
-  const rev = (arm: string, pr: string, index: number, comment_id: string | null) => ({
+  const rev = (arm: string, pr: string, index: number | null, comment_id: string | null) => ({
     arm_id: arm,
     instance_id: pr,
     index,
+    inline: index !== null,
     path: "a.c",
-    line: 10 + index,
+    line: 10 + (index ?? 9),
     side: "RIGHT",
     body: `[blocker] T${index}\n\nbody`,
     comment_id,
@@ -185,12 +190,16 @@ function dataset(root: string): void {
     rev(D, "p1", 0, "C1"),
     rev(D, "p2", 0, "C1"),
     rev(D, "p2", 1, "C2"),
+    rev(D, "p2", null, "C3"), // a finding posted in the review body
   ]);
   const dv = (arm: string, pr: string, defect_id: string, verdict: string) => ({
     arm_id: arm,
     instance_id: pr,
+    judge: "j",
+    key_version: "2",
     defect_id,
     verdict,
+    credit: verdict === "found" ? 1 : verdict === "partial" ? 0.5 : 0,
     comment_ids: [],
     why: "w",
   });
@@ -216,6 +225,7 @@ function dataset(root: string): void {
   ) => ({
     arm_id: arm,
     instance_id: pr,
+    judge: "j",
     comment_id,
     index,
     grade,
@@ -231,7 +241,7 @@ function dataset(root: string): void {
     cv(D, "p1", "C1", 0, "correct-valuable", "D2"),
     cv(D, "p2", "C1", 0, "correct-valuable", "D3"),
     cv(D, "p2", "C2", 1, "correct-valuable", null),
-    cv(D, "p2", "C3", null, "correct-minor", null), // judged, not posted
+    cv(D, "p2", "C3", null, "correct-minor", null), // judged, posted in the review body
   ]);
   const lab = (
     pr: string,
@@ -248,7 +258,9 @@ function dataset(root: string): void {
     how,
     old45,
     reachable,
-    votes: [{ reader: 1, verdict, klass: null, reason: "r", state: null, event: null }],
+    votes: [
+      { reader: 1, verdict, klass: null, reason: "a reader's reason", state: null, event: null },
+    ],
   });
   jsonl(sm, "state_labels", [
     lab("p1", "D1", "state_machine", true),
@@ -291,8 +303,8 @@ function dataset(root: string): void {
     local: string,
     source: string,
     klass: string,
-    s: boolean,
-    d: boolean,
+    s: number[] | null,
+    d: number[] | null,
     blind: string | null = null,
   ) => ({
     bug_id: `${pr}#${local}`,
@@ -300,22 +312,24 @@ function dataset(root: string): void {
     local_id: local,
     source,
     klass,
-    state_found: s,
-    default_found: d,
+    // an answer-key row's flags are the judge's verdicts and it lists no comments; an unlisted row lists
+    // the inline comments that raise it
+    state_found: source === "unlisted" ? s!.length > 0 : s !== null,
+    default_found: source === "unlisted" ? d!.length > 0 : d !== null,
     statement: source === "unlisted" ? "ours" : null,
-    state_review_comments: null,
-    default_review_comments: null,
+    state_review_comments: source === "unlisted" ? s : null,
+    default_review_comments: source === "unlisted" ? d : null,
     check_reason: null,
     blind_verdict: blind,
     blind_agrees: blind === null ? null : true,
     blind_reason: blind && "b",
   });
   jsonl(sm, "pooled_bugs", [
-    bug("p1", "D1", "answer-key", "event-order", true, true),
-    bug("p2", "D3", "answer-key", "stale-copy", false, true),
-    bug("p1", "U1", "unlisted", "event-order", true, true),
-    bug("p2", "U1", "unlisted", "lifecycle-order", true, false, "state"),
-    bug("p2", "U2", "unlisted", "stored-state", false, true, "default"),
+    bug("p1", "D1", "answer-key", "event-order", [], []),
+    bug("p2", "D3", "answer-key", "stale-copy", null, []),
+    bug("p1", "U1", "unlisted", "event-order", [0], [0]),
+    bug("p2", "U1", "unlisted", "lifecycle-order", [0], [], "state"),
+    bug("p2", "U2", "unlisted", "stored-state", [], [1], "default"),
   ]);
   const miss = (pr: string, defect_id: string, cause: string) => ({
     instance_id: pr,
@@ -348,16 +362,42 @@ function dataset(root: string): void {
   ]);
   mkdirSync(join(sm, "figures"), { recursive: true });
   writeFileSync(join(sm, "figures", "fig1.svg"), "<svg/>\n");
-  writeFileSync(join(sm, "README.md"), "# A study\n");
+  // the answer key's own text, beside the folder as the dataset's `defects` table holds it
+  jsonl(join(root, "data"), "defects", [
+    {
+      instance_id: "p1",
+      defect_id: "D1",
+      title: "Toggle lost",
+      statement: KEY_STATEMENT,
+      evidence: "e",
+      counts_if: null,
+    },
+  ]);
+  writeReadme(sm);
+}
+
+/** Ten words and more of an answer-key defect's statement (a label may not repeat ten in a row). */
+const KEY_STATEMENT =
+  "Two opposite toggles in one batch collapse into a single queue entry so the observer never sees the change.";
+
+/** The folder's README as its tables give it (state_machines.readme of numbers()). */
+function writeReadme(sm: string): void {
+  writeFileSync(
+    join(sm, "README.md"),
+    py(
+      "import state_machines as SM\nprint(json.dumps(SM.readme(SM.numbers(sys.argv[1]))))",
+      sm,
+    ) as string,
+  );
 }
 
 /** The fixture's numbers, in POST's shape: what the checks must recompute. */
 const POST = {
   prs: 2,
-  relabel: { total: 5, state: 3, borderline: 1, not: 1, reachable: 2 },
-  old45: { total: 2, state: 1, borderline: 0, not: 1 },
+  relabel: { total: 5, state: 3, borderline: 1, not: 1, reachable: 2, state_not_old45: 2 },
+  old45: { total: 2, state: 1, borderline: 0, not: 1, found_default: 2 },
   key_found: { [S]: 1, [D]: 2, "sm1-s4": 1, "sm1-s8": 0, "sm1-s8d": 1, "sm1-r": 2 },
-  key_only: { state_not_default: 0, default_not_state: 1 },
+  key_only: { state_not_default: 0, default_not_state: 1, default_not_state_ids: ["p2#D3"] },
   pool: { total: 5, key: 2, unlisted: 3, [S]: 3, [D]: 4, union: 5 },
   unlisted: { both: 1, state_only: 1, default_only: 1, blind_checked: 2, blind_agree: 2 },
   classes: {
@@ -369,6 +409,11 @@ const POST = {
     "unhandled-state": [0, 0, 0],
     "unchecked-transition": [0, 0, 0],
     "impossible-states": [0, 0, 0],
+  },
+  shares: {
+    key: { [S]: 50, [D]: 100, "sm1-s4": 50, "sm1-s8": 0, "sm1-s8d": 50 },
+    pool: { [S]: 60, [D]: 80, union: 100 },
+    state_comments_not: 50,
   },
   comments: {
     [S]: 4,
@@ -384,22 +429,35 @@ const POST = {
   default_found_any: { found: 3, of: 5 },
   misses: {
     total: 2,
+    real: 1,
     site_read_nothing_reported: 1,
     reported_a_different_problem: 0,
     defect_not_real_or_unreachable: 1,
   },
-  cost: { usd_per_pr_state: 2.5, usd_per_pr_default: 1.5, minutes_per_pr_state: 12 },
+  cost: { usd_per_pr_state: 2.5, usd_per_pr_default: 1.5, usd_per_pr_both: 4 },
 };
 
 const BASE = join(tmp, "base");
 dataset(BASE);
 const MANIFEST = manifest(BASE, join(tmp, "state-machines.sha256"));
 
-/** A copy of the base dataset, changed by `edit` (the manifest stays the base's unless re-made). */
-function variant(name: string, edit: (sm: string) => void): string {
+/**
+ * A copy of the base dataset, changed by `edit` (the manifest stays the base's unless re-made). Its README
+ * is then rendered again from the changed tables, so a case judges the one check it aims at; `keepReadme`
+ * leaves the README as `edit` left it.
+ */
+function variant(name: string, edit: (sm: string) => void, keepReadme = false): string {
   const root = join(tmp, name);
+  const sm = join(root, "state_machines");
   cpSync(BASE, root, { recursive: true });
-  edit(join(root, "state_machines"));
+  edit(sm);
+  if (!keepReadme && existsSync(join(sm, "README.md"))) {
+    try {
+      writeReadme(sm);
+    } catch {
+      // tables readme() cannot render (no common PRs): the README stays the base's, and fails its check
+    }
+  }
   return root;
 }
 
@@ -436,23 +494,29 @@ const C = {
     "every file is the committed manifest's (bench/aacr/hf/state-machines.sha256), none missing, extra or differing",
   columns: "every table has exactly its listed columns (no answer-key defect text)",
   whole:
-    "the rows are whole: both arms judged on the same pull requests, one verdict per arm on every labelled answer-key defect, every labelled comment a posted one, and the default review's labelled comments exactly its posted comments matched to no answer-key defect",
+    "the rows are whole: both arms judged on the same pull requests, one verdict per arm on every labelled answer-key defect, every judged comment a posted one (inline or in the review body), every labelled comment an inline one, the default review's labelled comments exactly its inline comments matched to no answer-key defect, and every unlisted bug found exactly by the reviews whose inline comments it lists",
+  readme: "README.md is the README its tables give (state_machines.readme of numbers())",
+  quotes:
+    "no label text of ours repeats 10 words in a row of an answer-key defect's text (the dataset's `defects`)",
   prs: "both arms reviewed the same pull requests",
   relabel:
-    "the strict relabel of the answer-key defects: state, borderline and not, and the state ones reachable at head",
-  old45: "the earlier list of 45 state defects under the strict relabel",
+    "the strict relabel of the answer-key defects: state, borderline and not, the state ones reachable at head, and the state ones not on the earlier list of 45",
+  old45:
+    "the earlier list of 45 state defects under the strict relabel, and how many of them the default review found",
   key_found:
     "answer-key recall on the reachable strict state defects (judge verdict found), of the two runs and the four earlier builds",
-  key_only: "the reachable strict state defects one run found and the other did not",
+  key_only: "the reachable strict state defects one run found and the other did not, and which",
   pool: "the pool of known real state bugs (answer key + unlisted) and how many of them each run and either run found; the answer-key part's found flags are the judge's verdicts",
   unlisted:
     "the unlisted bugs found by both runs or by one, and the one-sided ones re-checked blind",
   classes: "per class of state bug: pool, state review, default review",
+  shares:
+    "the percentages: answer-key recall, the pool found, and the state review's comments about something else",
   comments:
-    "the posted comments: the state review's by label after the second reads, its not-state ones the judge graded correct, the default review's, and comments per pull request",
+    "the inline comments: the state review's by label after the second reads, its not-state ones the judge graded correct, the default review's, and comments per pull request",
   default_found_any: "the answer-key defects of every kind the default review found",
   misses: "the state review's misses on the strict state defects, by cause",
-  cost: "list-price dollars and minutes per pull request (compare.usd_and_minutes)",
+  cost: "list-price dollars per pull request (compare.usd_and_minutes), and both runs' as the sum of the two rounded",
 };
 
 describe("state_machines: the manifest", () => {
@@ -460,7 +524,7 @@ describe("state_machines: the manifest", () => {
   // MUTATION: in hf_export.refuse_state_machines, return before the manifest check — this fails
   it("refuses a folder with a file missing, extra or changed, before anything is copied", () => {
     const extra = variant("extra", (sm) => writeFileSync(join(sm, "notes.md"), "x\n"));
-    const changed = variant("changed", (sm) => appendFileSync(join(sm, "README.md"), " "));
+    const changed = variant("changed", (sm) => appendFileSync(join(sm, "README.md"), " "), true);
     const missing = variant("missing", (sm) => rmSync(join(sm, "figures", "fig1.svg")));
     const copy = (root: string, out: string) =>
       py(
@@ -482,7 +546,9 @@ except SystemExit as e:
     expect(copy(missing, out)).toMatch(/missing \['state_machines\/figures\/fig1.svg'\]/);
     expect(existsSync(join(out, "state_machines"))).toBe(false);
     expect(copy(BASE, out)).toBe("copied");
-    expect(readFileSync(join(out, "state_machines", "README.md"), "utf8")).toBe("# A study\n");
+    expect(readFileSync(join(out, "state_machines", "README.md"), "utf8")).toBe(
+      readFileSync(join(BASE, "state_machines", "README.md"), "utf8"),
+    );
     expect(
       checks(extra)
         .filter((c) => !c.ok)
@@ -494,7 +560,7 @@ except SystemExit as e:
   it("fails every check when the folder is not in the dataset (fails closed)", () => {
     const gone = variant("gone", (sm) => rmSync(sm, { recursive: true }));
     const cs = checks(gone);
-    expect(cs).toHaveLength(15);
+    expect(cs).toHaveLength(18);
     expect(cs.filter((c) => c.ok)).toEqual([]);
   });
 
@@ -517,9 +583,9 @@ except SystemExit as e:
 });
 
 describe("state_machines: validation.json's checks", () => {
-  it("passes all fifteen on a whole folder that is the manifest's, recomputing every number", () => {
+  it("passes all eighteen on a whole folder that is the manifest's, recomputing every number", () => {
     const cs = checks(BASE);
-    expect(cs).toHaveLength(15);
+    expect(cs).toHaveLength(18);
     expect(cs.filter((c) => !c.ok)).toEqual([]);
     expect(cs.find((c) => c.check.endsWith(C.pool))!.got).toEqual(POST.pool);
   });
@@ -535,8 +601,28 @@ describe("state_machines: validation.json's checks", () => {
       "sm1-s8d": 43,
       "sm1-r": 46,
     });
-    expect(post.relabel).toEqual({ total: 186, state: 56, borderline: 2, not: 128, reachable: 55 });
+    expect(post.relabel).toEqual({
+      total: 186,
+      state: 56,
+      borderline: 2,
+      not: 128,
+      reachable: 55,
+      state_not_old45: 21,
+    });
+    expect(post.old45).toEqual({ total: 45, state: 35, borderline: 2, not: 8, found_default: 36 });
+    expect(post.key_only.default_not_state_ids).toEqual(["immich-app__immich@b7a1255#D2"]);
     expect(post.comments).toMatchObject({ [S]: 159, state: 96, borderline: 31, not: 32, [D]: 397 });
+    expect(post.shares).toEqual({
+      key: { [S]: 80, [D]: 82, "sm1-s4": 69, "sm1-s8": 71, "sm1-s8d": 78 },
+      pool: { [S]: 85, [D]: 71, union: 90 },
+      state_comments_not: 20,
+    });
+    // the write-up adds the two per-PR costs as it prints them
+    expect(post.cost).toEqual({
+      usd_per_pr_state: 2.78,
+      usd_per_pr_default: 2.77,
+      usd_per_pr_both: 5.55,
+    });
     expect(Object.keys(post).sort()).toEqual(Object.keys(POST).sort());
   });
 
@@ -548,7 +634,7 @@ describe("state_machines: validation.json's checks", () => {
     expect(failing(bad)).toEqual([C.columns]);
   });
 
-  // MUTATION: in state_machines.whole_problems, compare the default review's labels with all its posted comments (drop the defect_id test) — this fails
+  // MUTATION: in state_machines.whole_problems, compare the default review's labels with all its inline comments (drop the defect_id test) — this fails
   // MUTATION: in state_machines.whole_problems, skip the defect_verdicts comparison with state_labels — this fails
   it("fails rows that do not fit each other", () => {
     // a label on a default comment the judge matched to a defect
@@ -579,6 +665,194 @@ describe("state_machines: validation.json's checks", () => {
       ),
     );
     expect(failing(miss)).toEqual([C.whole]);
+  });
+
+  /** The problems whole_problems names for a variant's folder (only their names). */
+  function problems(root: string): string[] {
+    return py(
+      "import state_machines as SM\nprint(json.dumps(sorted(SM.whole_problems(sys.argv[1]))))",
+      join(root, "state_machines"),
+    ) as string[];
+  }
+
+  // Each case breaks one guard of whole_problems and names exactly the problems it must raise, so deleting
+  // any one guard drops its name and fails the case:
+  // MUTATION: in state_machines.whole_problems, delete the `cases: not judged` guard — this fails
+  // MUTATION: in state_machines.whole_problems, delete the inline index guard (`0..n-1`) — this fails
+  // MUTATION: in state_machines.whole_problems, delete the `cases: n_posted differs` guard — this fails
+  // MUTATION: in state_machines.whole_problems, delete the review-body row guard (index set or no judge's id) — this fails
+  // MUTATION: in state_machines.whole_problems, test only `stray` in the label guard (drop `len(lab) != len(set(lab))`) — this fails
+  // MUTATION: in state_machines.whole_problems, test only the repeat in the label guard (drop `stray or`) — this fails
+  // MUTATION: in state_machines.whole_problems, delete the guard that every state-review inline comment has a label — this fails
+  // MUTATION: in state_machines.whole_problems, delete the `reviews: a comment id the judge's verdicts lack` guard — this fails
+  // MUTATION: in state_machines.whole_problems, delete the guard that every judged comment is a reviews row of its index — this fails
+  // MUTATION: in state_machines.whole_problems, compare the defect verdicts as a set (`sorted(set(got)) != labelled`) — this fails
+  // MUTATION: in state_machines.whole_problems, delete the unlisted bugs' flag guard — this fails
+  // MUTATION: in state_machines.whole_problems, test only the flag in the unlisted guard (drop the posted-index test) — this fails
+  it.each([
+    [
+      "an unjudged case",
+      (sm: string) =>
+        edit(sm, "cases", (r) =>
+          r.arm_id === S && r.instance_id === "p1" ? { ...r, judged: false } : r,
+        ),
+      ["cases: not judged"],
+    ],
+    [
+      "a gap in a review's inline indices",
+      (sm: string) => {
+        const move = (r: Row) =>
+          r.arm_id === D && r.instance_id === "p2" && r.comment_id === "C1"
+            ? { ...r, index: 2 }
+            : r;
+        edit(sm, "reviews", move);
+        edit(sm, "comment_verdicts", move);
+      },
+      ["reviews: inline comment indices are not 0..n-1"],
+    ],
+    [
+      "n_posted off by one",
+      (sm: string) =>
+        edit(sm, "cases", (r) =>
+          r.arm_id === D && r.instance_id === "p1" ? { ...r, n_posted: 2 } : r,
+        ),
+      ["cases: n_posted differs from the inline comments"],
+    ],
+    [
+      "a review-body finding with an index",
+      (sm: string) => {
+        const move = (r: Row) => (r.comment_id === "C3" ? { ...r, index: 5, defect_id: "D2" } : r);
+        edit(sm, "reviews", (r) => (r.comment_id === "C3" ? { ...r, index: 5 } : r));
+        edit(sm, "comment_verdicts", move);
+      },
+      ["reviews: a finding in the review body with an index, or without the judge's id"],
+    ],
+    [
+      "a label of no inline comment",
+      (sm: string) =>
+        appendFileSync(
+          join(sm, "comment_state_labels.jsonl"),
+          JSON.stringify({ ...rows(sm, "comment_state_labels")[0]!, arm_id: "sm9-x" }) + "\n",
+        ),
+      ["comment_state_labels: a label of no inline comment, or two labels of one"],
+    ],
+    [
+      "two labels of one comment",
+      (sm: string) =>
+        appendFileSync(
+          join(sm, "comment_state_labels.jsonl"),
+          JSON.stringify(rows(sm, "comment_state_labels")[4]!) + "\n",
+        ),
+      ["comment_state_labels: a label of no inline comment, or two labels of one"],
+    ],
+    [
+      "a state-review comment with no label",
+      (sm: string) =>
+        edit(sm, "comment_state_labels", (r) =>
+          r.arm_id === S && r.instance_id === "p2" && r.index === 1 ? null : r,
+        ),
+      ["comment_state_labels: the state review's labels are not every one of its inline comments"],
+    ],
+    [
+      "a review's comment id the judge never gave",
+      (sm: string) =>
+        edit(sm, "reviews", (r) =>
+          r.arm_id === D && r.instance_id === "p1" ? { ...r, comment_id: "C9" } : r,
+        ),
+      [
+        "comment_verdicts: a judged comment that is no reviews row, or another index than its row's",
+        "reviews: a comment id the judge's verdicts lack",
+      ],
+    ],
+    [
+      "a judged comment that is no reviews row",
+      (sm: string) =>
+        appendFileSync(
+          join(sm, "comment_verdicts.jsonl"),
+          JSON.stringify({ ...rows(sm, "comment_verdicts")[0]!, comment_id: "C7", index: null }) +
+            "\n",
+        ),
+      [
+        "comment_verdicts: a judged comment that is no reviews row, or another index than its row's",
+      ],
+    ],
+    [
+      "a defect verdict given twice",
+      (sm: string) =>
+        appendFileSync(
+          join(sm, "defect_verdicts.jsonl"),
+          JSON.stringify(rows(sm, "defect_verdicts")[6]!) + "\n",
+        ),
+      ["defect_verdicts: sm1-c is not one verdict on each labelled defect"],
+    ],
+    [
+      "an unlisted bug found by a review that lists no comment for it",
+      (sm: string) =>
+        edit(sm, "pooled_bugs", (r) =>
+          r.bug_id === "p2#U1" ? { ...r, state_review_comments: [] } : r,
+        ),
+      ["pooled_bugs: an unlisted bug's found flag is not its listed inline comments"],
+    ],
+    [
+      "an unlisted bug that lists a comment no review posted",
+      (sm: string) =>
+        edit(sm, "pooled_bugs", (r) =>
+          r.bug_id === "p2#U1" ? { ...r, state_review_comments: [7] } : r,
+        ),
+      ["pooled_bugs: an unlisted bug's found flag is not its listed inline comments"],
+    ],
+  ] as [string, (sm: string) => void, string[]][])("fails %s", (name, change, want) => {
+    const root = variant(`whole-${name.replace(/\W+/g, "-")}`, change);
+    expect(problems(root)).toEqual(want);
+    expect(failing(root)).toContain(C.whole);
+  });
+
+  // MUTATION: in state_machines.checks, compare README.md with anything but readme(numbers()) (`same = True`) — this fails
+  it("fails a README that is not the one its tables give", () => {
+    const stale = variant(
+      "readme",
+      (sm) => appendFileSync(join(sm, "README.md"), "\nThe state review found 99 of them.\n"),
+      true,
+    );
+    expect(failing(stale)).toEqual([C.readme]);
+  });
+
+  // MUTATION: in state_machines.quote_problems, read only the defects' titles (key_text gives [d.get("title")]) — this fails
+  // MUTATION: in state_machines.quote_problems, skip a vote's reason (LABEL_TEXT without "votes.reason") — this fails
+  it("fails a label that repeats ten words of the answer key's text, and fails closed without `defects`", () => {
+    const words = KEY_STATEMENT.split(" ").slice(2, 12).join(" ");
+    const quoted = variant("quotes", (sm) =>
+      edit(sm, "state_labels", (r) =>
+        r.instance_id === "p1" && r.defect_id === "D1"
+          ? {
+              ...r,
+              votes: [
+                { ...(r.votes as Row[])[0]!, reason: `As the key says, ${words.toUpperCase()}!` },
+              ],
+            }
+          : r,
+      ),
+    );
+    expect(failing(quoted)).toEqual([C.quotes]);
+    // nine words in a row are not a quote
+    const nine = variant("quotes-nine", (sm) =>
+      edit(sm, "state_labels", (r) =>
+        r.instance_id === "p1" && r.defect_id === "D1"
+          ? {
+              ...r,
+              votes: [
+                {
+                  ...(r.votes as Row[])[0]!,
+                  reason: KEY_STATEMENT.split(" ").slice(2, 11).join(" "),
+                },
+              ],
+            }
+          : r,
+      ),
+    );
+    expect(failing(nine)).toEqual([]);
+    const gone = variant("quotes-gone", (sm) => rmSync(join(dirname(sm), "data", "defects.jsonl")));
+    expect(failing(gone)).toEqual([C.quotes]);
   });
 
   // MUTATION: in state_machines.numbers, count relabel.reachable over every state row (drop `and r["reachable"]`) — this fails
@@ -614,14 +888,16 @@ describe("state_machines: validation.json's checks", () => {
         r.arm_id === "sm1-s8" && r.defect_id === "D3" ? { ...r, found: true } : r,
       ),
     );
-    expect(failing(bad)).toEqual([C.key_found]);
+    expect(failing(bad)).toEqual([C.key_found, C.shares]);
   });
 
   // MUTATION: in state_machines.numbers, count pool.union as found by both (`and` for `or`) — this fails
   // MUTATION: in state_machines.numbers.got, read an answer-key row's found flags from the table (state_found) — this fails
   it("recomputes the pool, its answer-key part from the judge's verdicts", () => {
     const bad = variant("pool", (sm) =>
-      edit(sm, "pooled_bugs", (r) => (r.bug_id === "p1#U1" ? { ...r, default_found: false } : r)),
+      edit(sm, "pooled_bugs", (r) =>
+        r.bug_id === "p1#U1" ? { ...r, default_found: false, default_review_comments: [] } : r,
+      ),
     );
     expect(failing(bad)).toEqual(expect.arrayContaining([C.pool, C.unlisted, C.classes]));
     expect(failing(bad)).not.toContain(C.whole);
@@ -667,7 +943,8 @@ describe("state_machines: validation.json's checks", () => {
           : r,
       ),
     );
-    expect(failing(bad)).toEqual([C.default_found_any]);
+    // p1/D2 is on the old list, so the default review's count on it drops too
+    expect(failing(bad)).toEqual([C.old45, C.default_found_any]);
   });
 
   // MUTATION: in state_machines.numbers, count misses.<cause> over every miss (drop the cause test) — this fails
@@ -686,6 +963,17 @@ describe("state_machines: validation.json's checks", () => {
       edit(sm, "cases", (r) => (r.arm_id === S && r.instance_id === "p2" ? { ...r, usd: 3.5 } : r)),
     );
     expect(failing(bad)).toEqual([C.cost]);
+  });
+
+  // MUTATION: in state_machines.numbers, give cost.union.usd_per_pr_rounded_sum as the unrounded sum, rounded (round(sum(both), 2)) — this fails
+  it("gives both runs' cost as the sum of the two per-PR costs as rounded", () => {
+    // 2.504 and 1.504 print as 2.50 and 1.50, which add to 4.00; the unrounded 4.008 would print as 4.01
+    const bad = variant("cost-both", (sm) =>
+      edit(sm, "cases", (r) =>
+        r.instance_id === "p2" ? { ...r, usd: (r.usd as number) + 0.008 } : r,
+      ),
+    );
+    expect(failing(bad)).toEqual([]);
   });
 
   // MUTATION: in state_machines.numbers, give prs from the state arm alone (drop the comparison with the default arm's) — this fails
@@ -733,7 +1021,9 @@ print(json.dumps(out))`,
   // MUTATION: in verify_claims.discover, never set found["state_machines"] — this fails
   // MUTATION: in verify_claims.consistency, give the state-machine checks needs [] — this fails
   it("finds the folder beside the tables, and its release checks need it", () => {
-    jsonl(join(BASE, "data"), "prs", [{ instance_id: "p1" }]);
+    const root = variant("consistency-data", (sm) =>
+      jsonl(join(dirname(sm), "data"), "prs", [{ instance_id: "p1" }]),
+    );
     const got = py(
       `import verify_claims as V
 a = types.SimpleNamespace(work=sys.argv[2], martian=None, qodo_gt=None, no_validation=True)
@@ -746,13 +1036,22 @@ H.validate = lambda t: []
 H.validate_release = lambda *x: []
 import second_judges as SJ
 print(json.dumps([found["state_machines"], [[c["needs"], c["ok"]] for c in V.consistency(a, found, src) if c["needs"]]]))`,
-      BASE,
+      root,
       join(tmp, "consistency"),
     ) as [string, [string[], boolean][]];
-    expect(got[0]).toBe(join(BASE, "state_machines"));
-    // the fixture's folder is not the committed manifest's: the manifest check fails, the rest pass
-    expect(got[1]).toHaveLength(15);
+    expect(got[0]).toBe(join(root, "state_machines"));
+    // the fixture's folder is not the committed manifest's, and the verifier compares its numbers with the
+    // release's (POST): the manifest check and the thirteen number checks fail, the columns, the rows, the
+    // README and the quotes pass
     expect(got[1].every(([n]) => n.join() === "state_machines")).toBe(true);
+    expect(got[1].map(([, ok]) => ok)).toEqual([
+      false,
+      true,
+      true,
+      true,
+      true,
+      ...Array(13).fill(false),
+    ]);
   });
 
   it("lints a claims manifest whose check needs state_machines", () => {
@@ -840,5 +1139,377 @@ print(json.dumps([v(SM.file_rows(sys.argv[1])), v([])]))`,
     expect(
       py(`import hf_export as h\nprint(json.dumps(h.verify_result(sys.argv[1])))`, report),
     ).toContain("(3 on the tables and 2 on its `second_judges/` folder)");
+  });
+});
+
+describe("state_machines: the build", () => {
+  const B = join(tmp, "build");
+  const runs = join(B, "runs");
+  const labels = join(B, "labels");
+  const PR = "p1";
+  const QUOTE =
+    "a queued toggle and its opposite collapse into one entry so nobody sees the change";
+
+  function git(cwd: string, ...args: string[]): string {
+    const p = spawnSync(
+      "git",
+      [
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "-c",
+        "maintenance.auto=false",
+        ...args,
+      ],
+      { cwd, encoding: "utf8" },
+    );
+    if (p.status !== 0) throw new Error(p.stderr);
+    return p.stdout.trim();
+  }
+
+  function write(path: string, value: unknown): void {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, typeof value === "string" ? value : JSON.stringify(value));
+  }
+
+  /** A repo whose origin/main holds the state arm's commit and not the default arm's (a side branch). */
+  const repo = join(B, "repo");
+  mkdirSync(repo, { recursive: true });
+  git(repo, "init", "-q", "-b", "main");
+  git(repo, "commit", "-q", "--allow-empty", "-m", "main");
+  const onMain = git(repo, "rev-parse", "HEAD");
+  git(repo, "update-ref", "refs/remotes/origin/main", onMain);
+  git(repo, "checkout", "-q", "-b", "side");
+  git(repo, "commit", "-q", "--allow-empty", "-m", "side");
+  const offMain = git(repo, "rev-parse", "HEAD");
+
+  /**
+   * One PR in two runs. The state review posted two comments of the same text; the default review posted
+   * one inline comment and one finding in its review body. Key: D1 state (old list), D2 state that a second
+   * reader agreed cannot happen at head, D3 state whose not-real miss the second reader did not agree with.
+   */
+  function run(
+    arm: string,
+    commit: string,
+    profile: string,
+    posted: string[],
+    rows: string[],
+    md: string,
+  ) {
+    const r = join(runs, `${arm}-smoke10`);
+    write(join(r, "run.json"), {
+      qcr_commit: commit,
+      profile,
+      pi: "1",
+      models: { conversation: "m" },
+    });
+    write(join(runs, `${arm}-smoke10.arm.json`), {
+      image: `img:${arm}`,
+      image_id: "sha256:x",
+      config: "c",
+    });
+    const c = join(r, "cases", PR);
+    write(join(c, "case-summary.json"), {
+      status: "ok",
+      verdict: "COMMENT",
+      duration_seconds: 600,
+      bench_cost_usd: 2,
+    });
+    write(
+      join(c, "comments.json"),
+      posted.map((body, i) => ({ path: "a.c", line: 10 + i, side: "RIGHT", body })),
+    );
+    write(join(c, "review.md"), md);
+    write(join(r, "results", "all", `${PR}.json`), {
+      review: {
+        comments: rows.map((content, i) => ({
+          path: "a.c",
+          start_line: 20 + i,
+          end_line: 21 + i,
+          content,
+        })),
+      },
+    });
+    const found = arm === S ? ["D1"] : ["D1", "D3"];
+    write(join(r, "judge", "v2-gpt-6.1-sol-high", `${PR}.r1.json`), {
+      defect_set_version: "2",
+      defects: ["D1", "D2", "D3"].map((id) => ({
+        id,
+        verdict: found.includes(id) ? "found" : "missed",
+        comments: found.includes(id) ? ["C1"] : [],
+        why: "w",
+      })),
+      comments: rows.map((_, i) => ({
+        id: `C${i + 1}`,
+        defect: null,
+        verdict: "correct-minor",
+        new_defect: false,
+        why: "w",
+      })),
+      usage: { input: 1, output: 2, cacheRead: 3 },
+    });
+  }
+  const same = "[nit] Same title\n\nsame body";
+  run(S, onMain, "state-machines", [same, same], [same, same], "summary\n");
+  run(
+    D,
+    offMain,
+    "",
+    ["[blocker] Inline\n\nbody"],
+    ["[blocker] Inline\n\nbody", "[nit] In the body\n\nbody"],
+    "### Additional findings (not posted inline)\n\n- `a.c:22` — In the body — _posted in the body_\n",
+  );
+  const vote = (verdict: string, reason: string) => ({
+    "1": { verdict, klass: "lifecycle", reason },
+  });
+  write(join(labels, "strict-relabel.json"), {
+    [`${PR}#D1`]: {
+      verdict: "state_machine",
+      klass: "lifecycle",
+      how: "agree",
+      old45: true,
+      votes: vote("state_machine", `The reader saw that ${QUOTE}, at the queue.`),
+    },
+    [`${PR}#D2`]: {
+      verdict: "state_machine",
+      klass: "stuck",
+      how: "tiebreak",
+      old45: false,
+      votes: vote("state_machine", "r"),
+    },
+    [`${PR}#D3`]: {
+      verdict: "state_machine",
+      klass: "impossible",
+      how: "agree",
+      old45: false,
+      votes: vote("state_machine", "r"),
+    },
+  });
+  const miss = (d: string, agree: boolean) => ({
+    key: `${PR}#${d}`,
+    cause: "defect_not_real_or_unreachable",
+    owning_lens: "pass-sm-states",
+    planned_lenses: ["pass-sm-states"],
+    evidence: "a run path",
+    what_would_have_caught_it: "w",
+    check: { verdict: "agree", agree, reason: "c" },
+  });
+  write(join(labels, "comments-and-misses.json"), {
+    comments: [0, 1].map((index) => ({
+      pr: PR,
+      index,
+      title: "Same title",
+      verdict: "not",
+      klass: "none",
+      reason: "r",
+      key_defect: index === 0 ? "D1" : "",
+      real_if_unlisted: "n/a",
+    })),
+    checked: [{ pr: PR, index: 1, check: { verdict: "borderline", agree: false, reason: "s" } }],
+    misses: [miss("D2", true), miss("D3", false)],
+  });
+  write(join(labels, "pooled-unlisted.json"), {
+    classified: [],
+    bugs: ["U1", "U2"].map((bug_id, i) => ({
+      pr: PR,
+      bug_id,
+      statement: "ours",
+      state_review_comments: i === 0 ? [0] : [],
+      default_review_comments: i === 0 ? [] : [0],
+      check: { reason: "real", real: "real" },
+    })),
+  });
+  write(join(labels, "results.json"), {
+    pool: [
+      { id: `${PR}#D1`, source: "answer-key", klass: "lifecycle", state: true, default: true },
+      { id: `${PR}#U1`, source: "unlisted", klass: "transition", state: true, default: false },
+      { id: `${PR}#U2`, source: "unlisted", klass: "stale", state: false, default: true },
+    ],
+  });
+  write(join(labels, "blind-result.json"), [
+    { pr: PR, bug_id: "U1", blind: "state", expected: "state", real: "real", reason: "b" },
+    { pr: PR, bug_id: "U2", blind: "state", expected: "default", real: "real", reason: "b" },
+  ]);
+  const positives = join(B, "positives.json");
+  write(positives, { bysub: { smoke10: [PR] } });
+  const earlier = (found_c: string[]) => {
+    const p = join(B, `earlier-${found_c.length}.json`);
+    write(p, {
+      "sm1-s4": { found_strict: [`${PR}#D1`] },
+      "sm1-s8": { found_strict: [] },
+      "sm1-s8d": { found_strict: [] },
+      "sm1-r": { found_strict: [`${PR}#D1`, `${PR}#D3`] },
+      [D]: { found_strict: found_c },
+    });
+    return p;
+  };
+  const key = join(B, "key");
+  write(join(key, "smoke10.json"), {
+    version: 2,
+    cases: {
+      [PR]: {
+        defects: [{ id: "D1", title: "t", statement: `When ${QUOTE}.`, evidence: "", notes: "" }],
+      },
+    },
+  });
+  const figures = join(B, "figures");
+  const FIGS = py("import state_machines as SM\nprint(json.dumps(list(SM.FIGURES)))") as string[];
+  for (const f of FIGS) write(join(figures, f), "<svg/>\n");
+
+  const args = (over: Record<string, string> = {}) => ({
+    runs_dir: runs,
+    labels,
+    positives,
+    earlier: earlier([`${PR}#D1`, `${PR}#D3`]),
+    figures,
+    repo,
+    key,
+    out: join(B, "out", "state_machines"),
+    ...over,
+  });
+
+  /** collect() on the fixture (no file written), or the message it refuses with. */
+  function collect(over: Record<string, string> = {}): Record<string, Row[]> | string {
+    return py(
+      `import state_machines as SM
+a = types.SimpleNamespace(**json.loads(sys.argv[1]))
+try:
+    print(json.dumps(SM.collect(a)[0], default=str))
+except SystemExit as e:
+    print(json.dumps(str(e)))`,
+      JSON.stringify(args(over)),
+    ) as Record<string, Row[]> | string;
+  }
+
+  /** build()'s refusal on the fixture, before anything is written. */
+  function refusal(over: Record<string, string>): string {
+    return py(
+      `import state_machines as SM
+a = types.SimpleNamespace(**json.loads(sys.argv[1]))
+try:
+    SM.build(a); print(json.dumps("built"))
+except SystemExit as e:
+    print(json.dumps(str(e)))`,
+      JSON.stringify(args(over)),
+    ) as string;
+  }
+
+  const T = collect() as Record<string, Row[]>;
+  const pick = (rows: Row[], keys: string[]) =>
+    rows.map((r) => Object.fromEntries(keys.map((k) => [k, r[k]])));
+
+  // MUTATION: in state_machines.collect, give a posted comment the first row of its text, used or not (drop `not in used`) — this fails
+  // MUTATION: in state_machines.collect, drop the review body's rows (no `rest` rows in reviews) — this fails
+  it("numbers the posted comments with the judge's ids, two of one text apart, and keeps a review-body finding", () => {
+    expect(pick(T.reviews!, ["arm_id", "index", "inline", "line", "comment_id"])).toEqual([
+      { arm_id: S, index: 0, inline: true, line: 10, comment_id: "C1" },
+      { arm_id: S, index: 1, inline: true, line: 11, comment_id: "C2" },
+      { arm_id: D, index: 0, inline: true, line: 10, comment_id: "C1" },
+      { arm_id: D, index: null, inline: false, line: 22, comment_id: "C2" },
+    ]);
+    expect(pick(T.comment_verdicts!, ["arm_id", "comment_id", "index", "judge"])).toEqual([
+      { arm_id: S, comment_id: "C1", index: 0, judge: "gpt-6.1-sol-high" },
+      { arm_id: S, comment_id: "C2", index: 1, judge: "gpt-6.1-sol-high" },
+      { arm_id: D, comment_id: "C1", index: 0, judge: "gpt-6.1-sol-high" },
+      { arm_id: D, comment_id: "C2", index: null, judge: "gpt-6.1-sol-high" },
+    ]);
+    expect(pick(T.cases!, ["arm_id", "n_posted", "usd", "minutes", "judged"])).toEqual([
+      { arm_id: S, n_posted: 2, usd: 2, minutes: 10, judged: true },
+      { arm_id: D, n_posted: 1, usd: 2, minutes: 10, judged: true },
+    ]);
+    expect(T.defect_verdicts![0]).toMatchObject({
+      judge: "gpt-6.1-sol-high",
+      key_version: "2",
+      credit: 1,
+    });
+  });
+
+  // MUTATION: in state_machines.collect, write `profile` as the run gives it (drop `or None`) — this fails
+  it("states each arm's build: on public main or not, and no profile as null", () => {
+    expect(
+      pick(T.arms!, [
+        "arm_id",
+        "profile",
+        "qcr_commit",
+        "qcr_commit_on_public_main",
+        "qcr_commit_match",
+      ]),
+    ).toEqual([
+      {
+        arm_id: S,
+        profile: "state-machines",
+        qcr_commit: onMain,
+        qcr_commit_on_public_main: true,
+        qcr_commit_match: "same",
+      },
+      {
+        arm_id: D,
+        profile: null,
+        qcr_commit: offMain,
+        qcr_commit_on_public_main: false,
+        qcr_commit_match: null,
+      },
+    ]);
+  });
+
+  // MUTATION: in state_machines._klass, return the spelling as given (drop CLASS_SPELLINGS) — this fails
+  // MUTATION: in state_machines.collect, count every not-real miss as unreachable (drop the second reader's `agree`) — this fails
+  // MUTATION: in state_machines.collect, count a blind re-check as agreeing whatever review it names (drop `bl["blind"] == bl["expected"]`) — this fails
+  it("folds the class spellings, takes reachability from the agreed misses, and checks each blind re-check", () => {
+    expect(pick(T.state_labels!, ["defect_id", "klass", "reachable"])).toEqual([
+      { defect_id: "D1", klass: "lifecycle-order", reachable: true },
+      { defect_id: "D2", klass: "stuck-state", reachable: false },
+      { defect_id: "D3", klass: "impossible-states", reachable: true },
+    ]);
+    expect(pick(T.pooled_bugs!, ["bug_id", "klass", "blind_agrees"])).toEqual([
+      { bug_id: "p1#D1", klass: "lifecycle-order", blind_agrees: null },
+      { bug_id: "p1#U1", klass: "unchecked-transition", blind_agrees: true },
+      { bug_id: "p1#U2", klass: "stale-copy", blind_agrees: false },
+    ]);
+    expect(
+      pick(T.comment_state_labels!, ["index", "verdict", "first_verdict", "key_defect"]),
+    ).toEqual([
+      { index: 0, verdict: "not", first_verdict: "not", key_defect: "D1" },
+      { index: 1, verdict: "borderline", first_verdict: "not", key_defect: null },
+    ]);
+  });
+
+  // MUTATION: in state_machines.collect, skip the cut of the answer key's words (no unquote) — this fails
+  it("cuts the answer key's words from a reader's reason", () => {
+    const reason = (T.state_labels![0]!.votes as Row[])[0]!.reason as string;
+    expect(reason).toBe("The reader saw that [words of the answer key's defect], at the queue.");
+    expect((T.state_labels![1]!.votes as Row[])[0]!.reason).toBe("r");
+  });
+
+  // MUTATION: in state_machines.collect, take the result rows no inline comment took without reading review.md — this fails
+  // MUTATION: in state_machines.collect, drop the check of the score file's default run against the judge files — this fails
+  it("refuses a judged row that is neither inline nor in the review body, and an --earlier file that disagrees", () => {
+    const md = join(runs, `${D}-smoke10`, "cases", PR, "review.md");
+    const kept = readFileSync(md, "utf8");
+    writeFileSync(md, "summary\n");
+    try {
+      expect(collect()).toMatch(
+        /result rows \['C2'\] are neither inline comments nor the review body's 0 findings/,
+      );
+    } finally {
+      writeFileSync(md, kept);
+    }
+    expect(collect({ earlier: earlier([`${PR}#D1`]) })).toBe(
+      "--earlier: its default-run found list differs from the judge files",
+    );
+  });
+
+  // MUTATION: in state_machines.build, drop the check that --out does not exist — this fails
+  // MUTATION: in state_machines.build, drop the scrub check of the figures — this fails
+  it("refuses an --out that exists, and a figure the scrub would rewrite, before writing anything", () => {
+    const out = join(B, "exists", "state_machines");
+    mkdirSync(out, { recursive: true });
+    expect(refusal({ out })).toMatch(/exists: give a new folder/);
+    const figs = join(B, "figures-named");
+    cpSync(figures, figs, { recursive: true });
+    writeFileSync(join(figs, FIGS[0]!), "<svg><text>Jordan</text></svg>\n");
+    expect(refusal({ figures: figs })).toMatch(/the scrub would rewrite it/);
+    expect(existsSync(join(B, "out"))).toBe(false);
   });
 });

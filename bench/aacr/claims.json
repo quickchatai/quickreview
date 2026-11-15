@@ -57645,7 +57645,7 @@
   {
    "id": "card.state-machines.1",
    "file": "bench/aacr/hf/card.md",
-   "anchor": "runs on the 34 AACR-Bench pull requests whose answer-key defects include",
+   "anchor": "runs on the 34 AACR-Bench pull requests that hold an earlier list of 45",
    "value": "34",
    "group": "state-machines",
    "q": "state_machines:prs"
@@ -57849,6 +57849,22 @@
    "value": "32",
    "group": "state-machines",
    "q": "state_machines:comments.sm4-p.not"
+  },
+  {
+   "id": "card.state-machines.27",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "runs on the 34 AACR-Bench pull requests that hold an earlier list of 45",
+   "value": "45",
+   "group": "state-machines",
+   "q": "state_machines:old45.total"
+  },
+  {
+   "id": "card.state-machines.28",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "labelled state defects (28 of them hold a state defect under the strict",
+   "value": "28",
+   "group": "state-machines",
+   "q": "state_machines:prs.with_strict_state"
   },
   {
    "id": "bench.second-judge.36",

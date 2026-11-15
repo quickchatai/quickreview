@@ -597,8 +597,9 @@ number of this section from the folder (`second_judge` in
 ## State-machine study
 
 {{STATE_MACHINES_MD}} holds a study of QuickReview's state-machine review: two
-runs on the 34 AACR-Bench pull requests whose answer-key defects include
-labelled state bugs, reviewer and judge `gpt-6.1-sol`, one run each. `sm4-p`
+runs on the 34 AACR-Bench pull requests that hold an earlier list of 45
+labelled state defects (28 of them hold a state defect under the strict
+relabel below), reviewer and judge `gpt-6.1-sol`, one run each. `sm4-p`
 is the state-machine review alone (`review.profile=state-machines`, the eight
 `pass-sm-*` lenses, built from public main). `sm1-c` is the default review
 with its automatic state lens off, on an earlier build from a branch that was
@@ -628,8 +629,9 @@ default review's own earlier comments.
 {{STATE_MACHINES_FILES}}
 
 `bench/aacr/recompute/state_machines.py --data <this dataset>` recomputes
-every number of the folder's README from its tables, and `validation.json`
-holds the same checks of the folder (see "How to verify").
+every number of the folder's README from its tables and checks that the
+README is the one they give, and `validation.json` holds the same checks of
+the folder (see "How to verify").
 
 ## What is not here, and why
 
