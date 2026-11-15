@@ -341,6 +341,7 @@ function dataset(root: string): void {
     second_read_verdict: null,
     second_read_agrees: null,
     second_read_reason: null,
+    relabel_note: null,
   });
   jsonl(sm, "misses", [
     miss("p2", "D1", "defect_not_real_or_unreachable"),
@@ -516,7 +517,7 @@ const C = {
     "the inline comments: the state review's by label after the second reads, its not-state ones the judge graded correct, the default review's, and comments per pull request",
   default_found_any: "the answer-key defects of every kind the default review found",
   misses: "the state review's misses on the strict state defects, by cause",
-  cost: "list-price dollars per pull request (compare.usd_and_minutes), and both runs' as the sum of the two rounded",
+  cost: "list-price dollars per pull request (compare.usd_and_minutes), and both runs' exact combined cost rounded",
 };
 
 describe("state_machines: the manifest", () => {
@@ -617,11 +618,18 @@ describe("state_machines: validation.json's checks", () => {
       pool: { [S]: 85, [D]: 71, union: 90 },
       state_comments_not: 20,
     });
-    // the write-up adds the two per-PR costs as it prints them
+    // both runs together: the exact (94.62 + 94.30) / 34 = 5.5566, not 2.78 + 2.77
     expect(post.cost).toEqual({
       usd_per_pr_state: 2.78,
       usd_per_pr_default: 2.77,
-      usd_per_pr_both: 5.55,
+      usd_per_pr_both: 5.56,
+    });
+    expect(post.misses).toEqual({
+      total: 12,
+      real: 11,
+      site_read_nothing_reported: 5,
+      reported_a_different_problem: 6,
+      defect_not_real_or_unreachable: 1,
     });
     expect(Object.keys(post).sort()).toEqual(Object.keys(POST).sort());
   });
@@ -965,15 +973,17 @@ describe("state_machines: validation.json's checks", () => {
     expect(failing(bad)).toEqual([C.cost]);
   });
 
-  // MUTATION: in state_machines.numbers, give cost.union.usd_per_pr_rounded_sum as the unrounded sum, rounded (round(sum(both), 2)) — this fails
-  it("gives both runs' cost as the sum of the two per-PR costs as rounded", () => {
-    // 2.504 and 1.504 print as 2.50 and 1.50, which add to 4.00; the unrounded 4.008 would print as 4.01
+  // MUTATION: in state_machines.post_values, give usd_per_pr_both as the sum of the two rounded per-PR costs (round(sum(round(x, 2) for x in both), 2)) — this fails
+  it("gives both runs' cost as their exact combined cost, rounded, not the sum of the two rounded", () => {
+    // 2.504 and 1.504 print as 2.50 and 1.50, which add to 4.00; the exact 4.008 prints as 4.01
     const bad = variant("cost-both", (sm) =>
       edit(sm, "cases", (r) =>
         r.instance_id === "p2" ? { ...r, usd: (r.usd as number) + 0.008 } : r,
       ),
     );
-    expect(failing(bad)).toEqual([]);
+    expect(failing(bad)).toEqual([C.cost]);
+    const cost = checks(bad, manifest(bad, join(bad, "m.sha256"))).find((c) => c.check.endsWith(C.cost))!;
+    expect(cost.got).toEqual({ usd_per_pr_state: 2.5, usd_per_pr_default: 1.5, usd_per_pr_both: 4.01 });
   });
 
   // MUTATION: in state_machines.numbers, give prs from the state arm alone (drop the comparison with the default arm's) — this fails
@@ -1307,7 +1317,10 @@ describe("state_machines: the build", () => {
       real_if_unlisted: "n/a",
     })),
     checked: [{ pr: PR, index: 1, check: { verdict: "borderline", agree: false, reason: "s" } }],
-    misses: [miss("D2", true), miss("D3", false)],
+    misses: [
+      { ...miss("D2", true), relabel_note: "Relabelled on review by Jordan: see /home/alice/notes" },
+      miss("D3", false),
+    ],
   });
   write(join(labels, "pooled-unlisted.json"), {
     classified: [],
@@ -1472,6 +1485,14 @@ except SystemExit as e:
     ).toEqual([
       { index: 0, verdict: "not", first_verdict: "not", key_defect: "D1" },
       { index: 1, verdict: "borderline", first_verdict: "not", key_defect: null },
+    ]);
+  });
+
+  // MUTATION: in state_machines.collect, write every miss's relabel_note as None (drop m.get("relabel_note")) — this fails
+  it("carries a miss's relabel note, scrubbed, and null where the cause was not changed", () => {
+    expect(pick(T.misses!, ["defect_id", "relabel_note"])).toEqual([
+      { defect_id: "D2", relabel_note: "Relabelled on review by <owner>: see <home>/notes" },
+      { defect_id: "D3", relabel_note: null },
     ]);
   });
 

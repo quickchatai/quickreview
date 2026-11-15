@@ -96,7 +96,7 @@ TABLES: Dict[str, tuple] = {
                     "statement", "state_review_comments", "default_review_comments", "check_reason",
                     "blind_verdict", "blind_agrees", "blind_reason"),
     "misses": ("instance_id", "defect_id", "cause", "owning_lens", "planned_lenses", "what_would_have_caught_it",
-               "second_read_verdict", "second_read_agrees", "second_read_reason"),
+               "second_read_verdict", "second_read_agrees", "second_read_reason", "relabel_note"),
     "earlier_arms": ("arm_id", "description", "instance_id", "defect_id", "found"),
 }
 
@@ -107,14 +107,14 @@ LABEL_TEXT: Dict[str, tuple] = {
     "state_labels": ("votes.reason",),
     "comment_state_labels": ("reason", "second_read_reason"),
     "pooled_bugs": ("statement", "check_reason", "blind_reason"),
-    "misses": ("what_would_have_caught_it", "second_read_reason"),
+    "misses": ("what_would_have_caught_it", "second_read_reason", "relabel_note"),
 }
 QUOTE_WORDS = 10
 QUOTED = "[words of the answer key's defect]"
 
 # The numbers the study's write-up prints, each recomputed by numbers() from the tables (checks() compares).
 # Percentages are rounded to whole numbers, comments per PR to one decimal, dollars to cents; the cost of both
-# runs is the sum of the two per-PR costs as rounded, as the write-up adds them.
+# runs is their exact combined cost per PR, rounded to cents (not the sum of the two rounded costs).
 POST: Dict[str, object] = {
     "prs": 34,
     "relabel": {"total": 186, "state": 56, "borderline": 2, "not": 128, "reachable": 55, "state_not_old45": 21},
@@ -132,9 +132,9 @@ POST: Dict[str, object] = {
     "comments": {STATE: 159, "state": 96, "borderline": 31, "not": 32, "not_judged_correct": 28, DEFAULT: 397,
                  "per_pr_state": 4.7, "per_pr_default": 11.7, "per_pr_union": 16.4},
     "default_found_any": {"found": 161, "of": 186},
-    "misses": {"total": 12, "real": 11, "site_read_nothing_reported": 6, "reported_a_different_problem": 5,
+    "misses": {"total": 12, "real": 11, "site_read_nothing_reported": 5, "reported_a_different_problem": 6,
                "defect_not_real_or_unreachable": 1},
-    "cost": {"usd_per_pr_state": 2.78, "usd_per_pr_default": 2.77, "usd_per_pr_both": 5.55},
+    "cost": {"usd_per_pr_state": 2.78, "usd_per_pr_default": 2.77, "usd_per_pr_both": 5.56},
 }
 
 
@@ -342,8 +342,6 @@ def numbers_of(t: Dict[str, List[dict]]) -> Dict[str, object]:
         out[f"cost.{a}.minutes_per_pr"] = sum(mins) / len(rows) if rows and None not in mins else None
     both = (out[f"cost.{STATE}.usd_per_pr"], out[f"cost.{DEFAULT}.usd_per_pr"])
     out["cost.union.usd_per_pr"] = sum(both) if None not in both else None
-    # the write-up adds the two per-PR costs as it prints them, rounded to cents
-    out["cost.union.usd_per_pr_rounded_sum"] = round(sum(round(x, 2) for x in both), 2) if None not in both else None
     return out
 
 
@@ -384,7 +382,7 @@ def post_values(n: Dict[str, object]) -> Dict[str, object]:
         "misses": {"total": g("misses.total"), "real": g("misses.real"), **{c: g(f"misses.{c}") for c in MISS_CAUSES}},
         "cost": {"usd_per_pr_state": _r(g(f"cost.{STATE}.usd_per_pr"), 2),
                  "usd_per_pr_default": _r(g(f"cost.{DEFAULT}.usd_per_pr"), 2),
-                 "usd_per_pr_both": g("cost.union.usd_per_pr_rounded_sum")},
+                 "usd_per_pr_both": _r(g("cost.union.usd_per_pr"), 2)},
     }
 
 
@@ -410,7 +408,7 @@ NUMBER_CHECKS = (
                  "judge graded correct, the default review's, and comments per pull request"),
     ("default_found_any", "the answer-key defects of every kind the default review found"),
     ("misses", "the state review's misses on the strict state defects, by cause"),
-    ("cost", "list-price dollars per pull request (compare.usd_and_minutes), and both runs' as the sum of the two "
+    ("cost", "list-price dollars per pull request (compare.usd_and_minutes), and both runs' exact combined cost "
              "rounded"),
 )
 README_CHECK = "README.md is the README its tables give (state_machines.readme of numbers())"
@@ -843,7 +841,9 @@ def collect(a) -> tuple:
                                  "owning_lens": m.get("owning_lens"), "planned_lenses": m.get("planned_lenses"),
                                  "what_would_have_caught_it": m.get("what_would_have_caught_it"),
                                  "second_read_verdict": ch.get("verdict"), "second_read_agrees": ch.get("agree"),
-                                 "second_read_reason": ch.get("reason")})
+                                 "second_read_reason": ch.get("reason"),
+                                 # why a miss's cause was changed on review, where it was
+                                 "relabel_note": m.get("relabel_note")})
     # the earlier builds: found flags on the strict state defects (the score file's own strict list)
     ea = json.load(open(a.earlier))
     strict = sorted(k for k, v in sr.items() if v["verdict"] == "state_machine")
@@ -1007,7 +1007,8 @@ Every table is a `.parquet` file in this folder.
   through the run's plan, lens transcripts and candidate findings (the trace itself is not here): the
   `cause`, the lens that owned the defect (`owning_lens`), the lenses the run's plan held
   (`planned_lenses`), and what would have caught it; `second_read_*` is a second reader's check of the
-  cause where one was made.
+  cause where one was made, and `relabel_note` says why a cause was changed on review (null where it
+  was not).
 - `earlier_arms`: whether each of four earlier builds found each strict state defect (judge verdict
   `found`); derived flags only, their reviews are not in this folder.
 - `figures/`: the write-up's four charts.
@@ -1060,8 +1061,9 @@ reported a different problem at the site, {i('misses.defect_not_real_or_unreacha
 They are exactly the strict state defects the state review did not find.
 
 **Cost** (`cases.usd`): {n[f'cost.{STATE}.usd_per_pr']:.2f} and {n[f'cost.{DEFAULT}.usd_per_pr']:.2f} dollars
-per PR, rounded to cents as the write-up prints them; it gives both runs as their sum,
-{n['cost.union.usd_per_pr_rounded_sum']:.2f}, which is {n['cost.union.usd_per_pr']:.4f} before rounding.
+per PR, rounded to cents as the write-up prints them; both runs together cost
+{n['cost.union.usd_per_pr']:.2f} per PR, the exact sum ({n['cost.union.usd_per_pr']:.4f}) rounded, not the sum of
+the two rounded costs.
 
 ## Limits
 
