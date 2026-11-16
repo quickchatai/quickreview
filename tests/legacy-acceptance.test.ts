@@ -51,6 +51,12 @@
 //      (src/onboard/choices.ts). Every install set up before the model step
 //      stopped asking carries the keys in its checklist, and every install
 //      that pasted a key carries the file.
+//   7. the local review's shared state file: a build that kept one state per
+//      target saved every profile's rounds under the target's own key, and
+//      a profile with no file of its own yet still builds on that file when
+//      its last round was saved under the same profile (loadProfileState,
+//      packages/pi-plugin/src/reviewstate.ts). Every repo reviewed under a
+//      named profile before states were kept per profile has that file.
 // Not a fold: regression.ts's Recommendation "ask-owner-legacy" → "ask-owner" —
 // that value is produced and rendered only, never parsed back, so there is no
 // input side to keep.
@@ -147,6 +153,11 @@ import {
   type PassPlanEntry,
   type SessionHooks,
 } from "@quickchatai/pi-quickreview/src/types.js";
+import {
+  loadProfileState,
+  profileStateKey,
+  type ReviewState,
+} from "@quickchatai/pi-quickreview/src/reviewstate.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 import { fakeStreams, installScanRig, okSsh } from "./helpers/tui-rig.js";
 
@@ -1350,6 +1361,70 @@ describe("the model credential: the older key file and the older checklist keys 
       expect(choices["llm_model_prefix"]).toEqual(prefix);
       rmSync(checklistPath(stateDir));
     }
+  });
+});
+
+// ---- fold 7: the local review's shared state file -------------------------
+
+describe("a profile's review state: the shared file of a build before per-profile states", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "legacy-profile-state-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const target = "branch:o/r@feature";
+  const stateAt = (head: string, profile?: string): ReviewState => ({
+    version: 1,
+    target,
+    rounds: [
+      {
+        round_no: 1,
+        head_sha: head,
+        base_sha: "b",
+        merge_base: "m",
+        reviewed_at: "2026-11-01T00:00:00Z",
+        verdict: null,
+        scope: "full",
+        cost_usd: null,
+        ...(profile !== undefined ? { coverage: { profile, lenses: ["pass-validate"] } } : {}),
+      },
+    ],
+    rows: [],
+    checks: [],
+  });
+  const write = (name: string, s: ReviewState): string => {
+    const path = join(dir, name);
+    writeFileSync(path, JSON.stringify(s));
+    return path;
+  };
+
+  it("no profile keeps the target's own key; a named profile keys its own file", () => {
+    expect(profileStateKey(target, "")).toBe(target);
+    expect(profileStateKey(target, "security")).not.toBe(target);
+    expect(profileStateKey(target, "security")).not.toBe(profileStateKey(target, "state-machines"));
+  });
+
+  // MUTATION: return `own` from loadProfileState without reading the shared
+  // file — the profile's saved round is lost and this fails.
+  it("a named profile with no file of its own builds on the shared file's round of its own profile", () => {
+    const shared = write("shared.json", stateAt("aaa", "security"));
+    const got = loadProfileState(join(dir, "own.json"), shared, target, "security");
+    expect(got?.rounds[0]?.head_sha).toBe("aaa");
+  });
+
+  // MUTATION: drop the profile comparison in loadProfileState — a round of
+  // another profile, or one with no recorded profile, is taken and this fails.
+  it("never takes the shared file's round of another profile, or of no recorded profile", () => {
+    for (const s of [stateAt("aaa", ""), stateAt("aaa", "state-machines"), stateAt("aaa")]) {
+      const shared = write("shared.json", s);
+      expect(loadProfileState(join(dir, "own.json"), shared, target, "security")).toBeNull();
+    }
+  });
+
+  it("a profile's own file wins over the shared one", () => {
+    const shared = write("shared.json", stateAt("aaa", "security"));
+    const own = write("own.json", stateAt("bbb", "security"));
+    expect(loadProfileState(own, shared, target, "security")?.rounds[0]?.head_sha).toBe("bbb");
   });
 });
 

@@ -1758,6 +1758,85 @@ describe("review(): a checkpoint is only as wide as the lenses that made it", ()
     },
   );
 
+  /** A one-off `--profile state-machines` run, as the plugin builds its
+   * config: the same config file under another profile, for this run only. */
+  const smCtx = contextFrom(root, { cfg: parsed, toml }, "state-machines", "", {});
+  const oneOffProfile = (opts: ReviewOptions): ReviewOptions => ({
+    ...opts,
+    config: { ...smCtx.cfg, models: { ...smCtx.cfg.models, model: "faux/m" } },
+    ecosystem: smCtx.ecosystem,
+  });
+  /** A second commit on `feature`; its sha. */
+  const commitMore = (repo: string): string => {
+    writeFileSync(
+      join(repo, "src", "a.ts"),
+      "export const a = 1;\nexport const b = 2;\nexport const c = 3;\nexport const d = 4;\n",
+    );
+    git(repo, "commit", "-q", "-am", "add d");
+    return git(repo, "rev-parse", "HEAD");
+  };
+
+  // MUTATION: key the state file by the target alone in review() (drop
+  // `profileStateKey`) — the one-off replaces the normal checkpoint, the
+  // normal review at B is a full one with no `since`, and this fails.
+  it(
+    "a normal review after a one-off --profile review covers the change since its own checkpoint",
+    { timeout: 60_000 },
+    async () => {
+      expect(smCtx.cfg.review.profile).toBe("state-machines");
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = options("profile-one-off", runtime);
+      faux.appendResponses([
+        answer(opts, recordTitled("plain finding A")),
+        answer(opts, recordTitled("state finding B")),
+      ]);
+      const a = git(opts.repoDir, "rev-parse", "HEAD");
+      const plain = await review({ kind: "branch" }, opts, {});
+      expect(plain.exitCode, plain.text).toBe(0);
+      const b = commitMore(opts.repoDir);
+      const oneOff = await review({ kind: "branch" }, oneOffProfile(opts), {});
+      expect(oneOff.exitCode, oneOff.text).toBe(0);
+      expect(oneOff.data["unchanged"]).toBeUndefined();
+      const next = await preview({ kind: "branch" }, opts);
+      expect(next.exitCode, next.text).toBe(0);
+      expect(next.data["unchanged"]).toBeUndefined();
+      const p = next.data["preview"] as Record<string, unknown>;
+      expect(p["head_sha"]).toBe(b);
+      expect(p["scope"]).toBe("delta");
+      expect(p["since"]).toBe(a);
+      expect(p["prior_open"]).toBe(1);
+    },
+  );
+
+  // MUTATION: never save a round run under a named profile in review() (the
+  // other fix: the one-off writes no checkpoint) — the second one-off finds
+  // none, plans a full review, and this fails.
+  it(
+    "a second one-off --profile review sees the first one's checkpoint",
+    { timeout: 60_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = options("profile-one-off-twice", runtime);
+      faux.appendResponses([
+        answer(opts, recordTitled("plain finding A")),
+        answer(opts, recordTitled("state finding B")),
+      ]);
+      const plain = await review({ kind: "branch" }, opts, {});
+      expect(plain.exitCode, plain.text).toBe(0);
+      const b = commitMore(opts.repoDir);
+      const first = await review({ kind: "branch" }, oneOffProfile(opts), {});
+      expect(first.exitCode, first.text).toBe(0);
+      // The same head under the same profile: the first one-off's round
+      // answers it, so this run reviews nothing.
+      const second = await preview({ kind: "branch" }, oneOffProfile(opts));
+      expect(second.exitCode, second.text).toBe(0);
+      expect(second.data["unchanged"]).toBe(true);
+      expect(second.data["head_sha"]).toBe(b);
+    },
+  );
+
   // A state saved before rounds recorded their coverage keeps today's
   // behaviour: the same head again is nothing new.
   // MUTATION: make `covers()` return false for a round with no coverage —

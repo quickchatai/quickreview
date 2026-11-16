@@ -1,5 +1,12 @@
 # Release notes
 
+## Unreleased
+
+- A one-off `/qcr-review --profile NAME` review keeps its checkpoint apart
+  from the normal review's: the next normal review covers the change since
+  its own last review, not "nothing new", and the next review under that
+  profile builds on the one-off's.
+
 ## 1.5.0
 
 Two additions: QuickReview runs on any model provider pi supports, and a

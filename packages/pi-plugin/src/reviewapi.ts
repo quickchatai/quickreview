@@ -157,8 +157,9 @@ import {
   coversRound,
   prTargetKey,
   lastRound,
-  loadState,
+  loadProfileState,
   openFindings,
+  profileStateKey,
   recordRound,
   saveState,
   type ReviewRound,
@@ -853,18 +854,27 @@ async function runPipeline(
   // and a run asked for a lens family (a preset that skips every other lens)
   // never replaces a round it does not cover itself. A narrower run therefore
   // never hides code from a wider one, and the wider one's open findings stay.
+  // Each profile keeps its own checkpoint (`profileStateKey`): a one-off
+  // `--profile` review neither reads nor moves the normal review's, so the
+  // next normal review covers what it would have had the one-off not run.
   const targetKey = prInfo
     ? prTargetKey(prInfo.repo, prInfo.number)
     : branchTargetKey(t.repo, t.branch);
   const keepsState = (kind === "branch" && t.uncommitted === undefined) || kind === "pr";
-  const statePath =
-    opts.storeDir === null
-      ? null
-      : (openReviewStoreIn(opts.storeDir, repoDir)?.statePath(targetKey) ?? null);
-  const postsToPr = prInfo !== null && sends("pr");
   const lensCoverage = coverageOf(opts.config);
+  const reviewStore = opts.storeDir === null ? null : openReviewStoreIn(opts.storeDir, repoDir);
+  const statePath =
+    reviewStore?.statePath(profileStateKey(targetKey, lensCoverage.profile)) ?? null;
+  const postsToPr = prInfo !== null && sends("pr");
   const asked = opts.securityRequest !== undefined || opts.stateRequest !== undefined;
-  const stored = keepsState ? loadState(statePath, targetKey) : null;
+  const stored = keepsState
+    ? loadProfileState(
+        statePath,
+        reviewStore?.statePath(targetKey) ?? null,
+        targetKey,
+        lensCoverage.profile,
+      )
+    : null;
   const prev =
     opts.full || asked || postsToPr || stored === null || !covers(lastRound(stored), lensCoverage)
       ? null
