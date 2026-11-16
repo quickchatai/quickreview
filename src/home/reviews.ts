@@ -14,8 +14,10 @@
 //   runs       every run the registry holds for the repo: what the home
 //              re-attaches to when it opens.
 //   latest     the person's own reviews of the repo's PRs: the registry's
-//              finished runs and the app's per-target review state (the
-//              review home's delta history, packages/pi-plugin/src/reviewstate.ts).
+//              finished runs and the app's review state, kept per target
+//              and profile (the review home's delta history,
+//              packages/pi-plugin/src/reviewstate.ts; every profile's file of
+//              a PR counts, the newest round wins).
 //   autoRounds the PRs the daemon finished a review round of, from its
 //              status snapshot (src/home/daemonstatus.ts): a PR whose rounds
 //              are all still running or failed has no review yet.
@@ -404,7 +406,8 @@ export function reviewsPort(d: ReviewsPortDeps): ReviewsPort {
         const rv = s && s.pr !== null ? runReview(s) : null;
         if (s && s.pr !== null && rv) by.set(s.pr, later(by.get(s.pr), rv));
       }
-      // the per-target review state: a PR reviewed from a checkout
+      // the review state, one file per target and profile (the state inside
+      // names the target): a PR reviewed from a checkout, under any profile
       let stores: string[];
       try {
         stores = existsSync(d.reviewHome) ? list(d.reviewHome) : [];

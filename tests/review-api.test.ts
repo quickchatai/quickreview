@@ -15,6 +15,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -56,6 +57,8 @@ import { pricedFaux } from "./helpers/priced-faux.js";
 import { validate } from "./helpers/json-schema-lite.js";
 import { SECURITY_FAMILY } from "@quickchatai/pi-quickreview/src/passes.js";
 import { workTreeFactsIo } from "@quickchatai/pi-quickreview/src/secfactsgit.js";
+import { openReviewStoreIn } from "@quickchatai/pi-quickreview/src/reviewstore.js";
+import { profileStateKey } from "@quickchatai/pi-quickreview/src/reviewstate.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 
 useOfflineGuard();
@@ -1834,6 +1837,39 @@ describe("review(): a checkpoint is only as wide as the lenses that made it", ()
       expect(second.exitCode, second.text).toBe(0);
       expect(second.data["unchanged"]).toBe(true);
       expect(second.data["head_sha"]).toBe(b);
+    },
+  );
+
+  // A named profile reviewed by a build that kept one state per target saved
+  // its rounds in the target's shared file. review() reads that file when the
+  // profile has none of its own yet and its last round ran under this profile.
+  // MUTATION: pass null as loadProfileState's shared path in runPipeline — this fails
+  it(
+    "a named profile's round in the pre-1.5.0 shared file still answers an unchanged head",
+    { timeout: 60_000 },
+    async () => {
+      const faux = pricedFaux(() => 0.25, { provider: "faux", models: [{ id: "m" }] });
+      const { runtime } = fauxRuntime(faux);
+      const opts = options("profile-legacy-shared", runtime);
+      faux.appendResponses([answer(opts, recordTitled("state finding B"))]);
+      const first = await review({ kind: "branch" }, oneOffProfile(opts), {});
+      expect(first.exitCode, first.text).toBe(0);
+      const store = openReviewStoreIn(opts.storeDir!, opts.repoDir)!;
+      const saved = (readdirSync(join(store.dir, "state")) as string[])
+        .filter((e) => e.endsWith(".json"))
+        .map((e) => join(store.dir, "state", e));
+      expect(saved).toHaveLength(1);
+      const target = (JSON.parse(readFileSync(saved[0]!, "utf8")) as { target: string }).target;
+      const own = store.statePath(profileStateKey(target, "state-machines"));
+      const shared = store.statePath(target);
+      expect(saved[0]).toBe(own);
+      expect(shared).not.toBe(own);
+      // As the older build left it: the profile's round in the shared file only.
+      renameSync(own, shared);
+      const again = await preview({ kind: "branch" }, oneOffProfile(opts));
+      expect(again.exitCode, again.text).toBe(0);
+      expect(again.data["unchanged"]).toBe(true);
+      expect(again.data["head_sha"]).toBe(git(opts.repoDir, "rev-parse", "HEAD"));
     },
   );
 

@@ -11,11 +11,14 @@
 // 1`, src/schemaflag.ts) is answered in version 1 while the review's estimate
 // is a number, and refused before anything runs where it is not.
 //
-// Re-review: the state kept per target (packages/pi-plugin/src/reviewstate.ts) makes a second run
-// on an unchanged head free, and a run after a push a delta review over the
-// production follow-up plan (packages/pi-plugin/src/reviewdelta.ts) with the open findings handed
-// over to verify and never repeated; a rewrite or a doubtful delta is a full
-// review.
+// Re-review: the state kept per target and profile
+// (packages/pi-plugin/src/reviewstate.ts) makes a second run under the same
+// profile on an unchanged head free, and a run after a push a delta review
+// over the production follow-up plan (packages/pi-plugin/src/reviewdelta.ts)
+// with the open findings handed over to verify and never repeated; a rewrite
+// or a doubtful delta is a full review. A run under another profile (a
+// one-off `--profile`) builds on that profile's own state, never on this one,
+// so it gets no free re-run from it.
 //
 // A unified diff is a target too (`--diff -` reads stdin, `--diff FILE` a
 // file): no repository is needed, one around the working directory is only
