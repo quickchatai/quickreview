@@ -450,7 +450,7 @@ describe.skipIf(!hasScript || process.platform !== "linux")(
     const inPty =
       (outDir: string, screen?: { text: string }) =>
       (cmd: { bin: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }) =>
-        new Promise<number>((done) => {
+        new Promise<number>((done, fail) => {
           const line = `stty cols 140 rows 50; exec ${[cmd.bin, ...cmd.args].map(q).join(" ")}`;
           const child = spawn("script", ["-qefc", line, "/dev/null"], {
             cwd: cmd.cwd,
@@ -459,6 +459,12 @@ describe.skipIf(!hasScript || process.platform !== "linux")(
           });
           child.stdout.on("data", (b: Buffer) => {
             if (screen) screen.text += b.toString();
+          });
+          // A pi that has already left when the ^D below is written (its exit
+          // not yet heard) EPIPEs the write; the exit code the caller asserts
+          // carries that. Any other stdin error fails the run.
+          child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+            if (err.code !== "EPIPE") fail(err);
           });
           const t0 = Date.now();
           const poll = setInterval(() => {
@@ -665,7 +671,7 @@ describe.skipIf(!hasScript || process.platform !== "linux")(
           };
         },
         spawn: (cmd) =>
-          new Promise<number>((done) => {
+          new Promise<number>((done, fail) => {
             const line = `stty cols 140 rows 50; exec ${[cmd.bin, ...cmd.args].map(q).join(" ")}`;
             const child = spawn("script", ["-qefc", line, "/dev/null"], {
               cwd: cmd.cwd,
@@ -673,6 +679,12 @@ describe.skipIf(!hasScript || process.platform !== "linux")(
               stdio: ["pipe", "pipe", "pipe"],
             });
             child.stdout.on("data", (b: Buffer) => (screen += b.toString()));
+            // A pi that has already left when the ^D below is written (its
+            // exit not yet heard) EPIPEs the write; the exit code and screen
+            // asserted below carry that. Any other stdin error fails the run.
+            child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+              if (err.code !== "EPIPE") fail(err);
+            });
             const t0 = Date.now();
             const poll = setInterval(() => {
               // the fork's history is on screen once the round order is

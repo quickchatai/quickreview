@@ -101,7 +101,7 @@ const result = await runDebugRound(
     env: { ...process.env, PI_OFFLINE: "1", PI_TELEMETRY: "0", TERM: "xterm-256color" },
     // The pty: `script` gives pi a terminal; this plays the person.
     run: (cmd) =>
-      new Promise((done) => {
+      new Promise((done, fail) => {
         seen.bin = cmd.bin;
         seen.args = cmd.args.slice(0, 8);
         const line = `stty cols 140 rows 50; exec ${[cmd.bin, ...cmd.args].map(q).join(" ")}`;
@@ -112,6 +112,12 @@ const result = await runDebugRound(
         });
         let screen = "";
         child.stdout.on("data", (d) => (screen += d.toString()));
+        // A pi that has already left when the ^D below is written (its exit
+        // not yet heard) EPIPEs the write; the exit code in result.json
+        // carries that. Any other stdin error fails the run.
+        child.stdin.on("error", (err) => {
+          if (err.code !== "EPIPE") fail(err);
+        });
         const t0 = Date.now();
         const poll = setInterval(() => {
           let wave = 0;

@@ -175,6 +175,13 @@ async function runProbe(pi: InstalledPi, name: string): Promise<Probe> {
   let stderr = "";
   child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
   child.stdout.on("data", () => {});
+  // A pi that dies at start exits before reading this request; the write then
+  // EPIPEs. The probe's file (asserted below, with pi's stderr) carries that
+  // answer. Any other stdin error fails the run.
+  let stdinError: Error | undefined;
+  child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code !== "EPIPE") stdinError = err;
+  });
   child.stdin.write('{"type":"get_state"}\n');
   const deadline = Date.now() + 45_000;
   while (!existsSync(out) && Date.now() < deadline && child.exitCode === null) {
@@ -182,6 +189,7 @@ async function runProbe(pi: InstalledPi, name: string): Promise<Probe> {
   }
   child.stdin.end();
   child.kill("SIGTERM");
+  if (stdinError) throw stdinError;
   expect(existsSync(out), `the probe never ran under ${pi.cli}\n${stderr}`).toBe(true);
   const seen = JSON.parse(readFileSync(out, "utf8")) as Omit<Probe, "stderr">;
   return { ...seen, stderr };

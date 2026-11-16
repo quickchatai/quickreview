@@ -383,7 +383,7 @@ function runUpdater(
   stdin: Buffer | null = tarOf(),
   env: Record<string, string> = {},
 ): Promise<Out> {
-  return new Promise((resolveRun) => {
+  return new Promise((resolveRun, rejectRun) => {
     const child = spawn("bash", [updater, ...args], {
       env: {
         ...process.env,
@@ -405,6 +405,13 @@ function runUpdater(
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
     child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
     child.on("close", (code) => resolveRun({ code: code ?? -1, stdout, stderr }));
+    // An updater that refuses before it reads its stdin (a bad argument, a run
+    // spec it will not read) can exit before this write lands; the write then
+    // EPIPEs. That is the updater's answer, not a test failure: the exit code
+    // and output the test asserts carry it. Any other stdin error fails the run.
+    child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code !== "EPIPE") rejectRun(err);
+    });
     if (stdin) child.stdin.write(stdin);
     child.stdin.end();
   });

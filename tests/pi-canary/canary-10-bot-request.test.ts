@@ -229,7 +229,7 @@ async function interactive(): Promise<Run> {
     "Review PR 7.",
   ];
   writeFileSync(join(dir, "agent-cli", "auth.json"), "{}\n", { mode: 0o600 });
-  await new Promise<void>((done) => {
+  await new Promise<void>((done, fail) => {
     const line = `stty cols 140 rows 50; exec ${argv.map(q).join(" ")}`;
     const child = spawn("script", ["-qefc", line, "/dev/null"], {
       cwd: join(dir, "work"),
@@ -237,6 +237,12 @@ async function interactive(): Promise<Run> {
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdout.resume();
+    // A pi that has already left when the ^D below is written (its exit not
+    // yet heard) EPIPEs the write; the requests and session file asserted
+    // below carry that. Any other stdin error fails the run.
+    child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code !== "EPIPE") fail(err);
+    });
     const t0 = Date.now();
     const poll = setInterval(() => {
       // The turn is over when the session file holds the model's answer.
