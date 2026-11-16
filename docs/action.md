@@ -553,8 +553,8 @@ repository that installed it (the post still goes through the one
 because there is no memory in the Action. `scripts/action.sh` finds both lines
 exactly once, or fails.
 
-**No memory, no state.** The runner is fresh each time, and so is the review's
-state volume. A review posts only findings the pull request does not already
+**No memory, no state.** The runner is fresh each time, and the review keeps
+its state inside the throwaway container. A review posts only findings the pull request does not already
 carry, found by the hidden markers on earlier comments, which is what keeps a
 second run from repeating the first. Nothing else carries over: the second run
 is a full review too.

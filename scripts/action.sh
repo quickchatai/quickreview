@@ -37,7 +37,7 @@
 # scripts/qcr-host.sh, with the Action's differences):
 #   - the workspace read-only at /repo (an empty git repository when the job
 #     did not check one out), the generated config read-only, the pi login
-#     directory read-only at /qcr-login, an anonymous volume for the state;
+#     directory read-only at /qcr-login, the state in the container's own /tmp;
 #   - QCR_ROUTE=action, so the review is not capped unless `limit` is set and
 #     nothing is asked;
 #   - the GitHub token as a read-once file: a 0600 file in a
@@ -636,7 +636,10 @@ run_review() {
   args+=(-e "QCR_RUN_UID=$run_uid" -e "QCR_RUN_GID=$run_gid")
   args+=(--group-add "$LOGIN_GID" -e "QCR_LOGIN_GID=$LOGIN_GID")
   args+=(--mount "type=bind,src=$repo_dir,dst=/repo,readonly" -w /repo)
-  args+=(--mount "type=volume,dst=/opt/qcr/state" -e QCR_STATE_HOME=/opt/qcr/state/home)
+  # The review's state in the container's own /tmp, gone with --rm. Never under
+  # the image's /opt/qcr: the review host refuses a run directory inside the
+  # qcr tree (packages/pi-plugin/src/reviewhost.ts prepareReviewHost).
+  args+=(-e QCR_STATE_HOME=/tmp/qcr/home)
   args+=(--mount "type=bind,src=$w/login,dst=/qcr-login,readonly" -e PI_CODING_AGENT_DIR=/qcr-login)
   args+=(--mount "type=bind,src=$w/config.toml,dst=/qcr-config/config.toml,readonly" -e QCR_CONFIG=/qcr-config/config.toml)
   args+=(--mount "type=bind,src=$tokdir,dst=/run/qcr-in" -e QCR_GH_TOKEN_FILE=/run/qcr-in/gh-token)

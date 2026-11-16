@@ -500,6 +500,11 @@ describe("scripts/action.sh run — the docker run line", () => {
     expect(a.some((x) => x.startsWith("QCR_RUN_UID="))).toBe(true);
     // the repo read-only
     expect(a).toContain(`type=bind,src=${join(r.dir, "workspace")},dst=/repo,readonly`);
+    // The state lives in the container's /tmp, never under the image's /opt/qcr:
+    // the review host refuses a run directory inside the qcr tree.
+    // MUTATION: put the state back at QCR_STATE_HOME=/opt/qcr/state/home and this fails.
+    expect(a).toContain("QCR_STATE_HOME=/tmp/qcr/home");
+    expect(a.filter((x) => /^QCR_STATE_HOME=\/opt\/qcr(\/|$)/.test(x) || /dst=\/opt\/qcr(\/|,|$)/.test(x))).toEqual([]);
   });
 
   it("sets no cost cap by default, and --limit only when one is given", () => {
