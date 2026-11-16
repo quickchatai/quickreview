@@ -116,8 +116,29 @@ changes. It needs pi 1.4.0 or a later release of the same major version
 
 ### On your pull requests
 
-The same reviewer can watch a repository and review its pull requests on its
-own. That route needs Docker:
+In GitHub Actions, with nothing to host. Run this inside a checkout of your
+repository:
+
+```sh
+npx @quickchatai/quickreview action install   # the workflow, your model key as a secret, a PR
+```
+
+It asks when reviews should run, stores your model key as a repository secret
+with `gh`, and opens a pull request that adds the workflow. Merge it, and with
+the default triggers a `/qcr` comment on a pull request asks for a review. Or
+add the one step to a workflow yourself, with your key as a repository secret:
+
+```yaml
+- uses: quickchatai/quickreview@v1
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+The Action posts for real, and every run is a full review on your key
+([docs/action.md](docs/action.md)).
+
+The same reviewer can also watch a repository and review its pull requests on
+its own. That route needs Docker:
 [Run it as a bot on your pull requests](#run-it-as-a-bot-on-your-pull-requests).
 
 ### Which model it runs on
@@ -288,8 +309,10 @@ A comment that starts with `[feedback]` tells the reviewer a finding was wrong
 or too picky, and it applies that the same day.
 
 For a review in CI with nothing to host, there is a GitHub Action
-([docs/action.md](docs/action.md)). It posts for real on the repository that
-installs it.
+([docs/action.md](docs/action.md)). `npx @quickchatai/quickreview action install`
+sets it up, or add the one step `uses: quickchatai/quickreview@v1` with your
+model key in its `env:` ([On your pull requests](#on-your-pull-requests)). It
+posts for real on the repository that installs it.
 
 ### Where the reviewer lives
 

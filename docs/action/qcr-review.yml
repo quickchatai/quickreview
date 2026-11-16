@@ -1,23 +1,19 @@
-# qcr review: copy this file to .github/workflows/qcr-review.yml in the
-# repository to review. docs/action.md says what to set up first.
-#
-# Every push to a pull request is reviewed (opened, synchronize, ready for
-# review). Drafts and pull requests from forks are skipped, and a new push
-# cancels the review still running for the same pull request.
-#
-# Request-only: set the repository variable QCR_REQUEST_ONLY to true and a
-# review starts only when someone adds the label qcr-review to the pull
-# request or comments /qcr on it (members, owners and collaborators only).
-# Both ways of asking work in the every-push mode too.
-#
-# There is no cost cap. To set one, pass `limit` (US dollars) below.
-name: qcr review
+# QuickReview: an AI code review of a pull request, posted as one comment-only review.
+# Comment /qcr on a pull request to ask for a review.
+# Run the workflow by hand from the Actions tab (QuickReview, Run workflow) with a pull request number.
+# Every run is a full review on your model key; a re-run pays again.
+# Docs: https://github.com/quickchatai/quickreview/blob/main/docs/action.md
+name: QuickReview
 
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, labeled]
   issue_comment:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: The number of the pull request to review
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -26,65 +22,21 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    # One review per pull request: a newer run cancels the one in flight. On the
-    # job, not the workflow, so a comment that is not /qcr (which skips this
-    # job) cancels nothing.
+    timeout-minutes: 90
     concurrency:
-      group: qcr-review-${{ github.event.pull_request.number || github.event.issue.number }}
-      cancel-in-progress: true
+      group: quickreview-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+      cancel-in-progress: false
     if: >-
-      (github.event_name == 'pull_request'
-      && github.event.pull_request.draft == false
-      && github.event.pull_request.head.repo.full_name == github.repository
-      && ((github.event.action == 'labeled' && github.event.label.name == 'qcr-review')
-      || (github.event.action != 'labeled' && vars.QCR_REQUEST_ONLY != 'true')))
-      || (github.event_name == 'issue_comment'
+      (github.event_name == 'issue_comment'
       && github.event.issue.pull_request
-      && startsWith(github.event.comment.body, '/qcr')
-      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+      && startsWith(github.event.comment.body, '/qcr'))
+      || (github.event_name == 'workflow_dispatch')
     steps:
-      # A comment event carries no draft or fork flag: look the pull request up.
-      - name: Look up the pull request
-        id: pr
-        if: github.event_name == 'issue_comment'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.issue.number }}
-        run: |
-          set -euo pipefail
-          info="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json state,isDraft,isCrossRepository --jq '[.state, .isDraft, .isCrossRepository] | @tsv')"
-          read -r state draft fork <<<"$info"
-          if [ "$state" = OPEN ] && [ "$draft" = false ] && [ "$fork" = false ]; then
-            echo "review=true" >>"$GITHUB_OUTPUT"
-          else
-            echo "::notice::not reviewing #$PR: state $state, draft $draft, from a fork $fork"
-            echo "review=false" >>"$GITHUB_OUTPUT"
-          fi
-
-      # The base commit, never the pull request's own code: the review fetches
-      # the pull request itself, and the repository's .qcr/ profile is read
-      # from the base.
-      - uses: actions/checkout@v7
-        if: github.event_name != 'issue_comment' || steps.pr.outputs.review == 'true'
-        with:
-          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
-          fetch-depth: 1
-          persist-credentials: false
-
       - uses: quickchatai/quickreview@v1
-        if: github.event_name != 'issue_comment' || steps.pr.outputs.review == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
-          # The model login: the contents of a pi auth.json, as a repository
-          # secret. Or give an API key instead, for any provider: add an `env:`
-          # to this step with the variable the provider documents, for example
-          #   env:
-          #     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          pi-auth: ${{ secrets.QCR_PI_AUTH }}
-          # The model, as pi names it. Default: the provider's newest.
-          # model: provider/model
-          # limit: "5"
-          # The release image is public and needs no registry login. Only an
-          # image that is not public (a private mirror, named by `image`) takes
-          # a token that can read it, used only for docker login.
-          # registry-token: ${{ secrets.QCR_REGISTRY_TOKEN }}
+          pr: ${{ inputs.pr }}
+          # profile: security         # a shipped profile instead of the standard review
+          # model: provider/model     # default: the provider's newest
+          # limit: "5"                # a hard stop in US dollars; none by default

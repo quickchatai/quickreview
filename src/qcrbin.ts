@@ -17,6 +17,9 @@
 //   qcr update         the installing package manager updates qcr
 //   qcr plugin …       QuickReview installed into the coding-agent CLIs here
 //                      (src/plugincli.ts)
+//   qcr action …       the QuickReview GitHub Action set up in a repository:
+//                      its workflow, the model key's secret, a pull request
+//                      (src/actioncli.ts)
 //
 // `qcr --schema N review|scan|version …` is a host plugin's call: the verb
 // in contract N's JSON, or a refusal (src/schemaflag.ts), and no update
@@ -55,6 +58,7 @@ export const BIN_HELP = [
   "  qcr pi [args]           open pi, the coding agent QuickReview runs on, with /qcr-review, /qcr-scan, /qcr-setup and /selfimprove",
   "  qcr update              update qcr with the package manager that installed it",
   "  qcr plugin <subcommand> install QuickReview into your coding-agent CLIs (`qcr plugin --help`)",
+  "  qcr action <subcommand> review pull requests in GitHub Actions: set up the workflow (`qcr action --help`)",
   "  qcr version [--json]    this install's version, schemas and pi pin",
   "  qcr --schema N <verb>   review, scan or version as JSON in host-plugin contract N",
   "",
@@ -71,7 +75,7 @@ export type BinRoute =
   | { route: "help" }
   | { route: "pi"; args: string[] }
   | {
-      route: "version" | "update" | "login" | "model" | "review" | "scan" | "plugin";
+      route: "version" | "update" | "login" | "model" | "review" | "scan" | "plugin" | "action";
       args: string[];
       json: boolean;
       /** The host-plugin contract a `--schema N` run asked for. */
@@ -109,7 +113,8 @@ export function binRoute(argv: readonly string[]): BinRoute {
     cmd === "model" ||
     cmd === "review" ||
     cmd === "scan" ||
-    cmd === "plugin"
+    cmd === "plugin" ||
+    cmd === "action"
   )
     return { route: cmd, args, json };
   return { route: "app", argv: [...argv] };
@@ -239,6 +244,11 @@ async function route(r: BinRoute): Promise<void> {
     case "plugin": {
       const { cmdPlugin, pluginDeps } = await import("./plugincli.js");
       process.exitCode = await cmdPlugin(r.args, r.json, pluginDeps(await packageRoot()));
+      return;
+    }
+    case "action": {
+      const { cmdAction, actionDeps } = await import("./actioncli.js");
+      process.exitCode = await cmdAction(r.args, r.json, actionDeps());
       return;
     }
     case "refused":

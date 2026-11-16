@@ -167,7 +167,12 @@ the fence.
    snapshot and admits that snapshot; guards receive it and may **soften** a
    mutation (body, note) but can never change which mutation it is, and the
    result is re-admitted in full before anything executes. Never add a write
-   path around the gate.
+   path around the gate. One exception is named: `qcr action install`
+   (`src/actioncli.ts`) sets up the GitHub Action with the person's own `gh`,
+   on their command, through a closed list of gh calls held by a fence
+   (`tests/action-install.test.ts`); every other module's gh calls are reads,
+   held by `tests/fences-gh.test.ts`
+   ([ADR 0003](docs/adr/0003-setup-writes-through-gh.md)).
 2. **No review dismissal exists.** There is no mutation kind that dismisses,
    retracts, withdraws or revokes a review, and
    [`tests/fences-gate.test.ts`](tests/fences-gate.test.ts) fences the *name
@@ -255,7 +260,7 @@ the fence.
 | The home (a bare `qcr`) | `src/home/launch.ts` (the pinned pi, quiet, on the person's own pi home), `extensions/home.ts` (`createHome` over the ports; every action a key and a `home_*` tool), `src/home/model.ts` (state and actions, the review button), `src/home/panel.ts` (the overlay), `src/home/review.ts` (a review's progress model), `src/home/ports.ts` + `src/home/adapters.ts` + `src/home/reviews.ts` (the reviews port: preview, the detached registry's start/status/stop, the review state, the daemon's rounds, the post of a kept review) |
 | The pi plugin | `packages/pi-plugin/src/plugin/` (the entry `index.ts`, the commands, `versiongate.ts` for the `^1.4.0` pi range, `login.ts` for the borrowed host login), `packages/pi-plugin/src/reviewapi.ts`, [`packages/pi-plugin/README.md`](packages/pi-plugin/README.md) |
 | Host plugins | `plugins/qcr/templates/` (the one skill source), `plugins/qcr/render.mjs` (its renderer, for every host and the Plugin's gitignored `skills/`), `src/plugincli.ts` (`qcr plugin`: a host's render in the data home, `src/homes.ts` `dataHome`, pointed at through the host's own verbs, or copied, with a record of each file written, where Cursor and opencode have none), [`docs/plugin.md`](docs/plugin.md) |
-| The npm CLI | `bin/qcr.js` → `src/qcrbin.ts` (the bin's front door: bare `qcr`, `review`, `scan`, `login`, `pi`, `update`, `version`, `plugin`), `src/schemaflag.ts` (`qcr --schema N`, a host plugin's contract, `CONTRACTS` in `packages/pi-plugin/src/contract.ts`), `src/npmverbs.ts`, `src/updatenotice.ts`; every other verb goes to `src/cli.ts` |
+| The npm CLI | `bin/qcr.js` → `src/qcrbin.ts` (the bin's front door: bare `qcr`, `review`, `scan`, `login`, `pi`, `update`, `version`, `plugin`, `action`), `src/schemaflag.ts` (`qcr --schema N`, a host plugin's contract, `CONTRACTS` in `packages/pi-plugin/src/contract.ts`), `src/npmverbs.ts`, `src/updatenotice.ts`; every other verb goes to `src/cli.ts` |
 
 `agents/`, `prompts/`, `skills/companion/` and `extensions/` are shipped bot
 content (what the reviewer and companion sessions load); `.claude/` is

@@ -18,6 +18,7 @@ export const SQLITE_FREE_VERBS = [
   "version",
   "update",
   "plugin",
+  "action",
 ] as const;
 
 /** Is `err` the SQLite driver failing to load (the package missing, or its
