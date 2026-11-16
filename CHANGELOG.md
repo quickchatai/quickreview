@@ -15,6 +15,11 @@
   `/qcr-review --profile NAME` does, with its own checkpoint. `--preview`
   shows that profile's plan, and an unknown name is refused in one line that
   lists the shipped and local profiles.
+- A terminal `qcr review` no longer prints two internal debug lines among its
+  progress: a cache group's `[lens] pin-evidence cache-group-disposed …` and
+  `[ledger-pin] debug: ignoring LEDGER PR #0 …`. Both now go to the run's log,
+  `out/pi-stderr.log`; a warning a person should act on still reaches the
+  terminal.
 
 ## 1.5.0
 

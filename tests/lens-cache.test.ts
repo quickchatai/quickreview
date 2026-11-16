@@ -411,6 +411,22 @@ describe("[cache groups] lifetime: dispose is group-scoped", () => {
     }
   });
 
+  // A caller that names no debug sink (the daemon's botworker, the bench) keeps
+  // the disposal line on its warn sink, where the pin's evidence is read.
+  // MUTATION: make runlens's debug default `() => {}` instead of `warn` — this fails.
+  it("with no debug sink, the group's disposal line goes to warn", async () => {
+    respondWith(1, codexLike([], new FakeTransport()));
+    const warnings: string[] = [];
+    const runner = createLensRunner(
+      config({ cache: { size: 2, staggerMs: 0 }, warn: (m) => warnings.push(m) }),
+    );
+    expect((await runner.run({ agent: "pass-a", task: "go" })).result.exitCode).toBe(0);
+    expect(runner.liveSessions()).toBe(0);
+    expect(
+      warnings.filter((w) => /^pin-evidence cache-group-disposed key=\S+ sessions=1$/.test(w)),
+    ).toHaveLength(1);
+  });
+
   it("CacheGroups: sessions are disposed on the last release only, and a release is once", () => {
     const groups = new CacheGroups(2, 0, () => "k");
     const disposed: string[] = [];
