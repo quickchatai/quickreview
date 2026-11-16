@@ -187,7 +187,7 @@ jobs:
       # reuses its layer cache. It must be `docker buildx build`: plain `docker
       # build` goes to the "default" instance and never reads that cache. Off a
       # Blacksmith runner (QCR_RUNNERS=github, or a fork's PR) it is skipped.
-      - uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184 # v2.2.0
+      - uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267 # v2.3.0
         if: ${{ vars.QCR_RUNNERS != 'github' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
         with:
           cache-key: ci-release-amd64
