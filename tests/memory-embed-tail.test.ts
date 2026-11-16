@@ -333,13 +333,24 @@ describe("the OpenViking assembler: the search never outlives the seed's time le
   }
 
   it("the shorter of its own timeout and the time left; its own when none is given", async () => {
-    const { a, sent } = assemblerWith(8000);
-    await a.contextBlock("q", { maxTokens: 10 });
-    await a.contextBlock("q", { maxTokens: 10, timeoutMs: 3000 });
-    await a.contextBlock("q", { maxTokens: 10, timeoutMs: 20_000 });
-    await a.contextBlock("q", { maxTokens: 10, timeoutMs: 0.4 });
-    await a.contextBlock("q", { maxTokens: 10, timeoutMs: Number.NaN });
-    expect(sent.map((s) => s.timeoutMs)).toEqual([8000, 3000, 8000, 1, 8000]);
+    // The time left is the given timeout less the wall time the retired list
+    // took (two Date.now() reads around an await). The exact values below hold
+    // only when that time is 0, so the clock is frozen: on a real clock a busy
+    // runner crosses a millisecond between the reads and 3000 arrives as 2999.
+    // Only Date is faked; the awaits still resolve on the real event loop. The
+    // time spent is covered by the next test, on a real clock.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { a, sent } = assemblerWith(8000);
+      await a.contextBlock("q", { maxTokens: 10 });
+      await a.contextBlock("q", { maxTokens: 10, timeoutMs: 3000 });
+      await a.contextBlock("q", { maxTokens: 10, timeoutMs: 20_000 });
+      await a.contextBlock("q", { maxTokens: 10, timeoutMs: 0.4 });
+      await a.contextBlock("q", { maxTokens: 10, timeoutMs: Number.NaN });
+      expect(sent.map((s) => s.timeoutMs)).toEqual([8000, 3000, 8000, 1, 8000]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("the time the retired list took comes off the search's budget, and none left sends nothing", async () => {
