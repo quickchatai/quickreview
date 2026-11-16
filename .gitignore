@@ -7,21 +7,16 @@ dist/
 # The pi Plugin's skills, rendered from the one skill source (plugins/qcr/)
 # by the build and the Plugin's prepack: never edited, never committed.
 /packages/pi-plugin/skills/
-state/*
-!state/.gitkeep
-inject/*
-!inject/.gitkeep
-verdict/*
-!verdict/.gitkeep
-commands/*
-!commands/.gitkeep
-digest/*
-!digest/.gitkeep
-archive/*
-!archive/.gitkeep
-memory/*
-!memory/.gitkeep
-!memory/README.md
+# The runtime drop-boxes. A checkout run as the sandbox root gets them at
+# the root; the code that writes each one creates it, so none is tracked.
+# memory/ is a retired drop-box an older checkout may still hold.
+/state/
+/inject/
+/verdict/
+/commands/
+/digest/
+/archive/
+/memory/
 wt/
 # The base clone (<sandbox root>/<[github] clone_dir>) is NOT listed here: its
 # name is per-install, so scripts/deploy.sh writes it into the LOCAL

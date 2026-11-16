@@ -181,8 +181,8 @@ fenced with `<!-- RATIFIED … -->` markers and hashed by
 
 ## Runtime directories
 
-These are drop-boxes: empty in git (a `.gitkeep`, occasionally a README),
-populated only at runtime, never committed.
+These are drop-boxes: absent from git, created by the code that writes
+them, populated only at runtime, never committed.
 
 | directory | written by | read by |
 |---|---|---|
@@ -193,7 +193,6 @@ populated only at runtime, never committed.
 | `digest/` | the end-of-day sweep | `src/digest.ts`, the TUI |
 | `archive/pr-<n>/` | `src/sessions.ts` on close | `qcr why` |
 | `wt/pr-<n>/` | `src/worktrees.ts` | the lens passes — read-only working copies; nothing here ever commits or pushes |
-| `memory/` | nothing durable | a drop-box only; reviewer memory lives in OpenViking (`memory/README.md` explains) |
 
 ## Configuration
 
