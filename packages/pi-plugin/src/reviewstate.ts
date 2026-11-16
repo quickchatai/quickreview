@@ -153,6 +153,15 @@ export function loadState(path: string | null, target: string): ReviewState | nu
  * target saved every profile's rounds there, so a profile reviewed that way
  * keeps its history once; a round saved under another profile, or before
  * rounds recorded their profile, is never taken as this profile's.
+ *
+ * The second half departs, on purpose, from `covers`, which takes a round
+ * with no recorded coverage as covering. That rule reads a profile's own
+ * file. The shared file, read for a named profile, is another key's: before
+ * rounds recorded their coverage, `--profile NAME` already ran one-off
+ * reviews and saved them there, so a round with no coverage may be the
+ * configured profile's or a one-off's, and taking one under the wrong profile
+ * is how a review answers "nothing new" for code its profile never read. A
+ * named profile therefore reviews such a target in full once.
  */
 export function loadProfileState(
   ownPath: string | null,

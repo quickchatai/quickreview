@@ -6,6 +6,11 @@
   from the normal review's: the next normal review covers the change since
   its own last review, not "nothing new", and the next review under that
   profile builds on the one-off's.
+- An install whose configured `[review] profile` is named (a shipped profile
+  or a house pack) reviews a target in full once if that target's review state
+  was last saved before 1.5.0. Such a state does not record which profile
+  saved it, and a one-off `--profile` run saved there too, so it is not taken
+  as the configured profile's. An install with no profile set is unaffected.
 
 ## 1.5.0
 
