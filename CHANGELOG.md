@@ -1,6 +1,10 @@
 # Release notes
 
-## Unreleased
+## 1.5.1
+
+Fixes from an end-to-end test of 1.5.0 on a fresh install: a partial
+config.toml loads, a one-off profile review keeps its own checkpoint and
+works from the terminal, and the terminal output loses two debug lines.
 
 - **A config.toml needs only the keys you change.** Every table and key it
   leaves out takes the shipped value from `config.example.toml`, on every
@@ -13,6 +17,8 @@
 - **A config.toml that leaves out `[guards] no_checks_is_red` now withholds
   approval on a head with no checks**: it takes the shipped value, `true`. A
   repo with no CI at all sets `no_checks_is_red = false` to keep approving.
+- An existing scan image (`qcr-scan`) now also carries `config.example.toml`;
+  run `qcr scan rebuild` once before the next scan.
 - A one-off `/qcr-review --profile NAME` review keeps its checkpoint apart
   from the normal review's: the next normal review covers the change since
   its own last review, not "nothing new", and the next review under that
