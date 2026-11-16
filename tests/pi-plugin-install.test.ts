@@ -106,12 +106,20 @@ async function rpc(
       if (line.startsWith("{")) lines.push(JSON.parse(line) as Record<string, unknown>);
     }
   });
+  // A pi that dies at start exits before reading these requests; the write
+  // then EPIPEs. The lines and stderr the caller asserts carry that answer.
+  // Any other stdin error fails the run.
+  let stdinError: Error | undefined;
+  child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code !== "EPIPE") stdinError = err;
+  });
   for (const r of requests) child.stdin.write(JSON.stringify(r) + "\n");
   const deadline = Date.now() + 45_000;
   while (!done(lines) && Date.now() < deadline && child.exitCode === null)
     await new Promise((r) => setTimeout(r, 100));
   child.stdin.end();
   child.kill("SIGTERM");
+  if (stdinError) throw stdinError;
   return { lines, stderr };
 }
 
