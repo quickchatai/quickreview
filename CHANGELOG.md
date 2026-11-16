@@ -1,5 +1,58 @@
 # Release notes
 
+## Unreleased
+
+The GitHub Action installs with one command and runs on whatever trigger you
+choose ([docs/action.md](docs/action.md)).
+
+- **`npx @quickchatai/quickreview action install`** sets the Action up on a
+  repository. It asks when reviews should run, stores your model key as a
+  repository secret with `gh secret set` (the value on stdin, never on the
+  command line), creates the `qcr-review` label for the label trigger, and
+  opens a pull request that adds `.github/workflows/quickreview.yml`. Each
+  write is asked first. `--local` writes the file into your checkout instead,
+  and `qcr action workflow` prints it. These writes go through your own `gh`,
+  on your command, from a closed list of gh calls
+  ([docs/adr/0003-setup-writes-through-gh.md](docs/adr/0003-setup-writes-through-gh.md)).
+- **The Action takes any event.** Your workflow's `on:` and `if:` decide when
+  it runs. It finds the pull request in the event, and an event that names
+  none (a schedule, a manual run, `workflow_run`) needs the `pr` input. The
+  docs give four recipes: a `/qcr` comment, a label, every push, a manual run.
+- **It checks who asked before anything is spent.** A run started by someone
+  without write access to the repository, or by a bot, is skipped unless the
+  new `allowed-users` input names them. Before, the template trusted a
+  comment's `author_association`, which does not prove write access. A comment
+  on an issue, a closed or merged pull request, and a fork's pull request on
+  an event that gets no secrets are skipped with the reason. A missing model
+  key fails before the image is pulled.
+- **A fork's pull request is reviewed when someone with write access asks**,
+  with a `/qcr` comment or a manual run. Your model key is then in a container
+  that reads the fork's text: [docs/action.md](docs/action.md#pull-requests-from-forks)
+  says what keeps it from the model's tools and what does not, and advises a
+  key with a spend limit at the provider.
+- **Two more inputs.** `profile` runs a shipped profile (`security`,
+  `state-machines`, …) instead of the standard review, and `post: "false"`
+  reviews and posts nothing.
+- **Outputs and a job summary.** `skipped`, `skip-reason`, `pr`, `review-url`,
+  `verdict`, `findings`, `cost-usd` and `result` (the review's schema 2 JSON),
+  and a summary with the verdict, the cost and a table of the findings.
+- **No checkout step.** The review fetches the pull request itself and reads
+  `.qcr/` from its base.
+- **The workflow's job timeout is 90 minutes.** The template's 60 was shorter
+  than a review's own limit plus the fetch and the post.
+- **The Action is named QuickReview AI Code Review**, its Marketplace name.
+  The floating `v1` tag the docs name is moved to each release once its image
+  is on ghcr.
+
+### Migration
+
+A workflow made from the old template needs no change: the inputs it uses
+keep their meaning, and the Action now also checks who started the run. If you
+install the new workflow, delete the old `.github/workflows/qcr-review.yml`,
+or each pull request is reviewed twice. The template no longer uses the
+repository variable `QCR_REQUEST_ONLY` or the secret `QCR_PI_AUTH`: pick the
+triggers you want instead, and give the model an API key.
+
 ## 1.5.1
 
 Fixes from an end-to-end test of 1.5.0 on a fresh install: a partial
