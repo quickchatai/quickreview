@@ -111,7 +111,7 @@ merged base first, the selected profile last, one rule per kind:
   `id` an ancestor already defines **replaces that entry in place** (same
   position, the child's scope and text), so a child rewords a base rule
   without reordering the pack; a new `id` **appends**. `[addenda] drop =
-[ids]` removes inherited entries before the child's own files merge — so
+  [ids]` removes inherited entries before the child's own files merge — so
   dropping an id and defining it again moves it to the tail. A drop naming
   an id nothing inherited defines is refused (a typo must not read as a
   removal), and so is one naming a built-in `PASS_ADDENDA` entry: a profile
@@ -158,9 +158,7 @@ Each `addenda/*.md` file is ONE pass addendum — the same shape as a
 id: migration-discipline
 scope: pass-data-safety
 ---
-
 ## Migration discipline — four standing rules (house rule)
-
 …the body, appended verbatim to the built pass bodies…
 ```
 
@@ -224,7 +222,7 @@ memory seam). It governs four things:
   collision check: the daemon reads the base branch's migrations at the
   round's pinned base sha, detects a number the PR claims that the base
   already occupies, and posts the exact renumber remedy itself as a gated
-  **COMMENT** — never a blocker, never a verdict. A _degraded_ check (the
+  **COMMENT** — never a blocker, never a verdict. A *degraded* check (the
   check exists but could not run while the PR touches migrations) is never
   quieter than no check: the round prompt tells the session to check
   collisions itself (which un-muzzles pass-data-safety's withdrawn collision
@@ -287,11 +285,11 @@ guide = "style-guide.md"  # a guide in THIS profile's directory
 A **tier** is what a lens runs at: a thinking level and, when the install pins
 one, a model. There are three, ascending:
 
-| Tier       | Thinking level | What runs at it                                                                                                                                                                        |
-| ---------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `light`    | `medium`       | the raisable lenses of a small, quiet diff (under `[models] small_diff_lines` changed lines, no migration)                                                                             |
-| `standard` | `medium`       | the raisable lenses of every other diff; the tier a `light` lens is raised to; the scan's stage 1 (`[scan] tier`)                                                                      |
-| `deep`     | `high`         | the risk passes and every `pass-sec-*` lens, the validator (`[models] validate_tier`), the three lenses that read every changed line, and the eight state-machine lenses (`pass-sm-*`) |
+| Tier | Thinking level | What runs at it |
+|---|---|---|
+| `light` | `medium` | the raisable lenses of a small, quiet diff (under `[models] small_diff_lines` changed lines, no migration) |
+| `standard` | `medium` | the raisable lenses of every other diff; the tier a `light` lens is raised to; the scan's stage 1 (`[scan] tier`) |
+| `deep` | `high` | the risk passes and every `pass-sec-*` lens, the validator (`[models] validate_tier`), the three lenses that read every changed line, and the eight state-machine lenses (`pass-sm-*`) |
 
 - **Unpinned, a tier is a level on the review's one model.** The shipped
   config names no model, so all three run on the model the review's route
@@ -534,7 +532,7 @@ builds and plans are exactly what they are without it.
 - **Stage 2 adds the floor.** A deep proposal puts every `deep_lenses` lens
   (default consistency, delivery, duplication, maintainability) over every
   file stage 1 reads — grouped by unit, a case's worth a row, reason `deep
-floor: <lens> over <unit>`, no tests paired (the dig already sends the lens
+  floor: <lens> over <unit>`, no tests paired (the dig already sends the lens
   to callers, siblings and the contract) — after the companion's rows, priced
   and fitted like any row. Floor rows run lens-first, so the order of
   `deep_lenses` is the priority: under a budget the first-listed lens covers
@@ -551,7 +549,6 @@ to check first; and every case's event stream is kept under the state home's
 reads and any focus file the lens never opened on the case record. A focus
 file the lens never opened gets no ledger row: it is read again, and the
 run's reconcile never settles its findings fixed from it.
-
 - **Only a deep reading covers a file.** Ledger rows record their depth; a
   deep run reads again what only a standard reading covers (a deep reading
   covers both). Its price comes from deep readings, else from standard ones,
@@ -699,16 +696,16 @@ companion's login. The container mounts exactly, each as a
 `--mount` (a missing bind source fails instead of being created; a host path
 holding a comma is refused):
 
-| in the container                         | from the host                                                                               |            |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------- | ---------- |
-| `/reviewed-repo`                         | the reviewed checkout                                                                       | read-only  |
-| (a worktree's git dir, at its host path) | the repository's common git dir                                                             | read-only  |
-| `/qcr-state`                             | the install's state home                                                                    | read-write |
-| `/pi-agent-src`                          | the `agent/` dir of the `[scan] pihome_volume` volume (default `[companion] pihome_volume`) | read-only  |
-| `/pi-agent-src/sessions`                 | an empty tmpfs, hiding the companion's conversations                                        |            |
-| `/home/companion/.pi`                    | a tmpfs, private to the run                                                                 |            |
-| `/qcr-config/live`                       | a copy of the live config                                                                   | read-only  |
-| `/qcr-config/profiles`                   | the config home's `profiles/`                                                               | read-only  |
+| in the container | from the host | |
+|---|---|---|
+| `/reviewed-repo` | the reviewed checkout | read-only |
+| (a worktree's git dir, at its host path) | the repository's common git dir | read-only |
+| `/qcr-state` | the install's state home | read-write |
+| `/pi-agent-src` | the `agent/` dir of the `[scan] pihome_volume` volume (default `[companion] pihome_volume`) | read-only |
+| `/pi-agent-src/sessions` | an empty tmpfs, hiding the companion's conversations | |
+| `/home/companion/.pi` | a tmpfs, private to the run | |
+| `/qcr-config/live` | a copy of the live config | read-only |
+| `/qcr-config/profiles` | the config home's `profiles/` | read-only |
 
 — no `/workspace`, no ssh, no tracker, no GitHub token, no evidence.
 
@@ -777,18 +774,12 @@ container's `pi`; an explicit `[scan] sandbox` is never overridden. The
 doctor then says so (`"note"`). `--json`:
 
 ```json
-{
-  "ok": false,
-  "sandbox": "docker",
-  "reviewed_repo": "/path/to/checkout",
-  "checks": [
-    { "check": "docker", "ok": true, "detail": "docker 27.1.0" },
-    { "check": "image", "ok": false, "detail": "…", "fix": "qcr scan rebuild" },
-    { "check": "pihome", "ok": true, "detail": "…" },
-    { "check": "reviewed_repo", "ok": true, "detail": "…" },
-    { "check": "unit_cut", "ok": true, "detail": "a unit cut is saved" }
-  ]
-}
+{"ok": false, "sandbox": "docker", "reviewed_repo": "/path/to/checkout",
+ "checks": [{"check": "docker", "ok": true, "detail": "docker 27.1.0"},
+   {"check": "image", "ok": false, "detail": "…", "fix": "qcr scan rebuild"},
+   {"check": "pihome", "ok": true, "detail": "…"},
+   {"check": "reviewed_repo", "ok": true, "detail": "…"},
+   {"check": "unit_cut", "ok": true, "detail": "a unit cut is saved"}]}
 ```
 
 Exit 0 when every check passes, else 1. Pinned by
@@ -797,33 +788,17 @@ Exit 0 when every check passes, else 1. Pinned by
 `findings --json` carries every matching finding (`--limit` caps it):
 
 ```json
-{
-  "ok": true,
-  "total": 2,
-  "validity": { "confirmed": 0, "likely": 0, "needs-review": 0, "doubtful": 0, "unknown": 2 },
-  "findings": [
-    {
-      "fingerprint": "<64 hex>",
-      "file": "app/a.py",
-      "range": { "start": 1, "end": 2 },
-      "lens": "pass-scan",
-      "lenses": ["pass-scan"],
-      "unit": "app",
-      "kind": "bug",
-      "severity": "P2",
-      "validity": "confirmed|likely|needs-review|doubtful|unknown",
-      "state": "new|promoted|dismissed|fixed",
-      "claim": "…",
-      "doubted": false,
-      "doubt": null,
-      "looks_like_dismissed": null,
-      "dismissal_reason": null,
-      "ticket": null,
-      "first_seen": { "run": "scan-…", "sha": "…" },
-      "last_seen": { "run": "scan-…", "sha": "…" }
-    }
-  ]
-}
+{"ok": true, "total": 2,
+ "validity": {"confirmed": 0, "likely": 0, "needs-review": 0, "doubtful": 0, "unknown": 2},
+ "findings": [{"fingerprint": "<64 hex>", "file": "app/a.py",
+   "range": {"start": 1, "end": 2}, "lens": "pass-scan", "lenses": ["pass-scan"],
+   "unit": "app", "kind": "bug", "severity": "P2",
+   "validity": "confirmed|likely|needs-review|doubtful|unknown",
+   "state": "new|promoted|dismissed|fixed", "claim": "…",
+   "doubted": false, "doubt": null,
+   "looks_like_dismissed": null, "dismissal_reason": null, "ticket": null,
+   "first_seen": {"run": "scan-…", "sha": "…"},
+   "last_seen": {"run": "scan-…", "sha": "…"}}]}
 ```
 
 `doubt` is `{word, reason, class}` when the validator marked the finding "may
@@ -881,7 +856,7 @@ Three places carry a non-default policy (`packages/pi-plugin/src/postingpolicy.t
    which the live route runs through `scripts/render-review.sh`
    (`src/reviewrendercli.ts`, overlaying the profile's policy exactly as
    `wire.ts` does) and the benchmark runs in `src/bench/runner.ts
-renderBenchOutputs` — pinned equal by `tests/dedup-parity.test.ts`. Cut
+   renderBenchOutputs` — pinned equal by `tests/dedup-parity.test.ts`. Cut
    entries are recorded `withheld` with their word. Order: the tag rules,
    then one site per finding (same title, or a `same_as` follower row ⇒ same
    finding), then the budget — ranked by class (question, marker items, nit),
@@ -957,13 +932,13 @@ of its unique real findings.
 **when** and **priority**, held equal to `ALL_PASSES` by a test, so a new lens
 cannot ship without documenting its planning:
 
-| Priority    | Meaning                                                                                                                                                                    |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `core`      | every round (baseline, sweep, validator)                                                                                                                                   |
-| `risk`      | planned on its signal; never skipped or tiered down once planned (data-safety, security, prod-risk, every `pass-sec-*` lens)                                               |
-| `signal`    | planned when the diff or the PR text shows its concern (most lenses)                                                                                                       |
-| `breadth`   | planned on size or novelty (placement, simplicity, the quality lenses) — the design and maintainability questions defect lenses skip, at more cost per unique real finding |
-| `on-demand` | addable only (ask-human)                                                                                                                                                   |
+| Priority | Meaning |
+|---|---|
+| `core` | every round (baseline, sweep, validator) |
+| `risk` | planned on its signal; never skipped or tiered down once planned (data-safety, security, prod-risk, every `pass-sec-*` lens) |
+| `signal` | planned when the diff or the PR text shows its concern (most lenses) |
+| `breadth` | planned on size or novelty (placement, simplicity, the quality lenses) — the design and maintainability questions defect lenses skip, at more cost per unique real finding |
+| `on-demand` | addable only (ask-human) |
 
 Some planning signals worth knowing: `pass-backcompat` is also planned on a
 changed public signature or wire serialization anywhere (not only API paths);
@@ -976,12 +951,12 @@ first.
 AACR rest145, Martian tune20 + test30, Qodo pr100 and SWE-PRBench eval100;
 unique real findings from `bench/aacr/lens_yield.py --cases-json`):**
 
-| Lens             | Planned | NONE now  | Candidate narrowing                                           | NONE after       | Unique-real cases kept |
-| ---------------- | ------- | --------- | ------------------------------------------------------------- | ---------------- | ---------------------- |
-| pass-tests       | 384     | 222 (58%) | only when the PR touches a test or modifies existing code     | 204 of 365 (56%) | 9/9                    |
-| pass-backcompat  | 77      | 47 (61%)  | API/job path arms only when existing code is modified         | 41 of 68 (60%)   | 1/1                    |
-| pass-concurrency | 31      | 20 (65%)  | — (content trigger, needs the patch; planned by content only) | —                | 0 unique real          |
-| pass-rollout     | 61      | 30 (49%)  | — (text/content trigger, not replayable from stored cases)    | —                | 0 unique real          |
+| Lens | Planned | NONE now | Candidate narrowing | NONE after | Unique-real cases kept |
+|---|---|---|---|---|---|
+| pass-tests | 384 | 222 (58%) | only when the PR touches a test or modifies existing code | 204 of 365 (56%) | 9/9 |
+| pass-backcompat | 77 | 47 (61%) | API/job path arms only when existing code is modified | 41 of 68 (60%) | 1/1 |
+| pass-concurrency | 31 | 20 (65%) | — (content trigger, needs the patch; planned by content only) | — | 0 unique real |
+| pass-rollout | 61 | 30 (49%) | — (text/content trigger, not replayable from stored cases) | — | 0 unique real |
 
 Both file-shape narrowings keep every unique-real case but barely move the
 NONE rate (58→56%, 61→60%): a NONE here is mostly "nothing to find in this PR",
@@ -1214,16 +1189,16 @@ machine** produces: behaviour that depends on which state a thing is in,
 where the states and the moves between them are written down nowhere
 (`packages/pi-plugin/src/passes.ts STATE_FAMILY`).
 
-| Lens                  | Looks for                                                                                                                                                                                                                                                                                 | `kind:`                         |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| `pass-sm-states`      | a combination of flags, nullable fields and status values that must never exist, with a writer that produces it and a reader that mishandles it                                                                                                                                           | `state-machine:illegal-state`   |
-| `pass-sm-transitions` | a write of the state with no check of the state it leaves; a guard removed; a transition that skips what its siblings do                                                                                                                                                                  | `state-machine:transition`      |
-| `pass-sm-exhaustive`  | a state added, renamed or removed, and a dispatch, list, map or filter over the set that was not updated                                                                                                                                                                                  | `state-machine:unhandled-state` |
-| `pass-sm-stuck`       | a transient state (loading, processing, locked) that an error, early return, timeout or cancel leaves set                                                                                                                                                                                 | `state-machine:stuck`           |
-| `pass-sm-events`      | an event that arrives twice, late, out of order or while the last is in flight                                                                                                                                                                                                            | `state-machine:event-order`     |
-| `pass-sm-derived`     | a stored copy or summary of other state, and a writer of the source that leaves it stale                                                                                                                                                                                                  | `state-machine:derived`         |
-| `pass-sm-lifecycle`   | calls that must come in an order nothing enforces: use before init, use after close                                                                                                                                                                                                       | `state-machine:lifecycle`       |
-| `pass-sm-durable`     | stored state: a persisted shape changed with no migration or version change (server or client), a state write and its side effect that are not atomic, sequential writes outside a transaction, a stored transition with no compare on the old state, recovery, old data meeting new code | `state-machine:stored`          |
+| Lens | Looks for | `kind:` |
+|---|---|---|
+| `pass-sm-states` | a combination of flags, nullable fields and status values that must never exist, with a writer that produces it and a reader that mishandles it | `state-machine:illegal-state` |
+| `pass-sm-transitions` | a write of the state with no check of the state it leaves; a guard removed; a transition that skips what its siblings do | `state-machine:transition` |
+| `pass-sm-exhaustive` | a state added, renamed or removed, and a dispatch, list, map or filter over the set that was not updated | `state-machine:unhandled-state` |
+| `pass-sm-stuck` | a transient state (loading, processing, locked) that an error, early return, timeout or cancel leaves set | `state-machine:stuck` |
+| `pass-sm-events` | an event that arrives twice, late, out of order or while the last is in flight | `state-machine:event-order` |
+| `pass-sm-derived` | a stored copy or summary of other state, and a writer of the source that leaves it stale | `state-machine:derived` |
+| `pass-sm-lifecycle` | calls that must come in an order nothing enforces: use before init, use after close | `state-machine:lifecycle` |
+| `pass-sm-durable` | stored state: a persisted shape changed with no migration or version change (server or client), a state write and its side effect that are not atomic, sequential writes outside a transaction, a stored transition with no compare on the old state, recovery, old data meeting new code | `state-machine:stored` |
 
 Every one includes the shared contract `prompts/pass-sm-common.md`. A
 finding is a claim that **a sequence of events reaches a state the code
@@ -1261,23 +1236,22 @@ command = true                 # config.toml only; "@<bot> state-machines"
 - **What plans a family lens** (`packages/pi-plugin/src/statetriggers.ts`).
   Every probe reads one line of the diff at a time, cut to 400 characters.
 
-  | Lens                  | Strong (planned in every profile)                                                                                | Weak (only under `triggers = "all"`)                                                                         |
-  | --------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-  | `pass-sm-states`      | two or more status flags added in one file                                                                       | one status flag; a nullable marker field (`completedAt`, `deleted_by`)                                       |
-  | `pass-sm-transitions` | a check of the current state removed and not added back                                                          | a write of a `status`, `state`, `phase`, `stage` or `step`; the PR text says "state machine" or "transition" |
-  | `pass-sm-exhaustive`  | a member added to an enumeration or union of literals that already had members                                   | a `switch`, `match` or `when` over a state-like value                                                        |
-  | `pass-sm-stuck`       | a transient state entered in a file whose added lines handle no failure (`finally`, `catch`, `defer`, `with`, …) | any transient state entered; the PR text says "stuck" or "never reset"                                       |
-  | `pass-sm-events`      | the PR text says double submit, duplicate, out of order, idempotent, re-entrant                                  | an event handler, listener, receiver or consumer                                                             |
-  | `pass-sm-derived`     | an effect whose body only sets state                                                                             | a stored count, total, cache or last-value field written                                                     |
-  | `pass-sm-lifecycle`   | a check of a lifecycle phase (`initialized`, `closed`, …) removed                                                | a lifecycle method (`init`, `start`, `close`, `dispose`, …)                                                  |
-  | `pass-sm-durable`     | a migration, schema or SQL file whose added lines name a state column or an enum type                            | `UPDATE … SET status`, `.update(status=…)`                                                                   |
+  | Lens | Strong (planned in every profile) | Weak (only under `triggers = "all"`) |
+  |---|---|---|
+  | `pass-sm-states` | two or more status flags added in one file | one status flag; a nullable marker field (`completedAt`, `deleted_by`) |
+  | `pass-sm-transitions` | a check of the current state removed and not added back | a write of a `status`, `state`, `phase`, `stage` or `step`; the PR text says "state machine" or "transition" |
+  | `pass-sm-exhaustive` | a member added to an enumeration or union of literals that already had members | a `switch`, `match` or `when` over a state-like value |
+  | `pass-sm-stuck` | a transient state entered in a file whose added lines handle no failure (`finally`, `catch`, `defer`, `with`, …) | any transient state entered; the PR text says "stuck" or "never reset" |
+  | `pass-sm-events` | the PR text says double submit, duplicate, out of order, idempotent, re-entrant | an event handler, listener, receiver or consumer |
+  | `pass-sm-derived` | an effect whose body only sets state | a stored count, total, cache or last-value field written |
+  | `pass-sm-lifecycle` | a check of a lifecycle phase (`initialized`, `closed`, …) removed | a lifecycle method (`init`, `start`, `close`, `dispose`, …) |
+  | `pass-sm-durable` | a migration, schema or SQL file whose added lines name a state column or an enum type | `UPDATE … SET status`, `.update(status=…)` |
 
   Also: a profile `heuristics.toml` probe for a family lens (`paths` and
   `added_lines`, always strong), a request (below), and `[lenses.<pass>] plan = "always"`. `off` leaves the
   requests and `always`.
   A wholly new enumeration plans nothing: every dispatch over it is written
   in the same change.
-
 - **A family row runs at the `deep` tier on every route** — a trigger, a
   request, `plan = "always"` — because the eight lenses are shipped pins
   (`DEFAULT_PASS_TIERS`, see "The lenses pinned at high effort" above), so
@@ -1311,7 +1285,7 @@ command = true                 # config.toml only; "@<bot> state-machines"
   switched off through `enabled = false`, exactly as `[security] only`
   does for its family, and posting is scoped to state-machine findings
   (`[posting] scope = "state"`). `[security] only` and `[state_machines]
-only` together are refused at load: a review keeps one family alone.
+  only` together are refused at load: a review keeps one family alone.
   With no baseline, every re-review is a full round (`baseline-unplanned`):
   a state-machine-only review has no follow-up delta.
 
@@ -1325,7 +1299,7 @@ A request plans the whole family on the PR's next round, on top of the
 profile's plan, but never a lens the profile switched off or skipped. It is
 the security request's machinery under a second kind
 (`src/staterequest.ts`, kind `state-machines` in `pr_review_requests`), so
-everything said under _Asking for a security review_ holds for it: who may
+everything said under *Asking for a security review* holds for it: who may
 ask, the acknowledgement, serving once, a request that waits for a running
 round, the reconcile poll. A PR may carry both requests at once, each
 withdrawn by its own label.
@@ -1338,7 +1312,7 @@ withdrawn by its own label.
 - **`qcr review-now <pr> --state-machines`** from the operator (it may be
   given together with `--security`);
 - **`/qcr-review --state-machines`** in pi, or **`qcr review
---state-machines`** in the terminal, for that run alone. The
+  --state-machines`** in the terminal, for that run alone. The
   **`/qcr-review state-machines`** preset is the review mode: the family
   and the validator, and no other lens.
 
@@ -1383,7 +1357,7 @@ config_lines = ['AuthType:\s*NONE']  # probes over ADDED lines of config files
   triggers alone, so they are accepted for a `pass-sec-*` lens and refused
   for any other. A probe for a `pass-sec-*` lens is a
   strong security trigger: it plans that lens under `[security] triggers =
-"strong"` too.
+  "strong"` too.
 - **Extendable lenses only**: `pass-ui`, `pass-contracts`,
   `pass-data-safety`, `pass-security`, `pass-statelessness`,
   `pass-prod-risk`, `pass-delivery`, `pass-backcompat`, the fourteen
@@ -1451,14 +1425,14 @@ CLASS, never to a project or a benchmark comment. A profile cannot remove a
 compiled addendum; `[lenses.<pass>] enabled = false` still switches the whole
 lens off. Pinned by `tests/review-calibration-r4.test.ts`.
 
-| id                               | binds                                          | rule                                                                                                                                                                                                                                                                                                                                                           |
-| -------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `concurrency-duplicate-init`     | pass-concurrency                               | a lazily filled value checked and then filled without a second check under the exclusive lock (or a once-only primitive) is falsified on its own terms, not as a lost update: pure cheap equal values are safe; repeated I/O is `P3`, side effects or diverging values `P2`                                                                                    |
-| `write-predicate-scope`          | pass-baseline, pass-data-safety                | every OR branch of a DELETE/UPDATE filter (and every precedence group) must carry the scoping conditions — tenant, owner, type/method, status, parent; a branch without one rewrites or deletes other rows                                                                                                                                                     |
-| `persistence-bypasses-callbacks` | pass-baseline, pass-data-safety                | a new direct write (`delete_all`, `update_all`, through-association `delete`, queryset `update()`/`delete()`, bulk ops, bulk JPQL, raw SQL) is checked against what the model's lifecycle maintains — counter caches, dependent fields, cascades, audit/index hooks, validations                                                                               |
-| `removed-rule-other-consumers`   | pass-ui, pass-sweep, pass-widened              | a removed or changed style rule, selector, class, partial or key is grepped across every consumer — other pages, server-rendered/`noscript`/fallback templates, email/print, embeds, themes, snapshots — not just the component the PR targeted                                                                                                                |
-| `contract-values-renumbered`     | pass-baseline, pass-backcompat, pass-contracts | exit codes, status/error codes, persisted or wire enum values, event/message ids, CLI flag, env and config names are contracts: a changed, renumbered, reused or renamed value is reported unless the PR keeps the old one working or declares the break; reuse is the worst case                                                                              |
-| `validate-external-semantics`    | pass-validate                                  | (absorbed the former `validate-documented-semantics`) a source the validator cannot open lowers `confidence` only, never `reachability`; documented core semantics (language/runtime, standard library, SQL engine limits and locking, datastore command types, HTTP, OS) are judged from their documentation, not turned into an external-assumption question |
+| id | binds | rule |
+|---|---|---|
+| `concurrency-duplicate-init` | pass-concurrency | a lazily filled value checked and then filled without a second check under the exclusive lock (or a once-only primitive) is falsified on its own terms, not as a lost update: pure cheap equal values are safe; repeated I/O is `P3`, side effects or diverging values `P2` |
+| `write-predicate-scope` | pass-baseline, pass-data-safety | every OR branch of a DELETE/UPDATE filter (and every precedence group) must carry the scoping conditions — tenant, owner, type/method, status, parent; a branch without one rewrites or deletes other rows |
+| `persistence-bypasses-callbacks` | pass-baseline, pass-data-safety | a new direct write (`delete_all`, `update_all`, through-association `delete`, queryset `update()`/`delete()`, bulk ops, bulk JPQL, raw SQL) is checked against what the model's lifecycle maintains — counter caches, dependent fields, cascades, audit/index hooks, validations |
+| `removed-rule-other-consumers` | pass-ui, pass-sweep, pass-widened | a removed or changed style rule, selector, class, partial or key is grepped across every consumer — other pages, server-rendered/`noscript`/fallback templates, email/print, embeds, themes, snapshots — not just the component the PR targeted |
+| `contract-values-renumbered` | pass-baseline, pass-backcompat, pass-contracts | exit codes, status/error codes, persisted or wire enum values, event/message ids, CLI flag, env and config names are contracts: a changed, renumbered, reused or renamed value is reported unless the PR keeps the old one working or declares the break; reuse is the worst case |
+| `validate-external-semantics` | pass-validate | (absorbed the former `validate-documented-semantics`) a source the validator cannot open lowers `confidence` only, never `reachability`; documented core semantics (language/runtime, standard library, SQL engine limits and locking, datastore command types, HTTP, OS) are judged from their documentation, not turned into an external-assumption question |
 
 ## Replacing a shipped agent or prompt — the "customised" mark
 
@@ -1511,3 +1485,4 @@ and merges their verdicts. It was measured once, on a 19-lens PR
 merged record dropped every `doubted` and `downgraded` mark. It never earned the
 default and is kept only as a switch for a future measured design. Leave it
 at 1.
+
