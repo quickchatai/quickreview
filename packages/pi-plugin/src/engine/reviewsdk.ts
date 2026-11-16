@@ -46,7 +46,7 @@
 // are the run's (the round clears the board when it starts), so a caller that
 // runs reviews side by side builds a runtime per run (packages/pi-plugin/src/reviewapi.ts asks
 // for one per run) and disposes it after.
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { lensRunConfigFromEnv } from "../../extensions/lens.js";
 import { CONTEXT_PACK_FILE } from "../contextpack.js";
@@ -96,7 +96,10 @@ export interface ReviewSdkOptions {
   backstop?: (reason: BudgetReason) => void;
   /** Where the round's diagnostics go, one line each: a lens runner's warnings
    * (`[lens] …`, unless its config has a `warn` of its own) and ledger-pin's.
-   * Omitted: nowhere. */
+   * Omitted: nowhere. Their debug lines (a cache group's pin evidence, a ledger
+   * ledger-pin ignores) never come here: they go to the run's log, the session
+   * spec's `stderrFile` (`out/pi-stderr.log`), so a terminal shows a person
+   * only what they may act on. */
   warn?: (line: string) => void;
   /** The user's home, resolved by the host: the tool fence keeps its `.pi` out
    * and expands a tool's `~` against it (PiHostOptions.homeDir). */
@@ -237,6 +240,18 @@ export function reviewHostOptions(
   };
 }
 
+/** A sink that appends each line to `file`, the run's log. A line it cannot
+ * write is dropped: a debug line never costs the round. */
+export function runLog(file: string): (line: string) => void {
+  return (line) => {
+    try {
+      appendFileSync(file, `${line}\n`);
+    } catch {
+      // the log is gone: the line goes with it
+    }
+  };
+}
+
 /**
  * The review route's SDK runtime. One host per agent dir, built lazily at the
  * first session; no session, no host, no network and no env change.
@@ -249,10 +264,17 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
   // The tools of the host built last: one agent dir per review, so one.
   let lens: EngineLensTools | undefined;
 
-  /** The runner's config with the host's warn sink, unless it has its own. */
-  function withWarn(config: LensRunConfig): LensRunConfig {
+  /** The runner's config with the host's warn sink and the run's log for its
+   * debug lines, unless it has a warn sink of its own (the bench's). */
+  function withWarn(config: LensRunConfig, logFile: string): LensRunConfig {
     const warn = options.warn;
-    return config.warn || !warn ? config : { ...config, warn: (m) => warn(`[lens] ${m}`) };
+    if (config.warn) return config;
+    const toLog = runLog(logFile);
+    return {
+      ...config,
+      ...(warn ? { warn: (m: string) => warn(`[lens] ${m}`) } : {}),
+      ...(config.debug ? {} : { debug: (m: string) => toLog(`[lens] ${m}`) }),
+    };
   }
 
   function lensOf(spec: SessionSpec, host: PiHost): RoundLensTools {
@@ -280,7 +302,10 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
             }),
           ));
         const tools = engine
-          ? engineLensTools(withWarn((engine.config ?? engineLensConfig)(host, spec)), wave)
+          ? engineLensTools(
+              withWarn((engine.config ?? engineLensConfig)(host, spec), spec.stderrFile),
+              wave,
+            )
           : undefined;
         if (tools) lens = tools;
         const rt = sdkRuntime(host, {
@@ -290,6 +315,7 @@ export function reviewSdkRuntime(options: ReviewSdkOptions = {}): ReviewSdkRunti
               roundSdkExtras({
                 lens: tools ?? lensOf(s, host),
                 ...(options.warn ? { log: options.warn } : {}),
+                debug: runLog(s.stderrFile),
               })(s)),
           ...(options.backstop ? { backstop: options.backstop } : {}),
         });
