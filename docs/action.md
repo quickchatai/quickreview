@@ -24,8 +24,9 @@ things:
 1. **When reviews should run.** Pick any of the [four recipes](#when-it-runs-you-decide):
    `comment`, `label`, `push`, `manual`. `comment` and `manual` are picked by
    default.
-2. **The secret's name.** It offers the name of the API key your own model
-   route uses (what `qcr model` shows), when that is a key.
+2. **The secret's name.** When your own model route uses an API key (what
+   `qcr model` shows), it takes that key's name and says so. It asks only
+   when the route names no key.
 
 Then it does the rest, saying what it is about to do and asking before each
 write:
@@ -46,10 +47,16 @@ pull request then asks for a review.
 The flags: `--on comment,label,push,manual`, `--secret NAME`,
 `--repo OWNER/NAME` (outside a checkout), `--local` (write the file into this
 checkout and print the git steps, instead of opening a pull request), `--force`
-(replace a workflow file that is already there), `--yes` (ask nothing) and
-`--json`. Without a terminal it takes `comment,manual`, and the secret's name
-from `--secret` or your model route. `qcr action workflow` prints the workflow
-and writes nothing.
+(replace a workflow file that is already there), `--yes` (make each write
+without asking; in a terminal it still asks the two questions above when you
+did not pass `--on` or `--secret`) and `--json`. Without a terminal it takes
+`comment,manual`, and the secret's name from `--secret` or your model route.
+Without a terminal and without `--yes`, it makes no write and prints each
+command for you instead. `qcr action workflow` prints the workflow and writes
+nothing.
+
+With the `push` recipe, the install's own pull request is reviewed once the
+secret is set, and that review is paid for like any other.
 
 The install's GitHub writes are made by your own `gh`, on your command. Why
 they do not go through the reviewer's gate is
@@ -159,7 +166,7 @@ on:
   workflow_dispatch:
     inputs:
       pr:
-        description: The pull request to review
+        description: The number of the pull request to review
         required: true
         type: string
 jobs:
@@ -219,7 +226,7 @@ All inputs are optional.
 | `pr` | The pull request's number. Empty when there is none. |
 | `review-url` | The link to the posted review. Empty when nothing was posted. |
 | `verdict` | `APPROVE`, `REQUEST_CHANGES`, or empty. The verdict is the review body's text: the review itself is always a comment. |
-| `findings` | The number of findings, over every severity. |
+| `findings` | The number of findings, over every severity. Empty when the result holds no findings at all, as when the review was refused or printed no result. |
 | `cost-usd` | What the run spent in US dollars, as the review reports it. Empty when unknown. |
 | `result` | The whole review result, as [schema 2](../schemas/review-result.v2.json) JSON on one line. Empty when the run printed none. |
 

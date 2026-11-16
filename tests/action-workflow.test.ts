@@ -37,7 +37,8 @@ const TEMPLATE = "docs/action/qcr-review.yml";
 const EXAMPLE_SECRET = "ANTHROPIC_API_KEY";
 const REGENERATE = `qcr action workflow --on comment,manual --secret ${EXAMPLE_SECRET} > ${TEMPLATE}`;
 
-/** Each recipe's part of the job's `if:`, as the spec words it (FT-0809 B1). */
+/** Each recipe's part of the job's `if:`, written out here by hand, so the
+ * renderer's own table is checked against it rather than against itself. */
 const IF_PART: Record<Recipe, string> = {
   comment:
     "github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/qcr')",

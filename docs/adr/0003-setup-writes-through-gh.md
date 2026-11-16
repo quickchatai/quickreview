@@ -1,6 +1,6 @@
 ---
 status: accepted
-built: no. `qcr action install` and the fence over its gh calls are being built (FT-0809); the record was written before the code
+built: yes. `src/actioncli.ts` runs gh only through `runGh`, over the closed list in `ghCallAllowed`, and `tests/action-install.test.ts` drives every install path against that list. The record was written before the code
 ---
 
 # Setup writes through the person's own gh
