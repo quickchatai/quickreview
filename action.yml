@@ -1,11 +1,19 @@
 # The QuickReview Action.
 #
-# A composite: it checks that the release image can be pulled (it is public, so
+# A composite. Its first step after the runner check is the gate, which makes
+# GitHub reads only and spends nothing: it finds the pull request the event
+# names (or the pr input), checks that whoever started the run may start a
+# review (write access to the repository, or allowed-users), that the pull
+# request is open, and that the step has a model credential. A run it turns
+# down is skipped, with the reason in the outputs and the job summary. Then
+# the Action checks that the release image can be pulled (it is public, so
 # anonymously; a private mirror logs in with registry-token), and runs the
-# image's `review` once for one pull request, posting a comment-only review. Everything it does is in
-# scripts/action.sh (one verb per step), so it can be read, tested with a fake
-# docker, and linted outside a workflow. docs/action.md says how to use it;
-# docs/action/qcr-review.yml is the workflow to copy.
+# image's `review` once for that pull request, posting a comment-only review
+# unless post is "false". The result is in the outputs and the job summary.
+# Everything it does is in scripts/action.sh (one verb per step), so it can be
+# read, tested with a fake docker, and linted outside a workflow.
+# docs/action.md says how to use it; docs/action/qcr-review.yml is a workflow
+# to copy. The workflow decides when the Action runs.
 #
 # The review container gets: the checkout read-only, a generated config
 # (dry_run = false, memory off), the pi login read-only, QCR_ROUTE=action (no
@@ -15,13 +23,20 @@
 # A model credential reaches the review by name only: the step forwards every
 # environment name pi reads a credential from, whatever the provider, so a key
 # is set with the workflow's own `env:` on the step that uses this Action. The
-# four key inputs below are the same route under older names.
-name: QuickReview
+# four key inputs below are the same route under older names. The gate is told
+# only whether a key input or pi-auth was given, never their values.
+name: QuickReview AI Code Review
 description: Review a pull request with QuickReview, an open-source AI code reviewer, and post the findings as one comment-only review.
+branding:
+  icon: eye
+  color: blue
 
 inputs:
   pr:
-    description: The pull request number. Default is the number of the pull_request or issue_comment event.
+    description: >-
+      The pull request number. Default is the pull request the event names (a
+      pull_request event, or a comment on a pull request). An event that names
+      none, such as workflow_dispatch or schedule, needs it.
     required: false
     default: ""
   repo:
@@ -34,6 +49,13 @@ inputs:
       pull-requests: write.
     required: false
     default: ${{ github.token }}
+  allowed-users:
+    description: >-
+      Who else may start a review, beyond people with write access to the
+      repository: GitHub logins separated by commas (a bot as name[bot]), or *
+      for anyone. Default is nobody else.
+    required: false
+    default: ""
   registry-token:
     description: >-
       Only for an image that is not public (a private mirror, named by the image
@@ -56,6 +78,19 @@ inputs:
       credential the step has.
     required: false
     default: ""
+  profile:
+    description: >-
+      A shipped review profile to run instead of the standard review, such as
+      security or state-machines (docs/action.md lists them). The repository's
+      own .qcr/ profile applies either way.
+    required: false
+    default: ""
+  post:
+    description: >-
+      "true" posts the review on the pull request. "false" reviews, shows the
+      result in the job summary and the outputs, and posts nothing.
+    required: false
+    default: "true"
   pi-auth:
     description: >-
       The contents of a pi auth.json (a model login for any provider), as a
@@ -89,6 +124,40 @@ inputs:
     required: false
     default: ""
 
+outputs:
+  skipped:
+    description: >-
+      "true" when the Action decided not to review this run (skip-reason says
+      why), else "false".
+    value: ${{ steps.gate.outputs.skipped }}
+  skip-reason:
+    description: Why the Action did not review, in one line. Empty when it reviewed.
+    value: ${{ steps.gate.outputs.skip-reason }}
+  pr:
+    description: The number of the pull request reviewed. Empty when none was.
+    value: ${{ steps.gate.outputs.pr }}
+  review-url:
+    description: The link to the posted review. Empty when nothing was posted.
+    value: ${{ steps.run.outputs.review-url }}
+  verdict:
+    description: >-
+      APPROVE, REQUEST_CHANGES, or empty. The review is posted as a comment
+      either way, with the verdict in its text.
+    value: ${{ steps.run.outputs.verdict }}
+  findings:
+    description: >-
+      The number of findings, over every severity. Empty when the result holds
+      no findings at all, as when the review was refused or printed no result.
+    value: ${{ steps.run.outputs.findings }}
+  cost-usd:
+    description: What the review cost in US dollars, as the image reports it. Empty when unknown.
+    value: ${{ steps.run.outputs.cost-usd }}
+  result:
+    description: >-
+      The whole review result as JSON on one line (schema 2,
+      schemas/review-result.v2.json). Empty when the review printed none.
+    value: ${{ steps.run.outputs.result }}
+
 runs:
   using: composite
   steps:
@@ -101,7 +170,22 @@ runs:
         fi
         command -v docker >/dev/null || { echo "::error::docker is not installed on this runner"; exit 1; }
 
+    - name: Decide whether to review this run
+      id: gate
+      shell: bash
+      env:
+        QCR_ACTION_PATH: ${{ github.action_path }}
+        QCR_ACTION_PR: ${{ inputs.pr }}
+        QCR_ACTION_REPO: ${{ inputs.repo }}
+        QCR_ACTION_GH_TOKEN: ${{ inputs.github-token }}
+        QCR_ACTION_ALLOWED_USERS: ${{ inputs.allowed-users }}
+        # Whether a key input or pi-auth was given, never their values.
+        QCR_ACTION_HAS_KEY_INPUT: ${{ inputs.openai-api-key != '' || inputs.anthropic-api-key != '' || inputs.gemini-api-key != '' || inputs.digitalocean-api-key != '' }}
+        QCR_ACTION_HAS_PI_AUTH: ${{ inputs.pi-auth != '' }}
+      run: bash "$QCR_ACTION_PATH/scripts/action.sh" gate
+
     - name: Check this repository can pull the image
+      if: steps.gate.outputs.skipped == 'false'
       shell: bash
       env:
         QCR_ACTION_PATH: ${{ github.action_path }}
@@ -112,6 +196,7 @@ runs:
       run: bash "$QCR_ACTION_PATH/scripts/action.sh" preflight
 
     - name: Log in to a private mirror (registry-token only)
+      if: steps.gate.outputs.skipped == 'false'
       shell: bash
       env:
         QCR_ACTION_PATH: ${{ github.action_path }}
@@ -122,14 +207,18 @@ runs:
       run: bash "$QCR_ACTION_PATH/scripts/action.sh" login
 
     - name: Review the pull request
+      id: run
+      if: steps.gate.outputs.skipped == 'false'
       shell: bash
       env:
         QCR_ACTION_PATH: ${{ github.action_path }}
         QCR_ACTION_IMAGE: ${{ inputs.image }}
-        QCR_ACTION_PR: ${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}
+        QCR_ACTION_PR: ${{ steps.gate.outputs.pr }}
         QCR_ACTION_REPO: ${{ inputs.repo }}
         QCR_ACTION_LIMIT: ${{ inputs.limit }}
         QCR_ACTION_MODEL: ${{ inputs.model }}
+        QCR_ACTION_PROFILE: ${{ inputs.profile }}
+        QCR_ACTION_POST: ${{ inputs.post }}
         QCR_ACTION_GH_TOKEN: ${{ inputs.github-token }}
         QCR_ACTION_PI_AUTH: ${{ inputs.pi-auth }}
         # The key inputs travel under names of their own, so an empty input
