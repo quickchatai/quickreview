@@ -94,6 +94,8 @@ qcr review             # review this branch's commits against the default branch
 - `qcr review --uncommitted` reviews your working tree instead.
 - `qcr review 123`, or a pull request's URL, reviews a pull request. It needs
   `gh auth login` or a GitHub token.
+- `qcr review --profile NAME` reviews under another profile for that run
+  alone, for example `--profile state-machines` or `--profile security`.
 - `qcr model` shows which model reviews run on and what else you could use.
 
 `qcr` needs Node 22.19 or later. A review whose estimate is under your limit

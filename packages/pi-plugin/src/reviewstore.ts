@@ -3,7 +3,7 @@
 //
 // One directory per repo under the review home the host names (the CLI's is
 // `<state home>/review`, src/reviewhome.ts):
-//   <home>/<key>/state/<hash>.json   one file per target
+//   <home>/<key>/state/<hash>.json   one file per target and profile
 //   <home>/<key>/destination.json    the saved destinations
 // The key is the origin's owner/name plus the repo's root commit, so every
 // clone and worktree of a repo shares one history and a fork keeps its own.

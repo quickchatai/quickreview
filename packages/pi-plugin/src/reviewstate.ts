@@ -32,6 +32,16 @@ export function prTargetKey(repo: string, number: number): string {
   return `pr:${repo}#${number}`;
 }
 
+/** The key a target's state is kept under for the profile a run reviews
+ * under: the target's own key for no profile (`""`), where every state was
+ * kept before states were kept per profile, and the target plus the profile
+ * for any other. A review under one profile (a one-off `--profile`) therefore
+ * never moves another profile's checkpoint, and its own next run still finds
+ * its own. The key names the file only; the state inside names the target. */
+export function profileStateKey(targetKey: string, profile: string): string {
+  return profile === "" ? targetKey : `${targetKey} profile:${profile}`;
+}
+
 /** One review of the target. */
 export interface ReviewRound {
   round_no: number;
@@ -134,6 +144,35 @@ export function loadState(path: string | null, target: string): ReviewState | nu
   } catch {
     return null;
   }
+}
+
+/**
+ * The state a run under `profile` builds on: the profile's own file, else
+ * (no file of its own yet) the target's shared file, but only when its last
+ * round was saved under this same profile. A build that kept one state per
+ * target saved every profile's rounds there, so a profile reviewed that way
+ * keeps its history once; a round saved under another profile, or before
+ * rounds recorded their profile, is never taken as this profile's.
+ *
+ * The second half departs, on purpose, from `covers`, which takes a round
+ * with no recorded coverage as covering. That rule reads a profile's own
+ * file. The shared file, read for a named profile, is another key's: before
+ * rounds recorded their coverage, `--profile NAME` already ran one-off
+ * reviews and saved them there, so a round with no coverage may be the
+ * configured profile's or a one-off's, and taking one under the wrong profile
+ * is how a review answers "nothing new" for code its profile never read. A
+ * named profile therefore reviews such a target in full once.
+ */
+export function loadProfileState(
+  ownPath: string | null,
+  sharedPath: string | null,
+  target: string,
+  profile: string,
+): ReviewState | null {
+  const own = loadState(ownPath, target);
+  if (own !== null || sharedPath === null || sharedPath === ownPath) return own;
+  const shared = loadState(sharedPath, target);
+  return shared !== null && lastRound(shared).coverage?.profile === profile ? shared : null;
 }
 
 /** Atomic: a crash never leaves half a state. Best-effort by contract — a
