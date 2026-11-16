@@ -1135,6 +1135,23 @@ describe("scripts/action.sh run — the result", () => {
     expect(failed.res.status).toBe(1);
     expect(failed.outputs["findings"]).toBe("");
     expect(failed.summary).toContain("The review did not finish: no &lt;key&gt;");
+    // A failed run that still carries an empty findings object (the image's
+    // refusal of a login, after the plan) has no count either, and no "No findings."
+    // MUTATION: drop `!failed &&` from the findings line of RESULT_JS — this fails.
+    const refused = review(
+      [
+        JSON.stringify({
+          schema_version: 2,
+          ok: false,
+          partial: false,
+          errors: ["401"],
+          findings: {},
+        }),
+      ],
+      { FAKE_DOCKER_RC: "1" },
+    );
+    expect(refused.outputs["findings"]).toBe("");
+    expect(refused.summary).not.toContain("No findings.");
   });
 
   // MUTATION: print every line in the awk filter of run_review — the JSON

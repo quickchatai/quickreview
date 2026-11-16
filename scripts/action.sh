@@ -739,8 +739,14 @@ if (result === null) {
   process.exit(3);
 }
 
+// A run that failed (not one stopped at the cost limit, whose findings so far
+// are real) has no count: an empty findings object there is not "0 findings".
+const failed = result.ok === false && result.partial !== true;
 const findings =
-  result.findings !== null && typeof result.findings === "object" && !Array.isArray(result.findings)
+  !failed &&
+  result.findings !== null &&
+  typeof result.findings === "object" &&
+  !Array.isArray(result.findings)
     ? result.findings
     : null;
 const rows = [];
