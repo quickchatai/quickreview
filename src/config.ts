@@ -7,7 +7,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parse } from "smol-toml";
 import {
   locateConfig,
   locateSecrets,
@@ -17,6 +16,8 @@ import {
 import { packageRootFrom } from "@quickchatai/pi-quickreview/src/assetroot.js";
 import { repoCloneDirName } from "./clonedir.js";
 import { MissingConfigError } from "./missingconfig.js";
+import { configErrorAt } from "@quickchatai/pi-quickreview/src/configerror.js";
+import { readConfigToml } from "@quickchatai/pi-quickreview/src/shippedconfig.js";
 import { DEFAULT_LENS_GRANT_STAGGER_MS, DEFAULT_LENS_PERMITS } from "./ipc/permits.js";
 import {
   configDeprecations,
@@ -1799,8 +1800,12 @@ export const IMPROVEMENT_DENY_PREFIXES_DEFAULT: readonly string[] = [
   ".github/workflows/",
 ];
 
+/** The whole config.toml, every section, read over the shipped defaults
+ * (packages/pi-plugin/src/shippedconfig.ts `readConfigToml`) as the core's
+ * `parseCoreConfig` reads it: a key the file leaves out takes the shipped
+ * value, a key it sets is checked as written. */
 export function parseConfig(toml: string): Config {
-  const raw = parse(toml) as Record<string, any>;
+  const raw = readConfigToml(toml) as Record<string, any>;
   for (const line of configDeprecations(raw)) console.warn(`[quickreviewd] ${line}`);
   const github = parseGithubSection(raw);
   const preset = presetOf(raw);
@@ -2149,8 +2154,15 @@ export function loadConfig(path?: string): Config {
       missingConfigMessage(locateConfig(), strandedCheckoutConfig({ root: sandboxRoot() })),
     );
   }
-  const cfg = parseConfig(readFileSync(p, "utf8"));
-  validateSlackConfig(cfg);
+  const text = readFileSync(p, "utf8");
+  let cfg: Config;
+  try {
+    cfg = parseConfig(text);
+    validateSlackConfig(cfg);
+  } catch (err) {
+    // One line naming the file and the key, never a stack (src/qcrbin.ts).
+    throw configErrorAt(p, err);
+  }
   if (!path) cached = cfg;
   return cfg;
 }

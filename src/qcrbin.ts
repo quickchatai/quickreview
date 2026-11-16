@@ -34,6 +34,7 @@ import { isEntryModule } from "./entrymodule.js";
 import { isSqliteUnavailable, sqliteHint } from "./sqlitehint.js";
 import { fsDeniedLine } from "./fsdenied.js";
 import { MissingConfigError } from "./missingconfig.js";
+import { ConfigError } from "@quickchatai/pi-quickreview/src/configerror.js";
 import { parseSchemaFlag } from "./schemaflag.js";
 
 /** What QuickReview is, in one line: package.json's `description`, word for
@@ -259,7 +260,7 @@ export async function runBin(argv: readonly string[]): Promise<void> {
     const verb = r.route === "app" ? r.argv.find((a) => a !== "--json") : r.route;
     const line = isSqliteUnavailable(err)
       ? sqliteHint(verb, err)
-      : err instanceof MissingConfigError
+      : err instanceof MissingConfigError || err instanceof ConfigError
         ? `qcr ${verb}: ${err.message}`
         : fsDeniedLine(verb, err);
     if (line === null) throw err;

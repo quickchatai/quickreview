@@ -1074,6 +1074,22 @@ describe("models: the older keys are read forever", () => {
     expect(lines.filter((line) => String(line).includes("[models]"))).toEqual([]);
   });
 
+  // A config.toml that sets only some keys runs over the shipped defaults
+  // (packages/pi-plugin/src/shippedconfig.ts); the older keys it writes are
+  // read as before, never shadowed by a shipped current spelling.
+  // MUTATION: drop the `[models] model` group from FILLED_TOGETHER and add
+  // `model = "prov/new"` under [models] in config.example.toml — the shipped
+  // model wins over the written `conversation` and this fails.
+  it("a partial config in the older keys folds them, in both parsers", () => {
+    const partial =
+      '[models]\nconversation = "prov/old:high"\n\n[models.tiers]\nsol-high = "prov/x:high"\n';
+    for (const parse of [parseConfig, parseCoreConfig]) {
+      const m = parse(partial).models;
+      expect(m.model).toBe("prov/old:high");
+      expect(m.tiers.deep).toBe("prov/x:high");
+    }
+  });
+
   // MUTATION: drop the model/conversation line from configDeprecations
   // (packages/pi-plugin/src/reviewconfig.ts) — this fails.
   it("a model beside a different conversation: model is used, and the file is told once", () => {

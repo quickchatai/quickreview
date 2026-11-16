@@ -7,7 +7,6 @@
 // `parseCoreConfig` reads just these sections: what a one-shot review needs,
 // with no install home, no secrets lookup and no app section. Where a caller
 // wants the located secrets dir or a deprecation said, it does that itself.
-import { parse } from "smol-toml";
 import { globProblem } from "./glob.js";
 import {
   INTENT_MIN_SUBSTANCE_WORDS,
@@ -21,6 +20,7 @@ import {
 import type { LensTuningMap } from "./lenstuning.js";
 import { splitProvider, type ModelRoute } from "./modelroute.js";
 import type { PostingPolicy } from "./postingpolicy.js";
+import { readConfigToml } from "./shippedconfig.js";
 import {
   ALL_PASSES,
   SCAN_DEEP_FLOOR_LENSES,
@@ -2069,16 +2069,17 @@ export function foldLegacyOwnerSlackId(raw: Record<string, any>, owner: OwnerCon
 
 /**
  * The review sections of a config.toml, parsed and checked exactly as the
- * whole-file parser (`parseConfig`, src/config.ts) parses them. The other
- * sections are not read, so a file that only names the review's sections is
- * a whole review config. `[github] secrets_dir` stays as written. `warn`
- * hears each deprecated key once.
+ * whole-file parser (`parseConfig`, src/config.ts) parses them. The file is
+ * read over the shipped defaults (packages/pi-plugin/src/shippedconfig.ts
+ * `readConfigToml`): every key it leaves out takes the shipped value, so a
+ * file that sets one key is a whole config. `[github] secrets_dir` stays as
+ * written. `warn` hears each deprecated key once.
  */
 export function parseCoreConfig(
   toml: string,
   opts: { warn?: (line: string) => void } = {},
 ): CoreConfig {
-  const raw = parse(toml) as Record<string, any>;
+  const raw = readConfigToml(toml) as Record<string, any>;
   for (const line of configDeprecations(raw)) opts.warn?.(`[quickreviewd] ${line}`);
   const github = parseGithubSection(raw);
   const preset = presetOf(raw);

@@ -16,6 +16,13 @@ the repo-shaped half of LENS SELECTION (`heuristics.toml`, below)
 profile = "my-repo"   # a directory name under profiles/; "" = no profile
 ```
 
+That table is a whole `config.toml`: every key a config.toml leaves out takes
+the shipped value from `config.example.toml`, so a file holding only
+`[review] profile = "state-machines"` reviews exactly as the shipped config
+with that line changed (its header lists the three keys a missing value keeps
+its own meaning for). A key the file sets is checked as before, and a wrong
+value refuses to load in one line naming the file and the key.
+
 Where a profile lives: an install's own profile belongs in its
 config home, `$XDG_CONFIG_HOME/qcr/<install>/profiles/<name>/`, next to its
 `config.toml` — nothing about a reviewed repo lives in the app's checkout. The

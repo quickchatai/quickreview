@@ -175,13 +175,20 @@ describe("parseConfig", () => {
     expect(cfg.github.secrets_dir).toBe(resolve(homedir(), ".config/example-review-bot"));
   });
 
-  it("throws with the key name on a missing top-level section", () => {
-    expect(() => parseConfig("dry_run = true\n")).toThrowError(/missing key 'github'/);
+  // A key a config.toml leaves out takes the shipped value
+  // (packages/pi-plugin/src/shippedconfig.ts); tests/config-overlay.test.ts
+  // holds the overlay itself.
+  // MUTATION: parse the text alone in parseConfig (`parse(toml)` for
+  // `readConfigToml(toml)`) — `missing key 'github'` is thrown and this fails.
+  it("a missing top-level section takes the shipped one", () => {
+    const shipped = parseConfig(readFileSync(resolve(root, "config.example.toml"), "utf8"));
+    expect(parseConfig("dry_run = true\n").github).toEqual(shipped.github);
   });
 
-  it("throws on a missing github key", () => {
+  it("a missing github key takes the shipped value", () => {
     const trimmed = readFileSync(configPath, "utf8").replace(/^issue_label.*$/m, "");
-    expect(() => parseConfig(trimmed)).toThrowError(/missing key 'issue_label'/);
+    expect(trimmed).not.toMatch(/^issue_label/m);
+    expect(parseConfig(trimmed).github.issue_label).toBe("bot-filed");
   });
 
   it("coerces dry_run to a boolean", () => {
@@ -363,10 +370,17 @@ describe("[caps] every numeric cap is checked at parse time", () => {
     });
   });
 
-  it.each(Object.keys(ok))("refuses to load a config whose [caps] omits %s", (key) => {
+  // A cap the file leaves out is the shipped cap, never none: the table
+  // parser still refuses a cap it cannot compare against.
+  // MUTATION: return `v` unchecked from parseCaps' `cap` — the table without
+  // the key parses to an undefined cap and this fails.
+  it.each(Object.keys(ok))("a config whose [caps] omits %s runs on the shipped cap", (key) => {
     const without = base.replace(new RegExp(`^${key} = .*$`, "m"), "");
     expect(without).not.toContain(`${key} =`);
-    expect(() => parseConfig(without)).toThrow(
+    const shipped = parseConfig(readFileSync(resolve(root, "config.example.toml"), "utf8")).caps;
+    expect(parseConfig(without).caps[key as keyof typeof ok]).toBe(shipped[key as keyof typeof ok]);
+    const { [key as keyof typeof ok]: _gone, ...table } = ok;
+    expect(() => parseCaps(table)).toThrow(
       `[caps]: ${key} must be a non-negative number (got undefined)`,
     );
   });
@@ -462,9 +476,10 @@ describe("[models] tiered pass scheme", () => {
     }
   });
 
-  // MUTATION: restore `req(raw, "models")` in parseCoreConfig or in
-  // parseConfig — a config with no [models] section is `missing key 'models'`
-  // in that parser, and this fails.
+  // A config with no [models] section takes the shipped one, which pins
+  // nothing. MUTATION: add `model = "x/y"` under [models] in
+  // config.example.toml — the absent section is filled with that pin and
+  // this fails.
   it("a config with no [models] section at all pins nothing, in both parsers", () => {
     const none = readFileSync(configPath, "utf8").replace(/\[models\][\s\S]*?(?=\n\[tui\])/, "");
     expect(none).not.toMatch(/^\[models/m);

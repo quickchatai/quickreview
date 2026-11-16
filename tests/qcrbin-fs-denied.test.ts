@@ -1,7 +1,11 @@
 // The `qcr` bin's top-level error path: a filesystem refusal (EACCES, EPERM,
-// EROFS) on a path, or a missing live config, is one line on stderr and exit
-// 1, never a stack; any other error propagates unchanged. The app's `main` is faked to throw.
+// EROFS) on a path, a missing live config, or a config that does not load, is
+// one line on stderr and exit 1, never a stack; any other error propagates unchanged. The app's `main` is faked to throw.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadConfig } from "../src/config.js";
 import { MissingConfigError } from "../src/missingconfig.js";
 import { runBin } from "../src/qcrbin.js";
 
@@ -49,6 +53,30 @@ describe("the bin's top-level error path", () => {
     expect(errs).toEqual([
       "qcr regression: no config at /h/.config/qcr/default/config.toml — the install's config home holds none (a bare `qcr` writes one when you choose a repository)",
     ]);
+  });
+
+  // MUTATION: drop the ConfigError branch from runBin's catch — a config
+  // with a wrong value prints a stack and this fails.
+  it("turns a config that does not load into one line naming the file and the key", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-bin-config-"));
+    try {
+      const path = join(dir, "config.toml");
+      writeFileSync(path, '[models]\nvalidate_tier = "ultra"\n');
+      try {
+        loadConfig(path);
+      } catch (err) {
+        thrown.err = err;
+      }
+      const errs: string[] = [];
+      vi.spyOn(console, "error").mockImplementation((l: unknown) => void errs.push(String(l)));
+      await runBin(["status"]);
+      expect(process.exitCode).toBe(1);
+      expect(errs).toEqual([
+        `qcr status: ${path} [models] validate_tier: unknown tier "ultra" (one of light, standard, deep)`,
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("lets any other error propagate", async () => {

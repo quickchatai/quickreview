@@ -60,7 +60,8 @@ describe("the core's review sections", () => {
     const reviewOnly = EXAMPLE.split(/^(?=\[)/m)
       .filter((t) => !/^\[(server|daemon|eod|caps|slack|tui|companion|memory|openviking)\b/.test(t))
       .join("");
-    expect(() => parseConfig(reviewOnly)).toThrow(/missing key/);
+    // The app's sections the file leaves out are the shipped ones.
+    expect(parseConfig(reviewOnly)).toEqual(parseConfig(EXAMPLE));
     expect(parseCoreConfig(reviewOnly)).toEqual(parseCoreConfig(EXAMPLE));
   });
 
@@ -82,7 +83,8 @@ describe("zero-config", () => {
   it("with no config of the install's own, the one-shot runs on the shipped defaults", () => {
     const loaded = loadOneShotConfig({ root: ROOT, env });
     expect(loaded.path).toBeNull();
-    expect(loaded.toml).toBe(EXAMPLE);
+    // No config is an empty one, read over the shipped defaults.
+    expect(loaded.toml).toBe("");
     const expected = parseCoreConfig(EXAMPLE);
     expected.github.secrets_dir = locateSecrets({ configured: "", env }).path;
     expect(loaded.cfg).toEqual(expected);
