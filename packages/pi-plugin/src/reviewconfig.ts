@@ -79,9 +79,11 @@ export interface GithubConfig {
 }
 
 /**
- * [guards] — the posting-time guards. Every one but `no_checks_is_red` is on
- * by default; a knob exists only so a guard can be taken out of the path
- * deliberately, in one place, rather than by editing the gate.
+ * [guards] — the posting-time guards. Every one is on as shipped
+ * (config.example.toml), and a config.toml that leaves a knob out runs on the
+ * shipped value (packages/pi-plugin/src/shippedconfig.ts). A knob exists only
+ * so a guard can be taken out of the path deliberately, in one place, rather
+ * than by editing the gate.
  */
 export interface GuardsConfig {
   /** A non-author human APPROVED at the head ⇒ post COMMENT, not REQUEST_CHANGES. */
@@ -95,8 +97,9 @@ export interface GuardsConfig {
   block_approve_on_red_ci: boolean;
   /** A head with ZERO check-runs also withholds approval: in a CI-running
    * repo that is a conflicted PR or CI that has not started — no execution
-   * evidence. Off by default so a repo with no CI at all is never wedged (the
-   * `none` exemption). */
+   * evidence. On as shipped, so a config that leaves it out withholds
+   * approval at a zero-checks head; a repo with no CI at all sets it false to
+   * keep approving (the `none` exemption). */
   no_checks_is_red: boolean;
   /** The head the review is ABOUT must still be the PR's live head at posting
    * time: a push landing between the round's validation and
@@ -104,6 +107,10 @@ export interface GuardsConfig {
   refuse_on_head_drift: boolean;
 }
 
+/** The parser's floor under the shipped file: a knob reaches it only when
+ * neither the config nor config.example.toml names it. `no_checks_is_red`
+ * stays off here, so a hand-built config (a test's, the bench's) keeps the
+ * `none` exemption; the shipped file turns it on. */
 export const GUARDS_DEFAULTS: GuardsConfig = {
   downgrade_on_human_approval: true,
   skip_unchanged_head: true,

@@ -18,6 +18,7 @@ import { repoCloneDirName } from "./clonedir.js";
 import { MissingConfigError } from "./missingconfig.js";
 import { configErrorAt } from "@quickchatai/pi-quickreview/src/configerror.js";
 import { readConfigToml } from "@quickchatai/pi-quickreview/src/shippedconfig.js";
+import { appShippedConfigText } from "./shippeddefaults.js";
 import { DEFAULT_LENS_GRANT_STAGGER_MS, DEFAULT_LENS_PERMITS } from "./ipc/permits.js";
 import {
   configDeprecations,
@@ -1803,9 +1804,11 @@ export const IMPROVEMENT_DENY_PREFIXES_DEFAULT: readonly string[] = [
 /** The whole config.toml, every section, read over the shipped defaults
  * (packages/pi-plugin/src/shippedconfig.ts `readConfigToml`) as the core's
  * `parseCoreConfig` reads it: a key the file leaves out takes the shipped
- * value, a key it sets is checked as written. */
-export function parseConfig(toml: string): Config {
-  const raw = readConfigToml(toml) as Record<string, any>;
+ * value, a key it sets is checked as written. `shipped` is the defaults'
+ * text: by default the app package root's (src/shippeddefaults.ts), which an
+ * image without the core's asset root still carries. */
+export function parseConfig(toml: string, shipped: string = appShippedConfigText()): Config {
+  const raw = readConfigToml(toml, shipped) as Record<string, any>;
   for (const line of configDeprecations(raw)) console.warn(`[quickreviewd] ${line}`);
   const github = parseGithubSection(raw);
   const preset = presetOf(raw);

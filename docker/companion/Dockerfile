@@ -95,6 +95,9 @@ COPY prompts /opt/qcr/prompts
 COPY seeds /opt/qcr/seeds
 COPY profiles /opt/qcr/profiles
 COPY docker/companion /opt/qcr/docker/companion
+# The shipped defaults: a scan reads its mounted config.toml over this file
+# (src/shippeddefaults.ts), so a scan without it refuses to load any config.
+COPY config.example.toml /opt/qcr/config.example.toml
 # The build stamp: the hash `qcr companion rebuild` computed over exactly the
 # files copied above. `qcr scan start` refuses an image whose stamp is not
 # the checkout's (src/appstamp.ts).

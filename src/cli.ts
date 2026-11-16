@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { takeHandoffToken } from "@quickchatai/pi-quickreview/src/ghcred.js";
 import { isEntryModule } from "./entrymodule.js";
+import { runRefusingConfig } from "./configrefusal.js";
 import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
 import { daemonLoadLine } from "./eventloop.js";
 import { parseSchemaFlag } from "./schemaflag.js";
@@ -2325,5 +2326,9 @@ export async function main(rawArgv: string[]): Promise<void> {
 }
 
 if (isEntryModule(process.argv[1], fileURLToPath(import.meta.url))) {
-  void main(process.argv.slice(2));
+  // The image's `qcr` wrapper comes in here, not through src/qcrbin.ts: a
+  // config that does not load is one line and exit 1, as the bin says it.
+  const args = process.argv.slice(2);
+  const verb = args.find((a) => a !== "--json");
+  void runRefusingConfig(verb === undefined ? "qcr" : `qcr ${verb}`, () => main(args));
 }

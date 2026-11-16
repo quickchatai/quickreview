@@ -19,7 +19,7 @@
 //                 snapshot from an older daemon with no `poll` record
 //                 (invariant 9: never Off and never On)
 import { readFileSync } from "node:fs";
-import { readConfigToml } from "@quickchatai/pi-quickreview/src/shippedconfig.js";
+import { readAppConfigToml } from "../shippeddefaults.js";
 import { snapshotHeartbeat } from "../heartbeat.js";
 import { OnboardingEngine, type OnboardAdapters, type ProcessRunner } from "../onboard/engine.js";
 import {
@@ -262,11 +262,11 @@ const message = (err: unknown): string => (err instanceof Error ? err.message : 
 
 /** The config's `[github]` table and root `dry_run`, read again each time,
  * over the shipped defaults as the daemon reads them
- * (packages/pi-plugin/src/shippedconfig.ts `readConfigToml`): a key the file
- * leaves out is the shipped value the daemon runs on, never unknown. */
+ * (src/shippeddefaults.ts `readAppConfigToml`): a key the file leaves out is
+ * the shipped value the daemon runs on, never unknown. */
 function readConfig(path: string, read: (p: string) => string): Obj | string {
   try {
-    const v = readConfigToml(read(path)) as unknown;
+    const v = readAppConfigToml(read(path)) as unknown;
     return isObj(v) ? v : `${path} is not a TOML table`;
   } catch (err) {
     return `can't read ${path}: ${message(err)}`;

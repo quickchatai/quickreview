@@ -479,25 +479,54 @@ parsed by `parseConfig` in `src/config.ts` and loaded through `loadConfig()`. Ev
 the shipped defaults, and it is validated on every test run by
 `tests/publishability.test.ts` and `tests/config.test.ts`.
 
-The values below are the defaults **as shipped in `config.example.toml` and
-the `*_DEFAULTS` constants in `src/config.ts`**. A section marked *optional*
-may be omitted entirely; its defaults constant then supplies the whole block.
+Every section and every key is optional. The file is read over the shipped
+`config.example.toml` (`readConfigToml` in
+`packages/pi-plugin/src/shippedconfig.ts`; the app passes the copy at its own
+package root, `src/shippeddefaults.ts`), the same way on every surface that
+reads it: `qcr review`, the pi plugin, the daemon and `qcr config check`. A
+table or key the file leaves out takes the value written in
+`config.example.toml`, so a file holding only `[review] profile = "…"` is a
+whole config, and an empty file is no file. A key the file sets is checked as
+written; a file that does not load refuses in one line naming the file and the
+key (`ConfigError`, `packages/pi-plugin/src/configerror.ts`).
+
+Three groups keep what a missing key has always meant, and are not filled
+(`FILLED_TOGETHER` and `NEVER_FILLED` in `shippedconfig.ts`; the
+`config.example.toml` header lists them too):
+
+- `[scan] sandbox` is never filled: unset means `"host"` inside the companion
+  container.
+- A legacy spelling the file uses is never shadowed by the shipped current
+  spelling: `[models] model` with `conversation` and `default`, each
+  `[models.tiers]` rung with its older names, and `[owner] slack_id` with
+  `[slack] legacy_owner_slack_id`.
+- Setting one of the embedder's three keys (`[openviking]`
+  `embedding_provider`, `embedding_model`, `embedding_dimension`) takes none of
+  the other two from the shipped file.
+
+So the values below are the defaults **as shipped in `config.example.toml`**.
+The `*_DEFAULTS` constants in `src/config.ts` and
+`packages/pi-plugin/src/reviewconfig.ts` are the parsers' floor beneath it:
+only a key neither file names, or one held back above, reaches them. Where a
+constant and the shipped file differ, the shipped value is the one a config
+runs on: `[guards] no_checks_is_red` (constant `false`, shipped `true`) and
+`[tui] ssh_host` (constant `"my-vm"`, shipped `""`).
 
 ### 5.1 Sections at a glance
 
-| Section | Optional? | Parsed by (`src/config.ts`) | Primary consumers |
+| Section | Optional? (parser floor) | Parsed by (`src/config.ts`) | Primary consumers |
 | --- | --- | --- | --- |
-| root `dry_run` | no | `parseConfig` | `packages/pi-plugin/src/gate.ts` |
+| root `dry_run` | yes | `parseConfig` | `packages/pi-plugin/src/gate.ts` |
 | `[ops]` | yes (`OPS_DEFAULTS`) | `parseConfig` | every day-scoped feature |
-| `[github]` | no | `parseConfig` | `src/github.ts`, `src/reconcile.ts` |
+| `[github]` | yes | `parseConfig` | `src/github.ts`, `src/reconcile.ts` |
 | `[owner]` | yes (`OWNER_DEFAULTS`) | `parseConfig` | rendered prose, Slack tiering |
-| `[server]` | no | `parseConfig` | `src/webhook.ts` |
+| `[server]` | yes | `parseConfig` | `src/webhook.ts` |
 | `[ingress]` | yes (`INGRESS_DEFAULTS`) | `parseConfig` | `src/webhookheal.ts` |
-| `[daemon]` | no | `parseConfig` | `src/daemon.ts`, `src/dispatch.ts`, `src/session-command-supervisor.ts` |
-| `[eod]` | no | `parseConfig` | `src/eod.ts`, `src/eodpinwatch.ts` |
-| `[caps]` | no | `parseCaps` | `src/improvements.ts` |
+| `[daemon]` | yes | `parseConfig` | `src/daemon.ts`, `src/dispatch.ts`, `src/session-command-supervisor.ts` |
+| `[eod]` | yes | `parseConfig` | `src/eod.ts`, `src/eodpinwatch.ts` |
+| `[caps]` | yes | `parseCaps` | `src/improvements.ts` |
 | `[models]` (+ `.tiers`, `.pass_tiers`, `.pass_models`) | yes (`MODELS_TIER_DEFAULTS`: no model is named) | `parseModels` (`packages/pi-plugin/src/reviewconfig.ts`) | `packages/pi-plugin/src/include.ts`, `packages/pi-plugin/src/modelroute.ts`, `src/dispatch.ts` |
-| `[pi]` | no | `parseConfig` | `src/sessions.ts` |
+| `[pi]` | yes | `parseConfig` | `src/sessions.ts` |
 | `[memory]` | yes (`MEMORY_DEFAULTS`) | `parseConfig` | `src/memory/context.ts` |
 | `[openviking]` | yes (`OPENVIKING_DEFAULTS`) | `parseOpenViking` | `src/openviking/` |
 | `[tui]` | yes (`TUI_DEFAULTS`) | `parseConfig` | `src/tui/` |

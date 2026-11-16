@@ -32,7 +32,7 @@ import {
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   LOCAL_EMBEDDING,
@@ -43,6 +43,7 @@ import {
   resolveOpenVikingPaths,
   type OpenVikingConfig,
 } from "../src/config.js";
+import { appShippedConfigText } from "../src/shippeddefaults.js";
 import { sidecarConfig, startSidecar } from "../src/openviking/sidecar.js";
 import type { SupervisedChild } from "../src/openviking/index.js";
 import { copiedBeforeTsc, outOfTreeTypeInputs } from "./helpers/out-of-tree-imports.js";
@@ -269,6 +270,65 @@ describe("memory image — build context", () => {
     expect(dockerfile).toContain(
       `COPY --from=build /src/packages/pi-plugin/package.json ./node_modules/${CORE}/package.json`,
     );
+  });
+});
+
+describe("memory image — a config loads under the image's COPY layout", () => {
+  // The sidecar boots on `loadConfig()` (entrypoint.sh, sidecar-main.ts), and
+  // a config is read over the shipped defaults. This image ships the review
+  // core as package.json + dist/ only: no assets/, agents/ or prompts/, so
+  // the core has no asset root here, and the defaults must come from the app
+  // package root, where the image copies config.example.toml.
+  // MUTATION: drop `COPY config.example.toml ./config.example.toml` from
+  // docker/memory/Dockerfile, or make src/shippeddefaults.ts
+  // `appShippedConfigText` look under the core's asset root — this fails.
+  let layout: string;
+  beforeEach(() => {
+    layout = mkdtempSync(join(tmpdir(), "qcr-memory-layout-"));
+  });
+  afterEach(() => rmSync(layout, { recursive: true, force: true }));
+
+  /** The memory stage's COPY lines laid out under `at` (standing for
+   * /opt/qcr): a file from the context is copied, a directory or a build
+   * stage's output only made, which is all a config load reads. */
+  function layOut(at: string): void {
+    const stage = dockerfile.slice(dockerfile.indexOf("AS memory"));
+    let workdir = "/";
+    for (const line of stage
+      .replace(/\\\n/g, " ")
+      .split("\n")
+      .map((l) => l.trim())) {
+      const wd = /^WORKDIR\s+(\S+)/.exec(line);
+      if (wd) workdir = resolve(workdir, wd[1]!);
+      if (!line.startsWith("COPY ")) continue;
+      const parts = line.split(/\s+/).slice(1);
+      const fromStage = parts[0]!.startsWith("--from=");
+      const [src, dest] = parts.filter((p) => !p.startsWith("--")) as [string, string];
+      const abs = resolve(workdir, dest);
+      if (!abs.startsWith("/opt/qcr")) continue;
+      const into = join(at, relative("/opt/qcr", abs));
+      const out = dest.endsWith("/") ? join(into, basename(src)) : into;
+      const local = fromStage ? src.replace(/^\/src\//, "") : src;
+      if (existsSync(join(root, local)) && statSync(join(root, local)).isFile()) {
+        mkdirSync(dirname(out), { recursive: true });
+        cpSync(join(root, local), out);
+      } else {
+        mkdirSync(join(out, "src"), { recursive: true });
+      }
+    }
+  }
+
+  it("loads a one-key config.toml, read over the app root's shipped defaults", () => {
+    layOut(layout);
+    expect(existsSync(join(layout, "package.json"))).toBe(true);
+    // The core as this image ships it: a manifest and dist/, nothing else.
+    const core = join(layout, "node_modules", "@quickchatai", "pi-quickreview");
+    expect(readdirSync(core).sort()).toEqual(["dist", "package.json"]);
+    const shipped = appShippedConfigText(join(layout, "dist", "src"));
+    expect(shipped).toBe(configToml);
+    const loaded = parseConfig('[openviking]\nendpoint = "remote"\n', shipped);
+    expect(loaded.openviking.endpoint).toBe("remote");
+    expect(loaded.openviking.enabled).toBe(cfg.openviking.enabled);
   });
 });
 

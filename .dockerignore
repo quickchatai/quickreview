@@ -16,6 +16,7 @@
 !seeds
 !profiles
 !docker/companion
+!config.example.toml
 packages/pi-plugin/assets
 **/node_modules
 **/.git

@@ -798,8 +798,10 @@ recheck_pr_state_before_post = true  # re-read the PR right before posting; merg
 # blocks exactly like a failing test.
 block_approve_on_red_ci = true       # red/pending CI ⇒ approval withheld, review posts as COMMENT
 # A head with ZERO check-runs (conflicted PR, CI not
-# started) carries no execution evidence — withhold there too. Set true for a repo that
-# always runs CI (then `none` means something is wrong, not "no CI setup").
+# started) carries no execution evidence — withhold there too. On for a repo that
+# always runs CI (then `none` means something is wrong, not "no CI setup"); a repo
+# with no CI at all sets it false, or no approval ever posts. Leaving it out of
+# your config.toml takes this value.
 no_checks_is_red = true              # zero checks at head ⇒ approval withheld until checks pass
 # Guard 5: the head the round actually reviewed must still
 # be the PR's live head at posting time. Sessions export QCR_EXPECTED_HEAD

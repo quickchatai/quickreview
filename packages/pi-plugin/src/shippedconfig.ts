@@ -6,7 +6,11 @@
 // `parseConfig`, src/config.ts) read a config's text through `readConfigToml`
 // here, so the CLI, the plugin, the daemon and `qcr config check` cannot
 // disagree about what a partial file means. A key the file sets is parsed and
-// checked exactly as before.
+// checked exactly as before. The core reads the shipped text at its asset
+// root; the app passes its own package root's copy (src/shippeddefaults.ts),
+// because an app image may carry the core with no asset root at all. The two
+// are the same bytes: the core's packed copy is checked against the repo
+// root's (scripts/plugin-assets.mjs).
 //
 // Two kinds of key are not filled, because their absence is itself an answer
 // the parsers read:

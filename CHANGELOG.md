@@ -10,6 +10,9 @@
   `config.toml: missing key 'github'` and a stack trace. A key you set is
   checked as before, and a wrong value now refuses in one line naming the file
   and the key.
+- **A config.toml that leaves out `[guards] no_checks_is_red` now withholds
+  approval on a head with no checks**: it takes the shipped value, `true`. A
+  repo with no CI at all sets `no_checks_is_red = false` to keep approving.
 
 ## 1.5.0
 
