@@ -40,6 +40,33 @@ import {
 } from "../src/worktrees.js";
 import { nodeExec, type ExecFn, type ExecOpts } from "../src/tmux.js";
 import { EXEC_SETTLE_GRACE_MS } from "@quickchatai/pi-quickreview/src/execfn.js";
+import { waitFor } from "./helpers/wait-for.js";
+
+/**
+ * Whether `pid` is still a running process. A process killed with SIGKILL
+ * closes its files on the way out (which is what lets its parent's pipes
+ * report `close`), then becomes a zombie until its reaper (init, or a
+ * subreaper) collects it. `process.kill(pid, 0)` answers for every one of
+ * those stages, so on its own it reads a process that is already dead as
+ * alive. A zombie (`Z`, or `X` while it is being reaped) runs nothing.
+ */
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  let stat: string;
+  try {
+    stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  } catch {
+    // On Linux the entry went with the reap; with no /proc the kill probe stands.
+    return !existsSync("/proc/self/stat");
+  }
+  // The state follows the parenthesised command name, which may itself hold ")".
+  const state = stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3);
+  return state !== "Z" && state !== "X";
+}
 
 let tmp: string;
 let origin: string;
@@ -218,8 +245,13 @@ describe("network git commands are bounded", () => {
   // helper it started survived with git's stderr pipe open, and the call
   // (which settles on `close`) never returned. The kill now takes git's whole
   // process group, and the call settles within a short grace regardless.
+  // git's `close` proves the helper released git's pipes, not that its reaper
+  // has collected it yet: a helper caught mid-exit or as a zombie still
+  // answers `kill(pid, 0)`, more often the busier the machine. So the helper
+  // must reach "not running" (gone or a zombie), within a deadline far below
+  // its own 30 s sleep.
   // MUTATION: drop `ownProcessGroup: true` from networkGitExec — the helper
-  // survives the kill (its pid still answers); this fails.
+  // survives the kill (it keeps running its sleep); this fails.
   it("a fetch whose transport helper hangs is killed with it, and the call returns", async () => {
     const pidFile = join(tmp, "helper.pid");
     const helper = join(tmp, "hung-ssh.sh");
@@ -241,7 +273,8 @@ describe("network git commands are bounded", () => {
     // Settled by `close`, not by the grace: nothing held git's output open.
     expect(Date.now() - started).toBeLessThan(500 + EXEC_SETTLE_GRACE_MS);
     const pid = Number(readFileSync(pidFile, "utf8").trim());
-    expect(() => process.kill(pid, 0)).toThrow();
+    expect(pid).toBeGreaterThan(0);
+    await waitFor(() => !isRunning(pid), `the helper (pid ${pid}) to die`, 10_000);
   });
 
   // `close` waits for every holder of the child's pipes. A descendant that
