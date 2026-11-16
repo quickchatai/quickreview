@@ -1,5 +1,13 @@
 # Release notes
 
+## Unreleased
+
+- A terminal `qcr review` no longer prints two internal debug lines among its
+  progress: a cache group's `[lens] pin-evidence cache-group-disposed …` and
+  `[ledger-pin] debug: ignoring LEDGER PR #0 …`. Both now go to the run's log,
+  `out/pi-stderr.log`; a warning a person should act on still reaches the
+  terminal.
+
 ## 1.5.0
 
 Two additions: QuickReview runs on any model provider pi supports, and a

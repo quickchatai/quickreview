@@ -297,6 +297,9 @@ export interface LedgerPinDeps {
   /** Where the extension's diagnostics go, one line each (the host's: the env
    * shim passes stderr). Omitted: nowhere. */
   log?: (msg: string) => void;
+  /** Where its debug lines go (a ledger it ignores): a host that prints `log`
+   * to a person sends these to a log file instead. Omitted: `log`. */
+  debug?: (msg: string) => void;
 }
 
 /** What one ledger-pin extension needs, resolved: no env is read past here. */
@@ -336,6 +339,7 @@ export function createLedgerPin(config: LedgerPinConfig): ExtensionFactory {
 function registerLedgerPin(pi: ExtensionAPI, config: LedgerPinConfig): void {
   const loadCompact = config.loadCompact ?? loadPiCompact;
   const log = config.log ?? ((): void => {});
+  const debug = config.debug ?? log;
   const { prMeta: meta, ownPr, snapshotPath } = config;
   let lastLedger = "";
   let persistedLedger = "";
@@ -343,7 +347,7 @@ function registerLedgerPin(pi: ExtensionAPI, config: LedgerPinConfig): void {
   const capture = (source: unknown): string => {
     const onIgnore = (pr: number): void => {
       const who = ownPr === undefined ? "session has no QCR_PR" : `own PR is #${ownPr}`;
-      log(`[ledger-pin] debug: ignoring LEDGER PR #${pr} (${who})`);
+      debug(`[ledger-pin] debug: ignoring LEDGER PR #${pr} (${who})`);
     };
     const ledger = extractLedger(collectText(source), ownPr, onIgnore) ?? lastLedger;
     if (ledger) lastLedger = ledger;
