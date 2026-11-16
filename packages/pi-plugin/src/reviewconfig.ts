@@ -7,7 +7,6 @@
 // `parseCoreConfig` reads just these sections: what a one-shot review needs,
 // with no install home, no secrets lookup and no app section. Where a caller
 // wants the located secrets dir or a deprecation said, it does that itself.
-import { parse } from "smol-toml";
 import { globProblem } from "./glob.js";
 import {
   INTENT_MIN_SUBSTANCE_WORDS,
@@ -21,6 +20,7 @@ import {
 import type { LensTuningMap } from "./lenstuning.js";
 import { splitProvider, type ModelRoute } from "./modelroute.js";
 import type { PostingPolicy } from "./postingpolicy.js";
+import { readConfigToml } from "./shippedconfig.js";
 import {
   ALL_PASSES,
   SCAN_DEEP_FLOOR_LENSES,
@@ -79,9 +79,11 @@ export interface GithubConfig {
 }
 
 /**
- * [guards] — the posting-time guards. Every one but `no_checks_is_red` is on
- * by default; a knob exists only so a guard can be taken out of the path
- * deliberately, in one place, rather than by editing the gate.
+ * [guards] — the posting-time guards. Every one is on as shipped
+ * (config.example.toml), and a config.toml that leaves a knob out runs on the
+ * shipped value (packages/pi-plugin/src/shippedconfig.ts). A knob exists only
+ * so a guard can be taken out of the path deliberately, in one place, rather
+ * than by editing the gate.
  */
 export interface GuardsConfig {
   /** A non-author human APPROVED at the head ⇒ post COMMENT, not REQUEST_CHANGES. */
@@ -95,8 +97,9 @@ export interface GuardsConfig {
   block_approve_on_red_ci: boolean;
   /** A head with ZERO check-runs also withholds approval: in a CI-running
    * repo that is a conflicted PR or CI that has not started — no execution
-   * evidence. Off by default so a repo with no CI at all is never wedged (the
-   * `none` exemption). */
+   * evidence. On as shipped, so a config that leaves it out withholds
+   * approval at a zero-checks head; a repo with no CI at all sets it false to
+   * keep approving (the `none` exemption). */
   no_checks_is_red: boolean;
   /** The head the review is ABOUT must still be the PR's live head at posting
    * time: a push landing between the round's validation and
@@ -104,6 +107,10 @@ export interface GuardsConfig {
   refuse_on_head_drift: boolean;
 }
 
+/** The parser's floor under the shipped file: a knob reaches it only when
+ * neither the config nor config.example.toml names it. `no_checks_is_red`
+ * stays off here, so a hand-built config (a test's, the bench's) keeps the
+ * `none` exemption; the shipped file turns it on. */
 export const GUARDS_DEFAULTS: GuardsConfig = {
   downgrade_on_human_approval: true,
   skip_unchanged_head: true,
@@ -2069,16 +2076,17 @@ export function foldLegacyOwnerSlackId(raw: Record<string, any>, owner: OwnerCon
 
 /**
  * The review sections of a config.toml, parsed and checked exactly as the
- * whole-file parser (`parseConfig`, src/config.ts) parses them. The other
- * sections are not read, so a file that only names the review's sections is
- * a whole review config. `[github] secrets_dir` stays as written. `warn`
- * hears each deprecated key once.
+ * whole-file parser (`parseConfig`, src/config.ts) parses them. The file is
+ * read over the shipped defaults (packages/pi-plugin/src/shippedconfig.ts
+ * `readConfigToml`): every key it leaves out takes the shipped value, so a
+ * file that sets one key is a whole config. `[github] secrets_dir` stays as
+ * written. `warn` hears each deprecated key once.
  */
 export function parseCoreConfig(
   toml: string,
   opts: { warn?: (line: string) => void } = {},
 ): CoreConfig {
-  const raw = parse(toml) as Record<string, any>;
+  const raw = readConfigToml(toml) as Record<string, any>;
   for (const line of configDeprecations(raw)) opts.warn?.(`[quickreviewd] ${line}`);
   const github = parseGithubSection(raw);
   const preset = presetOf(raw);

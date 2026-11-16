@@ -284,8 +284,23 @@ describe("the real adapter reads this machine's stack", () => {
 
   it("says the trigger label from the config, and unknown when it has none", async () => {
     expect(await composeOver({ ps: ok("") }).port.trigger!()).toEqual(known("AI review requested"));
-    const none = await composeOver({ ps: ok("") }, "dry_run = true\n").port.trigger!();
+    const none = await composeOver({ ps: ok("") }, '[github]\ntrigger_label = ""\n').port
+      .trigger!();
     expect(none.kind).toBe("unknown");
+  });
+
+  // A config.toml reads over the shipped defaults, as the daemon reads it
+  // (packages/pi-plugin/src/shippedconfig.ts): a key it leaves out is the
+  // shipped value the daemon runs on, never unknown.
+  // MUTATION: read the config with smol-toml's `parse` in autoreview.ts
+  // `readConfig` — a partial config's dry_run and trigger label read as
+  // unknown, and this fails.
+  it("a partial config reads the shipped dry_run and trigger label", async () => {
+    const { port } = composeOver({ ps: ok("") }, '[review]\nprofile = "state-machines"\n');
+    expect(await port.control!.dryRun()).toEqual(known(true));
+    expect(await port.trigger!()).toEqual(known("AI review requested"));
+    const live = composeOver({ ps: ok("") }, "dry_run = false\n").port;
+    expect(await live.control!.dryRun()).toEqual(known(false));
   });
 });
 

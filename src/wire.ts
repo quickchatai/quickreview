@@ -25,6 +25,7 @@ import {
   type CommandWatcherOptions,
 } from "./commands.js";
 import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
+import { runRefusingConfig } from "./configrefusal.js";
 import { CaseWriter } from "./cases.js";
 import { Archiver } from "./archive/archiver.js";
 import { piGlobalSessionsDir } from "./archive/piglobal.js";
@@ -2213,5 +2214,6 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1]?.endsWith("wire.js")) {
-  void main();
+  // A config that does not load is one line and exit 1, never a stack.
+  void runRefusingConfig("[quickreviewd]", main);
 }

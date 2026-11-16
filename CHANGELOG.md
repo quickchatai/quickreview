@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **A config.toml needs only the keys you change.** Every table and key it
+  leaves out takes the shipped value from `config.example.toml`, on every
+  surface that reads it (`qcr review`, the pi plugin, the daemon,
+  `qcr config check`): `[review] profile = "state-machines"` alone is a whole
+  config, and an empty config.toml is no config.toml. Before, a partial file failed with
+  `config.toml: missing key 'github'` and a stack trace. A key you set is
+  checked as before, and a wrong value now refuses in one line naming the file
+  and the key.
+- **A config.toml that leaves out `[guards] no_checks_is_red` now withholds
+  approval on a head with no checks**: it takes the shipped value, `true`. A
+  repo with no CI at all sets `no_checks_is_red = false` to keep approving.
 - A one-off `/qcr-review --profile NAME` review keeps its checkpoint apart
   from the normal review's: the next normal review covers the change since
   its own last review, not "nothing new", and the next review under that

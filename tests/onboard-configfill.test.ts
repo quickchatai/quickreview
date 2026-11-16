@@ -892,7 +892,9 @@ describe("engine registration", () => {
   });
 
   it("refuses to write a config the loader would reject", async () => {
-    writeFileSync(join(root, "config.example.toml"), '[github]\nrepo = ""\n');
+    // A key a config leaves out takes the shipped value, so the rejected
+    // template sets a wrong one.
+    writeFileSync(join(root, "config.example.toml"), '[review]\nnits = "loose"\n');
     const { report } = await runStep();
     expect(report.ok).toBe(false);
     expect(failed(report)).toMatch(/would not load/);

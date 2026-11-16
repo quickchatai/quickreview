@@ -26,6 +26,7 @@ export const BAKED_PATHS = [
   "seeds",
   "profiles",
   "docker/companion",
+  "config.example.toml",
 ] as const;
 
 /** Directory names never descended: none of them is copied into the image.

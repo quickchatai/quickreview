@@ -280,7 +280,9 @@ A suite whose every check is inert is **not** green — there is no evidence the
 code passed anything.
 
 `ciBlocksApproval` blocks on `red` and `pending`. It blocks on `none` only when
-`no_checks_is_red` is set, which is off by default so a repo with no CI is
+`no_checks_is_red` is set. It is on as shipped (`config.example.toml`), and a
+config.toml that leaves it out runs on the shipped value, so a head with no
+checks withholds approval; a repo with no CI at all sets it `false` so it is
 never permanently wedged.
 
 **Reading the checks.** `listChecks` reads every page of check-runs and

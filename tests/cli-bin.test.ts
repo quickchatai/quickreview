@@ -48,3 +48,38 @@ describe.skipIf(!BUILT)("bin/qcr.js (needs `npm run build`)", () => {
     expect(r.stdout.match(/^qcr \d+\.\d+\.\d+/gm)).toHaveLength(1);
   });
 });
+
+describe.skipIf(!BUILT)(
+  "the entries that bypass the bin refuse a bad config in one line (needs `npm run build`)",
+  () => {
+    // The daemon (`node dist/src/wire.js`, docker/entrypoint.sh) and the image's
+    // `qcr` wrapper (`node dist/src/cli.js`) do not come through src/qcrbin.ts.
+    // MUTATION: go back to `void main()` at either entry (src/wire.ts,
+    // src/cli.ts) — a Node stack is printed and this fails.
+    const bad = join(tmp, "bad-config.toml");
+    writeFileSync(bad, '[models]\nvalidate_tier = "ultra"\n');
+    const env = {
+      ...process.env,
+      QCR_CONFIG: bad,
+      HOME: tmp,
+      XDG_CONFIG_HOME: join(tmp, "xdg-config"),
+      XDG_STATE_HOME: join(tmp, "xdg-state"),
+      XDG_DATA_HOME: join(tmp, "xdg-data"),
+    };
+    const line = `${bad} [models] validate_tier: unknown tier "ultra" (one of light, standard, deep)`;
+
+    it.each([
+      // An unknown verb prints the usage and then loads the config (cli.ts).
+      ["cli.js", ["nonesuch"], `qcr nonesuch: ${line}`],
+      ["wire.js", [], `[quickreviewd]: ${line}`],
+    ])("dist/src/%s", (file, args, want) => {
+      const r = spawnSync(process.execPath, [join(ROOT, "dist", "src", file), ...args], {
+        encoding: "utf8",
+        env,
+        timeout: 30_000,
+      });
+      expect(r.status, r.stderr).toBe(1);
+      expect(r.stderr.trim().split("\n")).toEqual([want]);
+    });
+  },
+);

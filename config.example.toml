@@ -1,5 +1,21 @@
 # quickreviewd — EXAMPLE config. Copy to config.toml and fill in.
 #
+# These are also the SHIPPED DEFAULTS. A config.toml needs only the keys you
+# change: every table and key it leaves out takes the value written here, on
+# every surface that reads it (qcr review, the pi plugin, the daemon, qcr
+# config check). A file holding just
+#     [review]
+#     profile = "state-machines"
+# is this file with that one line changed, and an empty config.toml is no
+# config.toml. A key you do set is checked as before: a wrong value refuses to
+# load, in one line naming the file and the key. Three exceptions keep what
+# a missing key has always meant: [scan] sandbox stays unset when you leave it
+# out; a key spelled the older way ([models] conversation or default, an older
+# [models.tiers] name, [slack] legacy_owner_slack_id) is never shadowed by the
+# current spelling here; and setting one of the embedder's three keys
+# (embedding_provider, embedding_model, embedding_dimension) takes none of the
+# other two from here.
+#
 # Every runtime knob lives here (spec §2). The values below are safe defaults:
 # dry_run is ON (every GitHub mutation is recorded to state/dryrun/ instead of
 # executed) and every identity is empty. The ~10 values a new operator must
@@ -782,8 +798,10 @@ recheck_pr_state_before_post = true  # re-read the PR right before posting; merg
 # blocks exactly like a failing test.
 block_approve_on_red_ci = true       # red/pending CI ⇒ approval withheld, review posts as COMMENT
 # A head with ZERO check-runs (conflicted PR, CI not
-# started) carries no execution evidence — withhold there too. Set true for a repo that
-# always runs CI (then `none` means something is wrong, not "no CI setup").
+# started) carries no execution evidence — withhold there too. On for a repo that
+# always runs CI (then `none` means something is wrong, not "no CI setup"); a repo
+# with no CI at all sets it false, or no approval ever posts. Leaving it out of
+# your config.toml takes this value.
 no_checks_is_red = true              # zero checks at head ⇒ approval withheld until checks pass
 # Guard 5: the head the round actually reviewed must still
 # be the PR's live head at posting time. Sessions export QCR_EXPECTED_HEAD

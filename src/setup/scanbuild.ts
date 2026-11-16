@@ -52,15 +52,19 @@ export const SCAN_MODEL_ENV = "QCR_SCAN_MODEL";
  * the one-shot review's rule (homes.ts `oneShotConfigFile`): when the
  * install's config home holds no config, the shipped defaults
  * (`<root>/config.example.toml`) stand in — a fresh npm install scans as it
- * reviews. A `$QCR_CONFIG` naming a missing file, a config stranded in the
- * checkout, and a config that does not parse still refuse. */
+ * reviews, read exactly as an empty config.toml is. A `$QCR_CONFIG` naming a
+ * missing file, a config stranded in the checkout, and a config that does not
+ * parse still refuse. */
 export function loadScanConfig(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
 ): { ok: true; cfg: Config; replaced?: number } | Refusal {
   let path: string;
+  let own: boolean;
   try {
-    path = oneShotConfigFile({ root, env }).file;
+    const at = oneShotConfigFile({ root, env });
+    path = at.file;
+    own = at.path !== null;
   } catch (err) {
     return {
       ok: false,
@@ -69,7 +73,8 @@ export function loadScanConfig(
   }
   let toml: string;
   try {
-    toml = readFileSync(path, "utf8");
+    // No config of the install's own is an empty one, over the shipped defaults.
+    toml = own ? readFileSync(path, "utf8") : "";
   } catch (err) {
     return { ok: false, errors: [`the live config ${path} cannot be read: ${String(err)}`] };
   }

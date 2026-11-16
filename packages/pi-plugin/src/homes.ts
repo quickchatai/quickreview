@@ -26,7 +26,9 @@ import {
   type LocatedProfile,
   type ProfilePlace,
 } from "./profilelookup.js";
+import { configErrorAt } from "./configerror.js";
 import { parseCoreConfig, type CoreConfig } from "./reviewconfig.js";
+import { SHIPPED_CONFIG_FILE } from "./shippedconfig.js";
 
 export {
   assertPathSegment,
@@ -344,12 +346,11 @@ export function locateSecrets(opts: LocateSecretsOptions): LocatedSecrets {
 
 // ---- the one-shot review's config -------------------------------------------
 
-/** The file that carries the shipped defaults, at the asset root: the values
- * a review runs on when the install has no config of its own. */
-export const SHIPPED_CONFIG_FILE = "config.example.toml";
+export { SHIPPED_CONFIG_FILE };
 
 /** The config a one-shot review runs on, and where it came from: `path` is
- * the install's file, or null when the shipped defaults stood in. */
+ * the install's file, or null when the shipped defaults stood in (`toml` is
+ * then empty: no config is an empty one, read over the shipped defaults). */
 export interface OneShotConfig {
   cfg: CoreConfig;
   toml: string;
@@ -380,12 +381,15 @@ export function oneShotConfigFile(opts: { root: string; env: InstallEnv }): {
 
 /**
  * The config `qcr review` runs on: the located config.toml's review sections
- * (packages/pi-plugin/src/reviewconfig.ts `parseCoreConfig`), with `[github] secrets_dir`
- * located as the daemon locates it. Zero-config: when the install's config
- * home holds no config, the shipped defaults (`<root>/config.example.toml`)
- * stand in. A `$QCR_CONFIG` that names a missing file is still an error — it
- * named that file — and so is a config stranded in the checkout. The daemon's loader (src/config.ts `loadConfig`) has no
- * such fallback: it refuses to start without a config.
+ * (packages/pi-plugin/src/reviewconfig.ts `parseCoreConfig`), read over the
+ * shipped defaults, with `[github] secrets_dir` located as the daemon locates
+ * it. Zero-config: when the install's config home holds no config, the
+ * shipped defaults (`<root>/config.example.toml`) stand in, read exactly as
+ * an empty config.toml is. A `$QCR_CONFIG` that names a missing file is still
+ * an error — it named that file — and so is a config stranded in the
+ * checkout. A config that does not load is a `ConfigError`: one line naming
+ * the file and the key. The daemon's loader (src/config.ts `loadConfig`) has
+ * no zero-config fallback: it refuses to start without a config.
  */
 export function loadOneShotConfig(opts: {
   /** The asset root, where the shipped defaults live. */
@@ -400,8 +404,13 @@ export function loadOneShotConfig(opts: {
 }): OneShotConfig {
   const env = opts.env;
   const { path, file } = oneShotConfigFile({ root: opts.root, env });
-  const toml = readFileSync(file, "utf8");
-  const cfg = parseCoreConfig(toml, opts.warn ? { warn: opts.warn } : {});
+  const toml = path === null ? "" : readFileSync(file, "utf8");
+  let cfg: CoreConfig;
+  try {
+    cfg = parseCoreConfig(toml, opts.warn ? { warn: opts.warn } : {});
+  } catch (err) {
+    throw configErrorAt(file, err);
+  }
   cfg.github.secrets_dir = locateSecrets({
     configured: cfg.github.secrets_dir,
     override: opts.secretsOverride ?? null,

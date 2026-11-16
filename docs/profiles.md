@@ -16,6 +16,13 @@ the repo-shaped half of LENS SELECTION (`heuristics.toml`, below)
 profile = "my-repo"   # a directory name under profiles/; "" = no profile
 ```
 
+That table is a whole `config.toml`: every key a config.toml leaves out takes
+the shipped value from `config.example.toml`, so a file holding only
+`[review] profile = "state-machines"` reviews exactly as the shipped config
+with that line changed (its header lists the three keys a missing value keeps
+its own meaning for). A key the file sets is checked as before, and a wrong
+value refuses to load in one line naming the file and the key.
+
 One review can run under another profile: `qcr review --profile NAME` in the
 terminal, `/qcr-review --profile NAME` in pi. The flag holds for that run
 alone; the config's profile stays. The run keeps a review checkpoint of its
