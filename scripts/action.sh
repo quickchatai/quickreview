@@ -820,8 +820,10 @@ report_result() { # report_result <stdout file> <repo> <pr> <docker exit code>
 
 # ---- gate --------------------------------------------------------------------------------
 
-# A GitHub login, a bot's with its [bot] suffix.
-LOGIN_RE='^[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?$'
+# A GitHub login, a bot's with its [bot] suffix. An Enterprise Managed User's
+# login carries an underscore (handle_shortcode). Every character here is safe
+# in the URL path segment the login goes into.
+LOGIN_RE='^[A-Za-z0-9][A-Za-z0-9_-]*(\[bot\])?$'
 
 # The gate's three outputs. When they cannot be written the later steps would
 # not know what to do, so that ends the step.

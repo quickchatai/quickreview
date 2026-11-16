@@ -37,6 +37,10 @@ const HEAD_SHA = "0123456789abcdef0123456789abcdef01234567";
 const OLD_SHA = "fedcba9876543210fedcba9876543210fedcba98";
 const PR_URL = "https://github.com/acme/widgets/pull/12";
 const ALL: Recipe[] = [...RECIPES];
+/** Every branch name the install tries, all taken. */
+const TAKEN = Array.from({ length: 20 }, (_, i) =>
+  i === 0 ? "qcr/action-install" : `qcr/action-install-${i + 1}`,
+);
 
 const tmp = mkdtempSync(join(tmpdir(), "action-install-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -57,11 +61,30 @@ interface World {
   secrets: string[];
   secretListFails: boolean;
   secretSetFails: boolean;
+  /** The organization secrets that reach the repository, or the HTTP status
+   * their list fails with (404: a repository with none to list). */
+  orgSecrets: string[] | number;
+  /** The total_count GitHub gives for them, when it is more than one page. */
+  orgTotal: number | null;
   labelExists: boolean;
+  /** `label create` fails for a reason other than "already exists". */
+  labelFails: boolean;
+  /** The repository read, for its default branch, fails. */
+  repoReadFails: boolean;
+  /** The read of the workflow file fails with something other than a 404. */
+  contentsFails: boolean;
   /** The workflow file's sha on the default branch, null when absent. */
   workflowSha: string | null;
+  /** The read of the default branch's head fails. */
+  headFails: boolean;
+  /** The check of a branch name fails with something other than a 404. */
+  branchCheckFails: boolean;
   /** Branches already on GitHub. */
   taken: string[];
+  /** Creating the branch fails. */
+  postFails: boolean;
+  /** Committing the workflow file fails. */
+  putFails: boolean;
   prFails: boolean;
   /** The checkout's origin remote, null when there is none. */
   origin: string | null;
@@ -76,9 +99,18 @@ const WORLD: World = {
   secrets: [],
   secretListFails: false,
   secretSetFails: false,
+  orgSecrets: [],
+  orgTotal: null,
   labelExists: false,
+  labelFails: false,
+  repoReadFails: false,
+  contentsFails: false,
   workflowSha: null,
+  headFails: false,
+  branchCheckFails: false,
   taken: [],
+  postFails: false,
+  putFails: false,
   prFails: false,
   origin: "git@github.com:acme/widgets.git",
   checkout: null,
@@ -139,32 +171,87 @@ function answer(w: World, cmd: string, a: string[]): ActionRunResult {
       : ok(w.secrets.map((s) => `${s}\t2026-11-01T00:00:00Z\n`).join(""));
   if (a[0] === "secret" && a[1] === "set")
     return w.secretSetFails ? no("failed to set secret: HTTP 403") : ok("");
-  if (a[0] === "label" && a[1] === "create")
+  if (a[0] === "label" && a[1] === "create") {
+    if (w.labelFails) return no("HTTP 403: Resource not accessible by integration");
     return w.labelExists
       ? no(
           'label with name "qcr-review" already exists; use `--force` to update its color and description',
         )
       : ok("");
+  }
   if (a[0] === "pr" && a[1] === "create")
     return w.prFails
       ? no("pull request create failed: GraphQL: Head sha can't be blank")
       : ok(`${PR_URL}\n`);
   if (a[0] === "api") {
-    if (a[1] === "-X") return ok("{}");
+    if (a[1] === "-X" && a[2] === "POST")
+      return w.postFails
+        ? no("gh: Reference already exists (HTTP 422)")
+        : ok(JSON.stringify({ ref: "refs/heads/x", object: { sha: HEAD_SHA } }));
+    if (a[1] === "-X" && a[2] === "PUT")
+      return w.putFails
+        ? no("gh: Resource not accessible by personal access token (HTTP 403)")
+        : ok("{}");
+    if (a[1] === "-X") return no(`the fake gh knows no ${j}`);
     const path = a[1] ?? "";
-    if (path === `repos/${R}`) return ok(JSON.stringify({ full_name: R, default_branch: "main" }));
-    if (path.startsWith(`repos/${R}/contents/`))
+    if (path === `repos/${R}`)
+      return w.repoReadFails
+        ? no("gh: Bad credentials (HTTP 401)")
+        : ok(JSON.stringify({ full_name: R, default_branch: "main" }));
+    if (path === `repos/${R}/actions/organization-secrets?per_page=100`) {
+      const org = w.orgSecrets;
+      if (org === 404) return NOT_FOUND;
+      if (typeof org === "number") return no(`gh: Resource not accessible (HTTP ${org})`);
+      return ok(
+        JSON.stringify({
+          total_count: w.orgTotal ?? org.length,
+          secrets: org.map((name) => ({ name, visibility: "selected" })),
+        }),
+      );
+    }
+    if (path.startsWith(`repos/${R}/contents/`)) {
+      if (w.contentsFails) return no("gh: Server Error (HTTP 502)");
       return w.workflowSha === null
         ? NOT_FOUND
         : ok(JSON.stringify({ path: WORKFLOW_PATH, sha: w.workflowSha }));
+    }
     if (path === `repos/${R}/git/ref/heads/main`)
-      return ok(JSON.stringify({ ref: "refs/heads/main", object: { sha: HEAD_SHA } }));
+      return w.headFails
+        ? no("gh: Server Error (HTTP 500)")
+        : ok(JSON.stringify({ ref: "refs/heads/main", object: { sha: HEAD_SHA } }));
     const m = /\/git\/ref\/heads\/(.+)$/.exec(path);
-    if (m)
+    if (m) {
+      if (w.branchCheckFails) return no("gh: Server Error (HTTP 503)");
       return w.taken.includes(m[1]!) ? ok(JSON.stringify({ object: { sha: "x" } })) : NOT_FOUND;
+    }
   }
   return no(`the fake gh knows no ${j}`);
 }
+
+/**
+ * What is wrong with one call the install made, or nothing: gh only as
+ * ALLOWED lists, git only to read, nothing else, and the key's value in no
+ * argv. Every call any test in this file drives is checked, after each test,
+ * so a call added on any path fails here, not only on the paths PATHS runs.
+ */
+function offTheList(cmd: string, args: readonly string[]): string[] {
+  const line = `${cmd} ${args.join(" ")}`;
+  const wrong: string[] = [];
+  if (line.includes(VALUE)) wrong.push(`the key's value in an argv: ${cmd}`);
+  if (cmd === "git") {
+    if (!["remote get-url origin", "rev-parse --show-toplevel"].includes(args.join(" ")))
+      wrong.push(line);
+  } else if (cmd !== "gh" || !ALLOWED.some(([, allowed]) => allowed(args))) wrong.push(line);
+  return wrong;
+}
+const offList: string[] = [];
+// MUTATION: in the secret-set failure branch of src/actioncli.ts, also run
+// `runGh(deps, repo, ["secret", "delete", secret, "--repo", repo, "--app",
+// "actions"])`, with `secret delete` added to ghCallAllowed. The test of
+// that branch fails here.
+afterEach(() => {
+  expect(offList.splice(0), "gh or git calls off the list").toEqual([]);
+});
 
 interface Rig {
   deps: ActionDeps;
@@ -202,6 +289,7 @@ function rig(
         ...(opts.input === undefined ? {} : { input: opts.input }),
         ...(opts.terminal ? { terminal: true } : {}),
       });
+      offList.push(...offTheList(cmd, args));
       return answer(w, cmd, [...args]);
     },
     prompt: (q) => {
@@ -244,6 +332,9 @@ function fields(args: readonly string[]): Record<string, string> {
   return f;
 }
 
+/** The read of the organization secrets that reach the repository. */
+const ORG_SECRETS = `repos/${R}/actions/organization-secrets?per_page=100`;
+
 const callOf = (r: Rig, prefix: string[]): Call | undefined =>
   r.calls.find((c) => c.cmd === "gh" && prefix.every((p, i) => c.args[i] === p));
 
@@ -267,6 +358,7 @@ describe("qcr action install: the pull request path", () => {
       "--version",
       "auth status --hostname github.com",
       `secret list --repo ${R} --app actions`,
+      `api repos/${R}/actions/organization-secrets?per_page=100`,
       `secret set ${KEY} --repo ${R} --app actions`,
       `label create qcr-review --repo ${R} --description Ask QuickReview for a review --color 1d76db`,
       `api repos/${R}`,
@@ -314,6 +406,54 @@ describe("qcr action install: the pull request path", () => {
     expect(code).toBe(0);
     expect(report.secret).toEqual({ name: KEY, state: "kept" });
     expect(callOf(r, ["secret", "set"])).toBeUndefined();
+    expect(callOf(r, ["api", ORG_SECRETS])).toBeUndefined();
+  });
+
+  // A repository secret overrides an organization secret of the same name
+  // for every workflow in the repository: storing one would move them all
+  // onto this person's key.
+  // MUTATION: skip the organization secrets read in secretThere. The local
+  // key is stored over the organization's, and this fails.
+  it("keeps an organization secret that reaches the repository, and stores nothing over it", async () => {
+    const r = rig({ world: { orgSecrets: ["OTHER", KEY] } });
+    const { code, report } = await install(r, "--secret", KEY, "--yes");
+    expect(code).toBe(0);
+    expect(report.secret).toEqual({ name: KEY, state: "kept" });
+    expect(callOf(r, ["secret", "set"])).toBeUndefined();
+
+    const text = rig({ world: { orgSecrets: [KEY] } });
+    expect(await cmdAction(["install", "--secret", KEY, "--yes"], false, text.deps)).toBe(0);
+    expect(text.out.join("\n")).toContain(
+      `An organization secret ${KEY} reaches ${R}: kept. A repository secret of that name would override it for every workflow there.`,
+    );
+  });
+
+  it("reads a 404 for the organization secrets as none, and stores the key", async () => {
+    const r = rig({ world: { orgSecrets: 404 } });
+    const { code, report } = await install(r, "--secret", KEY, "--yes");
+    expect(code).toBe(0);
+    expect(report.secret).toEqual({ name: KEY, state: "set" });
+    expect(callOf(r, ["secret", "set"])!.input).toBe(VALUE);
+  });
+
+  // MUTATION: read a failed organization secrets list as none in
+  // secretThere. The key is stored blind, and this fails.
+  it("stores nothing when it cannot tell whether an organization secret reaches the repository", async () => {
+    const cases: Array<[Partial<World>, string]> = [
+      [{ orgSecrets: 403 }, "gh: Resource not accessible (HTTP 403)"],
+      [{ orgSecrets: ["A_KEY", "B_KEY"], orgTotal: 140 }, "it has 140 and gh listed 2"],
+    ];
+    for (const [world, why] of cases) {
+      const r = rig({ world });
+      const { code, report } = await install(r, "--secret", KEY, "--yes");
+      expect(code, why).toBe(1);
+      expect(callOf(r, ["secret", "set"]), why).toBeUndefined();
+      expect(report.secret).toEqual({ name: KEY, state: "printed" });
+      expect(report.errors).toEqual([
+        `could not list the organization secrets ${R} can use, which a repository secret ${KEY} would override: ${why}`,
+      ]);
+      expect(report.workflow.written, why).toBe("pr");
+    }
   });
 
   it("with the key not set here and a terminal, hands the terminal to gh to ask for it", async () => {
@@ -346,6 +486,22 @@ describe("qcr action install: the pull request path", () => {
     expect(code).toBe(0);
     expect(report.label).toBe("exists");
     expect(report.errors).toEqual([]);
+  });
+
+  // MUTATION: count any failure of `label create` as "already exists" in
+  // install. The label reads as there, and this fails.
+  it("a label gh could not create is a failure, printed, and the run goes on", async () => {
+    const r = rig({ world: { labelFails: true } });
+    const { code, report } = await install(r, "--on", "label", "--secret", KEY, "--yes");
+    expect(code).toBe(1);
+    expect(report.label).toBe("printed");
+    expect(report.errors).toEqual([
+      "gh could not create the label qcr-review: HTTP 403: Resource not accessible by integration",
+    ]);
+    expect(report.next).toContainEqual(
+      expect.stringContaining(`create the label: gh label create qcr-review --repo ${R}`),
+    );
+    expect(report.workflow.written).toBe("pr");
   });
 
   it("makes no label without the label trigger", async () => {
@@ -384,6 +540,65 @@ describe("qcr action install: the pull request path", () => {
     );
     const pr = callOf(r, ["pr", "create"])!.args;
     expect(pr[pr.indexOf("--head") + 1]).toBe("qcr/action-install-3");
+  });
+
+  // Each step of the workflow's way onto GitHub stops the step when it fails:
+  // the next one would act on what was not there (a pull request from a
+  // branch with no commit, a commit to a branch that was not made).
+  // MUTATION: drop `if (!ran(put)) { cannot(…); return; }` from openPr. The
+  // putFails case opens a pull request, and this fails.
+  it("stops the workflow at the first gh read or write that fails, and says how to write it yourself", async () => {
+    const W = WORKFLOW_PATH;
+    const cases: Array<[Partial<World>, string, string[]]> = [
+      [
+        { repoReadFails: true },
+        `could not read ${R}'s default branch: gh: Bad credentials (HTTP 401)`,
+        [],
+      ],
+      [{ contentsFails: true }, `could not read ${W} on ${R}: gh: Server Error (HTTP 502)`, []],
+      [
+        { headFails: true },
+        `could not read the head of ${R}'s main: gh: Server Error (HTTP 500)`,
+        [],
+      ],
+      [
+        { branchCheckFails: true },
+        `could not check the branch qcr/action-install on ${R}: gh: Server Error (HTTP 503)`,
+        [],
+      ],
+      [
+        { taken: TAKEN },
+        `the branches qcr/action-install to qcr/action-install-20 are all taken on ${R}`,
+        [],
+      ],
+      [
+        { postFails: true },
+        "gh could not create the branch qcr/action-install: gh: Reference already exists (HTTP 422)",
+        ["api -X POST"],
+      ],
+      [
+        { putFails: true },
+        `gh could not commit ${W} to qcr/action-install (the branch is there; delete it or run again): gh: Resource not accessible by personal access token (HTTP 403)`,
+        ["api -X POST", "api -X PUT"],
+      ],
+    ];
+    for (const [world, error, writes] of cases) {
+      const r = rig({ world });
+      const { code, report } = await install(r, "--secret", KEY, "--yes");
+      expect(code, error).toBe(1);
+      expect(report.errors, error).toEqual([error]);
+      expect(report.workflow, error).toEqual({ path: W, written: null, pr_url: null });
+      expect(
+        r
+          .gh()
+          .filter((c) => /^(api -X|pr create)/.test(c))
+          .map((c) => c.split(" ").slice(0, 3).join(" ")),
+        error,
+      ).toEqual(writes);
+      expect(report.next, error).toContain(
+        `or write the workflow yourself: qcr action workflow --on comment,manual --secret ${KEY} > ${W}`,
+      );
+    }
   });
 
   it("a pull request gh could not open is a failure, with the command to open it", async () => {
@@ -554,7 +769,11 @@ describe("qcr action install: the repository and gh", () => {
       const { code, report } = await install(r, "--secret", KEY, "--yes");
       expect(code, fix).toBe(1);
       expect(report.next[0], fix).toBe(fix);
+      // the steps it did not reach
+      expect(report.on).toEqual([]);
       expect(report.secret).toBeNull();
+      expect(report.label).toBeNull();
+      expect(report.workflow.written).toBeNull();
       expect(
         r.gh().filter((c) => !/^(--version|auth status)/.test(c)),
         fix,
@@ -583,7 +802,9 @@ describe("qcr action install --local", () => {
     expect(report.next).toEqual(
       expect.arrayContaining([`git add ${WORKFLOW_PATH}`, expect.stringMatching(/^git push/)]),
     );
-    expect(r.gh().filter((c) => /^(api|pr create)/.test(c))).toEqual([]);
+    // the secret's step reads the organization's secrets; the workflow's way
+    // onto GitHub is not taken
+    expect(r.gh().filter((c) => /^(api|pr create)/.test(c))).toEqual([`api ${ORG_SECRETS}`]);
   });
 
   // MUTATION: drop the --force check in writeLocal — the file is replaced and
@@ -646,6 +867,49 @@ describe("qcr action install --json", () => {
     expect(Object.keys(report.workflow).sort()).toEqual(["path", "pr_url", "written"]);
     expect(r.err).toEqual([]);
   });
+
+  // The values are the ones docs/action.md lists, and every one of them is
+  // reached by some path, so the sets are not a self-loop.
+  // MUTATION: report `label: "declined"` when the person says no in install.
+  // The value is outside the documented set, and this fails.
+  it("holds every value to the documented set, on every install path", async () => {
+    const seen = {
+      secret: new Set<string | null>(),
+      label: new Set<string | null>(),
+      written: new Set<string | null>(),
+    };
+    for (const p of PATHS) {
+      const r = p.rig();
+      const code = await cmdAction(["install", ...p.args], true, r.deps);
+      expect(r.out, p.name).toHaveLength(1);
+      const report = JSON.parse(r.out[0]!) as InstallReport;
+      expect(Object.keys(report).sort(), p.name).toEqual(
+        ["errors", "label", "next", "ok", "on", "repo", "secret", "workflow"].sort(),
+      );
+      expect(report.ok, p.name).toBe(report.errors.length === 0);
+      expect(code, p.name).toBe(report.ok ? 0 : 1);
+      expect(report.repo, p.name).toBe(R);
+      for (const on of report.on) expect(RECIPES, p.name).toContain(on);
+      if (report.secret !== null) {
+        expect(Object.keys(report.secret).sort(), p.name).toEqual(["name", "state"]);
+        expect(["kept", "set", "printed"], p.name).toContain(report.secret.state);
+      }
+      seen.secret.add(report.secret?.state ?? null);
+      expect([null, "created", "exists", "printed"], p.name).toContain(report.label);
+      if (!report.on.includes("label")) expect(report.label, p.name).toBeNull();
+      seen.label.add(report.label);
+      expect(Object.keys(report.workflow).sort(), p.name).toEqual(["path", "pr_url", "written"]);
+      expect(report.workflow.path, p.name).toBe(WORKFLOW_PATH);
+      expect([null, "pr", "local"], p.name).toContain(report.workflow.written);
+      seen.written.add(report.workflow.written);
+      if (report.workflow.written !== "pr") expect(report.workflow.pr_url, p.name).toBeNull();
+      for (const line of [...report.next, ...report.errors])
+        expect(typeof line, p.name).toBe("string");
+    }
+    expect([...seen.secret].sort()).toEqual(["kept", "printed", "set", null].sort());
+    expect([...seen.label].sort()).toEqual(["created", "exists", "printed", null].sort());
+    expect([...seen.written].sort()).toEqual(["local", "pr", null].sort());
+  });
 });
 
 // ---- the closed list of gh calls (ADR 0003) -----------------------------------
@@ -662,6 +926,13 @@ const ALLOWED: ReadonlyArray<[string, (a: readonly string[]) => boolean]> = [
   ],
   ["label create", (a) => a.slice(0, 5).join(" ") === `label create qcr-review --repo ${R}`],
   ["api GET repo", (a) => a.length === 2 && a[0] === "api" && a[1] === `repos/${R}`],
+  [
+    "api GET org secrets",
+    (a) =>
+      a.length === 2 &&
+      a[0] === "api" &&
+      a[1] === `repos/${R}/actions/organization-secrets?per_page=100`,
+  ],
   [
     "api GET contents",
     (a) => a.length === 2 && a[0] === "api" && a[1]!.startsWith(`repos/${R}/contents/`),
@@ -753,6 +1024,75 @@ const PATHS: ReadonlyArray<{ name: string; rig: () => Rig; args: string[] }> = [
     args: ["--local", "--secret", KEY, "--yes"],
   },
   { name: "route key", rig: () => rig({ routeKey: KEY }), args: ["--yes"] },
+  {
+    name: "secret list fails",
+    rig: () => rig({ world: { secretListFails: true } }),
+    args: ["--secret", KEY, "--yes"],
+  },
+  {
+    name: "secret set fails",
+    rig: () => rig({ world: { secretSetFails: true } }),
+    args: ["--secret", KEY, "--yes"],
+  },
+  {
+    name: "org secret kept",
+    rig: () => rig({ world: { orgSecrets: [KEY] } }),
+    args: ["--secret", KEY, "--yes"],
+  },
+  {
+    name: "org secrets unreadable",
+    rig: () => rig({ world: { orgSecrets: 403 } }),
+    args: ["--secret", KEY, "--yes"],
+  },
+  {
+    name: "org secrets 404",
+    rig: () => rig({ world: { orgSecrets: 404 } }),
+    args: ["--secret", KEY, "--yes"],
+  },
+  {
+    name: "label fails",
+    rig: () => rig({ world: { labelFails: true } }),
+    args: ["--on", "label", "--secret", KEY, "--yes"],
+  },
+  {
+    name: "triggers and name asked",
+    rig: () => rig({ tty: true, env: {}, answers: ["label", "ASKED_KEY", "y", "y", "y"] }),
+    args: [],
+  },
+  {
+    name: "local, file there",
+    rig: () => {
+      const top = fresh();
+      mkdirSync(join(top, ".github", "workflows"), { recursive: true });
+      writeFileSync(join(top, WORKFLOW_PATH), "mine\n");
+      return rig({ world: { checkout: top } });
+    },
+    args: ["--local", "--secret", KEY, "--yes"],
+  },
+  {
+    name: "local, no checkout",
+    rig: () => rig({ world: { checkout: null } }),
+    args: ["--local", "--secret", KEY, "--yes"],
+  },
+  ...(
+    [
+      "repoReadFails",
+      "contentsFails",
+      "headFails",
+      "branchCheckFails",
+      "postFails",
+      "putFails",
+    ] as const
+  ).map((knob) => ({
+    name: knob,
+    rig: () => rig({ world: { [knob]: true } }),
+    args: ["--secret", KEY, "--yes"],
+  })),
+  {
+    name: "every branch taken",
+    rig: () => rig({ world: { taken: TAKEN } }),
+    args: ["--secret", KEY, "--yes"],
+  },
 ];
 
 describe("the closed list of gh calls", () => {
@@ -1007,6 +1347,7 @@ describe("qcr action install through the bin, with a fake gh on PATH", () => {
       .split("\n")
       .map((l) => JSON.parse(l) as { argv: string[]; input: string });
     for (const c of log) expect(c.argv.join(" ")).not.toContain(VALUE);
+    for (const c of log) expect(offTheList("gh", c.argv)).toEqual([]);
     const set = log.find((c) => c.argv[0] === "secret" && c.argv[1] === "set")!;
     expect(set.input).toBe(VALUE);
     for (const c of log.filter((x) => x !== set)) expect(c.input).toBe("");

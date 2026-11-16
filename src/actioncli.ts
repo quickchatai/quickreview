@@ -17,9 +17,11 @@
 //   3. the triggers: --on, else asked, else comment and manual;
 //   4. the secret's name: --secret, else the environment key the model route
 //      here uses (`qcr model --json`), else asked, else a usage error;
-//   5. the secret's value: kept when the repository has the secret; else the
-//      local value of that name, on gh's stdin and never in an argv; else gh
-//      asks for it on the terminal; else the command is printed;
+//   5. the secret's value: kept when the repository has the secret, or when
+//      an organization secret of that name reaches the repository (a
+//      repository secret would override it for every workflow there); else
+//      the local value of that name, on gh's stdin and never in an argv; else
+//      gh asks for it on the terminal; else the command is printed;
 //   6. the label qcr-review, with the `label` trigger ("already exists" is
 //      fine);
 //   7. the workflow, `.github/workflows/quickreview.yml`: by default a branch
@@ -204,12 +206,17 @@ const namesRepo = (xs: readonly string[], repo: string): boolean => {
   return i >= 0 && xs[i + 1] === repo;
 };
 
+/** The organization secrets that reach `repo`: one page of 100, the most
+ * GitHub gives. */
+const orgSecretsPath = (repo: string): string =>
+  `repos/${repo}/actions/organization-secrets?per_page=100`;
+
 /**
  * Is `args` a gh call this verb makes on `repo`? The closed list (ADR 0003):
  * `--version`, `auth status`, `secret list`, `secret set`, `label create`,
- * `api` GET on `repos/R`, `repos/R/contents/…` and `repos/R/git/ref/heads/…`,
- * `api -X POST repos/R/git/refs`, `api -X PUT repos/R/contents/…`, and
- * `pr create`, each on `repo` alone.
+ * `api` GET on `repos/R`, `repos/R/contents/…`, `repos/R/git/ref/heads/…` and
+ * `repos/R/actions/organization-secrets`, `api -X POST repos/R/git/refs`,
+ * `api -X PUT repos/R/contents/…`, and `pr create`, each on `repo` alone.
  */
 export function ghCallAllowed(args: readonly string[], repo: string): boolean {
   const r = `repos/${repo}`;
@@ -233,7 +240,10 @@ export function ghCallAllowed(args: readonly string[], repo: string): boolean {
     if (args.length === 2)
       return (
         safePath(b) &&
-        (b === r || b.startsWith(`${r}/contents/`) || b.startsWith(`${r}/git/ref/heads/`))
+        (b === r ||
+          b === orgSecretsPath(repo) ||
+          b.startsWith(`${r}/contents/`) ||
+          b.startsWith(`${r}/git/ref/heads/`))
       );
     if (b === "-X") {
       const [method, path, ...fields] = rest;
@@ -312,6 +322,41 @@ export function tokenScopes(text: string): string[] | null {
   return pick?.scopes ?? null;
 }
 
+/**
+ * Where the Actions secret `name` already reaches `repo` from: the
+ * repository's own, an organization's (a repository secret of the same name
+ * would override that one for every workflow in the repository), or nowhere.
+ * `why` when gh could not tell.
+ */
+function secretThere(
+  deps: ActionDeps,
+  repo: string,
+  name: string,
+): { at: "repo" | "org" | null } | { why: string } {
+  const list = runGh(deps, repo, ["secret", "list", "--repo", repo, "--app", "actions"]);
+  if (!ran(list)) return { why: `could not list ${repo}'s Actions secrets: ${said(list)}` };
+  if (secretNames(list.stdout).includes(name)) return { at: "repo" };
+  const org = runGh(deps, repo, ["api", orgSecretsPath(repo)]);
+  const cannot = (why: string): { why: string } => ({
+    why: `could not list the organization secrets ${repo} can use, which a repository secret ${name} would override: ${why}`,
+  });
+  // The repository's own list answered, so the grant is there: a 404 here is
+  // read as a repository with no organization secrets to list.
+  if (!ran(org)) return notFound(org) ? { at: null } : cannot(said(org));
+  const answer = objectOf(org);
+  const rows = answer?.["secrets"];
+  if (!Array.isArray(rows)) return cannot("gh's answer has no list of secrets");
+  const names = rows.flatMap((row: unknown) => {
+    const n = typeof row === "object" && row !== null ? (row as { name?: unknown }).name : null;
+    return typeof n === "string" ? [n.toUpperCase()] : [];
+  });
+  if (names.includes(name)) return { at: "org" };
+  const total = answer?.["total_count"];
+  if (typeof total === "number" && total > names.length)
+    return cannot(`it has ${total} and gh listed ${names.length}`);
+  return { at: null };
+}
+
 /** The secret names `gh secret list` printed (one per line, the name first). */
 export function secretNames(stdout: string): string[] {
   return stdout
@@ -376,14 +421,17 @@ function parse(args: readonly string[]): Parsed | string {
   return p;
 }
 
-/** What `install --json` prints. */
+/** What `install --json` prints (docs/action.md has the table). A step the
+ * run did not reach is null, and a write left to the person is "printed". */
 export interface InstallReport {
   ok: boolean;
   repo: string | null;
+  /** Empty when the run stopped before the triggers were chosen. */
   on: Recipe[];
   secret: { name: string; state: "kept" | "set" | "printed" } | null;
   /** The label's step: null when the `label` trigger is not chosen. */
   label: "created" | "exists" | "printed" | null;
+  /** `written` is null when no file was written. */
   workflow: { path: string; written: "pr" | "local" | null; pr_url: string | null };
   /** What the person does next, one step each. */
   next: string[];
@@ -603,14 +651,20 @@ async function install(p: Parsed, json: boolean, deps: ActionDeps): Promise<numb
   };
   if (!ghUsable) printSecret();
   else {
-    const list = runGh(deps, repo, ["secret", "list", "--repo", repo, "--app", "actions"]);
     const local = deps.env[secret];
-    if (!ran(list)) {
-      fail(`could not list ${repo}'s Actions secrets: ${said(list)}`);
+    const there = secretThere(deps, repo, secret);
+    if ("why" in there) {
+      // nothing is stored blind
+      fail(there.why);
       printSecret();
-    } else if (secretNames(list.stdout).includes(secret)) {
+    } else if (there.at === "repo") {
       report.secret = { name: secret, state: "kept" };
       say(`The repository already has the secret ${secret}: kept.`);
+    } else if (there.at === "org") {
+      report.secret = { name: secret, state: "kept" };
+      say(
+        `An organization secret ${secret} reaches ${repo}: kept. A repository secret of that name would override it for every workflow there.`,
+      );
     } else if (local !== undefined && local !== "") {
       const yes = await confirm(`Store your local ${secret} as the repository secret ${secret}?`);
       if (yes === true) {

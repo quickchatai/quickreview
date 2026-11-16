@@ -265,6 +265,35 @@ describe("the bin's front door where the SQLite driver cannot load", () => {
     expect(err.join("\n")).toMatch(/usage: qcr model/);
   });
 
+  // The Action's verb renders the workflow, and without --secret asks the
+  // model route which key it uses (the model CLI, loaded lazily): neither
+  // reaches the store. The route's answer depends on what the environment
+  // holds a key for, so the second call reads only its shape.
+  // MUTATION: import the state store from src/actioncli.ts. The driver
+  // throws on the way in, and this fails.
+  it("qcr action answers", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+    await runBin(["action", "workflow", "--secret", "SOME_MODEL_KEY"]);
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(err.join("\n")).not.toMatch(/state database|better-sqlite3/);
+    const text = out.join("\n");
+    expect(text).toMatch(/^# QuickReview: /);
+    expect(text).toContain("SOME_MODEL_KEY: ${{ secrets.SOME_MODEL_KEY }}");
+    out.length = 0;
+    // an empty pi home of the test's own: never the person's
+    process.env.PI_CODING_AGENT_DIR = join(dir, "pi-agent");
+    process.exitCode = undefined;
+    await runBin(["action", "workflow", "--json"]);
+    expect(err.join("\n")).not.toMatch(/state database|better-sqlite3/);
+    const answer = JSON.parse(out.join("\n")) as Record<string, unknown>;
+    if ("error" in answer) {
+      expect(process.exitCode).toBe(2);
+      expect(answer["error"]).toMatch(/pass --secret NAME/);
+    } else {
+      expect(process.exitCode ?? 0).toBe(0);
+      expect(answer["ok"]).toBe(true);
+    }
+  });
+
   it("qcr login refuses a bad provider by itself", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     await runBin(["login", "x'; rm -rf /"]);
     expect(process.exitCode).toBe(2);

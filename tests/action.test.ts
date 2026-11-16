@@ -1428,8 +1428,9 @@ describe("scripts/action.sh preflight", () => {
 interface World {
   /** The permission GitHub says the actor has, or an HTTP status to fail with. */
   permission?: string | number;
-  /** Fields over the open pull request, or an HTTP status to fail with. */
-  pull?: Record<string, unknown> | number;
+  /** Fields over the open pull request, an HTTP status to fail with, or a
+   * 200 body of its own (text that is not JSON). */
+  pull?: Record<string, unknown> | number | string;
 }
 const PERMISSION_URL = /^\/repos\/acme\/widgets\/collaborators\/([^/]+)\/permission$/;
 function github(w: World, url: string): [number, string] {
@@ -1449,6 +1450,7 @@ function github(w: World, url: string): [number, string] {
   if (url === "/repos/acme/widgets/pulls/7") {
     const p = w.pull ?? {};
     if (typeof p === "number") return [p, '{"message":"Not Found"}'];
+    if (typeof p === "string") return [200, p];
     return [
       200,
       JSON.stringify({
@@ -1517,6 +1519,8 @@ describe("scripts/action.sh gate", () => {
     opts: {
       event?: string;
       payload?: unknown;
+      /** The event file's text as it is, in place of a JSON payload. */
+      rawPayload?: string;
       world?: World;
       env?: Record<string, string>;
       pathFirst?: string;
@@ -1526,7 +1530,7 @@ describe("scripts/action.sh gate", () => {
     seen.length = 0;
     const r = rig();
     const eventFile = join(r.dir, "event.json");
-    writeFileSync(eventFile, JSON.stringify(opts.payload ?? PR_EVENT));
+    writeFileSync(eventFile, opts.rawPayload ?? JSON.stringify(opts.payload ?? PR_EVENT));
     const outFile = join(r.dir, "github-output");
     const sumFile = join(r.dir, "step-summary");
     const env = r.env({
@@ -1633,6 +1637,27 @@ describe("scripts/action.sh gate", () => {
         );
       }
     });
+
+    // MUTATION: drop `|| die "could not read the event payload …"` from
+    // event_pr. The empty answer reads as an event that names no pull
+    // request, the error names the wrong cause, and this fails.
+    it("fails on an event payload that is not JSON, before any GitHub read", async () => {
+      const g = await gate({ rawPayload: "{ not json" });
+      refused(g, "could not read the event payload (");
+      expect(g.requests).toEqual([]);
+    });
+  });
+
+  describe("the repository", () => {
+    // MUTATION: drop the OWNER/NAME check on the repository from gate. "not
+    // a repo" goes into a URL, curl fails, and this fails.
+    it("refuses a repository that is not OWNER/NAME, before any GitHub read", async () => {
+      for (const bad of ["not a repo", "acme", "acme/widgets/x", "acme/wid;gets"]) {
+        const g = await gate({ env: { QCR_ACTION_REPO: bad } });
+        refused(g, `the repository "${bad}" is not OWNER/NAME`);
+        expect(g.requests, bad).toEqual([]);
+      }
+    });
   });
 
   describe("who started it", () => {
@@ -1715,6 +1740,25 @@ describe("scripts/action.sh gate", () => {
       expect(urls(g)).toEqual(["/repos/acme/widgets/collaborators/mallory/permission"]);
     });
 
+    // An Enterprise Managed User's login is handle_shortcode.
+    // MUTATION: drop `_` from the class in LOGIN_RE. The gate cannot name
+    // the actor, fails, and this fails.
+    it("takes a managed user's login, by write access and when allowed-users names it", async () => {
+      const emu = { GITHUB_ACTOR: "octocat_acme" };
+      const g = await gate({ env: emu });
+      reviewed(g);
+      expect(urls(g)).toEqual([
+        "/repos/acme/widgets/collaborators/octocat_acme/permission",
+        "/repos/acme/widgets/pulls/7",
+      ]);
+      const named = await gate({
+        world: { permission: "none" },
+        env: { ...emu, QCR_ACTION_ALLOWED_USERS: "alice, Octocat_Acme" },
+      });
+      reviewed(named);
+      expect(urls(named)).toEqual(["/repos/acme/widgets/pulls/7"]);
+    });
+
     // MUTATION: drop the login check from allowed_users — this fails.
     it("refuses an allowed-users entry that is not a login, and an actor it cannot name", async () => {
       const g = await gate({ env: { QCR_ACTION_ALLOWED_USERS: "alice, bad/user" } });
@@ -1760,6 +1804,19 @@ describe("scripts/action.sh gate", () => {
       refused(g, "no GitHub token");
       expect(g.requests).toEqual([]);
     });
+
+    // A quote or a newline would end the header line in curl's config and
+    // start a directive of the token's own.
+    // MUTATION: drop the case that refuses a quote or a control character in
+    // the token from gate. The reads go out and this fails.
+    it("refuses a token that holds a quote, a backslash or a control character, before any GitHub read", async () => {
+      for (const bad of [`${TOKEN}"`, `${TOKEN}\\`, `${TOKEN}\nurl = "http://x"`, `a\tb`]) {
+        const g = await gate({ env: { QCR_ACTION_GH_TOKEN: bad } });
+        refused(g, "the GitHub token holds a character the gate cannot send");
+        expect(g.requests, JSON.stringify(bad)).toEqual([]);
+        expect(g.stdout + g.stderr).not.toContain(TOKEN);
+      }
+    });
   });
 
   describe("the pull request's state", () => {
@@ -1783,6 +1840,16 @@ describe("scripts/action.sh gate", () => {
       refused(
         await gate({ world: { pull: 500 } }),
         "could not read pull request #7 of `acme/widgets` (HTTP 500)",
+      );
+    });
+
+    // MUTATION: replace `|| die "could not read GitHub's answer …"` with
+    // `|| got=''` in gate. The answer reads as an open pull request from
+    // nowhere, it is reviewed, and this fails.
+    it("fails when GitHub's answer for the pull request is not JSON", async () => {
+      refused(
+        await gate({ world: { pull: "<html>a proxy's error page</html>" } }),
+        "could not read GitHub's answer for pull request #7",
       );
     });
 

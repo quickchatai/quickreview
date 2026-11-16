@@ -32,9 +32,12 @@ Then it does the rest, saying what it is about to do and asking before each
 write:
 
 - **The secret.** A repository secret of that name that already exists is
-  kept. Otherwise it stores your key with `gh secret set`: the value from
-  your environment, handed to gh on stdin, or gh asks you for it without echo.
-  With neither, it prints the command for you to run.
+  kept. So is an organization secret of that name that your organization
+  shares with the repository: a repository secret would override it for every
+  workflow in the repository. Otherwise it stores your key with
+  `gh secret set`: the value from your environment, handed to gh on stdin, or
+  gh asks you for it without echo. With neither, it prints the command for
+  you to run.
 - **The label.** With the `label` recipe, it creates the label `qcr-review`.
 - **The workflow.** It creates the branch `qcr/action-install` on GitHub,
   commits `.github/workflows/quickreview.yml` to it, and opens a pull request.
@@ -54,6 +57,19 @@ did not pass `--on` or `--secret`) and `--json`. Without a terminal it takes
 Without a terminal and without `--yes`, it makes no write and prints each
 command for you instead. `qcr action workflow` prints the workflow and writes
 nothing.
+
+`--json` prints one object, for a script to read:
+
+| Key | Value |
+|---|---|
+| `ok` | `true` when no step failed (exit 0) |
+| `repo` | `OWNER/NAME` |
+| `on` | the triggers, empty when the run stopped before choosing them |
+| `secret` | `{ "name", "state" }`, `state` one of `kept`, `set`, `printed` (left for you to run); `null` when the run stopped before this step |
+| `label` | `created`, `exists`, `printed` (left for you to run); `null` when the `label` trigger is not chosen, or the run stopped before this step |
+| `workflow` | `{ "path", "written", "pr_url" }`, `written` one of `pr`, `local`, or `null` when no file was written |
+| `next` | what is left for you to do, one step each |
+| `errors` | what failed, one line each |
 
 With the `push` recipe, the install's own pull request is reviewed once the
 secret is set, and that review is paid for like any other.
@@ -121,7 +137,12 @@ The Action's own gate decides whether to review
 `qcr action install` writes any mix of these four recipes into one workflow.
 `label` and `push` share one `pull_request: types:` list, and the job's `if:` is
 the OR of the parts you picked. The installed workflow also has one concurrency
-group per pull request, so a newer run cancels the one in flight.
+group per pull request. A newer push to the pull request's own branch cancels
+the review in flight (that takes write access). Any other run waits for it: a
+`/qcr` comment, a label, a manual run, or a push to a fork. Anyone who can
+comment can send `/qcr`, and the gate may then skip them, so their run must
+not cancel a review that has already spent. GitHub keeps one run waiting per
+group: a newer one replaces it before it starts.
 
 **`comment`**: someone comments `/qcr` on a pull request.
 
@@ -338,11 +359,19 @@ What GitHub gives a run on a fork's pull request:
 These are GitHub's defaults. A private repository can choose to send secrets
 and write tokens to runs from forks.
 
-So the `push` and `label` recipes skip a fork's pull request, and say so: the
-run has no key to review with. To review a fork's pull
-request, someone with write access asks with a `/qcr` comment or a manual run.
-The fork's author cannot start one on their own pull request unless
-`allowed-users` names them.
+So the `push` and `label` recipes do not review a fork's pull request:
+
+- **`push`**: the fork's author starts the run with their push. The gate
+  skips it because they have no write access to your repository. Naming them
+  in `allowed-users` does not help here: the run then gets past the gate's
+  first check and is skipped at the next, because GitHub gives a
+  `pull_request` run from a fork no secrets.
+- **`label`**: someone with write access adds the label, so the gate lets
+  them in, and then skips the run with that reason: GitHub gave it no key.
+
+To review a fork's pull request, someone with write access asks with a `/qcr`
+comment or a manual run. The fork's author can ask with a `/qcr` comment only
+when `allowed-users` names them.
 
 **The risk.** When a fork's pull request is reviewed, your model key is in the
 review container, and the container reads the fork's text: its code, its
@@ -370,6 +399,12 @@ What to do:
 - Let a maintainer's request be the gate. Review a fork's pull request only
   when someone with write access asks, after they have read it. That is the
   default.
+- Know what the request covers. The review reads the pull request's head as
+  it is when the run fetches it, not the commit you read. The fork's author
+  can push between your request and the fetch, while the runner starts and
+  pulls the image, and that push is reviewed with your key. When a push lands
+  after you asked, cancel the run from the Actions tab, read the push, and
+  ask again.
 - Use a key with a spend limit at the provider, kept for this workflow alone. A
   leaked key then costs at most that limit, and you can revoke it without
   touching anything else.
@@ -383,9 +418,10 @@ What to do:
   between runs, so it has no "nothing new" shortcut.
 - **No cap unless you set `limit`.** With a limit, the run stops at that spend
   and posts nothing.
-- **A cancelled run still cost what it spent.** The installed workflow's
-  concurrency group cancels a run when a newer one starts for the same pull
-  request.
+- **A cancelled run still cost what it spent.** With the `push` recipe, the
+  installed workflow cancels a review when a newer push to the same pull
+  request's branch starts one. Every other run waits for the review in flight
+  and then pays for its own.
 - **A skip costs nothing but a runner start.** The gate runs before the image
   is pulled.
 - **A review takes many minutes.** Its own limit is 60 minutes, plus the fetch

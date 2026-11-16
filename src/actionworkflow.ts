@@ -23,6 +23,13 @@
 // repository's `.qcr/` profile from its base. The concurrency group is on the
 // job, so a comment that is not /qcr skips the job and cancels nothing.
 //
+// A run cancels a review in progress only when it is a newer push to the
+// pull request's own branch in this repository, which takes write access.
+// Anything else that passes the job's `if:` waits for the running review: a
+// `/qcr` comment, a label, a manual run and a fork's push. Those can come
+// from someone the gate will skip, and a review that has already spent must
+// not be lost to them.
+//
 // Pure: no I/O, the same output for the same input, the recipes always in
 // the order of RECIPES whatever order they were given in. The model key's
 // secret name is the caller's: no provider or key name is written here
@@ -76,6 +83,11 @@ const PULL_REQUEST_TYPES: ReadonlyArray<{ type: string; recipe: Recipe }> = [
   { type: "ready_for_review", recipe: "push" },
   { type: "labeled", recipe: "label" },
 ];
+
+/** When a run cancels the review in progress: with `push`, a newer push to
+ * the pull request's own branch in this repository. Every other run waits. */
+const CANCEL_ON_PUSH =
+  "github.event_name == 'pull_request' && github.event.action != 'labeled' && github.event.pull_request.head.repo.full_name == github.repository";
 
 /** The commented-out settings under the Action's `with:`, and what each does. */
 const OPTIONS: ReadonlyArray<[string, string]> = [
@@ -172,7 +184,7 @@ export function renderWorkflow(o: WorkflowOptions): string {
     "    timeout-minutes: 90",
     "    concurrency:",
     `      group: quickreview-\${{ ${group} }}`,
-    "      cancel-in-progress: true",
+    `      cancel-in-progress: ${has("push") ? `\${{ ${CANCEL_ON_PUSH} }}` : "false"}`,
     "    if: >-",
   );
   // One line per `&&` term, each recipe's part in parentheses, the parts

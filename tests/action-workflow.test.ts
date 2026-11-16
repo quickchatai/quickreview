@@ -7,7 +7,8 @@
 // job's `if:` as the OR of the chosen recipes' parts, the `pr` input passed
 // only with `manual`, no checkout step, the permissions, the Action at the
 // floating major tag, the 90-minute timeout, the concurrency group on the
-// job, the model key's secret in the step's env, and actionlint on the
+// job (cancelling a review in flight only for a newer push to the pull
+// request's own branch), the model key's secret in the step's env, and actionlint on the
 // output (skipped where actionlint is not installed). The docs template is
 // the renderer's output byte for byte.
 //
@@ -35,7 +36,9 @@ const ROOT = resolve(import.meta.dirname, "..");
 /** The docs template, and the secret name it is rendered with. */
 const TEMPLATE = "docs/action/qcr-review.yml";
 const EXAMPLE_SECRET = "ANTHROPIC_API_KEY";
-const REGENERATE = `qcr action workflow --on comment,manual --secret ${EXAMPLE_SECRET} > ${TEMPLATE}`;
+/** This checkout's renderer, through its own bin: a `qcr` on PATH is an
+ * installed release, or the Docker wrapper, and not this tree. */
+const REGENERATE = `npm run build && node bin/qcr.js action workflow --on comment,manual --secret ${EXAMPLE_SECRET} > ${TEMPLATE}`;
 
 /** Each recipe's part of the job's `if:`, written out here by hand, so the
  * renderer's own table is checked against it rather than against itself. */
@@ -64,7 +67,7 @@ interface Workflow {
     {
       "runs-on": string;
       "timeout-minutes": number;
-      concurrency: { group: string; "cancel-in-progress": boolean };
+      concurrency: { group: string; "cancel-in-progress": boolean | string };
       if: string;
       steps: Step[];
     }
@@ -205,15 +208,28 @@ describe("the job", () => {
   // On the workflow, a comment that is not /qcr would cancel a review in
   // flight. MUTATION: move `concurrency:` to the workflow's top level — this
   // fails.
-  it("has one concurrency group per pull request, on the job, cancelling the run in flight", () => {
+  it("has one concurrency group per pull request, on the job", () => {
     for (const on of COMBOS) {
       const w = parsed(on);
       expect(w.concurrency, on.join(",")).toBeUndefined();
       const c = jobOf(w).concurrency;
-      expect(c["cancel-in-progress"]).toBe(true);
       expect(c.group).toMatch(/^quickreview-\$\{\{ .+ \}\}$/);
       expect(c.group).toContain("github.event.pull_request.number");
       expect(c.group).toContain("github.event.issue.number");
+    }
+  });
+
+  // A `/qcr` comment, a label or a fork's push can come from someone the
+  // gate skips: cancelling the review in flight for one would throw away
+  // what it has spent, and the run that replaced it would review nothing.
+  // MUTATION: render `cancel-in-progress: true` again. A stranger's comment
+  // cancels the review in flight, and this fails.
+  it("cancels a review in flight only for a newer push to the pull request's own branch", () => {
+    const CANCEL_ON_PUSH =
+      "${{ github.event_name == 'pull_request' && github.event.action != 'labeled' && github.event.pull_request.head.repo.full_name == github.repository }}";
+    for (const on of COMBOS) {
+      const cancel = jobOf(parsed(on)).concurrency["cancel-in-progress"];
+      expect(cancel, on.join(",")).toBe(on.includes("push") ? CANCEL_ON_PUSH : false);
     }
   });
 

@@ -170,6 +170,8 @@ the fence.
    path around the gate. One exception is named: `qcr action install`
    (`src/actioncli.ts`) sets up the GitHub Action with the person's own `gh`,
    on their command, through a closed list of gh calls held by a fence
+   (`tests/action-install.test.ts`); every other module's gh calls are reads,
+   held by `tests/fences-gh.test.ts`
    ([ADR 0003](docs/adr/0003-setup-writes-through-gh.md)).
 2. **No review dismissal exists.** There is no mutation kind that dismisses,
    retracts, withdraws or revokes a review, and

@@ -9,7 +9,9 @@ choose ([docs/action.md](docs/action.md)).
   repository. It asks when reviews should run, stores your model key as a
   repository secret with `gh secret set` (the value on stdin, never on the
   command line), creates the `qcr-review` label for the label trigger, and
-  opens a pull request that adds `.github/workflows/quickreview.yml`. Each
+  opens a pull request that adds `.github/workflows/quickreview.yml`. A
+  secret of that name the repository or its organization already gives the
+  workflow is kept. Each
   write is asked first. `--local` writes the file into your checkout instead,
   and `qcr action workflow` prints it. These writes go through your own `gh`,
   on your command, from a closed list of gh calls
@@ -38,6 +40,10 @@ choose ([docs/action.md](docs/action.md)).
   and a summary with the verdict, the cost and a table of the findings.
 - **No checkout step.** The review fetches the pull request itself and reads
   `.qcr/` from its base.
+- **A review in flight is not lost to a request the gate will skip.** In the
+  installed workflow, only a newer push to the pull request's own branch
+  cancels a running review. A `/qcr` comment, a label or a manual run waits
+  for it.
 - **The workflow's job timeout is 90 minutes.** The template's 60 was shorter
   than a review's own limit plus the fetch and the post.
 - **The Action is named QuickReview AI Code Review**, its Marketplace name.
