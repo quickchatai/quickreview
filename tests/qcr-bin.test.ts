@@ -122,6 +122,23 @@ describe("the bin's routes", () => {
     expect(BIN_HELP).toMatch(/^ {2}qcr model \[use\|reset\] /m);
   });
 
+  // MUTATION: drop `cmd === "action"` from binRoute — the verb goes to the
+  // app's main, which knows none, and this fails.
+  it("qcr action is the bin's own verb, with its subcommand and --json taken off", () => {
+    expect(binRoute(["action"])).toEqual({ route: "action", args: [], json: false });
+    expect(binRoute(["action", "install", "--on", "comment,manual", "--json"])).toEqual({
+      route: "action",
+      args: ["install", "--on", "comment,manual"],
+      json: true,
+    });
+    expect(binRoute(["action", "workflow"])).toEqual({
+      route: "action",
+      args: ["workflow"],
+      json: false,
+    });
+    expect(BIN_HELP).toMatch(/^ {2}qcr action <subcommand> /m);
+  });
+
   // The image's `qcr` is the app's main, never this front door, and the
   // wizard and the scan sandbox ask it there.
   // MUTATION: delete `case "model"` from src/cli.ts main — in the image the

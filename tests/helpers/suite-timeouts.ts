@@ -31,6 +31,7 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  * node:child_process is here (the fence checks it); the rest spawn through the
  * code under test and were found by tracing ChildProcess.prototype.spawn and
  * the *Sync variants across a full run:
+ *   action-install — qcr action install's gh, a fake gh on PATH;
  *   bench-defects, bench-live-cap, bench-runpi-flush — the bench's runPi over a
  *     fake `pi`;
  *   post-shim — the posting shims over a stub client;
@@ -45,6 +46,8 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  *     that does not exist.
  */
 export const PROCESS_SUITES: readonly string[] = [
+  "tests/action-install.test.ts", // qcr action install through the bin, against a fake gh on PATH
+  "tests/action-workflow.test.ts", // actionlint over every rendered workflow
   "tests/action.test.ts",
   "tests/archive-evidence-shell.test.ts",
   "tests/archive-worker-rounds.test.ts", // a fake pi on a pty (script) for qcr open
