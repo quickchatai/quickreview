@@ -11,11 +11,14 @@
 // 1`, src/schemaflag.ts) is answered in version 1 while the review's estimate
 // is a number, and refused before anything runs where it is not.
 //
-// Re-review: the state kept per target (packages/pi-plugin/src/reviewstate.ts) makes a second run
-// on an unchanged head free, and a run after a push a delta review over the
-// production follow-up plan (packages/pi-plugin/src/reviewdelta.ts) with the open findings handed
-// over to verify and never repeated; a rewrite or a doubtful delta is a full
-// review.
+// Re-review: the state kept per target and profile
+// (packages/pi-plugin/src/reviewstate.ts) makes a second run under the same
+// profile on an unchanged head free, and a run after a push a delta review
+// over the production follow-up plan (packages/pi-plugin/src/reviewdelta.ts)
+// with the open findings handed over to verify and never repeated; a rewrite
+// or a doubtful delta is a full review. A run under another profile (a
+// one-off `--profile`) builds on that profile's own state, never on this one,
+// so it gets no free re-run from it.
 //
 // A unified diff is a target too (`--diff -` reads stdin, `--diff FILE` a
 // file): no repository is needed, one around the working directory is only
@@ -72,7 +75,10 @@ import type { PiHost, PiHostOptions } from "@quickchatai/pi-quickreview/src/engi
 import type { ReviewRuntimeOptions } from "@quickchatai/pi-quickreview/src/engine/reviewruntime.js";
 import type { Ecosystem } from "@quickchatai/pi-quickreview/src/ecosystem.js";
 import type { ReviewMemoryPort } from "@quickchatai/pi-quickreview/src/memoryport.js";
-import type { ProfilePlace } from "@quickchatai/pi-quickreview/src/profilelookup.js";
+import {
+  unknownProfile,
+  type ProfilePlace,
+} from "@quickchatai/pi-quickreview/src/profilelookup.js";
 import type { PrCredentialDeps, PrFetchRequest } from "@quickchatai/pi-quickreview/src/prtarget.js";
 import {
   FALLBACK_DESTINATIONS,
@@ -142,6 +148,7 @@ export function reviewHelp(): string {
     "  --full            review the whole branch again, ignoring what an earlier review left",
     "  --security        ask for a security review on top of the plan: every lens of the security family\n                    is planned (never one the profile switched off), as /qcr-review --security asks",
     "  --state-machines  ask for a state-machine review on top of the plan: every lens of the state-machine\n                    family is planned (never one the profile switched off)",
+    "  --profile NAME    review under that profile, for this run only, as /qcr-review --profile does:\n                    its lenses, its rules and its posting policy (`--preview` shows its plan). The\n                    config's profile stays, and so does its last review: the run keeps a\n                    checkpoint of its own. A name no profile has is refused, with the list of\n                    shipped and local profiles",
     "  --json            one JSON object instead of text (the agent destination)",
     "  --to DEST         where the result goes, for this run: terminal, file, json, pr (comma-separated;\n                    pr posts a comment-only review to the PR and needs a PR target)",
     "  --out FILE        write the markdown report to FILE (implies file)",
@@ -215,15 +222,25 @@ export interface ReviewCliDeps {
    * install's homes (src/homes.ts `homeProfilePlaces`). Absent: the
    * examples alone. */
   profileHomes?: readonly ProfilePlace[];
+  /** The review context under another profile than the config's (`--profile
+   * NAME`): the install's config with that profile's overlays and ecosystem,
+   * as `cfg` and `ecosystem` are with the config's own. Absent: `--profile`
+   * is refused. */
+  profileContext?: (profile: string) => { cfg: CoreConfig; ecosystem: Ecosystem };
   /** The operator's pi agent dir (its login): only read. The run's pi gets a
    * private agent dir of its own (src/hostroute.ts). */
   agentDir: string;
+  /** The review context under the config's own profile. Read only when the
+   * run names no `--profile`, so a host may build it on first read (a
+   * getter): a `--profile` run never loads the config's profile, as
+   * `/qcr-review --profile` does not, and a read that throws is a refusal. */
   cfg: CoreConfig;
   ecosystem: Ecosystem;
   /** Hosts the review session (`[engine] runtime`, the SDK): a runtime, or
    * what builds one for the run, handed the model side the route resolved
-   * (the borrowed login, the route, the host it was resolved on). */
-  runtime: Runtime | ((host: ReviewRunHost) => Runtime);
+   * (the borrowed login, the route, the host it was resolved on) and the
+   * run's own config (its profile's, under `--profile`). */
+  runtime: Runtime | ((host: ReviewRunHost, cfg: CoreConfig) => Runtime);
   /** What the run's model is resolved from (`routeRun`). Absent: the review
    * says nothing of its model, and its sessions run on what the config pins
    * and the runtime resolves. */
@@ -609,6 +626,34 @@ export async function runReviewCli(
     return refuse(2, [
       "--debug-pi runs the round inside pi's interactive UI and needs a terminal (not --json, not a detached run)",
     ]);
+  // `--profile NAME`: this run reviews under that profile, as `/qcr-review
+  // --profile` does — its config, its ecosystem and so its checkpoint (the
+  // review state is kept per profile, packages/pi-plugin/src/reviewstate.ts
+  // `profileStateKey`), so the normal review's is neither read nor moved.
+  // Nor is the config's own profile loaded: `deps.cfg` is read only without
+  // `--profile`, and a config profile that cannot be built is a refusal.
+  let base: { cfg: CoreConfig; ecosystem: Ecosystem };
+  if (cmd.profile === undefined) {
+    try {
+      base = { cfg: deps.cfg, ecosystem: deps.ecosystem };
+    } catch (err) {
+      return refuse(1, [err instanceof Error ? err.message : String(err)]);
+    }
+  } else {
+    const unknown = unknownProfile({
+      root: deps.root,
+      profile: cmd.profile,
+      homes: deps.profileHomes ?? [],
+    });
+    if (unknown !== null) return refuse(2, [unknown]);
+    if (deps.profileContext === undefined)
+      return refuse(2, ["--profile is not available here: set [review] profile in the config"]);
+    try {
+      base = deps.profileContext(cmd.profile);
+    } catch (err) {
+      return refuse(1, [err instanceof Error ? err.message : String(err)]);
+    }
+  }
   const storeDir = deps.storeDir !== undefined ? deps.storeDir : reviewHome();
   // Where the result goes (packages/pi-plugin/src/reviewdest.ts): the flags,
   // else the repo's saved default, else the person is asked, every time, else
@@ -640,14 +685,14 @@ export async function runReviewCli(
   // level. The main session names no model either and runs on the route, at
   // the level the flag names, else the config's; a debug round's pi is a
   // child that reads the flag's own text.
-  let cfg = deps.cfg;
+  let cfg = base.cfg;
   const notes: string[] = [];
   if (cmd.model !== undefined) {
-    const stripped = stripPins(deps.cfg);
+    const stripped = stripPins(base.cfg);
     const level =
       splitModelSpec(cmd.model).thinking !== null
         ? null
-        : splitModelSpec(deps.cfg.models.model).thinking;
+        : splitModelSpec(base.cfg.models.model).thinking;
     cfg = {
       ...stripped.cfg,
       models: {
@@ -671,8 +716,8 @@ export async function runReviewCli(
           pin:
             cmd.model !== undefined
               ? { text: cmd.model, from: "flag" }
-              : isPinned(deps.cfg.models.model)
-                ? { text: deps.cfg.models.model, from: "config" }
+              : isPinned(base.cfg.models.model)
+                ? { text: base.cfg.models.model, from: "config" }
                 : undefined,
           sessions: !cmd.preview && !debug,
           ask: !cmd.preview && !json,
@@ -689,12 +734,12 @@ export async function runReviewCli(
     dryrunDir: deps.dryrunDir,
     storeDir,
     config: cfg,
-    ecosystem: deps.ecosystem,
+    ecosystem: base.ecosystem,
     ...(deps.profileHomes ? { profileHomes: deps.profileHomes } : {}),
     // `qcr review` runs one review per process: its one runtime is that run's,
     // and what it holds goes with the process. It is asked for when the round
     // starts, after the route: the host the route was resolved on is its host.
-    runtime: () => (typeof runtime === "function" ? runtime(routed?.host() ?? {}) : runtime),
+    runtime: () => (typeof runtime === "function" ? runtime(routed?.host() ?? {}, cfg) : runtime),
     ...(routed ? { route: routed.route } : {}),
     prepareHost: routed ? routed.prepareHost : prepareHostRun,
     ...(debug ? { debugRound: deps.debugPi! } : {}),
@@ -794,12 +839,15 @@ export async function cmdReview(
     const verb = rest[0];
     const { randomBytes } = await import("node:crypto");
     const det = await import("./reviewdetach.js");
-    const { stateHome } = await import("./homes.js");
+    const { homeProfilePlaces, stateHome } = await import("./homes.js");
     // In the release image the host wrapper makes the run a container of its own
     //: it names the container and the id, and starts the driver itself.
     const container = containerRunEnv(process.env);
+    const { assetRoot } = await import("@quickchatai/pi-quickreview/src/assetroot.js");
     return det.runDetachedVerb(verb, rest.slice(1), json, {
       home: join(stateHome(), "review", "detached"),
+      // `start --profile NAME` refuses an unknown name where the run would.
+      profiles: { root: assetRoot(), homes: homeProfilePlaces() },
       ...(contract !== undefined ? { contract } : {}),
       out: (l) => console.log(l),
       now: Date.now,
@@ -949,9 +997,14 @@ export async function cmdReview(
     warn: (l) => console.warn(l),
   });
   const profileHomes = homeProfilePlaces();
-  const { cfg, ecosystem } = contextFrom(root, loaded, loaded.cfg.review.profile, "", {
-    homes: profileHomes,
-  });
+  const contextOf = (profile: string): { cfg: CoreConfig; ecosystem: Ecosystem } =>
+    contextFrom(root, loaded, profile, "", { homes: profileHomes });
+  // The config profile's context is built on first read, and only a run
+  // without `--profile` reads it (runReviewCli): `qcr review --profile NAME`
+  // never loads the config's profile, as `/qcr-review --profile NAME` does not.
+  let ofConfig: { cfg: CoreConfig; ecosystem: Ecosystem } | undefined;
+  const configContext = (): { cfg: CoreConfig; ecosystem: Ecosystem } =>
+    (ofConfig ??= contextOf(loaded.cfg.review.profile));
   const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY);
   const readStdin = async (): Promise<string> => {
     if (process.stdin.isTTY) throw new Error("standard input is a terminal: pipe a diff in");
@@ -1032,10 +1085,15 @@ export async function cmdReview(
       : {}),
     root,
     profileHomes,
+    profileContext: contextOf,
     agentDir,
-    cfg,
-    ecosystem,
-    runtime: (host) => selectReviewRuntime(cfg, host),
+    get cfg() {
+      return configContext().cfg;
+    },
+    get ecosystem() {
+      return configContext().ecosystem;
+    },
+    runtime: (host, cfg) => selectReviewRuntime(cfg, host),
     // A round inside interactive pi needs the whole terminal.
     ...(interactive && process.stdout.isTTY
       ? {

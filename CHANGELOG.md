@@ -13,6 +13,24 @@
 - **A config.toml that leaves out `[guards] no_checks_is_red` now withholds
   approval on a head with no checks**: it takes the shipped value, `true`. A
   repo with no CI at all sets `no_checks_is_red = false` to keep approving.
+- A one-off `/qcr-review --profile NAME` review keeps its checkpoint apart
+  from the normal review's: the next normal review covers the change since
+  its own last review, not "nothing new", and the next review under that
+  profile builds on the one-off's.
+- An install whose configured `[review] profile` is named (a shipped profile
+  or a house pack) reviews a target in full once if that target's review state
+  was last saved before 1.5.0. Such a state does not record which profile
+  saved it, and a one-off `--profile` run saved there too, so it is not taken
+  as the configured profile's. An install with no profile set is unaffected.
+- `qcr review --profile NAME` reviews under that profile for one run, as
+  `/qcr-review --profile NAME` does, with its own checkpoint. `--preview`
+  shows that profile's plan, and an unknown name is refused in one line that
+  lists the shipped and local profiles.
+- A terminal `qcr review` no longer prints two internal debug lines among its
+  progress: a cache group's `[lens] pin-evidence cache-group-disposed …` and
+  `[ledger-pin] debug: ignoring LEDGER PR #0 …`. Both now go to the run's log,
+  `out/pi-stderr.log`; a warning a person should act on still reaches the
+  terminal.
 
 ## 1.5.0
 

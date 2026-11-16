@@ -28,6 +28,8 @@ import {
   reviewHostOptions,
   reviewSdkRuntime,
 } from "@quickchatai/pi-quickreview/src/engine/reviewsdk.js";
+import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
+import { loadBuiltAgents } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
 import { REPO_ROOT } from "./helpers/round-rig.js";
 import { pricedFaux, ROUTABLE_FAUX_MODEL, routableFaux } from "./helpers/priced-faux.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -77,13 +79,18 @@ const spec = (over: Partial<SessionSpec> = {}, env: Record<string, string> = {})
   ...over,
 });
 
-/** A host builder over a faux provider; records the options it was given. */
-function fauxHost(seen: PiHostOptions[], onTurn: (context: unknown) => void = () => {}) {
+/** A host builder over a faux provider; records the options it was given.
+ * Every turn answers `reply`. */
+function fauxHost(
+  seen: PiHostOptions[],
+  onTurn: (context: unknown) => void = () => {},
+  reply = "done",
+) {
   const faux = pricedFaux(() => 0.1, { provider: "faux", models: [{ id: "m" }] });
   faux.appendResponses(
     Array.from({ length: 4 }, () => async (context: unknown) => {
       onTurn(context);
-      return fauxAssistantMessage("done");
+      return fauxAssistantMessage(reply);
     }),
   );
   return async (o: PiHostOptions): Promise<PiHost> => {
@@ -464,6 +471,97 @@ describe("reviewSdkRuntime", () => {
       expect(seen[0]!.toolUid).toEqual({ uid: "65534", gid: "1000" });
     });
   });
+});
+
+// A terminal `qcr review` prints the host's warn sink to the person; the
+// round's debug lines (a ledger ledger-pin ignores, a cache group's pin
+// evidence) go to the run's log, the spec's stderrFile (out/pi-stderr.log),
+// and nowhere else. A real warning still reaches the warn sink.
+describe("reviewSdkRuntime: debug lines go to the run's log, not the terminal", () => {
+  // MUTATION: drop `debug: runLog(s.stderrFile)` from the extras in
+  // reviewSdkRuntime - the ledger-pin line falls back to `warn` and this fails.
+  it("ledger-pin's 'ignoring LEDGER PR' line: in stderr.log, never in warn", async () => {
+    login(Date.now() + 3 * 3_600_000);
+    const warned: string[] = [];
+    const rt = reviewSdkRuntime({
+      makeHost: fauxHost([], () => {}, "LEDGER PR #0 @ abc123\n- open: none"),
+      lens: noLens,
+      warn: (l) => warned.push(l),
+    });
+    // a local review: no PR, as `qcr review` runs it
+    const s = await rt.create(spec({}, { QCR_PR: "" }));
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+    await rt.dispose();
+    expect(warned.join("\n")).not.toMatch(/\[ledger-pin\] debug/);
+    expect(readFileSync(join(dir, "stderr.log"), "utf8")).toContain(
+      "[ledger-pin] debug: ignoring LEDGER PR #0 (session has no QCR_PR)",
+    );
+  });
+
+  // MUTATION: in ledger-pin.ts send the snapshot-write failure to `debug`
+  // instead of `log` - the person no longer sees it and this fails.
+  it("a real ledger-pin warning (the snapshot cannot be written) still reaches warn", async () => {
+    login(Date.now() + 3 * 3_600_000);
+    const blocker = join(dir, "not-a-dir");
+    writeFileSync(blocker, "");
+    const warned: string[] = [];
+    const rt = reviewSdkRuntime({
+      makeHost: fauxHost([], () => {}, "LEDGER PR #7 @ abc123\n- open: none"),
+      lens: noLens,
+      warn: (l) => warned.push(l),
+    });
+    const s = await rt.create(spec({}, { QCR_LEDGER_FILE: join(blocker, "ledger.md") }));
+    expect((await s.prompt("go")).code).toBe(0);
+    await s.dispose();
+    await rt.dispose();
+    expect(warned.join("\n")).toContain("[ledger-pin] snapshot write failed");
+  });
+
+  // MUTATION: in withWarn (reviewsdk.ts) leave `debug` off the runner's config
+  // - the pin-evidence line falls back to `warn` and this fails.
+  it(
+    "the lens runner's pin-evidence line: in stderr.log, never in warn",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      login(Date.now() + 3 * 3_600_000);
+      const agents = join(dir, "agents");
+      mkdirSync(agents);
+      writeFileSync(
+        join(agents, "pass-a.md"),
+        "---\nname: pass-a\ndescription: a lens\nmodel: faux/m\ntools: read\n---\nReport findings.\n",
+      );
+      const warned: string[] = [];
+      const rt = reviewSdkRuntime({
+        makeHost: fauxHost([]),
+        warn: (l) => warned.push(l),
+        engine: {
+          plannedWave: false,
+          config: (host) => ({
+            host,
+            permits: 2,
+            registry: loadBuiltAgents(agents),
+            cwd: dir,
+            env: { PATH: process.env["PATH"], HOME: dir },
+            bashGuard: createBashGuard({ sandboxRoot: dir, replay: false, secretDirs: [] }),
+            leafTools: () => [],
+            ledgerPath: join(dir, "lens-ledger.jsonl"),
+            sessionGapMs: 0,
+            cache: { size: 2, staggerMs: 0 },
+          }),
+        },
+      });
+      const s = await rt.create(spec());
+      const run = await rt.engineLens!.runner.run({ agent: "pass-a", task: "look" });
+      expect(run.result.exitCode).toBe(0);
+      await s.dispose();
+      await rt.dispose();
+      expect(warned.join("\n")).not.toMatch(/pin-evidence/);
+      expect(readFileSync(join(dir, "stderr.log"), "utf8")).toMatch(
+        /^\[lens\] pin-evidence cache-group-disposed key=\S+ sessions=1$/m,
+      );
+    },
+  );
 });
 
 describe("selectReviewRuntime ([engine] runtime for qcr review)", () => {

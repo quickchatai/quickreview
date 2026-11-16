@@ -5,7 +5,7 @@
 import { parseDestinations, type Destination } from "@quickchatai/pi-quickreview/src/reviewdest.js";
 
 export const REVIEW_USAGE =
-  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--model MODEL] [--full] [--security] [--state-machines] [--to DEST] [--out FILE] [--debug-pi] [--json] | --help";
+  "usage: qcr review start|status|stop (detached runs, see `qcr review start --help`) | qcr review [branch | --uncommitted | --diff FILE|- | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--preview] [--key K] [--limit USD] [--model MODEL] [--full] [--security] [--state-machines] [--profile NAME] [--to DEST] [--out FILE] [--debug-pi] [--json] | --help";
 
 export type ReviewCommand =
   | { help: true }
@@ -32,6 +32,9 @@ export type ReviewCommand =
        * plan — the whole state-machine family is planned (never a lens the
        * profile switched off). Set only when given. */
       stateRequest?: true;
+      /** `--profile`: the profile this run reviews under, as `/qcr-review
+       * --profile NAME` does — for this run only; the config's stays. */
+      profile?: string;
       to?: Destination[];
       out?: string;
       /** `--debug-pi`: the round runs inside interactive pi. */
@@ -56,6 +59,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
   let key: string | undefined;
   let limit: number | undefined;
   let model: string | undefined;
+  let profile: string | undefined;
   let to: Destination[] | undefined;
   let out: string | undefined;
   let debugPi = false;
@@ -83,6 +87,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     } else if (a === "--repo") repo = value(i++, a);
     else if (a === "--key") key = value(i++, a);
     else if (a === "--model") model = value(i++, a).trim();
+    else if (a === "--profile") profile = value(i++, a);
     else if (a === "--to") {
       try {
         to = parseDestinations(value(i++, a));
@@ -133,6 +138,7 @@ export function parseReviewArgs(rest: readonly string[]): ReviewCommand {
     ...(key !== undefined ? { key } : {}),
     ...(limit !== undefined ? { limit } : {}),
     ...(model !== undefined ? { model } : {}),
+    ...(profile !== undefined ? { profile } : {}),
     ...(to !== undefined ? { to } : {}),
     ...(out !== undefined ? { out } : {}),
   };

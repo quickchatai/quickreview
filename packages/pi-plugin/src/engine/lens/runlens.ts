@@ -177,6 +177,9 @@ export interface LensRunConfig {
   /** A ledger or progress write that failed (diagnostic only; never fatal).
    * The host's sink: omitted, nowhere. */
   warn?: (message: string) => void;
+  /** Evidence no person acts on (`pin-evidence …`): a host that prints its
+   * warnings to a person sends these to a log file instead. Omitted: `warn`. */
+  debug?: (message: string) => void;
   now?: () => number;
   newId?: () => string;
 }
@@ -349,6 +352,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
   const newId = config.newId ?? randomUUID;
   // The host's sink (it prefixes `[lens] ` where it prints); omitted: nowhere.
   const warn = config.warn ?? ((): void => {});
+  const debug = config.debug ?? warn;
   /** Sessions streaming now, by id. A host that handed two ungrouped passes
    * one id would cut one's websocket when the other is disposed (canary 1);
    * a cache group shares its id on purpose and disposes together. */
@@ -365,7 +369,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
   const groups =
     cache !== undefined
       ? new CacheGroups(cache.size, cache.staggerMs, undefined, (key, n) =>
-          warn(`pin-evidence cache-group-disposed key=${key} sessions=${n}`),
+          debug(`pin-evidence cache-group-disposed key=${key} sessions=${n}`),
         )
       : undefined;
   const sessionGapMs = config.sessionGapMs ?? DEFAULT_SESSION_GAP_MS;

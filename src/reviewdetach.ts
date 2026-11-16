@@ -68,6 +68,10 @@ import {
 import { latestLiveRound, viewRound } from "@quickchatai/pi-quickreview/src/live/read.js";
 import { lensActivityLine, lensElapsedMs } from "@quickchatai/pi-quickreview/src/live/lensline.js";
 import { parsePrTarget } from "@quickchatai/pi-quickreview/src/prtarget.js";
+import {
+  unknownProfile,
+  type ProfilePlace,
+} from "@quickchatai/pi-quickreview/src/profilelookup.js";
 import { parseReviewArgs } from "./reviewargs.js";
 import {
   REVIEW_SCHEMA_VERSION,
@@ -75,7 +79,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/contract.js";
 
 export const DETACHED_USAGE =
-  "usage: qcr review start [branch | --uncommitted | --diff FILE | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--model PROVIDER/MODEL] [--full] [--security] [--state-machines] [--to DEST] [--out FILE] --json\n" +
+  "usage: qcr review start [branch | --uncommitted | --diff FILE | <PR number|URL>] [--repo OWNER/NAME] [--base REF] [--key K] [--limit USD] [--model PROVIDER/MODEL] [--full] [--security] [--state-machines] [--profile NAME] [--to DEST] [--out FILE] --json\n" +
   "       qcr review status [RUN_ID] [--wait [--timeout SECONDS]] --json\n" +
   "       qcr review stop [RUN_ID]";
 
@@ -96,6 +100,11 @@ export interface DetachDeps {
   kill: (pid: number, signal: NodeJS.Signals) => void;
   /** Which target a `start` is of, without running anything. */
   identify: (rest: readonly string[]) => Identified;
+  /** Where `start --profile NAME` looks the name up (the production tree and
+   * the install's profile homes), so an unknown name is refused before the
+   * start claims or launches anything. Absent: only the run refuses it, and
+   * `status` is where that refusal shows. */
+  profiles?: { root: string; homes: readonly ProfilePlace[] };
   /** Start the detached child; it must outlive this process. A run whose
    * container is its process returns no pid, and the container's name. */
   launch: (l: {
@@ -198,7 +207,14 @@ export function identifyTarget(rest: readonly string[], cwd: string): Identified
     else if (a === "--uncommitted") uncommitted = true;
     else if (a === "--diff") diff = rest[++i];
     // A flag's value is never the target: `--model 5` names no pull request.
-    else if (a === "--key" || a === "--limit" || a === "--to" || a === "--out" || a === "--model")
+    else if (
+      a === "--key" ||
+      a === "--limit" ||
+      a === "--to" ||
+      a === "--out" ||
+      a === "--model" ||
+      a === "--profile"
+    )
       i++;
     else if (/^#?\d+$/.test(a) || /^https?:\/\//.test(a)) pr = a;
   }
@@ -538,14 +554,24 @@ function start(
   if (rest.includes("--preview"))
     return usage("a preview runs at once: use `qcr review --preview`, not start");
   // Same grammar as a foreground review; its own parser decides.
+  let profile: string | undefined;
   try {
     const parsed = parseReviewArgs(rest);
     if (!parsed.help && parsed.debugPi)
       return usage(
         "--debug-pi runs the round in your terminal: use `qcr review --debug-pi`, not start",
       );
+    if (!parsed.help) profile = parsed.profile;
   } catch (err) {
     return usage(err instanceof Error ? err.message : String(err));
+  }
+  // An unknown profile is refused here, in the run's own words and with its
+  // exit code (2, as a foreground `qcr review --profile` refuses it), before
+  // the target is claimed: a start that launched it would exit 0 and leave
+  // the refusal to `status`.
+  if (profile !== undefined && deps.profiles !== undefined) {
+    const unknown = unknownProfile({ ...deps.profiles, profile });
+    if (unknown !== null) return emit(2, `✗ ${unknown}`, { ok: false, errors: [unknown] });
   }
 
   const id = deps.identify(rest);

@@ -265,6 +265,135 @@ describe("qcr review --security", () => {
   );
 });
 
+describe("qcr review --profile", () => {
+  /** The harness, able to load a profile as the terminal's own verb does. */
+  const profiled = (repo: string, piBin = "false") => {
+    const h = harness({ repo, piBin });
+    return { ...h, deps: { ...h.deps, profileContext: (p: string) => contextFor(root, p) } };
+  };
+  const lensesOf = (line: string): string[] =>
+    (JSON.parse(line) as { preview: { lenses: string[] } }).preview.lenses.map((a) =>
+      a.replace(/--[^-].*$/, ""),
+    );
+
+  it("parses as the run's profile, and only when given; a bare --profile is a usage error", () => {
+    expect(parseReviewArgs(["--profile", "state-machines"])).toMatchObject({
+      help: false,
+      profile: "state-machines",
+    });
+    expect(parseReviewArgs([])).not.toHaveProperty("profile");
+    expect(() => parseReviewArgs(["--profile"])).toThrow(/--profile needs a value/);
+    expect(() => parseReviewArgs(["--profile", "--preview"])).toThrow(/--profile needs a value/);
+  });
+
+  it("is named in the usage line and documented in --help", () => {
+    expect(REVIEW_USAGE).toContain("[--profile NAME]");
+    expect(reviewHelp()).toMatch(
+      /^ {2}--profile NAME {4}review under that profile, for this run only/m,
+    );
+  });
+
+  // The preview is the profile's plan, not the config's. MUTATION: drop the
+  // `base = deps.profileContext(cmd.profile)` line in runReviewCli
+  // (src/reviewcli.ts) — the preview lists the default plan and this fails.
+  it(
+    "--preview under state-machines lists the eight pass-sm-* lenses and the validator, nothing else",
+    { timeout: 30_000 },
+    async () => {
+      const h = profiled(mkRepo("profile-sm"));
+      expect(await runReviewCli(["--profile", "state-machines", "--preview"], true, h.deps)).toBe(
+        0,
+      );
+      const { STATE_FAMILY } = await import("@quickchatai/pi-quickreview/src/passes.js");
+      expect(STATE_FAMILY).toHaveLength(8);
+      expect([...lensesOf(h.lines[0]!)].sort()).toEqual([...STATE_FAMILY, "pass-validate"].sort());
+    },
+  );
+
+  // A `--profile` run never builds the config's own profile, as
+  // `/qcr-review --profile` does not: a configured profile whose chain cannot
+  // be built stops only the runs that use it, and stops them with a refusal,
+  // never a throw. MUTATION: read `deps.cfg` before the `cmd.profile` check in
+  // runReviewCli (src/reviewcli.ts) — the --profile preview throws and this
+  // fails.
+  it(
+    "--profile works when the config's own profile cannot be built; without it that is a refusal",
+    { timeout: 30_000 },
+    async () => {
+      const broken = (deps: ReturnType<typeof profiled>["deps"]) =>
+        Object.defineProperties(
+          { ...deps },
+          {
+            cfg: {
+              get: () => {
+                throw new Error('profile "house": unknown ecosystem "cobol"');
+              },
+            },
+            ecosystem: {
+              get: () => {
+                throw new Error('profile "house": unknown ecosystem "cobol"');
+              },
+            },
+          },
+        );
+      const h = profiled(mkRepo("profile-broken-config"));
+      expect(
+        await runReviewCli(["--profile", "state-machines", "--preview"], true, broken(h.deps)),
+      ).toBe(0);
+      const { STATE_FAMILY } = await import("@quickchatai/pi-quickreview/src/passes.js");
+      expect([...lensesOf(h.lines[0]!)].sort()).toEqual([...STATE_FAMILY, "pass-validate"].sort());
+      const plain = profiled(mkRepo("profile-broken-config-plain"));
+      expect(await runReviewCli(["--preview"], true, broken(plain.deps))).toBe(1);
+      expect(JSON.parse(plain.lines[0]!).errors).toEqual([
+        'profile "house": unknown ecosystem "cobol"',
+      ]);
+    },
+  );
+
+  // An unknown name is refused before anything runs, in one line that names
+  // every profile there is. MUTATION: return null from `unknownProfile`
+  // (packages/pi-plugin/src/profilelookup.ts) — the run goes on to load the
+  // profile, refuses with another message and exit 1, and this fails.
+  it("an unknown profile exits 2 with one line naming the shipped and local profiles", async () => {
+    const home = join(tmp, "profile-homes");
+    mkdirSync(join(home, "mine"), { recursive: true });
+    const h = profiled(mkRepo("profile-unknown"));
+    const deps = { ...h.deps, profileHomes: [{ dir: home, source: "home" as const }] };
+    expect(await runReviewCli(["--profile", "no-such-profile"], false, deps)).toBe(2);
+    // the refusal's text is one line; the JSON object after it (every
+    // refusal's fallback destinations, terminal and json) carries the same one
+    const [text, json] = h.lines;
+    expect(text!.split("\n")).toHaveLength(1);
+    expect(text).toMatch(/^✗ no profile named "no-such-profile": shipped /);
+    expect(text).toMatch(/shipped [^;]*\bstate-machines\b/);
+    expect(text).toMatch(/shipped [^;]*\bsecurity\b/);
+    expect(text).toMatch(/; local mine$/);
+    expect(JSON.parse(json!).errors).toEqual([text!.slice(2)]);
+    // a name that could escape profiles/ is the same not-found, never a join
+    expect(await runReviewCli(["--profile", "../etc", "--preview"], false, h.deps)).toBe(2);
+  });
+
+  // The one-off run keeps a checkpoint of its own (the review state is kept
+  // per profile, packages/pi-plugin/src/reviewstate.ts): after a
+  // reviewed `--profile` run the normal review still plans the branch. MUTATION:
+  // drop the `base = deps.profileContext(cmd.profile)` line in runReviewCli —
+  // the one-off saves the normal checkpoint, the preview plans nothing, and
+  // this fails.
+  it(
+    "a one-off --profile review leaves the normal review's checkpoint where it was",
+    { timeout: 60_000 },
+    async () => {
+      const repo = mkRepo("profile-checkpoint");
+      setLimit(repo, 1000);
+      const once = profiled(repo, happyPi("profile-checkpoint").bin);
+      expect(await runReviewCli(["--profile", "state-machines"], true, once.deps)).toBe(0);
+      const pre = profiled(repo);
+      expect(await runReviewCli(["--preview"], true, pre.deps)).toBe(0);
+      expect(lensesOf(pre.lines[0]!).length).toBeGreaterThan(0);
+    },
+  );
+});
+
 describe("qcr review: under and over the limit", () => {
   it("under the repo's limit it starts without asking and prints findings grouped by severity", async () => {
     const repo = mkRepo("under");

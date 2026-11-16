@@ -1,8 +1,9 @@
 # state-machines — a review of implicit state machines, and nothing else
 
 `extends = "default"`, then makes the review a state-machine review. Select
-it with `[review] profile = "state-machines"` (or `--profile state-machines`
-for a one-shot review).
+it with `[review] profile = "state-machines"`, or for one review with
+`qcr review --profile state-machines` in the terminal or
+`/qcr-review --profile state-machines` in pi.
 
 An **implicit state machine** is behaviour that depends on which state a
 thing is in, where nobody wrote the states and the moves between them down

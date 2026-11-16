@@ -1,8 +1,9 @@
 # security — a security-only review
 
 `extends = "default"`, then makes the review a security review and nothing
-else. Select it with `[review] profile = "security"` (or `--profile security`
-for a one-shot review).
+else. Select it with `[review] profile = "security"`, or for one review with
+`qcr review --profile security` in the terminal or `/qcr-review --profile
+security` in pi.
 
 ## What runs
 
