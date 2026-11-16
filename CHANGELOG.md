@@ -4,9 +4,9 @@
 
 - **A config.toml needs only the keys you change.** Every table and key it
   leaves out takes the shipped value from `config.example.toml`, on every
-  surface that reads it (`qcr review`, the pi plugin, the daemon, `qcr config
-  check`): `[review] profile = "state-machines"` alone is a whole config, and
-  an empty config.toml is no config.toml. Before, a partial file failed with
+  surface that reads it (`qcr review`, the pi plugin, the daemon,
+  `qcr config check`): `[review] profile = "state-machines"` alone is a whole
+  config, and an empty config.toml is no config.toml. Before, a partial file failed with
   `config.toml: missing key 'github'` and a stack trace. A key you set is
   checked as before, and a wrong value now refuses in one line naming the file
   and the key.
