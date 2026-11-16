@@ -2,7 +2,15 @@
 // plugins. Time, pids, the launcher and the review itself are injected; one
 // test really spawns a detached node stub to show the run outlives its starter.
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -103,6 +111,30 @@ describe("start", () => {
     expect(json(h)).toMatchObject({ ok: true, run_id: "run1", state: "running" });
     expect(h.launched).toHaveLength(1);
     expect(h.launched[0]!.argv).toEqual(["--base", "main"]);
+  });
+
+  // An unknown profile is refused by the start itself, before it claims or
+  // launches anything, in the foreground run's words and exit code.
+  // MUTATION: drop the `unknownProfile` check in reviewdetach.ts `start` —
+  // the run launches, the start exits 0, and this fails.
+  it("refuses an unknown --profile before it claims the target or launches", async () => {
+    const root = join(tmp, "profile-root");
+    mkdirSync(join(root, "profiles", "state-machines"), { recursive: true });
+    const homes = [{ dir: join(tmp, "profile-home"), source: "home" as const }];
+    mkdirSync(join(homes[0]!.dir, "mine"), { recursive: true });
+    const h = harness({ profiles: { root, homes } });
+    expect(await runDetachedVerb("start", ["--profile", "typo"], true, h.deps)).toBe(2);
+    const j = json(h);
+    expect(j.ok).toBe(false);
+    expect(j.errors).toHaveLength(1);
+    expect(j.errors[0]).toMatch(
+      /^no profile named "typo": shipped [^;]*state-machines[^;]*; local mine$/,
+    );
+    expect(h.launched).toHaveLength(0);
+    expect(existsSync(h.deps.home)).toBe(false);
+    // a known one (shipped or local) starts as any review does
+    expect(await runDetachedVerb("start", ["--profile", "mine"], true, h.deps)).toBe(0);
+    expect(h.launched[0]!.argv).toEqual(["--profile", "mine"]);
   });
 
   it("refuses a second concurrent review of the same target, clearly", async () => {
@@ -590,6 +622,11 @@ describe("identifyTarget", () => {
     expect(identifyTarget(["--model", "5"], repo)).toEqual(b);
     expect(identifyTarget(["12", "--repo", "o/r", "--model", "7"], repo)).toEqual(p);
     expect(DETACHED_USAGE).toContain("[--model PROVIDER/MODEL]");
+    // MUTATION: drop `--profile` from the same list — a profile named `5` is
+    // read as pull request 5 and this fails.
+    expect(identifyTarget(["--profile", "5"], repo)).toEqual(b);
+    // MUTATION: drop `[--profile NAME]` from DETACHED_USAGE — this fails.
+    expect(DETACHED_USAGE).toContain("[--state-machines] [--profile NAME]");
   });
 });
 

@@ -310,6 +310,46 @@ describe("qcr review --profile", () => {
     },
   );
 
+  // A `--profile` run never builds the config's own profile, as
+  // `/qcr-review --profile` does not: a configured profile whose chain cannot
+  // be built stops only the runs that use it, and stops them with a refusal,
+  // never a throw. MUTATION: read `deps.cfg` before the `cmd.profile` check in
+  // runReviewCli (src/reviewcli.ts) — the --profile preview throws and this
+  // fails.
+  it(
+    "--profile works when the config's own profile cannot be built; without it that is a refusal",
+    { timeout: 30_000 },
+    async () => {
+      const broken = (deps: ReturnType<typeof profiled>["deps"]) =>
+        Object.defineProperties(
+          { ...deps },
+          {
+            cfg: {
+              get: () => {
+                throw new Error('profile "house": unknown ecosystem "cobol"');
+              },
+            },
+            ecosystem: {
+              get: () => {
+                throw new Error('profile "house": unknown ecosystem "cobol"');
+              },
+            },
+          },
+        );
+      const h = profiled(mkRepo("profile-broken-config"));
+      expect(
+        await runReviewCli(["--profile", "state-machines", "--preview"], true, broken(h.deps)),
+      ).toBe(0);
+      const { STATE_FAMILY } = await import("@quickchatai/pi-quickreview/src/passes.js");
+      expect([...lensesOf(h.lines[0]!)].sort()).toEqual([...STATE_FAMILY, "pass-validate"].sort());
+      const plain = profiled(mkRepo("profile-broken-config-plain"));
+      expect(await runReviewCli(["--preview"], true, broken(plain.deps))).toBe(1);
+      expect(JSON.parse(plain.lines[0]!).errors).toEqual([
+        'profile "house": unknown ecosystem "cobol"',
+      ]);
+    },
+  );
+
   // An unknown name is refused before anything runs, in one line that names
   // every profile there is. MUTATION: return null from `unknownProfile`
   // (packages/pi-plugin/src/profilelookup.ts) — the run goes on to load the
