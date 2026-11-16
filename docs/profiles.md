@@ -16,6 +16,14 @@ the repo-shaped half of LENS SELECTION (`heuristics.toml`, below)
 profile = "my-repo"   # a directory name under profiles/; "" = no profile
 ```
 
+One review can run under another profile: `qcr review --profile NAME` in the
+terminal, `/qcr-review --profile NAME` in pi. The flag holds for that run
+alone; the config's profile stays. The run keeps a review checkpoint of its
+own, so the next review under the config's profile still covers the change
+since its own last review. `qcr review --profile NAME --preview` shows that
+profile's plan, and a name no profile has is refused with the shipped and
+local profiles listed.
+
 Where a profile lives: an install's own profile belongs in its
 config home, `$XDG_CONFIG_HOME/qcr/<install>/profiles/<name>/`, next to its
 `config.toml` — nothing about a reviewed repo lives in the app's checkout. The

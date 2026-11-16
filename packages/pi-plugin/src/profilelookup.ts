@@ -10,7 +10,7 @@
 //      mounted config home; the VM's shipped one; the bench image's)
 //   3. the checkout's `profiles/` — the generic examples only
 // Places 1 and 2 are the caller's `homes`; place 3 is `<root>/profiles`.
-import { statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 /** A single path segment an install or a profile may be named by.
@@ -107,6 +107,46 @@ export function findProfile(opts: {
     if (isDir(dir)) return { name, dir, source: place.source };
   }
   return null;
+}
+
+/** The profiles a review can run under, by name: `shipped`, the checkout's
+ * generic examples that are there; `local`, every profile directory in the
+ * `homes` (one named as a shipped one is listed here, where it is read
+ * from). Each list sorted, deduplicated. */
+export function availableProfiles(opts: {
+  root: string;
+  homes: readonly ProfilePlace[];
+  isDir?: (path: string) => boolean;
+}): { shipped: string[]; local: string[] } {
+  const isDir = opts.isDir ?? isDirectory;
+  const names = (dir: string): string[] => {
+    try {
+      return readdirSync(dir).filter((n) => isPathSegment(n) && isDir(join(dir, n)));
+    } catch {
+      return [];
+    }
+  };
+  const local = new Set<string>();
+  for (const place of profileSearchPlaces(opts.root, opts.homes))
+    if (place.source !== "checkout") for (const n of names(place.dir)) local.add(n);
+  const shipped = EXAMPLE_PROFILES.filter(
+    (n) => !local.has(n) && isDir(join(opts.root, PROFILES_DIR, n)),
+  );
+  return { shipped: [...shipped].sort(), local: [...local].sort() };
+}
+
+/** Null when a review can run under `profile`; else the one-line refusal that
+ * names every profile it could run under (`availableProfiles`). A name that
+ * is not a plain path segment is not found either: it is never joined. */
+export function unknownProfile(opts: {
+  root: string;
+  profile: string;
+  homes: readonly ProfilePlace[];
+}): string | null {
+  if (isPathSegment(opts.profile) && findProfile(opts) !== null) return null;
+  const { shipped, local } = availableProfiles(opts);
+  const list = (names: string[]): string => (names.length > 0 ? names.join(", ") : "none");
+  return `no profile named ${JSON.stringify(opts.profile)}: shipped ${list(shipped)}; local ${list(local)}`;
 }
 
 /**

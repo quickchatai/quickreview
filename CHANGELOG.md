@@ -11,6 +11,10 @@
   was last saved before 1.5.0. Such a state does not record which profile
   saved it, and a one-off `--profile` run saved there too, so it is not taken
   as the configured profile's. An install with no profile set is unaffected.
+- `qcr review --profile NAME` reviews under that profile for one run, as
+  `/qcr-review --profile NAME` does, with its own checkpoint. `--preview`
+  shows that profile's plan, and an unknown name is refused in one line that
+  lists the shipped and local profiles.
 
 ## 1.5.0
 
