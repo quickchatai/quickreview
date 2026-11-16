@@ -1,6 +1,9 @@
 # Release notes
 
-## Unreleased
+## 1.5.0
+
+Two additions: QuickReview runs on any model provider pi supports, and a
+state-machine review joins the security review (below).
 
 QuickReview runs on any model provider pi supports, on the credential you
 already have. The shipped config names no model. With one login or key a
@@ -91,6 +94,56 @@ a new name as a required pass that is missing.
 - The prompt-cache pack applies to the API family it was built for, and a
   lens on any other API runs without the warm-up
   ([docs/prompt-caching.md](docs/prompt-caching.md)).
+
+### State-machine review
+
+Eight `pass-sm-*` lenses review implicit state machines: a status field, a
+set of flags or a stored copy of other state that a change can leave in a
+combination the code mishandles. They cover the states, transitions,
+unhandled states, transient states left set, event order, stale copies,
+lifecycle order and stored state. They share one contract
+(`prompts/pass-sm-common.md`), run at the `deep` tier, and each holds
+`state_explore`, a read-only tool over the PR's committed objects that lists
+the lines where something may be missing and the writes, reads, exits and
+siblings of a name. The validator
+replays each finding's trace. Details: "State-machine review" in
+[docs/profiles.md](docs/profiles.md).
+
+- **The default review plans a state lens on its own** when a change shows a
+  strong signal, such as a new member of an existing enumeration or a
+  transient state entered in code that handles no failure
+  (`[state_machines] triggers`, `strong` by default). A round that plans one
+  costs more than before. `off` restores the old plan; `all` adds the weak
+  signals.
+- **Ask for one on a PR** with the `qcr:state-machines` label, an
+  `@<bot> state-machines` comment from an owner, member or collaborator, or
+  `qcr review-now <pr> --state-machines`.
+- **Ask for one locally** with `qcr review --state-machines` or
+  `/qcr-review --state-machines`: the usual plan plus the eight lenses. The
+  `/qcr-review state-machines` preset runs them and the validator only.
+- **A state-machine-only bot** is the `state-machines` profile
+  (`[state_machines] only`): every other lens off, posting scoped to
+  state-machine findings (`[posting] scope = "state"`), and an APPROVE means
+  "no state-machine finding". `[security] only` and `[state_machines] only`
+  together are refused at load.
+
+### Fixes
+
+- **A withheld approval no longer stays withheld at an unchanged head.** A
+  cancelled CI run that a newer, successful run of the same workflow and
+  event replaced no longer reads red, in the gate and in `pr-checks.sh`. A
+  retry round that withholds the approval again keeps it owed, so green CI
+  re-queues the PR. The board shows `APPROVE·withheld` when the code verdict
+  was APPROVE and GitHub has only a COMMENT.
+
+### Docs and benchmark data
+
+- The README leads with the install command; the full benchmark results are
+  in [BENCHMARKS.md](BENCHMARKS.md).
+- The benchmark dataset has a DOI (10.57967/hf/11598) and downloads with no
+  login. Its `state_machines/` folder holds the state-machine study, and
+  `bench/aacr/recompute/state_machines.py` recomputes its numbers (tag
+  `bench-data-v1.1`).
 
 ## 1.4.2
 
