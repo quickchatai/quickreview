@@ -57,7 +57,10 @@ import { parseReferenceLabels, recallByQuality, renderReport } from "../src/benc
 import { renderReviewFromRecord } from "@quickchatai/pi-quickreview/src/reviewrender.js";
 import {
   AuthExpiring,
+  authFingerprint,
   benchAuthFrom,
+  benchLoginModels,
+  codexLoginModels,
   DISABLED_REFRESH,
   syncBenchAuth,
   BENCH_RETRY,
@@ -1153,6 +1156,84 @@ describe("the benchmark's login: read-only, never refreshed", () => {
       ).toThrow(/no pi login/);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the login route's added models (QCR_BENCH_LOGIN_MODELS)", () => {
+  const auth = {
+    "openai-codex": {
+      type: "oauth",
+      access: "A",
+      refresh: "R",
+      expires: 2_000_000,
+      accountId: "x",
+    },
+  };
+  function sync(dst: string, src: string, loginModels: string | undefined): void {
+    const saved = process.env["QCR_BENCH_LOGIN_MODELS"];
+    try {
+      if (loginModels === undefined) delete process.env["QCR_BENCH_LOGIN_MODELS"];
+      else process.env["QCR_BENCH_LOGIN_MODELS"] = loginModels;
+      syncBenchAuth({
+        srcDir: src,
+        dstDir: dst,
+        root: "/r",
+        needMs: 0,
+        now: () => 0,
+        mode: "login",
+      });
+    } finally {
+      if (saved === undefined) delete process.env["QCR_BENCH_LOGIN_MODELS"];
+      else process.env["QCR_BENCH_LOGIN_MODELS"] = saved;
+    }
+  }
+
+  it("is 1 or unset, anything else refused", () => {
+    expect(benchLoginModels({})).toBe(false);
+    expect(benchLoginModels({ QCR_BENCH_LOGIN_MODELS: "" })).toBe(false);
+    expect(benchLoginModels({ QCR_BENCH_LOGIN_MODELS: " 1 " })).toBe(true);
+    expect(() => benchLoginModels({ QCR_BENCH_LOGIN_MODELS: "yes" })).toThrow(/1 or unset/);
+  });
+
+  it("adds the models to pi's built-in openai-codex provider on the login, and only when asked", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-login-models-"));
+    try {
+      const src = join(tmp, "src");
+      const dst = join(tmp, "dst");
+      mkdirSync(src);
+      writeFileSync(join(src, "auth.json"), JSON.stringify(auth));
+      sync(dst, src, "1");
+      const models = JSON.parse(readFileSync(join(dst, "models.json"), "utf8"));
+      expect(models).toEqual(codexLoginModels());
+      // The built-in provider, no key or login of its own: the login copy serves it.
+      expect(Object.keys(models.providers)).toEqual(["openai-codex"]);
+      expect(models.providers["openai-codex"].apiKey).toBeUndefined();
+      const ids = models.providers["openai-codex"].models.map((m: { id: string }) => m.id);
+      expect(ids).toContain("gpt-6.2-astra");
+      expect(statSync(join(dst, "models.json")).mode & 0o777).toBe(0o600);
+      // The login copy is the same either way: refresh still disabled.
+      expect(JSON.parse(readFileSync(join(dst, "auth.json"), "utf8"))["openai-codex"].refresh).toBe(
+        DISABLED_REFRESH,
+      );
+      // Not asked: the file an earlier sync wrote is gone.
+      sync(dst, src, undefined);
+      expect(existsSync(join(dst, "models.json"))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fingerprints the added models, so such a run never resumes over a catalog-only run", () => {
+    const saved = process.env["QCR_BENCH_LOGIN_MODELS"];
+    try {
+      delete process.env["QCR_BENCH_LOGIN_MODELS"];
+      expect(authFingerprint("login")).toEqual({});
+      process.env["QCR_BENCH_LOGIN_MODELS"] = "1";
+      expect(authFingerprint("login").login_models_sha256).toMatch(/^[a-f0-9]{64}$/);
+    } finally {
+      if (saved === undefined) delete process.env["QCR_BENCH_LOGIN_MODELS"];
+      else process.env["QCR_BENCH_LOGIN_MODELS"] = saved;
     }
   });
 });
