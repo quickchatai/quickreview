@@ -607,6 +607,7 @@ never published, so its `qcr_commit` is not on public main. The folder holds
 both runs' posted comments and the judge's verdicts, every AI label the study
 made, the earlier builds' found flags and the write-up's charts; its README
 describes every table and how each number is recomputed. No config reads it.
+A third run, `sm5-a`, is a preliminary addition (below).
 
 **What it found.** Two AI readers relabelled all 186 answer-key defects of
 these pull requests blind, by one rule (a state bug needs a named state and an
@@ -632,6 +633,22 @@ default review's own earlier comments.
 every number of the folder's README from its tables and checks that the
 README is the one they give, and `validation.json` holds the same checks of
 the folder (see "How to verify").
+
+### Preliminary: GPT-6.2 Astra
+
+`sm5-a` is the state-machine review of `sm4-p` with `openai-codex/gpt-6.2-astra`
+as the reviewer, on the same 34 pull requests, judged by `gpt-6.1-sol` at high
+effort. It is added as a preliminary result. On the 55 reachable strict state
+defects it found 52 (95%), against 44 for `sm4-p`, and of all 186 answer-key
+defects it found 152. It posted 448 inline comments, 13.2 a pull request, at
+$21.06 a pull request at list price (the same pricing as the other runs: pi's
+cost of each call, at OpenAI's list prices for the model at its release).
+
+**Limits.** One run. Its lens pass deadline was 20 minutes, where the shipped
+default is 8. Its judge, `gpt-6.1-sol`, is not its reviewer's model. Its
+comments carry no state labels and the bugs it found outside the answer key
+were not pooled, so its pool share is not measured, and its comments are not
+known to be about state bugs alone (a fifth of `sm4-p`'s are not).
 
 ## What is not here, and why
 

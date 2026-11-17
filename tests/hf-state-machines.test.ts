@@ -1,5 +1,6 @@
-// The dataset's state-machine study (`state_machines/`): the export copies the folder only when it is the
-// committed manifest's, validation.json checks it and recomputes every number of the study from its tables,
+// The dataset's state-machine study (`state_machines/`, its two runs and a preliminary third, unlabelled): the
+// export copies the folder only when it is the committed manifest's, validation.json checks it and recomputes
+// every number of the study from its tables,
 // the claims verifier reads those numbers by name, and the card links the folder and counts its checks
 // apart. Runs for real under python3, standard library only, on a small study of .jsonl tables (two pull
 // requests, neutral planted names):
@@ -99,12 +100,15 @@ function manifest(root: string, path: string): string {
 
 const S = "sm4-p"; // the state-machine review
 const D = "sm1-c"; // the default review
+const A = "sm5-a"; // the preliminary third run: the state-machine review with GPT-6.2 Astra, unlabelled
 
 /**
  * A study on two PRs. Answer key: p1/D1 state (old list), p1/D2 not (old list), p2/D1 state but not
  * reachable at head, p2/D2 borderline, p2/D3 state. The state review finds p1/D1 and only partly p2/D3; the
  * default review finds p1/D1, p1/D2 and p2/D3 and partly p2/D2. Pool: the two reachable state defects and
- * three unlisted bugs (both, state only, default only).
+ * three unlisted bugs (both, state only, default only). The third run (A, no labels) finds p1/D1, p1/D2 and
+ * p2/D1 (not reachable) and partly p2/D3, with three inline comments on p1 and one plus a review-body finding
+ * on p2.
  */
 function dataset(root: string): void {
   const sm = join(root, "state_machines");
@@ -149,6 +153,24 @@ function dataset(root: string): void {
       prs: 2,
       note: "n",
     },
+    {
+      arm_id: A,
+      display_name: "Astra",
+      image: "img:c",
+      image_id: "sha256:c",
+      config: "c",
+      profile: "state-machines",
+      qcr_commit: "c1",
+      qcr_commit_on_public_main: false,
+      qcr_commit_match: null,
+      qcr_commit_dirty: false,
+      pi: "1",
+      reviewer_model: "m2",
+      judge_model: "m",
+      runs: [`${A}-x`],
+      prs: 2,
+      note: "n",
+    },
   ]);
   const kase = (arm: string, pr: string, usd: number, minutes: number, n_posted: number) => ({
     arm_id: arm,
@@ -170,6 +192,8 @@ function dataset(root: string): void {
     kase(S, "p2", 3, 14, 2),
     kase(D, "p1", 1, 20, 1),
     kase(D, "p2", 2, 30, 2),
+    kase(A, "p1", 10, 12, 3),
+    kase(A, "p2", 20, 16, 1),
   ]);
   const rev = (arm: string, pr: string, index: number | null, comment_id: string | null) => ({
     arm_id: arm,
@@ -191,6 +215,11 @@ function dataset(root: string): void {
     rev(D, "p2", 0, "C1"),
     rev(D, "p2", 1, "C2"),
     rev(D, "p2", null, "C3"), // a finding posted in the review body
+    rev(A, "p1", 0, "C1"),
+    rev(A, "p1", 1, "C2"),
+    rev(A, "p1", 2, "C3"),
+    rev(A, "p2", 0, "C1"),
+    rev(A, "p2", null, "C2"),
   ]);
   const dv = (arm: string, pr: string, defect_id: string, verdict: string) => ({
     arm_id: arm,
@@ -214,6 +243,11 @@ function dataset(root: string): void {
     dv(D, "p2", "D1", "missed"),
     dv(D, "p2", "D2", "partial"),
     dv(D, "p2", "D3", "found"),
+    dv(A, "p1", "D1", "found"),
+    dv(A, "p1", "D2", "found"),
+    dv(A, "p2", "D1", "found"),
+    dv(A, "p2", "D2", "missed"),
+    dv(A, "p2", "D3", "partial"),
   ]);
   const cv = (
     arm: string,
@@ -242,6 +276,11 @@ function dataset(root: string): void {
     cv(D, "p2", "C1", 0, "correct-valuable", "D3"),
     cv(D, "p2", "C2", 1, "correct-valuable", null),
     cv(D, "p2", "C3", null, "correct-minor", null), // judged, posted in the review body
+    cv(A, "p1", "C1", 0, "correct-valuable", "D1"),
+    cv(A, "p1", "C2", 1, "correct-valuable", "D2"),
+    cv(A, "p1", "C3", 2, "incorrect", null),
+    cv(A, "p2", "C1", 0, "correct-valuable", "D1"),
+    cv(A, "p2", "C2", null, "correct-minor", null),
   ]);
   const lab = (
     pr: string,
@@ -436,6 +475,16 @@ const POST = {
     defect_not_real_or_unreachable: 1,
   },
   cost: { usd_per_pr_state: 2.5, usd_per_pr_default: 1.5, usd_per_pr_both: 4 },
+  astra: {
+    key_found: 1,
+    of: 2,
+    share: 50,
+    defects_found: 3,
+    defects_of: 5,
+    comments: 4,
+    per_pr: 2,
+    usd_per_pr: 15,
+  },
 };
 
 const BASE = join(tmp, "base");
@@ -495,11 +544,11 @@ const C = {
     "every file is the committed manifest's (bench/aacr/hf/state-machines.sha256), none missing, extra or differing",
   columns: "every table has exactly its listed columns (no answer-key defect text)",
   whole:
-    "the rows are whole: both arms judged on the same pull requests, one verdict per arm on every labelled answer-key defect, every judged comment a posted one (inline or in the review body), every labelled comment an inline one, the default review's labelled comments exactly its inline comments matched to no answer-key defect, and every unlisted bug found exactly by the reviews whose inline comments it lists",
+    "the rows are whole: every run judged on the same pull requests, one verdict per run on every labelled answer-key defect, every judged comment a posted one (inline or in the review body), every labelled comment an inline one of the two labelled runs, the default review's labelled comments exactly its inline comments matched to no answer-key defect, and every unlisted bug found exactly by the reviews whose inline comments it lists",
   readme: "README.md is the README its tables give (state_machines.readme of numbers())",
   quotes:
     "no label text of ours repeats 10 words in a row of an answer-key defect's text (the dataset's `defects`)",
-  prs: "both arms reviewed the same pull requests",
+  prs: "every run reviewed the same pull requests",
   relabel:
     "the strict relabel of the answer-key defects: state, borderline and not, the state ones reachable at head, and the state ones not on the earlier list of 45",
   old45:
@@ -518,6 +567,8 @@ const C = {
   default_found_any: "the answer-key defects of every kind the default review found",
   misses: "the state review's misses on the strict state defects, by cause",
   cost: "list-price dollars per pull request (compare.usd_and_minutes), and both runs' exact combined cost rounded",
+  astra:
+    "the preliminary GPT-6.2 Astra run (sm5-a): answer-key recall on the reachable strict state defects and its share, the answer-key defects of every kind it found, its inline comments and comments per pull request, and list-price dollars per pull request (compare.usd_and_minutes)",
 };
 
 describe("state_machines: the manifest", () => {
@@ -561,7 +612,7 @@ except SystemExit as e:
   it("fails every check when the folder is not in the dataset (fails closed)", () => {
     const gone = variant("gone", (sm) => rmSync(sm, { recursive: true }));
     const cs = checks(gone);
-    expect(cs).toHaveLength(18);
+    expect(cs).toHaveLength(19);
     expect(cs.filter((c) => c.ok)).toEqual([]);
   });
 
@@ -584,9 +635,9 @@ except SystemExit as e:
 });
 
 describe("state_machines: validation.json's checks", () => {
-  it("passes all eighteen on a whole folder that is the manifest's, recomputing every number", () => {
+  it("passes all nineteen on a whole folder that is the manifest's, recomputing every number", () => {
     const cs = checks(BASE);
-    expect(cs).toHaveLength(18);
+    expect(cs).toHaveLength(19);
     expect(cs.filter((c) => !c.ok)).toEqual([]);
     expect(cs.find((c) => c.check.endsWith(C.pool))!.got).toEqual(POST.pool);
   });
@@ -630,6 +681,17 @@ describe("state_machines: validation.json's checks", () => {
       site_read_nothing_reported: 5,
       reported_a_different_problem: 6,
       defect_not_real_or_unreachable: 1,
+    });
+    // the preliminary GPT-6.2 Astra run (sm5-a), as the card prints it
+    expect(post.astra).toEqual({
+      key_found: 52,
+      of: 55,
+      share: 95,
+      defects_found: 152,
+      defects_of: 186,
+      comments: 448,
+      per_pr: 13.2,
+      usd_per_pr: 21.06,
     });
     expect(Object.keys(post).sort()).toEqual(Object.keys(POST).sort());
   });
@@ -697,6 +759,8 @@ describe("state_machines: validation.json's checks", () => {
   // MUTATION: in state_machines.whole_problems, compare the defect verdicts as a set (`sorted(set(got)) != labelled`) — this fails
   // MUTATION: in state_machines.whole_problems, delete the unlisted bugs' flag guard — this fails
   // MUTATION: in state_machines.whole_problems, test only the flag in the unlisted guard (drop the posted-index test) — this fails
+  // MUTATION: in state_machines.whole_problems, compare the defect verdicts of the study's two runs alone (`for a in ARMS`) — this fails
+  // MUTATION: in state_machines.whole_problems, delete the guard on a label of a run the study did not label — this fails
   it.each([
     [
       "an unjudged case",
@@ -729,8 +793,9 @@ describe("state_machines: validation.json's checks", () => {
     [
       "a review-body finding with an index",
       (sm: string) => {
-        const move = (r: Row) => (r.comment_id === "C3" ? { ...r, index: 5, defect_id: "D2" } : r);
-        edit(sm, "reviews", (r) => (r.comment_id === "C3" ? { ...r, index: 5 } : r));
+        const body = (r: Row) => r.arm_id === D && r.comment_id === "C3";
+        const move = (r: Row) => (body(r) ? { ...r, index: 5, defect_id: "D2" } : r);
+        edit(sm, "reviews", (r) => (body(r) ? { ...r, index: 5 } : r));
         edit(sm, "comment_verdicts", move);
       },
       ["reviews: a finding in the review body with an index, or without the judge's id"],
@@ -792,6 +857,23 @@ describe("state_machines: validation.json's checks", () => {
           JSON.stringify(rows(sm, "defect_verdicts")[6]!) + "\n",
         ),
       ["defect_verdicts: sm1-c is not one verdict on each labelled defect"],
+    ],
+    [
+      "a verdict missing from the third run",
+      (sm: string) =>
+        edit(sm, "defect_verdicts", (r) =>
+          r.arm_id === A && r.instance_id === "p2" && r.defect_id === "D2" ? null : r,
+        ),
+      ["defect_verdicts: sm5-a is not one verdict on each labelled defect"],
+    ],
+    [
+      "a label of the third run, which the study did not label",
+      (sm: string) =>
+        appendFileSync(
+          join(sm, "comment_state_labels.jsonl"),
+          JSON.stringify({ ...rows(sm, "comment_state_labels")[0]!, arm_id: A }) + "\n",
+        ),
+      ["comment_state_labels: a label of a run the study did not label"],
     ],
     [
       "an unlisted bug found by a review that lists no comment for it",
@@ -993,13 +1075,40 @@ describe("state_machines: validation.json's checks", () => {
   });
 
   // MUTATION: in state_machines.numbers, give prs from the state arm alone (drop the comparison with the default arm's) — this fails
-  it("fails when the two arms did not review the same PRs", () => {
-    const bad = variant("prs", (sm) =>
-      edit(sm, "cases", (r) =>
-        r.arm_id === D && r.instance_id === "p2" ? { ...r, instance_id: "p3" } : r,
+  // MUTATION: in state_machines.numbers, give prs from the study's two runs alone (`for a in ARMS` in prs) — this fails
+  // MUTATION: in state_machines.whole_problems, compare the PRs of the study's two runs alone — this fails
+  it("fails when the runs did not review the same PRs", () => {
+    for (const arm of [D, A]) {
+      const bad = variant(`prs-${arm}`, (sm) =>
+        edit(sm, "cases", (r) =>
+          r.arm_id === arm && r.instance_id === "p2" ? { ...r, instance_id: "p3" } : r,
+        ),
+      );
+      expect(failing(bad)).toEqual(expect.arrayContaining([C.prs, C.whole]));
+      expect(problems(bad)).toContain("cases: the runs' pull requests differ");
+    }
+  });
+
+  // MUTATION: in state_machines.numbers, count key.<run> over every strict defect for the third run (drop `& reach`) — this fails
+  // MUTATION: in state_machines.post_values, give astra.defects_found as the state review's (defects.sm4-p.found) — this fails
+  it("recomputes the preliminary third run apart from the study's numbers", () => {
+    const key = variant("astra-key", (sm) =>
+      edit(sm, "defect_verdicts", (r) =>
+        r.arm_id === A && r.instance_id === "p2" && r.defect_id === "D3"
+          ? { ...r, verdict: "found" }
+          : r,
       ),
     );
-    expect(failing(bad)).toEqual(expect.arrayContaining([C.prs, C.whole]));
+    expect(failing(key)).toEqual([C.astra]);
+    const got = checks(key, manifest(key, join(key, "m.sha256"))).find((c) =>
+      c.check.endsWith(C.astra),
+    )!.got;
+    expect(got).toEqual({ ...POST.astra, key_found: 2, share: 100, defects_found: 4 });
+    // its comments and cost: none of the two runs' numbers moves
+    const cost = variant("astra-cost", (sm) =>
+      edit(sm, "cases", (r) => (r.arm_id === A && r.instance_id === "p1" ? { ...r, usd: 12 } : r)),
+    );
+    expect(failing(cost)).toEqual([C.astra]);
   });
 });
 
@@ -1013,7 +1122,7 @@ out = {}
 for root in sys.argv[1:]:
     p = M.PROVIDERS["state_machines"](M.Tables(root + "/data"))
     r = {}
-    for k in ("pool.sm4-p", "key.sm1-c", "comments.sm4-p.per_pr", "nope"):
+    for k in ("pool.sm4-p", "key.sm1-c", "comments.sm4-p.per_pr", "key.sm5-a", "comments.sm5-a", "nope"):
         try:
             r[k] = p.value(k)
         except M.KeyError_ as e:
@@ -1027,6 +1136,8 @@ print(json.dumps(out))`,
       "pool.sm4-p": 3,
       "key.sm1-c": 2,
       "comments.sm4-p.per_pr": 2,
+      "key.sm5-a": 1,
+      "comments.sm5-a": 4,
       nope: "KeyError: unknown state_machines number 'nope'",
     });
     expect(got["claims-gone"]!["pool.sm4-p"]).toBe(
@@ -1057,7 +1168,7 @@ print(json.dumps([found["state_machines"], [[c["needs"], c["ok"]] for c in V.con
     ) as [string, [string[], boolean][]];
     expect(got[0]).toBe(join(root, "state_machines"));
     // the fixture's folder is not the committed manifest's, and the verifier compares its numbers with the
-    // release's (POST): the manifest check and the thirteen number checks fail, the columns, the rows, the
+    // release's (POST): the manifest check and the fourteen number checks fail, the columns, the rows, the
     // README and the quotes pass
     expect(got[1].every(([n]) => n.join() === "state_machines")).toBe(true);
     expect(got[1].map(([, ok]) => ok)).toEqual([
@@ -1066,7 +1177,7 @@ print(json.dumps([found["state_machines"], [[c["needs"], c["ok"]] for c in V.con
       true,
       true,
       true,
-      ...Array(13).fill(false),
+      ...Array(14).fill(false),
     ]);
   });
 
@@ -1121,8 +1232,9 @@ print(json.dumps([v(SM.file_rows(sys.argv[1])), v([])]))`,
       "[`state_machines/`](https://huggingface.co/datasets/acme/bench/tree/main/state_machines)";
     expect(card[0]).toContain(`("Second judge"), and ${link}\nholds a study`);
     expect(card[0]).toContain(`## State-machine study\n\n${link} holds a study`);
-    expect(card[0]).toContain("| File | Rows |\n|---|---:|\n| `state_machines/arms.jsonl` | 2 |");
+    expect(card[0]).toContain("| File | Rows |\n|---|---:|\n| `state_machines/arms.jsonl` | 3 |");
     expect(card[0]).toContain("| `state_machines/pooled_bugs.jsonl` | 5 |");
+    expect(card[0]).toContain("\n### Preliminary: GPT-6.2 Astra\n");
     expect(card[1]).toContain("and `<state_machines/ not in this build>`\nholds a study");
     expect(card[1]).not.toContain("tree/main/state_machines");
   });
@@ -1201,8 +1313,8 @@ describe("state_machines: the build", () => {
   const offMain = git(repo, "rev-parse", "HEAD");
 
   /**
-   * One PR in two runs. The state review posted two comments of the same text; the default review posted
-   * one inline comment and one finding in its review body. Key: D1 state (old list), D2 state that a second
+   * One PR in three runs. The state review posted two comments of the same text; the default review posted
+   * one inline comment and one finding in its review body; the third run (unlabelled) one inline comment. Key: D1 state (old list), D2 state that a second
    * reader agreed cannot happen at head, D3 state whose not-real miss the second reader did not agree with.
    */
   function run(
@@ -1247,7 +1359,7 @@ describe("state_machines: the build", () => {
         })),
       },
     });
-    const found = arm === S ? ["D1"] : ["D1", "D3"];
+    const found = arm === S ? ["D1"] : arm === A ? ["D1", "D2", "D3"] : ["D1", "D3"];
     write(join(r, "judge", "v2-gpt-6.1-sol-high", `${PR}.r1.json`), {
       defect_set_version: "2",
       defects: ["D1", "D2", "D3"].map((id) => ({
@@ -1275,6 +1387,14 @@ describe("state_machines: the build", () => {
     ["[blocker] Inline\n\nbody"],
     ["[blocker] Inline\n\nbody", "[nit] In the body\n\nbody"],
     "### Additional findings (not posted inline)\n\n- `a.c:22` — In the body — _posted in the body_\n",
+  );
+  run(
+    A,
+    offMain,
+    "state-machines",
+    ["[major] Astra\n\nbody"],
+    ["[major] Astra\n\nbody"],
+    "summary\n",
   );
   const vote = (verdict: string, reason: string) => ({
     "1": { verdict, klass: "lifecycle", reason },
@@ -1429,16 +1549,19 @@ except SystemExit as e:
       { arm_id: S, index: 1, inline: true, line: 11, comment_id: "C2" },
       { arm_id: D, index: 0, inline: true, line: 10, comment_id: "C1" },
       { arm_id: D, index: null, inline: false, line: 22, comment_id: "C2" },
+      { arm_id: A, index: 0, inline: true, line: 10, comment_id: "C1" },
     ]);
     expect(pick(T.comment_verdicts!, ["arm_id", "comment_id", "index", "judge"])).toEqual([
       { arm_id: S, comment_id: "C1", index: 0, judge: "gpt-6.1-sol-high" },
       { arm_id: S, comment_id: "C2", index: 1, judge: "gpt-6.1-sol-high" },
       { arm_id: D, comment_id: "C1", index: 0, judge: "gpt-6.1-sol-high" },
       { arm_id: D, comment_id: "C2", index: null, judge: "gpt-6.1-sol-high" },
+      { arm_id: A, comment_id: "C1", index: 0, judge: "gpt-6.1-sol-high" },
     ]);
     expect(pick(T.cases!, ["arm_id", "n_posted", "usd", "minutes", "judged"])).toEqual([
       { arm_id: S, n_posted: 2, usd: 2, minutes: 10, judged: true },
       { arm_id: D, n_posted: 1, usd: 2, minutes: 10, judged: true },
+      { arm_id: A, n_posted: 1, usd: 2, minutes: 10, judged: true },
     ]);
     expect(T.defect_verdicts![0]).toMatchObject({
       judge: "gpt-6.1-sol-high",
@@ -1448,6 +1571,7 @@ except SystemExit as e:
   });
 
   // MUTATION: in state_machines.collect, write `profile` as the run gives it (drop `or None`) — this fails
+  // MUTATION: in state_machines.collect, read the study's two runs alone (`for arm in ARMS` in the cases loop) — this fails
   it("states each arm's build: on public main or not, and no profile as null", () => {
     expect(
       pick(T.arms!, [
@@ -1472,6 +1596,19 @@ except SystemExit as e:
         qcr_commit_on_public_main: false,
         qcr_commit_match: null,
       },
+      {
+        arm_id: A,
+        profile: "state-machines",
+        qcr_commit: offMain,
+        qcr_commit_on_public_main: false,
+        qcr_commit_match: null,
+      },
+    ]);
+    expect(T.arms![2]!.display_name).toBe("State-machine review, GPT-6.2 Astra (preliminary)");
+    expect(T.defect_verdicts!.filter((r) => r.arm_id === A).map((r) => r.verdict)).toEqual([
+      "found",
+      "found",
+      "found",
     ]);
   });
 

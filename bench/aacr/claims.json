@@ -1738,7 +1738,7 @@
    "archive": []
   },
   "state-machines": {
-   "what": "the state-machine study in the dataset's state_machines/ folder: two runs on 34 AACR-Bench pull requests, its state labels and pooled state bugs, as the card states them",
+   "what": "the state-machine study in the dataset's state_machines/ folder: two runs on 34 AACR-Bench pull requests, its state labels and pooled state bugs, and a preliminary third run (GPT-6.2 Astra as the reviewer), as the card states them",
    "families": [],
    "archive": []
   }
@@ -57867,6 +57867,86 @@
    "q": "state_machines:prs.with_strict_state"
   },
   {
+   "id": "card.state-machines.29",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "as the reviewer, on the same 34 pull requests, judged by `gpt-6.1-sol` at high",
+   "value": "34",
+   "group": "state-machines",
+   "q": "state_machines:prs"
+  },
+  {
+   "id": "card.state-machines.30",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "effort. It is added as a preliminary result. On the 55 reachable strict state",
+   "value": "55",
+   "group": "state-machines",
+   "q": "state_machines:relabel.reachable"
+  },
+  {
+   "id": "card.state-machines.31",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects it found 52 (95%), against 44 for `sm4-p`, and of all 186 answer-key",
+   "value": "52",
+   "group": "state-machines",
+   "q": "state_machines:key.sm5-a"
+  },
+  {
+   "id": "card.state-machines.32",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects it found 52 (95%), against 44 for `sm4-p`, and of all 186 answer-key",
+   "value": "95%",
+   "group": "state-machines",
+   "q": "state_machines:key.sm5-a.pct"
+  },
+  {
+   "id": "card.state-machines.33",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects it found 52 (95%), against 44 for `sm4-p`, and of all 186 answer-key",
+   "value": "44",
+   "group": "state-machines",
+   "q": "state_machines:key.sm4-p"
+  },
+  {
+   "id": "card.state-machines.34",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects it found 52 (95%), against 44 for `sm4-p`, and of all 186 answer-key",
+   "value": "186",
+   "group": "state-machines",
+   "q": "state_machines:defects.total"
+  },
+  {
+   "id": "card.state-machines.35",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects it found 152. It posted 448 inline comments, 13.2 a pull request, at",
+   "value": "152",
+   "group": "state-machines",
+   "q": "state_machines:defects.sm5-a.found"
+  },
+  {
+   "id": "card.state-machines.36",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects it found 152. It posted 448 inline comments, 13.2 a pull request, at",
+   "value": "448",
+   "group": "state-machines",
+   "q": "state_machines:comments.sm5-a"
+  },
+  {
+   "id": "card.state-machines.37",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects it found 152. It posted 448 inline comments, 13.2 a pull request, at",
+   "value": "13.2",
+   "group": "state-machines",
+   "q": "state_machines:comments.sm5-a.per_pr"
+  },
+  {
+   "id": "card.state-machines.38",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "$21.06 a pull request at list price (the same pricing as the other runs: pi's",
+   "value": "21.06",
+   "group": "state-machines",
+   "q": "state_machines:cost.sm5-a.usd_per_pr"
+  },
+  {
    "id": "bench.second-judge.36",
    "file": "bench/aacr/paper/benchmark.tex",
    "anchor": "less than defect verdicts: the same grade on 84.0--92.1\\% of each",
@@ -70957,6 +71037,22 @@
     "25"
    ],
    "why": "a tool version a reader needs (a requirement, not a benchmark number)"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "One run. Its lens pass deadline was 20 minutes, where the shipped",
+   "tokens": [
+    "20"
+   ],
+   "why": "configuration or a method parameter"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "default is 8. Its judge, `gpt-6.1-sol`, is not its reviewer's model. Its",
+   "tokens": [
+    "8"
+   ],
+   "why": "configuration or a method parameter"
   }
  ]
 }
