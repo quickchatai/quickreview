@@ -180,6 +180,12 @@ list.
    that is one posted review. In your agent or terminal it is the list you get
    back. Every finding, kept or dropped, is recorded with its reasoning.
 
+By default a review is quiet: it raises and posts no nits and nothing below
+P2, only blockers, likely defects worth a question, security questions, and
+items for a person to check. Set `quiet = false` under `[review]` in `config.toml` for the fuller
+review, nits and minor questions included, that the benchmark numbers below
+were measured on.
+
 ## Why it is built this way
 
 A model asked to review a whole change reports what it happened to notice, and

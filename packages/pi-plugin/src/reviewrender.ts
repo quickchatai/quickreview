@@ -444,7 +444,9 @@ export function renderReviewFromRecord(
  * routes (scripts/render-review.sh → src/reviewrendercli.ts, and the bench
  * runner) turn a config into render options, so they cannot drift. */
 export interface PostedRenderConfig {
-  review: { dedup_merge?: boolean };
+  /** `quiet`: the posting backstop of the quiet review (postingpolicy.ts
+   * `quietWithholdWord`). */
+  review: { dedup_merge?: boolean; quiet?: boolean };
   github?: { bot_login?: string };
   /** The profile's `[posting]` policy, overlaid on the config the same way
    * on both routes (wire.ts / the bench: `applyProfilePosting`). */
@@ -462,6 +464,10 @@ export interface PostedRenderOptions {
   dedupMerge?: boolean;
   /** The profile's `[posting]` policy; absent or all-default ⇒ no cut. */
   policy?: PostingPolicy;
+  /** `[review] quiet`: a `[nit]` and a non-security question below `P2` are
+   * withheld under any policy or none (postingpolicy.ts
+   * `quietWithholdWord`). Absent ⇒ off. */
+  quiet?: boolean;
   /** `[security] fold`: a security entry doubted as `unverifiable` is
    * posted as a `security-demoted` question (`applySecurityFoldToRecord`). */
   securityFold?: boolean;
@@ -480,6 +486,9 @@ export function postedRenderOptions(
     ...fallbacks,
     dedupMerge: cfg.review.dedup_merge === true,
     ...(isDefaultPosting(cfg.posting) ? {} : { policy: cfg.posting! }),
+    // The quiet backstop rides beside the policy, never inside it: the
+    // posting policy (and its note and addendum) stays the profile's.
+    ...(cfg.review.quiet === true ? { quiet: true } : {}),
     ...(cfg.security?.fold === true ? { securityFold: true } : {}),
   };
 }
@@ -655,6 +664,8 @@ export interface PolicyWithheld {
 export function applyPostingPolicyToRecord(
   record: unknown,
   policy: PostingPolicy | undefined,
+  /** `[review] quiet`: the quiet backstop (`selectPosted`'s `quiet`). */
+  opts: { quiet?: boolean } = {},
 ): { record: unknown; withheld: PolicyWithheld[] } {
   if (typeof record !== "object" || record === null) return { record, withheld: [] };
   const rec = record as Record<string, unknown>;
@@ -662,7 +673,11 @@ export function applyPostingPolicyToRecord(
   if (rawEntries === null) return { record, withheld: [] };
   // A partial chain never posts, under any policy (postingpolicy.ts): with no
   // policy and no partial chain posted, the record is left as it is.
-  if (isDefaultPosting(policy) && !rawEntries.some((e) => isPostedEntry(e) && partialChainEntry(e)))
+  if (
+    opts.quiet !== true &&
+    isDefaultPosting(policy) &&
+    !rawEntries.some((e) => isPostedEntry(e) && partialChainEntry(e))
+  )
     return { record, withheld: [] };
   const entries = rawEntries.map((e) =>
     typeof e === "object" && e !== null ? { ...(e as Record<string, unknown>) } : e,
@@ -683,6 +698,7 @@ export function applyPostingPolicyToRecord(
       };
     },
     policy,
+    { quiet: opts.quiet === true },
   );
   if (!sel.withheld.length) return { record, withheld: [] };
   const withheld: PolicyWithheld[] = [];
@@ -722,7 +738,7 @@ export function renderPostedReview(
   /** The record keys the security fold turned into questions. */
   folded: string[];
 } {
-  const { dedupMerge, policy, securityFold, ...renderOpts } = opts;
+  const { dedupMerge, policy, quiet, securityFold, ...renderOpts } = opts;
   const candidates =
     typeof record === "object" && record !== null && !Array.isArray(record)
       ? recordEntries(record as Record<string, unknown>)
@@ -740,7 +756,7 @@ export function renderPostedReview(
   const checked = dedupMerge
     ? postCheckRecord(normalized)
     : { record: normalized, merges: [] as PostCheckMerge[] };
-  const cut = applyPostingPolicyToRecord(checked.record, policy);
+  const cut = applyPostingPolicyToRecord(checked.record, policy, { quiet: quiet === true });
   const rendered = renderReviewFromRecord(cut.record, {
     ...renderOpts,
     ...(policy?.body === "verdict" ? { bodyMode: "verdict" as const } : {}),

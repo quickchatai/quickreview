@@ -119,6 +119,10 @@ export interface ReviewInput {
    * returned as `withheld` for the findings record, never dropped silently.
    */
   policy?: PostingPolicy;
+  /** `[review] quiet`: a `[nit]` and a non-security question below `P2` are
+   * withheld under any policy or none (postingpolicy.ts `quietWithholdWord`),
+   * recorded `withheld` like a policy's cut. Absent ⇒ off. */
+  quiet?: boolean;
   /** The plain opening paragraph (the verdict `summary`): its first sentence
    * is the one sentence a `body = "verdict"` review carries. */
   summary?: string;
@@ -295,8 +299,9 @@ export function assembleReview(full: ReviewInput): AssembledReview {
   // 0. the profile's posting policy: the budget, the tag rules and one site
   //    per finding, over the findings in the order the session ranked them.
   //    A no-op (the same input) without a policy, but for a partial exploit
-  //    chain, which never posts. Within one severity the budget prefers a
-  //    finding on a changed line (`changedLine`).
+  //    chain, which never posts, and the quiet backstop (`[review] quiet`).
+  //    Within one severity the budget prefers a finding on a changed line
+  //    (`changedLine`).
   const runs = full.policy && full.patches ? runsByPath(full.patches) : undefined;
   const selection = selectPosted(
     full.findings,
@@ -321,6 +326,7 @@ export function assembleReview(full: ReviewInput): AssembledReview {
         : {}),
     }),
     full.policy,
+    { quiet: full.quiet === true },
   );
   const input: ReviewInput =
     selection.withheld.length > 0 ? { ...full, findings: selection.kept } : full;

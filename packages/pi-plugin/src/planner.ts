@@ -259,6 +259,10 @@ export function buildPassPlan(
   // The plan explains why each lens was chosen — the path-shaped lenses
   // included, not only sub-lenses.
   const reasons0 = new Map<string, string>();
+  // `[review] quiet`: pass-intent is not planned — its findings are capped at
+  // `P3` and a quiet review posts nothing below `P2`. It stays addable, and a
+  // profile's `plan = "always"` still plans it; with quiet off it is selected
+  // exactly as before.
   const selected0 = selectLenses(
     files,
     intent,
@@ -269,7 +273,8 @@ export function buildPassPlan(
       placementMinNewFileLines: cfg.review.placement_min_new_file_lines,
     },
     reasons0,
-  );
+  ).filter((l) => !(cfg.review.quiet === true && l === INTENT_PASS));
+  if (cfg.review.quiet === true) reasons0.delete(INTENT_PASS);
   // Sub-lenses ride after the path-selected lenses, each with the reason its
   // trigger fired (`[review] sublenses`).
   const sub = selectSubLenses(files, intent).filter(
@@ -1439,7 +1444,12 @@ export function buildRoundOrder(args: {
     ...(sweep_unswept.length > 0 ? { sweep_unswept } : {}),
     ...(behaviour_unread && behaviour_unread.length > 0 ? { behaviour_unread } : {}),
     ...(args.dependencyNote ? { dependency_note: args.dependencyNote } : {}),
-    ...(args.cfg.review.nits === "open" ? { nit_policy: "open" as const } : {}),
+    // `[review] quiet` wins over `nits`: a quiet round raises no nit at all.
+    ...(args.cfg.review.quiet === true
+      ? { nit_policy: "quiet" as const }
+      : args.cfg.review.nits === "open"
+        ? { nit_policy: "open" as const }
+        : {}),
     ...(isDefaultPosting(args.cfg.posting) ? {} : { posting_policy: args.cfg.posting }),
     // `[review] render_outputs` (packages/pi-plugin/src/reviewrender.ts): the round renders its
     // posted review from the findings record. Absent ⇒ the session writes

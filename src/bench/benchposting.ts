@@ -219,6 +219,9 @@ export function policeBenchOutput(args: {
   /** The PR's per-file patches, when known: within one severity the budget
    * then prefers an item on a changed line, as production posting does. */
   patches?: Record<string, string>;
+  /** `[review] quiet`: the quiet backstop, as production posting applies it
+   * (postingpolicy.ts `quietWithholdWord`). */
+  quiet?: boolean;
 }): { comments: unknown[]; reviewMd: string; record: unknown; report: BenchPostingReport } {
   const { policy } = args;
   const runs = args.patches ? runsByPath(args.patches) : undefined;
@@ -317,6 +320,7 @@ export function policeBenchOutput(args: {
         : {}),
     }),
     policy,
+    { quiet: args.quiet === true },
   );
   const kept = new Set(sel.kept);
 
@@ -442,14 +446,18 @@ export function recordPostsPartialChain(record: unknown): boolean {
  * profile's own when it sets one; under the default policy, the default —
  * whose one cut is a posted partial chain, never posted under any policy or
  * none — only when the case's findings record marks one posted, so every
- * other default-policy case is scored exactly as the session wrote it. Null
- * when there is nothing to enforce.
+ * other default-policy case is scored exactly as the session wrote it. Under
+ * `[review] quiet` there is always something to enforce (the quiet backstop
+ * rides beside whatever policy this returns). Null when there is nothing to
+ * enforce.
  */
 export function benchPolicyToEnforce(
   caseDir: string,
   policy: PostingPolicy | undefined,
+  quiet = false,
 ): PostingPolicy | null {
   if (policy !== undefined && !isDefaultPosting(policy)) return policy;
+  if (quiet) return { ...DEFAULT_POSTING_POLICY };
   return recordPostsPartialChain(readJsonOr(join(caseDir, CASE_FILES.findings)))
     ? { ...DEFAULT_POSTING_POLICY }
     : null;
@@ -465,6 +473,8 @@ export function enforceBenchPosting(
   caseDir: string,
   policy: PostingPolicy,
   patches?: Record<string, string>,
+  /** `[review] quiet`: the quiet backstop beside the policy. */
+  opts: { quiet?: boolean } = {},
 ): BenchPostingReport | null {
   const cPath = join(caseDir, CASE_FILES.comments);
   if (!existsSync(cPath)) return null;
@@ -488,6 +498,7 @@ export function enforceBenchPosting(
     },
     policy,
     ...(patches ? { patches } : {}),
+    ...(opts.quiet === true ? { quiet: true } : {}),
   });
   renameSync(cPath, join(caseDir, POLICED_ORIGINALS[0]));
   writeFileSync(cPath, JSON.stringify(out.comments, null, 2) + "\n");
@@ -499,7 +510,11 @@ export function enforceBenchPosting(
   }
   writeFileSync(
     join(caseDir, "posting-policy.json"),
-    JSON.stringify({ policy, ...out.report }, null, 2) + "\n",
+    JSON.stringify(
+      { policy, ...(opts.quiet === true ? { quiet: true } : {}), ...out.report },
+      null,
+      2,
+    ) + "\n",
   );
   return out.report;
 }

@@ -683,6 +683,38 @@ const NITS_OPEN_VALIDATE_ADDENDUM =
   '\n## Nits are open this round (config `[review] nits = "open"`)\n' +
   "Do not kill a confirmed nit for being minor: `below-bar` is not used this round, and a true nit that asks for no change is rewritten to name the change it implies rather than killed `nit-no-request`. Every other rule stands — a nit must be TRUE (kill `refuted`/`unverifiable` as ever), style still needs the repo's written guide (`style-not-in-guide`), and repeats still merge.\n";
 
+// `[review] quiet` (the default): a PR review raises and posts nothing below
+// `P2`. Three entries, all PR builds only — a scan is never quieted. The lens
+// rule supersedes, for a quiet review, every earlier text that asks a lens for
+// a `P3` or a `nit`, the out-of-lane routing included: the placement,
+// simplicity and intent lenses' "raise it as ONE `P3` question" and the
+// `judgment-lens-own-questions` line become "raise it at its honest severity;
+// below `P2`, not at all" — a ratified amendment carried here so the lens
+// texts keep their bytes. The validator rule turns every demote-to-`P3`/`nit`
+// into the existing kill word `below-bar`, never touching DOUBTED, the
+// reachability questions, `[check this]` or the security demotion and fold.
+// The posting step backstops all three (postingpolicy.ts `quietWithholdWord`).
+const QUIET_LENS_ADDENDUM =
+  "\n## Quiet review — nothing below P2 (config `[review] quiet = true`; supersedes every rule above that asks for a `P3` or a `nit`)\n" +
+  "This review posts only what someone must act on. Report no `nit` and nothing whose honest severity is below `P2`:\n" +
+  "- **No polish.** Naming, style, formatting, structure, duplication, leftovers, doc or comment wording, a missing test, a clearer message: none of it is reported unless it names a wrong behaviour someone can hit — a caller that breaks, a wrong value, a CI job that fails, a reader misled into a bug you can show. When it does, report that wrong behaviour as a defect at its honest severity.\n" +
+  "- **Severity stays honest.** Never lower a severity to stay quiet, and never raise one to clear this bar. A real defect whose honest severity is `P3` is not reported.\n" +
+  '- **A defect outside your lane** — correctness, security, data — is raised at its honest severity, with the evidence that sets it; if that is below `P2` it is not raised. For this review this replaces the out-of-lane rule in your lens text and in *Finish your own questions* ("raise it as ONE `P3` question"); the lens that owns it still judges it at full strength.\n' +
+  "- **`P2` stays.** A likely defect in a rare state — a `P2` the reachability gate turns into a question — is reported exactly as before, and so is everything at `P0`–`P2`.\n" +
+  "- **This outranks a nit request** from any rule composed after it, a repository profile's rules included: where one asks you for a `nit` or a `P3`, report nothing.\n";
+
+const QUIET_STYLE_ADDENDUM =
+  '\n## Style under the quiet review — enforced rules only (config `[review] quiet = true`; supersedes "Severity is nit" and every style rule above that asks for a `[nit]`)\n' +
+  "Report a changed line only when it breaks a rule the repository ENFORCES: a lint, format or type check one of its CI jobs runs, or a written house rule whose break does something — fails that job, or changes behaviour someone can hit. Raise it as a defect at its honest severity, quoting the rule (file and line) and saying what the break does (the CI job that fails, the behaviour that changes); below `P2` it is not raised. A break that only reads differently — a cosmetic nit — is not reported, however clearly the guide states the rule. `NONE` is the expected answer.\n";
+
+const QUIET_VALIDATE_ADDENDUM =
+  "\n## The quiet review — no survivor below P2 (config `[review] quiet = true`; supersedes every rule above that keeps, demotes or restates a candidate as a `P3` or a `nit`)\n" +
+  "This review posts nothing below `P2`. Audit every candidate exactly as the rules above say, then:\n" +
+  "- **No survivor is a `nit` or a `P3`.** Where a rule above would demote a confirmed candidate to `P3` or `nit`, or keep it at one — a small consequence (demote, not kill), a restated consequence, a convention or written-rule break, leftovers, a doc or prose finding, a regression-test ask, an intent or design candidate over its cap, an external assumption, copies that have not diverged — kill it with the existing word `below-bar` instead.\n" +
+  "- **Severity stays honest.** Never lower a severity to reach this kill, and never raise one to escape it. A candidate whose honest severity is `P2` or higher survives at that severity.\n" +
+  "- **An out-of-lane defect** — a correctness, security or data defect a lens raised outside its own lane (placement, simplicity, intent, a code-quality lens) — arrives at its honest severity in a quiet review: audit it at that severity like any other candidate. The intent and design caps (`intent-over-cap`, `design-over-cap`) bind a lens's own class, never such a defect; one whose honest severity is below `P2` is killed `below-bar`.\n" +
+  "- **Untouched:** the blocker bar; a `P2` the reachability gate makes a question; DOUBTED — a candidate whose claim fails is doubted, never killed `below-bar`; `[check this]`; and the security rules — the seed's `security-demoted` question (rule 1) and the security fold (`validate-security-fold`) keep a security candidate as a question at its own severity, whatever this section says.\n";
+
 // Duplicate merge (docs/duplicate-merge.md): deterministic code forms
 // candidate groups before the validator; the
 // validator decides "same root cause" with the code in view and keeps one
@@ -750,6 +782,7 @@ const SCAN_SECURITY_NEEDS_REVIEW_ADDENDUM =
 export function configAddenda(
   review: {
     nits?: NitPolicy;
+    quiet?: boolean;
     validate_demote?: boolean;
     validate_consequence_rule?: boolean;
     dedup_merge?: boolean;
@@ -758,12 +791,18 @@ export function configAddenda(
   security: Pick<SecurityConfig, "fold"> = SECURITY_DEFAULTS,
 ): PassAddendum[] {
   const out: PassAddendum[] = [];
+  // `[review] quiet`: a PR build loses the two entries that mint nits
+  // (validate-demote-not-kill, nits-open) and gains the three quiet ones; a
+  // scan build keeps exactly what it had, the two entries at their place.
+  const quiet = review.quiet === true;
+  const unlessQuiet: { mode?: BuildMode } = quiet ? { mode: "scan" } : {};
   // On unless switched off — the switch exists so a benchmark can measure the
   // review without it.
   if (review.validate_demote !== false)
     out.push({
       id: "validate-demote-not-kill",
       scope: [VALIDATE_PASS],
+      ...unlessQuiet,
       text: VALIDATE_DEMOTE_NOT_KILL_ADDENDUM,
     });
   // Off unless switched on — an experiment arm, not (yet) the review.
@@ -775,8 +814,19 @@ export function configAddenda(
     });
   if (review.nits === "open")
     out.push(
-      { id: "nits-open", scope: "lenses", text: NITS_OPEN_LENS_ADDENDUM },
-      { id: "nits-open-validate", scope: [VALIDATE_PASS], text: NITS_OPEN_VALIDATE_ADDENDUM },
+      { id: "nits-open", scope: "lenses", ...unlessQuiet, text: NITS_OPEN_LENS_ADDENDUM },
+      {
+        id: "nits-open-validate",
+        scope: [VALIDATE_PASS],
+        ...unlessQuiet,
+        text: NITS_OPEN_VALIDATE_ADDENDUM,
+      },
+    );
+  if (quiet)
+    out.push(
+      { id: "quiet-lenses", scope: "lenses", mode: "pr", text: QUIET_LENS_ADDENDUM },
+      { id: "quiet-style", scope: [STYLE_PASS_NAME], mode: "pr", text: QUIET_STYLE_ADDENDUM },
+      { id: "quiet-validate", scope: [VALIDATE_PASS], mode: "pr", text: QUIET_VALIDATE_ADDENDUM },
     );
   // `[review] dedup_merge` (docs/duplicate-merge.md): the validator judges
   // the round's candidate groups as units. PR builds only.

@@ -1,5 +1,29 @@
 # Release notes
 
+## Unreleased
+
+A pull request review is now quiet by default: it raises and posts what
+someone must act on, and nothing below that.
+
+- **No nits, nothing below P2.** The lenses no longer raise nits or `P3`
+  findings (naming, style, structure, duplication, leftovers, doc wording,
+  missing-test asks), unless one names a wrong behaviour someone can hit, which
+  is then raised at its honest severity. The validator kills what it would have
+  demoted to a nit, and the posting step withholds any that slip through.
+  Blockers, `P2` questions (a likely defect in a rare state), `[check this]`
+  items and security questions post as before, and the verdict is unchanged.
+- The style lens reports only breaks of rules your repository enforces — a
+  lint, format or type check its CI runs, or a written house rule whose break
+  does something — as defects, never a cosmetic nit. The intent lens is not
+  planned under quiet.
+- **To get the previous review back**, set `quiet = false` under `[review]`
+  in `config.toml`: nits, `P3` questions, the intent lens and the
+  `[review] nits` policy return exactly as they were.
+- Whole-repository scans are unchanged.
+- The benchmark reviews with quiet off unless an arm sets
+  `--config review.quiet=true`, so it reproduces the published numbers, which
+  were all measured with the previous review.
+
 ## 1.5.1
 
 Fixes from an end-to-end test of 1.5.0 on a fresh install: a partial

@@ -121,10 +121,13 @@ genuine ones — the fairer way to quote this benchmark.
 ## Nits, and the benchmark
 
 AACR-Bench rewards nits: most of its references are minor notes, and a
-review that posts only what clears its bar cannot match them. Production
-keeps `[review] nits = "strict"` (true-but-trivial candidates are dropped;
-review volume comes out of nits). For a benchmark run, `--config
-review.nits=open` lifts those limits — every true nit the passes raise is
+review that posts only what clears its bar cannot match them. The published
+runs reviewed with `[review] quiet` off and `nits = "strict"`
+(true-but-trivial candidates are dropped; review volume comes out of nits).
+Production now ships the quiet review (`[review] quiet = true`: no nits and
+nothing below P2), which the benchmark does not use unless an arm sets
+`--config review.quiet=true` (src/bench/runner.ts `benchQuiet`). For a
+benchmark run, `--config review.nits=open` lifts the nit limits — every true nit the passes raise is
 posted — which shows how much of the AACR gap is nit volume rather than
 missed problems. Style is excluded either way: it still needs the repo's
 written guide. Report which policy an arm ran; the defect table is the check
