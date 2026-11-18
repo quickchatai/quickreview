@@ -19,6 +19,7 @@ import type { PrStateRow } from "../src/state.js";
 import { assembleReview, type Finding } from "../src/posting.js";
 import { policeBenchOutput } from "../src/bench/benchposting.js";
 import { benchQuiet, runFingerprint } from "../src/bench/runner.js";
+import { renderConfig } from "../src/reviewrendercli.js";
 import { REVIEW_DEFAULTS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import {
   PASS_ADDENDA,
@@ -252,13 +253,15 @@ describe("[review] quiet — the round order's QUIET note", () => {
       const loud = render(withoutNote);
       expect(quiet, rt).toContain("**QUIET REVIEW (`[review] quiet = true`).**");
       expect(loud, rt).not.toContain("QUIET REVIEW");
-      // The ratified passages render to the same bytes either way: the note
-      // sits between fences, never inside one.
+      // The note's placeholder sits between fences, never inside one. The
+      // rendered prompt has its RATIFIED markers stripped, so this reads the
+      // template source, where the markers are.
       // MUTATION: move `{{nit_policy_note}}` inside the posting-map fence of a
       // round template — this fails
-      expect(quiet.match(RATIFIED_BLOCK), rt).toEqual(loud.match(RATIFIED_BLOCK));
-      for (const block of quiet.match(RATIFIED_BLOCK) ?? [])
-        expect(block, rt).not.toContain("QUIET REVIEW");
+      const blocks = tpl.match(RATIFIED_BLOCK) ?? [];
+      expect(blocks.length, rt).toBeGreaterThan(0);
+      expect(tpl, rt).toContain("{{nit_policy_note}}");
+      for (const block of blocks) expect(block, rt).not.toContain("{{nit_policy_note}}");
     }
   });
 });
@@ -350,6 +353,27 @@ describe("[review] quiet — the posting backstop, through the render step", () 
       dedupMerge: false,
       quiet: true,
     });
+  });
+
+  it("the live route's render config carries quiet, from the config or the shipped default", () => {
+    const load = (cfg: Config) => ({ config: () => cfg, profilePosting: () => ({}) });
+    // MUTATION: in renderConfig, build `review` from dedup_merge alone — this fails
+    const live = renderConfig("/sandbox", undefined, load(quietCfg)).cfg;
+    expect(live.review.quiet).toBe(true);
+    expect(
+      renderPostedReview(structuredClone(RECORD), postedRenderOptions(live)).withheld.map(
+        (w) => w.id,
+      ),
+    ).toEqual(["nit", "p3q"]);
+    expect(renderConfig("/sandbox", undefined, load(loudCfg)).cfg.review.quiet).toBe(false);
+    const unread = renderConfig("/sandbox", undefined, {
+      config: () => {
+        throw new Error("config.toml: unreadable");
+      },
+      profilePosting: () => ({}),
+    });
+    expect(unread.unread).toBeDefined();
+    expect(unread.cfg.review.quiet).toBe(REVIEW_DEFAULTS.quiet);
   });
 
   it("the word for each class, as every route reads it", () => {
