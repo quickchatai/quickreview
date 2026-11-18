@@ -147,8 +147,6 @@ AUTH_VOLUME="${QCR_BENCH_AUTH_VOLUME:-companion-pihome}"
 AUTH_MODE="${QCR_BENCH_AUTH:-login}"
 OPENAI_ENV="${QCR_BENCH_OPENAI_ENV:-$HERE/openai.env}"
 PROVIDER="${QCR_BENCH_PROVIDER:-}"
-# Models the login serves that pi's catalog does not list yet (src/bench/auth.ts codexLoginModels).
-LOGIN_MODELS="${QCR_BENCH_LOGIN_MODELS:-}"
 DIGITALOCEAN_ENV="${QCR_BENCH_DIGITALOCEAN_ENV:-$HERE/digitalocean.env}"
 GOOGLE_ENV="${QCR_BENCH_GOOGLE_ENV:-$HERE/google.env}"
 # A review provider's key file and key variable (src/bench/auth.ts BENCH_PROVIDERS).
@@ -229,7 +227,6 @@ CLAUDE_ENV="${QCR_BENCH_CLAUDE_ENV:-$HERE/claude.env}"
 [[ "$AUTH_MODE" == login || "$AUTH_MODE" == api-key ]] || die "QCR_BENCH_AUTH must be login | api-key"
 [[ -z "$PROVIDER" || "$PROVIDER" == digitalocean || "$PROVIDER" == google ]] || die "QCR_BENCH_PROVIDER must be digitalocean | google or unset"
 [[ -z "$PROVIDER" || "$ARM" == qcr ]] || die "QCR_BENCH_PROVIDER is supported only by the QuickReview arm"
-[[ -z "$LOGIN_MODELS" || ( "$LOGIN_MODELS" == 1 && "$AUTH_MODE" == login && -z "$PROVIDER" ) ]] || die "QCR_BENCH_LOGIN_MODELS must be 1 or unset, on the login route only"
 [[ "$LINE_K" =~ ^[0-9]{1,3}$ ]] || die "--line-k must be a small non-negative integer"
 [[ "$PHASE" =~ ^(all|init|case|finish)$ ]] || die "--phase must be all | init | case | finish"
 [[ "$SHARDS" =~ ^[1-9][0-9]?$ ]] || die "--shards must be 1..99"
@@ -307,8 +304,6 @@ auth_mounts() {
     --mount "type=volume,src=$AUTH_VOLUME,dst=/pi-agent-src,volume-subpath=agent,readonly"
     --mount "type=tmpfs,dst=/pi-agent-src/sessions"
   )
-  [[ -n "$LOGIN_MODELS" ]] && AUTH+=(-e QCR_BENCH_LOGIN_MODELS=1)
-  return 0
 }
 
 # The Claude Code arm's credential: its OWN token file, handed to docker with
@@ -550,7 +545,6 @@ case "$cmd" in
       # fingerprint (and its models) as every case container does, so a
       # resume keeps exactly the cases this configuration produced.
       am=(); [[ "$AUTH_MODE" == api-key ]] && am=(-e QCR_BENCH_AUTH=api-key)
-      [[ -n "$LOGIN_MODELS" ]] && am=(-e QCR_BENCH_LOGIN_MODELS=1)
       if [[ -n "$PROVIDER" ]]; then
         am=(-e QCR_BENCH_AUTH=api-key -e QCR_BENCH_PROVIDER="$PROVIDER")
       fi

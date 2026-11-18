@@ -140,69 +140,6 @@ export function googleModels() {
   };
 }
 
-/**
- * Models the ChatGPT login serves that the pinned pi's catalog does not list
- * yet. On the login route, `QCR_BENCH_LOGIN_MODELS=1` writes them into the
- * sandbox's models.json as models of pi's built-in `openai-codex` provider, so
- * they run on the same login as the provider's own models. Each entry copies
- * its family's catalog entry (api, base URL, limits, thinking levels) and
- * carries OpenAI's list prices at release, so pi's per-call cost stays a
- * list-price equivalent as for every catalog model.
- */
-export function codexLoginModels() {
-  return {
-    providers: {
-      "openai-codex": {
-        models: [
-          {
-            id: "gpt-6.2-astra",
-            name: "GPT-6.2 Astra",
-            api: "openai-codex-responses",
-            baseUrl: "https://chatgpt.com/backend-api",
-            reasoning: true,
-            input: ["text", "image"],
-            contextWindow: 272000,
-            maxTokens: 128000,
-            cost: {
-              input: 8,
-              output: 40,
-              cacheRead: 0.4,
-              cacheWrite: 10,
-              tiers: [
-                { inputTokensAbove: 272000, input: 16, output: 60, cacheRead: 0.8, cacheWrite: 20 },
-              ],
-            },
-            thinkingLevelMap: {
-              off: null,
-              minimal: "low",
-              low: "low",
-              medium: "medium",
-              high: "high",
-              xhigh: "xhigh",
-              max: "max",
-            },
-            compat: {
-              supportsOpenAIGrammarTools: true,
-              supportsAdditionalTools: true,
-              supportsToolSearch: true,
-              supportsMidConvoSystemMessages: true,
-            },
-          },
-        ],
-      },
-    },
-  };
-}
-
-/** Whether the login route adds `codexLoginModels()`: `QCR_BENCH_LOGIN_MODELS`
- * unset or empty = no, `1` = yes, anything else refused. */
-export function benchLoginModels(env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = (env["QCR_BENCH_LOGIN_MODELS"] ?? "").trim();
-  if (v === "") return false;
-  if (v === "1") return true;
-  throw new Error("QCR_BENCH_LOGIN_MODELS must be 1 or unset");
-}
-
 /** The review providers an API-key bench run can use besides OpenAI/Anthropic:
  * the key a sandbox's pi needs (by name; the value rides bench.sh's --env-file)
  * and the models.json the sandbox gets. */
@@ -216,17 +153,8 @@ export const BENCH_PROVIDERS = {
 export function authFingerprint(mode: BenchAuthMode = benchAuthMode()): {
   auth?: "api-key";
   inference?: { provider: BenchProviderId; config_sha256: string };
-  login_models_sha256?: string;
 } {
   const provider = benchProvider();
-  // The login route's added models change what a model spec runs, so a run
-  // that uses them never resumes over, or mixes with, one that does not.
-  if (mode === "login" && benchLoginModels())
-    return {
-      login_models_sha256: createHash("sha256")
-        .update(JSON.stringify(codexLoginModels()))
-        .digest("hex"),
-    };
   return mode === "api-key"
     ? {
         auth: "api-key",
@@ -299,14 +227,6 @@ export function syncBenchAuth(o: {
     words: BENCH_AUTH_WORDS,
   });
   writeBenchSettings(o.dstDir, o.root);
-  if (benchLoginModels()) {
-    writeFileSync(
-      join(o.dstDir, "models.json"),
-      JSON.stringify(codexLoginModels(), null, 2) + "\n",
-      { mode: 0o600 },
-    );
-    chmodSync(join(o.dstDir, "models.json"), 0o600);
-  }
   return { expiresAt };
 }
 

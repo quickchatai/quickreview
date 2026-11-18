@@ -732,8 +732,8 @@ def collect(a) -> tuple:
             (ASTRA, "State-machine review, GPT-6.2 Astra (preliminary)",
              "preliminary: review.profile=state-machines as sm4-p, reviewer openai-codex/gpt-6.2-astra, lens pass "
              "deadline 20 minutes (engine.lens_pass_deadline_min; the shipped default is 8); its build is public main "
-             "plus one bench-only commit that registers the model with pi (QCR_BENCH_LOGIN_MODELS, with OpenAI's list "
-             "prices at release), the review code unchanged; the study labelled none of its comments and pooled none "
+             "plus one bench-only commit that gives the pinned pi a models.json entry for the model, which pi's own "
+             "catalog added after its 1.5.2 release, the review code unchanged; the study labelled none of its comments and pooled none "
              "of its bugs")):
         runs = [f"{arm}-{s}" for s in SETS if s in bysub]
         rj = [json.load(open(os.path.join(a.runs_dir, r, "run.json"))) for r in runs]
