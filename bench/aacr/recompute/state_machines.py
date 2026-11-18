@@ -12,9 +12,9 @@ judge gpt-6.1-sol (judge effort high): the state-machine review (`sm4-p`, `revie
 on public main) and the default review with its automatic state lens off (`sm1-c`, an earlier build from a
 branch that was never published). A third run, `sm5-a`, is a preliminary addition: the state-machine review
 with openai-codex/gpt-6.2-astra as the reviewer, the same judge, and a 20-minute lens deadline (the shipped
-default is 8); the study labelled none of its comments and pooled none of its bugs. AI readers relabelled the 186 answer-key defects of those PRs as state
-bugs or not, labelled every comment of the state review and every comment of the default review the judge
-matched to no answer-key defect, and pooled the real state bugs either review posted that the answer key
+default is 8); the study labelled none of its comments and pooled none of its bugs. AI readers relabelled
+the 186 answer-key defects of those PRs as state bugs or not, labelled every comment of the state review
+and every comment of the default review the judge matched to no answer-key defect, and pooled the real state bugs either review posted that the answer key
 does not list. The folder holds the three runs' posted comments and judge verdicts, every label, and the
 earlier builds' found flags on the strict state defects; README.md (written by `build`) says what each
 table holds.

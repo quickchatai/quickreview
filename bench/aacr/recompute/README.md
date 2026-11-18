@@ -180,7 +180,8 @@ rounding rule).
 The dataset's `state_machines/` folder holds a study of the state-machine
 review: two runs' posted comments and judge verdicts, the study's labels and its
 pooled state bugs, and a preliminary third run's comments and verdicts (`sm5-a`,
-GPT-6.2 Astra as the reviewer; unlabelled) (its README describes each table). `state_machines.py` runs
+GPT-6.2 Astra as the reviewer, its comments unlabelled); its README describes each
+table. `state_machines.py` runs
 validation.json's checks of it: every file against the committed
 `bench/aacr/hf/state-machines.sha256`, the tables' columns, the rows against each
 other, the folder README against the one its tables give (`readme()`), no label
