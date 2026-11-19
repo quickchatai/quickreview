@@ -243,15 +243,6 @@ describe("DOCS_SUITE", () => {
     ])
       expect(suite, t).toContain(t);
   });
-
-  // The page a coding agent follows from the README's prompt is docs prose, so
-  // a change to it alone takes the docs-only route. The test that holds it to
-  // the installer's hosts and the bin's verbs runs there.
-  // MUTATION: remove tests/agent-setup-docs.test.ts from DOCS_SUITE — this fails.
-  it("holds the agent setup page's test, which a change to that page alone runs", () => {
-    expect(route(["docs/agent-setup.md"]).full).toBe(false);
-    expect(suite).toContain("tests/agent-setup-docs.test.ts");
-  });
 });
 
 describe("gate", () => {

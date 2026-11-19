@@ -31,15 +31,17 @@ Paste this into Claude Code, Codex or any other coding agent, inside your
 repository:
 
 ```text
-Set up QuickReview for me. Fetch this page and follow it step by step:
+Set up QuickReview for me. Download this page with curl, read all of it,
+and follow it step by step:
 https://raw.githubusercontent.com/quickchatai/quickreview/main/docs/agent-setup.md
+If your sandbox blocks the download, ask me to approve it.
 Ask me before anything that signs in, spends money or writes to GitHub.
 ```
 
 The agent installs QuickReview's plugin into itself, checks for a model
-credential and tells you what to type next. Or take the same steps by hand:
+credential and tells you what to type next.
 
-Your first review, in Claude Code. Run these two lines in a terminal. They need
+To do it by hand in Claude Code, run these two lines in a terminal. They need
 Node 22.19 or later, and no Docker.
 
 ```sh
@@ -65,9 +67,10 @@ uncommitted changes or a pull request and it reviews those instead.
   is installed with it, and never uses your coding agent's own login. Any
   provider pi supports works, by subscription or API key. With no credential, a
   review stops at the preview, which is free, and says what to do.
-- **A review is slow and costs money.** On GPT-6.1 Sol, the model we measured,
-  a review took about two dollars and more than fifteen minutes per pull
-  request. The six other reviewers we ran on the same pull requests each
+- **A review is slow and costs money.** On GPT-6.1 Sol through a ChatGPT
+  sign-in, the model and route we measured, a review took about two dollars
+  and more than fifteen minutes per pull request. On another model or route
+  the preview shows no estimate, only where the review stops. The six other reviewers we ran on the same pull requests each
   averaged under three minutes and under a dollar ([Benchmarks](#benchmarks)).
   On a subscription plan a review uses quota and adds no bill.
 - **It reads your code and runs none of it:** no build, no tests, no scripts

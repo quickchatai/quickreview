@@ -7,6 +7,8 @@
 //   - every `npx -y @quickchatai/quickreview <verb>` it gives is a verb the
 //     bin's front door routes (src/qcrbin.ts binRoute), and no npx of the
 //     package goes without `-y`, which a terminal would stop at;
+//   - every review it gives parses as a preview (src/reviewargs.ts), and
+//     step 4's model check asks for JSON;
 //   - the README's prompt opens the Quickstart and fetches the page by its
 //     raw URL on the package's own repository, and repeats no install line.
 import { existsSync, readFileSync } from "node:fs";
@@ -15,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import { NAMES, loadSource } from "../plugins/qcr/render.mjs";
 import { PLUGIN_HOSTS } from "../src/plugincli.js";
 import { binRoute } from "../src/qcrbin.js";
+import { parseReviewArgs } from "../src/reviewargs.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const read = (p: string): string => readFileSync(join(ROOT, p), "utf8");
@@ -77,6 +80,23 @@ describe("docs/agent-setup.md: the commands", () => {
   // MUTATION: drop `-y` from the login line in step 4 — this fails.
   it("passes -y to every npx of the package", () => {
     expect(PAGE.match(/npx @quickchatai\/quickreview/g)).toBeNull();
+  });
+
+  // A review the page gives without `--preview` would start a paid run, and
+  // one under the limit starts without asking. Step 4 reads the fields of
+  // `model --json`.
+  // MUTATION: drop --preview from step 5's review line, or --json from step
+  // 4's first model line — this fails.
+  it("gives every review as a preview, and step 4's model check as JSON", () => {
+    const routed = calls.map((argv) => ({ argv, r: binRoute(argv) }));
+    const reviews = routed.filter((c) => c.r.route === "review");
+    expect(reviews.length).toBeGreaterThan(0);
+    for (const { argv, r } of reviews) {
+      const cmd = parseReviewArgs("args" in r ? r.args : []);
+      expect(!cmd.help && cmd.preview, argv.join(" ")).toBe(true);
+    }
+    const model = routed.find((c) => c.r.route === "model");
+    expect(model && "json" in model.r && model.r.json, "the first model call").toBe(true);
   });
 });
 
