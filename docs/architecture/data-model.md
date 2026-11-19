@@ -589,15 +589,26 @@ usage on every pull request. That line is the starting value: the daemon's
 stored choice (`trigger_choice`) is the one source of truth, and the latest
 choice wins. `set-trigger` makes a choice without writing the config, and so
 does `setup --trigger` once the reviewer is up: the walk's last step,
-`set_trigger`, hands the word through the same sealed channel (`handTrigger`,
-`src/host/trigger.ts`), and a word that cannot be handed over fails the walk
-there as `trigger_failed`. The daemon reads the choice again at every poll,
+`set_trigger`, hands the word through the same sealed channel (`handTriggerTo`,
+`src/host/trigger.ts`) and, since nobody waits on the walk, reads the
+daemon's receipt for up to 60 s (`TRIGGER_RECEIPT_MS`, past the operator
+watcher's 15 s fallback sweep and one queued command ahead). A reviewer found
+running that refuses the word, or whose channel cannot take it, fails the
+walk there as `trigger_failed`; a reviewer that is not there to take it fails
+it as what is wrong (`reviewer_not_running`, `reviewer_unreachable`,
+`config_unreadable`). A word still unanswered after the wait is on the
+channel: setup is `done` with `trigger_pending`, and the export's `trigger`,
+the daemon's own word, is how a host sees it land. The daemon reads the choice again at every poll,
 across restarts, so a setup run again with another word takes effect on a
 running reviewer with no restart, and a `set-trigger` after it wins over it in
 turn. Left out, the config's own stays (`label` on a new install), nothing is
 handed, and the choice stands. Neither restarts anything, so the daemon
 follows with its rounds, its queue and its state untouched, and the export's
-`trigger` says the word it follows. The trigger is never part of what a reviewer is bound to: unlike the
+`trigger` says the word it follows. That rule, that the export and the home
+report the trigger from the daemon's own writing and with the daemon off say
+none, holds on a host-managed install; on an install no host manages no host
+choice exists, so the home names the config's word while the daemon is off,
+as the one it will start on (the export still leaves `trigger` out). The trigger is never part of what a reviewer is bound to: unlike the
 repository and the identity, it can change at any time.
 
 **`state/onboarding/host.json`** (`HostRecord` in `src/host/record.ts`) is
@@ -605,7 +616,7 @@ what the verbs keep between calls:
 
 | Part | Written by | Holds |
 | --- | --- | --- |
-| `setup` | `host setup` and its walk | `state` (`running`, `done`, `failed`), the `step` it is at or stopped at (`SETUP_STEPS`), a `problem` (`SETUP_PROBLEMS`), and when it started and last moved; and, for the walk alone (the export never prints it), the `trigger` setup was given |
+| `setup` | `host setup` and its walk | `state` (`running`, `done`, `failed`), the `step` it is at or stopped at (`SETUP_STEPS`), a `problem` (`SETUP_PROBLEMS`), `trigger_pending` on a `done` whose `--trigger` the reviewer had not taken when the walk stopped waiting, and when it started and last moved; and, for the walk alone (the export never prints it), the `trigger` setup was given |
 | `go_live` | `host go-live` and its walk | `state`, a `problem` (`GO_LIVE_PROBLEMS`), and the two times |
 | `proof_request` | `host proof-start` | the pull request, and the newest round that had already ended when it was asked (`floor`): only a later round answers the request |
 | `proof_shown` | `host proof-result` | the practice round it returned. A go-live is admitted only on a round with this mark |

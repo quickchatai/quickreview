@@ -60,7 +60,7 @@
     },
     "trigger": {
       "enum": ["label", "all"],
-      "description": "What the reviewer picks up by itself: the trigger the running reviewer follows, as it writes it itself, never the config file's word. On an install a host manages it is the latest choice the reviewer has stored: `host set-trigger`, or `host setup --trigger`, which hands its word the same way once the reviewer is up (the setup step set_trigger); the latest wins, with no restart, and the config's `[github] trigger` is only the starting value, followed where no choice was ever stored. On any other install it is the config's word as the reviewer started on it. label: pull requests that carry the trigger label or a review request. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request, and the labelled and review-requested ones as under label; in dry-run it takes only the labelled and review-requested ones, so the first pass after go-live takes each of the others. Absent when the reviewer is not running, or does not say."
+      "description": "What the reviewer picks up by itself: the trigger the running reviewer follows, as it writes it itself, never the config file's word. On an install a host manages it is the latest choice the reviewer has stored: `host set-trigger`, or `host setup --trigger`, which hands its word the same way once the reviewer is up (the setup step set_trigger); the latest wins, with no restart, and the config's `[github] trigger` is only the starting value, followed where no choice was ever stored. On any other install it is the config's word as the reviewer started on it. It is how a host sees setup's --trigger land when setup says trigger_pending. label: pull requests that carry the trigger label or a review request. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request, and the labelled and review-requested ones as under label; in dry-run it takes only the labelled and review-requested ones, so the first pass after go-live takes each of the others. Absent when the reviewer is not running, or does not say."
     },
     "poll": {
       "type": "object",
@@ -178,11 +178,17 @@
             "verify_failed",
             "config_unreadable",
             "step_failed",
+            "reviewer_not_running",
+            "reviewer_unreachable",
             "trigger_failed",
             "interrupted",
             "internal_error"
           ],
-          "description": "Why it failed. trigger_failed: setup's --trigger could not be handed to the running reviewer, or the reviewer refused it; the reviewer is up and follows the trigger it followed before. interrupted: the process that ran it is gone and left no result."
+          "description": "Why it failed. config_unreadable: the config cannot be read, or at set_trigger names no repository any more. At set_trigger, when the reviewer is not there to take setup's --trigger: reviewer_not_running (it is not running) or reviewer_unreachable (whether it runs cannot be told). trigger_failed: only a reviewer found running at set_trigger that refused setup's --trigger, or whose channel could not take the word; it follows the trigger it followed before. interrupted: the process that ran it is gone and left no result."
+        },
+        "trigger_pending": {
+          "const": true,
+          "description": "Only with done: setup's --trigger is on the running reviewer's channel, and the reviewer had not taken it after 60 s of waiting. Setup is done; the board's trigger, the reviewer's own word, is how a host sees the word land: it says setup's word once the reviewer has taken it. Absent when the reviewer took it, or setup was given no --trigger."
         }
       },
       "description": "The setup `qcr --schema 3 host setup` started: running with the step it is at, done, or failed with the step it stopped at and why. Absent when no setup was started."

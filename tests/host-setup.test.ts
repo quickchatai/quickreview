@@ -15,7 +15,14 @@ import { SWITCH_ON_ORDER, runSwitchOn } from "../src/home/switchon.js";
 import { SETUP_STEPS } from "../src/host/outcomes.js";
 import { readHostProgress, readHostRecord } from "../src/host/record.js";
 import { bindingMismatch, hostSetup, parseSetupArgs } from "../src/host/setup.js";
-import { SET_TRIGGER_STEP_ID, setupProblem, walkSetup } from "../src/host/walk.js";
+import { RECEIPT_TRIES, RECEIPT_WAIT_MS } from "../src/host/proof.js";
+import {
+  SET_TRIGGER_STEP_ID,
+  TRIGGER_RECEIPT_TRIES,
+  setupProblem,
+  standingProblem,
+  walkSetup,
+} from "../src/host/walk.js";
 import { acquireChecklistLock, checklistLockPath } from "../src/onboard/checklistlock.js";
 import { CHOICE_KEYS } from "../src/onboard/choices.js";
 import { GO_LIVE_CONFIRMATION, GO_LIVE_STEP_ID } from "../src/onboard/steps/golive.js";
@@ -620,18 +627,16 @@ describe("the walk", () => {
     expect(progress()).toEqual({ setup: { state: "done" } });
   });
 
-  // MUTATION: record the walk as done whatever handTrigger answered — a word
-  // the reviewer never took reads as set up, and this fails.
-  it("a --trigger that cannot be handed over fails the walk at set_trigger, as trigger_failed", async () => {
+  // MUTATION: record the walk as done whatever the hand-over answered — a
+  // word the reviewer never took reads as set up, and this fails.
+  it("a --trigger a running reviewer will not take fails the walk at set_trigger, as trigger_failed", async () => {
     w.writeConfig(MARKER_ONLY);
     for (const [why, set] of [
       ["the reviewer refuses it", () => void (w.daemon.receipt = "refused")],
       ["the channel cannot be written", () => void (w.daemon.writeFails = true)],
-      ["the reviewer is not running", () => void (w.daemon.running = false)],
     ] as const) {
       w.daemon.receipt = "queued";
       w.daemon.writeFails = false;
-      w.daemon.running = true;
       set();
       expect(await hostSetup(w.ports, [...ARGS, "--trigger", "all"]), why).toEqual({
         state: "started",
@@ -642,15 +647,84 @@ describe("the walk", () => {
       });
       expect(w.logs.at(-1), why).toMatch(/the trigger "all" could not be handed to the reviewer/);
     }
-    // a daemon that has not answered yet has it on its channel: handed
-    w.daemon.running = true;
+  });
+
+  // `trigger_failed` says the reviewer is up and refused: a reviewer that is
+  // not there to take the word is said as what is wrong with it.
+  // MUTATION: map every refusal at set_trigger to "trigger_failed" (drop
+  // `standingProblem`) — a stopped reviewer reads as one that is up, and
+  // this fails.
+  it("a reviewer that is not there to take the --trigger fails the walk by what is wrong with it", async () => {
+    w.writeConfig(MARKER_ONLY);
+    for (const [why, set, problem] of [
+      [
+        "the reviewer is not running",
+        () => void (w.daemon.running = false),
+        "reviewer_not_running",
+      ],
+      [
+        "whether it runs cannot be told",
+        () => void (w.daemon.psFails = true),
+        "reviewer_unreachable",
+      ],
+    ] as const) {
+      w.daemon.running = true;
+      w.daemon.psFails = false;
+      set();
+      expect(await hostSetup(w.ports, [...ARGS, "--trigger", "all"]), why).toEqual({
+        state: "started",
+      });
+      expect(await runWalk(), why).toBe(1);
+      expect(progress(), why).toEqual({ setup: { state: "failed", step: "set_trigger", problem } });
+      expect(w.daemon.payloads, why).toEqual([]);
+      expect(w.logs.at(-1), why).toMatch(/the trigger "all" could not be handed to the reviewer/);
+    }
+    // the config's own refusals keep the config's word
+    expect(standingProblem("config_unreadable")).toBe("config_unreadable");
+    expect(standingProblem("not_set_up")).toBe("config_unreadable");
+  });
+
+  // The walk is detached and can wait: a receipt the operator watcher's
+  // fallback sweep writes late is still read.
+  // MUTATION: hand the word with the verb's moment (`handTriggerTo` with
+  // RECEIPT_TRIES) — the late receipt is never read, and this fails.
+  it("waits for a late receipt, and a late refusal still fails the walk", async () => {
+    w.writeConfig(MARKER_ONLY);
+    expect(TRIGGER_RECEIPT_TRIES * RECEIPT_WAIT_MS).toBeGreaterThanOrEqual(60_000);
+    const late = TRIGGER_RECEIPT_TRIES - 1;
+    expect(late).toBeGreaterThan(RECEIPT_TRIES);
+
+    w.daemon.pendingFor = late;
+    expect(await hostSetup(w.ports, [...ARGS, "--trigger", "all"])).toEqual({ state: "started" });
+    expect(await runWalk()).toBe(0);
+    expect(progress()).toEqual({ setup: { state: "done" } });
+    expect(w.logs.join("\n")).toMatch(/the reviewer follows the trigger "all"/);
+
+    w.daemon.receiptReads = 0;
+    w.daemon.receipt = "refused";
+    expect(await hostSetup(w.ports, [...ARGS, "--trigger", "all"])).toEqual({ state: "started" });
+    expect(await runWalk()).toBe(1);
+    expect(progress()).toEqual({
+      setup: { state: "failed", step: "set_trigger", problem: "trigger_failed" },
+    });
+  });
+
+  // MUTATION: drop `trigger_pending` from the walk's done — a word still
+  // queued reads as taken, and this fails.
+  it("a word still unanswered after the wait is done, with trigger_pending", async () => {
+    w.writeConfig(MARKER_ONLY);
     w.daemon.receipt = "pending";
     expect(await hostSetup(w.ports, [...ARGS, "--trigger", "label"])).toEqual({
       state: "started",
     });
     expect(await runWalk()).toBe(0);
+    expect(w.daemon.receiptReads).toBe(TRIGGER_RECEIPT_TRIES);
+    expect(progress()).toEqual({ setup: { state: "done", trigger_pending: true } });
+    expect(w.logs.join("\n")).toMatch(/was not taken within 60 s/);
+    // a setup run again with nothing to hand clears it
+    expect(await hostSetup(w.ports, ARGS)).toEqual({ state: "started" });
+    expect(await runWalk()).toBe(0);
     expect(progress()).toEqual({ setup: { state: "done" } });
-    expect(w.logs.join("\n")).toMatch(/takes it when it reads its channel/);
   });
 
   it("a machine that cannot run it fails at the machine checks, by its failed check", async () => {

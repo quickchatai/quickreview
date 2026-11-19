@@ -12,9 +12,16 @@
 // Its last step is its own (`set_trigger`), walked when setup was given
 // `--trigger`: once the reviewer is up, the word is handed to it through the
 // sealed operator channel `host set-trigger` uses (src/host/trigger.ts), so
-// the daemon's stored choice, the one it follows, is setup's word. A word
-// that cannot be handed fails the walk as `trigger_failed`; the reviewer is
-// up then, on the trigger it followed before.
+// the daemon's stored choice, the one it follows, is setup's word. Nobody
+// waits on the walk, so it reads the daemon's receipt for up to
+// TRIGGER_RECEIPT_MS, not the verb's moment. A reviewer that is not there to
+// take the word fails the step with what is wrong (`reviewer_not_running`,
+// `reviewer_unreachable`, `config_unreadable`); `trigger_failed` is only a
+// reviewer found running that refused the word or whose channel could not
+// take it, which then follows the trigger it followed before. A word still
+// unanswered when the wait is over is on the channel: setup is `done` with
+// `trigger_pending`, and the export's `trigger`, the daemon's own word, says
+// when it has taken it.
 //
 // How far it has got is written to the host record after every step, which
 // is what the board export prints as `setup`: `running` with the step, then
@@ -37,14 +44,39 @@ import { MEMORY_KEYS_STEP_ID } from "../onboard/steps/memorykeys.js";
 import { VERIFY_STACK_STEP_ID } from "../onboard/steps/verifyup.js";
 import type { SwitchResult } from "../home/ports.js";
 import { DAEMON_START_STEP_ID, MACHINE_CHECKS_STEP_ID, runSwitchOn } from "../home/switchon.js";
-import { SETUP_STEPS, type SetupProblem, type SetupStepId } from "./outcomes.js";
+import { SETUP_STEPS, type HostReason, type SetupProblem, type SetupStepId } from "./outcomes.js";
 import type { HostPorts } from "./ports.js";
+import { RECEIPT_WAIT_MS, isAnswer, standing } from "./proof.js";
 import { readHostRecord, updateHostRecord } from "./record.js";
 import { sessionMarker } from "./session.js";
-import { handTrigger } from "./trigger.js";
+import { handTriggerTo } from "./trigger.js";
 
 /** The walk's own last step: setup's `--trigger`, handed to the reviewer. */
 export const SET_TRIGGER_STEP_ID = "set_trigger" satisfies SetupStepId;
+
+/** How long the walk waits for the reviewer to take setup's `--trigger`:
+ * past the operator watcher's fallback sweep (15 s, src/commands.ts), which
+ * is what finds the file on a box whose operator directory this very write
+ * created, with one queued command served ahead of it. */
+export const TRIGGER_RECEIPT_MS = 60_000;
+export const TRIGGER_RECEIPT_TRIES = Math.ceil(TRIGGER_RECEIPT_MS / RECEIPT_WAIT_MS);
+
+/** The closed word for a reviewer that was not there to hand setup's
+ * `--trigger` to, from `standing`'s refusal. */
+export function standingProblem(reason: HostReason | undefined): SetupProblem {
+  switch (reason) {
+    case "reviewer_not_running":
+      return "reviewer_not_running";
+    case "reviewer_unreachable":
+      return "reviewer_unreachable";
+    // the config the walk wrote cannot be read, or names no repository now
+    case "config_unreadable":
+    case "not_set_up":
+      return "config_unreadable";
+    default:
+      return "step_failed";
+  }
+}
 
 /** How often, and how long apart, a walk looks for the lock handed to it:
  * the verb rewrites the record right after it starts the walk. */
@@ -134,6 +166,7 @@ export async function walkSetup(ports: HostPorts, token: string): Promise<number
     state: "running" | "done" | "failed",
     step: SetupStepId | undefined,
     problem?: SetupProblem,
+    triggerPending = false,
   ): void => {
     updateHostRecord(ports.stateDir, (r) => ({
       ...r,
@@ -141,6 +174,7 @@ export async function walkSetup(ports: HostPorts, token: string): Promise<number
         state,
         ...(step !== undefined ? { step } : {}),
         ...(problem !== undefined ? { problem } : {}),
+        ...(triggerPending ? { trigger_pending: true as const } : {}),
         started_at: startedAt,
         updated_at: ports.now().toISOString(),
       },
@@ -207,23 +241,32 @@ export async function walkSetup(ports: HostPorts, token: string): Promise<number
     // setup's `--trigger`, handed to the reviewer now it is up, the way
     // `set-trigger` hands it: the daemon's stored choice is the one it
     // follows, so a setup run again with another word takes effect at once
+    let pending = false;
     if (trigger !== undefined) {
       at(SET_TRIGGER_STEP_ID);
-      const handed = await handTrigger(ports, trigger);
-      if (handed.state !== "done" && handed.state !== "sent") {
+      const couldNot = (why: string | undefined, problem: SetupProblem): number => {
         ports.log(
-          `host setup: the trigger "${trigger}" could not be handed to the reviewer: ${handed.message ?? handed.reason ?? handed.state}`,
+          `host setup: the trigger "${trigger}" could not be handed to the reviewer: ${why ?? problem}`,
         );
-        write("failed", SET_TRIGGER_STEP_ID, "trigger_failed");
+        write("failed", SET_TRIGGER_STEP_ID, problem);
         return 1;
-      }
+      };
+      const reviewer = await standing(ports);
+      // no reviewer to take the word: say what is wrong with it
+      if (isAnswer(reviewer)) return couldNot(reviewer.message, standingProblem(reviewer.reason));
+      const handed = await handTriggerTo(ports, reviewer, trigger, TRIGGER_RECEIPT_TRIES);
+      // a reviewer found running refused the word, or its channel could not
+      // take it
+      if (handed.state !== "done" && handed.state !== "sent")
+        return couldNot(handed.message, "trigger_failed");
+      pending = handed.state === "sent";
       ports.log(
-        handed.state === "done"
-          ? `host setup: the reviewer follows the trigger "${trigger}"`
-          : `host setup: the trigger "${trigger}" is handed to the reviewer, which takes it when it reads its channel`,
+        pending
+          ? `host setup: the trigger "${trigger}" is on the reviewer's channel and was not taken within ${TRIGGER_RECEIPT_MS / 1000} s; the reviewer takes it when it reads its channel`
+          : `host setup: the reviewer follows the trigger "${trigger}"`,
       );
     }
-    write("done", undefined);
+    write("done", undefined, undefined, pending);
     return 0;
   } catch (err) {
     ports.log(`host setup: the walk stopped: ${message(err)}`);

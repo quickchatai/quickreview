@@ -134,10 +134,18 @@ export const SETUP_PROBLEMS = [
   "memory_failed",
   "start_failed",
   "verify_failed",
+  /** The config cannot be read; at `set_trigger`, also a config that names
+   * no repository any more. */
   "config_unreadable",
   "step_failed",
-  /** Setup's `--trigger` could not be handed to the reviewer, or the
-   * reviewer refused it. */
+  /** At `set_trigger`: the reviewer is not running, so setup's `--trigger`
+   * was not handed over. */
+  "reviewer_not_running",
+  /** At `set_trigger`: whether the reviewer runs could not be told, so
+   * setup's `--trigger` was not handed over. */
+  "reviewer_unreachable",
+  /** At `set_trigger`, of a reviewer found running: it refused setup's
+   * `--trigger`, or its channel could not take the word. Only then. */
   "trigger_failed",
   /** The walk's process is gone and left no result. */
   "interrupted",

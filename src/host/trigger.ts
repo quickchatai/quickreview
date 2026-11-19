@@ -50,7 +50,14 @@ import { operatorCommandWriteScriptAt } from "../operatorwrite.js";
 import { admit, hostManagedRefusal, notHostManaged } from "./admit.js";
 import { TRIGGER_WORDS, refused, type HostAnswer, type TriggerWord } from "./outcomes.js";
 import { lockOptions, type HostPorts } from "./ports.js";
-import { RECEIPT_TRIES, RECEIPT_WAIT_MS, isAnswer, receiptOf, standing } from "./proof.js";
+import {
+  RECEIPT_TRIES,
+  RECEIPT_WAIT_MS,
+  isAnswer,
+  receiptOf,
+  standing,
+  type Standing,
+} from "./proof.js";
 
 export const SET_TRIGGER_USAGE = "usage: qcr --schema 3 host set-trigger label|all";
 
@@ -103,6 +110,22 @@ export function setTriggerWriteArgv(name: string, trigger: TriggerWord): string[
 export async function handTrigger(ports: HostPorts, trigger: TriggerWord): Promise<HostAnswer> {
   const at = await standing(ports);
   if (isAnswer(at)) return at;
+  return handTriggerTo(ports, at, trigger);
+}
+
+/**
+ * `handTrigger` once there is a reviewer to tell (`standing`): write the
+ * command, then read its receipt `tries` times, `RECEIPT_WAIT_MS` apart (by
+ * default a moment, for a verb a host waits on). Every refusal here is
+ * of a reviewer that was found running: the channel could not be written
+ * (`reviewer_unreachable`), or the daemon said no (`trigger_refused`).
+ */
+export async function handTriggerTo(
+  ports: HostPorts,
+  at: Standing,
+  trigger: TriggerWord,
+  tries = RECEIPT_TRIES,
+): Promise<HostAnswer> {
   const name = setTriggerFileName(ports.now(), trigger);
   const write = await at.transport.execAsRoot(setTriggerWriteArgv(name, trigger));
   if (write.code !== 0)
@@ -112,7 +135,7 @@ export async function handTrigger(ports: HostPorts, trigger: TriggerWord): Promi
         oneLine(write.stderr || write.stdout).slice(0, 200) || `exit ${write.code}`
       }). Nothing changed`,
     );
-  for (let attempt = 0; attempt < RECEIPT_TRIES; attempt += 1) {
+  for (let attempt = 0; attempt < tries; attempt += 1) {
     await ports.sleep(RECEIPT_WAIT_MS);
     const receipt = await receiptOf(at.transport, name);
     if (receipt.kind === "queued") return { state: "done", trigger };

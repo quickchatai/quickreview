@@ -64,6 +64,11 @@ export interface FakeDaemon {
   dryrun: Record<string, unknown>[];
   /** What the daemon answers a `review-now` command with. */
   receipt: "queued" | "refused" | "pending";
+  /** A daemon slow to read its channel: this many receipt reads answer
+   * pending before `receipt` is said. */
+  pendingFor: number;
+  /** How many times a receipt was read. */
+  receiptReads: number;
   /** The command write exits non-zero. */
   writeFails: boolean;
   /** The command files written, by name. */
@@ -184,7 +189,8 @@ function dockerOver(w: HostWorld): OnboardAdapters["runner"] {
       if (script.includes(".result.json")) {
         const served = [...d.served].find(([name]) => script.includes(name))?.[1];
         if (served !== undefined) return ok(JSON.stringify(served));
-        if (d.receipt === "pending") return ok("pending\n");
+        d.receiptReads += 1;
+        if (d.receipt === "pending" || d.receiptReads <= d.pendingFor) return ok("pending\n");
         return ok(
           JSON.stringify(
             d.receipt === "queued"
@@ -289,6 +295,8 @@ export function hostWorld(): HostWorld {
       whyFails: false,
       dryrun: [],
       receipt: "queued",
+      pendingFor: 0,
+      receiptReads: 0,
       writeFails: false,
       written: [],
       payloads: [],

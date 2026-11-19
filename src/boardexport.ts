@@ -93,6 +93,9 @@ export interface BoardStep {
   step?: string;
   /** Why it failed, in a closed word. */
   problem?: string;
+  /** A setup done while its `--trigger` waits on the reviewer's channel:
+   * `trigger` says the word once the reviewer has taken it. */
+  trigger_pending?: true;
 }
 
 /** The practice review the go-live is confirmed against. */
@@ -104,7 +107,7 @@ export interface BoardProof {
 }
 
 /** A go-live a host started. */
-export type BoardGoLive = Omit<BoardStep, "step">;
+export type BoardGoLive = Omit<BoardStep, "step" | "trigger_pending">;
 
 /** The host verbs' records the export carries. */
 export interface BoardProgress {

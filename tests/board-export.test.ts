@@ -641,6 +641,20 @@ describe("the records a host's verbs leave", () => {
     expect(await read(failing)).toEqual(bare);
   });
 
+  // A setup done while its --trigger is still on the reviewer's channel
+  // says so in a closed field; the export's `trigger` says when it lands.
+  // MUTATION: drop `trigger_pending` from the schema's `setup` — this fails.
+  it("a setup done with its --trigger pending validates, and only as true", async () => {
+    const out = await read(
+      fakeBoardPorts({ progress: () => ({ setup: { state: "done", trigger_pending: true } }) }),
+    );
+    expect(out.setup).toEqual({ state: "done", trigger_pending: true });
+    expect(validate(schema, out)).toEqual([]);
+    expect(
+      validate(schema, { ...out, setup: { state: "done", trigger_pending: false } }),
+    ).not.toEqual([]);
+  });
+
   // A go-live says nothing of a trigger label: no host verb writes one, and
   // the live daemon makes sure of it through the gate (src/triggerlabel.ts).
   // MUTATION: give the schema's `go_live` a `label` again, or say the label

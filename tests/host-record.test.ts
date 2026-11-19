@@ -196,6 +196,20 @@ describe("what the board export prints", () => {
     });
   });
 
+  // MUTATION: leave `trigger_pending` out of readHostProgress — a setup whose
+  // --trigger is still on the reviewer's channel reads as taken, and this
+  // fails.
+  it("a setup done while its --trigger waits on the channel says trigger_pending", () => {
+    updateHostRecord(stateDir, (r) => ({
+      ...r,
+      setup: { state: "done", trigger_pending: true, started_at: AT, updated_at: AT },
+    }));
+    expect(readHostProgress(stateDir, { alive })).toEqual({
+      setup: { state: "done", trigger_pending: true },
+    });
+    expect(readHostRecord(stateDir).setup).toMatchObject({ trigger_pending: true });
+  });
+
   // A go-live says nothing of a trigger label: no host verb writes one. A
   // record an earlier build left with a `label` beside it reads without it.
   // MUTATION: read `label` off the record again in goLiveOf and print it in

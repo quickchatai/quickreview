@@ -246,8 +246,14 @@ default. A second choice reviews every pull request.
   fingerprint never moves. **`host setup --trigger label|all`** writes that
   starting value into the config and, once the reviewer is up, hands the same
   word through the same channel, as the setup walk's last step
-  (`set_trigger`; a word that cannot be handed over fails the walk there
-  with the problem `trigger_failed`). A setup run again with another word
+  (`set_trigger`). The walk reads the daemon's receipt for up to 60 s, past
+  the operator watcher's fallback sweep; a reviewer found running that
+  refuses the word, or whose channel cannot take it, fails the walk there
+  with the problem `trigger_failed`, and one that is not there to take it
+  with `reviewer_not_running`, `reviewer_unreachable` or `config_unreadable`.
+  A word still unanswered after the wait leaves setup `done` with
+  `trigger_pending: true`, and the export's `trigger` says when the daemon
+  has taken it. A setup run again with another word
   therefore takes effect on a running reviewer with no restart, and a
   `set-trigger` after it wins over it in turn. Left out, the config's own
   stays (`label` on a new install), nothing is handed, and the daemon's

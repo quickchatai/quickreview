@@ -67,6 +67,11 @@ export interface SetupProgress {
   state: ProgressState;
   step?: SetupStepId;
   problem?: SetupProblem;
+  /** With `done`: setup's `--trigger` is on the reviewer's channel and the
+   * reviewer had not taken it when the walk stopped waiting
+   * (TRIGGER_RECEIPT_MS, src/host/walk.ts). Printed by the export; the
+   * export's `trigger`, the daemon's own word, says when it has. */
+  trigger_pending?: true;
   /** The `--trigger` this setup was given, which its walk reads as it
    * starts and hands to the reviewer once it is up (the `set_trigger` step).
    * Absent: it was given none, and the reviewer's own choice stands. Not
@@ -145,6 +150,7 @@ function setupOf(v: unknown): SetupProgress | undefined {
     state,
     ...(step !== undefined ? { step } : {}),
     ...(problem !== undefined ? { problem } : {}),
+    ...(v["trigger_pending"] === true ? { trigger_pending: true as const } : {}),
     ...(trigger !== undefined ? { trigger } : {}),
     started_at: started,
     updated_at: str(v["updated_at"]) ?? started,
@@ -271,7 +277,12 @@ export function updateHostRecord(
 
 /** What the board export prints of a host's long steps and practice review. */
 export interface HostProgress {
-  setup?: { state: ProgressState; step?: SetupStepId; problem?: SetupProblem };
+  setup?: {
+    state: ProgressState;
+    step?: SetupStepId;
+    problem?: SetupProblem;
+    trigger_pending?: true;
+  };
   go_live?: { state: ProgressState; problem?: GoLiveProblem };
   proof?: HostProof;
 }
@@ -329,6 +340,7 @@ export function readHostProgress(stateDir: string, o: ProcessFacts = {}): HostPr
         : s.problem !== undefined
           ? { problem: s.problem }
           : {}),
+      ...(!lost && s.trigger_pending === true ? { trigger_pending: true as const } : {}),
     };
   }
   if (record.go_live !== undefined) {
