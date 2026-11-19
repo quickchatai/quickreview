@@ -27,6 +27,18 @@ finding is then checked against the code, and you get one review. It is in
 
 ## Quickstart
 
+Paste this into Claude Code, Codex or any other coding agent, inside your
+repository:
+
+```text
+Set up QuickReview for me. Fetch this page and follow it step by step:
+https://raw.githubusercontent.com/quickchatai/quickreview/main/docs/agent-setup.md
+Ask me before anything that signs in, spends money or writes to GitHub.
+```
+
+The agent installs QuickReview's plugin into itself, checks for a model
+credential and tells you what to type next. Or take the same steps by hand:
+
 Your first review, in Claude Code. Run these two lines in a terminal. They need
 Node 22.19 or later, and no Docker.
 
@@ -340,7 +352,7 @@ the reviewer. Webhooks need the GitHub App route and an HTTPS URL
 
 ## Documentation
 
-- **Using it:** [coding agents](docs/plugin.md), [pi](packages/pi-plugin/README.md), [models, credentials and price](docs/llm-setup.md), [repo profiles and the scan](docs/profiles.md), [the GitHub Action](docs/action.md)
+- **Using it:** [setup by your coding agent](docs/agent-setup.md), [coding agents](docs/plugin.md), [pi](packages/pi-plugin/README.md), [models, credentials and price](docs/llm-setup.md), [repo profiles and the scan](docs/profiles.md), [the GitHub Action](docs/action.md)
 - **Running the bot:** [guided setup](docs/onboarding.md), [the GitHub App](docs/github-app-setup.md), [the Docker stack](docker/README.md), [the server route](deploy/ansible/README.md), [the `qcr` wrapper](docs/host-wrapper.md), [the dry-run flag](docs/ownership.md)
 - **How it works:** [architecture](docs/architecture/README.md), [the report, with every lens](bench/aacr/paper/quickreview.pdf), [what stops a review running your code](docs/exec-boundary.md), [memory embeddings](docs/memory-embeddings.md), [the manifesto](MANIFESTO.md)
 - **How it was measured:** [every benchmark result](BENCHMARKS.md), [the benchmark harness](bench/aacr/README.md)

@@ -44,6 +44,7 @@ export const isDocs = (p) =>
  * with no dist/. */
 export const DOCS_SUITE = [
   "tests/action.test.ts",
+  "tests/agent-setup-docs.test.ts",
   "tests/bench-claims.test.ts",
   "tests/bench-recompute.test.ts",
   "tests/ci-clone-smoke.test.ts",
