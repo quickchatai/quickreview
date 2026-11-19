@@ -44,6 +44,7 @@
     "0011-review-session-memory-boundary.patch",
     "0012-typecheck-against-the-real-pi.patch",
     "0013-createopenviking-factory.patch",
-    "0014-one-turn-sync-in-flight.patch"
+    "0014-one-turn-sync-in-flight.patch",
+    "0015-optional-enum-parameters.patch"
   ]
 }

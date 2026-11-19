@@ -926,10 +926,18 @@ export class PiHost {
   }
 
   /** A fresh settings manager per session: sessions never share mutable
-   * settings, and project settings (the reviewed repo's .pi/) are never read. */
+   * settings, and project settings (the reviewed repo's .pi/) are never read.
+   * The cache is warmed while a session streams and no longer: pi 1.5's own
+   * default ("idle") goes on re-sending a settled session's whole prompt for
+   * up to 30 minutes on a model with a cache lifetime, as requests no round
+   * asked for and its cost does not count. A host's own setting still wins. */
   private settings(): SettingsManager {
     return SettingsManager.inMemory(
-      { httpIdleTimeoutMs: this.httpIdleTimeoutMs, ...this.options.settings },
+      {
+        cacheWarming: "streaming",
+        httpIdleTimeoutMs: this.httpIdleTimeoutMs,
+        ...this.options.settings,
+      },
       { projectTrusted: false },
     );
   }

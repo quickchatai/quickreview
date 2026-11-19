@@ -192,6 +192,18 @@ describe("[runLens] a pass", () => {
     expect(asked(b)).toContain("Task: t2");
   });
 
+  // pi 1.5's default goes on warming a settled session's cache for up to 30
+  // minutes: requests no round asked for, on a cost nothing here counts.
+  // MUTATION: drop `cacheWarming: "streaming"` from PiHost.settings
+  // (pisdk.ts) — a session takes pi's default, "idle"; this fails.
+  it("warms its cache while it streams and no longer", async () => {
+    rig.faux.setResponses([fauxAssistantMessage("done")]);
+    const runner = createLensRunner(config());
+    await runner.run({ agent: "pass-a", task: "go" });
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]!.settingsManager.getCacheWarmingMode()).toBe("streaming");
+  });
+
   it("is read: text, usage, stop reason and timestamped messages, with one ledger line", async () => {
     rig.faux.setResponses([() => fauxAssistantMessage("the answer")]);
     const runner = createLensRunner(config());

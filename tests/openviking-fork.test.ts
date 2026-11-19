@@ -167,7 +167,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(15); // 0000 scaffolding + eleven numbered + 0012 typing + 0013 (patch 12) + 0014 (patch 13)
+    expect(upstream.patches.length).toBe(16); // 0000 scaffolding + eleven numbered + 0012 typing + 0013 (patch 12) + 0014 (patch 13) + 0015 optional enums
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -632,9 +632,7 @@ describe("PATCH 5 — a second memory namespace, and only where it belongs", () 
       // The prefix and the parameter are both keyed off `multi`, so a
       // single-namespace pi (every review session) sees neither.
       expect(tools).toContain("multi ? `[${ns.name}] ${text}` : text");
-      expect(tools).toContain(
-        "multi\n    ? { namespace: Type.Optional(StringEnum(names)) }\n    : {}",
-      );
+      expect(tools).toContain("multi\n    ? { namespace: optionalEnum(names) }\n    : {}");
       // Every namespace-aware tool takes it, and every one appends the note.
       expect(tools.match(/\.\.\.nsParam,/g)?.length ?? 0).toBe(4);
       expect(tools.match(/\+ nsNote,/g)?.length ?? 0).toBe(4);
@@ -2441,11 +2439,20 @@ describe("PATCH 13 — one turn sync in flight per session, file 0014", () => {
 
   // MUTATION: drop "0014-one-turn-sync-in-flight.patch" from upstream.json's
   // patch list — this fails.
-  it("ships the patch, recorded last in the series, with its marker", () => {
-    expect(upstream.patches.at(-1)).toBe("0014-one-turn-sync-in-flight.patch");
+  it("ships the patch, recorded in the series, with its marker", () => {
+    expect(upstream.patches).toContain("0014-one-turn-sync-in-flight.patch");
     const patch = read(join("patches", "0014-one-turn-sync-in-flight.patch"));
     expect(patch).toContain("QCR PATCH 13");
     expect(patch).toContain("diff --git a/extensions/vendor/openviking-pi/sync.ts");
     expect(read("NOTICE")).toContain(" 13. ");
+  });
+
+  // MUTATION: drop "0015-optional-enum-parameters.patch" from upstream.json's
+  // patch list — this fails.
+  it("ships build patch 0015, recorded last in the series", () => {
+    expect(upstream.patches.at(-1)).toBe("0015-optional-enum-parameters.patch");
+    const patch = read(join("patches", "0015-optional-enum-parameters.patch"));
+    expect(patch).toContain("QCR build conformance");
+    expect(patch).toContain("diff --git a/extensions/vendor/openviking-pi/tools.ts");
   });
 });
