@@ -37,6 +37,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/engine/lens/cache-run.js";
 import {
   PACK_FIRST_APIS,
+  cacheSplitsByLevel,
   isPackFirstApi,
   packFirstApplies,
   leafCache,
@@ -381,9 +382,12 @@ describe("[cache telemetry] what a packed group's runs say of their first reques
     );
   });
 
-  // The passes of one group think at different levels.
-  // MUTATION: compare `reasoning` in prefixDifference (leaf-cache.ts) — this fails.
-  it("passes that differ from the warm-up in their thinking level alone are not said to differ", async () => {
+  // The provider keeps a cache per thinking level, so a group holds one
+  // level. A request that still reaches the provider at another level than
+  // its warm-up's reads none of it, and the line says so.
+  // MUTATION: drop the `reasoning` comparison from prefixDifference
+  // (leaf-cache.ts) — no warning; this fails.
+  it("a pass sent at another thinking level than its warm-up is said to differ in `reasoning`", async () => {
     respondWith(
       3,
       codexLike([], new FakeTransport(), undefined, {
@@ -393,7 +397,93 @@ describe("[cache telemetry] what a packed group's runs say of their first reques
     const warnings: string[] = [];
     const runner = createLensRunner(packed({ warn: (m) => warnings.push(m), debug: () => {} }));
     await Promise.all(["pass-a", "pass-b"].map((agent) => runner.run({ agent, task: agent })));
-    expect(warnings).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/does not extend its warm-up's \(it differs in reasoning\)/);
+  });
+});
+
+describe("[cache groups] one thinking level per group, one key per round", () => {
+  const packed = (over: Partial<LensRunConfig> = {}) =>
+    config({ cache: { size: 8, staggerMs: 0, pack: PACK, warmupWaitMs: 5_000 }, ...over });
+  const levelAgent = (name: string, level: string): string =>
+    `---\nname: ${name}\ndescription: ${name} lens\nmodel: ${FAMILY_MODEL}\nthinking: ${level}\ntools: read, bash\n---\nYou are ${name}. Report findings.\n`;
+
+  // On the family's Responses API a lens reads nothing of a warm-up sent at
+  // another thinking level (measured), so passes of two levels are two
+  // groups, each warmed at its own.
+  // MUTATION: pass no level to cacheGroupKey in execute (runlens.ts) — one
+  // group, one warm-up, at the first pass's level; this fails.
+  it("passes on one model and tool list at two thinking levels are two groups, each with its own warm-up", async () => {
+    writeFileSync(join(dir, "agents", "pass-hi.md"), levelAgent("pass-hi", "high"));
+    writeFileSync(join(dir, "agents", "pass-hi2.md"), levelAgent("pass-hi2", "high"));
+    writeFileSync(join(dir, "agents", "pass-lo.md"), levelAgent("pass-lo", "low"));
+    respondWith(5, codexLike([], new FakeTransport()));
+    const runner = createLensRunner(packed());
+    const runs = await Promise.all(
+      ["pass-hi", "pass-lo", "pass-hi2"].map((agent) => runner.run({ agent, task: agent })),
+    );
+    expect(runs.map((r) => r.result.errorMessage)).toEqual([undefined, undefined, undefined]);
+    const lines = ledger();
+    expect(lines.filter((l) => l.kind === "warmup")).toHaveLength(2);
+    const groupOf = (agent: string) => lines.find((l) => l.agent === agent)!.group;
+    expect(groupOf("pass-hi")).toBe(groupOf("pass-hi2"));
+    expect(groupOf("pass-lo")).not.toBe(groupOf("pass-hi"));
+  });
+
+  it("cacheSplitsByLevel: apart everywhere but the Messages API with the level sent inside the conversation", () => {
+    expect(cacheSplitsByLevel(undefined)).toBe(true);
+    expect(cacheSplitsByLevel({ api: "openai-codex-responses" })).toBe(true);
+    expect(cacheSplitsByLevel({ api: "openai-completions" })).toBe(true);
+    expect(cacheSplitsByLevel({ api: "anthropic-messages" })).toBe(true);
+    expect(
+      cacheSplitsByLevel({ api: "anthropic-messages", compat: { supportsMidConvoEffort: true } }),
+    ).toBe(false);
+    expect(
+      cacheSplitsByLevel({
+        api: "openai-codex-responses",
+        compat: { supportsMidConvoEffort: true },
+      }),
+    ).toBe(true);
+  });
+
+  // A row that comes after its group's first wave (the validator, a retry)
+  // reads the cache the wave left: it joins the key and starts no warm-up.
+  // MUTATION: start a warm-up for every pass that finds none running in
+  // groupReady (runlens.ts) — the late pass warms again; this fails.
+  it("a pass that joins a warmed key late starts no warm-up of its own", async () => {
+    respondWith(3, codexLike([], new FakeTransport()));
+    const runner = createLensRunner(packed());
+    expect((await runner.run({ agent: "pass-a", task: "first" })).result.exitCode).toBe(0);
+    expect(runner.liveSessions()).toBe(0);
+    expect((await runner.run({ agent: "pass-b", task: "late" })).result.exitCode).toBe(0);
+    const lines = ledger();
+    expect(lines.filter((l) => l.kind === "warmup")).toHaveLength(1);
+    expect(new Set(lines.map((l) => l.group)).size).toBe(1);
+  });
+
+  // MUTATION: answer false from needsWarmup once the key had a first pass
+  // (cache-run.ts) — a key whose warm-up failed is never warmed; this fails.
+  it("CacheLease.needsWarmup: the first pass, and a later one only while the key was never warmed", async () => {
+    const groups = new CacheGroups(8, 0, () => "k");
+    const first = groups.join("m", 0);
+    expect(first.needsWarmup()).toBe(true);
+    // A warm-up that ran and failed: it says nothing of its size.
+    await first.startWarmup(async () => {});
+    first.release(1);
+    const second = groups.join("m", 2);
+    expect(second.first).toBe(false);
+    expect(second.needsWarmup()).toBe(true);
+    // One that ended well.
+    let done!: () => void;
+    const running = second.startWarmup(() => new Promise<void>((r) => (done = r)));
+    const sibling = groups.join("m", 3);
+    expect(sibling.needsWarmup()).toBe(false); // one is running: wait for it
+    second.warmedInput(1000);
+    done();
+    await running;
+    second.release(4);
+    sibling.release(5);
+    expect(groups.join("m", 6).needsWarmup()).toBe(false);
   });
 });
 
@@ -439,6 +529,21 @@ describe("[cache groups] keyed by model spec and tool list", () => {
     expect(key).not.toBe(cacheGroupKey(FAMILY_MODEL, ["bash", "read"]));
     expect(key).not.toBe(cacheGroupKey(OUTSIDE_MODEL, ["read", "bash"]));
     expect(cacheGroupKey(FAMILY_MODEL, undefined)).not.toBe(cacheGroupKey(FAMILY_MODEL, []));
+  });
+
+  // MUTATION: leave `level` out of the key in cacheGroupKey (cache-run.ts) — this fails.
+  it("cacheGroupKey: a thinking level is part of the key when one is given, and none is no level", () => {
+    const tools = ["read", "bash"];
+    const key = cacheGroupKey(FAMILY_MODEL, tools);
+    expect(cacheGroupKey(FAMILY_MODEL, tools, null)).toBe(key);
+    expect(cacheGroupKey(FAMILY_MODEL, tools, undefined)).toBe(key);
+    expect(cacheGroupKey(FAMILY_MODEL, tools, "high")).not.toBe(key);
+    expect(cacheGroupKey(FAMILY_MODEL, tools, "high")).toBe(
+      cacheGroupKey(FAMILY_MODEL, tools, "high"),
+    );
+    expect(cacheGroupKey(FAMILY_MODEL, tools, "high")).not.toBe(
+      cacheGroupKey(FAMILY_MODEL, tools, "medium"),
+    );
   });
 });
 

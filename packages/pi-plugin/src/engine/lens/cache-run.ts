@@ -74,7 +74,15 @@ export class CacheLease {
     private readonly life: Lifetime,
     private readonly leave: () => void,
     private readonly facts: CacheKeyFacts,
+    private readonly used: (nowMs: number) => void = () => {},
   ) {}
+
+  /** Whether a pass that finds no warm-up running should start one: the key
+   * was never warmed (its first pass is this one, or its warm-up failed). A
+   * late pass of a key that was warmed reads that cache and starts none. */
+  needsWarmup(): boolean {
+    return this.life.warmup === undefined && this.facts.warmupInput === undefined;
+  }
 
   /** The warm-up's first request, as it was sent. */
   warmedWith(digest: PrefixDigest): void {
@@ -138,25 +146,38 @@ export class CacheLease {
     return life.warmup;
   }
 
-  /** The member is done with the group. The last release disposes its sessions. */
-  release(): void {
+  /** The member is done with the group, at `nowMs` when the caller has a
+   * clock: the group was in use until then. The last release disposes its
+   * sessions. */
+  release(nowMs?: number): void {
     if (this.released) return;
     this.released = true;
+    if (nowMs !== undefined) this.used(nowMs);
     this.life.members -= 1;
     this.leave();
   }
 }
 
 /**
- * The key a pass's cache group is shared under: its model spec and its tool
- * allowlist, in order. Two passes on one model whose sessions hold different
- * tools send different `tools` fields, which are part of the cached prefix
- * (leaf-cache.ts), so they share no prefix; a group that mixed them would
- * warm the prefix of whichever pass came first. Undefined tools (no allowlist)
- * is its own key, never the same as an empty list.
+ * The key a pass's cache group is shared under: its model spec, its tool
+ * allowlist, in order, and, where the provider keeps a cache per thinking
+ * level, that level (`level`; the runner passes none where it does not,
+ * leaf-cache.ts `cacheSplitsByLevel`). Two passes on one model whose sessions
+ * hold different tools declare different tools, which are part of the cached
+ * prefix (leaf-cache.ts), so they share no prefix; and where the cache is per
+ * level, a pass reads nothing of a warm-up sent at another (measured: 0 of
+ * ~35k tokens at medium behind a warm-up at high, 33k at high). A group that
+ * mixed either would warm the prefix of whichever pass came first, for that
+ * pass's like alone. Undefined tools (no allowlist) is its own key, never the
+ * same as an empty list.
  */
-export function cacheGroupKey(spec: string, tools: readonly string[] | undefined): string {
-  return `${spec}\u0000${tools === undefined ? "\u0000*" : tools.join(",")}`;
+export function cacheGroupKey(
+  spec: string,
+  tools: readonly string[] | undefined,
+  level?: string | null,
+): string {
+  const base = `${spec}\u0000${tools === undefined ? "\u0000*" : tools.join(",")}`;
+  return level === undefined || level === null ? base : `${base}\u0000${level}`;
 }
 
 /** Per group key (cacheGroupKey), cache groups of `size`; each live group's lifetime. */
@@ -177,8 +198,12 @@ export class CacheGroups {
     this.grouper = new CacheGrouper(size, staggerMs, newKey);
   }
 
-  /** Join the group for `key`'s next lens (cacheGroupKey: model spec and tool list). */
+  /** Join the group for `key`'s next lens (cacheGroupKey). */
   join(key: string, nowMs: number): CacheLease {
+    // A group with a pass still running is in use now, however long ago its
+    // last pass joined: its sessions keep the provider's cache fresh.
+    const current = this.grouper.current(key);
+    if (current !== undefined && this.lives.has(current)) this.grouper.used(nowMs, key, current);
     const slot: CacheSlot = this.grouper.next(nowMs, key);
     let life = this.lives.get(slot.key);
     if (life === undefined) {
@@ -199,6 +224,7 @@ export class CacheGroups {
       held,
       () => this.settle(slot.key, held),
       facts,
+      (ms) => this.grouper.used(ms, key, slot.key),
     );
   }
 

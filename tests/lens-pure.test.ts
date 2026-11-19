@@ -196,12 +196,14 @@ describe("config.toml [engine] lens_* (the retired [pi] subagent_* keys)", () =>
   const toml = readFileSync(resolve(import.meta.dirname, "fixtures/config.toml"), "utf8");
   const withEngine = (lines: string) => `${toml}\n[engine]\n${lines}\n`;
 
-  it("defaults: width 4, cache group 5, stagger 2500 ms, deadline 8 minutes", () => {
+  // The cache group is larger than a round has lenses: one key, and one
+  // warm-up, for each model, tool list and thinking level of a round.
+  it("defaults: width 4, cache group 32, stagger 2500 ms, deadline 8 minutes", () => {
     const e = parseConfig(toml).engine;
     expect(e).toEqual(ENGINE_DEFAULTS);
     expect(e).toMatchObject({
       lens_max_concurrency: 4,
-      lens_cache_group: 5,
+      lens_cache_group: 32,
       lens_cache_stagger_ms: 2500,
       lens_pass_deadline_min: DEFAULT_LENS_PASS_DEADLINE_MIN,
     });

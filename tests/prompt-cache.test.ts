@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  CACHE_GROUP_MAX_AGE_MS,
+  CACHE_GROUP_MAX_IDLE_MS,
   CacheGrouper,
 } from "@quickchatai/pi-quickreview/src/engine/lens/cache-group.js";
 import {
@@ -56,11 +56,37 @@ describe("cache groups", () => {
     expect(g.next(9000, "m")).toEqual({ key: "k3", first: false, delayMs: 0 });
   });
 
-  it("a stale group starts afresh (the provider's cache is short-lived)", () => {
+  it("a group idle too long starts afresh (the provider's cache is short-lived)", () => {
     let n = 0;
     const g = new CacheGrouper(10, 2500, () => `k${++n}`);
     g.next(0);
-    expect(g.next(CACHE_GROUP_MAX_AGE_MS + 1).key).toBe("k2");
+    expect(g.next(CACHE_GROUP_MAX_IDLE_MS + 1).key).toBe("k2");
+  });
+
+  // A round's later rows (the validator, a retry) come minutes after its
+  // first wave began and seconds after it ended. Counting from the group's
+  // first pass gave each of them a new key, and a warm-up that paid for the
+  // whole pack again.
+  // MUTATION: count the idle time from `leaderAt` in CacheGrouper.next — the
+  // late row gets "k2"; this fails.
+  it("a group is idle from its last use, not from its first pass: a late row joins it", () => {
+    let n = 0;
+    const g = new CacheGrouper(10, 2500, () => `k${++n}`);
+    expect(g.next(0, "m")).toMatchObject({ key: "k1", first: true });
+    // A pass of the group was still in use five minutes on.
+    g.used(5 * 60_000, "m", "k1");
+    expect(g.next(6 * 60_000, "m")).toMatchObject({ key: "k1", first: false, delayMs: 0 });
+    // A join is a use too.
+    expect(g.next(9 * 60_000, "m").key).toBe("k1");
+    // Idle past the limit after that: afresh.
+    expect(g.next(9 * 60_000 + CACHE_GROUP_MAX_IDLE_MS + 1, "m")).toMatchObject({
+      key: "k2",
+      first: true,
+    });
+    // A use of a group that is no longer the model's current one changes nothing.
+    g.used(60 * 60_000, "m", "k1");
+    expect(g.current("m")).toBe("k2");
+    expect(g.next(60 * 60_000, "m").key).toBe("k3");
   });
 
   it("the knobs read from the environment; anything unreadable is off / the default", () => {
@@ -381,15 +407,18 @@ describe("the request digest (what a warm-up and its lenses are compared by)", (
     expect(prefixDifference(digest(), lens)).toBeUndefined();
   });
 
-  // The passes of one cache group think at different levels (the group's key
-  // leaves the level out), so a digest that folded `reasoning` into the rest
-  // would cry wolf on most groups.
-  // MUTATION: drop "reasoning" from the keys prefixDigest leaves out of
-  // `other` - this fails.
-  it("the thinking level alone is no difference, and neither is the cache key", () => {
-    const lens = digest({ reasoning: { effort: "medium" }, prompt_cache_key: "another" });
-    expect(lens.reasoning).not.toBe(digest().reasoning);
-    expect(prefixDifference(digest(), lens)).toBeUndefined();
+  // Where a request carries the thinking level, the provider keeps a cache
+  // per level: a lens at another level than its warm-up reads none of it. It
+  // is named apart from the rest of the request, so the line says what to fix.
+  // MUTATION: drop the `reasoning` comparison from prefixDifference - this fails.
+  it("another thinking level than the warm-up's is a difference, named `reasoning`", () => {
+    const lens = digest({ reasoning: { effort: "medium" } });
+    expect(lens.other).toBe(digest().other);
+    expect(prefixDifference(digest(), lens)).toBe("reasoning");
+  });
+
+  it("the cache key alone is no difference: it names the group, not what was sent", () => {
+    expect(prefixDifference(digest(), digest({ prompt_cache_key: "another" }))).toBeUndefined();
   });
 
   it("names the first part a lens does not repeat", () => {

@@ -44,11 +44,41 @@ The last row held whether the lenses were sent the instant the warm-up ended or 
 
 The last row is what the rewrite sent from the day pi moved the declarations into the input until it was fixed: the pack went ahead of the whole input, the tool item with it. Every lens of every packed group then paid for the pack again, and the warm-up bought nothing. The rewrite now leaves pi's leading tool declarations where they are and puts the pack after them.
 
+### One warm-up per thinking level
+
+Measured on `gpt-6-luna` and `gpt-6.1-sol`, under one session id, over a ~33k-token pack:
+
+| Warm-up sent at | Lens sent at | What the lens reads of the warm-up |
+|---|---|---|
+| high | high | 33,024 of ~35,700 tokens |
+| high | medium | **0** |
+| high | low | **0** |
+| medium (a second warm-up, same id) | medium | 33,024 |
+
+A second lens at medium, sent after the first one, read nothing of it either: the two part after the pack, and only a request that held just the shared prefix is read by both. So on this API the cache is kept per thinking level, and a warm-up serves the lenses of its own level. A cache group therefore holds one level, and a round whose lenses think at two levels sends two warm-ups.
+
+On `claude-haiku-5-5` lenses at medium and at high read all of a warm-up sent at low. pi sends the level there as a marker inside the conversation, behind the pack, so the prefix is the same at every level, and a group on such a model holds every level.
+
+### One key for a round
+
+Measured on the SDK runner, lenses of five turns each over a 36k-token pack, all at one level:
+
+| | Warm-ups | Lenses whose first turn read the warm-up | Later turns that missed their own prefix |
+|---|---|---|---|
+| `gpt-6-luna`, 12 lenses, 4 at a time, groups of 5 | 3 | 12 of 12 | 0 of 48 |
+| `gpt-6-luna`, 12 lenses, 4 at a time, one group | 1 | 12 of 12 | 0 of 48 |
+| `gpt-6.1-sol`, 12 lenses, 4 at a time, one group | 1 | 12 of 12 | 0 of 48 |
+| `gpt-6-luna`, 16 lenses, 8 at a time, one group | 1 | 16 of 16 | 0 of 64 |
+
+A key that carries a whole round's lenses loses nothing, and each group after the first only pays for the pack again. That is why the default group is larger than a round.
+
 ## Shape
 
-**Cache groups** (`[engine] lens_cache_group`, default 5; `packages/pi-plugin/src/engine/lens/cache-group.ts`, `cache-run.ts`).
+**Cache groups** (`[engine] lens_cache_group`, default 32; `packages/pi-plugin/src/engine/lens/cache-group.ts`, `cache-run.ts`).
 - A lens session is created with its group's key as its session id, which pi turns into the provider's cache key and routing headers. The group shares one id (see docs/probes/p4.6-codex-cache-routing.md), so the sessions of a group are disposed together once the whole group is done: one lens's dispose would otherwise close a sibling's live transport.
-- Sessions share a key in groups of N per model, so no single key carries a whole round's request rate.
+- A group is the lenses of one model, one tool list and, where the provider keeps a cache per thinking level, one level (see "One warm-up per thinking level" below).
+- A group holds up to N sessions over its life. The default is more than a round has, so a round has one key, and one warm-up, for each model, tool list and level. A key never carries more sessions at a time than `[engine] lens_max_concurrency`, whatever N is.
+- A group none of whose sessions was in use for 4 minutes starts afresh, with a new key and a new warm-up. A row that comes later in the round (the validator, a retry, a coverage row) joins its group's key and reads the same cache, with no warm-up of its own.
 - The groups are for every provider. Where an API has no cache routing keyed on the session id, the shared id changes nothing.
 - A group that is not packed (a round without a pack, or a model outside the pack's API family, below) starts its later sessions `[engine] lens_cache_stagger_ms` (2500) after its first. Rows of one agent whose prompts differ only in a short task pointer, such as the sweep rows, then share their system prompt.
 
@@ -140,7 +170,7 @@ Whether the cache hit is recorded for every run of a cache group, in the round's
 
 Two lines go to the run's log:
 
-- When a pass's first request does not extend its group's warm-up, one warning per group names the part: `other`, `instructions`, `tools`, `inputN`, `pack` (the request carries no pack) or `tool-declarations` (a tool is declared after the pack). The thinking level is not compared, because the passes of one group think at different levels and still share the prefix.
+- When a pass's first request does not extend its group's warm-up, one warning per group names the part: `other`, `reasoning` (it was sent at another thinking level than the warm-up), `instructions`, `tools`, `inputN`, `pack` (the request carries no pack) or `tool-declarations` (a tool is declared after the pack).
 - When a group's sessions are disposed: `cache group <key>: turn1_hot=<n>/<passes> warmup_input=<tokens>`. A first turn is hot when it read at least nine tenths of what the warm-up sent (all of its request: what it paid for, read and wrote).
 
 `tests/pi-canary/canary-16-pack-first-prefix.test.ts` runs pi's own request builder through the rewrite, so a pi that changes what it puts in the input fails there and not on the bill.

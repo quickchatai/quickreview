@@ -121,6 +121,30 @@ export function packFirstApplies(model: PackModel | undefined): boolean {
   );
 }
 
+/**
+ * Whether the provider keeps a cache per thinking level for `model`, so that
+ * a warm-up serves only the passes that think at its level and a cache group
+ * must hold one level (cache-run.ts `cacheGroupKey`).
+ *
+ * It does on the Responses API: a lens at medium read 0 of ~35k tokens behind
+ * a warm-up at high, and 33k behind one at medium (measured, on two models).
+ * It does not on the Messages API where pi sends the level as a marker inside
+ * the conversation, behind the pack (pi's `supportsMidConvoEffort`): lenses at
+ * medium and high read all of a warm-up sent at low (measured). Anywhere else
+ * nothing was measured, and apart is the safe answer: a group that mixes
+ * levels where the cache is split wastes its warm-up on every other level,
+ * while a split that was not needed costs one warm-up more.
+ */
+export function cacheSplitsByLevel(model: PackModel | undefined): boolean {
+  if (model?.api !== MESSAGES_API) return true;
+  const compat = model.compat;
+  return !(
+    typeof compat === "object" &&
+    compat !== null &&
+    (compat as { supportsMidConvoEffort?: unknown }).supportsMidConvoEffort === true
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -161,10 +185,11 @@ function packPlace(items: readonly unknown[], pack: string): { item: number; blo
 
 /**
  * Short hashes of the parts that make up a request's cacheable prefix, in
- * request order: never their content. `reasoning` is its own part, because
- * the passes of one cache group may think at different levels and still share
- * a prefix; the cache key is left out, since it names the group and says
- * nothing of what was sent. `input` holds one hash per item of the
+ * request order: never their content. `reasoning` is its own part: where a
+ * request carries the thinking level there, the provider keeps a cache per
+ * level, so a difference in it alone is a cold lens and is named as such.
+ * The cache key is left out, since it names the group and says nothing of
+ * what was sent. `input` holds one hash per item of the
  * conversation, through the pack when the request carries it (`packAt`; the
  * item that holds the pack is hashed up to the pack's end), else the first
  * three. `instructions` is the system prompt, wherever the API puts it.
@@ -245,12 +270,13 @@ export function renderPrefixDigest(d: PrefixDigest): string {
 /**
  * The first part in which a lens request does not extend its group's warm-up,
  * or undefined when it does: the warm-up's request up to the end of the pack
- * is what the lens must repeat, and neither may declare a tool after it. The
- * thinking level is not compared (see PrefixDigest). A request that carries
- * no pack differs in `pack`.
+ * is what the lens must repeat, at the warm-up's thinking level, and neither
+ * may declare a tool after it. A request that carries no pack differs in
+ * `pack`.
  */
 export function prefixDifference(warmup: PrefixDigest, lens: PrefixDigest): string | undefined {
   if (warmup.other !== lens.other) return "other";
+  if (warmup.reasoning !== lens.reasoning) return "reasoning";
   if (warmup.instructions !== lens.instructions) return "instructions";
   if (warmup.tools !== lens.tools) return "tools";
   if (warmup.packAt < 0 || lens.packAt < 0) return "pack";

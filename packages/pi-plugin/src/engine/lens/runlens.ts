@@ -91,6 +91,7 @@ import {
 import { LensActivityTracker, type LensActivity } from "./activity.js";
 import { ProviderRetryWatch, passTimeoutMessage, runUnderDeadline } from "./deadline.js";
 import {
+  cacheSplitsByLevel,
   leafCache,
   packFirstApplies,
   renderPrefixDigest,
@@ -481,18 +482,20 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     }
   };
 
-  /** Whether the groups of a model are packed, by the spec that keys their
-   * group: asked once per model of the run, so every pass of a group, and
-   * every group of a model, takes one path. */
-  const packedSpecs = new Map<string, Promise<boolean>>();
-  const packedOn = (on: PassModel): Promise<boolean> => {
-    let known = packedSpecs.get(on.spec);
+  /** The model of a spec, asked once per model of the run: every pass of a
+   * group, and every group of a model, then takes one path. */
+  const models = new Map<string, Promise<PackModel | undefined>>();
+  const knownModel = (on: PassModel): Promise<PackModel | undefined> => {
+    let known = models.get(on.spec);
     if (known === undefined) {
-      known = modelOf(on).then(packFirstApplies);
-      packedSpecs.set(on.spec, known);
+      known = modelOf(on);
+      models.set(on.spec, known);
     }
     return known;
   };
+
+  /** Whether the groups of a model are packed. */
+  const packedOn = (on: PassModel): Promise<boolean> => knownModel(on).then(packFirstApplies);
 
   /** The round's pack for a pass on `on` when its cache group is packed, else
    * undefined. A group is packed when the round has a pack and the group's
@@ -621,13 +624,17 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     // before any other pass of the group looks for it.
     const pack = groups !== undefined ? await packFor(on) : undefined;
     // Keyed by tool list too: a warm-up warms the prefix of its first pass's
-    // tools, and the request's `tools` field is part of that prefix.
-    const lease =
-      groups !== undefined ? groups.join(cacheGroupKey(on.spec, agent.tools), now()) : undefined;
+    // tools, which are part of that prefix. And by thinking level, where the
+    // provider keeps a cache per level: a warm-up then serves its own level.
+    let lease: CacheLease | undefined;
+    if (groups !== undefined) {
+      const level = cacheSplitsByLevel(await knownModel(on)) ? agent.thinking : null;
+      lease = groups.join(cacheGroupKey(on.spec, agent.tools, level), now());
+    }
     try {
       return await executeIn(id, agent, request, on, lease, pack);
     } finally {
-      lease?.release();
+      lease?.release(now());
     }
   }
 
@@ -759,10 +766,12 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
   }
 
   /** Wait until the pass's group is ready for it. A packed group (`pack` is
-   * its pack, from packFor): the group's warm-up (started by the first
-   * pass), at most the wait; a warm-up that fails or runs late releases the
-   * group all the same. Any other group: the stagger after the group's first
-   * pass, an awaited delay, and no warm-up. */
+   * its pack, from packFor): the group's warm-up, at most the wait; a warm-up
+   * that fails or runs late releases the group all the same. The warm-up is
+   * started by the first pass of a key, and by a later one only when the key
+   * was never warmed (its warm-up failed): a pass that joins a warmed key
+   * late reads that cache and waits for nothing. Any other group: the stagger
+   * after the group's first pass, an awaited delay, and no warm-up. */
   async function groupReady(
     agent: LensAgent,
     on: PassModel,
@@ -775,7 +784,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       return;
     }
     const waitMs = cache?.warmupWaitMs ?? WARMUP_WAIT_MS;
-    const warm = lease.first
+    const warm = lease.needsWarmup()
       ? lease.startWarmup((keep) => warmUp(agent, on, lease, pack, keep, waitMs * 2))
       : lease.warmup();
     if (warm === undefined) return;
