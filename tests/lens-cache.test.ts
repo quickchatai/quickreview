@@ -40,6 +40,7 @@ import {
   cacheSplitsByLevel,
   isPackFirstApi,
   packFirstApplies,
+  packPaysOff,
   leafCache,
   packFirstPayload,
 } from "@quickchatai/pi-quickreview/src/engine/lens/leaf-cache.js";
@@ -1036,6 +1037,24 @@ describe("[pack-first family] the pack is for its API family only", () => {
     expect(packFirstApplies({ api: "anthropic-messages", compat: {} })).toBe(false);
     expect(packFirstApplies({ api: "anthropic-messages", compat: midConvo })).toBe(true);
     expect(packFirstApplies({ api: "openai-completions", compat: midConvo })).toBe(false);
+  });
+
+  // On the Messages API a packed pass pays for its instructions twice (they
+  // follow the pack as a system message, read from cache only once an
+  // assistant turn follows), so the pack must be worth more than that.
+  // MUTATION: answer true for every pass in packPaysOff (leaf-cache.ts) — a
+  // pass with instructions longer than the pack takes it at a loss; this fails.
+  it("the pack pays on the Messages API only when it is longer than the pass's instructions", () => {
+    const messages = {
+      api: "anthropic-messages",
+      compat: { supportsMidConvoSystemMessages: true },
+    };
+    expect(packPaysOff(messages, "p".repeat(1000), "b".repeat(999))).toBe(true);
+    expect(packPaysOff(messages, "p".repeat(1000), "b".repeat(1000))).toBe(false);
+    expect(packPaysOff(messages, "p".repeat(1000), "b".repeat(5000))).toBe(false);
+    // Everywhere else the instructions are paid once either way.
+    expect(packPaysOff({ api: "openai-codex-responses" }, "p", "b".repeat(5000))).toBe(true);
+    expect(packPaysOff(undefined, "p", "b".repeat(5000))).toBe(true);
   });
 
   // A family API whose every model fails `packFirstApplies` is packed nowhere.

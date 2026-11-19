@@ -94,6 +94,7 @@ import {
   cacheSplitsByLevel,
   leafCache,
   packFirstApplies,
+  packPaysOff,
   renderPrefixDigest,
   type PackModel,
   type PrefixDigest,
@@ -497,14 +498,16 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
   /** Whether the groups of a model are packed. */
   const packedOn = (on: PassModel): Promise<boolean> => knownModel(on).then(packFirstApplies);
 
-  /** The round's pack for a pass on `on` when its cache group is packed, else
-   * undefined. A group is packed when the round has a pack and the group's
-   * model speaks an API of the pack-first family: the rewrite builds that
-   * family's request and no other. Never rejects. */
-  const packFor = async (on: PassModel): Promise<string | undefined> => {
+  /** The round's pack for `agent`'s pass on `on` when the pass is packed, else
+   * undefined. A pass is packed when the round has a pack, the pack applies
+   * to its group's model (the rewrite builds that model's request and no
+   * other) and the pack pays for a pass with its instructions
+   * (leaf-cache.ts `packPaysOff`). Never rejects. */
+  const packFor = async (on: PassModel, agent: LensAgent): Promise<string | undefined> => {
     const pack = cache?.pack;
     if (pack === undefined || !pack.trim()) return undefined;
-    return (await packedOn(on)) ? pack : undefined;
+    if (!(await packedOn(on))) return undefined;
+    return packPaysOff(await knownModel(on), pack, agent.body) ? pack : undefined;
   };
 
   const transition = (id: string, entry: ProgressTransition): void => {
@@ -622,7 +625,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     // Decided before the pass joins its group, so joining and waiting on the
     // group stay one step: a group's first pass has started the warm-up
     // before any other pass of the group looks for it.
-    const pack = groups !== undefined ? await packFor(on) : undefined;
+    const pack = groups !== undefined ? await packFor(on, agent) : undefined;
     // Keyed by tool list too: a warm-up warms the prefix of its first pass's
     // tools, which are part of that prefix. And by thinking level, where the
     // provider keeps a cache per level: a warm-up then serves its own level.

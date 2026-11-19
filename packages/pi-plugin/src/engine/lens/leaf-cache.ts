@@ -145,6 +145,25 @@ export function packFirstApplies(model: PackModel | undefined): boolean {
 }
 
 /**
+ * Whether the pack pays for a pass on `model` whose instructions are `body`,
+ * given the round's `pack`. On the Responses API it always does. On the
+ * Messages API a packed pass pays for its instructions twice: they follow the
+ * pack as a system message, which the provider reads from cache only once an
+ * assistant turn follows it, so they are sent in full on the first turn and
+ * written to the cache on the second (measured: a breakpoint on that message
+ * is read by an identical request and by no later turn). Against that the
+ * pass reads the pack from the group's cache and does not write it into its
+ * own. With a cache write at about 1.25 times the input price and a read at a
+ * tenth of it, the pack pays once it is about as long as the instructions, the
+ * warm-up's share included; so a pass takes the pack when the pack is the
+ * longer of the two, and otherwise runs as an unpacked pass does and reads
+ * the pack file.
+ */
+export function packPaysOff(model: PackModel | undefined, pack: string, body: string): boolean {
+  return model?.api !== MESSAGES_API || pack.length > body.length;
+}
+
+/**
  * Whether the provider keeps a cache per thinking level for `model`, so that
  * a warm-up serves only the passes that think at its level and a cache group
  * must hold one level (cache-run.ts `cacheGroupKey`).

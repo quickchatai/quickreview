@@ -146,6 +146,8 @@ A request may carry four cache breakpoints. pi marks the tools, the system promp
 
 A model that takes no system message there (an older one) is not packed: the lens body would have to stay ahead of the pack, where it differs per lens, and no lens could read the warm-up.
 
+**A pass takes the pack there only when the pack is longer than its own instructions.** The provider reads a system message inside the conversation from cache only once an assistant turn follows it. So a packed pass sends its instructions in full on its first turn and writes them to the cache on its second: it pays for them twice, where an unpacked pass writes them once with its system prompt. A breakpoint on that message does not help: an identical request reads it, and no later turn does (measured). Against that the pass reads the pack from the group's cache and does not write it into a cache of its own. With a write at about 1.25 times the input price and a read at a tenth of it, the pack pays once it is about as long as the instructions, the warm-up's share included. A pass whose instructions are the longer runs as an unpacked pass does and reads the pack file; the other passes of its group are packed all the same.
+
 Measured on `claude-haiku-5-5`, on the real runner, over a pack of about 54,000 tokens (the same text is about 36,000 tokens on GPT):
 
 | | Without the pack in the prompt | Pack first |
