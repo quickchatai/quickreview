@@ -222,11 +222,11 @@ describe("the committed golden outputs", () => {
 
 describe("qcr version", () => {
   it("reports the image version, the schema versions, the contracts and the pi pin", () => {
-    const v = versionInfo(ROOT, { package: "@earendil-works/pi-coding-agent", version: "1.4.0" });
+    const v = versionInfo(ROOT, { package: "@earendil-works/pi-coding-agent", version: "1.5.2" });
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string };
     expect(v.image.version).toBe(pkg.version);
     expect(v.schemas).toEqual({ review: REVIEW_SCHEMA_VERSION, scan: SCAN_SCHEMA_VERSION });
-    expect(v.pi).toEqual({ package: "@earendil-works/pi-coding-agent", version: "1.4.0" });
+    expect(v.pi).toEqual({ package: "@earendil-works/pi-coding-agent", version: "1.5.2" });
     expect(renderVersion(v)).toMatch(
       /JSON schemas: review v2, scan v1; host-plugin contracts: 1, 2$/m,
     );

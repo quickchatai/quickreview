@@ -19,7 +19,8 @@
 // MUTATION: in packFirstPayload leave the closing message out of a lens's
 // input - the last two tests fail.
 import { describe, expect, it } from "vitest";
-import { Type, type Api, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import {

@@ -13,6 +13,7 @@ import { createOpenViking } from "../extensions/vendor/openviking-pi/index.js";
 import type { OVClient } from "../extensions/vendor/openviking-pi/client.js";
 import { loadConfig } from "../extensions/vendor/openviking-pi/config.js";
 import { boundedHook, HOOK_TIMEOUT_MS } from "../extensions/vendor/openviking-pi/qcr-hooks.js";
+import { registerTools } from "../extensions/vendor/openviking-pi/tools.js";
 import {
   envOverlay,
   openVikingConfigFromEnv,
@@ -619,5 +620,53 @@ describe("a config.json beside the module is still read", () => {
     expect(cfg.config.enabled).toBe(false);
     expect(cfg.config.recallLimit).toBe(4);
     expect(cfg.config.recallLimitConfigured).toBe(true);
+  });
+});
+
+// Build patch 0015. pi-ai 1.5's StringEnum is a plain object, and typebox's
+// Optional over an object it did not build writes `~optional` as an ordinary
+// key: the provider was then sent `"~optional": true` inside a tool's schema.
+describe("[build conformance 0015] no tool schema carries typebox's optional marker", () => {
+  const schemas = (namespaces: boolean): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    const pi = {
+      registerTool: (def: { name: string; parameters: unknown }) =>
+        (out[def.name] = def.parameters),
+    };
+    const client = { cfg: { user: "reviewer" } } as unknown as OVClient;
+    registerTools(pi, client, undefined, {
+      leaf: false,
+      ...(namespaces
+        ? {
+            namespaces: [
+              { name: "reviewer", client },
+              { name: "shared", client },
+            ],
+          }
+        : {}),
+    });
+    return out;
+  };
+
+  // MUTATION: build an optional enum as Type.Optional(StringEnum(values)) in
+  // optionalEnum (tools.ts) — `mode` and `namespace` are sent with
+  // "~optional": true; this fails.
+  it.each([false, true])(
+    "what is sent for every tool is plain JSON Schema (a choice of namespace: %s)",
+    (namespaces) => {
+      const sent = JSON.stringify(schemas(namespaces));
+      expect(sent).toContain('"viking_write"');
+      expect(sent).toContain('"enum":["create","replace"]');
+      if (namespaces) expect(sent).toContain('"enum":["reviewer","shared"]');
+      // No key of typebox's own ("~optional", "~kind", ...) among the schema's.
+      expect(sent).not.toMatch(/"~[A-Za-z]+":/);
+    },
+  );
+
+  // An optional parameter stays optional: it is not among the required ones.
+  it("the optional enums are still optional", () => {
+    const write = schemas(true)["viking_write"] as { required?: string[] };
+    expect(write.required ?? []).not.toContain("mode");
+    expect(write.required ?? []).not.toContain("namespace");
   });
 });

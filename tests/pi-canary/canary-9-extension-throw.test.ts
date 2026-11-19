@@ -10,7 +10,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Type, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { ExtensionError } from "@earendil-works/pi-coding-agent";
 import { type Rig, createRig, useOfflineGuard } from "./harness.js";
 import { createOpenViking } from "../../extensions/vendor/openviking-pi/index.js";

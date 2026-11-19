@@ -30,10 +30,10 @@ anything here.
 ## The patch series
 
 Thirteen numbered behaviour patches, applied in order over the vendored upstream
-files, plus two unnumbered build patches (0000 scaffolding, 0012 typing). They live in `patches/` as
+files, plus three unnumbered build patches (0000 scaffolding, 0012 typing, 0015 optional enums). They live in `patches/` as
 `git apply`-able diffs — verified by applying the first thirteen, in order, to a
 pristine `v0.4.15` extraction and diffing the result against this directory:
-byte-identical. (0013 and 0014 are checked to apply on the tree the patches
+byte-identical. (0013, 0014 and 0015 are checked to apply on the tree the patches
 before them produce; the full pristine-extraction replay has not been re-run
 with them.) (`patches/` and `upstream.json` are meta and are not themselves
 part of the reproduced tree.) Every hunk they add carries a greppable marker:
@@ -582,3 +582,22 @@ Also unverified live: a `viking_read`/`viking_write` through the SECOND
 (reviewer) client from the companion's pi. The key and the server-side
 confinement are proven; the extension-side routing is covered by unit tests
 only. Fold it into the companion smoke (`npm run smoke:companion`).
+
+### 0015 — optional enum parameters on pi 1.5 *(not a behaviour patch)*
+
+pi-ai 1.5 validates tool arguments with its own schema package, and its
+`StringEnum` now returns a plain object where it returned a typebox schema.
+typebox's `Type.Optional` over an object it did not build writes its
+`~optional` marker as an ordinary, enumerable key, so
+`Type.Optional(StringEnum(...))` put `"~optional": true` into the schema of
+`viking_write`'s `mode` (and of `namespace`, where there is a choice) on every
+route that loads this file beside the repo's own typebox: the SDK sessions.
+The interactive pi, which supplies its own typebox, sent the schema without
+it, and the two requests no longer matched (canary 10, the bot's request).
+
+`tools.ts` builds those parameters through `optionalEnum`, which hands
+typebox the enum as `Type.Unsafe` first. The schema that is sent is the one
+pi 1.4.0 sent: `{ "type": "string", "enum": [...] }`, optional. Marked
+`[QCR build conformance]`.
+
+Touches: `tools.ts`, this README.

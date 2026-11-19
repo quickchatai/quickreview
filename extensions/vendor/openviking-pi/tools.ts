@@ -20,6 +20,14 @@ import {
 // [QCR PATCH 11]
 import { scopedFindTargets, scopedWriteRefusal } from "./qcr-hint.js";
 
+// [QCR build conformance] An optional enum parameter. pi-ai 1.5's StringEnum
+// returns a plain object, no longer a typebox schema, and typebox's Optional
+// over an object it did not build writes its `~optional` marker as an
+// ordinary key, which then reaches the provider inside the tool's schema.
+// Type.Unsafe makes the enum typebox's own first; the schema sent is the same.
+const optionalEnum = <const T extends readonly string[]>(values: T) =>
+  Type.Optional(Type.Unsafe<T[number]>(StringEnum(values)));
+
 /** [QCR PATCH 5] One memory namespace the tools can address: a name the model
  * uses and the client holding that namespace's USER key. */
 export interface ToolNamespace {
@@ -77,7 +85,7 @@ export function registerTools(
   const nsNote = namespaceNote(names);
   /** The `namespace` parameter exists ONLY when there is a choice to make. */
   const nsParam: Record<string, unknown> = multi
-    ? { namespace: Type.Optional(StringEnum(names)) }
+    ? { namespace: optionalEnum(names) }
     : {};
   const nsGuidelines: string[] = multi
     ? [`Memory lives in ${names.length} separate trees (${names.join(", ")}); say which one you mean and read the prefix on the answer.`]
@@ -324,7 +332,7 @@ export function registerTools(
         uri: Type.Optional(Type.String({ description: "Target viking:// URI, ending in .md (e.g. 'viking://user/reviewer/memories/experiences/pr-5312-migration.md'). With `content`, for ONE entry." })),
         content: Type.Optional(Type.String({ description: "Markdown body of the memory (one entry)" })),
         tags: Type.Optional(Type.Array(Type.String(), { description: "Convention tags without '#', e.g. ['pinned','review-ops']" })),
-        mode: Type.Optional(StringEnum(["create", "replace"] as const)),
+        mode: optionalEnum(["create", "replace"] as const),
         expect_hash: Type.Optional(Type.String({ description: "Required for mode 'replace': sha256 of the CURRENT stored bytes" })),
         // [QCR PATCH 10] a typed lesson — the header is rendered from this.
         lesson: Type.Optional(lessonParam),
@@ -334,7 +342,7 @@ export function registerTools(
             uri: Type.String({ description: "Target viking:// URI, ending in .md" }),
             content: Type.String({ description: "Markdown body of the memory" }),
             tags: Type.Optional(Type.Array(Type.String())),
-            mode: Type.Optional(StringEnum(["create", "replace"] as const)),
+            mode: optionalEnum(["create", "replace"] as const),
             expect_hash: Type.Optional(Type.String()),
             // [QCR PATCH 10]
             lesson: Type.Optional(lessonParam),

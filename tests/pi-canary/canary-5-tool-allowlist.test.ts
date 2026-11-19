@@ -6,7 +6,8 @@
 // active, what it says is registered, and what the provider is actually told
 // (the request's tool declarations), since the last is what the model can call.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Type, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_TOOLS } from "@quickchatai/pi-quickreview/src/engine/pisdk.js";
 import { type HostRig, createHostRig, useOfflineGuard } from "./harness.js";
