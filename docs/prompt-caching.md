@@ -116,6 +116,8 @@ A key that carries a whole round's lenses loses nothing, and each group after th
 
 The warm-up's request is exactly that shared prefix, and every lens request of the group extends it: the lens repeats the warm-up's whole conversation, the closing message included, and adds its own after it (see "A lens extends its warm-up" above).
 
+A warm-up is one request. The closing message asks for one word, and a model does not always give it: on a pack of 44k tokens `gpt-6-luna` at high answered with a tool call in four reviews of four, went on from request to request until the warm-up's time limit, and its group's lenses waited the whole 30 s for it. The pack is in the cache when the first answer ends, so a warm-up whose answer asks for a tool is ended there and counts as done.
+
 Measured on the SDK runner at pi 1.4.0 (the real host and runner, a 36k-token pack): four lenses and one that started 20 s after them each read 35,584 tokens of their first request from cache and paid for about 2,500, on `gpt-6-luna` and on `gpt-6.1-sol`. The late lens joined the group's key and needed no warm-up of its own.
 
 And in a whole review (21 lenses on two models, a change of 1,500 lines, the default settings): 21 of 21 lenses read their warm-up on their first request, none of 74 later requests missed what its lens had sent before, and 88% of the lenses' input tokens were read from cache.

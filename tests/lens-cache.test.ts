@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fauxAssistantMessage,
   fauxProvider,
+  fauxToolCall,
   type FauxProviderHandle,
   type SimpleStreamOptions,
   type TranscriptContext,
@@ -890,6 +891,37 @@ describe("[cache groups] the warm-up", () => {
     // The group counted no first turn for the lens whose request failed.
     expect(said.filter((m) => /turn1_hot=\d+\/0 /.test(m)).length).toBeGreaterThan(0);
     expect(said.some((m) => /turn1_hot=\d+\/[1-9]/.test(m))).toBe(false);
+  });
+
+  // A warm-up is one request. On a pack that reads like a task a model may
+  // answer with a tool call and not the one word: left alone it goes on,
+  // request after request, to its time limit, and the group's passes wait.
+  // MUTATION: drop the subscription that ends the warm-up at an answer asking
+  // for a tool, in warmUp (runlens.ts) — the warm-up sends a second request;
+  // this fails.
+  it("a warm-up whose model asks for a tool ends at that answer: one request, the key warmed, no failure", async () => {
+    const seen: Seen[] = [];
+    const ok = codexLike(seen, new FakeTransport());
+    family.setResponses([
+      () =>
+        fauxAssistantMessage([fauxToolCall("read", { path: join(dir, "absent.txt") })], {
+          stopReason: "toolUse",
+        }),
+      ok,
+      ok,
+      ok,
+    ]);
+    const runner = createLensRunner(
+      config({ cache: { size: 8, staggerMs: 0, pack: PACK, warmupWaitMs: 5_000 } }),
+    );
+    expect((await runner.run({ agent: "pass-a", task: "first" })).result.exitCode).toBe(0);
+    expect((await runner.run({ agent: "pass-b", task: "late" })).result.exitCode).toBe(0);
+    // The two passes' requests, and none of the warm-up's after its first.
+    expect(seen.map((x) => x.task)).toEqual(["Task: first", "Task: late"]);
+    const warm = ledger().filter((l) => l.kind === "warmup");
+    expect(warm).toHaveLength(1);
+    expect(warm[0]).toMatchObject({ exitCode: 0 });
+    expect(warm[0]!.turn1).toBeDefined();
   });
 
   // The warm-up is a session with tools, so it carries the guard like any pass.
