@@ -86,7 +86,9 @@ export interface LensLedgerLine {
   errorMessage?: string;
   timedOut?: boolean;
   /** The run's first request: what it paid for and what it read from cache.
-   * A warm-up's is its only request. */
+   * A warm-up's is its only request. Absent when that request failed or was
+   * cut, and when the deadline ended the first attempt: a retry's first
+   * request is not the run's. */
   turn1?: LensFirstTurn;
   /** Its cache group's key, when it ran in one. */
   group?: string;

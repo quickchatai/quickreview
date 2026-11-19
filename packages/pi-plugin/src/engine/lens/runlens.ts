@@ -35,7 +35,8 @@
 //     PACK_CLOSING, and nothing else) that the passes beside it wait for, at
 //     most 30 s, and every request is rewritten pack-first, so that it extends
 //     the warm-up's. A pass that joins a warmed key later waits for nothing;
-//     one that joins a key whose warm-up failed starts it again. Any other group,
+//     one that joins a key whose warm-up failed starts it again, once
+//     (cache-run.ts WARMUP_ATTEMPTS). Any other group,
 //     and every group of a round with no pack, is not: no warm-up, no wait, no
 //     rewrite; its later passes start after a stagger, and a lens reads the
 //     pack file its task names.
@@ -841,6 +842,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
 
     /** What the pass's ledger line says of its cache group. */
     const seen: LensCacheFacts = lease !== undefined ? { group: lease.key } : {};
+    let attemptsRead = 0;
     cacheFacts.set(id, seen);
 
     /** Dispose a finished session: now, or with its cache group, which shares
@@ -946,8 +948,11 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         if (repeat !== undefined) clearInterval(repeat);
         const { reading, usage, turn1 } = readSession(session);
         spent = addUsage(spent, usage);
-        // The pass's first turn is its first attempt's.
-        if (turn1 !== undefined && seen.turn1 === undefined) {
+        // The pass's first turn is its first attempt's, or unknown: a later
+        // attempt may read what the first one left in the cache, and that
+        // says nothing of the warm-up.
+        attemptsRead += 1;
+        if (turn1 !== undefined && attemptsRead === 1) {
           seen.turn1 = turn1;
           if (pack !== undefined) lease?.firstTurn(turn1);
         }

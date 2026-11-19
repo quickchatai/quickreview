@@ -539,6 +539,22 @@ describe("[runLens] abort and deadline", () => {
     expect(ledger()).toHaveLength(1);
   });
 
+  // A pass's first turn is its first request's. The attempt the deadline cut
+  // has none to report, and the retry's is no stand-in: it may read what the
+  // first attempt left in the cache.
+  // MUTATION: take the first turn of any attempt while none is known
+  // (`seen.turn1 === undefined` for `attemptsRead === 1` in runlens.ts) — the
+  // retry's usage is recorded as the pass's first turn; this fails.
+  it("a pass whose first attempt the deadline cut has no first turn: the retry's is not taken for it", async () => {
+    rig.faux.setResponses([hang(() => {}), async () => fauxAssistantMessage("second time lucky")]);
+    const runner = createLensRunner(config({ deadlineMs: 60 }));
+    const { result } = await runner.run({ agent: "pass-a", task: "go" });
+    expect(result.exitCode).toBe(0);
+    const [line] = ledger();
+    expect(line!.usage.input + line!.usage.output).toBeGreaterThan(0);
+    expect(line!.turn1).toBeUndefined();
+  });
+
   it("times out after the second attempt, once, with the timeout named and the permit back", async () => {
     let calls = 0;
     rig.faux.setResponses(

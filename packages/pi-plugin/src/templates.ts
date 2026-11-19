@@ -939,7 +939,9 @@ export function renderSweepNote(
   ];
   const files = order.sweep_task_files;
   if (files && files.length > 0) {
-    // The sweep launches through the wave tool too, as its own call.
+    // The sweep launches through the wave tool too, as its own call. The
+    // pointer below is what the row holds and what a hand launch must send;
+    // the wave sends the row its file's text (launch-plan.ts unitMessage).
     const dir = taskDirOf(files);
     out.push(
       "",

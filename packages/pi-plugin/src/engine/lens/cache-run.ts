@@ -32,6 +32,11 @@ export const WARMUP_WAIT_MS = 30_000;
  * (leaf-cache.ts `PACK_CLOSING`), so it says nothing of its own. */
 export const WARMUP_REPLY_TASK = PACK_CLOSING;
 
+/** How many warm-ups a key is given: its first, and one more when that one
+ * warmed nothing. A warm-up that failed twice says the provider is failing,
+ * and the passes go on without one, as they do when it is slow. */
+export const WARMUP_ATTEMPTS = 2;
+
 /** What the group disposes: a pi session, as far as the group knows it. */
 export interface Retired {
   dispose(): void;
@@ -48,6 +53,8 @@ export interface CacheKeyFacts {
   warmup?: PrefixDigest;
   /** The tokens the warm-up's request held (uncached and cached). */
   warmupInput?: number;
+  /** Warm-ups started for the key (WARMUP_ATTEMPTS). */
+  warmups: number;
   /** Passes of the key whose first turn was read. */
   turn1: number;
   /** Those that read the warm-up from cache (TURN1_HOT_SHARE). */
@@ -60,8 +67,10 @@ export interface CacheKeyFacts {
 class Lifetime {
   members = 0;
   readonly sessions: Retired[] = [];
-  /** The group's warm-up, memoised: set once, by the group's first lens. */
+  /** The group's last warm-up, memoised: one runs at a time. */
   warmup: Promise<void> | undefined;
+  /** That warm-up has ended, well or not. */
+  warmupSettled = false;
 }
 
 /** A member's hold on its group. Released exactly once. */
@@ -79,10 +88,14 @@ export class CacheLease {
   ) {}
 
   /** Whether a pass that finds no warm-up running should start one: the key
-   * was never warmed (its first pass is this one, or its warm-up failed). A
-   * late pass of a key that was warmed reads that cache and starts none. */
+   * was never warmed (its first pass is this one, or its warm-up ended and
+   * warmed nothing, whether or not passes beside it still run) and has
+   * attempts left. A late pass of a key that was warmed reads that cache and
+   * starts none. */
   needsWarmup(): boolean {
-    return this.life.warmup === undefined && this.facts.warmupInput === undefined;
+    if (this.facts.warmupInput !== undefined) return false;
+    if (this.life.warmup !== undefined && !this.life.warmupSettled) return false;
+    return this.facts.warmups < WARMUP_ATTEMPTS;
   }
 
   /** The warm-up's first request, as it was sent. */
@@ -130,16 +143,19 @@ export class CacheLease {
   }
 
   /**
-   * Start the group's warm-up unless it already started; return it either way.
+   * Start the group's warm-up unless one is running; return it either way.
    * `run` never rejects; it is handed `keep` for the session it makes. The
    * warm-up is a member of the group until it settles, so a group whose lenses
    * all finished first still waits to dispose it.
    */
   startWarmup(run: (keep: (s: Retired) => void) => Promise<void>): Promise<void> {
-    if (this.life.warmup !== undefined) return this.life.warmup;
+    if (this.life.warmup !== undefined && !this.life.warmupSettled) return this.life.warmup;
     this.life.members += 1;
+    this.facts.warmups += 1;
     const life = this.life;
+    life.warmupSettled = false;
     const settle = (): void => {
+      life.warmupSettled = true;
       life.members -= 1;
       this.leave();
     };
@@ -214,7 +230,7 @@ export class CacheGroups {
     const held = life;
     let facts = this.facts.get(slot.key);
     if (facts === undefined) {
-      facts = { turn1: 0, turn1Hot: 0, differenceTold: false };
+      facts = { warmups: 0, turn1: 0, turn1Hot: 0, differenceTold: false };
       this.facts.set(slot.key, facts);
     }
     return new CacheLease(

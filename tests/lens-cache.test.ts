@@ -32,6 +32,7 @@ import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-gua
 import { CACHE_GROUP_MAX_IDLE_MS } from "@quickchatai/pi-quickreview/src/engine/lens/cache-group.js";
 import {
   CacheGroups,
+  WARMUP_ATTEMPTS,
   WARMUP_REPLY_TASK,
   cacheGroupKey,
   settledWithin,
@@ -511,6 +512,43 @@ describe("[cache groups] one thinking level per group, one key per round", () =>
     second.release(4);
     sibling.release(5);
     expect(groups.join("m", 6).needsWarmup()).toBe(false);
+  });
+
+  // A wave's rows queue behind the permit cap, so a row joins its key while
+  // the rows before it still run. A warm-up that ended and warmed nothing is
+  // then started again by the next row that joins, not only once the group
+  // is empty; one that is running is waited for; and a key gets two.
+  // MUTATION: keep the first warm-up's promise for the group's whole life
+  // (`if (this.life.warmup !== undefined) return false` in needsWarmup,
+  // cache-run.ts) — the row that joins beside a live pass starts none; this
+  // fails.
+  // MUTATION: drop the WARMUP_ATTEMPTS bound from needsWarmup — the third
+  // row starts a third warm-up; this fails.
+  it("CacheLease.needsWarmup: a warm-up that warmed nothing is started again beside a live pass, twice at most", async () => {
+    const groups = new CacheGroups(8, 0, () => "k");
+    const first = groups.join("m", 0);
+    let fail!: () => void;
+    const failing = first.startWarmup(() => new Promise<void>((r) => (fail = r)));
+    const second = groups.join("m", 1);
+    expect(second.needsWarmup()).toBe(false); // running: one at a time
+    expect(second.warmup()).toBe(failing);
+    fail();
+    await failing;
+    // `first` still runs; the warm-up ended and warmed nothing.
+    expect(second.needsWarmup()).toBe(true);
+    let ran = 0;
+    const again = second.startWarmup(async () => {
+      ran += 1;
+    });
+    expect(again).not.toBe(failing);
+    await again;
+    expect(ran).toBe(1);
+    expect(WARMUP_ATTEMPTS).toBe(2);
+    const third = groups.join("m", 2);
+    expect(third.needsWarmup()).toBe(false);
+    for (const lease of [first, second, third]) lease.release(3);
+    // And not in a later life of the key either.
+    expect(groups.join("m", 4).needsWarmup()).toBe(false);
   });
 });
 

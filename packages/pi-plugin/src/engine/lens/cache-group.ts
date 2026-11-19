@@ -12,11 +12,10 @@ import { randomUUID } from "node:crypto";
  * the same cache (measured: a lens 20 s behind its group read all of it). */
 export const CACHE_GROUP_MAX_IDLE_MS = 4 * 60_000;
 
-/** One cache group's place: its key, whether the caller is its first child,
- * and how long a pack-less child should wait. */
+/** One cache group's place: its key, and how long a pack-less child should
+ * wait. */
 export interface CacheSlot {
   key: string;
-  first: boolean;
   delayMs: number;
 }
 
@@ -39,11 +38,11 @@ export class CacheGrouper {
     if (g === undefined || g.members >= this.size || now - g.usedAt > CACHE_GROUP_MAX_IDLE_MS) {
       const key = this.newKey();
       this.groups.set(model, { key, leaderAt: now, usedAt: now, members: 1 });
-      return { key, first: true, delayMs: 0 };
+      return { key, delayMs: 0 };
     }
     g.members += 1;
     g.usedAt = Math.max(g.usedAt, now);
-    return { key: g.key, first: false, delayMs: Math.max(0, g.leaderAt + this.staggerMs - now) };
+    return { key: g.key, delayMs: Math.max(0, g.leaderAt + this.staggerMs - now) };
   }
 
   /** The key of `model`'s current group, if it has one. */

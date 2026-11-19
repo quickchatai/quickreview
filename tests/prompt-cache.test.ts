@@ -46,15 +46,15 @@ describe("cache groups", () => {
   it("one key per group of `size` per model; the first child at once, the rest after the stagger", () => {
     let n = 0;
     const g = new CacheGrouper(3, 2500, () => `k${++n}`);
-    expect(g.next(1000, "m")).toEqual({ key: "k1", first: true, delayMs: 0 });
-    expect(g.next(1000, "m")).toEqual({ key: "k1", first: false, delayMs: 2500 });
-    expect(g.next(2000, "m")).toEqual({ key: "k1", first: false, delayMs: 1500 });
+    expect(g.next(1000, "m")).toEqual({ key: "k1", delayMs: 0 });
+    expect(g.next(1000, "m")).toEqual({ key: "k1", delayMs: 2500 });
+    expect(g.next(2000, "m")).toEqual({ key: "k1", delayMs: 1500 });
     // Another model: its own group (the cache is per model).
-    expect(g.next(2000, "other")).toEqual({ key: "k2", first: true, delayMs: 0 });
+    expect(g.next(2000, "other")).toEqual({ key: "k2", delayMs: 0 });
     // Full: a new group, a new first child.
-    expect(g.next(2000, "m")).toEqual({ key: "k3", first: true, delayMs: 0 });
+    expect(g.next(2000, "m")).toEqual({ key: "k3", delayMs: 0 });
     // Past the stagger a member waits no longer.
-    expect(g.next(9000, "m")).toEqual({ key: "k3", first: false, delayMs: 0 });
+    expect(g.next(9000, "m")).toEqual({ key: "k3", delayMs: 0 });
   });
 
   it("a group idle too long starts afresh (the provider's cache is short-lived)", () => {
@@ -73,17 +73,14 @@ describe("cache groups", () => {
   it("a group is idle from its last use, not from its first pass: a late row joins it", () => {
     let n = 0;
     const g = new CacheGrouper(10, 2500, () => `k${++n}`);
-    expect(g.next(0, "m")).toMatchObject({ key: "k1", first: true });
+    expect(g.next(0, "m")).toMatchObject({ key: "k1" });
     // A pass of the group was still in use five minutes on.
     g.used(5 * 60_000, "m", "k1");
-    expect(g.next(6 * 60_000, "m")).toMatchObject({ key: "k1", first: false, delayMs: 0 });
+    expect(g.next(6 * 60_000, "m")).toMatchObject({ key: "k1", delayMs: 0 });
     // A join is a use too.
     expect(g.next(9 * 60_000, "m").key).toBe("k1");
     // Idle past the limit after that: afresh.
-    expect(g.next(9 * 60_000 + CACHE_GROUP_MAX_IDLE_MS + 1, "m")).toMatchObject({
-      key: "k2",
-      first: true,
-    });
+    expect(g.next(9 * 60_000 + CACHE_GROUP_MAX_IDLE_MS + 1, "m").key).toBe("k2");
     // A use of a group that is no longer the model's current one changes nothing.
     g.used(60 * 60_000, "m", "k1");
     expect(g.current("m")).toBe("k2");

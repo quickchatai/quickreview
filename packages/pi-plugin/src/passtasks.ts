@@ -607,6 +607,8 @@ export function renderPassTaskNote(
           "focus after the row's pointer: a site, a question, a prior open finding",
           "this lens must verify first.",
         ];
+  // The pointer named below is what a row holds and what a hand launch must
+  // send; the wave sends the row its file's text (launch-plan.ts unitMessage).
   return [
     "",
     ...intro,
