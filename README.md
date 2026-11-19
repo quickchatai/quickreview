@@ -67,10 +67,9 @@ uncommitted changes or a pull request and it reviews those instead.
   is installed with it, and never uses your coding agent's own login. Any
   provider pi supports works, by subscription or API key. With no credential, a
   review stops at the preview, which is free, and says what to do.
-- **A review is slow and costs money.** On GPT-6.1 Sol through a ChatGPT
-  sign-in, the model and route we measured, a review took about two dollars
-  and more than fifteen minutes per pull request. On another model or route
-  the preview shows no estimate, only where the review stops. The six other reviewers we ran on the same pull requests each
+- **A review is slow and costs money.** On GPT-6.1 Sol, the model we measured,
+  a review took about two dollars and more than fifteen minutes per pull
+  request. The six other reviewers we ran on the same pull requests each
   averaged under three minutes and under a dollar ([Benchmarks](#benchmarks)).
   On a subscription plan a review uses quota and adds no bill.
 - **It reads your code and runs none of it:** no build, no tests, no scripts
