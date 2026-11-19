@@ -5,13 +5,17 @@
 // reader cannot count on it: a qcr from before `--schema` prints none.
 // `schemas.review` is the version the code prints by itself; `contracts` may
 // list an older contract beside it, whose review payloads are printed by
-// projection (`qcr --schema N` is how a caller asks for one).
+// projection (`qcr --schema N` is how a caller asks for one). `host_families`
+// was added to version 1 too: the host contract's families are built one at a
+// time, so a host reads which of them this release has here, not off the
+// contract number alone.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   REVIEW_SCHEMA_VERSION,
   SCAN_SCHEMA_VERSION,
   VERSION_SCHEMA_VERSION,
+  hostFamilies,
   supportedContracts,
 } from "@quickchatai/pi-quickreview/src/contract.js";
 import { piPinFromPackageJson } from "./onboard/pipin.js";
@@ -28,6 +32,9 @@ export interface VersionInfo {
   schemas: { review: number; scan: number };
   /** The host-plugin contract numbers `qcr --schema N` accepts, ascending. */
   contracts: number[];
+  /** The host contract's families this build prints, each at its version
+   * (`board`, `host`); one that is not built yet is not listed. */
+  host_families: Record<string, number>;
   pi: { package: string; version: string } | null;
 }
 
@@ -58,14 +65,17 @@ export function versionInfo(
     image: { version, build_sha: buildSha },
     schemas: { review: REVIEW_SCHEMA_VERSION, scan: SCAN_SCHEMA_VERSION },
     contracts: supportedContracts(),
+    host_families: hostFamilies(),
     pi: pin ?? piPinFromPackageJson(root),
   };
 }
 
 export function renderVersion(v: VersionInfo): string {
+  const families = Object.entries(v.host_families).map(([name, n]) => `${name} v${n}`);
   return [
     `qcr ${v.image.version}${v.image.build_sha ? ` (build ${v.image.build_sha})` : ""}`,
     `JSON schemas: review v${v.schemas.review}, scan v${v.schemas.scan}; host-plugin contracts: ${v.contracts.join(", ")}`,
+    ...(families.length > 0 ? [`host contract families: ${families.join(", ")}`] : []),
     v.pi ? `pi: ${v.pi.package}@${v.pi.version}` : "pi: no pin found",
   ].join("\n");
 }

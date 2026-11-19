@@ -103,6 +103,8 @@ interface World {
   quote?: ReviewQuote;
   /** The refresher's pause, pi's menu and the pause's release, in the order they happened. */
   log: string[];
+  /** A host manages GitHub and the repository here (`[github] token_source = "host"`). */
+  hosted?: boolean;
 }
 
 /** A machine with nothing set up: pi, git and gh installed, nothing else. */
@@ -197,6 +199,7 @@ function adapters(w: World, holds: Setup["holds"]): HomeAdapters {
     autoReview: { status: async () => unknown("not yet") },
     memory: { status: async () => unknown("not yet") },
     spend: { totals: async () => unknown("not yet") },
+    hostManaged: () => w.hosted === true,
     ...(hold
       ? {
           loginOwner: {
@@ -944,6 +947,101 @@ describe("Choose a repository", () => {
     await s.pi.key("alt+n");
     expect(s.writes).toEqual([]);
     expect(open(s)[0]!.options).toMatchObject({ anchor: "center" });
+  });
+});
+
+// A host-managed install (`[github] token_source = "host"`): GitHub and the
+// repository are the host's to provide. The card shows each as managed by the
+// host, or as waited for; its key reads again and does nothing else.
+describe("a host-managed install: GitHub and the repository are the host's", () => {
+  /** Signed in to a model, on a machine with no gh at all; the host has
+   * provided nothing yet. `recents` counts every read of the repository list. */
+  const hosted = (over: Partial<World> = {}): { w: World; recents: () => number } => {
+    const w = fresh({ creds: NORTH, hosted: true, path: new Set(["git"]), ...over });
+    let recents = 0;
+    Object.defineProperty(w, "recent", {
+      get: () => {
+        recents++;
+        return known(["acme/widgets"]);
+      },
+    });
+    return { w, recents: () => recents };
+  };
+
+  // MUTATION: drop the `this.managed()` branch of githubFacts — the card says
+  // gh is not installed and sends the person to install it, and this fails.
+  it("waits for the host's token: no gh is looked for and no sign-in is named", async () => {
+    const { w } = hosted();
+    const s = await openSetup(w);
+    expect(row(s, "GitHub")).toMatch(/▸ {2}GitHub\s+alt\+n check/);
+    expect(s.text()).toMatch(
+      /Waiting for your host to provide a GitHub token\. alt\+n checks again\./,
+    );
+    expect(s.text()).not.toMatch(/gh auth login|gh is not installed|cli\.github\.com/);
+    expect(s.text()).not.toMatch(/Connect GitHub|Choose a repository|choose a repository/);
+    // still nothing: the same words, as the notice
+    await s.pi.key("alt+n");
+    expect(s.text()).toMatch(/waiting for your host to provide a GitHub token, then press alt\+n/);
+    expect(await s.pi.tool("home_check_github")).not.toMatch(/gh auth login|gh is/);
+    w.user = known("octo");
+    await s.pi.key("alt+n");
+    expect(row(s, "GitHub")).toMatch(/✓ {2}GitHub\s+@octo · managed by your host/);
+    expect(s.text()).toMatch(/Connected to GitHub as @octo · managed by your host\./);
+  });
+
+  // MUTATION: drop the `this.managed()` return at the top of chooseRepo — the
+  // repository is described and written to the config, and this fails.
+  it("offers no repository step: nothing is listed, picked, described or written", async () => {
+    const { w, recents } = hosted({ user: known("octo") });
+    const s = await openSetup(w);
+    expect(row(s, "Repository")).toMatch(/▸ {2}Repository\s+alt\+n check/);
+    expect(s.text()).toMatch(/Waiting for your host to set the repository\. alt\+n checks again\./);
+    expect(s.text()).not.toMatch(/recently pushed|paste any owner/);
+    s.answers.select = "acme/widgets";
+    await s.pi.key("alt+n");
+    expect(await s.pi.tool("home_choose_repo")).toMatch(/the repository is managed by your host/);
+    expect(await s.pi.tool("home_choose_repo", { repo: "acme/widgets" })).toMatch(
+      /the repository is managed by your host/,
+    );
+    expect(await s.pi.tool("home_setup_next")).toMatch(
+      /waiting for your host to set the repository/,
+    );
+    expect(s.selects).toEqual([]);
+    expect(s.described).toEqual([]);
+    expect(s.writes).toEqual([]);
+    expect(recents()).toBe(0);
+    expect(open(s)[0]!.options).toMatchObject({ anchor: "center" });
+  });
+
+  it("once the host has set both, the card gives way to the home, which says whose they are", async () => {
+    const { w } = hosted({ user: known("octo") });
+    const s = await openSetup(w);
+    expect(open(s)[0]!.options).toMatchObject({ anchor: "center" });
+    w.repo = known("acme/widgets");
+    await s.pi.key("alt+n");
+    expect(open(s)).toHaveLength(1);
+    expect(open(s)[0]!.options).toMatchObject({ anchor: "top-right" });
+    const lines = s.lines();
+    expect(lines[0]).toMatch(/quickreview ─+ acme\/widgets · managed by your host ─╮$/);
+    expect(flat(lines)).toMatch(/✓ GitHub @octo · managed by your host/);
+    expect(s.writes).toEqual([]);
+  });
+
+  it("set up from the start, the greeting names the host for both", async () => {
+    const { w } = hosted({ user: known("octo"), repo: known("acme/widgets") });
+    const s = await openSetup(w);
+    expect(open(s)[0]!.options).toMatchObject({ anchor: "top-right" });
+    expect(s.text()).toMatch(
+      /Found your North login, GitHub @octo and acme\/widgets, both managed by your host: you're set\./,
+    );
+  });
+
+  it("a token the home cannot read is unknown, never a gap and never a sign-in", async () => {
+    const { w } = hosted({ user: unknown("GitHub refused the token your host wrote (HTTP 401)") });
+    const s = await openSetup(w);
+    expect(row(s, "GitHub")).toMatch(/\? {2}GitHub/);
+    expect(s.text()).toMatch(/Unknown — can't tell: GitHub refused the token your host wrote/);
+    expect(s.text()).not.toMatch(/gh auth login/);
   });
 });
 

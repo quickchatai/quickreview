@@ -2868,6 +2868,32 @@ describe("/qcr-setup", () => {
     expect(JSON.stringify(lines)).not.toContain("secret-value");
   });
 
+  // `[github] token_source = "host"`: the credential is the token file a
+  // host keeps, and nothing else is looked for.
+  // MUTATION: drop the `hostManagedSecrets` branch of the GitHub step — the
+  // variable is read and, without one, `gh auth login` is named, and this fails.
+  it("on a host-managed install, reads the host's token file: no variable, no gh, no sign-in named", async () => {
+    const host = fakeHost({ runner: scriptedRunner(ghOk) });
+    host.env["GITHUB_TOKEN"] = "secret-value";
+    const home = join(host.env["XDG_CONFIG_HOME"]!, "qcr", "default");
+    mkdirSync(join(home, "secrets"), { recursive: true });
+    writeFileSync(join(home, "config.toml"), '[github]\nauth = "user"\ntoken_source = "host"\n');
+    const step = async () =>
+      (await runSetupChecks({ host, range, root: () => ROOT })).find(
+        (l) => l.id === PLUGIN_SETUP_STEPS.github,
+      )!;
+    const waiting = await step();
+    expect(waiting.status).toBe("pending");
+    expect(waiting.note).toMatch(/managed by its host/);
+    expect(waiting.note).toContain(join(home, "secrets", "github_token"));
+    expect(waiting.note).not.toMatch(/gh auth login|GH_TOKEN|GITHUB_TOKEN/);
+    writeFileSync(join(home, "secrets", "github_token"), "ghu_hostWrittenToken0123\n");
+    const there = await step();
+    expect(there.status).toBe("done");
+    expect(there.found).toBe("managed by your host (for PR targets)");
+    expect(JSON.stringify([waiting, there])).not.toMatch(/secret-value|ghu_hostWritten/);
+  });
+
   it("finds this repo's .qcr/profile.toml at the repo's top level", async () => {
     const host = fakeHost();
     mkdirSync(join(host.cwd, ".qcr"), { recursive: true });

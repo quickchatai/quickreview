@@ -2218,7 +2218,10 @@ export async function main(rawArgv: string[]): Promise<void> {
       // The own-account route's token refresher (src/githubtoken.ts): gh's
       // token → <secrets>/github_token, 0600. The crontab entry runs this.
       const { cmdGithubToken } = await import("./githubtoken.js");
+      const { hostManagedInstall } = await import("./hostmanaged.js");
       process.exitCode = await cmdGithubToken(rest, {
+        // a host-managed install: the host is the token file's only writer
+        hostManaged: () => hostManagedInstall(),
         secretsDir: () => {
           try {
             return loadConfig().github.secrets_dir;
@@ -2286,6 +2289,22 @@ export async function main(rawArgv: string[]): Promise<void> {
       // versions, pi pin (src/version.ts). Needs no config and no state.
       const { cmdVersion } = await import("./version.js");
       return cmdVersion(json);
+    }
+    case "board": {
+      // The host contract's board export (src/boardexport.ts): one JSON
+      // object, read-only. The bin's front door routes the verb itself; this
+      // is the same verb for the image, whose `qcr` comes in here.
+      const { cmdBoard } = await import("./boardexport.js");
+      process.exitCode = await cmdBoard(rest);
+      return;
+    }
+    case "host": {
+      // The host contract's verbs (src/host/cli.ts). The bin's front door
+      // routes them itself; this is the same door for the image, where every
+      // one of them refuses: they run on the machine that runs the stack.
+      const { cmdHost } = await import("./host/cli.js");
+      process.exitCode = await cmdHost(rest);
+      return;
     }
     case "model": {
       // Which model reviews run on here, and how to change it (src/modelcli.ts).

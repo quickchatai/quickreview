@@ -26,6 +26,7 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { HOST_MANAGED } from "@quickchatai/pi-quickreview/src/hosttoken.js";
 import { clockOf } from "@quickchatai/pi-quickreview/src/live/lensline.js";
 import { spendText } from "@quickchatai/pi-quickreview/src/pricing.js";
 import { ago, credentialHow, type HomeModel } from "./model.js";
@@ -155,9 +156,17 @@ export class HomePanel implements Component {
   private top(w: number): string {
     const left = `${this.edge("╭─ ")}${this.th.bold(this.c("accent", "quickreview"))} `;
     const repo = this.m.state.repo;
+    // a host-managed install: the repository is the host's, and says so
+    const hosted = this.m.hostManaged();
     const name =
       repo.kind === "known"
-        ? (repo.value ?? "no repository")
+        ? repo.value === null
+          ? hosted
+            ? "waiting for your host"
+            : "no repository"
+          : hosted
+            ? `${repo.value} · ${HOST_MANAGED}`
+            : repo.value
         : repo.kind === "unknown"
           ? "repository unknown"
           : "…";
@@ -182,6 +191,8 @@ export class HomePanel implements Component {
     const s = this.m.state.autoReview;
     if (s.kind === "pending") return [left, right];
     const on = s.kind === "known" && s.value.state !== "off";
+    // a host-managed install: the host starts it, so no key turns it on
+    if (!on && this.m.hostManaged()) return [left, this.c("dim", "started by your host")];
     const key = this.host.focused() ? "a" : "alt+a";
     return [left, this.c("dim", `${key} ${on ? "switches it off" : "turns it on"}`)];
   }
@@ -301,8 +312,9 @@ export class HomePanel implements Component {
         : g.kind === "unknown"
           ? `${this.c("dim", "?")} ${this.c("muted", "GitHub")} unknown`
           : g.value === null
-            ? `${this.c("warning", "✗")} ${this.c("muted", "GitHub")} ${this.c("warning", "not signed in")}`
-            : `${this.c("success", "✓")} ${this.c("muted", "GitHub")} @${g.value}`;
+            ? // a host-managed install has no sign-in: the token is the host's to write
+              `${this.c("warning", "✗")} ${this.c("muted", "GitHub")} ${this.c("warning", this.m.hostManaged() ? "waiting for your host" : "not signed in")}`
+            : `${this.c("success", "✓")} ${this.c("muted", "GitHub")} @${g.value}${this.m.hostManaged() ? this.c("dim", ` · ${HOST_MANAGED}`) : ""}`;
     return [
       `${login}    ${gh}`,
       this.c("dim", this.m.tools === "full" ? "all pi tools" : "reviewer tools"),

@@ -420,7 +420,9 @@ const credentialLabel = (s: CredentialSource): string =>
       ? "the token handed to the container"
       : s === "gh"
         ? "gh auth login"
-        : s.slice("env:".length);
+        : s === "host"
+          ? "the token your host manages"
+          : s.slice("env:".length);
 
 const usd = (n: number): string => `$${n.toFixed(2)}`;
 
@@ -748,7 +750,7 @@ async function runPipeline(
       ...(target.repo !== undefined ? { repo: target.repo } : {}),
     });
     if (!parsed.ok) return refuse(1, [parsed.error]);
-    const cred = await resolvePrCredential(opts.config.github.secrets_dir, gh);
+    const cred = await resolvePrCredential(opts.config.github, gh);
     if (!cred.ok) return refuse(1, [cred.error]);
     if (io.signal?.aborted) return stopped();
     runDir = join(opts.runsDir, `${stamp}-pr${parsed.number}`);
@@ -760,6 +762,7 @@ async function runPipeline(
       number: parsed.number,
       scratchDir: scratch,
       token: cred.token,
+      ...(cred.source === "host" ? { hostManaged: true } : {}),
       ...(gh?.fetchFn ? { fetchFn: gh.fetchFn } : {}),
       ...(gh?.gitBase ? { gitBase: gh.gitBase } : {}),
       ...(gh?.apiBase ? { apiBase: gh.apiBase } : {}),
@@ -1678,7 +1681,7 @@ async function runPipeline(
     const postAs = loadPostIdentity(repoDir);
     if (post) {
       const id = await resolvePostCredential(
-        opts.config.github.secrets_dir,
+        opts.config.github,
         postAs,
         { source: prInfo.source, token: prToken },
         gh,

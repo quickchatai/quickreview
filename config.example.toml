@@ -58,6 +58,24 @@ repo = ""                                    # ← FILL (1): the repo to review,
 #          bot_login is your own GitHub login. The App secrets (app_id,
 #          app.pem, webhook_secret) are not needed.
 #auth = "app"
+# Who keeps that credential:
+#   "self" (the default; a missing key means "self") — this install does: the
+#          App's key, or under auth = "user" the `qcr github-token sync`
+#          refresher above.
+#   "host" — the marker of a host-managed install: a host that runs the
+#          reviewer for you writes <secrets dir>/github_token (atomically, 0600,
+#          the token alone) and keeps a token with at least 15 minutes of life
+#          in it at all times; it may write the token's expiry beside it as
+#          <secrets dir>/github_token.expires_at (one ISO 8601 instant). Needs
+#          auth = "user". The daemon reads the file exactly as it does under
+#          "self" (first use, every five minutes, after a 401). Nothing on the
+#          machine signs in to GitHub or refreshes the token: the onboarding
+#          account step proves the file's token and installs no crontab entry,
+#          `qcr github-token sync` refuses, and the home shows the identity
+#          and the repository as managed by your host, with no GitHub sign-in,
+#          no repository pick, no switch-on and no go-live of its own.
+#          A host sets this; you would not set it by hand.
+#token_source = "self"
 app_slug = ""                                # ← FILL (2): your GitHub App slug ("" under auth = "user")
 bot_login = ""                               # ← FILL (3): the App bot login, "<app_slug>[bot]" (your login under auth = "user")
 review_team = ""                            # ← FILL (4): "org/team" whose review request triggers

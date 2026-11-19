@@ -11,6 +11,10 @@
 //              re-login that a stored login was replaced. Provider ids, each
 //              credential's type and expiry, never a token.
 //   GitHub     `gh`: the account, the repository's open PRs, the browser.
+//              On a host-managed install (`[github] token_source = "host"`,
+//              src/hostmanaged.ts) there is no gh: the same three are read
+//              with the token file the host keeps (`tokenFileGithubPort`),
+//              and which of the two answers is decided again on every call.
 //   repository `[github] repo` of the install's config.toml, read again on
 //              every refresh.
 //   clock      Date.now.
@@ -41,9 +45,11 @@ import { join } from "node:path";
 import { parse } from "smol-toml";
 import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { assetRoot } from "@quickchatai/pi-quickreview/src/assetroot.js";
+import { readTokenFile } from "@quickchatai/pi-quickreview/src/hosttoken.js";
 import { postSavedReview } from "@quickchatai/pi-quickreview/src/savedpost.js";
 import { HOME_DEFAULTS, sandboxRoot, type HomeToolSet } from "../config.js";
 import { loadOneShotConfig, locateConfig, stackRoot, stateHome } from "../homes.js";
+import { hostManagedAt, secretsDirAt } from "../hostmanaged.js";
 import type { OnboardAdapters, ProcessRunner } from "../onboard/engine.js";
 import { openStepMemoryForward } from "../onboard/stepforward.js";
 import { composeAutoReview, serviceState } from "./autoreview.js";
@@ -224,6 +230,165 @@ export function parsePulls(json: string): OpenPull[] {
   });
 }
 
+/** The open pull requests of one repository, as `gh pr list --json` names
+ * the fields: one GraphQL read gives the sizes a REST list leaves out. */
+const OPEN_PULLS_QUERY = `query($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: 100, after: $after, orderBy: { field: CREATED_AT, direction: DESC }) {
+      nodes {
+        number title updatedAt isDraft additions deletions changedFiles headRefName headRefOid
+        author { login }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+
+/** GitHub's answer to OPEN_PULLS_QUERY, as far as it is read. */
+interface PullsAnswer {
+  data?: {
+    repository?: {
+      pullRequests?: {
+        nodes?: unknown;
+        pageInfo?: { hasNextPage?: unknown; endCursor?: unknown };
+      };
+    } | null;
+  } | null;
+  errors?: Array<{ message?: unknown }>;
+}
+
+/** How many pages of 100 the list reads: `gh pr list --limit 200`'s reach. */
+const OPEN_PULLS_PAGES = 2;
+const GITHUB_READ_TIMEOUT_MS = 15_000;
+
+/**
+ * The home's GitHub reads on a host-managed install: the token file the host
+ * keeps in `secretsDir()`, read again on every call, and GitHub's API. No
+ * `gh`, and no words that send the person to sign in: a token the host has
+ * not written is "no credential yet" (`user` answers null), and one GitHub
+ * refuses is unknown with the reason. The token is never in an answer.
+ */
+export function tokenFileGithubPort(o: {
+  secretsDir: () => string;
+  fetch?: typeof fetch;
+  apiBase?: string;
+}): GithubPort {
+  const fetchFn: typeof fetch = o.fetch ?? ((input, init) => fetch(input, init));
+  const apiBase = o.apiBase ?? "https://api.github.com";
+  const token = (): Known<string | null> => {
+    let file: ReturnType<typeof readTokenFile>;
+    try {
+      file = readTokenFile(o.secretsDir());
+    } catch (err) {
+      return unknown(`can't locate the token file: ${message(err)}`);
+    }
+    if (file.ok) return known(file.token);
+    return file.reason === "missing" || file.reason === "empty"
+      ? known(null)
+      : unknown(
+          file.reason === "malformed"
+            ? `the token file ${file.path} your host wrote holds more than one word`
+            : `the token file ${file.path} your host wrote cannot be read`,
+        );
+  };
+  const call = async (
+    bearer: string,
+    path: string,
+    init: { method?: string; body?: string } = {},
+  ): Promise<{ status: number; body: unknown }> => {
+    const res = await fetchFn(`${apiBase}${path}`, {
+      ...init,
+      signal: AbortSignal.timeout(GITHUB_READ_TIMEOUT_MS),
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        accept: "application/vnd.github+json",
+        "user-agent": "quickreview-home",
+        ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
+      },
+    });
+    const text = await res.text();
+    let body: unknown = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = null;
+    }
+    return { status: res.status, body };
+  };
+  const refusal = (status: number): string =>
+    status === 401
+      ? "GitHub refused the token your host wrote (HTTP 401): your host renews it"
+      : `GitHub answered HTTP ${status} to the token your host wrote`;
+  return {
+    user: async () => {
+      const t = token();
+      if (t.kind === "unknown" || t.value === null) return t;
+      try {
+        const r = await call(t.value, "/user");
+        const login = (r.body as { login?: unknown } | null)?.login;
+        if (r.status === 200 && typeof login === "string" && login !== "") return known(login);
+        return unknown(r.status === 200 ? "GitHub's answer names no login" : refusal(r.status));
+      } catch (err) {
+        return unknown(`GitHub could not be reached: ${message(err)}`);
+      }
+    },
+    openPulls: async (repo) => {
+      const t = token();
+      if (t.kind === "unknown") return t;
+      if (t.value === null) return unknown("your host has not written a GitHub token yet");
+      const [owner, name] = repo.split("/");
+      const rows: unknown[] = [];
+      let after: string | null = null;
+      for (let page = 0; page < OPEN_PULLS_PAGES; page++) {
+        let r: { status: number; body: unknown };
+        try {
+          r = await call(t.value, "/graphql", {
+            method: "POST",
+            body: JSON.stringify({ query: OPEN_PULLS_QUERY, variables: { owner, name, after } }),
+          });
+        } catch (err) {
+          return unknown(`GitHub could not be reached: ${message(err)}`);
+        }
+        if (r.status !== 200) return unknown(refusal(r.status));
+        const answer = r.body as PullsAnswer | null;
+        const list = answer?.data?.repository?.pullRequests;
+        if (!list || !Array.isArray(list.nodes)) {
+          const said = answer?.errors?.[0]?.message;
+          return unknown(
+            `GitHub did not list ${repo}'s pull requests${typeof said === "string" ? `: ${firstLine(said)}` : ""}`,
+          );
+        }
+        rows.push(...(list.nodes as unknown[]));
+        const cursor = list.pageInfo?.endCursor;
+        if (list.pageInfo?.hasNextPage !== true || typeof cursor !== "string") break;
+        after = cursor;
+      }
+      try {
+        return known(parsePulls(JSON.stringify(rows)));
+      } catch (err) {
+        return unknown(`GitHub's answer is not a pull request list: ${message(err)}`);
+      }
+    },
+    // a host-managed install is a terminal on a machine with no browser of the person's
+    openInBrowser: async () => ({ ok: false, why: "this home has no browser to open" }),
+  };
+}
+
+/** The home's GitHub port: `host` while the install is host-managed, `own`
+ * (the person's `gh`) otherwise, asked again on every call. */
+export function hostAwareGithubPort(o: {
+  managed: () => boolean;
+  own: GithubPort;
+  host: GithubPort;
+}): GithubPort {
+  const now = (): GithubPort => (o.managed() ? o.host : o.own);
+  return {
+    user: () => now().user(),
+    openPulls: (repo) => now().openPulls(repo),
+    openInBrowser: (repo, pr) => now().openInBrowser(repo, pr),
+  };
+}
+
 /** `[github] repo` of the config at `configPath()`, located again on every
  * read. No config file, or an empty repo, is no repository. */
 export function repoPort(
@@ -325,6 +490,11 @@ export function realHomeAdapters(o: {
   configPath: () => string;
   reviews: ReviewsPort;
   runner?: Runner;
+  /** The environment the secrets dir is located in (a host-managed install's
+   * token file); default: this process's. */
+  env?: Readonly<Record<string, string | undefined>>;
+  /** GitHub's API for the host-managed reads; default: the real one. */
+  fetch?: typeof fetch;
   /** The app root, the compose project of this machine's stack: given, the
    * auto-review and memory ports read and switch it. */
   root?: string;
@@ -332,6 +502,7 @@ export function realHomeAdapters(o: {
   spend?: SpendPort;
 }): HomeAdapters {
   const repo = repoPort(o.configPath);
+  const hostManaged = hostManagedAt(o.configPath);
   const stack =
     o.root === undefined
       ? null
@@ -354,7 +525,15 @@ export function realHomeAdapters(o: {
       now: () => Date.now(),
       ...(daemonRuns ? { daemonRuns } : {}),
     }),
-    github: githubPort(o.runner ?? execRunner),
+    github: hostAwareGithubPort({
+      managed: hostManaged,
+      own: githubPort(o.runner ?? execRunner),
+      host: tokenFileGithubPort({
+        secretsDir: secretsDirAt(o.configPath, o.env ?? process.env),
+        ...(o.fetch ? { fetch: o.fetch } : {}),
+      }),
+    }),
+    hostManaged,
     repo,
     clock: { now: () => Date.now() },
     reviews: o.reviews,
@@ -434,6 +613,7 @@ export function homeOptionsFromEnv(env: Readonly<Record<string, string | undefin
     adapters: realHomeAdapters({
       agentDir,
       configPath,
+      env,
       reviews: realReviewsPort(env, { root, runner: stepRunner }),
       root,
       spend: realSpendPort({

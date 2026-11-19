@@ -9,6 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BOARD_SCHEMA_VERSION,
+  HOST_SCHEMA_VERSION,
   CONTRACTS,
   REVIEW_PRINTABLE_VERSIONS,
   REVIEW_SCHEMA_VERSION,
@@ -52,7 +54,7 @@ describe("the contracts", () => {
   // fails. MUTATION: put the old rule back in supportedContracts
   // (`c.review === REVIEW_SCHEMA_VERSION`) — contract 1 is dropped, and this fails.
   it("every contract listed is one this build can print", () => {
-    expect(supportedContracts()).toEqual([1, 2]);
+    expect(supportedContracts()).toEqual([1, 2, 3]);
     expect(supportedContracts()).toEqual(Object.keys(CONTRACTS).map(Number));
     expect(REVIEW_PRINTABLE_VERSIONS).toEqual([1, 2]);
     expect(REVIEW_PRINTABLE_VERSIONS).toContain(REVIEW_SCHEMA_VERSION);
@@ -64,11 +66,14 @@ describe("the contracts", () => {
       // the review version a caller on this contract reads is the one it fixes
       expect(reviewVersionFor(n)).toBe(c.review);
     }
-    // the newest contract is the code's own versions
+    // the newest contract is the code's own versions, the host families it
+    // carries among them
     expect(CONTRACTS[Math.max(...supportedContracts())]).toEqual({
       review: REVIEW_SCHEMA_VERSION,
       scan: SCAN_SCHEMA_VERSION,
       version: VERSION_SCHEMA_VERSION,
+      board: BOARD_SCHEMA_VERSION,
+      host: HOST_SCHEMA_VERSION,
     });
   });
 });
@@ -206,7 +211,7 @@ describe("at the front door", () => {
     expect(process.exitCode ?? 0).toBe(0);
     const v = JSON.parse(out.join("\n")) as Record<string, unknown>;
     expect(v["schema_version"]).toBe(CONTRACTS[1]!.version);
-    expect(v["contracts"]).toEqual([1, 2]);
+    expect(v["contracts"]).toEqual([1, 2, 3]);
     expect((v["schemas"] as Record<string, unknown>)["review"]).toBe(REVIEW_SCHEMA_VERSION);
     expect(err).toEqual([]);
   });
@@ -217,7 +222,9 @@ describe("at the front door", () => {
     expect(process.exitCode).toBe(3);
     expect(out).toEqual([]);
     expect(err).toHaveLength(1);
-    expect(err[0]).toMatch(/^qcr --schema: this qcr does not print contract 9 \(it prints 1, 2\)/);
+    expect(err[0]).toMatch(
+      /^qcr --schema: this qcr does not print contract 9 \(it prints 1, 2, 3\)/,
+    );
   });
 
   it("a verb with no versioned payload runs nothing and is usage", async () => {
@@ -272,7 +279,7 @@ describe("at the front door", () => {
   it("the image's entry reads the flag the same way", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     await main(["--schema", "1", "version"]);
     expect(process.exitCode ?? 0).toBe(0);
-    expect(JSON.parse(out.join("\n"))).toMatchObject({ schema_version: 1, contracts: [1, 2] });
+    expect(JSON.parse(out.join("\n"))).toMatchObject({ schema_version: 1, contracts: [1, 2, 3] });
     out.length = 0;
     await main(["--schema", "9", "version"]);
     expect(process.exitCode).toBe(3);

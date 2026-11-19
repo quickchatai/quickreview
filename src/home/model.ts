@@ -18,6 +18,7 @@
 // cursor rests on is priced after PRICE_REST_MS, one preview at a time, cached
 // by its head: a preview for a PR the cursor has left gives way to the next.
 import type { HomeToolSet } from "../config.js";
+import { HOST_MANAGED } from "@quickchatai/pi-quickreview/src/hosttoken.js";
 import type { ProviderInventory } from "@quickchatai/pi-quickreview/src/modelroute.js";
 import { KEEP_IT_HERE, postAnswer } from "@quickchatai/pi-quickreview/src/plugin/messages.js";
 import type { PostingRule } from "@quickchatai/pi-quickreview/src/plugin/settings.js";
@@ -249,6 +250,8 @@ export class HomeModel {
    * provider's credential counts): it is the one the login line names first. */
   private provider: string;
   private inFlight: Promise<string> | null = null;
+  /** `[github] token_source = "host"`, as the last refresh read it. */
+  private hosted = false;
   private greeted = false;
   private pullsWarned = false;
   /** The latest run per PR this home started or re-attached to. */
@@ -507,6 +510,12 @@ export class HomeModel {
 
   private async detect(): Promise<string> {
     const a = this.o.adapters;
+    // the marker first, and once per refresh: every row drawn after it agrees
+    try {
+      this.hosted = a.hostManaged?.() === true;
+    } catch {
+      this.hosted = false;
+    }
     const land =
       <K extends keyof HomeState>(key: K) =>
       (v: HomeState[K]): void => {
@@ -594,7 +603,11 @@ export class HomeModel {
         ? `your ${credential.name} ${credential.from === "login" ? "login" : "credential"}`
         : null,
       user ? `GitHub @${user}` : null,
-      repo ? `${repo} from your qcr config` : null,
+      repo
+        ? this.hostManaged()
+          ? `${repo}, both ${HOST_MANAGED}`
+          : `${repo} from your qcr config`
+        : null,
     ].filter((x): x is string => x !== null);
     const open = this.ordered().length;
     this.say(
@@ -958,6 +971,14 @@ export class HomeModel {
     return this.o.adapters[what].control !== undefined;
   }
 
+  /** Does a host manage this install's GitHub credential and repository?
+   * Then the home shows both as managed and offers no sign-in, no pick, no
+   * switch-on and no go-live of its own (src/hostmanaged.ts). As the last
+   * refresh read it: drawing a frame never reads the config. */
+  hostManaged(): boolean {
+    return this.hosted;
+  }
+
   /** Memory's switch, when the home has one. */
   memoryControl(): MemoryControl | undefined {
     return this.o.adapters.memory.control;
@@ -1037,6 +1058,8 @@ export class HomeModel {
       github: {
         user: nullable(this.state.github),
         signed_in: this.state.github.kind === "known" ? this.state.github.value !== null : null,
+        // a host keeps the credential and the repository: nothing here signs in or picks
+        ...(this.hostManaged() ? { managed_by: "host" } : {}),
       },
       tools: this.tools,
       setup_needed: this.gaps(),

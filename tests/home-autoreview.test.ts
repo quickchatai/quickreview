@@ -7,6 +7,8 @@
 import { describe, expect, it } from "vitest";
 import { createHome } from "../extensions/home.js";
 import {
+  HOST_GOES_LIVE,
+  HOST_STARTS_AUTO_REVIEW,
   autoReviewLabel,
   composeAutoReview,
   runningRounds,
@@ -301,6 +303,70 @@ describe("the real adapter reads this machine's stack", () => {
     expect(await port.trigger!()).toEqual(known("AI review requested"));
     const live = composeOver({ ps: ok("") }, "dry_run = false\n").port;
     expect(await live.control!.dryRun()).toEqual(known(false));
+  });
+});
+
+// A host-managed install (`[github] token_source = "host"`): its host starts
+// auto-review and takes it live through its own verbs, so the home's switch
+// runs no step of either. The port refuses, in words, before it builds a
+// checklist: `stepAdapters` throwing is what proves no step was reached.
+describe("the switch on a host-managed install", () => {
+  const HOSTED = '[github]\nrepo = "acme/widgets"\nauth = "user"\ntoken_source = "host"\n';
+  const hosted = (config = HOSTED) => {
+    const calls: string[][] = [];
+    const port = composeAutoReview({
+      root: "/app",
+      configPath: () => "/cfg/config.toml",
+      runner: {
+        run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
+          calls.push([cmd, ...args]);
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      },
+      stepAdapters: () => {
+        throw new Error("a step was reached");
+      },
+      now: () => NOW,
+      read: () => config,
+    });
+    return { control: port.control!, calls };
+  };
+
+  // MUTATION: drop the `hostManaged()` check in control.switchOn — the walk
+  // is built (stepAdapters throws), and this fails.
+  it("switch-on refuses, in words, and runs no step and no command", async () => {
+    const { control, calls } = hosted();
+    const out = await control.switchOn({ memory: null, confirmed: true });
+    expect(out).toEqual({ ok: false, live: null, detail: HOST_STARTS_AUTO_REVIEW, steps: [] });
+    expect(out.detail).toMatch(/started by your host/);
+    expect(calls).toEqual([]);
+  });
+
+  // MUTATION: drop the `hostManaged()` check in control.goLive or
+  // control.proofRound — the go-live step's checklist is built, and this fails.
+  it("the proof round and the go-live refuse the same way: the go-live step is never reached", async () => {
+    const { control, calls } = hosted();
+    expect(await control.proofRound(7)).toEqual({ ok: false, detail: HOST_GOES_LIVE });
+    expect(await control.goLive({ confirmed: true })).toEqual({
+      ok: false,
+      detail: HOST_GOES_LIVE,
+    });
+    expect(HOST_GOES_LIVE).toMatch(/from your host/);
+    expect(calls).toEqual([]);
+  });
+
+  it("switch-off stays: the daemon can still be stopped from the home", async () => {
+    const { control, calls } = hosted();
+    expect((await control.switchOff()).ok).toBe(true);
+    expect(calls).toEqual([["docker", "compose", "--project-directory", "/app", "stop", "daemon"]]);
+  });
+
+  it("an install that keeps its own credential walks the steps as before", async () => {
+    const { control } = hosted('[github]\nrepo = "acme/widgets"\n');
+    await expect(control.switchOn({ memory: null, confirmed: true })).rejects.toThrow(
+      /a step was reached/,
+    );
+    await expect(control.goLive({ confirmed: true })).rejects.toThrow(/a step was reached/);
   });
 });
 

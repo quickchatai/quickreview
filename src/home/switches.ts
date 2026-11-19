@@ -14,6 +14,11 @@
 // Auto-review off:  a warning naming the running round → stop at once, data
 //                   kept, memory untouched
 // Memory:           its RAM cost → on or off, auto-review untouched
+//
+// On a host-managed install (`[github] token_source = "host"`) switching
+// auto-review on and going live are the host's: the home asks nothing, runs
+// nothing and says whose it is. Switching it off stays, with no "Go live"
+// among its answers.
 import type {
   AutoReviewControl,
   AutoReviewStatus,
@@ -24,7 +29,7 @@ import type {
   Slot,
 } from "./ports.js";
 import { known } from "./ports.js";
-import { runningWarning } from "./autoreview.js";
+import { HOST_STARTS_AUTO_REVIEW, runningWarning } from "./autoreview.js";
 
 /** How a switch asks the person: pi's own select. */
 export interface Ask {
@@ -88,11 +93,17 @@ export async function switchAutoReview(
   adapters: HomeAdapters,
   ask: Ask | undefined,
 ): Promise<string> {
+  const hosted = adapters.hostManaged?.() === true;
+  // the host's to start: no machine check runs and nothing is asked
+  if (hosted && !isOn(host.autoReview())) {
+    host.say(`${HOST_STARTS_AUTO_REVIEW}. Nothing changed.`);
+    return `auto-review is not switched on from this home: ${HOST_STARTS_AUTO_REVIEW}`;
+  }
   const control = adapters.autoReview.control;
   if (!control) return "auto-review can't be switched from this home";
   if (!ask) return NEEDS_PERSON;
   return isOn(host.autoReview())
-    ? switchOff(host, control, ask)
+    ? switchOff(host, control, ask, { goLive: !hosted })
     : switchOn(host, adapters, control, ask);
 }
 
@@ -169,9 +180,15 @@ async function switchOn(
     : `auto-review did not start: ${outcome.detail}\n${outcome.steps.join("\n")}`;
 }
 
-async function switchOff(host: SwitchHost, control: AutoReviewControl, ask: Ask): Promise<string> {
+async function switchOff(
+  host: SwitchHost,
+  control: AutoReviewControl,
+  ask: Ask,
+  o: { goLive: boolean } = { goLive: true },
+): Promise<string> {
   const a = host.autoReview();
-  const dry = a.kind === "known" && a.value.state === "on-dry";
+  // going live is offered from dry-run, where it is the home's to offer
+  const dry = o.goLive && a.kind === "known" && a.value.state === "on-dry";
   const warning = runningWarning(await control.running());
   const answer = await ask.select(
     `Switch auto-review off? ${warning} All its data is kept, so switching it on again is quick.`,

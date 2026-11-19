@@ -17,6 +17,12 @@
 //    through the one gate, and the token reaches the daemon as that file,
 //    never through the environment or a command line (SECURITY.md, hard
 //    rule 3 as amended). Nothing here reads the environment.
+//
+// `[github] token_source = "host"` changes who writes that file, and nothing
+// about how it is read: a host that manages the install writes it (atomically,
+// 0600) and keeps at least 15 minutes of life in it, so the re-read rules
+// above always find a usable token. Only the words of a failure differ: no
+// command on the machine can write the file, so none is named.
 import { createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -54,7 +60,9 @@ export const USER_TOKEN_FILE = "github_token";
 /** How long a read of the token file is trusted before it is read again. */
 export const USER_TOKEN_REREAD_MS = 5 * 60 * 1000;
 
-/** The person's own GitHub token, as the host-side refresher last wrote it. */
+/** The person's own GitHub token, as its writer last wrote it: the host-side
+ * refresher (`qcr github-token sync`), or under `token_source = "host"` the
+ * host that manages the install. */
 export class UserTokenSource implements GitHubCredential {
   private token: string | null = null;
   private readAt = 0;
@@ -62,6 +70,8 @@ export class UserTokenSource implements GitHubCredential {
   constructor(
     private readonly secretsDir: string,
     private readonly now: () => number = Date.now,
+    /** `hostManaged`: a host writes the file, so a failure names no command. */
+    private readonly o: { hostManaged?: boolean } = {},
   ) {}
 
   /** The token file's path — named in every error, never its contents. */
@@ -87,15 +97,20 @@ export class UserTokenSource implements GitHubCredential {
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code ?? "unreadable";
       throw new Error(
-        `no GitHub user token at ${this.path} (${code}) — [github] auth = "user" reads the person's ` +
-          "token from this file; run `qcr github-token sync` on the host to write it",
+        this.o.hostManaged === true
+          ? `no GitHub token at ${this.path} (${code}) — [github] token_source = "host": the host that ` +
+              "manages this install writes the token to this file and keeps it fresh; nothing on this machine does"
+          : `no GitHub user token at ${this.path} (${code}) — [github] auth = "user" reads the person's ` +
+              "token from this file; run `qcr github-token sync` on the host to write it",
         { cause: err },
       );
     }
     const token = text.trim();
     if (token === "")
       throw new Error(
-        `the GitHub user token file ${this.path} is empty — run \`qcr github-token sync\``,
+        this.o.hostManaged === true
+          ? `the GitHub token file ${this.path} is empty — the host that manages this install writes it`
+          : `the GitHub user token file ${this.path} is empty — run \`qcr github-token sync\``,
       );
     if (/\s/.test(token))
       throw new Error(
@@ -107,13 +122,13 @@ export class UserTokenSource implements GitHubCredential {
 }
 
 /** The credential `[github] auth` names: the App minter by default, the
- * person's token file under "user". */
+ * person's token file under "user" (whoever `token_source` says writes it). */
 export function githubCredential(
-  g: { auth?: "app" | "user"; secrets_dir: string },
+  g: { auth?: "app" | "user"; token_source?: "self" | "host"; secrets_dir: string },
   fetchFn: FetchFn = fetch,
 ): GitHubCredential {
   return g.auth === "user"
-    ? new UserTokenSource(g.secrets_dir)
+    ? new UserTokenSource(g.secrets_dir, Date.now, { hostManaged: g.token_source === "host" })
     : new TokenMinter(g.secrets_dir, fetchFn);
 }
 

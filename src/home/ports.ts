@@ -98,7 +98,9 @@ export interface OpenPull {
 }
 
 export interface GithubPort {
-  /** The `gh` account's login; null when `gh` is not signed in. */
+  /** The `gh` account's login; null when `gh` is not signed in. On a
+   * host-managed install: the login of the token the host wrote; null while
+   * the host has written none. */
   user(): Promise<Known<string | null>>;
   /** The repository's open pull requests (closed and merged ones never). */
   openPulls(repo: string): Promise<Known<readonly OpenPull[]>>;
@@ -301,8 +303,12 @@ export interface SwitchOnAnswers {
   /** Memory with it: true turns it on, false keeps it off, null leaves it
    * as it is (it was not offered). */
   memory: boolean | null;
-  /** The one explicit confirm. Only a person's answer in the home sets it.
-   * Switch-on comes up in dry-run: the go-live has a confirm of its own. */
+  /** The one explicit confirm. Only a person sets it: by their own answer in
+   * the home, or, on an install a host runs for them, as a host's attested
+   * operator (the person the host authenticated, pressing its Start: the
+   * `setup` verb of src/host/). Switch-on comes up in dry-run: the go-live
+   * has a confirm of its own, and under a host that confirm is the operator's
+   * attestation of the practice review they were shown (src/host/golive.ts). */
   confirmed: true;
 }
 
@@ -320,6 +326,9 @@ export interface SwitchOnOutcome {
   detail: string;
   /** Each step that ran or was skipped, in order: `id: what it said`. */
   steps: readonly string[];
+  /** Where a walk that failed stopped: the step, and its failed checks by
+   * name. Absent when it did not fail at a step. */
+  failed?: { step: string; checks: readonly string[] };
 }
 
 export interface AutoReviewControl {
@@ -379,4 +388,11 @@ export interface HomeAdapters {
   /** Who refreshes the stored logins and whether one expired. Absent: the
    * home shows only which providers pi has a credential for. */
   loginOwner?: LoginOwnerPort;
+  /** Does a host manage this install's GitHub credential and repository
+   * (`[github] token_source = "host"`, src/hostmanaged.ts)? Then the home
+   * shows both as managed by the host and offers no GitHub sign-in, no
+   * repository pick, no switch-on and no go-live of its own. The model asks
+   * once per refresh and a switch asks when it is pressed, so it is read
+   * again each time. Absent: this install keeps its own. */
+  hostManaged?: () => boolean;
 }

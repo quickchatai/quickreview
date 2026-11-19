@@ -30,6 +30,13 @@
 // step that a read showed to be missing is left; when the last one is done
 // the panel turns into the home.
 //
+// On a host-managed install (`[github] token_source = "host"`,
+// src/hostmanaged.ts) the github and repo rows are the host's, not steps the
+// person takes: each shows what the host has provided as "managed by your
+// host", or that the home is waiting for it. Their key reads again and
+// nothing else: no `gh` is looked for, no sign-in is named, no repository is
+// listed, picked or written.
+//
 // Every step is one method here, called by a key (alt+n, ⏎ on the focused
 // card) and by a `home_*` tool alike (src/home/setuptools.ts). The checklist
 // lives in memory: every launch detects afresh.
@@ -46,6 +53,7 @@ import {
   type SetupStep,
   type StepReport,
 } from "@quickchatai/pi-quickreview/src/setupchecklist.js";
+import { HOST_MANAGED } from "@quickchatai/pi-quickreview/src/hosttoken.js";
 import type { LoginMenu, LoginMenuEnd } from "./loginowner.js";
 import { credentialHow, type HomeModel, type SetupGap } from "./model.js";
 import type { GithubPort, Known, PiCredential, ReviewQuote } from "./ports.js";
@@ -66,6 +74,17 @@ const HOME_STEP_ORDER: readonly HomeStepId[] = [
   HOME_STEPS.github,
   HOME_STEPS.repo,
 ];
+
+/** What the two rows a host manages are called there: facts, not acts. */
+export const HOST_MANAGED_TITLES: Partial<Record<HomeStepId, string>> = {
+  [HOME_STEPS.github]: "GitHub",
+  [HOME_STEPS.repo]: "Repository",
+};
+/** What each says while the host has not provided it yet. */
+export const WAITING_FOR_HOST_TOKEN = "waiting for your host to provide a GitHub token";
+export const WAITING_FOR_HOST_REPO = "waiting for your host to set the repository";
+/** What a pick or a write of the repository is answered with there. */
+export const REPO_IS_THE_HOSTS = `the repository is ${HOST_MANAGED}: it is set there, and nothing here changes it`;
 
 /** The first step's title: any provider pi supports. */
 export const SIGN_IN_TITLE = "Sign in to a model provider";
@@ -149,6 +168,8 @@ export interface SetupStepView {
   missing?: string;
   /** Its source could not be read: neither done nor missing. */
   unknown?: string;
+  /** A host provides it: its key reads again, and there is nothing to do here. */
+  managed?: true;
   /** The next step: the one alt+n runs. */
   next: boolean;
 }
@@ -324,10 +345,22 @@ export class HomeSetup {
     return this.o.ports.firstRun?.host.runner.which(cmd);
   }
 
+  /** A host manages GitHub and the repository here: no step is the person's. */
+  private managed(): boolean {
+    return this.m.hostManaged();
+  }
+
   private githubFacts(): Facts {
+    const g = this.m.state.github;
+    if (this.managed()) {
+      if (g.kind === "known")
+        return g.value === null
+          ? { missing: WAITING_FOR_HOST_TOKEN }
+          : { found: `@${g.value} · ${HOST_MANAGED}` };
+      return { unknown: g.kind === "unknown" ? `can't tell: ${g.why}` : "still reading" };
+    }
     if (this.which("gh") === null)
       return { missing: "gh is not installed: get it from https://cli.github.com" };
-    const g = this.m.state.github;
     if (g.kind === "known")
       return g.value === null
         ? { missing: "gh is signed out: run `gh auth login` in a shell" }
@@ -337,6 +370,10 @@ export class HomeSetup {
 
   private repoFacts(): Facts {
     const r = this.m.state.repo;
+    if (r.kind === "known" && this.managed())
+      return r.value === null
+        ? { missing: WAITING_FOR_HOST_REPO }
+        : { found: `${r.value} · ${HOST_MANAGED}` };
     if (r.kind === "known")
       return r.value === null
         ? { missing: "no repository is chosen yet" }
@@ -344,6 +381,13 @@ export class HomeSetup {
     return {
       unknown: r.kind === "unknown" ? `can't read your qcr config: ${r.why}` : "still reading",
     };
+  }
+
+  /** The repository's facts, with `refusal` in place of "missing": a run
+   * that cannot set it says why, and one that finds it set is done. */
+  private repoFactsOr(refusal: string): Facts {
+    const f = this.repoFacts();
+    return "missing" in f ? { missing: refusal } : f;
   }
 
   private facts(id: HomeStepId): Facts {
@@ -469,7 +513,8 @@ export class HomeSetup {
   }
 
   private async runGithub(): Promise<StepReport> {
-    if (this.which("gh") === null)
+    const managed = this.managed();
+    if (!managed && this.which("gh") === null)
       return refused("github", "gh is not installed: get it from https://cli.github.com");
     let u: Known<string | null>;
     try {
@@ -478,12 +523,22 @@ export class HomeSetup {
       u = { kind: "unknown", why: message(err) };
     }
     if (u.kind === "unknown") return refused("github", `can't tell: ${u.why}`);
+    // the host's token, read again: there is no sign-in to send the person to
+    if (managed)
+      return u.value === null
+        ? refused("github", WAITING_FOR_HOST_TOKEN)
+        : {
+            ok: true,
+            checks: [{ name: "github", ok: true, detail: `@${u.value} · ${HOST_MANAGED}` }],
+          };
     return u.value === null
       ? refused("github", "gh is still signed out: run `gh auth login` in a shell")
       : { ok: true, checks: [{ name: "github", ok: true, detail: `@${u.value} · via gh` }] };
   }
 
   private async runRepo(raw: unknown): Promise<StepReport> {
+    // the host's to set: nothing is described, and nothing is written
+    if (this.managed()) return report("repo", this.repoFactsOr(REPO_IS_THE_HOSTS));
     const repos = this.o.ports.repos;
     if (repos === undefined)
       return refused("repo", "this home cannot write your qcr config: set [github] repo in it");
@@ -523,7 +578,8 @@ export class HomeSetup {
     // the session ended while the reads were out: their answer lands into nothing
     if (this.closed) return;
     this.synced = true;
-    if (this.isPending(HOME_STEPS.repo)) void this.recent();
+    // a host-managed install lists no repository to pick from
+    if (this.isPending(HOME_STEPS.repo) && !this.managed()) void this.recent();
     this.phased();
     this.maybeStartLogin();
     this.changed();
@@ -621,6 +677,7 @@ export class HomeSetup {
     if (id === undefined) return "setup is done: every step is";
     if (id === HOME_STEPS.login) return this.signIn(o);
     if (id === HOME_STEPS.github) return this.checkGithub();
+    if (id === HOME_STEPS.repo && this.managed()) return this.checkHostRepo();
     if (id === HOME_STEPS.repo) return this.chooseRepo(undefined, ui);
     if (id === HOME_STEPS.model) return this.chooseModel(ui);
     // a first-run check: look again
@@ -746,8 +803,20 @@ export class HomeSetup {
     return why;
   }
 
+  /** The repository row on a host-managed install: read the config again,
+   * and say what the host has set. Nothing is picked and nothing is written. */
+  private async checkHostRepo(): Promise<string> {
+    await this.reread();
+    const f = this.repoFacts();
+    if ("found" in f) return `repository: ${f.found}`;
+    const why = "unknown" in f ? f.unknown : f.missing;
+    this.m.say(`${why[0]?.toUpperCase() ?? ""}${why.slice(1)}. alt+n checks again.`, "warn");
+    return why;
+  }
+
   /** The person's recently pushed repositories, read once. */
   recent(): Promise<Known<readonly string[]>> {
+    if (this.managed()) return Promise.resolve({ kind: "unknown", why: REPO_IS_THE_HOSTS });
     const repos = this.o.ports.repos;
     if (repos === undefined)
       return Promise.resolve({ kind: "unknown", why: "this home cannot list them" });
@@ -761,6 +830,10 @@ export class HomeSetup {
   /** Choose the repository: `repo` as given (owner/name or a URL), or, with
    * pi's dialogs, picked from the recent ones or pasted. */
   async chooseRepo(repo?: string, ui?: SetupUi): Promise<string> {
+    if (this.managed()) {
+      this.m.say(`${REPO_IS_THE_HOSTS[0]!.toUpperCase()}${REPO_IS_THE_HOSTS.slice(1)}.`);
+      return REPO_IS_THE_HOSTS;
+    }
     let text = repo;
     if (text === undefined || text.trim() === "") {
       const recent = await this.recent();
@@ -807,12 +880,23 @@ export class HomeSetup {
       .filter((l) => this.checkIds.includes(l.id) && l.status === "pending")
       .map((l) => ({ id: l.id, title: l.title, why: l.note ?? l.explain, next: l.id === next }));
     const shown = this.asked !== null ? [...HOME_STEP_ORDER, HOME_STEPS.model] : HOME_STEP_ORDER;
+    const hosted = this.managed();
     const steps = shown.map((id): SetupStepView => {
       const l = lines.find((x) => x.id === id);
-      const title = l?.title ?? id;
+      // a row the host provides is named as a fact, not as something to do
+      const theHosts = hosted ? HOST_MANAGED_TITLES[id] : undefined;
+      const title = theHosts ?? l?.title ?? id;
+      const managed = theHosts !== undefined ? { managed: true as const } : {};
       if (l?.status === "done") {
         const f = this.facts(id);
-        return { id, title, state: "done", found: "found" in f ? f.found : "done", next: false };
+        return {
+          id,
+          title,
+          state: "done",
+          found: "found" in f ? f.found : "done",
+          ...managed,
+          next: false,
+        };
       }
       const unknown = this.unknownWhy.get(id);
       const f = this.facts(id);
@@ -821,6 +905,7 @@ export class HomeSetup {
         title,
         state: running(id) ? "running" : "pending",
         ...(unknown !== undefined ? { unknown } : "missing" in f ? { missing: f.missing } : {}),
+        ...managed,
         next: id === next && !running(id),
       };
     });

@@ -45,10 +45,24 @@ import {
 export type GithubAuthMode = "app" | "user";
 export const GITHUB_AUTH_MODES: readonly GithubAuthMode[] = ["app", "user"];
 
+/** `[github] token_source`: who keeps the daemon's GitHub credential.
+ * `self` (the default) is the reviewer's own doing: the App's key, or under
+ * `auth = "user"` the token file `qcr github-token sync` writes from the
+ * person's sign-in. `host` is the marker of a host-managed install: a host
+ * writes the token file and keeps it fresh, and nothing on the machine signs
+ * in to GitHub, refreshes the token, picks the repository or goes live by
+ * itself. `host` needs a mode whose credential is the token file. */
+export type GithubTokenSource = "self" | "host";
+export const GITHUB_TOKEN_SOURCES: readonly GithubTokenSource[] = ["self", "host"];
+/** The auth modes whose credential is the token file: what a host can manage. */
+export const HOST_MANAGED_AUTH_MODES: readonly GithubAuthMode[] = ["user"];
+
 export interface GithubConfig {
   repo: string;
   /** Always set after parse; absent (a hand-built config) means "app". */
   auth?: GithubAuthMode;
+  /** Always set after parse; absent (a hand-built config) means "self". */
+  token_source?: GithubTokenSource;
   /** The App's slug. May be "" under `auth = "user"`, where no App exists. */
   app_slug: string;
   /** The login the system posts as: the App's `<slug>[bot]`, or under
@@ -1895,6 +1909,18 @@ export function parseGithubSection(raw: Record<string, any>): GithubConfig {
     throw new Error(
       `config.toml [github]: auth must be "app" or "user" (got ${JSON.stringify(auth)})`,
     );
+  const token_source = given.token_source ?? "self";
+  if (!GITHUB_TOKEN_SOURCES.includes(token_source))
+    throw new Error(
+      `config.toml [github]: token_source must be "self" or "host" (got ${JSON.stringify(token_source)})`,
+    );
+  // A host manages the token FILE. The App route mints its own token from
+  // the App's key, so there is no file for a host to keep.
+  if (token_source === "host" && !HOST_MANAGED_AUTH_MODES.includes(auth))
+    throw new Error(
+      `config.toml [github]: token_source = "host" needs ${HOST_MANAGED_AUTH_MODES.map((m) => `auth = "${m}"`).join(" or ")} ` +
+        `(got auth = ${JSON.stringify(auth)}): a host keeps the token file, and that mode does not read one`,
+    );
   return {
     base_branch: "main",
     clone_dir: "",
@@ -1902,6 +1928,7 @@ export function parseGithubSection(raw: Record<string, any>): GithubConfig {
     ...(auth === "user" ? { app_slug: "" } : {}),
     ...given,
     auth,
+    token_source,
   } as GithubConfig;
 }
 

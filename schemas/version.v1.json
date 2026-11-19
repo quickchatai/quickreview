@@ -45,6 +45,11 @@
       "items": { "type": "integer", "minimum": 1 },
       "description": "The host-plugin contract numbers `qcr --schema N` accepts, ascending. Added within version 1: a qcr from before the flag prints none."
     },
+    "host_families": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 1 },
+      "description": "The host contract's payload families this build prints, each at its family version (`board`: schemas/board.v1.json; `host`: schemas/host.v1.json). The families are built one at a time, so one that is not built yet is not listed. Added within version 1: a qcr from before the host contract prints none."
+    },
     "pi": {
       "type": ["object", "null"],
       "required": ["package", "version"],

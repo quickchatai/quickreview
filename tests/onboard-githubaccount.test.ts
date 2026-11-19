@@ -366,3 +366,133 @@ describe("the App route", () => {
     expect(r.failures.join(" ")).toMatch(/gh auth login/);
   });
 });
+
+// `[github] token_source = "host"`: a host writes the token file and keeps it
+// fresh, and owns the identity and the repository. The step proves the file's
+// token and touches nothing a sign-in would: no gh, no crontab, no token write.
+describe("a host-managed install", () => {
+  const HOST_TOKEN = "ghu_hostWrittenTokenValue0123456789ab";
+  /** Mark the config, and write the token file as the host would. */
+  const hostManaged = (token: string | null = HOST_TOKEN): World => {
+    writeFileSync(
+      join(root, "config.toml"),
+      setTomlKey(configText(), "github", "token_source", "host")!,
+    );
+    if (token !== null) {
+      mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
+      writeFileSync(join(secretsDir, "github_token"), token, { mode: 0o600 });
+    }
+    // gh would answer with ANOTHER token: one that reaches GitHub proves gh was read
+    return world({ token: token ?? "gho_neverWrittenByTheHost0123456789ab" });
+  };
+  /** Every process the step started that a sign-in or a refresher would. */
+  const signInCalls = (w: World): string[] =>
+    w.calls.filter((c) => /^(sh |crontab|gh |\/usr\/local\/bin\/gh )/.test(c));
+
+  // MUTATION: drop the `hostManaged(ctx)` branch at the top of the step's run
+  // — the step resolves gh and installs the crontab entry, and this fails.
+  it("passes with no gh on the machine, installs no crontab entry and leaves the token file as the host wrote it", async () => {
+    const w = hostManaged();
+    const noGh: OnboardAdapters["runner"] = {
+      async run(cmd, args) {
+        w.calls.push([cmd, ...args].join(" "));
+        return cmd === "docker"
+          ? { code: 0, stdout: "", stderr: "" }
+          : { code: 127, stdout: "", stderr: `${cmd}: not found` };
+      },
+    };
+    const r = await engineFor(w, { runner: noGh }).runStep(GITHUB_ACCOUNT_STEP_ID, {
+      github_auth: "user",
+      repo: "acme/web",
+    });
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(signInCalls(w)).toEqual([]);
+    expect(w.crontab).toBeNull();
+    expect(readFileSync(join(secretsDir, "github_token"), "utf8")).toBe(HOST_TOKEN);
+    expect(r.checks.find((c) => c.name === "token")!.detail).toMatch(/signs in as dana-op/);
+    expect(r.checks.find((c) => c.name === "refresh")!.detail).toMatch(/no crontab entry/);
+    expect(JSON.stringify(r)).not.toContain(HOST_TOKEN);
+    expect(JSON.stringify(r)).not.toMatch(/gh auth login|github-token sync/);
+  });
+
+  it("proves the file's token with GitHub, and writes the route's config beside the marker", async () => {
+    const w = hostManaged();
+    const e = engineFor(w);
+    const r = await e.runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(w.calls).toContain("GET /user");
+    expect(w.calls).toContain("GET /repos/acme/web");
+    const text = configText();
+    expect(readTomlKey(text, "github", "token_source")).toBe("host");
+    expect(readTomlKey(text, "github", "auth")).toBe("user");
+    expect(readTomlKey(text, "github", "bot_login")).toBe("dana-op");
+    expect(readTomlKey(text, "ingress", "shape")).toBe("polling");
+    const loaded = loadConfig(join(root, "config.toml"));
+    expect(loaded.github.token_source).toBe("host");
+    expect(loaded.github.auth).toBe("user");
+    expect(e.choices()[CHOICE_KEYS.githubAuth]).toBe("user");
+    expect(e.choices()[CHOICE_KEYS.accountRepo]).toBe("acme/web");
+  });
+
+  it("creates no label: the host's token may be read-only", async () => {
+    const w = hostManaged();
+    const r = await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(w.calls.filter((c) => c.startsWith("POST ") || c.includes("/labels"))).toEqual([]);
+    expect(w.labels.size).toBe(0);
+    expect(r.checks.find((c) => c.name === "labels")!.detail).toMatch(/read-only/);
+  });
+
+  it("a token the host has not written yet is red, naming the host and no command", async () => {
+    const w = hostManaged(null);
+    const r = await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/managed by its host/);
+    expect(r.failures.join(" ")).not.toMatch(/gh auth login|github-token sync|GH_TOKEN/);
+    expect(signInCalls(w)).toEqual([]);
+    expect(w.calls.some((c) => c.startsWith("GET "))).toBe(false);
+  });
+
+  it("a token GitHub rejects is red, and the file is left as it was", async () => {
+    const w = hostManaged();
+    w.token = "ghu_theTokenGitHubNowExpects0123456789";
+    const r = await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/GitHub rejected the token/);
+    expect(r.failures.join(" ")).toMatch(/managed by its host/);
+    expect(readFileSync(join(secretsDir, "github_token"), "utf8")).toBe(HOST_TOKEN);
+  });
+
+  it("with no repository it lists none to pick: the repository is the host's", async () => {
+    const w = hostManaged();
+    const r = await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID);
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/the repository is managed by your host/);
+    expect(w.calls).not.toContain("GET /user/repos");
+  });
+
+  it("refuses the App route in words, and changes nothing", async () => {
+    const w = hostManaged();
+    const before = configText();
+    const e = engineFor(w);
+    const r = await e.runStep(GITHUB_ACCOUNT_STEP_ID, { github_auth: "app" });
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/who reviews is managed by your host/);
+    expect(configText()).toBe(before);
+    expect(e.choices()[CHOICE_KEYS.githubAuth]).toBeUndefined();
+  });
+
+  it("verify re-proves the token and looks for no crontab entry; a failure names the host", async () => {
+    const w = hostManaged();
+    await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    w.calls.length = 0;
+    expect((await engineFor(w).verifyAll()).ok).toBe(true);
+    expect(signInCalls(w)).toEqual([]);
+
+    w.token = "ghu_theTokenGitHubNowExpects0123456789";
+    const lapsed = await engineFor(w).verifyAll();
+    expect(lapsed.ok).toBe(false);
+    expect(lapsed.results[0]!.failures.join(" ")).toMatch(/managed by its host/);
+    expect(lapsed.results[0]!.failures.join(" ")).not.toMatch(/github-token sync|gh auth login/);
+  });
+});

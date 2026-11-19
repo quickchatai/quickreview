@@ -45,6 +45,8 @@ interface Machine {
   /** Everything asked of the outside world, in order. */
   log: string[];
   answers: SwitchOnAnswers[];
+  /** A host manages GitHub here (`[github] token_source = "host"`). */
+  hosted?: boolean;
 }
 
 function machine(over: Partial<Machine> = {}): Machine {
@@ -152,6 +154,7 @@ function adaptersOver(m: Machine): HomeAdapters {
     },
     memory: { status: async () => known(m.memory), control: memory },
     spend: { totals: async () => unknown("not yet") },
+    hostManaged: () => m.hosted === true,
   };
 }
 
@@ -405,6 +408,111 @@ describe("switching auto-review off", () => {
     expect(await h2.pi.tool("home_auto_review")).toMatch(/no proof round yet/);
     expect(none.log).toEqual(["auto.running", "auto.proof"]);
     expect(h2.asked).toHaveLength(1);
+  });
+});
+
+// A host-managed install: its host starts auto-review and takes it live.
+// The home's switch has no path to either, whoever presses it.
+describe("on a host-managed install", () => {
+  // MUTATION: drop the `hosted && !isOn(...)` return in switchAutoReview —
+  // the machine checks run and the person is asked, and this fails.
+  it("switch-on asks nothing and runs nothing: it says the host starts it", async () => {
+    const m = machine({ hosted: true });
+    const h = await home(m, [CHOICE.here, CHOICE.notNow, CHOICE.turnOn]);
+    const said = await h.pi.tool("home_auto_review");
+    expect(said).toMatch(/started by your host/);
+    expect(h.asked).toEqual([]);
+    expect(m.log).toEqual([]);
+    expect(h.text()).toMatch(/○ Auto-review off\s+started by your host/);
+    expect(h.text()).not.toMatch(/turns it on/);
+    expect(h.text()).toMatch(/Auto-review is started by your host here/);
+  });
+
+  it("the keys reach the same refusal, and so does a home with no one to ask", async () => {
+    const m = machine({ hosted: true });
+    const h = await home(m, [CHOICE.here, CHOICE.notNow, CHOICE.turnOn]);
+    await h.pi.key("alt+a");
+    await drain();
+    await h.pi.key("f2");
+    await h.pi.input("a");
+    await drain();
+    expect(m.log).toEqual([]);
+    expect(h.asked).toEqual([]);
+
+    const quiet = machine({ hosted: true });
+    const h2 = await home(quiet, [], { hasUI: false });
+    expect(await h2.pi.tool("home_auto_review")).toMatch(/started by your host/);
+    expect(quiet.log).toEqual([]);
+  });
+
+  // MUTATION: pass `{ goLive: true }` to switchOff on a host-managed install
+  // — "Go live" is offered from dry-run, and this fails.
+  it("switch-off stays, from dry-run too, with no Go live among its answers", async () => {
+    const m = machine({ hosted: true, auto: "on-dry", proof: { pr: 7, verdict: "COMMENT" } });
+    const h = await home(m, [CHOICE.goLive]);
+    expect(await h.pi.tool("home_auto_review")).toMatch(/cancelled: nothing changed/);
+    expect(h.asked).toHaveLength(1);
+    expect(h.asked[0]!.options).toEqual([CHOICE.keepOn, CHOICE.switchOff]);
+    expect(m.log).toEqual(["auto.running"]);
+
+    const off = machine({ hosted: true, auto: "on-dry" });
+    const h2 = await home(off, [CHOICE.switchOff]);
+    expect(await h2.pi.tool("home_auto_review")).toMatch(/auto-review is off/);
+    expect(off.log).toEqual(["auto.running", "auto.switchOff"]);
+  });
+
+  // MUTATION: drop HOST_MANAGED_ROUTES' `posting` entry — Advanced walks to
+  // the proof round and the go-live, and this fails.
+  it("Advanced has no go-live, no GitHub App and no webhooks: each says whose it is", async () => {
+    const m = machine({ hosted: true, auto: "on-dry", pulls: [12] });
+    const h = await home(m, ["Go live", CHOICE.proofRound, CHOICE.goLive]);
+    expect(await h.pi.tool("home_advanced", { choice: "posting" })).toMatch(
+      /Going live is done from your host/,
+    );
+    expect(await h.pi.tool("home_advanced", { choice: "identity" })).toMatch(
+      /who reviews is managed by your host/,
+    );
+    expect(await h.pi.tool("home_advanced", { choice: "webhooks" })).toMatch(
+      /managed by your host/,
+    );
+    expect(h.asked).toEqual([]);
+    expect(m.log).toEqual([]);
+    expect(m.auto).toBe("on-dry");
+  });
+
+  it("Advanced's own list leaves those three out", async () => {
+    const m = machine({ hosted: true });
+    const h = await home(m, [undefined]);
+    await h.pi.tool("home_advanced");
+    expect(h.asked).toHaveLength(1);
+    expect(h.asked[0]!.options.join("\n")).not.toMatch(/GitHub App|Webhooks|Dry-run or live/);
+    expect(h.asked[0]!.options).toContain("Close");
+
+    const own = machine();
+    const h2 = await home(own, [undefined]);
+    await h2.pi.tool("home_advanced");
+    expect(h2.asked[0]!.options.join("\n")).toMatch(
+      /GitHub App[\s\S]*Webhooks[\s\S]*Dry-run or live/,
+    );
+  });
+
+  it("the panel shows the identity and the repository as managed by your host", async () => {
+    const m = machine({ hosted: true });
+    const h = await home(m, []);
+    expect(h.text()).toMatch(/acme\/widgets · managed by your host/);
+    expect(h.text()).toMatch(/✓ GitHub @octo · managed by your host/);
+    expect(h.text()).not.toMatch(/gh auth login|not signed in/);
+    const status = JSON.parse(await h.pi.tool("home_status")) as {
+      github: { user: string; managed_by?: string };
+    };
+    expect(status.github).toMatchObject({ user: "octo", managed_by: "host" });
+
+    const own = await home(machine(), []);
+    expect(own.text()).not.toMatch(/managed by your host/);
+    const plain = JSON.parse(await own.pi.tool("home_status")) as {
+      github: { managed_by?: string };
+    };
+    expect(plain.github.managed_by).toBeUndefined();
   });
 });
 

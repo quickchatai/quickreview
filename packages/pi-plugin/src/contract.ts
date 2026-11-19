@@ -23,12 +23,30 @@
 // refused in words instead (packages/pi-plugin/src/localreview.ts
 // `reviewForContract`).
 //
+// Contract 3 is the host contract: what a host that runs a reviewer for its
+// operator reads and calls. It adds host families to the three every contract
+// has, and they are built one at a time: `board` (schemas/board.v<N>.json,
+// the export `qcr --schema 3 board` prints, src/boardexport.ts) is the first,
+// and `host` (schemas/host.v<N>.json, what each `qcr --schema 3 host <verb>`
+// prints, src/host/) the second.
+// A contract lists a host family only once this build prints it, so
+// `hostFamilies()` is what a release answers "which of them are here" with.
+// A host-family payload leads with the NUMBER OF THE CONTRACT it is printed
+// in, not with the family's own version: a host holds one number, its
+// contract's, and checks every payload it reads against that one
+// (`hostPayloadVersion`). The family's version is what the schema file is
+// named by and what CONTRACTS fixes.
+//
 // A leaf: no imports, so every CLI and `qcr version` read the same numbers.
 
 export const REVIEW_SCHEMA_VERSION = 2;
 export const SCAN_SCHEMA_VERSION = 1;
 /** The shape of `qcr version --json` itself. */
 export const VERSION_SCHEMA_VERSION = 1;
+/** The board export's shape (schemas/board.v1.json). */
+export const BOARD_SCHEMA_VERSION = 1;
+/** The shape of what a host verb prints (schemas/host.v1.json). */
+export const HOST_SCHEMA_VERSION = 1;
 
 /** The review family versions the code can print: its own, and the older
  * one by projection. */
@@ -37,18 +55,35 @@ export const REVIEW_PRINTABLE_VERSIONS: readonly number[] = Object.freeze([
   REVIEW_SCHEMA_VERSION,
 ]);
 
-/** One family version per payload family: what a host plugin's contract fixes. */
+/** The families a host contract adds to the three every contract has. */
+export const HOST_FAMILIES = ["board", "host"] as const;
+export type HostFamily = (typeof HOST_FAMILIES)[number];
+
+/** The version of each host family this build prints. */
+const HOST_FAMILY_VERSIONS: Readonly<Record<HostFamily, number>> = Object.freeze({
+  board: BOARD_SCHEMA_VERSION,
+  host: HOST_SCHEMA_VERSION,
+});
+
+/** One family version per payload family: what a host plugin's contract
+ * fixes. A host family a contract does not list has no payload in it. */
 export interface Contract {
   readonly review: number;
   readonly scan: number;
   readonly version: number;
+  readonly board?: number;
+  readonly host?: number;
 }
+
+/** The payload families a contract can fix a version of. */
+export type ContractFamily = keyof Contract;
 
 /** The host-plugin contracts, by number. A contract's versions never change;
  * a bumped family version is a new entry. */
 export const CONTRACTS: Readonly<Record<number, Contract>> = Object.freeze({
   1: Object.freeze({ review: 1, scan: 1, version: 1 }),
   2: Object.freeze({ review: 2, scan: 1, version: 1 }),
+  3: Object.freeze({ review: 2, scan: 1, version: 1, board: 1, host: 1 }),
 });
 
 /** The contract numbers this build prints payloads for: those whose every
@@ -59,10 +94,40 @@ export function supportedContracts(): number[] {
       ([, c]) =>
         REVIEW_PRINTABLE_VERSIONS.includes(c.review) &&
         c.scan === SCAN_SCHEMA_VERSION &&
-        c.version === VERSION_SCHEMA_VERSION,
+        c.version === VERSION_SCHEMA_VERSION &&
+        HOST_FAMILIES.every((f) => c[f] === undefined || c[f] === HOST_FAMILY_VERSIONS[f]),
     )
     .map(([n]) => Number(n))
     .sort((a, b) => a - b);
+}
+
+/** The supported contracts that carry `family`, ascending: every one for the
+ * three base families, and only the host contracts for a host family. */
+export function contractsWith(family: ContractFamily): number[] {
+  return supportedContracts().filter((n) => CONTRACTS[n]?.[family] !== undefined);
+}
+
+/** The host families this build prints, each at its version: what the
+ * supported contracts list between them. A family absent here is not built
+ * in this release, whatever contract number it will belong to. */
+export function hostFamilies(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const family of HOST_FAMILIES)
+    if (contractsWith(family).length > 0) out[family] = HOST_FAMILY_VERSIONS[family];
+  return out;
+}
+
+/** The `schema_version` a host-family payload leads with: the contract its
+ * caller named, when that contract carries the family; else the newest
+ * supported contract that does (a call that named none). Undefined when no
+ * supported contract carries it. */
+export function hostPayloadVersion(
+  family: HostFamily,
+  contract: number | undefined,
+): number | undefined {
+  const carrying = contractsWith(family);
+  if (contract !== undefined && carrying.includes(contract)) return contract;
+  return carrying[carrying.length - 1];
 }
 
 /** The review family version a caller reads: the one contract `contract`

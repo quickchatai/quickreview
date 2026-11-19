@@ -1,5 +1,128 @@
 # Release notes
 
+## Unreleased
+
+### The board export, for a host that runs the reviewer
+
+A host that runs QuickReview for its operator (a page that lists the pull
+requests being reviewed, reviewed and still open) can now read the
+reviewer's board as one JSON object, without a terminal and without opening
+the state database.
+
+- **`qcr --schema 3 board`** prints it: who posts and on which repository,
+  whether the reviewer runs (`off`, `starting`, `on`, `paused_login`,
+  `broken`), whether it posts or records (`posting`, and `posting_pending`
+  when the config already says live and the daemon has not restarted), the
+  host's model login, the trigger label, the last poll, today's and the
+  month's spend, and three lists of at most 50 pull requests each, newest
+  first: `reviewing` (queued, running, posting, failed with a closed
+  `problem`, paused), `reviewed` (the verdict, and separately what GitHub
+  holds: `posted_event`, absent for a round that posted nothing) and `open`.
+  The shape is `schemas/board.v1.json`.
+- **Absent means unknown.** A field the verb cannot read is left out, never
+  printed as a zero, an empty list or a default: with the daemon off the
+  lists are absent, and before setup the repository and identity are. The
+  export carries no URL. The verb starts nothing and writes nothing, and
+  when it cannot build the object it prints nothing on stdout and exits
+  non-zero.
+- **The daemon writes `state/board.json`** beside `status.json`, atomically,
+  on every status write and whenever a round moved, and the verb reads that
+  one file. Nothing to do on an existing install: the file appears with the
+  first status write after an update.
+- **Host contract 3.** `--schema` takes a third contract: contract 2's
+  review, scan and version families, plus the host families, of which
+  `board` is the first. `qcr --schema 3 version` lists it under `contracts`
+  and names the host families this release has under `host_families`, and
+  `package.json` records both in a `qcrContracts` block for a host that
+  packages a release without running it. Contracts 1 and 2 are unchanged;
+  `--schema 1 board` and `--schema 2 board` are refused with exit 3, as a
+  contract with no board.
+
+### A host-managed GitHub credential
+
+A host that runs the reviewer for a person can now keep the GitHub credential
+itself, so nothing on the machine signs in to GitHub.
+
+- **`[github] token_source = "host"`**, beside `auth = "user"`, is the
+  marker. The host writes `<secrets>/github_token` (atomically, `0600`, the
+  token alone) and keeps a token with at least 15 minutes of life in it at
+  all times. The daemon reads the file exactly as before: on first use, every
+  five minutes, and after a 401. The default, `"self"`, is every install's
+  behaviour until now, and a config without the key is unchanged.
+- **An optional expiry note** beside the token,
+  `<secrets>/github_token.expires_at` (one ISO 8601 instant with its zone),
+  feeds the board export's `github` field: `ok`, `expired` or `missing`, and
+  absent when the file or the note cannot be read. GitHub is not asked.
+- **Nothing on such an install obtains or refreshes a GitHub credential.**
+  The onboarding account step proves the file's token and neither runs `gh`
+  nor installs the refresh crontab entry, and creates no label;
+  `qcr github-token sync` refuses, in words; `scripts/mint-token.sh` prints
+  the file's token; the local `qcr review` route reads that file and no other
+  source.
+- **The home shows the identity and the repository as "managed by your
+  host"**, reads pull requests with the same token, and offers no GitHub
+  sign-in, no repository pick, no switch-on and no go-live of its own. It
+  never prints `gh auth login` there. Reviewing a pull request on demand
+  stays, and so does switching auto-review off.
+
+### Host verbs: a host starts the reviewer, shows a practice review and takes it live
+
+The second family of host contract 3, `host: 1`. A host that has
+authenticated its own operator can now do from its own process what a person
+does in the terminal home, without a prompt: `qcr --schema 3 host <verb>`.
+Each verb answers within seconds with one JSON object (`schema_version`,
+`verb`, then `state`, one of that verb's closed set; a refusal or failure
+carries a closed `reason` and a `message` in words). The shape is
+`schemas/host.v1.json`.
+
+- **`host setup --repo owner/name --auth user`** writes the config (the
+  shipped template with the repository and its default branch, read from
+  GitHub with the token file; no `gh` is run) and starts switch-on's steps as
+  a detached process, with the silent defaults: this machine, polling,
+  escalation off, local embeddings, the login of the pi on this machine. It
+  answers `started`; a second call while the first runs answers `running`.
+  The reviewer comes up in dry-run. It refuses, in words, a missing model
+  login, a token file it cannot use, and a repository or auth mode other than
+  the one already on record. On a host-managed install
+  (`[github] token_source = "host"`) it also states the auth mode beside the
+  marker and sets the improvement-PR and bot-filed-issue caps to zero, so the
+  host's token never needs to write contents or issues. `--auth installation` is read and refused: that
+  credential mode is not in this release.
+- **`host review-now <pr>`** asks the daemon to review one pull request now,
+  as `qcr review-now` does.
+- **`host proof-start <pr>` and `host proof-result <pr>`** are the practice
+  review. The first asks for the round and returns; it refuses when the
+  config says the reviewer already posts. The second never waits: it answers
+  `running` until the round has finished, then prints the review as it would
+  have been posted (the body, and at most 50 inline comments, each
+  length-capped) and records it as the proof. Only `proof-result` writes that
+  record, and returning it is what marks the practice review as shown.
+- **`host go-live`** takes an attestation as JSON on standard input, never on
+  the command line: `{operator: {host, id}, confirmed_at, proof: {pr,
+  round_no}}`. It refuses unless the proof is the recorded one, was returned
+  by `proof-result`, the confirm is under ten minutes old, and the process
+  was not started from an agent session. Then it runs the existing go-live
+  step, detached, records the attestation, and makes sure the trigger label
+  exists. `dry_run` still moves only through that one step
+  ([docs/ownership.md](docs/ownership.md) names "a host's attested
+  operator").
+- **Progress is in the board export.** `qcr --schema 3 board` now fills
+  `setup` (`running` with the step, `done`, or `failed` with the step and a
+  closed `problem`), `go_live` (the same, without a step) and `proof` (the
+  practice round, once `proof-result` has returned it). A walk whose process
+  is gone reads as `failed`, `interrupted`. Both fields' words are closed
+  sets in `schemas/board.v1.json`.
+- **One writer of the setup checklist at a time.** The host verbs and the
+  terminal home's switches take the same lock around their steps
+  (`state/onboarding/checklist.lock`). Whichever finds it taken says by what
+  and runs nothing: a verb answers `busy` with the holder, and the home says
+  that its host is working and to try again.
+- **No agent can run them.** Every host verb refuses when it was started from
+  a review session, the companion or the home's own pi, and inside the
+  daemon's container.
+- `qcr --schema 3 version` lists `host` under `host_families`, and
+  `package.json`'s `qcrContracts` block records it.
+
 ## 1.6.0
 
 Three changes: a review is quiet by default, the lenses of a round read

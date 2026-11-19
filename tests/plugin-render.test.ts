@@ -620,7 +620,7 @@ describe("the bodies", () => {
 });
 
 describe("the contract", () => {
-  // MUTATION: set TEMPLATE_CONTRACT to 3 — this fails.
+  // MUTATION: set TEMPLATE_CONTRACT to 9 — this fails.
   it("the templates' contract is one this qcr prints", () => {
     expect(supportedContracts()).toContain(TEMPLATE_CONTRACT);
   });

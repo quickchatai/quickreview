@@ -407,6 +407,54 @@ describe("UserTokenSource", () => {
     expect((new UserTokenSource(secretsDir) as { appJwt?: unknown }).appJwt).toBeUndefined();
   });
 
+  // `[github] token_source = "host"`: a host writes the file. The re-read
+  // rules are the same ones; only a failure's words differ.
+  it("host-managed: the same file under the same re-read rules", async () => {
+    write("ghu_first");
+    let now = T0;
+    const src = new UserTokenSource(secretsDir, () => now, { hostManaged: true });
+    expect(await src.installationToken()).toBe("ghu_first");
+    write("ghu_second");
+    now = T0 + USER_TOKEN_REREAD_MS - 1;
+    expect(await src.installationToken()).toBe("ghu_first");
+    now = T0 + USER_TOKEN_REREAD_MS;
+    expect(await src.installationToken()).toBe("ghu_second");
+    write("ghu_third");
+    src.invalidate();
+    expect(await src.installationToken()).toBe("ghu_third");
+  });
+
+  // MUTATION: drop the `hostManaged` branch of reload's errors — the sync
+  // command is named on an install where it refuses, and this fails.
+  it("host-managed: a missing or empty file names the host, and no command", async () => {
+    const src = new UserTokenSource(secretsDir, () => T0, { hostManaged: true });
+    const missing = String(await src.installationToken().catch((e: Error) => e));
+    expect(missing).toContain(join(secretsDir, "github_token"));
+    expect(missing).toMatch(/ENOENT/);
+    expect(missing).toMatch(/token_source = "host"/);
+    expect(missing).not.toMatch(/github-token sync|gh auth login/);
+    write("  \n");
+    const empty = String(await src.installationToken().catch((e: Error) => e));
+    expect(empty).toMatch(/is empty/);
+    expect(empty).not.toMatch(/github-token sync/);
+  });
+
+  it("githubCredential hands the token source its writer: token_source", async () => {
+    const hosted = githubCredential({
+      auth: "user",
+      token_source: "host",
+      secrets_dir: secretsDir,
+    });
+    expect(hosted).toBeInstanceOf(UserTokenSource);
+    expect(String(await hosted.installationToken().catch((e: Error) => e))).not.toMatch(
+      /github-token sync/,
+    );
+    const own = githubCredential({ auth: "user", token_source: "self", secrets_dir: secretsDir });
+    expect(String(await own.installationToken().catch((e: Error) => e))).toMatch(
+      /github-token sync/,
+    );
+  });
+
   it("githubCredential picks the shape [github] auth names (missing ⇒ the App)", () => {
     expect(githubCredential({ auth: "user", secrets_dir: secretsDir })).toBeInstanceOf(
       UserTokenSource,

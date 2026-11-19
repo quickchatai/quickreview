@@ -72,6 +72,9 @@ export interface PrFetchRequest {
   /** Runs git (a test seam). Default: a child process, never blocking the
    * event loop, so the caller's stop is heard while the fetch runs. */
   exec?: ExecFn;
+  /** The token is the one a host manages for this install: a refusal is the
+   * host's to put right, so no sign-in command is named. */
+  hostManaged?: boolean;
 }
 
 /** How long the network fetch of a PR's head and base may take. */
@@ -119,7 +122,10 @@ export async function fetchPrTarget(req: PrFetchRequest): Promise<PrFetchResult>
     if (res.status === 401 || res.status === 403)
       return {
         ok: false,
-        error: `GitHub rejected the credential reading ${label} (${res.status}): check it can read ${req.repo}, or run \`gh auth login\``,
+        error:
+          req.hostManaged === true
+            ? `GitHub rejected the credential reading ${label} (${res.status}): the token your host manages cannot read ${req.repo}, or has lapsed. Your host renews it`
+            : `GitHub rejected the credential reading ${label} (${res.status}): check it can read ${req.repo}, or run \`gh auth login\``,
       };
     if (res.status === 404)
       return {
@@ -206,18 +212,30 @@ export interface PrCredentialDeps {
   handoff?: string | null;
 }
 
-/** The local route's credential for `secretsDir`, with the real App, env and
- * `gh` unless a test says otherwise. */
+/** Where the local route's credential lives: the install's secrets dir, and
+ * who keeps the token there (`[github] token_source`). A bare string is the
+ * secrets dir of an install that keeps its own. */
+export type CredentialHome = string | { secrets_dir: string; token_source?: "self" | "host" };
+
+const secretsOf = (home: CredentialHome): string =>
+  typeof home === "string" ? home : home.secrets_dir;
+const hostManagedHome = (home: CredentialHome): boolean =>
+  typeof home !== "string" && home.token_source === "host";
+
+/** The local route's credential for the install at `home`, with the real
+ * App, env and `gh` unless a test says otherwise. A host-managed install has
+ * one source, the token file its host keeps. */
 export function resolvePrCredential(
-  secretsDir: string,
+  home: CredentialHome,
   o: PrCredentialDeps = {},
 ): Promise<CredentialResolution> {
   return resolveGithubCredential({
-    secretsDir,
+    secretsDir: secretsOf(home),
     env: o.env ?? process.env,
     mintApp: o.mintApp ?? ((dir) => new TokenMinter(dir).installationToken()),
     ghAuthToken: o.ghAuthToken ?? ghAuthTokenFromCli,
     handoff: o.handoff === undefined ? handedToken() : o.handoff,
+    hostManaged: hostManagedHome(home),
   });
 }
 
@@ -226,7 +244,7 @@ export function resolvePrCredential(
  * reading the PR. A named source that is not available is an error, never a
  * silent switch to another identity. */
 export async function resolvePostCredential(
-  secretsDir: string,
+  home: CredentialHome,
   postAs: string | null,
   resolved: { source: CredentialSource; token: string },
   o: PrCredentialDeps = {},
@@ -238,6 +256,35 @@ export async function resolvePostCredential(
       ok: false,
       error: `post_as is ${postAs} but that credential is not available (expected one of ${known.join(", ")})`,
     };
+  }
+  const secretsDir = secretsOf(home);
+  // A host-managed install posts as the token its host keeps, and as nothing
+  // else: no other source is looked for, so none can be switched to.
+  const managed = hostManagedHome(home);
+  if (managed && postAs !== "host")
+    return {
+      ok: false,
+      error: `post_as is ${postAs} but this install's GitHub credential is managed by its host: it posts as the token the host keeps (post_as "host", or none)`,
+    };
+  if (!managed && postAs === "host")
+    return {
+      ok: false,
+      error: `post_as is ${postAs} but that credential is not available: no host manages this install's GitHub credential`,
+    };
+  if (managed) {
+    const file = await resolveGithubCredential({
+      secretsDir,
+      env: {},
+      mintApp: async () => "",
+      ghAuthToken: () => null,
+      hostManaged: true,
+    });
+    return file.ok
+      ? file
+      : {
+          ok: false,
+          error: `post_as is ${postAs} but that credential is not available: ${file.error}`,
+        };
   }
   const env = o.env ?? process.env;
   const r = await resolveGithubCredential({

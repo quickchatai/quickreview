@@ -38,6 +38,7 @@ import {
 } from "../setupchecklist.js";
 import { contextFrom } from "../engine/context.js";
 import { homeProfilePlaces, loadOneShotConfig } from "../homes.js";
+import { HOST_MANAGED, hostTokenProblem, readTokenFile } from "../hosttoken.js";
 import { LENS_TUNING_KEYS } from "../lenstuning.js";
 import { REPO_PROFILE_DIR, REPO_TOML_KEYS } from "../profileoverrides.js";
 import { PROFILES_DIR } from "../profilelookup.js";
@@ -127,6 +128,18 @@ function reviewRoute(
     pin,
     configPath: loaded.path,
   };
+}
+
+/** The secrets dir of a host-managed install (`[github] token_source =
+ * "host"`), where its host keeps the token file; null on an install that
+ * keeps its own credential, or whose config cannot be read. */
+function hostManagedSecrets(host: PluginHost, root: () => string): string | null {
+  try {
+    const { cfg } = loadOneShotConfig({ root: root(), env: { ...host.env, HOME: host.home } });
+    return cfg.github.token_source === "host" ? cfg.github.secrets_dir : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A step whose run and verify both re-check what detect checks: there is
@@ -279,6 +292,16 @@ export function pluginSetupSteps(o: PluginSetupOptions): SetupStep[] {
         optional: true,
       },
       async () => {
+        // A host-managed install (`[github] token_source = "host"`): the
+        // credential is the token file its host keeps, and nothing else. No
+        // variable and no gh is looked for, and no sign-in is named.
+        const managed = hostManagedSecrets(host, root);
+        if (managed !== null) {
+          const file = readTokenFile(managed);
+          return file.ok
+            ? { found: `${HOST_MANAGED} (for PR targets)` }
+            : { missing: hostTokenProblem(file) };
+        }
         const tokenEnv = ["GH_TOKEN", "GITHUB_TOKEN"].find(
           (k) => (host.env[k] ?? "").trim() !== "",
         );

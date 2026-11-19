@@ -845,6 +845,52 @@ describe("[github] auth (the App, or the person's own credential)", () => {
   });
 });
 
+describe("[github] token_source (the install's own credential, or a host's)", () => {
+  const shipped = readFileSync(configPath, "utf8");
+  const POLLING = '\n[ingress]\nshape = "polling"\n';
+  const github = (keys: string, rest = POLLING) =>
+    `${shipped.replace("[github]\n", `[github]\n${keys}\n`)}${rest}`;
+
+  it("defaults to self: a missing key is an install that keeps its own credential", () => {
+    expect(parseConfig(shipped).github.token_source).toBe("self");
+    expect(parseConfig(github('auth = "user"')).github.token_source).toBe("self");
+  });
+
+  it('parses token_source = "host" beside auth = "user"', () => {
+    const cfg = parseConfig(github('auth = "user"\ntoken_source = "host"'));
+    expect(cfg.github.token_source).toBe("host");
+    expect(cfg.github.auth).toBe("user");
+  });
+
+  it('refuses token_source = "host" on the App route, saying which mode a host can manage', () => {
+    // MUTATION: drop the HOST_MANAGED_AUTH_MODES check in parseGithubSection
+    // — a config whose host-managed token file nothing reads loads, and this fails.
+    for (const keys of ['token_source = "host"', 'auth = "app"\ntoken_source = "host"'])
+      expect(() => parseConfig(github(keys, ""))).toThrowError(
+        /\[github\]: token_source = "host" needs auth = "user"/,
+      );
+  });
+
+  it("a host-managed install is still polling-only", () => {
+    expect(() => parseConfig(github('auth = "user"\ntoken_source = "host"', ""))).toThrowError(
+      /runs polling-only/,
+    );
+  });
+
+  it("refuses an unknown token_source value", () => {
+    expect(() => parseConfig(github('auth = "user"\ntoken_source = "vault"'))).toThrowError(
+      /\[github\]: token_source must be "self" or "host"/,
+    );
+  });
+
+  it("the review core parses the key too (parseCoreConfig)", () => {
+    expect(
+      parseCoreConfig(github('auth = "user"\ntoken_source = "host"')).github.token_source,
+    ).toBe("host");
+    expect(parseCoreConfig(shipped).github.token_source).toBe("self");
+  });
+});
+
 describe("loadConfig", () => {
   it("loads from an explicit path without poisoning the module cache", () => {
     const a = loadConfig(configPath);

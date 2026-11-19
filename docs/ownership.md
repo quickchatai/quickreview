@@ -29,6 +29,23 @@ direction** — is the owner's explicit call, never an agent's (AGENTS.md invari
   fills — refuses an edit naming that key however it is spelled, so the flag
   cannot move as a side effect of anything else. Declining is a first-class
   outcome: a dry-run installation is a complete one.
+- On an install a host runs for a person (`[github] token_source = "host"`),
+  the owner is **a host's attested operator**: the person the host
+  authenticated, who was shown a practice review and confirmed going live on
+  it. The host relays that confirm and decides nothing. Its `go-live` verb
+  (`qcr --schema 3 host go-live`, `src/host/golive.ts`) takes an attestation
+  on standard input, naming the operator, the instant of the confirm and the
+  practice round, and refuses unless that round is the one the checklist
+  records, was returned by `host proof-result` (which is what marks a practice
+  review as shown), the confirm is under ten minutes old, and the process was
+  not started from an agent session. Then it calls the same go-live step as
+  the wizard and the home, with every check above intact, and records the
+  attestation. The host's other verbs cannot reach the flag: `host setup`
+  writes the config through the same key-refusing writer and comes up in
+  dry-run. `tests/host-fences.test.ts` holds that nothing under `src/host/`
+  writes the flag, that the go-live path has exactly two callers (the home's
+  switch and this verb's walk), and that no agent session can run a host
+  verb. The home on such an install offers no go-live of its own.
 - One narrow, closed exception to "dry-run executes nothing":
   the App-self-config class, a single mutation kind that re-points **the App's
   own webhook URL** when a rotating tunnel hostname changes. It touches only

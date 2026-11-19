@@ -150,7 +150,10 @@ function readSavedPost(file: string): SavedPost | null {
 export async function postSavedReview(
   file: string,
   o: {
-    config: { dry_run: boolean; github: { secrets_dir: string } };
+    config: {
+      dry_run: boolean;
+      github: { secrets_dir: string; token_source?: "self" | "host" };
+    };
     dryrunDir: string;
     github?: PostGithub;
     log?: (line: string) => void;
@@ -163,7 +166,7 @@ export async function postSavedReview(
   });
   const saved = readSavedPost(file);
   if (saved === null) return fail(`${file} is not a saved review`);
-  const secrets = o.config.github.secrets_dir;
+  const secrets = o.config.github;
   let credential: { ok: true; token: string } | { ok: false; error: string };
   try {
     const read = await resolvePrCredential(secrets, o.github);

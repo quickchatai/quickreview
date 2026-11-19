@@ -20,6 +20,11 @@
 //
 // Every question is the person's, asked in the home: a tool can open a choice
 // but cannot answer it. A step that fails ends the walk with what it said.
+//
+// On a host-managed install (`[github] token_source = "host"`) three of the
+// choices are the host's and are not offered: who reviews (a GitHub App),
+// webhooks (they need an App of the person's own) and going live. Opened by
+// name they answer whose they are, and run no step.
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { parse } from "smol-toml";
@@ -36,6 +41,7 @@ import {
   type StepContext,
   type StepReport,
 } from "../onboard/engine.js";
+import { lockHolderWords, withChecklistLock } from "../onboard/checklistlock.js";
 import { userAuthRecorded } from "../onboard/choices.js";
 import { APP_SLUG_STEP_ID, appSlugStep } from "../onboard/steps/appslug.js";
 import { releaseVersion } from "../onboard/steps/compose.js";
@@ -50,6 +56,8 @@ import {
   topologyRecorded,
 } from "../onboard/steps/topology.js";
 import { VM_DEPLOY_STEP_ID, vmDeployStep } from "../onboard/steps/vmdeploy.js";
+import { HOST_MANAGED } from "@quickchatai/pi-quickreview/src/hosttoken.js";
+import { HOST_GOES_LIVE } from "./autoreview.js";
 import type { AutoReviewControl } from "./ports.js";
 import { switchOnRegistry, type SwitchOnStepOptions } from "./switchon.js";
 import { goLive, type Ask } from "./switches.js";
@@ -67,6 +75,14 @@ export const ADVANCED = {
 /** The routes a tool may open by name. */
 export const ADVANCED_ROUTES = ["identity", "webhooks", "remote", "slack", "posting"] as const;
 export type AdvancedRoute = (typeof ADVANCED_ROUTES)[number];
+
+/** The routes a host-managed install leaves to its host, and what each
+ * answers when opened by name. */
+export const HOST_MANAGED_ROUTES: Partial<Record<AdvancedRoute, string>> = {
+  identity: `who reviews is ${HOST_MANAGED}: the identity is chosen there, and no GitHub App is set up from this home`,
+  webhooks: `this install polls for work: its GitHub credential is ${HOST_MANAGED}, and webhooks need a GitHub App of your own`,
+  posting: HOST_GOES_LIVE,
+};
 
 export const STAY_DRY = "Stay in dry-run";
 export const GO_LIVE = "Go live";
@@ -96,6 +112,11 @@ export interface AdvancedPort {
   checklist(log: (line: string) => void): AdvancedChecklist;
   /** The release a server deploys when the person names none: this app's. */
   release(): string;
+  /** Run a route's steps as the checklist's one writer: under the checklist
+   * lock a host's verbs take too (src/onboard/checklistlock.ts). `busy`
+   * answers, with what holds it, when it is taken. Absent: nothing else
+   * writes this checklist. */
+  exclusive?<T>(run: () => Promise<T>, busy: (why: string) => T): Promise<T>;
 }
 
 /** How Advanced asks: pi's select, and its input for a name or a hostname. */
@@ -111,6 +132,9 @@ export interface HomeAdvancedOptions {
   refresh: () => Promise<string>;
   /** The selected pull request: going live's proof round reviews it. */
   selected?: () => number | null;
+  /** Does a host manage this install's GitHub credential (the home model's
+   * `hostManaged`)? Then HOST_MANAGED_ROUTES are the host's. */
+  hostManaged?: () => boolean;
 }
 
 const NEEDS_PERSON =
@@ -163,14 +187,22 @@ export class HomeAdvanced {
   /** Open Advanced: the person picks a choice (or the tool named one). */
   async open(ask: AdvancedAsk | undefined, route?: AdvancedRoute): Promise<string> {
     if (!ask) return NEEDS_PERSON;
+    const hosted = this.o.hostManaged?.() === true;
     let r = route ?? null;
     if (r === null) {
+      const offered = ADVANCED_ROUTES.filter((x) => !hosted || !(x in HOST_MANAGED_ROUTES));
       const pick = await ask.select("Advanced", [
-        ...ADVANCED_ROUTES.map((x) => ADVANCED[x]),
+        ...offered.map((x) => ADVANCED[x]),
         ADVANCED.close,
       ]);
       r = routeOf(pick);
       if (r === null) return "closed: nothing changed";
+    }
+    // the host's: said, and no step of it runs
+    const theHosts = hosted ? HOST_MANAGED_ROUTES[r] : undefined;
+    if (theHosts !== undefined) {
+      this.o.say(`${theHosts[0]!.toUpperCase()}${theHosts.slice(1)}. Nothing changed.`);
+      return `${theHosts}; nothing changed`;
     }
     if (r === "posting") return this.posting(ask);
     const port = this.o.port;
@@ -195,7 +227,15 @@ export class HomeAdvanced {
     };
     let out;
     try {
-      out = await runRoute(port.checklist(progress), plan, progress);
+      const walk = (): ReturnType<typeof runRoute> =>
+        runRoute(port.checklist(progress), plan, progress);
+      out = port.exclusive
+        ? await port.exclusive<Awaited<ReturnType<typeof runRoute>>>(walk, (why) => ({
+            ok: false,
+            detail: why,
+            steps: [],
+          }))
+        : await walk();
     } catch (err) {
       out = { ok: false, detail: String(err), steps: [] as string[] };
     }
@@ -417,5 +457,9 @@ export function composeAdvanced(o: {
   return {
     checklist: (log) => new OnboardingEngine(advancedRegistry({ env: o.env }), o.stepAdapters(log)),
     release: () => releaseVersion(o.root),
+    exclusive: (run, busy) =>
+      withChecklistLock(o.stepAdapters(() => {}).paths.stateDir, "home", run, (held) =>
+        busy(`${lockHolderWords(held)}; try again when it has finished`),
+      ),
   };
 }

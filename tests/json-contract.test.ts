@@ -39,9 +39,12 @@ import { stateHomeFs } from "../src/setup/adapters.js";
 import { runScanCli, type ScanCliDeps } from "../src/scancli.js";
 import { runDetachedVerb, type DetachDeps } from "../src/reviewdetach.js";
 import {
+  BOARD_SCHEMA_VERSION,
+  HOST_SCHEMA_VERSION,
   REVIEW_SCHEMA_VERSION,
   SCAN_SCHEMA_VERSION,
   VERSION_SCHEMA_VERSION,
+  hostPayloadVersion,
   withSchemaVersion,
 } from "@quickchatai/pi-quickreview/src/contract.js";
 import { MEASURED } from "@quickchatai/pi-quickreview/src/measured.js";
@@ -56,6 +59,9 @@ vi.stubEnv(
 );
 const { runReviewCli } = await import("../src/reviewcli.js");
 const { contextFor } = await import("../src/bench/runner.js");
+const { boardExport } = await import("../src/boardexport.js");
+const { known } = await import("../src/home/ports.js");
+const { BoardWorld, CONFIG, at, fakeBoardPorts, openPr } = await import("./helpers/board-rig.js");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const GOLDEN_DIR = join(ROOT, "tests", "fixtures", "json-contract");
@@ -70,6 +76,10 @@ const review = schemaOf("review-result.v2");
 const reviewV1 = schemaOf("review-result.v1");
 const scan = schemaOf("scan-result.v1");
 const versionSchema = schemaOf("version.v1");
+/** The host contract's board export. Its payloads lead with the contract's
+ * number (3), not with the family's version (which names the file). */
+const boardSchema = schemaOf("board.v1");
+const BOARD_CONTRACT = 3;
 
 /** What a payload was captured as, so the goldens can be rewritten. */
 const captured = new Map<string, Json>();
@@ -175,13 +185,21 @@ describe("the committed golden outputs", () => {
     expect(validate(versionSchema, golden("version"))).toEqual([]);
   });
 
+  it.skipIf(UPDATE)("board validates against board.v1", () => {
+    const g = golden("board");
+    expect(g["schema_version"]).toBe(BOARD_CONTRACT);
+    expect(validate(boardSchema, g)).toEqual([]);
+  });
+
   // Skipped while regenerating: a golden new to the list is written when the run ends.
   it.skipIf(UPDATE)("every golden file is listed above (none is orphaned)", () => {
     expect(
       readdirSync(GOLDEN_DIR)
         .map((f) => f.replace(/\.json$/, ""))
         .sort(),
-    ).toEqual([...REVIEW_GOLDENS, ...REVIEW_V1_GOLDENS, ...SCAN_GOLDENS, "version"].sort());
+    ).toEqual(
+      [...REVIEW_GOLDENS, ...REVIEW_V1_GOLDENS, ...SCAN_GOLDENS, "version", "board"].sort(),
+    );
   });
 
   it("the schema files pin the version the code prints", () => {
@@ -193,6 +211,10 @@ describe("the committed golden outputs", () => {
     ).toBe(1);
     expect(scan["$id"]).toBe("scan-result.v1.json");
     expect(versionSchema["$id"]).toBe("version.v1.json");
+    expect(boardSchema["$id"]).toBe(`board.v${BOARD_SCHEMA_VERSION}.json`);
+    expect(
+      (boardSchema["properties"] as Record<string, { const?: number }>)["schema_version"]!.const,
+    ).toBe(BOARD_CONTRACT);
     for (const [s, v] of [
       [review, REVIEW_SCHEMA_VERSION],
       [scan, SCAN_SCHEMA_VERSION],
@@ -228,10 +250,12 @@ describe("qcr version", () => {
     expect(v.schemas).toEqual({ review: REVIEW_SCHEMA_VERSION, scan: SCAN_SCHEMA_VERSION });
     expect(v.pi).toEqual({ package: "@earendil-works/pi-coding-agent", version: "1.5.2" });
     expect(renderVersion(v)).toMatch(
-      /JSON schemas: review v2, scan v1; host-plugin contracts: 1, 2$/m,
+      /JSON schemas: review v2, scan v1; host-plugin contracts: 1, 2, 3$/m,
     );
-    // an added field: the version family stays at 1
-    expect(v.contracts).toEqual([1, 2]);
+    expect(renderVersion(v)).toMatch(/^host contract families: board v1, host v1$/m);
+    // added fields: the version family stays at 1
+    expect(v.contracts).toEqual([1, 2, 3]);
+    expect(v.host_families).toEqual({ board: BOARD_SCHEMA_VERSION, host: HOST_SCHEMA_VERSION });
     expect(VERSION_SCHEMA_VERSION).toBe(1);
     expectContract(versionSchema, "version", VERSION_SCHEMA_VERSION, v as unknown as Json);
   });
@@ -251,6 +275,51 @@ describe("qcr version", () => {
     expect(versionInfo(root).image.build_sha).toBe("0123456789abcdef");
     writeFileSync(join(root, "BUILD_SHA"), "unstamped\n");
     expect(versionInfo(root).image.build_sha).toBeNull();
+  });
+});
+
+// ---- qcr --schema 3 board ----------------------------------------------------------
+
+describe("qcr board", () => {
+  // The whole shape at once: a working install mid-way to going live, with
+  // the fields other sources supply (the token's word, the checklist's
+  // records) filled by their ports. Each absent-means-unknown case is
+  // tests/board-export.test.ts.
+  it("prints the board in the host contract, every field of the schema's shape", async () => {
+    const w = new BoardWorld();
+    try {
+      w.tick(-3600);
+      w.pr(1, { state: "queued", trigger_ts: at(-3000) });
+      w.pr(2);
+      w.finished(2, {
+        verdict: "APPROVE",
+        posted: { event: "APPROVE", id: 9001, at: at(-3500) },
+        comments: 1,
+      });
+      w.pr(3);
+      w.tick(0);
+      w.open = [openPr(1), openPr(2), openPr(3), openPr(4)];
+      const text = w.boardText();
+      const live = await boardExport(
+        fakeBoardPorts({
+          boardFile: async () => known(text),
+          config: () => known(CONFIG.replace("dry_run = true", "dry_run = false")),
+          github: () => "ok",
+          progress: () => ({
+            setup: { state: "done" },
+            go_live: { state: "running" },
+            proof: { pr: 2, round_no: 1, verdict: "APPROVE", completed_at: at(-100) },
+          }),
+        }),
+        hostPayloadVersion("board", BOARD_CONTRACT)!,
+      );
+      expectContract(boardSchema, "board", BOARD_CONTRACT, live as unknown as Json);
+      expect(live.reviewing).toHaveLength(1);
+      expect(live.reviewed).toHaveLength(1);
+      expect(live.open).toHaveLength(2);
+    } finally {
+      w.close();
+    }
   });
 });
 

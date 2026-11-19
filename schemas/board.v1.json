@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "board.v1.json",
+  "title": "qcr --schema 3 board, board family version 1",
+  "description": "The reviewer's board for a host that runs it for its operator: who posts and where, whether the reviewer works, and three short lists of pull requests. An absent field means unknown, never zero, an empty list or a default; an empty list is a read that found nothing. With the daemon off the three lists are absent. No field carries a URL: a host builds its links from its own record of the repository and the numbers here. The verb reads and never writes.",
+  "type": "object",
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {
+      "const": 3,
+      "description": "The host contract the payload is printed in. A host-family payload leads with its contract's number, not with the family's own version (which names this file)."
+    },
+    "written_at": {
+      "type": "string",
+      "description": "When the daemon wrote the board the lists, poll, spend and posting are read from, ISO. Absent with them."
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+      "description": "The configured repository, owner/name. Absent before setup."
+    },
+    "identity": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "enum": ["user", "app", "installation"],
+          "description": "How the reviewer posts: as a person, as a GitHub App it holds the key of, or as an App installation whose token its host supplies."
+        },
+        "login": {
+          "type": "string",
+          "description": "The login reviews are posted under."
+        }
+      },
+      "description": "Who posts, as the config says. Absent until the config names an identity."
+    },
+    "posting": {
+      "enum": ["dry_run", "live"],
+      "description": "The running daemon's own flag: dry_run records each intended GitHub write and posts nothing."
+    },
+    "posting_pending": {
+      "const": "live",
+      "description": "The config says live and the running daemon is still in dry-run: it posts once it has restarted."
+    },
+    "reviewer": {
+      "enum": ["off", "starting", "on", "paused_login", "broken"],
+      "description": "off: the daemon does not run. starting: it runs and its first poll has not ended. on: its heartbeat and last poll are fresh and clean. paused_login: the model login it reviews on lapsed. broken: it runs and is not working."
+    },
+    "model_login": {
+      "enum": ["ok", "expired", "missing"],
+      "description": "The host's stored model login, from pi's own files. Readable before setup."
+    },
+    "github": {
+      "enum": ["ok", "expired", "missing"],
+      "description": "A host-managed GitHub token file, as the file and its expiry note say. Absent when the install has no such file or it cannot tell."
+    },
+    "trigger_label": {
+      "type": "string",
+      "description": "The label that makes the reviewer pick up a pull request by itself."
+    },
+    "trigger": {
+      "enum": ["label", "all"],
+      "description": "What the reviewer picks up by itself: pull requests that carry the label, or every pull request."
+    },
+    "poll": {
+      "type": "object",
+      "required": ["interval_s"],
+      "properties": {
+        "last_at": {
+          "type": "string",
+          "description": "When the last reconcile pass ran, ISO. Absent before the first pass has ended."
+        },
+        "ok": {
+          "type": "boolean",
+          "description": "That pass ran with no error. Absent before the first pass."
+        },
+        "interval_s": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The daemon's own poll cadence, in seconds."
+        }
+      }
+    },
+    "spend": {
+      "type": "object",
+      "required": ["today_usd", "month_usd"],
+      "properties": {
+        "today_usd": { "type": "number", "minimum": 0 },
+        "month_usd": { "type": "number", "minimum": 0 },
+        "today_unknown_rounds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Rounds today that used tokens and have no price: the sum counts none of them."
+        },
+        "month_unknown_rounds": { "type": "integer", "minimum": 1 }
+      },
+      "description": "What the daemon recorded as spent on model calls in the current UTC day and month."
+    },
+    "setup": { "$ref": "#/$defs/setup" },
+    "go_live": { "$ref": "#/$defs/go_live" },
+    "proof": {
+      "type": "object",
+      "required": ["pr", "round_no"],
+      "properties": {
+        "pr": { "type": "integer", "minimum": 1 },
+        "round_no": { "type": "integer", "minimum": 1 },
+        "verdict": { "type": "string" },
+        "completed_at": { "type": "string" }
+      },
+      "description": "The practice review a go-live is confirmed against: the round the checklist records, once `qcr --schema 3 host proof-result` has returned it. Absent until then."
+    },
+    "reviewing": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/reviewing" },
+      "description": "Pull requests with review work owed or in flight: queued, a round running, a finished review being delivered, or a failure on record. Newest first."
+    },
+    "reviewed": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/reviewed" },
+      "description": "Open pull requests whose last verdict is set and that are not in reviewing. Newest first."
+    },
+    "open": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/open" },
+      "description": "The open pull requests the last reconcile pass listed, minus the two lists above. Newest first. Absent until a pass has listed them."
+    },
+    "listed_at": {
+      "type": "string",
+      "description": "When the open pull requests were listed, ISO. Present exactly with open."
+    },
+    "more": {
+      "const": true,
+      "description": "At least one list was cut to its newest 50 rows."
+    }
+  },
+  "$defs": {
+    "setup": {
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": { "enum": ["running", "done", "failed"] },
+        "step": {
+          "enum": [
+            "machine_checks",
+            "topology",
+            "github_account",
+            "escalation",
+            "embeddings",
+            "ingress",
+            "memory",
+            "login_share",
+            "daemon_start",
+            "bringup",
+            "memory_user_keys",
+            "verify_stack"
+          ],
+          "description": "The step it is at, or stopped at."
+        },
+        "problem": {
+          "enum": [
+            "docker_unavailable",
+            "disk_low",
+            "port_in_use",
+            "machine_check_failed",
+            "github_failed",
+            "model_login_missing",
+            "memory_failed",
+            "start_failed",
+            "verify_failed",
+            "config_unreadable",
+            "step_failed",
+            "interrupted",
+            "internal_error"
+          ],
+          "description": "Why it failed. interrupted: the process that ran it is gone and left no result."
+        }
+      },
+      "description": "The setup `qcr --schema 3 host setup` started: running with the step it is at, done, or failed with the step it stopped at and why. Absent when no setup was started."
+    },
+    "go_live": {
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": { "enum": ["running", "done", "failed"] },
+        "problem": {
+          "enum": [
+            "attestation_rejected",
+            "proof_unverified",
+            "config_failed",
+            "restart_failed",
+            "label_failed",
+            "go_live_failed",
+            "interrupted",
+            "internal_error"
+          ],
+          "description": "Why it failed. label_failed: the reviewer posts, and its trigger label could not be created. interrupted: the process that ran it is gone and left no result."
+        }
+      },
+      "description": "The go-live `qcr --schema 3 host go-live` started. Absent when none was. Whether the reviewer posts is `posting`, the running daemon's own flag."
+    },
+    "reviewing": {
+      "type": "object",
+      "required": ["number", "state"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "state": {
+          "enum": ["queued", "running", "posting", "failed", "paused"],
+          "description": "queued: waiting for a slot. running: a round is in flight. posting: the review is finished and being delivered to GitHub. failed: a failure is on record (problem says which). paused: queued and held by a pause."
+        },
+        "problem": {
+          "enum": ["retry_scheduled", "posting_failed", "round_failed", "worker_parked"],
+          "description": "Why a failed row failed. retry_scheduled: the daemon retries it by itself at retry_at. posting_failed: the review could not be delivered or confirmed. round_failed: the round itself failed. worker_parked: its worker kept crashing and is parked. The last three wait for the operator."
+        },
+        "round": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The round in flight, or the one that failed."
+        },
+        "started_at": {
+          "type": "string",
+          "description": "When the round in flight started, ISO."
+        },
+        "retry_at": {
+          "type": "string",
+          "description": "When a retry_scheduled failure is retried, ISO."
+        }
+      }
+    },
+    "reviewed": {
+      "type": "object",
+      "required": ["number"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "verdict": {
+          "enum": ["APPROVE", "REQUEST_CHANGES", "NEEDS_HUMAN"],
+          "description": "What the last round decided. Not what GitHub shows: see posted_event."
+        },
+        "posted_event": {
+          "enum": ["APPROVE", "REQUEST_CHANGES", "COMMENT"],
+          "description": "What the review is on GitHub as. Absent when the round posted nothing (dry-run)."
+        },
+        "approval_withheld": {
+          "type": "boolean",
+          "description": "An approval was decided and is held back until the checks pass: GitHub holds a comment."
+        },
+        "posted_at": { "type": "string" },
+        "review_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The review's id on GitHub."
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many rounds the pull request has had."
+        },
+        "findings": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The inline comments the last round's review carries."
+        },
+        "head_changed": {
+          "type": "boolean",
+          "description": "The pull request's head moved since that round reviewed it."
+        }
+      }
+    },
+    "open": {
+      "type": "object",
+      "required": ["number"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "draft": { "type": "boolean" },
+        "updated_at": { "type": "string" }
+      }
+    }
+  }
+}

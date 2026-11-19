@@ -44,6 +44,21 @@
 // Exactly one of github_account / github_app is enabled once the route is
 // answered; while it is unanswered both are, and this step (order 33) is the
 // one that answers.
+//
+// A HOST-MANAGED install (`[github] token_source = "host"` in config.toml) has
+// no question and no sign-in: a host writes `<secrets>/github_token` and
+// keeps it fresh, and owns the identity and the repository. There the step
+//   * runs no `gh` and reads no GH_TOKEN / GITHUB_TOKEN, and never writes
+//     the token file: it proves the file's token (`GET /user`, then the
+//     repository read) and reports the login;
+//   * installs no crontab entry: the host is the refresher;
+//   * takes the repository it is handed, recorded or configured, and lists
+//     none to pick from;
+//   * creates no label: the host's token may be read-only until the reviewer
+//     posts, and nothing before the first posted review needs one;
+//   * writes the same config the "user" route owns, leaving the marker as it is.
+// Its verify re-proves the token and names the host, never a command, as the
+// one that puts a failure right. The App route is refused there in words.
 import {
   CHOICE_KEYS,
   GITHUB_AUTH_CHOICES,
@@ -87,6 +102,11 @@ import {
 } from "./ingress.js";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import {
+  HOST_MANAGED,
+  hostTokenProblem,
+  readTokenFile,
+} from "@quickchatai/pi-quickreview/src/hosttoken.js";
 
 export const GITHUB_ACCOUNT_STEP_ID = "github_account";
 
@@ -313,12 +333,138 @@ function cronNote(kind: TokenKind, manual: string): string {
   return `${lapse} The refresh command, to run by hand or from any scheduler:\n    ${manual}`;
 }
 
+/** Does config.toml carry the host-managed marker, `[github] token_source =
+ * "host"`? No config, or one without the key, is an install that keeps its own. */
+function hostManaged(ctx: StepContext): boolean {
+  const text = readTextOrNull(ctx.adapters.paths.configPath);
+  return text !== null && readTomlKey(text, "github", "token_source") === "host";
+}
+
+/** What a failure on a host-managed install ends with: whose it is to fix. */
+const HOST_FIXES =
+  "this install's GitHub credential is managed by its host, which writes the token file and keeps it fresh";
+
 export function githubAccountStep(opts: GithubAccountStepOptions = {}): OnboardingStep {
   const apiBase = opts.apiBase ?? "https://api.github.com";
   const env = opts.env ?? process.env;
 
   function secretsDir(ctx: StepContext): string {
     return opts.secretsDir ?? secretsDirFor(ctx.adapters, ctx.choices);
+  }
+
+  /** The host-managed route: prove the token the host wrote, and write the
+   * config the route owns. No gh, no crontab, no token write, no label. */
+  async function runHost(ctx: StepContext): Promise<StepReport> {
+    const checks: CheckResult[] = [
+      {
+        name: "route",
+        ok: true,
+        detail: `your GitHub identity and repository are ${HOST_MANAGED}: there is no sign-in here, and nothing to pick`,
+      },
+    ];
+    const file = readTokenFile(secretsDir(ctx));
+    if (!file.ok) {
+      checks.push({ name: "token", ok: false, detail: hostTokenProblem(file) });
+      return { ok: false, checks };
+    }
+    log(ctx, "proving the GitHub token this install's host wrote");
+    const who = await githubLogin(ctx.adapters.fetch, file.token, apiBase);
+    if (!who.ok) {
+      checks.push({
+        name: "token",
+        ok: false,
+        detail:
+          who.status === 401
+            ? `GitHub rejected the token in ${file.path} (${who.detail}): ${HOST_FIXES}`
+            : `could not check the token in ${file.path} with GitHub (${who.detail}); run this step again`,
+      });
+      return { ok: false, checks };
+    }
+    const login = who.login;
+    checks.push({
+      name: "token",
+      ok: true,
+      detail:
+        `the token your host wrote signs in as ${login}${who.expiry ? `, expiring ${who.expiry}` : ""} ` +
+        `(${file.path}). The token itself is never shown or logged`,
+    });
+    checks.push({
+      name: "refresh",
+      ok: true,
+      detail: "your host keeps the token fresh: no crontab entry is installed, and no `gh` is used",
+    });
+
+    const currentText = readTextOrNull(ctx.adapters.paths.configPath);
+    const configured = currentText ? readTomlKey(currentText, "github", "repo") : null;
+    const repo =
+      parseRepoAnswer(ctx.input.repo) ??
+      parseRepoAnswer(ctx.choices[CHOICE_KEYS.accountRepo]) ??
+      (configured && REPO_SLUG_RE.test(configured) ? parseRepoSlug(configured) : null);
+    if (repo === null) {
+      checks.push({
+        name: "repo",
+        ok: false,
+        detail: `no repository is set yet: the repository is ${HOST_MANAGED}, which sets it before the reviewer starts`,
+      });
+      return { ok: false, checks, data: { route: "user", login, cron: "host", gh_path: null } };
+    }
+    const access = await repoAccess(ctx.adapters.fetch, apiBase, file.token, repo);
+    checks.push(access.check);
+    if (!access.ok) return { ok: false, checks };
+    checks.push({
+      name: "labels",
+      ok: true,
+      detail:
+        "the trigger labels are not created here: the token your host wrote may be read-only until the reviewer posts, " +
+        "and reviewing one pull request needs no label",
+    });
+
+    const source = configText(ctx);
+    if (source.text === null) {
+      checks.push({ name: "config", ok: false, detail: source.detail });
+      return { ok: false, checks };
+    }
+    const next = userConfig(source.text, login);
+    if (Array.isArray(next)) {
+      checks.push({ name: "config", ok: false, detail: next.join("; ") });
+      return { ok: false, checks };
+    }
+    const changed = source.seeded || next !== source.text;
+    if (changed) writeAtomic(ctx.adapters.paths.configPath, next);
+    checks.push({
+      name: "config",
+      ok: true,
+      detail:
+        `[github] auth = "user", bot_login = "${login}", app_slug = "" and [ingress] shape = "polling" ` +
+        `${changed ? `written to ${ctx.adapters.paths.configPath}` : "already in place"}; token_source = "host" is left as your host set it`,
+    });
+    const delivery = await deliverConfigChange(
+      ctx,
+      undefined,
+      (changed && !source.seeded) || ctx.data.restart_owed === true,
+      GITHUB_ACCOUNT_STEP_ID,
+    );
+    checks.push(...delivery.checks);
+
+    const slug = `${repo.owner}/${repo.name}`;
+    ctx.recordChoice(CHOICE_KEYS.githubAuth, "user");
+    ctx.recordChoice(CHOICE_KEYS.accountLogin, login);
+    ctx.recordChoice(CHOICE_KEYS.accountRepo, slug);
+    ctx.recordChoice(CHOICE_KEYS.botLogin, login);
+    return {
+      ok: checks.every((c) => c.ok),
+      checks,
+      data: {
+        route: "user",
+        login,
+        repo: slug,
+        // "host": no crontab entry exists for verify to look for
+        cron: "host",
+        gh_path: null,
+        labels: false,
+        restart_owed: delivery.restartOwed,
+      },
+    };
   }
 
   async function runUser(ctx: StepContext, switching: boolean): Promise<StepReport> {
@@ -509,6 +655,9 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
     const checks: CheckResult[] = [];
     const path = join(secretsDir(ctx), GITHUB_TOKEN_FILE);
     const token = (readTextOrNull(path) ?? "").trim();
+    // A host-managed install: no command here writes the file, so a failure
+    // names the host and never one.
+    const managed = hostManaged(ctx);
     if (token === "") {
       return {
         ok: false,
@@ -516,7 +665,9 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
           {
             name: "token",
             ok: false,
-            detail: `${path} is missing or empty — run this step (or \`qcr github-token sync\`) to write it`,
+            detail: managed
+              ? `${path} is missing or empty: ${HOST_FIXES}`
+              : `${path} is missing or empty — run this step (or \`qcr github-token sync\`) to write it`,
           },
         ],
       };
@@ -532,7 +683,9 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
         : {
             name: "token-file",
             ok: false,
-            detail: `${path} is readable by others (mode ${m?.toString(8) ?? "unknown"}) — \`chmod 600 ${path}\`, or run this step again`,
+            detail: managed
+              ? `${path} is readable by others (mode ${m?.toString(8) ?? "unknown"}): the host that manages this install writes it, and must write it 0600`
+              : `${path} is readable by others (mode ${m?.toString(8) ?? "unknown"}) — \`chmod 600 ${path}\`, or run this step again`,
           },
     );
     const who = await githubLogin(ctx.adapters.fetch, token, apiBase);
@@ -542,7 +695,9 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
         ? {
             name: "token",
             ok: false,
-            detail: `the token in ${path} no longer works (${who.detail}) — run \`qcr github-token sync\` or this step again`,
+            detail: managed
+              ? `the token in ${path} no longer works (${who.detail}): ${HOST_FIXES}`
+              : `the token in ${path} no longer works (${who.detail}) — run \`qcr github-token sync\` or this step again`,
           }
         : login !== "" && who.login !== login
           ? {
@@ -627,6 +782,22 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
       const answered = routeAnswer(ctx.input);
       const typed =
         typeof ctx.input.github_auth === "string" && ctx.input.github_auth.trim() !== "";
+      // A host-managed install: the route is not a question, and no gh is run
+      // to answer it. Asking for the App route is refused, in words.
+      if (hostManaged(ctx)) {
+        if (answered === "app")
+          return {
+            ok: false,
+            checks: [
+              {
+                name: "github_auth",
+                ok: false,
+                detail: `who reviews is ${HOST_MANAGED} ([github] token_source = "host"): a GitHub App is not set up from here. Nothing changed`,
+              },
+            ],
+          };
+        return runHost(ctx);
+      }
       if (typed && answered === null) return { ok: false, checks: [offerRoutes(true)] };
       let route = answered ?? recorded;
       let defaulted = false;

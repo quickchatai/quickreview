@@ -56,6 +56,12 @@
 //                                                              home_check_github,
 //                                                              home_choose_repo
 //
+// On a host-managed install (`[github] token_source = "host"`) a host keeps
+// the GitHub credential and the repository: the home reads pull requests with
+// the host's token file, shows both as "managed by your host", and offers no
+// GitHub sign-in, no repository pick, no switch-on and no go-live of its own.
+// Reviewing a pull request on demand stays, on the same token.
+//
 // On a machine that is not set up, the setup checklist (src/home/setup.ts)
 // shows as a centred card (src/home/setupcard.ts) instead of the panel; when
 // its last step is done the card gives way to the panel, and back again if a
@@ -310,6 +316,7 @@ export function createHome(o: HomeOptions): ExtensionFactory {
       say: (text, kind) => model.say(text, kind),
       refresh: () => model.refresh(),
       selected: () => model.selected,
+      hostManaged: () => model.hostManaged(),
     });
     // Setup's brief goes to the chat as the person's message, after the
     // agent's turn when one is running

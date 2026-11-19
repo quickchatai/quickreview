@@ -242,7 +242,9 @@ describe("the review family under a contract", () => {
     expect(REVIEW_SCHEMA_VERSION).toBe(2);
     expect(CONTRACTS[1]).toEqual({ review: 1, scan: 1, version: 1 });
     expect(CONTRACTS[2]).toEqual({ review: 2, scan: 1, version: 1 });
-    expect(supportedContracts()).toEqual([1, 2]);
+    // contract 3, the host contract, keeps the review family where contract 2 has it
+    expect(supportedContracts()).toEqual([1, 2, 3]);
+    expect(reviewVersionFor(3)).toBe(2);
     expect(reviewVersionFor(undefined)).toBe(2);
     expect(reviewVersionFor(2)).toBe(2);
     expect(reviewVersionFor(1)).toBe(1);

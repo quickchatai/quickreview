@@ -21,6 +21,7 @@
 import { readFileSync } from "node:fs";
 import { readAppConfigToml } from "../shippeddefaults.js";
 import { snapshotHeartbeat } from "../heartbeat.js";
+import { lockHolderWords, withChecklistLock } from "../onboard/checklistlock.js";
 import { OnboardingEngine, type OnboardAdapters, type ProcessRunner } from "../onboard/engine.js";
 import {
   CONTAINER_STATE_DIR,
@@ -39,6 +40,7 @@ import {
   type AutoReviewStatus,
   type Known,
   type RunningRound,
+  type SwitchOnOutcome,
   type SwitchResult,
 } from "./ports.js";
 import {
@@ -273,6 +275,13 @@ function readConfig(path: string, read: (p: string) => string): Obj | string {
   }
 }
 
+/** What the home's switch says on a host-managed install, where it runs no
+ * step: starting auto-review and going live are the host's. */
+export const HOST_STARTS_AUTO_REVIEW =
+  "Auto-review is started by your host here, in dry-run. The home does not start it";
+export const HOST_GOES_LIVE =
+  "Going live is done from your host here, after a practice review you read there. The home does not move it";
+
 export interface ComposeAutoReviewOptions extends SwitchOnStepOptions {
   /** The app's root: the compose project directory, with `state/` under it. */
   root: string;
@@ -297,6 +306,23 @@ export function composeAutoReview(o: ComposeAutoReviewOptions): AutoReviewPort {
   const config = (): Obj | string => readConfig(o.configPath(), read);
   const engine = (log: (line: string) => void): OnboardingEngine =>
     new OnboardingEngine(switchOnRegistry(o), o.stepAdapters(log));
+  // Every run of a step writes the checklist, and a host's verbs write it too
+  // (src/host/): an engine that runs steps is built and used under the
+  // checklist lock, and when the lock is taken the home says by what and runs
+  // nothing.
+  const locked = <T>(
+    log: (line: string) => void,
+    run: (e: OnboardingEngine) => Promise<T>,
+    busy: (why: string) => T,
+  ): Promise<T> => {
+    const adapters = o.stepAdapters(log);
+    return withChecklistLock(
+      adapters.paths.stateDir,
+      "home",
+      () => run(new OnboardingEngine(switchOnRegistry(o), adapters)),
+      (held) => busy(`${lockHolderWords(held)}; try again when it has finished`),
+    );
+  };
   const dryRunNow = (): boolean | null => {
     const c = config();
     return typeof c === "string" ? null : typeof c["dry_run"] === "boolean" ? c["dry_run"] : null;
@@ -311,52 +337,80 @@ export function composeAutoReview(o: ComposeAutoReviewOptions): AutoReviewPort {
         };
   };
 
+  // A host-managed install: its host starts auto-review and takes it live,
+  // each through its own verbs. The home's switch runs no step of either.
+  const hostManaged = (): boolean => {
+    const c = config();
+    const github = typeof c === "string" ? undefined : c["github"];
+    return isObj(github) && github["token_source"] === "host";
+  };
+
   const control: AutoReviewControl = {
-    machineChecks: async () => {
-      const lines: string[] = [];
-      const r = await engine((l) => lines.push(l)).runStep(MACHINE_CHECKS_STEP_ID);
-      // the three the person is told about: Docker, disk, ports
-      const said = r.checks
-        .filter((c) => c.name === "docker" || c.name === "disk" || c.name === "ports")
-        .map((c) => c.detail)
-        .join(" · ");
-      return r.ok ? { ok: true, detail: said } : { ok: false, detail: r.failures.join("; ") };
-    },
+    machineChecks: () =>
+      locked<SwitchResult>(
+        () => {},
+        async (e) => {
+          const r = await e.runStep(MACHINE_CHECKS_STEP_ID);
+          // the three the person is told about: Docker, disk, ports
+          const said = r.checks
+            .filter((c) => c.name === "docker" || c.name === "disk" || c.name === "ports")
+            .map((c) => c.detail)
+            .join(" · ");
+          return r.ok ? { ok: true, detail: said } : { ok: false, detail: r.failures.join("; ") };
+        },
+        (why) => ({ ok: false, detail: why }),
+      ),
     dryRun: async () => {
       const d = dryRunNow();
       return d === null ? unknown(`can't read dry_run from ${o.configPath()}`) : known(d);
     },
     switchOn: async (answers, progress) => {
+      if (hostManaged())
+        return { ok: false, live: null, detail: HOST_STARTS_AUTO_REVIEW, steps: [] };
       const c = config();
       const github = typeof c === "string" ? undefined : c["github"];
       const repo =
         isObj(github) && typeof github["repo"] === "string" && github["repo"] !== ""
           ? github["repo"]
           : null;
-      return runSwitchOn({
-        checklist: engine((l) => progress?.(l)),
-        answers,
-        repo,
-        dryRun: dryRunNow,
-        stopMemory: () => compose(["stop", MEMORY_SERVICE], "memory stopped"),
-        startMemory: () => compose(["up", "-d", MEMORY_SERVICE], "the memory engine runs"),
-        ...(progress ? { progress } : {}),
-      });
+      return locked<SwitchOnOutcome>(
+        (l) => progress?.(l),
+        (e) =>
+          runSwitchOn({
+            checklist: e,
+            answers,
+            repo,
+            dryRun: dryRunNow,
+            stopMemory: () => compose(["stop", MEMORY_SERVICE], "memory stopped"),
+            startMemory: () => compose(["up", "-d", MEMORY_SERVICE], "the memory engine runs"),
+            ...(progress ? { progress } : {}),
+          }),
+        (why) => {
+          const dry = dryRunNow();
+          return { ok: false, live: dry === null ? null : !dry, detail: why, steps: [] };
+        },
+      );
     },
     proof: async () => {
       const p = recordedProof(engine(() => {}));
       return p ? { pr: p.pr, verdict: p.verdict } : null;
     },
-    proofRound: (pr, progress) =>
-      runProofRound(
-        engine((l) => progress?.(l)),
-        pr,
-      ),
-    goLive: (answers) =>
-      runGoLive(
-        engine(() => {}),
-        answers,
-      ),
+    proofRound: async (pr, progress) =>
+      hostManaged()
+        ? { ok: false, detail: HOST_GOES_LIVE }
+        : locked<SwitchResult>(
+            (l) => progress?.(l),
+            (e) => runProofRound(e, pr),
+            (why) => ({ ok: false, detail: why }),
+          ),
+    goLive: async (answers) =>
+      hostManaged()
+        ? { ok: false, detail: HOST_GOES_LIVE }
+        : locked<SwitchResult>(
+            () => {},
+            (e) => runGoLive(e, answers),
+            (why) => ({ ok: false, detail: why }),
+          ),
     running: async () => {
       const t = await statusText();
       if (t.kind === "unknown") return t;

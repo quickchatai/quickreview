@@ -118,6 +118,8 @@ export class SetupCard implements Component {
     const v = this.host.setup.view();
     const out: string[] = [];
     const k = this.key();
+    // a row the host provides has one act here: read it again
+    const verb = s.managed ? "check" : VERB[s.id];
     let mark: string;
     let label: string;
     let right = "";
@@ -132,13 +134,11 @@ export class SetupCard implements Component {
     } else if (s.unknown !== undefined) {
       mark = this.c("dim", "?");
       label = s.next ? this.th.bold(this.c("text", s.title)) : this.c("text", s.title);
-      right = s.next
-        ? `${this.c("accent", k)} ${this.c("muted", VERB[s.id])}`
-        : this.c("dim", "unknown");
+      right = s.next ? `${this.c("accent", k)} ${this.c("muted", verb)}` : this.c("dim", "unknown");
     } else if (s.next) {
       mark = this.c("accent", "▸");
       label = this.th.bold(this.c("text", s.title));
-      right = `${this.c("accent", k)} ${this.c("muted", VERB[s.id])}`;
+      right = `${this.c("accent", k)} ${this.c("muted", verb)}`;
     } else {
       mark = this.c("dim", "○");
       label = this.c("dim", s.title);
@@ -148,6 +148,9 @@ export class SetupCard implements Component {
     if (s.id === "login") out.push(...this.loginRows(w, s));
     else if (s.unknown !== undefined)
       out.push(...this.sub(w, `Unknown — ${s.unknown}.`, "warning"));
+    else if (s.next && s.managed && s.missing)
+      // the host's to provide: there is nothing to run, only to look again
+      out.push(...this.sub(w, `${capital(s.missing)}. ${k} checks again.`, "warning"));
     else if (s.next && s.id === "github" && s.missing)
       out.push(...this.sub(w, `${capital(s.missing)}, then ${k} checks again.`, "warning"));
     else if (s.next && s.id === "repo")
@@ -222,6 +225,10 @@ export class SetupCard implements Component {
   render(width: number): string[] {
     const w = Math.max(40, width);
     const v = this.host.setup.view();
+    // a host-managed install: GitHub and the repository are the host's to provide
+    const lead = v.steps.some((s) => s.managed)
+      ? "Sign in to a model provider once, and review your first pull request."
+      : "Sign in once, choose a repository, and review your first pull request.";
     const body = [
       this.row(w, ""),
       this.row(
@@ -229,10 +236,7 @@ export class SetupCard implements Component {
         `  ${this.th.bold(this.c("text", "Welcome to quickreview"))}`,
         this.c("muted", `${v.done} of ${v.total} done  `),
       ),
-      this.row(
-        w,
-        `  ${this.c("muted", "Sign in once, choose a repository, and review your first pull request.")}`,
-      ),
+      this.row(w, `  ${this.c("muted", lead)}`),
       this.row(w, ""),
     ];
     for (const c of v.checks) {

@@ -1,6 +1,6 @@
 // A validator for the JSON Schema subset schemas/*.json use: type, enum,
-// const, required, properties, additionalProperties, items, oneOf, anyOf,
-// pattern, minimum and local "#" / "#/$defs/…" references. A keyword outside the
+// const, required, properties, additionalProperties, items, maxItems, oneOf,
+// anyOf, pattern, maxLength, minimum and local "#" / "#/$defs/…" references. A keyword outside the
 // subset throws, so a schema cannot quietly say more than it is checked for.
 // (No ajv: it is not a dependency of this repo.)
 type Schema = Record<string, unknown>;
@@ -19,9 +19,11 @@ const KNOWN = new Set([
   "properties",
   "additionalProperties",
   "items",
+  "maxItems",
   "oneOf",
   "anyOf",
   "pattern",
+  "maxLength",
   "minimum",
 ]);
 
@@ -69,6 +71,8 @@ export function validate(schema: Schema, value: unknown, root: Schema = schema):
       !new RegExp(s["pattern"]).test(v)
     )
       errors.push(`${at}: does not match ${s["pattern"]}`);
+    if (typeof v === "string" && typeof s["maxLength"] === "number" && v.length > s["maxLength"])
+      errors.push(`${at}: longer than ${s["maxLength"]}`);
     if (typeof v === "number" && typeof s["minimum"] === "number" && v < s["minimum"])
       errors.push(`${at}: below ${s["minimum"]}`);
     for (const key of ["oneOf", "anyOf"] as const) {
@@ -78,6 +82,8 @@ export function validate(schema: Schema, value: unknown, root: Schema = schema):
       if (key === "oneOf" ? passing.length !== 1 : passing.length === 0)
         errors.push(`${at}: matches ${passing.length} of the ${key} alternatives`);
     }
+    if (Array.isArray(v) && typeof s["maxItems"] === "number" && v.length > s["maxItems"])
+      errors.push(`${at}: more than ${s["maxItems"]} items`);
     if (Array.isArray(v) && s["items"])
       v.forEach((x, i) => walk(s["items"] as Schema, x, `${at}[${i}]`));
     if (v !== null && typeof v === "object" && !Array.isArray(v)) {

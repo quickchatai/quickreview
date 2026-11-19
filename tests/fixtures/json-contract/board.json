@@ -1,0 +1,76 @@
+{
+  "schema_version": 3,
+  "written_at": "2026-11-19T12:00:00.000Z",
+  "repo": "acme/webapp",
+  "identity": {
+    "mode": "user",
+    "login": "octo-dev"
+  },
+  "posting": "dry_run",
+  "posting_pending": "live",
+  "reviewer": "on",
+  "model_login": "ok",
+  "github": "ok",
+  "trigger_label": "AI review requested",
+  "poll": {
+    "last_at": "2026-11-19T11:59:00.000Z",
+    "ok": true,
+    "interval_s": 300
+  },
+  "spend": {
+    "today_usd": 0.25,
+    "month_usd": 0.25
+  },
+  "setup": {
+    "state": "done"
+  },
+  "go_live": {
+    "state": "running"
+  },
+  "proof": {
+    "pr": 2,
+    "round_no": 1,
+    "verdict": "APPROVE",
+    "completed_at": "2026-11-19T11:58:20.000Z"
+  },
+  "reviewing": [
+    {
+      "number": 1,
+      "title": "PR 1",
+      "author": "alice",
+      "state": "queued"
+    }
+  ],
+  "reviewed": [
+    {
+      "number": 2,
+      "title": "PR 2",
+      "author": "alice",
+      "verdict": "APPROVE",
+      "posted_event": "APPROVE",
+      "approval_withheld": false,
+      "posted_at": "2026-11-19T11:01:40.000Z",
+      "review_id": 9001,
+      "rounds": 1,
+      "findings": 1,
+      "head_changed": false
+    }
+  ],
+  "open": [
+    {
+      "number": 4,
+      "title": "PR 4",
+      "author": "alice",
+      "draft": false,
+      "updated_at": "2026-11-19T11:00:00.000Z"
+    },
+    {
+      "number": 3,
+      "title": "PR 3",
+      "author": "alice",
+      "draft": false,
+      "updated_at": "2026-11-19T11:00:00.000Z"
+    }
+  ],
+  "listed_at": "2026-11-19T11:59:00.000Z"
+}

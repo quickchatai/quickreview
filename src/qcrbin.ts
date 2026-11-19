@@ -18,9 +18,14 @@
 //   qcr plugin …       QuickReview installed into the coding-agent CLIs here
 //                      (src/plugincli.ts)
 //
-// `qcr --schema N review|scan|version …` is a host plugin's call: the verb
-// in contract N's JSON, or a refusal (src/schemaflag.ts), and no update
-// notice.
+// `qcr --schema N review|scan|version|board|host …` is a host plugin's call:
+// the verb in contract N's JSON, or a refusal (src/schemaflag.ts), and no
+// update notice. `board` is the host contract's board export
+// (src/boardexport.ts): it reads the daemon's board file and never the store,
+// so it has its own route here. `host <verb>` is the host contract's verbs
+// (src/host/cli.ts), for a host that runs the reviewer for its operator: they
+// drive the compose stack and the setup checklist and never open the store
+// either.
 //
 // Every other verb goes to src/cli.ts `main` unchanged. The image's
 // `node /opt/qcr/dist/src/cli.js` never comes through here. Run as a script
@@ -56,14 +61,14 @@ export const BIN_HELP = [
   "  qcr update              update qcr with the package manager that installed it",
   "  qcr plugin <subcommand> install QuickReview into your coding-agent CLIs (`qcr plugin --help`)",
   "  qcr version [--json]    this install's version, schemas and pi pin",
-  "  qcr --schema N <verb>   review, scan or version as JSON in host-plugin contract N",
+  "  qcr --schema N <verb>   review, scan, version, board or host as JSON in host-plugin contract N",
   "",
   "Every app verb:",
 ].join("\n");
 
 /** The verbs that never print the update notice: the ones that hand the
  * terminal over (the home, the TUI, pi) or are about versions themselves. */
-const QUIET_VERBS = new Set(["home", "tui", "pi", "update", "version", "login"]);
+const QUIET_VERBS = new Set(["home", "tui", "pi", "update", "version", "login", "board", "host"]);
 
 /** What `runBin` would do with `argv`, before doing it. */
 export type BinRoute =
@@ -71,7 +76,8 @@ export type BinRoute =
   | { route: "help" }
   | { route: "pi"; args: string[] }
   | {
-      route: "version" | "update" | "login" | "model" | "review" | "scan" | "plugin";
+      route:
+        "version" | "update" | "login" | "model" | "review" | "scan" | "plugin" | "board" | "host";
       args: string[];
       json: boolean;
       /** The host-plugin contract a `--schema N` run asked for. */
@@ -87,7 +93,7 @@ export function binRoute(argv: readonly string[]): BinRoute {
   if (schema.kind === "ok") {
     const [verb, ...args] = schema.argv;
     return {
-      route: verb as "review" | "scan" | "version",
+      route: verb as "review" | "scan" | "version" | "board" | "host",
       args,
       json: true,
       schema: schema.contract,
@@ -109,7 +115,9 @@ export function binRoute(argv: readonly string[]): BinRoute {
     cmd === "model" ||
     cmd === "review" ||
     cmd === "scan" ||
-    cmd === "plugin"
+    cmd === "plugin" ||
+    cmd === "board" ||
+    cmd === "host"
   )
     return { route: cmd, args, json };
   return { route: "app", argv: [...argv] };
@@ -239,6 +247,20 @@ async function route(r: BinRoute): Promise<void> {
     case "plugin": {
       const { cmdPlugin, pluginDeps } = await import("./plugincli.js");
       process.exitCode = await cmdPlugin(r.args, r.json, pluginDeps(await packageRoot()));
+      return;
+    }
+    case "board": {
+      // The host contract's board export: JSON always, read-only, and no
+      // state store (src/boardexport.ts).
+      const { cmdBoard } = await import("./boardexport.js");
+      process.exitCode = await cmdBoard(r.args, { contract: r.schema });
+      return;
+    }
+    case "host": {
+      // The host contract's verbs: JSON always, one object per call, and no
+      // state store (src/host/cli.ts).
+      const { cmdHost } = await import("./host/cli.js");
+      process.exitCode = await cmdHost(r.args, { contract: r.schema });
       return;
     }
     case "refused":

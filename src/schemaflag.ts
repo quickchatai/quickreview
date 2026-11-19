@@ -3,7 +3,10 @@
 //
 //   N        a host-plugin contract number (CONTRACTS in
 //            packages/pi-plugin/src/contract.ts): one version per payload family
-//   <verb>   review, scan or version, the verbs that print versioned JSON
+//   <verb>   review, scan, version, board or host, the verbs that print
+//            versioned JSON. `board` and `host` are host families: only a
+//            host contract carries them (contract 3 on), so an older contract
+//            has no board to print and no host verb to run.
 //
 // The flag comes before the verb and nowhere else; after the verb it is the
 // verb's own argument. It implies `--json`, and the bin prints no update notice
@@ -11,8 +14,9 @@
 //
 //   2   usage: no N, an N that is not a number, or a verb with no versioned
 //       payload (the home, login, pi, update, the operator verbs)
-//   3   a contract this qcr does not print: one line on stderr, nothing on
-//       stdout, so a plugin falls back to the release it was rendered from
+//   3   a contract this qcr does not print, or one with no payload for the
+//       verb: one line on stderr, nothing on stdout, so a plugin falls back
+//       to the release it was rendered from
 //
 // The bin's front door and the image's entry (src/cli.ts `main`) read it here,
 // so `qcr` from npm and the image's wrapper answer alike.
@@ -25,10 +29,24 @@
 // (`requestedContract`), and the review verbs (src/reviewcli.ts `cmdReview`)
 // stamp and gate their payloads by it. A run with no flag is asked for none
 // and prints the code's own versions.
-import { supportedContracts } from "@quickchatai/pi-quickreview/src/contract.js";
+import {
+  CONTRACTS,
+  contractsWith,
+  supportedContracts,
+  type ContractFamily,
+} from "@quickchatai/pi-quickreview/src/contract.js";
 
-/** The verbs whose `--json` payload leads with a family's schema_version. */
-export const SCHEMA_VERBS: readonly string[] = ["review", "scan", "version"];
+/** The payload family each versioned verb prints. */
+const VERB_FAMILY: Readonly<Record<string, ContractFamily>> = {
+  review: "review",
+  scan: "scan",
+  version: "version",
+  board: "board",
+  host: "host",
+};
+
+/** The verbs whose `--json` payload leads with a schema_version. */
+export const SCHEMA_VERBS: readonly string[] = Object.keys(VERB_FAMILY);
 
 export type SchemaFlag =
   /** No `--schema` before the verb: the argv is the caller's as it came. */
@@ -98,6 +116,13 @@ function readSchemaFlag(argv: readonly string[]): SchemaFlag {
       kind: "refused",
       code: 3,
       line: `qcr --schema: this qcr does not print contract ${contract} (it prints ${known.join(", ")}) — use the qcr release the plugin was made for, or update the plugin`,
+    };
+  const family = VERB_FAMILY[verb]!;
+  if (CONTRACTS[contract]?.[family] === undefined)
+    return {
+      kind: "refused",
+      code: 3,
+      line: `qcr --schema: contract ${contract} has no ${family} payload (${contractsWith(family).join(", ") || "no contract"} has one) — name a contract that carries it`,
     };
   return { kind: "ok", contract, argv: [verb, ...args] };
 }

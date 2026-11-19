@@ -15,6 +15,7 @@ import type {
   ChecklistAdapters,
   SetupChecklist,
 } from "@quickchatai/pi-quickreview/src/setupchecklist.js";
+import { lockHolderWords, withChecklistLock } from "../onboard/checklistlock.js";
 import { OnboardingEngine, type OnboardAdapters, type ProcessRunner } from "../onboard/engine.js";
 import { BROUGHT_UP_CHOICE_KEY } from "../onboard/steps/bringup.js";
 import {
@@ -124,8 +125,24 @@ export function composeMemory(o: ComposeMemoryOptions): MemoryPort {
           detail: `docker compose ${args.join(" ")} exited ${r.code}: ${firstLine(r.stderr || r.stdout)}`,
         };
   };
-  const engine = (log: (line: string) => void): OnboardingEngine =>
-    new OnboardingEngine(switchOnRegistry(o), o.stepAdapters(log));
+  // The steps write the checklist, as a host's verbs do (src/host/): they
+  // run under the checklist lock, and a lock that is taken is said, with
+  // nothing run.
+  const locked = (
+    log: (line: string) => void,
+    run: (e: OnboardingEngine) => Promise<SwitchResult>,
+  ): Promise<SwitchResult> => {
+    const adapters = o.stepAdapters(log);
+    return withChecklistLock<SwitchResult>(
+      adapters.paths.stateDir,
+      "home",
+      () => run(new OnboardingEngine(switchOnRegistry(o), adapters)),
+      (held) => ({
+        ok: false,
+        detail: `${lockHolderWords(held)}; try again when it has finished`,
+      }),
+    );
+  };
   const startMemory = (): Promise<SwitchResult> =>
     compose(["up", "-d", MEMORY_SERVICE], "the memory engine runs");
 
@@ -137,40 +154,48 @@ export function composeMemory(o: ComposeMemoryOptions): MemoryPort {
           (readEnvKey(readEnvText(o.root), "QCR_MEMORY_LIMIT") ?? "").trim() ||
             DEFAULT_MEMORY_LIMIT,
         ),
-      switchOn: async (progress) => {
-        const e = engine((l) => progress?.(l));
-        if (typeof e.choices()[BROUGHT_UP_CHOICE_KEY] !== "string") {
-          // No stack yet: switch-on's steps bring it up with memory, and the
-          // daemon is put back as it was (off), so auto-review stays off.
-          const daemonWas = await serviceState(o.runner, o.root, DAEMON_SERVICE);
-          const checks = await e.runStep(MACHINE_CHECKS_STEP_ID);
-          if (!checks.ok) return { ok: false, detail: checks.failures.join("; ") };
-          const steps: string[] = [];
-          const walked = await runSteps(
-            {
-              checklist: e,
-              memory: true,
-              repo: await o.repo(),
-              startMemory,
-              ...(o.sleep ? { sleep: o.sleep } : {}),
-              ...(progress ? { progress } : {}),
-            },
-            steps,
-          );
-          if (!walked.ok) return { ok: false, detail: walked.detail };
-          if (daemonWas.kind === "known" && daemonWas.value !== "running") {
-            const stopped = await compose(["stop", DAEMON_SERVICE], "");
-            if (!stopped.ok) return { ok: false, detail: `memory is on, but ${stopped.detail}` };
-          }
-          return { ok: true, detail: "Memory is on." };
-        }
-        return memoryOnStack(e, {
-          startMemory,
-          ...(o.sleep ? { sleep: o.sleep } : {}),
-          ...(progress ? { progress } : {}),
-        });
-      },
+      switchOn: (progress) =>
+        locked(
+          (l) => progress?.(l),
+          (e) => switchOnWith(e, progress),
+        ),
       switchOff: () => compose(["stop", MEMORY_SERVICE], "Memory is off. What it learned is kept."),
     },
   };
+
+  async function switchOnWith(
+    e: OnboardingEngine,
+    progress: ((line: string) => void) | undefined,
+  ): Promise<SwitchResult> {
+    if (typeof e.choices()[BROUGHT_UP_CHOICE_KEY] !== "string") {
+      // No stack yet: switch-on's steps bring it up with memory, and the
+      // daemon is put back as it was (off), so auto-review stays off.
+      const daemonWas = await serviceState(o.runner, o.root, DAEMON_SERVICE);
+      const checks = await e.runStep(MACHINE_CHECKS_STEP_ID);
+      if (!checks.ok) return { ok: false, detail: checks.failures.join("; ") };
+      const steps: string[] = [];
+      const walked = await runSteps(
+        {
+          checklist: e,
+          memory: true,
+          repo: await o.repo(),
+          startMemory,
+          ...(o.sleep ? { sleep: o.sleep } : {}),
+          ...(progress ? { progress } : {}),
+        },
+        steps,
+      );
+      if (!walked.ok) return { ok: false, detail: walked.detail };
+      if (daemonWas.kind === "known" && daemonWas.value !== "running") {
+        const stopped = await compose(["stop", DAEMON_SERVICE], "");
+        if (!stopped.ok) return { ok: false, detail: `memory is on, but ${stopped.detail}` };
+      }
+      return { ok: true, detail: "Memory is on." };
+    }
+    return memoryOnStack(e, {
+      startMemory,
+      ...(o.sleep ? { sleep: o.sleep } : {}),
+      ...(progress ? { progress } : {}),
+    });
+  }
 }

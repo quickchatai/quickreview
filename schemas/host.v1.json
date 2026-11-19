@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "host.v1.json",
+  "title": "qcr --schema 3 host <verb>, host family version 1",
+  "description": "What each host verb prints: one object per call, for a host that runs the reviewer for a person it has authenticated itself. The verbs are setup, review-now, proof-start, proof-result and go-live. Each is non-interactive and answers within seconds; long work is started detached and followed through the board export (schemas/board.v1.json: `setup`, `go_live`, `proof`). `state` is one of the verb's closed set, and a refusal or failure carries a closed `reason`: a host maps both to its own text. The exit code is 0 when the verb did what it was asked or says what is already under way, 2 for a call it could not read (reason usage), 1 for any other refusal or failure; the object is printed in each case. No field carries a URL or a credential.",
+  "type": "object",
+  "required": ["schema_version", "verb", "state"],
+  "oneOf": [
+    {
+      "$ref": "#/$defs/setup"
+    },
+    {
+      "$ref": "#/$defs/review_now"
+    },
+    {
+      "$ref": "#/$defs/proof_start"
+    },
+    {
+      "$ref": "#/$defs/proof_result"
+    },
+    {
+      "$ref": "#/$defs/go_live"
+    }
+  ],
+  "$defs": {
+    "reason": {
+      "enum": [
+        "usage",
+        "in_session",
+        "not_on_host",
+        "unsupported_auth",
+        "model_login_missing",
+        "model_login_unreadable",
+        "github_token_missing",
+        "github_token_unreadable",
+        "github_token_rejected",
+        "github_unreachable",
+        "repo_unreachable",
+        "repo_mismatch",
+        "auth_mismatch",
+        "config_unreadable",
+        "config_invalid",
+        "launch_failed",
+        "not_set_up",
+        "already_live",
+        "reviewer_not_running",
+        "reviewer_unreachable",
+        "review_refused",
+        "round_failed",
+        "no_dry_run_record",
+        "record_failed",
+        "attestation_invalid",
+        "proof_missing",
+        "proof_mismatch",
+        "proof_not_shown",
+        "confirm_stale"
+      ],
+      "description": "Why a verb refused, or why a practice round failed. Present with state refused or failed."
+    },
+    "holder": {
+      "enum": ["home", "setup", "go_live", "proof"],
+      "description": "What holds the setup lock, with state busy: the reviewer's own terminal home, or a host verb's work (setup, go_live, proof)."
+    },
+    "setup": {
+      "type": "object",
+      "required": ["schema_version", "verb", "state"],
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "verb": {
+          "const": "setup"
+        },
+        "state": {
+          "enum": ["started", "running", "busy", "refused"],
+          "description": "started: the config is written and the setup walk runs, detached; the board export's `setup` field follows it. running: a setup walk is already under way, and nothing new was started. busy: something else holds the setup lock (holder). refused: nothing was started (reason)."
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The refusal or failure in words, for a log. A host shows its own text for `reason`."
+        },
+        "holder": {
+          "$ref": "#/$defs/holder"
+        }
+      },
+      "additionalProperties": false
+    },
+    "review_now": {
+      "type": "object",
+      "required": ["schema_version", "verb", "state"],
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "verb": {
+          "const": "review-now"
+        },
+        "state": {
+          "enum": ["queued", "sent", "refused"],
+          "description": "queued: the daemon queued the pull request. sent: the request is written and the daemon has not answered yet; the board export's `reviewing` list shows the pull request once it has. refused: nothing was asked (reason)."
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The refusal or failure in words, for a log. A host shows its own text for `reason`."
+        },
+        "pr": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The pull request the call named."
+        }
+      },
+      "additionalProperties": false
+    },
+    "proof_start": {
+      "type": "object",
+      "required": ["schema_version", "verb", "state"],
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "verb": {
+          "const": "proof-start"
+        },
+        "state": {
+          "enum": ["started", "sent", "running", "busy", "refused"],
+          "description": "started: the daemon queued the practice round. sent: the request is written and the daemon has not answered yet. running: a round of that pull request is already under way, and it is the practice round. busy: something else holds the setup lock (holder). refused: nothing was asked (reason)."
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The refusal or failure in words, for a log. A host shows its own text for `reason`."
+        },
+        "holder": {
+          "$ref": "#/$defs/holder"
+        },
+        "pr": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The pull request the call named."
+        }
+      },
+      "additionalProperties": false
+    },
+    "proof_result": {
+      "type": "object",
+      "required": ["schema_version", "verb", "state"],
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "verb": {
+          "const": "proof-result"
+        },
+        "state": {
+          "enum": ["running", "done", "failed", "not_started", "busy", "refused"],
+          "description": "running: the practice round has not finished. done: it has; `proof` is the record a go-live is confirmed against and `review` is the review as it would have been posted. Returning this is what marks the practice review as shown. failed: the round produced no practice review (reason). not_started: no practice round was asked for on that pull request. busy: something else holds the setup lock (holder). refused: nothing was read (reason)."
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The refusal or failure in words, for a log. A host shows its own text for `reason`."
+        },
+        "holder": {
+          "$ref": "#/$defs/holder"
+        },
+        "pr": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The pull request the call named."
+        },
+        "proof": {
+          "$ref": "#/$defs/proof"
+        },
+        "review": {
+          "$ref": "#/$defs/review"
+        }
+      },
+      "additionalProperties": false
+    },
+    "go_live": {
+      "type": "object",
+      "required": ["schema_version", "verb", "state"],
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "verb": {
+          "const": "go-live"
+        },
+        "state": {
+          "enum": ["started", "running", "busy", "refused"],
+          "description": "started: the attestation was admitted and the go-live runs, detached; the board export's `go_live` field follows it, and `posting` says when the daemon posts. running: a go-live is already under way. busy: something else holds the setup lock (holder). refused: nothing was changed (reason)."
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The refusal or failure in words, for a log. A host shows its own text for `reason`."
+        },
+        "holder": {
+          "$ref": "#/$defs/holder"
+        }
+      },
+      "additionalProperties": false
+    },
+    "proof": {
+      "type": "object",
+      "required": ["pr", "round_no", "verdict", "completed_at"],
+      "properties": {
+        "pr": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "round_no": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "verdict": {
+          "type": "string",
+          "description": "The round's verdict on the merits."
+        },
+        "completed_at": {
+          "type": "string",
+          "description": "When the practice review was recorded, ISO."
+        }
+      },
+      "additionalProperties": false,
+      "description": "The practice round, with state done. A go-live attestation names its `pr` and `round_no`."
+    },
+    "review": {
+      "type": "object",
+      "required": ["body", "comments", "comments_total"],
+      "properties": {
+        "event": {
+          "enum": ["APPROVE", "REQUEST_CHANGES", "COMMENT"],
+          "description": "The review event GitHub would have been sent. Absent when the record names none of the three."
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 20000,
+          "description": "The review body, cut at 20000 characters."
+        },
+        "body_truncated": {
+          "const": true,
+          "description": "The body was cut."
+        },
+        "comments": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/comment"
+          },
+          "description": "The inline comments in the review's order, the first 50 at most."
+        },
+        "comments_total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many inline comments the review holds, those past the first 50 included."
+        }
+      },
+      "additionalProperties": false,
+      "description": "The review as it would have been posted, read out of the dry-run record: plain text, to be shown as plain text."
+    },
+    "comment": {
+      "type": "object",
+      "required": ["path", "line", "body"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The line the comment anchors to; 0 when the record names none."
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 4000,
+          "description": "The comment, cut at 4000 characters."
+        },
+        "truncated": {
+          "const": true,
+          "description": "The body was cut."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

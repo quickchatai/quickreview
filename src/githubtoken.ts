@@ -28,6 +28,11 @@
 // refresh is what keeps the reviewer signed in; a `gho_`/`ghp_` token does not
 // expire and the entry is merely harmless.
 //
+// One install has no use for any of this: under `[github] token_source =
+// "host"` a host manages the credential and is the file's only writer, so the
+// verb refuses, in words, before it reads gh or touches the file
+// (HOST_MANAGED_REFUSAL), and the wizard installs no crontab entry there.
+//
 // The daemon never imports this module (it reads no personal token itself):
 // the CLI and the onboarding wizard are its only callers.
 import { execFile } from "node:child_process";
@@ -409,7 +414,13 @@ export const execRunner: TokenRunner = {
     }),
 };
 
-/** `qcr github-token sync`. Exit 0 on a written, proven token; 1 otherwise. */
+/** What the verb says on a host-managed install, where it does nothing. */
+export const HOST_MANAGED_REFUSAL =
+  '✗ github-token sync: refused. This install\'s GitHub credential is managed by its host ([github] token_source = "host"): ' +
+  "the host writes the token file and keeps it fresh. No sign-in was read and nothing was written";
+
+/** `qcr github-token sync`. Exit 0 on a written, proven token; 1 otherwise,
+ * and 1 with HOST_MANAGED_REFUSAL on a host-managed install. */
 export async function cmdGithubToken(
   rest: readonly string[],
   deps: {
@@ -418,11 +429,17 @@ export async function cmdGithubToken(
     fetch?: typeof fetch;
     /** The secrets dir when `--secrets-dir` is not given. */
     secretsDir: () => string;
+    /** Does a host manage this install's GitHub credential (src/hostmanaged.ts)? */
+    hostManaged?: () => boolean;
     log?: (line: string) => void;
   },
 ): Promise<number> {
   const args = parseGithubTokenArgs(rest);
   const log = deps.log ?? ((l: string) => console.log(l));
+  if (deps.hostManaged?.() === true) {
+    log(HOST_MANAGED_REFUSAL);
+    return 1;
+  }
   const result = await syncGithubToken({
     runner: deps.runner ?? execRunner,
     env: deps.env ?? process.env,

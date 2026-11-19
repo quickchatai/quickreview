@@ -51,6 +51,16 @@ implementations, picked by `[github] auth`:
   command line. The git credential helper (`scripts/mint-token.sh`) prints the
   same file.
 
+  `[github] token_source = "host"` names another writer of that file and
+  changes nothing about the seam: a host that manages the install writes it
+  (atomically, 0600) and keeps at least 15 minutes of life in it, and
+  `UserTokenSource` reads it under the same rules. The file's read and its
+  optional expiry note, `github_token.expires_at`, are
+  `packages/pi-plugin/src/hosttoken.ts`; the marker's readers are
+  `src/hostmanaged.ts` (tests: `tests/hosttoken.test.ts`). On such an install
+  `qcr github-token sync` refuses, and the local review route's credential
+  chain is that file alone.
+
 What `"user"` changes, and what it does not:
 
 - **Polling only.** Config load refuses any `[ingress] shape` but

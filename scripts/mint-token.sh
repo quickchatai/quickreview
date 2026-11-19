@@ -6,6 +6,9 @@
 # SECURITY.md) it prints the token file `<secrets dir>/github_token`
 # that the host-side refresher (`qcr github-token sync`) keeps fresh, and does
 # nothing else: no App, no JWT, no cache. --refresh re-reads the same file.
+# Under `[github] token_source = "host"` the same file is written by the host
+# that manages the install, and this prints it the same way: only the words
+# of a failure differ, since no command on the machine writes the file.
 #
 # Otherwise (`auth = "app"`, the default) it is the shell equivalent of
 # packages/pi-plugin/src/githubAuth.ts:
@@ -75,10 +78,15 @@ AUTH="$(cfg github auth 2>/dev/null || true)"
 AUTH="${AUTH:-app}"
 if [[ "$AUTH" == "user" ]]; then
   TOKEN_FILE="$SECRETS_DIR/github_token"
-  [[ -r "$TOKEN_FILE" ]] ||
-    die "unreadable user token: $TOKEN_FILE ([github] auth = \"user\"; run \`qcr github-token sync\` on the host)"
+  TOKEN_SOURCE="$(cfg github token_source 2>/dev/null || true)"
+  if [[ "$TOKEN_SOURCE" == "host" ]]; then
+    FIX="[github] token_source = \"host\": the host that manages this install writes it and keeps it fresh"
+  else
+    FIX="[github] auth = \"user\"; run \`qcr github-token sync\` on the host"
+  fi
+  [[ -r "$TOKEN_FILE" ]] || die "unreadable user token: $TOKEN_FILE ($FIX)"
   token="$(tr -d '[:space:]' < "$TOKEN_FILE")"
-  [[ -n "$token" ]] || die "empty user token file: $TOKEN_FILE (run \`qcr github-token sync\` on the host)"
+  [[ -n "$token" ]] || die "empty user token file: $TOKEN_FILE ($FIX)"
   printf '%s\n' "$token"
   exit 0
 fi

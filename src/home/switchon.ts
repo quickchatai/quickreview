@@ -354,6 +354,9 @@ export interface StepsRun<A extends ChecklistAdapters> {
   startMemory?: () => Promise<SwitchResult>;
   /** Between phase B's tries while the engine starts (tests skip the wait). */
   sleep?: (ms: number) => Promise<void>;
+  /** Told the id of each step as it is about to run: what a walk with no one
+   * watching records as how far it has got (src/host/walk.ts). */
+  onStep?: (id: string) => void;
 }
 
 export interface SwitchOnRun<A extends ChecklistAdapters> extends Omit<StepsRun<A>, "memory"> {
@@ -368,7 +371,10 @@ export interface SwitchOnRun<A extends ChecklistAdapters> extends Omit<StepsRun<
 const line = (id: string, what: string): string => `${id}: ${what}`;
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-export type Walked = { ok: true } | { ok: false; detail: string };
+/** How a walk ended. A failed one names the step it stopped at and the checks
+ * of it that failed, by name. */
+export type Walked =
+  { ok: true } | { ok: false; detail: string; step: string; checks: readonly string[] };
 
 /** Memory's phase B on a stack that runs now: start the engine (when the
  * caller can), then run the memory step again until the engine answers, for
@@ -406,13 +412,19 @@ export async function runSteps<A extends ChecklistAdapters>(
     r.progress?.(s);
   };
   const inputs = { answers: { memory: r.memory, confirmed: false as const }, repo: r.repo };
-  const failed = (id: string, title: string, why: string): Walked => {
+  const failed = (
+    id: string,
+    title: string,
+    why: string,
+    checks: readonly string[] = [],
+  ): Walked => {
     steps.push(line(id, `failed: ${why}`));
-    return { ok: false, detail: `${title}: ${why}` };
+    return { ok: false, detail: `${title}: ${why}`, step: id, checks };
   };
   let memoryWaits = false;
   const phaseB = async (): Promise<Walked> => {
     memoryWaits = false;
+    r.onStep?.(MEMORY_STEP_ID);
     const b = await memoryPhaseB(r, switchOnInput(MEMORY_STEP_ID, inputs));
     if (!b.ok) return failed(MEMORY_STEP_ID, "Memory", b.detail);
     say(line(MEMORY_STEP_ID, b.detail));
@@ -436,13 +448,20 @@ export async function runSteps<A extends ChecklistAdapters>(
       continue;
     }
     r.progress?.(`${s.title}…`);
+    r.onStep?.(s.id);
     const res = await r.checklist.runStep(s.id, switchOnInput(s.id, inputs));
     if (!res.ok && s.id === MEMORY_STEP_ID && waitsOnServer(res.checks)) {
       memoryWaits = true;
       say(line(s.id, "its root key is placed; its user keys follow once the engine runs"));
       continue;
     }
-    if (!res.ok) return failed(s.id, s.title, res.failures.join("; ") || "it did not finish");
+    if (!res.ok)
+      return failed(
+        s.id,
+        s.title,
+        res.failures.join("; ") || "it did not finish",
+        res.checks.filter((c) => !c.ok).map((c) => c.name),
+      );
     say(line(s.id, res.checks.map((c) => c.detail).join("; ") || "done"));
   }
   if (memoryWaits) return phaseB();
@@ -467,7 +486,13 @@ export async function runSwitchOn<A extends ChecklistAdapters>(
   const walked = await runSteps({ ...r, memory: r.answers.memory }, steps);
   if (!walked.ok) {
     const dry = r.dryRun();
-    return { ok: false, live: dry === null ? null : !dry, detail: walked.detail, steps };
+    return {
+      ok: false,
+      live: dry === null ? null : !dry,
+      detail: walked.detail,
+      steps,
+      failed: { step: walked.step, checks: walked.checks },
+    };
   }
   if (r.answers.memory === false) {
     const stopped = await r.stopMemory();

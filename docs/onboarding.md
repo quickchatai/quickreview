@@ -438,6 +438,63 @@ rest.
 You can switch later by running the step again with the other answer. Nothing
 is deleted either way: an App's secrets and your token file stay where they are.
 
+**A host-managed install.** Where a host runs the reviewer for you, it sets
+`[github] token_source = "host"` in `config.toml`, beside `auth = "user"`. That
+key is the marker of a host-managed GitHub credential, and you would not set it
+by hand. The contract between the reviewer and such a host:
+
+- **the token** is the file `<secrets>/github_token`. The host writes it
+  atomically (a rename), mode `0600`, the token alone, and keeps a token with
+  **at least 15 minutes of life** in it at all times. The daemon reads it as it
+  reads the file on the own-account route: on first use, every five minutes,
+  and after a 401. Nothing else changes on the daemon's side.
+- **the expiry note** is optional: `<secrets>/github_token.expires_at`, one
+  ISO 8601 instant with its zone (`2026-11-19T15:04:05Z`, GitHub's own
+  `expires_at` spelling), the time the token in the file lapses. It is never a
+  credential. The reviewer reports the pair as `ok` (a token, and no note or a
+  note still ahead), `expired` (a token whose note has passed) or `missing` (no
+  token); when the file or the note cannot be read it reports nothing, never a
+  guess.
+
+Under the marker nothing on the machine signs in to GitHub or refreshes the
+token:
+
+- this step runs no `gh` and reads no `GH_TOKEN` / `GITHUB_TOKEN`. It **proves
+  the file's token** (`GET /user`, then the repository read), reports the
+  login, and never writes the file. It installs **no crontab entry**, lists no
+  repositories to pick from (the repository is the host's to set), creates no
+  label (the host's token may be read-only until the reviewer posts), and
+  writes the same config the `user` route owns. Asking it for the `app` route
+  is refused in words;
+- `qcr github-token sync` refuses, in words, before it reads anything;
+- `scripts/mint-token.sh`, the sessions' token helper, prints the file's token
+  as it does on the own-account route;
+- the home (a bare `qcr`) reads pull requests with the same token, shows your
+  GitHub identity and the repository as "managed by your host", and offers no
+  GitHub sign-in, no repository step, no switch-on and no go-live of its own:
+  your host starts the reviewer and takes it live. Reviewing one pull request
+  on demand from the home stays, on the same token. Switching auto-review off
+  stays too.
+
+What the host does instead is the `host` family of the same contract,
+`qcr --schema 3 host <verb>`, run from the host's own process for the person
+it authenticated (shape: `schemas/host.v1.json`;
+[architecture/data-model.md](architecture/data-model.md) §4.8):
+
+- `host setup --repo owner/name --auth user` writes the config and runs this
+  walk's steps detached, with the same silent defaults the home's switch uses.
+  The reviewer comes up in dry-run;
+- `host proof-start <pr>` and `host proof-result <pr>` are the proof round
+  below, in two halves that never wait: the second prints the review as it
+  would have been posted, for the host to show its operator;
+- `host go-live` is the go-live step below, on the operator's confirm of that
+  practice review, sent as an attestation on standard input. The flag still
+  moves only in that step ([ownership.md](ownership.md)).
+
+The host verbs and the home's switches take one lock around the checklist, so
+only one of them changes the setup at a time, and no host verb runs from
+inside an agent session or the daemon's container.
+
 ### 35 — The interview, and `config.toml`
 
 Asks the handful of things only you can answer, and computes the rest.

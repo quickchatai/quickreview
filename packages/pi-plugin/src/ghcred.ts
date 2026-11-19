@@ -9,6 +9,12 @@
 // Order: the App if configured, then the token handed to a container as a
 // file (below), then GITHUB_TOKEN / GH_TOKEN, then `gh auth token`.
 //
+// One install has no chain at all: under `[github] token_source = "host"` a
+// host manages the GitHub credential, and the route's credential is the token
+// file it keeps (`<secrets dir>/github_token`, packages/pi-plugin/src/hosttoken.ts)
+// and nothing else. No `gh`, no environment variable, and a missing file is
+// said as the host's to write: the person is never told to sign in.
+//
 // The handoff: a token a container runs with is never env
 // and never argv. The caller (the host wrapper, or the Action) writes it to a
 // 0600 file in a fresh 0700 dir, bind-mounted at /run/qcr-in, and names the
@@ -29,6 +35,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { hostTokenProblem, readTokenFile } from "./hosttoken.js";
 
 export const CREDENTIAL_SOURCES = [
   "app",
@@ -36,6 +43,7 @@ export const CREDENTIAL_SOURCES = [
   "gh",
   "env:GITHUB_TOKEN",
   "env:GH_TOKEN",
+  "host",
 ] as const;
 export type CredentialSource = (typeof CREDENTIAL_SOURCES)[number];
 
@@ -136,6 +144,9 @@ export interface CredentialDeps {
   ghAuthToken: () => string | null;
   /** The token handed to this container as a file, if one was (`handedToken()`). */
   handoff?: string | null;
+  /** `[github] token_source = "host"`: the credential is the token file in
+   * `secretsDir`, and no other source is tried. */
+  hostManaged?: boolean;
 }
 
 /** The real `gh auth token`. */
@@ -153,6 +164,12 @@ export function ghAuthTokenFromCli(): string | null {
 }
 
 export async function resolveGithubCredential(d: CredentialDeps): Promise<CredentialResolution> {
+  if (d.hostManaged === true) {
+    const file = readTokenFile(d.secretsDir);
+    return file.ok
+      ? { ok: true, source: "host", token: file.token }
+      : { ok: false, error: hostTokenProblem(file) };
+  }
   let appNote = "";
   const appConfigured =
     d.secretsDir !== "" &&

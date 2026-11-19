@@ -224,6 +224,7 @@ losing the review record, except `state.db` itself.
 | --- | --- | --- | --- |
 | `state/state.db` (`-wal`, `-shm`) | SQLite | `src/state.ts` | the record of everything above |
 | `state/status.json` | JSON | `writeStatusJson` (`src/state.ts`), from the daemon's timer | the heartbeat snapshot; written temp + rename |
+| `state/board.json` | JSON | `writeBoardJson` (`src/boardfile.ts`), from the daemon's status write and when a round moved | the board for a host (§4.7); written temp + rename |
 | `state/dryrun/` | one JSON file per intent | `MutationGate` (`packages/pi-plugin/src/gate.ts`) | what a GitHub mutation *would* have been while `dry_run = true` |
 | `state/agents/` | built pass agent bodies, one file per lens × tier | `buildAgents` (`packages/pi-plugin/src/include.ts`), called from `src/wire.ts` | the only path by which built passes reach the subagent extension |
 | `state/findings/` | `pr-<n>-round-<k>.json` | the PR session | parsed into `round_findings` by `packages/pi-plugin/src/findingsrecord.ts` |
@@ -244,6 +245,9 @@ losing the review record, except `state.db` itself.
 | `state/slack/origin/` | JSON | `OriginStore` (`src/slack/origin.ts`) | which Slack message caused which daemon action |
 | `state/ingress/hostname` | one bare hostname | the tunnel sidecar | default path from `ingressHostnameFile` (`src/config.ts`) when `[ingress] hostname_file` is empty |
 | `state/onboarding/` | `checklist.json`, `config.candidate.toml`, `pi-sessions/` | `src/onboard/` | the wizard's own state |
+| `state/onboarding/checklist.lock` | JSON, one record | `src/onboard/checklistlock.ts` | who is writing the checklist now (the home, or a host verb's work): holder, pid, token. Created whole, removed on release; one whose process is gone is taken over |
+| `state/onboarding/host.json` | JSON | the host verbs (`src/host/record.ts`), under the checklist lock | how far a host's setup and go-live have got, the practice round asked for and the one returned, and the attestation a go-live ran on (§4.8); written temp + rename |
+| `state/onboarding/host-setup.log`, `host-go-live.log` | text | the detached walks (`src/host/walk.ts`, `src/host/golive.ts`) | what each step said; append-only, for a person |
 | `state/changes/` | `change-register.json` | `src/tui/index.ts` | the TUI change log |
 | `state/tui-deploy-runs/`, `state/tui-deploy-ceremony.json`, `state/tui-resume-<pid>.json`, `state/tui-help-shown` | JSON / markers | the TUI | deploy run logs and small per-operator markers |
 | `state/tui-evidence-sweep.json` | JSON | `SweepProgressFile` (`src/tui/evidence.ts`) | the evidence sweep's per-PR progress: the signature each PR was last cleanly reconciled at and whether the store then held its evidence (`{sig, stored}`), and the evidence store it describes; written temp + rename. Unreadable or another store's ⇒ treated as empty, with a notice |
@@ -467,6 +471,108 @@ session asked for is the templates' withheld approval (APPROVE,
 `approval_withheld`); a receipt the daemon reconciled from GitHub, whose
 `intended_event` is only the posted event, proves no decision off a COMMENT and
 keeps the loud path.
+
+### 4.7 Board — `state/board.json` and `qcr --schema 3 board`
+
+A host that runs the reviewer for its operator reads one JSON object: who
+posts and where, whether the reviewer works, and three short lists of pull
+requests. Two shapes are involved, and only the second is a contract.
+
+**`state/board.json`** is the daemon's own file (`BoardFile` in
+`src/boardfile.ts`, `format: 1`). The daemon builds it from the status
+snapshot it has just built, plus the last round of each pull request it lists
+as reviewed, and writes it beside `status.json` on every status write and
+whenever a round moved since the last write (`roundTransitionKey`: a pull
+request queued, a round started, a review posted, a round ended or failed).
+It holds `written_at`, a `health` block (the slice of the snapshot the
+reviewer's label is judged on, the daemon's own `dry_run` and its `poll`
+record among it), `spend`, and the lists:
+
+| List | A pull request is in it when | A row carries |
+| --- | --- | --- |
+| `reviewing` | review work is owed or in flight: it is queued, a round runs, a finished review is being delivered to GitHub, or a review failure is on record | `number`, `title`, `author`, `state` (`queued`, `running`, `posting`, `failed`, `paused`), and for a failed one `problem` (`retry_scheduled`, `posting_failed`, `round_failed`, `worker_parked`), `round`, `started_at`, `retry_at` |
+| `reviewed` | its last verdict is set and it is not in `reviewing` | `number`, `title`, `author`, `verdict`, `posted_event`, `approval_withheld`, `posted_at`, `review_id`, `rounds`, `findings`, `head_changed` |
+| `open` | the last reconcile pass listed it open and it is in neither list above | `number`, `title`, `author`, `draft`, `updated_at` |
+
+A closed pull request is in none. `verdict` is what the round decided;
+`posted_event` is what GitHub holds, and it is there only for a round that
+holds a review's id: a round in dry-run confirms the event it intended and
+posts nothing, so its row has no `posted_event`, `posted_at` or `review_id`.
+Each list is its newest 50 rows, newest first (`reviewing` by when the work
+began, `reviewed` by the pull request's last change in the daemon's record,
+`open` by GitHub's `updated_at`), and `more: true` says at least one was cut.
+`open` and `listed_at` are absent until a pass has listed the open pull
+requests. No row carries a URL, a repository name or an identity.
+
+**The export** is what `qcr --schema 3 board` prints (`src/boardexport.ts`;
+shape in `schemas/board.v1.json`, the `board` family of host contract 3 in
+`packages/pi-plugin/src/contract.ts`). It reads that one file out of the
+running daemon's state and merges what the daemon does not know:
+
+| Field | Source |
+| --- | --- |
+| `written_at`, `posting`, `poll`, `spend`, `reviewing`, `reviewed`, `open`, `listed_at`, `more` | `board.json`, read only while the daemon runs |
+| `reviewer` (`off`, `starting`, `on`, `paused_login`, `broken`) | whether the daemon's container runs, then the file's `health` block, by the rule the home shows auto-review by (`autoReviewLabel`) |
+| `repo`, `identity`, `trigger_label` | the install's `config.toml`, read as text; `posting_pending: "live"` when it says `dry_run = false` and the running daemon is still in dry-run |
+| `model_login` (`ok`, `expired`, `missing`) | pi's `auth.json` on the host and, while the daemon runs, its refresher's record; readable before any setup |
+| `github` | the token file's own word (`githubWord`, over `githubTokenHealth` in `packages/pi-plugin/src/hosttoken.ts`): `ok`, `expired` by its expiry note, or `missing`, where the file is the credential (`[github] auth = "user"`, or a host's `token_source = "host"`). Absent where an App mints its own token and where the file or the note cannot be read; GitHub is not asked |
+| `setup`, `go_live`, `proof` | the host verbs' record and the checklist's practice round, through `readBoardProgress` (§4.8) |
+
+An absent field means unknown, never a zero, an empty list or a default: with
+the daemon off the lists and everything else it reports are absent, before
+setup `repo` and `identity` are, and a source that cannot be read costs its
+own fields and nothing else. The payload leads with `schema_version`, the
+number of the contract it is printed in (3), not the family's own version.
+The verb starts nothing and writes nothing; when it cannot build the object
+it prints nothing on stdout and exits non-zero.
+
+### 4.8 Host verbs — `qcr --schema 3 host <verb>` and `state/onboarding/host.json`
+
+A host that has authenticated its own operator starts the reviewer, asks for
+reviews, shows a practice review and takes the reviewer live through five
+non-interactive verbs (`src/host/`; shape in `schemas/host.v1.json`, the
+`host` family of host contract 3). Each prints one JSON object:
+`schema_version` (the contract's number, 3), `verb`, and `state`, one of the
+verb's closed set (`HOST_STATES` in `src/host/outcomes.ts`). A refusal
+(`refused`) or a practice round that produced nothing (`failed`) carries a
+closed `reason` and a `message` in words; a host maps the reason to its own
+text.
+
+| Verb | Answers | What it does |
+| --- | --- | --- |
+| `setup --repo o/n --auth user` | `started`, `running`, `busy`, `refused` | writes the config from the shipped template (`renderHostConfig`, `src/onboard/steps/hostconfig.ts`) and starts switch-on's steps detached |
+| `review-now <pr>` | `queued`, `sent`, `refused` | one `review-now` command into the daemon's operator channel |
+| `proof-start <pr>` | `started`, `sent`, `running`, `busy`, `refused` | the same request, as a practice round; refuses when the config says the reviewer posts |
+| `proof-result <pr>` | `running`, `done`, `failed`, `not_started`, `busy`, `refused` | looks once; when the round has finished, records the proof and prints the review (`body`, at most 50 `comments` of `path`, `line`, `body`, each length-capped) |
+| `go-live` | `started`, `running`, `busy`, `refused` | admits the attestation on standard input and starts the go-live step detached |
+
+Long work runs in a detached process (`host walk`, started by the verb and by
+nothing else) under the checklist lock, which the verb takes and hands to it:
+a second call answers `running`, and anything else that wants the checklist
+(another verb, the home's switches) answers `busy` or says so and runs
+nothing.
+
+**`state/onboarding/host.json`** (`HostRecord` in `src/host/record.ts`) is
+what the verbs keep between calls:
+
+| Part | Written by | Holds |
+| --- | --- | --- |
+| `setup` | `host setup` and its walk | `state` (`running`, `done`, `failed`), the `step` it is at or stopped at (`SETUP_STEPS`), a `problem` (`SETUP_PROBLEMS`), and when it started and last moved |
+| `go_live` | `host go-live` and its walk | `state`, a `problem` (`GO_LIVE_PROBLEMS`), and the two times |
+| `proof_request` | `host proof-start` | the pull request, and the newest round that had already ended when it was asked (`floor`): only a later round answers the request |
+| `proof_shown` | `host proof-result` | the practice round it returned. A go-live is admitted only on a round with this mark |
+| `attestation_pending`, `attestation` | `host go-live`, then its walk | who confirmed (`operator.host`, `operator.id`), `confirmed_at`, the `proof` it names, when it was received, and `live_at` once the go-live step succeeded |
+
+The proof itself is the checklist's own record (`proof_round_completed` in
+`checklist.json`), written through the wizard's proof step with a run that
+waits for nothing (`hostProofStep`); the go-live step reads it where it always
+has, and re-verifies it against the daemon's state before it touches
+`dry_run`.
+
+The board export prints `setup` and `go_live` from this file. A walk recorded
+as `running` whose process no longer holds the lock did not finish: it is
+printed as `failed` with `problem: "interrupted"`, and nothing is written.
+`proof` is printed once `proof_shown` matches the checklist's record.
 
 ---
 
@@ -792,6 +898,8 @@ for the owner's Slack id is still accepted on input and folded to
 | What does the companion see? | `TuiView` / `FeedWriter` in `src/tui/feed.ts` |
 | What commands exist and who may issue them? | `COMMAND_WHITELIST` + `operatorSealVerdict` in `src/commands.ts` |
 | What is a posting receipt? | `src/posting-receipt.ts`; writer `scripts/post-review.sh` |
+| What does a host read of the reviewer? | `schemas/board.v1.json`; `src/boardexport.ts` (the export), `src/boardfile.ts` (the daemon's file) |
+| What can a host ask of the reviewer? | `schemas/host.v1.json`; `src/host/cli.ts` (the verbs), `src/host/outcomes.ts` (every word they answer with), `src/host/record.ts` (what they keep) |
 | What does an alert file look like? | `parseAlert` in `src/tui/alerts.ts` |
 | Where does a config knob get read? | `src/config.ts` — the `Config` interface and the `*_DEFAULTS` constants |
 | What is a safe starting `config.toml`? | `config.example.toml` (annotated, validated by the suite) |

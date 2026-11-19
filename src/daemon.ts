@@ -1,6 +1,7 @@
 // quickreviewd — the daemon entrypoint. Wires config → store → gate → adapter →
 // webhook server + reconcile poll + dispatch pump + verdict watcher + deadline
-// checker + status.json writer.
+// checker + status.json writer (and board.json beside it, for a host:
+// src/boardfile.ts).
 //
 // Everything that touches GitHub goes through the MutationGate, which in
 // dry-run records the intended call to state/dryrun/ instead of executing it.
@@ -21,6 +22,7 @@ import {
   webhooksEnabled,
   type Config,
 } from "./config.js";
+import { buildBoardFile, roundTransitionKey, writeBoardJson } from "./boardfile.js";
 import { dispatchOnce, type DispatchAdapter, type PreparedTree } from "./dispatch.js";
 import {
   DaemonLoadMonitor,
@@ -1091,6 +1093,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           `dispatched #${o.pr} round ${o.round_no} (${o.round_type}) lenses=${o.lenses.join(",")}`,
         );
     });
+    followRounds();
   };
 
   const retryDueReviewFailures = async (): Promise<number> => {
@@ -1139,6 +1142,20 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       }
     } catch (err) {
       log("authwatch failed", err);
+    }
+  };
+
+  // The key of the rounds as the board last showed them (src/boardfile.ts
+  // `roundTransitionKey`); null until a board has been written.
+  let boardKey: string | null = null;
+  /** A round moved since the board was written: write it again now, without
+   * waiting for the status tick. Called where rounds move (the dispatch pump,
+   * the verdict sweep); it never throws into them. */
+  const followRounds = (): void => {
+    try {
+      if (roundTransitionKey(store) !== boardKey) writeStatus();
+    } catch (err) {
+      log("round transition check failed (the status tick still writes the board)", err);
     }
   };
 
@@ -1227,6 +1244,18 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       };
       if (deps.runHost) snapshot.run_host = deps.runHost;
       writeStatusJson(stateDir, snapshot);
+      // The board for a host, from the same snapshot. Its own guard, after
+      // the heartbeat is on disk: a board that cannot be built or written
+      // never costs the status write.
+      try {
+        writeBoardJson(
+          stateDir,
+          buildBoardFile(snapshot, (pr) => store.roundsFor(pr)),
+        );
+        boardKey = roundTransitionKey(store);
+      } catch (err) {
+        log("board.json write failed", err);
+      }
     } catch (err) {
       log("status.json write failed", err);
     }
@@ -1248,7 +1277,13 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     pump,
     retryDueReviewFailures,
     scanRoundStages: () => roundStages.scan(),
-    sweepVerdicts: () => verdicts.sweep(),
+    sweepVerdicts: async () => {
+      try {
+        return await verdicts.sweep();
+      } finally {
+        followRounds();
+      }
+    },
     wakeThreadDecisions: () => threadDecisions.requestSweep(),
     retryThreadDecision: (commentId) => threadDecisions.retryFailed(commentId),
 
@@ -1344,10 +1379,15 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         VERDICT_SWEEP_S,
         () =>
           void guard("verdict sweep", async () => {
-            await verdicts.sweep();
-            await threadDecisions.sweep();
-            await prConversation.sweep();
-            await rechecks.sweep();
+            try {
+              await verdicts.sweep();
+              await threadDecisions.sweep();
+              await prConversation.sweep();
+              await rechecks.sweep();
+            } finally {
+              // a verdict the watcher applied, by this sweep or between two
+              followRounds();
+            }
           }),
       );
       every(DEADLINE_TICK_S, () => {

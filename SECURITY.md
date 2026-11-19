@@ -37,6 +37,23 @@ should receive an acknowledgement within a few days.
     is a copy of that file, not a down-scoped read-only token, so the
     companion guard's write veto is its only fence.
 
+    `[github] token_source = "host"` (with `auth = "user"`) is the marker of
+    a **host-managed** credential: a host that runs the reviewer writes that
+    same file (atomically, 0600, the token alone) and keeps a token with at
+    least 15 minutes of life in it at all times, and may write the token's
+    expiry beside it as `github_token.expires_at`, a note that is never a
+    credential. Everything above still holds: polling only, COMMENT reviews,
+    the one gate, the file as the only way the token reaches the daemon, and
+    the same re-read rules. What changes is that nothing on the machine
+    obtains or refreshes a GitHub credential: the onboarding account step
+    proves the file's token and neither runs `gh` nor installs the refresh
+    crontab entry, `qcr github-token sync` refuses, the local `qcr review`
+    route reads that file and no other source (no `gh`, no environment
+    variable), and the home offers no GitHub sign-in, no repository pick, no
+    switch-on and no go-live of its own. The token's scope and lifetime are
+    the host's to set; the reviewer assumes neither and never asks the person
+    to sign in to GitHub on such an install.
+
   The local `qcr review` route and the GitHub Action may use the person's
   own credential chain. The daemon never reads one from the environment.
 - Every GitHub mutation flows through a single gate with posting-time

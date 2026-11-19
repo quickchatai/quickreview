@@ -34,7 +34,7 @@ export function setupTools(setup: HomeSetup): {
       name: "home_check_github",
       label: "Home: check GitHub",
       description:
-        "Check again whether gh is installed and signed in. When it is not, the answer says what to run.",
+        "Check again whether the home can reach GitHub: gh installed and signed in, or, on an install whose host manages the GitHub credential, the token the host wrote. The answer says what is missing and whose it is to put right; where a host manages it there is no sign-in to suggest.",
       parameters: NO_PARAMS,
       execute: async () => textResult(await setup.checkGithub()),
     },
@@ -42,7 +42,7 @@ export function setupTools(setup: HomeSetup): {
       name: "home_choose_repo",
       label: "Home: choose a repository",
       description:
-        "Set the repository the home reviews: owner/name or any GitHub URL of it. It is written to the qcr config's [github] repo. Without `repo`, answers the person's recently pushed repositories to choose from.",
+        "Set the repository the home reviews: owner/name or any GitHub URL of it. It is written to the qcr config's [github] repo. Without `repo`, answers the person's recently pushed repositories to choose from. On an install whose host manages the repository it answers that, and writes nothing.",
       parameters: {
         type: "object",
         properties: {

@@ -528,6 +528,32 @@ describe('mint-token under [github] auth = "user"', () => {
     expect(empty.stderr).toContain("empty user token file");
   });
 
+  // `[github] token_source = "host"`: a host writes the same file, and the
+  // sessions' helper prints it the same way.
+  const HOST_TOML = '[github]\nauth = "user"\ntoken_source = "host"\nsecrets_dir = ""\n';
+
+  it("host-managed: prints the token file the host wrote, --refresh too", () => {
+    const r = runUser(HOST_TOML, "ghu_hosted123\n");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe("ghu_hosted123\n");
+    const again = runUser(HOST_TOML, "ghu_hosted456", ["--refresh"]);
+    expect(again.status, again.stderr).toBe(0);
+    expect(again.stdout).toBe("ghu_hosted456\n");
+  });
+
+  // MUTATION: drop the TOKEN_SOURCE branch in mint-token.sh — the refresher
+  // that refuses on this install is named, and this fails.
+  it("host-managed: a missing or empty file names the host, never the refresher", () => {
+    for (const token of [null, "  \n"]) {
+      const r = runUser(HOST_TOML, token);
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain("github_token");
+      expect(r.stderr).toContain('token_source = "host"');
+      expect(r.stderr).not.toContain("qcr github-token sync");
+      expect(r.stderr).not.toContain("app.pem");
+    }
+  });
+
   it("a config without the key is the App route (auth defaults to app)", () => {
     const r = runUser('[github]\nsecrets_dir = ""\n', "ghu_never_printed");
     expect(r.status).not.toBe(0);

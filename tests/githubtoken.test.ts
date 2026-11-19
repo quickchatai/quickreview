@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CRON_MARKER,
   GITHUB_TOKEN_FILE,
+  HOST_MANAGED_REFUSAL,
   cmdGithubToken,
   cronEntryState,
   cronLine,
@@ -233,6 +234,49 @@ describe("the sync", () => {
       log: (l) => lines.push(l),
     });
     expect(bad).toBe(1);
+  });
+
+  // MUTATION: drop the `deps.hostManaged?.()` check in cmdGithubToken — gh is
+  // read and the host's token file is overwritten, and this fails.
+  it("refuses on a host-managed install, in words: no gh is read and the host's file is not touched", async () => {
+    const HOSTS = "ghu_theHostWroteThisToken0123456789";
+    writeFileSync(join(dir, GITHUB_TOKEN_FILE), HOSTS, { mode: 0o600 });
+    const h = host();
+    const fetched: string[] = [];
+    const lines: string[] = [];
+    const code = await cmdGithubToken(["sync", "--gh", BROKER_GH, "--secrets-dir", dir], {
+      runner: h.runner,
+      env: { GH_TOKEN: TOKEN },
+      fetch: (async (input: unknown) => {
+        fetched.push(String(input));
+        return new Response("{}", { status: 500 });
+      }) as unknown as typeof fetch,
+      secretsDir: () => dir,
+      hostManaged: () => true,
+      log: (l) => lines.push(l),
+    });
+    expect(code).toBe(1);
+    expect(lines).toEqual([HOST_MANAGED_REFUSAL]);
+    expect(lines[0]).toMatch(/refused/);
+    expect(lines[0]).toMatch(/managed by its host/);
+    expect(lines[0]).not.toMatch(/gh auth login/);
+    expect(h.calls).toEqual([]);
+    expect(fetched).toEqual([]);
+    expect(readFileSync(join(dir, GITHUB_TOKEN_FILE), "utf8")).toBe(HOSTS);
+  });
+
+  it("an install that keeps its own credential syncs as before, asked or not", async () => {
+    const lines: string[] = [];
+    const code = await cmdGithubToken(["sync", "--gh", BROKER_GH, "--secrets-dir", dir], {
+      runner: host().runner,
+      env: {},
+      fetch: github(),
+      secretsDir: () => dir,
+      hostManaged: () => false,
+      log: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(readFileSync(join(dir, GITHUB_TOKEN_FILE), "utf8")).toBe(TOKEN);
   });
 
   it("parses its arguments strictly", () => {

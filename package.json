@@ -148,5 +148,17 @@
     "//": "Named qcrPi, never `pi`: pi reads a package.json `pi` key as a package manifest, and this root is not a pi package (the plugin is packages/pi-plugin). pi and pi-ai are exact dependencies above (types for the extensions, and the VM boot's plain `npm ci` installs them beside the global CLI the image carries). This block is the mirror a bare checkout without config.toml reads: package and version must equal the dependencies, the lockfile, config.toml [pi], ansible group_vars and every Dockerfile ARG (tests/fences.test.ts [T12], tests/docker-daemon.test.ts). Lens sessions run through our own lens tools (src/engine/lens/), not a pi subagent extension, so no extra extension pin exists.",
     "package": "@earendil-works/pi-coding-agent",
     "version": "1.5.2"
+  },
+  "qcrContracts": {
+    "//": "What `qcr --schema N` prints in this release, for a host that packages a release without running it: `supported` is the contract numbers (packages/pi-plugin/src/contract.ts CONTRACTS), `host_families` the host contract's payload families built so far, each at its version. The same two facts `qcr version --json` reports as `contracts` and `host_families`; tests/board-export.test.ts holds this block to the code.",
+    "supported": [
+      1,
+      2,
+      3
+    ],
+    "host_families": {
+      "board": 1,
+      "host": 1
+    }
   }
 }

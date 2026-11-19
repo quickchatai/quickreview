@@ -16,6 +16,7 @@ import {
   fetchPrTarget,
   parsePrTarget,
   resolvePostCredential,
+  resolvePrCredential,
 } from "@quickchatai/pi-quickreview/src/prtarget.js";
 import {
   githubCredential,
@@ -192,6 +193,120 @@ describe("resolvePostCredential", () => {
     expect(r.ok).toBe(false);
     expect(!r.ok && r.error).toMatch(/post_as is app but that credential is not available/);
     expect(!r.ok && r.error).toMatch(/token mint failed: 401/);
+  });
+});
+
+// `[github] token_source = "host"`: the local route has no chain. Its
+// credential is the token file the host keeps, and a failure never sends the
+// person to sign in.
+describe("a host-managed install: the token file, and nothing else", () => {
+  const HOSTS = "ghu_hostWrittenTokenValue0123456789ab";
+  const hosted = (token: string | null, app = false): string => {
+    const d = mkdtempSync(join(tmp, "secrets-hosted-"));
+    if (token !== null) writeFileSync(join(d, "github_token"), `${token}\n`, { mode: 0o600 });
+    if (app) {
+      writeFileSync(join(d, "app_id"), "1");
+      writeFileSync(join(d, "app.pem"), "pem");
+    }
+    return d;
+  };
+  /** Every other source present, each of which must stay unread. */
+  const others = () => {
+    const touched: string[] = [];
+    return {
+      touched,
+      deps: {
+        env: { GITHUB_TOKEN: "g", GH_TOKEN: "h" },
+        mintApp: async () => {
+          touched.push("app");
+          return "app-token";
+        },
+        ghAuthToken: () => {
+          touched.push("gh");
+          return "cli";
+        },
+        handoff: "handed",
+      },
+    };
+  };
+
+  // MUTATION: drop the `d.hostManaged === true` branch of
+  // resolveGithubCredential — the App (or gh) answers first, and this fails.
+  it("reads the host's token file before, and instead of, every other source", async () => {
+    const o = others();
+    const r = await resolveGithubCredential({
+      secretsDir: hosted(HOSTS, true),
+      ...o.deps,
+      hostManaged: true,
+    });
+    expect(r).toEqual({ ok: true, source: "host", token: HOSTS });
+    expect(o.touched).toEqual([]);
+  });
+
+  it("with no token yet it falls back to nothing, and names the host, never a sign-in", async () => {
+    const o = others();
+    const dir = hosted(null);
+    const r = await resolveGithubCredential({ secretsDir: dir, ...o.deps, hostManaged: true });
+    expect(r.ok).toBe(false);
+    expect(o.touched).toEqual([]);
+    if (r.ok) return;
+    expect(r.error).toContain(join(dir, "github_token"));
+    expect(r.error).toMatch(/managed by its host/);
+    expect(r.error).not.toMatch(/gh auth login|GITHUB_TOKEN|GH_TOKEN/);
+    expect(r.error).not.toBe(MISSING_CREDENTIAL_HELP);
+  });
+
+  it("resolvePrCredential takes the marker from the [github] table it is handed", async () => {
+    const o = others();
+    const dir = hosted(HOSTS);
+    expect(await resolvePrCredential({ secrets_dir: dir, token_source: "host" }, o.deps)).toEqual({
+      ok: true,
+      source: "host",
+      token: HOSTS,
+    });
+    expect(o.touched).toEqual([]);
+    // unmarked, the same directory is an install that keeps its own: the chain
+    expect(await resolvePrCredential({ secrets_dir: dir, token_source: "self" }, o.deps)).toEqual({
+      ok: true,
+      source: "handoff",
+      token: "handed",
+    });
+    expect(await resolvePrCredential(dir, o.deps)).toMatchObject({ ok: true, source: "handoff" });
+  });
+
+  it("posts as the host's token: another post_as is an error, never a switch of identity", async () => {
+    const o = others();
+    const dir = hosted(HOSTS);
+    const read = { source: "host" as const, token: HOSTS };
+    const home = { secrets_dir: dir, token_source: "host" as const };
+    expect(await resolvePostCredential(home, null, read, o.deps)).toEqual({ ok: true, ...read });
+    expect(await resolvePostCredential(home, "host", read, o.deps)).toEqual({ ok: true, ...read });
+    for (const postAs of ["gh", "app", "env:GH_TOKEN", "handoff"]) {
+      const r = await resolvePostCredential(home, postAs, read, o.deps);
+      expect(r.ok, postAs).toBe(false);
+      expect(!r.ok && r.error, postAs).toMatch(/managed by its host/);
+    }
+    expect(o.touched).toEqual([]);
+    // and an install that keeps its own has no host to post as
+    const own = await resolvePostCredential(dir, "host", { source: "gh", token: "t" }, o.deps);
+    expect(!own.ok && own.error).toMatch(/no host manages this install/);
+  });
+
+  it("a PR read GitHub rejects is the host's to renew: no sign-in command is named", async () => {
+    const unauth = (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch;
+    const r = await fetchPrTarget({
+      repo: "o/r",
+      number: 7,
+      scratchDir: join(tmp, "scratch-hosted"),
+      token: HOSTS,
+      fetchFn: unauth,
+      hostManaged: true,
+    });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).toMatch(/rejected the credential reading o\/r#7 \(401\)/);
+    expect(!r.ok && r.error).toMatch(/your host/i);
+    expect(!r.ok && r.error).not.toMatch(/gh auth login/);
+    expect(!r.ok && r.error).not.toContain(HOSTS);
   });
 });
 
