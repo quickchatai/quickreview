@@ -120,6 +120,8 @@ Measured on the SDK runner at pi 1.4.0 (the real host and runner, a 36k-token pa
 
 The task files tell the lens that the pack is the first message of its conversation, and to read the pack file instead when it is not there.
 
+**The task is sent, not pointed at.** A lens of the round's planned wave is sent its task file's text, under a first line that names the file (`packages/pi-plugin/src/engine/lens/launch-plan.ts` `unitMessage`). Sent a bare pointer, a lens spent its first request asking for the file and its second reading it, with the whole prefix read again in between. Only a planned row is sent this way: its path was listed from the round's own task directories. A lens the session launches by hand is sent what the session wrote.
+
 Measured end to end (real pi 1.0.0 parent, the retired native glue): two lenses with different instructions over a 24k-token pack. Each paid ~1.2k uncached tokens and read 23,808 from cache, against ~25k uncached each without it.
 
 ## Which APIs the pack applies to

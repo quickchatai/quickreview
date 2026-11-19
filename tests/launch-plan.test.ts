@@ -10,8 +10,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   LAUNCH_PLAN_DIRS_ENV,
+  inlinePointer,
   planLaunch,
   taskPointer,
+  unitMessage,
 } from "@quickchatai/pi-quickreview/src/engine/lens/launch-plan.js";
 
 let root: string;
@@ -62,6 +64,47 @@ describe("planLaunch", () => {
     expect(u[0]!.task).toBe(
       `Task file: ${join(tasks, "01-pass-baseline--deep.md")}. Read it first; it is your complete task.`,
     );
+  });
+
+  // A lens sent the bare pointer spends a request asking for its task file
+  // and another reading it. A planned unit's file is one the round wrote, so
+  // its lens is sent the text itself.
+  // MUTATION: return `unit.task` from unitMessage — the lens gets the pointer;
+  // this fails.
+  it("unitMessage: a planned unit's lens is sent its task file's text, the file named first and `extra` last", () => {
+    const [first] = units({
+      dirs: [tasks],
+      extra: { "1": "Do not re-raise: X at a.py:3." },
+    });
+    const path = join(tasks, "01-pass-baseline--deep.md");
+    expect(first!.task).toBe(`${taskPointer(path)}\n\nDo not re-raise: X at a.py:3.`);
+    expect(unitMessage(first!)).toBe(
+      `${inlinePointer(path)}\n\n# task 01-pass-baseline--deep.md\n\nDo not re-raise: X at a.py:3.`,
+    );
+    expect(inlinePointer(path)).toBe(
+      `Task file: ${path}. Its text follows; it is your complete task.`,
+    );
+  });
+
+  // The text is read from the unit's own path and from nowhere else, and a
+  // file the round did not write as a task is left to the lens's own read.
+  // MUTATION: drop the `isFile()` test from unitMessage — the symlinked row's
+  // lens is sent the target's text; this fails.
+  it("unitMessage: a file that is missing, empty, too large or not a regular file leaves the pointer", () => {
+    const [a, b, c, d] = units({ dirs: [tasks] });
+    rmSync(a!.path);
+    expect(unitMessage(a!)).toBe(a!.task);
+    writeFileSync(b!.path, "  \n");
+    expect(unitMessage(b!)).toBe(b!.task);
+    writeFileSync(c!.path, "x".repeat(256 * 1024 + 1));
+    expect(unitMessage(c!)).toBe(c!.task);
+    const secret = join(root, "secret.txt");
+    writeFileSync(secret, "not a task\n");
+    rmSync(d!.path);
+    symlinkSync(secret, d!.path);
+    expect(unitMessage(d!)).toBe(d!.task);
+    // A unit whose task is not its file's pointer (nothing the plan builds) is sent as it is.
+    expect(unitMessage({ ...d!, task: "look at the cache" })).toBe("look at the cache");
   });
 
   it("never covers the validator", () => {

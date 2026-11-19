@@ -28,7 +28,10 @@ import { EventCostMeter } from "../src/bench/cost.js";
 import { lensOutputsFromEvents } from "../src/bench/whatif.js";
 import { engineLensTools } from "@quickchatai/pi-quickreview/src/engine/lens/engine-tools.js";
 import {
+  inlinePointer,
   planLaunch,
+  taskPointer,
+  unitMessage,
   type LaunchUnit,
 } from "@quickchatai/pi-quickreview/src/engine/lens/launch-plan.js";
 import { loadBuiltAgents } from "@quickchatai/pi-quickreview/src/engine/lens/registry.js";
@@ -286,6 +289,21 @@ describe("[lens_wave] the join", () => {
     expect(sessionsMade).toBe(21);
     expect(wave.rows()).toHaveLength(20);
     expect(ledger().filter((l) => l.kind === "lens")).toHaveLength(21);
+  });
+
+  // MUTATION: start a row with `unit.task` in LensWave.start (wave.ts) — the
+  // lens is sent the pointer and reads the file itself; this fails.
+  it("a row's lens is sent its task file's text, and the row is still named by the pointer", async () => {
+    slowAnswers(20, 1);
+    const runner = counting(createLensRunner(config()));
+    const wave = new LensWave();
+    const [unit] = planned();
+    launchWave(wave, runner, [unit!]);
+    await Promise.all(wave.rows().map((r) => r.done));
+    expect(runner.asked).toEqual([unitMessage(unit!)]);
+    expect(runner.asked[0]!.startsWith(inlinePointer(unit!.path))).toBe(true);
+    expect(runner.asked[0]).toContain(readFileSync(unit!.path, "utf8").trimEnd());
+    expect(wave.rows()[0]!.task).toBe(taskPointer(unit!.path));
   });
 
   it("returns a finished wave again without running anything, with the same ids", async () => {

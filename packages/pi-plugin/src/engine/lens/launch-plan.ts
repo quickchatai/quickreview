@@ -3,7 +3,7 @@
 // discovery rows, and how `skip` / `extra` apply. Pure over the filesystem it
 // reads. Lifted from the retired extensions/subagents.ts, whose `launch_plan`
 // tool it planned for; `lens_wave` (tool.ts) is its successor.
-import { readdirSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { foldAgentName } from "../../types.js";
 
@@ -25,6 +25,43 @@ const VALIDATOR_AGENT_RE = /^pass-validate(--|$)/;
  * templates prescribe (packages/pi-plugin/src/passtasks.ts renderPassTaskNote). */
 export function taskPointer(path: string): string {
   return `Task file: ${path}. Read it first; it is your complete task.`;
+}
+
+/** The first line of a task sent WITH its file's text: the same file named the
+ * same way, and what follows it said. */
+export function inlinePointer(path: string): string {
+  return `Task file: ${path}. Its text follows; it is your complete task.`;
+}
+
+/** A task file larger than this is left for the lens to read: it is no task
+ * file the round wrote. */
+const INLINE_TASK_MAX_BYTES = 256 * 1024;
+
+/**
+ * What a planned unit's lens is sent: its task file's text, under a first line
+ * that names the file, then whatever the launch added to the row (`extra`).
+ * A lens sent the bare pointer spends its first request asking for the file
+ * and its second reading it; sent the text, it starts on the task.
+ *
+ * Only a planned unit is sent this way: its path was listed from one of the
+ * round's own task directories (planLaunch), never taken from a model's
+ * words. A file that is not a regular file, is too large, is empty or cannot
+ * be read leaves the unit's task as it is, the pointer, and the lens reads
+ * the file itself.
+ */
+export function unitMessage(unit: LaunchUnit): string {
+  const pointer = taskPointer(unit.path);
+  if (!unit.task.startsWith(pointer)) return unit.task;
+  let text: string;
+  try {
+    const stat = lstatSync(unit.path);
+    if (!stat.isFile() || stat.size > INLINE_TASK_MAX_BYTES) return unit.task;
+    text = readFileSync(unit.path, "utf8");
+  } catch {
+    return unit.task;
+  }
+  if (!text.trim()) return unit.task;
+  return `${inlinePointer(unit.path)}\n\n${text.trimEnd()}${unit.task.slice(pointer.length)}`;
 }
 
 /** The task directory a unit comes from: "plan" for the round's tasks dir,
