@@ -56,6 +56,8 @@ export interface SwitchHost {
   memory(): Slot<MemoryState>;
   /** The trigger label, when known. */
   trigger(): string | null;
+  /** Which pull requests it picks up by itself, when known. */
+  pickUp(): "label" | "all" | null;
   repo(): string | null;
   /** The selected pull request: the proof round's, when one is needed. */
   selected(): number | null;
@@ -70,18 +72,33 @@ export interface SwitchHost {
 const NEEDS_PERSON =
   "this switch asks the person in the home, and no one can answer here; nothing changed";
 
-/** What auto-review picks up: the trigger label (unknown when it can't be
- * read) or a review request. */
-export function pickUpPhrase(trigger: string | null): string {
-  return trigger === null
+/** What auto-review picks up, as the install says it now. */
+export interface PickUp {
+  /** Which pull requests it takes by itself (src/triggerchoice.ts); null
+   * when that cannot be read. */
+  rule: "label" | "all" | null;
+  /** The trigger label; null when it cannot be read. */
+  label: string | null;
+}
+
+/** What auto-review picks up: every open pull request that is not a draft,
+ * or the labelled ones (the label unknown when it can't be read) and a
+ * review request; and when which of the two cannot be read, it says so
+ * rather than naming one. */
+export function pickUpPhrase(p: PickUp): string {
+  if (p.rule === "all") return "every open pull request that is not a draft";
+  if (p.rule === null) return "labelled pull requests or every one (which is unknown)";
+  return p.label === null
     ? "pull requests with the trigger label (which one is unknown) or a review request"
-    : `pull requests labelled "${trigger}" or with a review request`;
+    : `pull requests labelled "${p.label}" or with a review request`;
 }
 
 /** The same, as a sentence. */
-export function pickUpLine(trigger: string | null): string {
-  return `It picks up ${pickUpPhrase(trigger)}.`;
+export function pickUpLine(p: PickUp): string {
+  return `It picks up ${pickUpPhrase(p)}.`;
 }
+
+const pickUpOf = (host: SwitchHost): PickUp => ({ rule: host.pickUp(), label: host.trigger() });
 
 /** Is auto-review, as last read, something to switch off? */
 function isOn(s: Slot<AutoReviewStatus>): boolean {
@@ -147,7 +164,7 @@ async function switchOn(
   // 4. the one confirm: it comes up in dry-run unless the config is live
   const dry = await control.dryRun();
   const repo = host.repo() ?? "your repository";
-  const picks = pickUpPhrase(host.trigger());
+  const picks = pickUpPhrase(pickUpOf(host));
   const posture =
     dry.kind === "unknown"
       ? `Auto-review reviews ${picks} in ${repo}. Whether it posts to GitHub is unknown: ${dry.why}.`
@@ -173,7 +190,7 @@ async function switchOn(
     host.release("memory");
   }
   await host.refresh();
-  if (outcome.ok) host.say(`${outcome.detail} ${pickUpLine(host.trigger())}`, "ok");
+  if (outcome.ok) host.say(`${outcome.detail} ${pickUpLine(pickUpOf(host))}`, "ok");
   else host.say(`Auto-review did not start: ${outcome.detail}`, "warn");
   return outcome.ok
     ? `${outcome.detail}\n${outcome.steps.join("\n")}`

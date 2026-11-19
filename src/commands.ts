@@ -42,6 +42,10 @@ import type { LessonSwitchChange } from "./lessonledger.js";
 import { validateReceipt, type CurationReceipt } from "./learner/receipt.js";
 import { beltRestricts, type OriginRecord } from "./slack/origin.js";
 import { SLACK_TS_RE } from "./slack/reply.js";
+import {
+  GITHUB_TRIGGERS,
+  type GithubTrigger,
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 
 /** The session-writable command vocabulary — the one list `CommandName` is
  * read from, so a name cannot be typed without being admitted. */
@@ -102,7 +106,10 @@ export const CONTROL_TEXT_MAX = 8000;
  * them again for any issuer but the operator. `review-now` is the operator's
  * "review this PR now": one PR queued as a human-asked round, exactly as a
  * fresh trigger label would queue it, with no GitHub write to ask for it (the
- * onboarding wizard's proof round sends it). The kill switch's state lives
+ * onboarding wizard's proof round sends it). `set-trigger` is a host's choice
+ * of which pull requests the reviewer picks up by itself (`label` or `all`),
+ * kept in state.db (src/triggerchoice.ts) and never written into config.toml,
+ * which the round fingerprint watches. The kill switch's state lives
  * in state.db (src/lessonledger.ts), never as a memory tag anyone holding a
  * key could write.
  */
@@ -114,6 +121,7 @@ export const OPERATOR_COMMANDS = [
   "archive-run",
   "archive-restore",
   "review-now",
+  "set-trigger",
   ...CONTROL_COMMANDS,
 ] as const;
 
@@ -190,6 +198,9 @@ export type Command =
    * `state_machines: true` asks for a state-machine review the same way
    * (src/staterequest.ts). */
   | { command: "review-now"; pr: number; security?: true; state_machines?: true }
+  /** A host's choice of trigger (`OPERATOR_COMMANDS`): never valid in a
+   * session's file. */
+  | { command: "set-trigger"; trigger: GithubTrigger }
   /** The operator's round controls (`CONTROL_COMMANDS`): never valid in a
    * session's file. */
   | { command: "steer"; pr: number; text: string }
@@ -280,6 +291,13 @@ export interface CommandDeps {
     pr: number,
     file: string,
     opts?: { security?: boolean; stateMachines?: boolean },
+  ): Promise<FileOutcome | void> | FileOutcome | void;
+  /** A host's choice of trigger, kept in the daemon's store
+   * (src/triggerchoice.ts). Reached only for an operator-issued command;
+   * optional like `drain`. */
+  setTrigger?(
+    trigger: GithubTrigger,
+    file: string,
   ): Promise<FileOutcome | void> | FileOutcome | void;
   /** The operator's round controls (`CONTROL_COMMANDS`), forwarded to the PR's
    * host. Reached only for an operator-issued command; optional like `drain`,
@@ -646,6 +664,14 @@ function validateOperatorCommand(
           ...(stateMachines ? { state_machines: true } : {}),
         },
       };
+    }
+    case "set-trigger": {
+      const err = fieldError(obj, ["trigger"]);
+      if (err) return { ok: false, reason: err };
+      const trigger = GITHUB_TRIGGERS.find((t) => t === obj["trigger"]);
+      if (trigger === undefined)
+        return { ok: false, reason: `'trigger' must be one of ${GITHUB_TRIGGERS.join(", ")}` };
+      return { ok: true, command: { command: "set-trigger", trigger } };
     }
     case "steer":
     case "follow-up":
@@ -1023,6 +1049,16 @@ export async function executeCommand(
           ...(command.state_machines ? { stateMachines: true } : {}),
         }),
       );
+    }
+    case "set-trigger": {
+      // The belt behind validation's brace, as for the kill switch.
+      if (ctx.issuer !== "operator")
+        return {
+          ok: false,
+          reason: `'${command.command}' is the operator's alone — refused for issuer '${ctx.issuer}'`,
+        };
+      if (!deps.setTrigger) return { ok: false, reason: "set-trigger is not wired on this daemon" };
+      return normalize(await deps.setTrigger(command.trigger, ctx.delivery_key ?? ctx.file));
     }
     case "steer":
     case "follow-up":

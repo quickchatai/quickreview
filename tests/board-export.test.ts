@@ -450,6 +450,36 @@ describe("absent means unknown: the config", () => {
     expect(out.trigger_label).toBe("AI review requested");
   });
 
+  // On a host-managed install the host's choice (`host set-trigger`) is the
+  // running daemon's, carried in its board (src/triggerchoice.ts).
+  // MUTATION: print `facts.trigger` again in boardExport (skip
+  // effectiveTrigger) — the export says the config's `label` while the
+  // reviewer runs on the host's `all`, and this fails; or say the config's
+  // word with the daemon off — the absent case fails.
+  it("`trigger` on a host-managed install: the host's choice from the daemon's board, absent without one", async () => {
+    const hosted = CONFIG.replace("[github]\n", '[github]\ntoken_source = "host"\n');
+    const boardWithChoice = (choice: unknown): string =>
+      JSON.stringify({ ...(JSON.parse(smallBoard()) as Json), trigger_choice: choice });
+    const at = (text: string, over: Parameters<typeof fakeBoardPorts>[0] = {}) =>
+      read(withBoard(text, { config: () => known(hosted), ...over }));
+    expect((await at(boardWithChoice("all"))).trigger).toBe("all");
+    expect((await at(boardWithChoice("label"))).trigger).toBe("label");
+    // no choice made: the config's word
+    expect((await at(boardWithChoice(null))).trigger).toBe("label");
+    // a board that does not say (an older daemon, a store it could not read)
+    expect(await at(boardWithChoice(undefined))).not.toHaveProperty("trigger");
+    expect(await at(boardWithChoice("every"))).not.toHaveProperty("trigger");
+    // the daemon off: its choice cannot be read
+    expect(
+      await at(boardWithChoice("all"), { daemon: async () => known("stopped" as const) }),
+    ).not.toHaveProperty("trigger");
+    // an install no host manages: the config's word, whatever the board says
+    expect(
+      (await read(withBoard(boardWithChoice("all"), { config: () => known(CONFIG) }))).trigger,
+    ).toBe("label");
+    expect(validate(schema, await at(boardWithChoice("all")))).toEqual([]);
+  });
+
   it("the identity is the mode the file names and the login it posts under", () => {
     const github = (lines: string[]): string => ["[github]", ...lines, ""].join("\n");
     expect(configFacts(github(['auth = "user"', 'bot_login = "octo-dev"'])).identity).toEqual({
@@ -626,22 +656,19 @@ describe("the records a host's verbs leave", () => {
     expect(await read(failing)).toEqual(bare);
   });
 
-  // The trigger label is beside a go-live that is done, in its own closed
-  // word: it never makes one failed.
-  // MUTATION: say the label as a `problem` of the go-live — the schema's
-  // closed set of problems has no such word, and this fails.
-  it("a go-live that is done carries how its trigger label went, beside it", async () => {
-    for (const label of ["ok", "failed"] as const) {
-      const out = await read(
-        fakeBoardPorts({ progress: () => ({ go_live: { state: "done", label } }) }),
-      );
-      expect(out.go_live).toEqual({ state: "done", label });
-      expect(validate(schema, out)).toEqual([]);
-    }
+  // A go-live says nothing of a trigger label: no host verb writes one, and
+  // the live daemon makes sure of it through the gate (src/triggerlabel.ts).
+  // MUTATION: give the schema's `go_live` a `label` again, or say the label
+  // as a `problem` of the go-live — this fails.
+  it("a go-live that is done is done, and carries no trigger label", async () => {
+    const out = await read(fakeBoardPorts({ progress: () => ({ go_live: { state: "done" } }) }));
+    expect(out.go_live).toEqual({ state: "done" });
+    expect(validate(schema, out)).toEqual([]);
+    const goLive = (schema["$defs"] as Record<string, { properties: Record<string, unknown> }>)[
+      "go_live"
+    ]!;
+    expect(Object.keys(goLive.properties).sort()).toEqual(["problem", "state"]);
     const base = await read(fakeBoardPorts());
-    expect(validate(schema, { ...base, go_live: { state: "done", label: "missing" } })).not.toEqual(
-      [],
-    );
     expect(
       validate(schema, { ...base, go_live: { state: "failed", problem: "label_failed" } }),
     ).not.toEqual([]);

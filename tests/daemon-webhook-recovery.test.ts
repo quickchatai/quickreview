@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -82,6 +82,66 @@ it(
     };
     const daemon = createDaemon({
       cfg: person,
+      root,
+      store,
+      adapter: {
+        searchLabelTriggered: async () => [],
+        searchTeamTriggered: async () => [],
+        searchAwaitingEscalationReviewer: async () => [],
+        listOpenPrs: async () => [],
+        stalenessScan: async () => [],
+        listBotReviewComments: async () => [],
+      } as unknown as DaemonAdapter,
+      log: () => {},
+    });
+    try {
+      await daemon.start();
+      expect(captured?.secret).toBe("");
+    } finally {
+      await daemon.stop();
+      store.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it(
+  "a host-supplied installation token boots with a webhook shape named and never reads the webhook secret",
+  { timeout: HEAVY_TIMEOUT_MS },
+  async () => {
+    // A hand-built config may name a webhook shape beside `auth =
+    // "installation"` (the loader refuses one, a hand-built one is not the
+    // loader's). The secrets dir holds a `webhook_secret` that cannot be read
+    // at all: a directory, so any read of it throws.
+    // MUTATION: drop `|| usesTokenFile(cfg.github)` from readWebhookSecret in
+    // src/daemon.ts — the boot reads the file, throws EISDIR, and this fails.
+    const root = mkdtempSync(join(tmpdir(), "qcr-webhook-installation-"));
+    const secrets = join(root, "secrets");
+    mkdirSync(join(secrets, "webhook_secret"), { recursive: true });
+    const store = new StateStore(":memory:");
+    let captured: webhook.WebhookDeps | undefined;
+    vi.spyOn(webhook, "createWebhookServer").mockImplementation((deps) => {
+      captured = deps;
+      return {
+        listen: (_port: number, _host: string, cb: () => void) => cb(),
+        close: (cb: () => void) => cb(),
+      } as unknown as ReturnType<typeof webhook.createWebhookServer>;
+    });
+    const installation = {
+      ...cfg,
+      github: {
+        ...cfg.github,
+        auth: "installation" as const,
+        token_source: "host" as const,
+        app_slug: "acme-reviewer",
+        bot_login: "acme-reviewer[bot]",
+        secrets_dir: secrets,
+      },
+      // a webhook shape: the shape alone would read the secret
+      ingress: { ...cfg.ingress, shape: "none" as const },
+    };
+    const daemon = createDaemon({
+      cfg: installation,
       root,
       store,
       adapter: {

@@ -44,6 +44,7 @@ import {
   type GithubTrigger,
 } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { STATE_REQUEST } from "./staterequest.js";
+import { effectiveTrigger } from "./triggerchoice.js";
 import {
   applySecurityRequest,
   SECURITY_REQUEST,
@@ -148,11 +149,6 @@ export interface ReconcileDeps {
   /** How long the sweep may keep STARTING claims in one pass; the rest are
    * carried to the next. Default RECEIPT_SWEEP_BUDGET_MS. */
   receiptSweepBudgetMs?: number;
-  /** `[github] trigger` as the install's config says it at this pass: the
-   * one knob a running daemon follows without a restart, so whoever changes
-   * it (a person's edit, a host's `set-trigger`) costs no round in flight.
-   * Absent, undefined or throwing ⇒ the value the config was loaded with. */
-  trigger?: () => GithubTrigger | undefined;
 }
 
 /**
@@ -296,14 +292,22 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // configured login is the person's: their PRs are reviewed, and their own
   // comments are told from the reviewer's by its marker (identity.ts).
   const botLogin = botAccountLogin(cfg.github);
-  // What the daemon picks up by itself: the config's word at this pass where
-  // the caller can read it, else the word it was loaded with.
-  let trigger: GithubTrigger = cfg.github.trigger ?? "label";
+  // What the daemon picks up by itself (src/triggerchoice.ts): on a
+  // host-managed install the host's choice from the store, read again at
+  // every pass, else the config's word as it was loaded. A store that cannot
+  // say leaves the trigger unknown, and an unknown trigger takes nothing by
+  // itself: the labelled pull requests are still picked up below.
+  let chosen: GithubTrigger | null | undefined;
   try {
-    trigger = deps.trigger?.() ?? trigger;
+    chosen = store.triggerChoice();
   } catch (err) {
-    (deps.log ?? (() => {}))("reconcile: the config's trigger could not be read", err);
+    (deps.log ?? (() => {}))("reconcile: the trigger choice could not be read", err);
   }
+  const trigger = effectiveTrigger({
+    hostManaged: cfg.github.token_source === "host",
+    chosen,
+    configured: cfg.github.trigger ?? "label",
+  });
   const report: ReconcileReport = {
     ran_at: now().toISOString(),
     open_prs: 0,
@@ -610,7 +614,14 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // person's where both are opened under one login. The pull request is
   // queued as the poll's own derivation (`reconcile`), never as a person's
   // request: a label, a review request or `review-now` still outranks it.
-  if (trigger === "all") {
+  //
+  // It takes nothing while the daemon is in dry-run, and marks nothing: a
+  // practice review of every open pull request is one nobody is shown, and
+  // a mark written then would keep each of them from the first live pass.
+  // So the first pass after go-live takes every open pull request once. A
+  // practice review is asked for by name (`review-now`, a host's
+  // `proof-start`), and the label still works in dry-run.
+  if (trigger === "all" && !cfg.dry_run) {
     await step("trigger-all", async () => {
       if (!openListed) {
         (deps.log ?? (() => {}))(

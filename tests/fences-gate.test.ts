@@ -142,6 +142,39 @@ describe("no review-dismissing mutation can appear", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A label's definition: one builder, one caller
+// ---------------------------------------------------------------------------
+
+describe("the trigger label's definition is created through the gate, from one place", () => {
+  /**
+   * `create_label` is an ordinary kind with exactly one intent builder,
+   * `GitHubAdapter.createLabel` in src/github.ts, and that method has exactly
+   * one caller, the daemon's trigger label ensurer (src/triggerlabel.ts). A
+   * host verb, a walk or a second module that wanted the label would have to
+   * appear here.
+   *
+   * MUTATION: call `.createLabel(` (or `gh.createLabel?.(`) from
+   * src/host/golive.ts or src/daemon.ts, or build a second `kind:
+   * "create_label"` intent anywhere in src/ — this fails.
+   */
+  it("one create_label builder in src/github.ts, called only by src/triggerlabel.ts", () => {
+    const builders: string[] = [];
+    const callers: string[] = [];
+    for (const f of srcTs()) {
+      const rel = f.slice(ROOT.length + 1);
+      const code = codeOf(f);
+      if (/kind:\s*["']create_label["']/.test(code)) builders.push(rel);
+      // a call of the method (`.createLabel(`, `.createLabel?.(`), not its
+      // declaration (`async createLabel(`)
+      for (const m of code.matchAll(/(\basync\s+)?\bcreateLabel\s*(?:\?\.)?\s*\(/g))
+        if (m[1] === undefined && /\.\s*$/.test(code.slice(0, m.index))) callers.push(rel);
+    }
+    expect(builders).toEqual(["src/github.ts"]);
+    expect([...new Set(callers)]).toEqual(["src/triggerlabel.ts"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A gate reachable from a process entrypoint must have its guards installed
 // ---------------------------------------------------------------------------
 

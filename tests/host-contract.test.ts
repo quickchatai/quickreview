@@ -27,7 +27,6 @@ import {
   HOST_REASONS,
   HOST_STATES,
   HOST_VERBS,
-  LABEL_WORDS,
   PROGRESS_STATES,
   PROOF_BODY_CAP,
   PROOF_COMMENT_BODY_CAP,
@@ -48,6 +47,7 @@ import { SCHEMA_VERBS, forgetRequestedContract, parseSchemaFlag } from "../src/s
 import { stripComments } from "./helpers/engine-fences.js";
 import { validate } from "./helpers/json-schema-lite.js";
 import {
+  MARKER_ONLY,
   REPO,
   WALK_PID,
   finishedRound,
@@ -175,11 +175,10 @@ describe("the schema file and the code's closed sets", () => {
     expect(d["reason"]!["enum"]).toEqual([...HOST_REASONS]);
     expect(d["holder"]!["enum"]).toEqual([...HOST_HOLDERS]);
     expect([...HOST_HOLDERS]).toEqual([...LOCK_HOLDERS]);
-    // the trigger label's word: go-live's alone, and the same closed set in
-    // the board export
-    expect(props(d["go_live"]!)["label"]!["enum"]).toEqual([...LABEL_WORDS]);
-    for (const verb of HOST_VERBS)
-      expect("label" in props(d[names[verb]]!), verb).toBe(verb === "go-live");
+    // no verb says anything of a trigger label: no host verb writes one
+    // (the live daemon makes sure of it through the gate, src/triggerlabel.ts)
+    // MUTATION: give go-live's payload a `label` again — this fails.
+    for (const verb of HOST_VERBS) expect("label" in props(d[names[verb]]!), verb).toBe(false);
     // what the reviewer picks up by itself: set-trigger's word alone, and the
     // same closed set as the board export's `trigger` and the config key's
     expect(props(d["set_trigger"]!)["trigger"]!["enum"]).toEqual([...TRIGGER_WORDS]);
@@ -213,8 +212,8 @@ describe("the schema file and the code's closed sets", () => {
     expect(setup["problem"]!["enum"]).toEqual([...SETUP_PROBLEMS]);
     expect(goLive["state"]!["enum"]).toEqual([...PROGRESS_STATES]);
     expect(goLive["problem"]!["enum"]).toEqual([...GO_LIVE_PROBLEMS]);
-    // the label is its own closed field, never a problem
-    expect(goLive["label"]!["enum"]).toEqual([...LABEL_WORDS]);
+    // a go-live says nothing of a trigger label, as its field or its problem
+    expect(goLive).not.toHaveProperty("label");
     expect(GO_LIVE_PROBLEMS.filter((p) => /label/.test(p))).toEqual([]);
     expect(goLive).not.toHaveProperty("step");
     expect(props(board)["setup"]).toEqual({ $ref: "#/$defs/setup" });
@@ -252,7 +251,22 @@ describe("what a call prints", () => {
     };
     const setup = ["--repo", REPO, "--auth", "user"];
 
-    // before anything is set up
+    // on a machine with no config there is no install a host manages yet:
+    // every verb but setup refuses
+    for (const [verb, args] of [
+      ["review-now", ["7"]],
+      ["proof-start", ["7"]],
+      ["proof-result", ["7"]],
+      ["go-live", []],
+      ["set-trigger", ["all"]],
+    ] as const)
+      expect(await ok(verb, [...args]), verb).toMatchObject({
+        state: "refused",
+        reason: "not_host_managed",
+      });
+
+    // the host's marker, written before setup: set up for nothing yet
+    w.writeConfig(MARKER_ONLY);
     expect(await ok("review-now", ["7"])).toMatchObject({ state: "refused", reason: "not_set_up" });
     expect(await ok("proof-result", ["7"])).toEqual({
       schema_version: 3,
@@ -329,17 +343,16 @@ describe("what a call prints", () => {
     expect(await ok("go-live", [])).toMatchObject({ state: "running" });
     expect(await ok("proof-result", ["7"])).toMatchObject({ state: "done" });
 
-    // the walk goes live; a repeat call only tries the trigger label again
+    // the walk goes live; a repeat call answers done and does nothing else
     expect(await walkGoLive(w.walker(), w.launched.at(-1)!.token)).toBe(0);
     w.writeConfig(w.config()!.replace(/^dry_run = true$/m, "dry_run = false"));
+    const asked = w.github.length;
     expect(await ok("go-live", [])).toEqual({
       schema_version: 3,
       verb: "go-live",
       state: "done",
-      label: "ok",
     });
-    w.labelCreate = 403;
-    expect(await ok("go-live", [])).toMatchObject({ state: "done", label: "failed" });
+    expect(w.github).toHaveLength(asked);
 
     // which pull requests it picks up by itself, changed with one call
     expect(await ok("set-trigger", ["all"])).toEqual({
@@ -348,6 +361,15 @@ describe("what a call prints", () => {
       state: "done",
       trigger: "all",
     });
+    // the daemon has not answered yet: the choice is on its channel
+    w.daemon.receipt = "pending";
+    expect(await ok("set-trigger", ["label"])).toEqual({
+      schema_version: 3,
+      verb: "set-trigger",
+      state: "sent",
+      trigger: "label",
+    });
+    w.daemon.receipt = "queued";
     expect(await ok("set-trigger", ["every"])).toMatchObject({
       state: "refused",
       reason: "usage",
@@ -367,6 +389,11 @@ describe("what a call prints", () => {
       state: "refused",
       reason: "not_host_managed",
     });
+    for (const verb of ["review-now", "proof-start", "proof-result"] as const)
+      expect(await ok(verb, ["7"]), verb).toMatchObject({
+        state: "refused",
+        reason: "not_host_managed",
+      });
 
     // the states a host must be ready for were all printed at least once
     for (const state of [
@@ -387,6 +414,7 @@ describe("what a call prints", () => {
       "go-live:done",
       "go-live:refused",
       "set-trigger:done",
+      "set-trigger:sent",
       "set-trigger:busy",
       "set-trigger:refused",
     ])

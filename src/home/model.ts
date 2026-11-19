@@ -80,6 +80,9 @@ export interface HomeState {
   /** What auto-review picks up besides a review request: the trigger
    * label; null when the port does not report it. */
   trigger: Slot<string> | null;
+  /** Which pull requests auto-review picks up by itself; null when the port
+   * does not report it, which the home says as unknown. */
+  pickUp: Slot<"label" | "all"> | null;
   memory: Slot<MemoryState>;
   spend: Slot<SpendTotals>;
   /** Who refreshes the login and whether it expired (src/home/loginowner.ts);
@@ -234,6 +237,7 @@ export class HomeModel {
     autoRounds: PENDING,
     autoReview: PENDING,
     trigger: null,
+    pickUp: null,
     memory: PENDING,
     spend: PENDING,
     loginHealth: null,
@@ -278,6 +282,7 @@ export class HomeModel {
     this.provider = providerOf(o.model);
     this.after = o.after ?? noTimer;
     if (o.adapters.autoReview.trigger) this.state.trigger = PENDING;
+    if (o.adapters.autoReview.pickUp) this.state.pickUp = PENDING;
     if (o.adapters.loginOwner) this.state.loginHealth = PENDING;
   }
 
@@ -530,6 +535,9 @@ export class HomeModel {
       safe(() => a.memory.status()).then(land("memory")),
       a.autoReview.trigger
         ? safe(() => a.autoReview.trigger!()).then(land("trigger"))
+        : Promise.resolve(),
+      a.autoReview.pickUp
+        ? safe(() => a.autoReview.pickUp!()).then(land("pickUp"))
         : Promise.resolve(),
       safe(() => a.spend.totals()).then(land("spend")),
       a.loginOwner
@@ -990,6 +998,12 @@ export class HomeModel {
     return t?.kind === "known" ? t.value : null;
   }
 
+  /** Which pull requests auto-review picks up by itself, when known. */
+  pickUp(): "label" | "all" | null {
+    const p = this.state.pickUp;
+    return p?.kind === "known" ? p.value : null;
+  }
+
   private switchHost(): SwitchHost {
     const hold = (slot: "autoReview" | "memory", v: Known<unknown>): void => {
       (this.state as unknown as Record<string, unknown>)[slot] = v;
@@ -1000,6 +1014,7 @@ export class HomeModel {
       autoReview: () => this.state.autoReview,
       memory: () => this.state.memory,
       trigger: () => this.trigger(),
+      pickUp: () => this.pickUp(),
       repo: () => this.repo(),
       selected: () => this.selected,
       say: (text, kind) => this.say(text, kind),
@@ -1066,7 +1081,14 @@ export class HomeModel {
       auto_review: auto.kind === "known" ? auto.value : null,
       ...(auto.kind === "unknown" ? { auto_review_unknown_because: auto.why } : {}),
       ...(this.state.trigger
-        ? { auto_review_picks_up: { trigger_label: this.trigger(), review_requests: true } }
+        ? {
+            auto_review_picks_up: {
+              // null: unknown, never "the label"
+              rule: this.pickUp(),
+              trigger_label: this.trigger(),
+              review_requests: true,
+            },
+          }
         : {}),
       memory: nullable(this.state.memory),
       spend: nullable(this.state.spend),

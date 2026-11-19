@@ -11,17 +11,20 @@
 //   proof-result <pr>     the practice review, once its round has finished
 //                         (src/host/proof.ts)
 //   go-live               take the reviewer live, on the attestation sent on
-//                         standard input; on one that is already live, try
-//                         its trigger label again (src/host/golive.ts)
+//                         standard input; on one that is already live,
+//                         answer `done` and restart nothing
+//                         (src/host/golive.ts)
 //   set-trigger label|all change which pull requests the reviewer picks up
-//                         by itself: the labelled ones, or every one. The
-//                         running daemon follows without a restart
-//                         (src/host/trigger.ts)
+//                         by itself: the labelled ones, or every one. Sent
+//                         to the running daemon, which keeps it; the config
+//                         is not rewritten (src/host/trigger.ts)
 //
 // The verbs act for a host's attested operator, on installs a host manages
 // (`[github] token_source = "host"`, src/host/admit.ts): `setup` makes a
 // machine with no config one and refuses a config that is there without the
-// marker, and `go-live` and `set-trigger` refuse any install without it.
+// marker, and every other verb (`review-now` and the two proof verbs
+// included) refuses any install without it, before it takes the lock or asks
+// the daemon anything.
 //
 // Every verb is non-interactive and answers within seconds: one JSON object
 // on stdout, `schema_version` first (the number of the contract the caller

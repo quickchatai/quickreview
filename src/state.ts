@@ -24,6 +24,7 @@ import type { DaemonLoadStatus } from "./eventloop.js";
 import type { MemoryIncident, MemoryStatus } from "./memory/health.js";
 import type { RoundStageSupervisorHealth } from "./session-command-supervisor.js";
 import type { SweepStatus } from "@quickchatai/pi-quickreview/src/sweepstatus.js";
+import type { GithubTrigger } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import type {
   CollisionCommentRecord,
   PriorFindingCheckRow,
@@ -1217,6 +1218,18 @@ CREATE TABLE IF NOT EXISTS drain_state (
   drained_deliveries INTEGER NOT NULL DEFAULT 0,
   since              TEXT,
   updated_at         TEXT NOT NULL
+);
+-- Which pull requests the reviewer picks up by itself, as a host chose it
+-- through the sealed operator channel (the 'set-trigger' command,
+-- src/triggerchoice.ts): ONE row, id = 1, and no row until a host has chosen.
+-- It wins over the config's [github] trigger on a host-managed install, and
+-- lives here rather than in config.toml because the config is on the round
+-- fingerprint's policy surface: a routine change must not rewrite it.
+CREATE TABLE IF NOT EXISTS trigger_choice (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  trigger    TEXT NOT NULL CHECK (trigger IN ('label', 'all')),
+  chosen_at  TEXT NOT NULL,
+  file       TEXT NOT NULL
 );
 -- Worker crash-loop breaker: consecutive worker failures per PR. A PR
 -- with parked_at set gets no worker until the operator's rerun-round or
@@ -6440,6 +6453,33 @@ export class StateStore {
       .immediate();
   }
 
+  /** The trigger a host chose through the operator channel; null when none
+   * was chosen (src/triggerchoice.ts reads it beside the config's own). */
+  triggerChoice(): GithubTrigger | null {
+    const row = this.db.prepare("SELECT trigger FROM trigger_choice WHERE id = 1").get() as
+      { trigger: string } | undefined;
+    if (row === undefined) return null;
+    if (row.trigger === "label" || row.trigger === "all") return row.trigger;
+    throw new Error(`state.db trigger_choice holds ${JSON.stringify(row.trigger)}`);
+  }
+
+  /** Record a host's choice of trigger, from the command file `file`. What
+   * the store held before it, null for none. */
+  setTriggerChoice(trigger: GithubTrigger, file: string): GithubTrigger | null {
+    return this.db
+      .transaction(() => {
+        const was = this.triggerChoice();
+        this.db
+          .prepare(
+            `INSERT INTO trigger_choice (id, trigger, chosen_at, file) VALUES (1, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET trigger=excluded.trigger, chosen_at=excluded.chosen_at, file=excluded.file`,
+          )
+          .run(trigger, this.ts(), file);
+        return was;
+      })
+      .immediate();
+  }
+
   triggerEdgePending(pr: number, kind: "label" | "team_request"): boolean {
     return (
       this.db.prepare("SELECT 1 FROM trigger_edges WHERE pr=? AND kind=?").get(pr, kind) !==
@@ -8675,6 +8715,10 @@ export interface StatusSnapshot {
   /** Where the daemon runs (src/runhost.ts). Absent: not reported (an older
    * daemon, or one assembled without its host facts). */
   run_host?: import("./runhost.js").RunHostStatus;
+  /** The trigger a host chose through the operator channel, null when none
+   * was chosen (src/triggerchoice.ts). Absent: the daemon could not read its
+   * store, or predates the field — unknown, never "none". */
+  trigger_choice?: GithubTrigger | null;
   /** Every open pull request of the reviewed repo, as the last successful
    * reconcile pass listed it (tracked or not): what the board offers to
    * review. Absent until a pass has listed them. */

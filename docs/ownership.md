@@ -46,8 +46,8 @@ direction** — is the owner's explicit call, never an agent's (AGENTS.md invari
   host verb writes the marker into a config that is already there. The
   host's other verbs cannot reach the flag: `host setup` writes the config
   through the same key-refusing writer and comes up in dry-run, and
-  `host set-trigger` writes one other key through it (`[github] trigger`),
-  its result held to "the config as it was, and that key".
+  `host set-trigger` writes no config at all: it sends its choice through
+  the sealed operator channel, and the daemon keeps it in its own state.
   `tests/host-fences.test.ts` holds that nothing under `src/host/` writes the
   flag, that the go-live path has exactly two callers (the home's switch and
   this verb's walk), that an install without the marker does not go live on

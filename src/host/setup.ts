@@ -22,8 +22,9 @@
 // itself (`[github] trigger`): the ones that carry the trigger label, or
 // every one, which spends model usage on every pull request. It is written
 // with the rest of the config. Left out, the config's own stays, and a new
-// config's is `label`. `host set-trigger` changes it later
-// (src/host/trigger.ts).
+// config's is `label`. `host set-trigger` changes it later, and its choice
+// is the running daemon's to keep (src/host/trigger.ts): from then on it wins
+// over this key.
 //
 // What it refuses, in words, before anything is written:
 //
@@ -53,8 +54,11 @@
 // never asked) must be the `<slug>[bot]` the slug implies. A slug that names
 // another App is refused as `identity_mismatch`, since a reviewer that does
 // not know its own login never recognises its own reviews. The config then
-// states `auth = "installation"`, the slug and the login beside the marker.
+// states `auth = "installation"`, the slug and the login beside the marker,
+// both as GitHub spells them: the check ignores case as GitHub does, and the
+// reviewer's own-content checks do not.
 import {
+  githubSpelledSlug,
   hostTokenProblem,
   readHostMarker,
   readTokenFile,
@@ -229,35 +233,44 @@ async function readRepository(
   };
 }
 
+/** The App's slug as GitHub spells it, once the token is proved to be that
+ * App's; otherwise why not. */
+type IdentityRead = { ok: true; slug: string } | { ok: false; answer: HostAnswer };
+
 /**
- * Why the token file's token is not the App `slug` names, or null when it
- * is. Asked of GitHub once, before anything is written: a token that cannot
- * say who it is refuses the setup as much as one that is another App's.
+ * Is the token file's token the App `slug` names? Asked of GitHub once,
+ * before anything is written: a token that cannot say who it is refuses the
+ * setup as much as one that is another App's. The check ignores case, as
+ * GitHub does; the slug it answers with is the one GitHub's login spells,
+ * which is what the config states, since the reviewer recognises its own
+ * reviews by a comparison that does not ignore it.
  */
-async function identityRefusal(
-  ports: HostPorts,
-  token: string,
-  slug: string,
-): Promise<HostAnswer | null> {
+async function identityRead(ports: HostPorts, token: string, slug: string): Promise<IdentityRead> {
   const expected = appBotLogin(slug);
+  const no = (answer: HostAnswer): IdentityRead => ({ ok: false, answer });
   const who = await tokenOwnLogin(ports.fetch, token, ports.apiBase);
   if (!who.ok)
-    return who.status === 401
-      ? refused(
-          "github_token_rejected",
-          "GitHub refused the token in the token file (HTTP 401): the host that manages it renews it",
-        )
-      : refused(
-          "github_unreachable",
-          `${who.detail}, so it could not be checked that it posts as ${expected}. Nothing changed`,
-        );
+    return no(
+      who.status === 401
+        ? refused(
+            "github_token_rejected",
+            "GitHub refused the token in the token file (HTTP 401): the host that manages it renews it",
+          )
+        : refused(
+            "github_unreachable",
+            `${who.detail}, so it could not be checked that it posts as ${expected}. Nothing changed`,
+          ),
+    );
   const problem = tokenIdentityProblem(expected, who.login);
-  return problem === null
-    ? null
-    : refused(
-        "identity_mismatch",
-        `${problem}. --app-slug ${slug} must be the slug of the App the token was minted for. Nothing changed`,
-      );
+  const spelled = problem === null ? githubSpelledSlug(slug, who.login) : null;
+  if (spelled !== null) return { ok: true, slug: spelled };
+  return no(
+    refused(
+      "identity_mismatch",
+      `${problem ?? `the token in the token file acts as ${who.login}, which is not an App's bot login`}. ` +
+        `--app-slug ${slug} must be the slug of the App the token was minted for. Nothing changed`,
+    ),
+  );
 }
 
 const NOT_A_HOSTS = (ports: Pick<HostPorts, "configPath">): string =>
@@ -345,9 +358,12 @@ export async function hostSetup(ports: HostPorts, args: readonly string[]): Prom
     if (!seen.ok) return seen.answer;
 
     // an installation's identity is the slug's: is the token that App's?
+    // The config states the slug as GitHub spells it.
+    let appSlug: string | undefined;
     if (asked.auth === "installation" && asked.appSlug !== undefined) {
-      const wrong = await identityRefusal(ports, file.token, asked.appSlug);
-      if (wrong !== null) return wrong;
+      const who = await identityRead(ports, file.token, asked.appSlug);
+      if (!who.ok) return who.answer;
+      appSlug = who.slug;
     }
 
     let template: string;
@@ -365,9 +381,7 @@ export async function hostSetup(ports: HostPorts, args: readonly string[]): Prom
       timezone: ports.timezone(),
       auth: asked.auth,
       ...(asked.trigger !== undefined ? { trigger: asked.trigger } : {}),
-      ...(asked.auth === "installation" && asked.appSlug !== undefined
-        ? { appSlug: asked.appSlug }
-        : {}),
+      ...(asked.auth === "installation" && appSlug !== undefined ? { appSlug } : {}),
     });
     if (!rendered.ok) return refused("config_invalid", rendered.why);
     try {

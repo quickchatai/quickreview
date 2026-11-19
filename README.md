@@ -252,10 +252,13 @@ with your GitHub identity and your model credential.
        alt="Animation, about two minutes: a GitHub pull-request page for PR #42 beside the PR's own reviewer bot and a lifecycle strip (tracked, queued, reviewing, awaiting author, closed). A review label triggers the bot; it checks out the whole repository, follows callers and library source, and reads the repo's written rules and CI. Lens passes report candidates, the validator drops three, and the bot posts a REQUEST_CHANGES review with two rule-citing blockers, a question and a deferred finding it files as issue #57. The author replies on two threads: the bot concedes one after checking the claim and holds the other, citing the line. After a fix and a re-request, the bot verifies and resolves the fixed threads, leaves the deferred one open, approves on green CI, and a teammate merges.">
 </p>
 
-- **It reviews when asked.** Put the trigger label on a pull request
-  (`AI review requested` unless you rename it), or request a review from the
-  team it watches. One session then follows that pull request through pushes
-  and re-reviews, and keeps track of what it raised.
+- **It reviews when asked, or every pull request if you choose.** Put the
+  trigger label on a pull request (`AI review requested` unless you rename
+  it), or request a review from the team it watches. With
+  `[github] trigger = "all"` it also takes every open pull request that is
+  not a draft, once each, once it is live. One session then follows that
+  pull request through pushes and re-reviews, and keeps track of what it
+  raised.
 - **It starts in dry run.** Each review it would post is saved for you to read,
   and nothing reaches GitHub. Going live is its own step, after you have
   watched one review.

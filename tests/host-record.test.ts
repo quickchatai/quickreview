@@ -10,7 +10,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readBoardProgress } from "../src/boardexport.js";
 import {
   GO_LIVE_PROBLEMS,
-  LABEL_WORDS,
   PROGRESS_STATES,
   SETUP_PROBLEMS,
   SETUP_STEPS,
@@ -197,38 +196,20 @@ describe("what the board export prints", () => {
     });
   });
 
-  // The label is beside a go-live that ended live, in its own closed word.
-  // MUTATION: print `label` as a `problem`, or pass any string through as the
-  // label — a host reads a word its schema does not list, and this fails.
-  it("a go-live that is done says how its trigger label went, in a closed word", () => {
-    const goLive = (over: Record<string, unknown>): void => {
-      mkdirSync(join(stateDir, "onboarding"), { recursive: true });
-      writeFileSync(
-        hostRecordPath(stateDir),
-        JSON.stringify({ go_live: { state: "done", started_at: AT, updated_at: AT, ...over } }),
-      );
-    };
-    goLive({ label: "failed" });
-    expect(readHostRecord(stateDir).go_live).toMatchObject({ state: "done", label: "failed" });
-    expect(readHostProgress(stateDir, { alive }).go_live).toEqual({
-      state: "done",
-      label: "failed",
-    });
-    goLive({ label: "ok" });
-    expect(readHostProgress(stateDir, { alive }).go_live).toEqual({ state: "done", label: "ok" });
-    // nothing has tried the label, or the word is not one of the two: absent
-    goLive({});
+  // A go-live says nothing of a trigger label: no host verb writes one. A
+  // record an earlier build left with a `label` beside it reads without it.
+  // MUTATION: read `label` off the record again in goLiveOf and print it in
+  // readHostProgress — a host reads a field its schema does not list, and
+  // this fails.
+  it("a go-live record carries no label, and one written with it reads without it", () => {
+    mkdirSync(join(stateDir, "onboarding"), { recursive: true });
+    writeFileSync(
+      hostRecordPath(stateDir),
+      JSON.stringify({ go_live: { state: "done", label: "ok", started_at: AT, updated_at: AT } }),
+    );
+    expect(readHostRecord(stateDir).go_live).not.toHaveProperty("label");
     expect(readHostProgress(stateDir, { alive }).go_live).toEqual({ state: "done" });
-    goLive({ label: "label_failed" });
-    expect(readHostProgress(stateDir, { alive }).go_live).toEqual({ state: "done" });
-    // a go-live that did not end live says nothing of a label
-    goLive({ state: "failed", problem: "restart_failed", label: "ok" });
-    expect(readHostProgress(stateDir, { alive }).go_live).toEqual({
-      state: "failed",
-      problem: "restart_failed",
-    });
-    expect([...LABEL_WORDS]).toEqual(["ok", "failed"]);
-    expect(GO_LIVE_PROBLEMS).not.toContain("label_failed");
+    expect(GO_LIVE_PROBLEMS.filter((p) => /label/.test(p))).toEqual([]);
   });
 
   // A lock left by another boot of the machine holds nothing.

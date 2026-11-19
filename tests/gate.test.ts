@@ -110,6 +110,10 @@ describe("the closed mutation vocabulary", () => {
     expect([...MUTATION_KINDS].sort()).toEqual(
       [
         "add_label",
+        // A label's definition in the repository (the trigger label the
+        // daemon makes sure of), never a label on a pull request. An
+        // ordinary kind in every respect — see its describe below.
+        "create_label",
         "create_issue",
         "create_pull",
         "create_review",
@@ -247,6 +251,60 @@ describe("request_reviewer — the escalation feature's second delivery shape", 
     gate.setGuard({ before: async () => ({ block: "pr-merged" }) });
     expect(await gate.execute(request)).toMatchObject({ executed: false, blocked: "pr-merged" });
     expect(executor).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A label's definition is an ordinary kind.
+ *
+ * `create_label` is what the running daemon asks for when the trigger label
+ * is missing from the repository (src/triggerlabel.ts). It behaves like
+ * `add_label`: recorded instead of sent in dry-run, refused with forceLive,
+ * and outside the class that executes in dry-run.
+ */
+describe("create_label — the trigger label's definition", () => {
+  const create: MutationIntent = {
+    kind: "create_label",
+    method: "POST",
+    path: "/repos/o/r/labels",
+    body: { name: "AI review requested", color: "1d76db", description: "Ask for a review" },
+    note: 'create the label "AI review requested" in o/r',
+  };
+
+  // MUTATION: put "create_label" in APP_SELF_CONFIG_KINDS — the gate runs it
+  // for real in dry-run, and this fails.
+  it("is suppressed to state/dryrun in dry-run, like every ordinary kind", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor);
+    const result = await gate.execute(create);
+    expect(executor).not.toHaveBeenCalled();
+    expect(result.executed).toBe(false);
+    expect(JSON.parse(readFileSync(result.dryRunFile!, "utf8"))).toMatchObject({
+      kind: "create_label",
+      path: "/repos/o/r/labels",
+    });
+  });
+
+  it("executes through the ONE executor in live mode", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    expect((await gate.execute(create)).executed).toBe(true);
+    expect(executor).toHaveBeenCalledOnce();
+  });
+
+  it("forceLive THROWS on it — the supersede_own_review bypass is still the only one", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor);
+    await expect(gate.execute({ ...create, forceLive: true })).rejects.toThrow(
+      /forceLive is not allowed/,
+    );
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("is NOT in the app-self-config class — that set is still exactly one kind", () => {
+    expect(MUTATION_KINDS).toContain("create_label");
+    expect(APP_SELF_CONFIG_KINDS as readonly string[]).not.toContain("create_label");
+    expect([...APP_SELF_CONFIG_KINDS]).toEqual(["update_own_webhook_url"]);
   });
 });
 

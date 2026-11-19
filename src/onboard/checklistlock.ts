@@ -51,8 +51,8 @@ import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 
 /** What can hold the lock: the home's switches, or one kind of host verb.
- * `trigger` is a host's `set-trigger`: it writes the config the walks write,
- * for the moment its one edit takes. */
+ * `trigger` is a host's `set-trigger`, for the moment it hands its choice to
+ * the running daemon: never beside a walk that may be restarting it. */
 export const LOCK_HOLDERS = ["home", "setup", "go_live", "proof", "trigger"] as const;
 export type LockHolder = (typeof LOCK_HOLDERS)[number];
 

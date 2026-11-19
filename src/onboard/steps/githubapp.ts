@@ -26,11 +26,12 @@
 //     ever logged (ids and lengths only).
 //   * root rule 1 stays where it is — this is the WIZARD, not the daemon, and
 //     it runs before any daemon exists. The only repo write it makes is
-//     CREATING LABEL DEFINITIONS (POST /repos/{o}/{r}/labels), which is not a
-//     `MutationKind` at all: it never posts a review, never applies or removes
-//     a label on a PR, never pushes a branch, and so never goes near the
-//     MutationGate's kinds. Do not grow this step into a repo-mutating path —
-//     anything the daemon does belongs behind the gate.
+//     CREATING LABEL DEFINITIONS (POST /repos/{o}/{r}/labels), made here
+//     before any gate exists: it never posts a review, never applies or
+//     removes a label on a PR, never pushes a branch. The running daemon's
+//     own creation of the trigger label goes through the gate
+//     (`create_label`, src/triggerlabel.ts). Do not grow this step into a
+//     repo-mutating path — anything the daemon does belongs behind the gate.
 //   * the manifest is CONSUMED, never copied: loadManifest reads
 //     deploy/github-app-manifest.json, the artifact tests/github-app-manifest
 //     .test.ts pins to the webhook handler and the mutation gate. Only three

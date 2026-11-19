@@ -95,6 +95,8 @@ import {
   type ReviewRequestKind,
 } from "./securityrequest.js";
 import { STATE_REQUEST } from "./staterequest.js";
+import { effectiveTrigger } from "./triggerchoice.js";
+import { triggerLabelEnsurer, type TriggerLabelAdapter } from "./triggerlabel.js";
 import {
   PostingOutbox,
   jobPath as postingJobPath,
@@ -115,7 +117,8 @@ export type DaemonAdapter = DispatchAdapter &
   VerdictAdapter &
   Partial<RecheckAdapter> &
   Partial<CiAdapter> &
-  Partial<ConversationAdapter> & {
+  Partial<ConversationAdapter> &
+  Partial<TriggerLabelAdapter> & {
     /** The conversation comment with the gate's note naming why it posts
      * (src/github.ts) — the security request's acknowledgement. */
     createIssueComment?(
@@ -143,11 +146,6 @@ export interface DaemonDeps {
    * in stub-wired daemons: never guess a mutation route from a partial stub. */
   postingDelivery?: PostingDeliveryAdapter;
   cfg?: Config;
-  /** `[github] trigger` as the live config says it now (src/livetrigger.ts):
-   * asked at every reconcile pass, so a change to that one key is followed
-   * without a restart. Absent ⇒ the trigger `cfg` was loaded with. */
-  liveTrigger?: () =>
-    import("@quickchatai/pi-quickreview/src/reviewconfig.js").GithubTrigger | undefined;
   root?: string;
   store?: StateStore;
   adapter?: DaemonAdapter;
@@ -502,6 +500,20 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   store.setAnomalySink((signal) => wakePolicy.onAnomaly(signal));
 
   const gh: DaemonAdapter = deps.adapter ?? buildGitHubAdapter(cfg, stateDir);
+  /** The trigger label made sure of when the daemon follows `label`: the
+   * trigger is read as the reconcile pass reads it. */
+  const ensureTriggerLabel = triggerLabelEnsurer({
+    adapter: gh,
+    trigger: () =>
+      effectiveTrigger({
+        hostManaged: cfg.github.token_source === "host",
+        chosen: store.triggerChoice(),
+        configured: cfg.github.trigger ?? "label",
+      }),
+    name: cfg.github.trigger_label,
+    log: (line) => log(line),
+    logEvent: (kind, data) => store.logEvent(kind, null, data),
+  });
   /** The acknowledgement of a fresh security request, through the gate's
    * `create_issue_comment`; an adapter without it (a stub) posts nothing. */
   const ackSecurityRequest = async (
@@ -988,9 +1000,6 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         // sweep reads session transcripts and is not needed for that, so it
         // starts on the next pass to keep the boot pass short.
         receiptSweep: !bootFirstPass,
-        // The one knob followed between starts: which pull requests the
-        // daemon picks up by itself.
-        ...(deps.liveTrigger ? { trigger: deps.liveTrigger } : {}),
       }).catch((err: unknown) => {
         thrown = err;
         throw err;
@@ -1054,6 +1063,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     // is owed, and asked again here once its backoff is due. Its own guard:
     // it never fails the pass.
     await guard("owed base rechecks", () => retryOwedBaseRechecks(recheckDeps));
+    // The trigger label's definition (src/triggerlabel.ts): asked once after
+    // the first pass and once after each change of the trigger, never at
+    // every pass, through the gate. It never fails the pass.
+    await guard("trigger label", () => ensureTriggerLabel());
     // The poll's outcome reaches status.json now, not at the next heartbeat:
     // "working" is judged on it.
     writeStatus();
@@ -1254,6 +1267,13 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         ...(lastPoll?.error !== undefined ? { error: lastPoll.error } : {}),
         interval_s: cfg.daemon.poll_interval_s,
       };
+      // A host's choice of trigger (src/triggerchoice.ts), for the home and
+      // the board; left out when the store cannot say, never "none".
+      try {
+        snapshot.trigger_choice = store.triggerChoice();
+      } catch (err) {
+        log("trigger choice read failed (the snapshot leaves it out)", err);
+      }
       if (deps.runHost) snapshot.run_host = deps.runHost;
       writeStatusJson(stateDir, snapshot);
       // The board for a host, from the same snapshot. Its own guard, after

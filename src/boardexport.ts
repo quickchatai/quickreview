@@ -13,7 +13,9 @@
 //                are absent.
 //   the config   the repository, the identity, the trigger label, what the
 //                reviewer picks up by itself (`trigger`: labelled pull
-//                requests, or all), and
+//                requests, or all; on a host-managed install the host's
+//                choice in the daemon's board wins, src/triggerchoice.ts,
+//                and with no board to read it from the field is absent), and
 //                `dry_run` as the file says it now (read as text, never
 //                through the loader: before setup there is no config, and
 //                that is an answer too).
@@ -23,9 +25,8 @@
 //                whose GitHub credential is that file (`githubWord`): there,
 //                lapsed by its expiry note, or not there. GitHub is not asked.
 //   progress     `setup`, `go_live` and `proof`: how far a host's setup and
-//                go-live have got (a go-live that is done says how its
-//                trigger label went beside it), and the practice review a
-//                go-live is confirmed against. The host verbs' record and the
+//                go-live have got, and the practice review a go-live is
+//                confirmed against. The host verbs' record and the
 //                checklist's proof, read through one reader
 //                (`readBoardProgress`, src/host/record.ts).
 //
@@ -70,6 +71,7 @@ import { CONTAINER_STATE_DIR, DAEMON_SERVICE, daemonExec } from "./onboard/steps
 import { piAgentDir } from "./piagentdir.js";
 import { requestedContract } from "./schemaflag.js";
 import { readAppConfigToml } from "./shippeddefaults.js";
+import { effectiveTrigger } from "./triggerchoice.js";
 
 // ---- the export's shape ---------------------------------------------------------
 
@@ -105,10 +107,8 @@ export interface BoardProof {
   completed_at?: string;
 }
 
-/** A go-live a host started. `label` is beside its outcome, never part of
- * it: how making sure of the trigger label went once the reviewer was live
- * (src/host/outcomes.ts LABEL_WORDS). */
-export type BoardGoLive = Omit<BoardStep, "step"> & { label?: "ok" | "failed" };
+/** A go-live a host started. */
+export type BoardGoLive = Omit<BoardStep, "step">;
 
 /** The host verbs' records the export carries. */
 export interface BoardProgress {
@@ -217,9 +217,12 @@ interface ConfigFacts {
   trigger_label?: string;
   /** `[github] trigger`, as the file says it now: the value it states, or
    * `label` where it leaves the key out. Absent for a value that is neither
-   * of the two. The daemon reads the same key at every poll
-   * (src/livetrigger.ts), so this is what it follows. */
+   * of the two. The export's `trigger` is this word read with the host's
+   * choice (src/triggerchoice.ts `effectiveTrigger`). */
   trigger?: GithubTrigger;
+  /** The file carries the host-managed marker (`[github] token_source =
+   * "host"`). */
+  host_managed?: true;
   /** Root `dry_run`, as the file says it now. */
   dry_run?: boolean;
 }
@@ -263,6 +266,7 @@ export function configFacts(toml: string): ConfigFacts {
       : {}),
     ...(label !== undefined ? { trigger_label: label } : {}),
     ...(trigger !== undefined ? { trigger } : {}),
+    ...(writtenGithub["token_source"] === "host" ? { host_managed: true as const } : {}),
     ...(typeof merged["dry_run"] === "boolean" ? { dry_run: merged["dry_run"] } : {}),
   };
 }
@@ -460,6 +464,16 @@ export async function boardExport(ports: BoardPorts, contract: number): Promise<
     counted !== undefined && Date.parse(counted.since) <= now && now < Date.parse(counted.until)
       ? counted.count
       : undefined;
+  // What the reviewer picks up by itself: the one reading the daemon's own
+  // pass makes. A host's choice is the running daemon's, read off its board.
+  const trigger =
+    facts === undefined
+      ? undefined
+      : effectiveTrigger({
+          hostManaged: facts.host_managed === true,
+          chosen: board === null ? undefined : board.trigger_choice,
+          configured: facts.trigger,
+        });
 
   return {
     schema_version: contract,
@@ -477,7 +491,7 @@ export async function boardExport(ports: BoardPorts, contract: number): Promise<
     ...(poll !== undefined ? { poll } : {}),
     ...(spend !== undefined ? { spend } : {}),
     ...(reviewedToday !== undefined ? { reviewed_today: reviewedToday } : {}),
-    ...(facts?.trigger !== undefined ? { trigger: facts.trigger } : {}),
+    ...(trigger !== undefined ? { trigger } : {}),
     ...(progress.setup !== undefined ? { setup: progress.setup } : {}),
     ...(progress.go_live !== undefined ? { go_live: progress.go_live } : {}),
     ...(progress.proof !== undefined ? { proof: progress.proof } : {}),

@@ -42,8 +42,9 @@
 //
 //   4. On such an install the trigger the host named (`[github] trigger`:
 //      labelled pull requests, or every pull request) is stated too. A host
-//      that named none leaves the config's own. Changing it later is another
-//      writer's one edit (triggerconfig.ts).
+//      that named none leaves the config's own. Changing it later is no
+//      config edit: a host's `set-trigger` goes to the running daemon, which
+//      keeps the choice in its own store (src/triggerchoice.ts).
 //
 // The last check is the rule itself: the text that comes out states the same
 // `dry_run` as the text that went in, read as the daemon reads it. Anything

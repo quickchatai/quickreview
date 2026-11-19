@@ -511,22 +511,25 @@ it authenticated (shape: `schemas/host.v1.json`;
   --app-slug <slug>`) writes the config and runs this
   walk's steps detached, with the same silent defaults the home's switch uses.
   With `installation` it first checks that the token's own login is
-  `<slug>[bot]`, and refuses (`identity_mismatch`) when it is not.
+  `<slug>[bot]`, and refuses (`identity_mismatch`) when it is not; the slug
+  and login it writes are spelled as GitHub answers them.
   The reviewer comes up in dry-run. On a machine with no config yet it writes
   the marker and the auth mode itself; a config that is already there without
   the marker is refused (`not_host_managed`) before anything is written, so
   an install that keeps its own credential is never made host-managed;
 - `host proof-start <pr>` and `host proof-result <pr>` are the proof round
   below, in two halves that never wait: the second prints the review as it
-  would have been posted, for the host to show its operator;
+  would have been posted, for the host to show its operator. Both, and
+  `host review-now`, refuse an install without the marker
+  (`not_host_managed`), so no proof record is written there;
 - `host go-live` is the go-live step below, on the operator's confirm of that
   practice review, sent as an attestation on standard input. The flag still
   moves only in that step ([ownership.md](ownership.md)), and only on an
   install that carries the marker. The go-live is done once that step has
-  succeeded; the trigger label is made sure of after it and reported beside
-  it (`label`: `ok` or `failed`), never as a failure of the go-live. Called
-  again on an install that is already live, the verb only tries the label
-  again: nothing is re-run and the daemon is not restarted;
+  succeeded, and it writes nothing to GitHub: the trigger label is the live
+  daemon's to make sure of, through the gate. Called again on an install
+  that is already live, the verb answers `done`: nothing is re-run and the
+  daemon is not restarted;
 - `host setup --trigger label|all` and, later, `host set-trigger label|all`
   say which pull requests the reviewer picks up by itself (`[github]
   trigger`): the ones that carry the trigger label (the default), or every
@@ -534,9 +537,14 @@ it authenticated (shape: `schemas/host.v1.json`;
   once. **`all` spends model usage on every pull request**, and switching to
   it queues every open pull request that has no review yet. Under either, a
   push to a reviewed pull request queues nothing by itself, and a review
-  asked for by name (the label, `review-now`) still runs. `set-trigger` is
-  one edit of the config under the same lock; it restarts nothing, because
-  the daemon reads that key again at every poll.
+  asked for by name (the label, `review-now`) still runs. In dry-run `all`
+  takes nothing, so the first pass after go-live takes every open pull
+  request once. `set-trigger` writes no config: under the same lock it sends
+  its choice through the sealed operator channel `review-now` uses, and the
+  running daemon keeps it in its own state, where it wins over `[github]
+  trigger` from the next poll and across restarts. It restarts nothing, and
+  answers `done` once the daemon took it or `sent` while it has not
+  answered.
 
 The host verbs and the home's switches take one lock around the checklist, so
 only one of them changes the setup at a time. The lock's record carries the

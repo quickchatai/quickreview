@@ -68,6 +68,8 @@ export interface FakeDaemon {
   writeFails: boolean;
   /** The command files written, by name. */
   written: string[];
+  /** What each command file written carries, in the order written. */
+  payloads: Record<string, unknown>[];
 }
 
 export interface GithubCall {
@@ -99,9 +101,6 @@ export interface HostWorld {
   viewerAnswer: { status: number; body: unknown };
   /** Real steps that stand in for the fake of the same id. */
   real: SetupStep<OnboardAdapters>[];
-  /** What GitHub answers a label read and a label create with. */
-  labelRead: number;
-  labelCreate: number;
   /** The steps that ran, in order, with what each was handed. */
   ran: Ran[];
   /** A step id that fails, and the name of its failed check. */
@@ -160,8 +159,12 @@ function dockerOver(w: HostWorld): OnboardAdapters["runner"] {
       // the operator command, written as root
       if (args.includes("-u")) {
         if (d.writeFails) return no("daemon commands dir /opt/qcr/commands missing");
-        const name = /'([^']+-onboard-reviewnow-\d+\.json)'/.exec(script)?.[1];
+        const name =
+          /'([^']+-onboard-reviewnow-\d+\.json)'/.exec(script)?.[1] ??
+          /'([^']+-host-settrigger-[a-z]+\.json)'/.exec(script)?.[1];
         if (name !== undefined) d.written.push(name);
+        const payload = /^printf '%s\\n' '(\{[^']*\})'/.exec(script)?.[1];
+        if (payload !== undefined) d.payloads.push(JSON.parse(payload) as Record<string, unknown>);
         return ok();
       }
       if (script.includes(".result.json")) {
@@ -206,8 +209,6 @@ function githubOver(w: HostWorld): typeof fetch {
       if (w.viewerAnswer.status === 0) throw new Error("getaddrinfo ENOTFOUND api.github.test");
       return answer(w.viewerAnswer.status, w.viewerAnswer.body);
     }
-    if (/\/labels\/[^/]+$/.test(url)) return answer(w.labelRead, w.labelRead === 200 ? {} : null);
-    if (/\/labels$/.test(url) && method === "POST") return answer(w.labelCreate, {});
     return answer(404, { message: "Not Found" });
   }) as typeof fetch;
 }
@@ -273,6 +274,7 @@ export function hostWorld(): HostWorld {
       receipt: "queued",
       writeFails: false,
       written: [],
+      payloads: [],
     },
     calls: [],
     github: [],
@@ -283,8 +285,6 @@ export function hostWorld(): HostWorld {
     userAnswer: { status: 200, body: { login: "octo-dev" } },
     viewerAnswer: { status: 404, body: { message: "Not Found" } },
     real: [],
-    labelRead: 404,
-    labelCreate: 201,
     ran: [],
     fail: null,
     refuseGoLive: null,

@@ -30,7 +30,7 @@ import { verifySignature } from "../src/webhook.js";
 // Static, not `await import()` inside the tests: cliops pulls in a large
 // graph, and a mid-test import puts its transform on the test's clock — the
 // one step that stretches without bound when the machine is loaded.
-import { derivedQueueOf, manualQueueOf, stalenessSimulation } from "../src/cliops.js";
+import { allQueueOf, derivedQueueOf, manualQueueOf, stalenessSimulation } from "../src/cliops.js";
 import { parseConfig } from "../src/config.js";
 import type { PrRef } from "../src/github.js";
 import {
@@ -321,6 +321,67 @@ describe("② derived queue (selfscan)", () => {
       expect(derived).toEqual(dryRun ? [10, 14] : [10, 14, 15]);
     });
   }
+
+  // Under `[github] trigger = "all"` the queue holds pull requests no search
+  // lists: the ones the every-pull-request trigger took.
+  // MUTATION: drop `allTriggered` from the probe's manual side (or from
+  // cmdChecklist's deps) — a healthy queue under `all` reports extra=[21,22],
+  // and this fails.
+  it("knows trigger = all: the rows it took are owed, a row nothing asked for is still extra", async () => {
+    const store = new StateStore(":memory:");
+    const cfg = {
+      ...checklistCfg,
+      dry_run: false,
+      github: { ...checklistCfg.github, trigger: "all" as const },
+    };
+    const label = [hit(20)];
+    const open = [20, 21, 22].map((n) => openRef(n, `h${n}`));
+    const adapter: ReconcileAdapter = {
+      searchLabelTriggered: async () => label,
+      searchTeamTriggered: async () => [],
+      listOpenPrs: async () => open,
+      getPr: async (n) => open.find((r) => r.number === n) ?? openRef(n, `h${n}`, "closed"),
+      listBotReviewComments: async () => [],
+    };
+    const hooks: SessionHooks = {
+      async dispatchRound() {},
+      async inject() {},
+      async archiveAndClose() {},
+    };
+    await reconcileOnce({ cfg, store, adapter, hooks });
+    const derived = derivedQueueOf(store.allPrs(), false);
+    const sorted = (xs: number[]): number[] => [...xs].sort((x, y) => x - y);
+    expect(sorted(derived)).toEqual([20, 21, 22]);
+    expect(sorted(allQueueOf(store.allPrs(), false, store))).toEqual([20, 21, 22]);
+    const probe = (withAll: boolean) =>
+      probeQueueDiff({
+        labelTriggered: async () => manualQueueOf(label, "label", false, BOT, store),
+        teamTriggered: async () => [],
+        ...(withAll ? { allTriggered: () => allQueueOf(store.allPrs(), false, store) } : {}),
+        derivedQueue: () => derivedQueueOf(store.allPrs(), false),
+      });
+    expect((await probe(true)).pass).toBe(true);
+    const blind = await probe(false);
+    expect(blind.pass).toBe(false);
+    expect(blind.detail).toContain("extra=[21,22]");
+
+    // a row queued by nothing the checklist knows is still a disagreement
+    seedPr(store, 23, "queued", "h23");
+    const stray = await probe(true);
+    expect(stray.pass).toBe(false);
+    expect(stray.detail).toContain("extra=[23]");
+    // in dry-run the trigger takes nothing, so nothing is counted for it
+    expect(allQueueOf([{ number: 30, state: "reviewing" }], true, store)).toEqual([]);
+  });
+
+  // MUTATION: drop the `allTriggered` line from cmdChecklist's deps — the
+  // probe is never told, and this fails.
+  it("the checklist command hands the probe the rows the trigger took", () => {
+    const code = readFileSync(join(process.cwd(), "src", "cliops.ts"), "utf8");
+    expect(code).toMatch(
+      /allTriggered: \(\) => allQueueOf\(store\.allPrs\(\), cfg\.dry_run, store\)/,
+    );
+  });
 });
 
 const BOT = "example-review[bot]";

@@ -64,8 +64,13 @@ re-asked at every poll. A PR that already has a review, or a round queued or
 running, is marked without being queued; a draft and a paused PR are left
 unmarked and taken by the first pass that finds them ready. The pickup is
 system-provenance (`reconcile`), so a label, a team request or `review-now`
-still outranks it. The daemon reads this one key again at every pass
-(`src/livetrigger.ts`), so changing it needs no restart.
+still outranks it. The step takes nothing while the daemon is in dry-run and
+marks nothing, so the first live pass takes every open PR once. Which trigger
+a pass runs on is `effectiveTrigger` (`src/triggerchoice.ts`): the config's
+key as loaded at start, except on a host-managed install, where a host's
+`set-trigger` choice, kept in state.db (`trigger_choice`) and read again at
+every pass, wins. A choice that cannot be read leaves the trigger unknown, and
+an unknown trigger takes nothing by itself.
 
 Both triggers are *consumed* at dispatch — the label is removed and the team
 review request is deleted through the gated adapter (`consumeTriggers` in

@@ -42,6 +42,29 @@ export function hostManaged(ports: Pick<HostPorts, "read" | "configPath">): bool
   }
 }
 
+/**
+ * The refusal of a verb that acts only on an install a host manages, or null
+ * when the config carries the marker. A config that is not there, or says no
+ * marker, is `not_host_managed`; one that is there and cannot be read is
+ * `config_unreadable`, never "not a host's": what the file says is unknown.
+ */
+export function hostManagedRefusal(
+  ports: Pick<HostPorts, "read" | "configPath">,
+  what: string,
+): HostAnswer | null {
+  let text: string;
+  try {
+    text = ports.read(ports.configPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException | null)?.code === "ENOENT") return notHostManaged(what);
+    return refused(
+      "config_unreadable",
+      `can't read ${ports.configPath} (${err instanceof Error ? err.message : String(err)}). Nothing changed`,
+    );
+  }
+  return hostManagedToml(text) ? null : notHostManaged(what);
+}
+
 /** The refusal for a verb that acts only on an install a host manages. */
 export const notHostManaged = (what: string): HostAnswer =>
   refused(

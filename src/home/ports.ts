@@ -274,6 +274,10 @@ export interface AutoReviewPort {
   /** What auto-review picks up besides a review request: the trigger label
    * (`[github] trigger_label`). Absent: the home does not say. */
   trigger?(): Promise<Known<string>>;
+  /** Which pull requests it picks up by itself: the labelled ones, or every
+   * open one that is not a draft (src/triggerchoice.ts `effectiveTrigger`).
+   * Absent: the home cannot say, and says so. */
+  pickUp?(): Promise<Known<"label" | "all">>;
   /** The switch (src/home/autoreview.ts). Absent: the home only shows it. */
   control?: AutoReviewControl;
 }

@@ -75,6 +75,7 @@ const EVENT_PERMISSION: Record<string, string> = {
 const KIND_WRITE_PERMISSION: Record<Exclude<MutationKind, AppSelfConfigKind>, string> = {
   add_label: "issues", // POST /issues/{n}/labels
   remove_label: "issues", // DELETE /issues/{n}/labels/{label}
+  create_label: "issues", // POST /labels (a label's definition lives on the issues API)
   delete_team_review_request: "pull_requests", // DELETE /pulls/{n}/requested_reviewers
   // Escalation needs no wider App permission: this is a POST on the same
   // route the DELETE above uses, and both are Pull requests: write — which the

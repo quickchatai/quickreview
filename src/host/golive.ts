@@ -33,42 +33,26 @@
 // builds an edit of it; this module is one of the two callers the go-live
 // path has (tests/host-fences.test.ts pins both).
 //
-// Once the reviewer is live the walk makes sure the trigger label exists in
-// the repository, through the function the wizard's steps create their
-// labels with (`ensureLabel`, src/onboard/steps/githubapp.ts): a label
-// definition, read and if missing created with the install's own token, and
-// no review, comment or push. The mutation gate has no kind for a label's
-// definition (its label kinds put a label on a pull request), so this is the
-// wizard's one writer and no second one. The label is not the go-live: the
-// walk ends `done` once the go-live step has succeeded, and says beside it
-// how the label went (`label`: `ok` or `failed`). A host that has only just
-// let its token write commonly sees `failed` first.
+// Nothing here writes to GitHub. The walk ends `done` once the go-live step
+// has succeeded. The trigger label is the live daemon's own to make sure of,
+// through the mutation gate (`create_label`, src/triggerlabel.ts), when it
+// follows the label trigger; no host verb creates it.
 //
 // A repeat call on an install that is already live (the config reads
-// `dry_run = false` and the attestation it went live on is on record) tries
-// the label again and does nothing else: no go-live step, no restart of a
-// daemon that may be mid-round. It answers `done` with the label's word.
-import { expiryInstant, readTokenFile } from "@quickchatai/pi-quickreview/src/hosttoken.js";
+// `dry_run = false` and the attestation it went live on is on record) answers
+// `done` and does nothing else: no go-live step, and no restart of a daemon
+// that may be mid-round.
+import { expiryInstant } from "@quickchatai/pi-quickreview/src/hosttoken.js";
 import { readConfigToml } from "@quickchatai/pi-quickreview/src/shippedconfig.js";
-import { configFacts } from "../boardexport.js";
 import { acquireChecklistLock } from "../onboard/checklistlock.js";
-import { readChecklist } from "../onboard/engine.js";
-import {
-  DEFAULT_LABELS,
-  ensureLabel,
-  labelSpecs,
-  parseRepoSlug,
-} from "../onboard/steps/githubapp.js";
-import { readTomlKey } from "../onboard/steps/ingress.js";
 import { runGoLive } from "../home/switchon.js";
-import { admit, hostManaged, notHostManaged } from "./admit.js";
+import { admit, hostManaged, hostManagedRefusal } from "./admit.js";
 import {
   refused,
   type GoLiveProblem,
   type HostAnswer,
   type HostProof,
   type HostReason,
-  type LabelWord,
 } from "./outcomes.js";
 import { lockOptions, type HostPorts } from "./ports.js";
 import {
@@ -138,8 +122,11 @@ export async function hostGoLive(ports: HostPorts, args: readonly string[]): Pro
   const no = admit(ports);
   if (no !== null) return no;
   if (args.length > 0) return refused("usage", `host go-live takes no argument. ${GO_LIVE_USAGE}`);
-  if (!hostManaged(ports))
-    return notHostManaged("this install's go-live is its owner's own, at the reviewer's home");
+  const unmanaged = hostManagedRefusal(
+    ports,
+    "this install's go-live is its owner's own, at the reviewer's home",
+  );
+  if (unmanaged !== null) return unmanaged;
   let sent: unknown;
   try {
     sent = JSON.parse(await ports.stdin());
@@ -161,9 +148,9 @@ export async function hostGoLive(ports: HostPorts, args: readonly string[]): Pro
   const lock = got.lock;
   let handed = false;
   try {
-    // Already live, on an attestation: the label is all that is left to try.
+    // Already live, on an attestation: there is nothing left to do, and
+    // nothing is run again or restarted.
     if (alreadyLive(ports)) {
-      const label = await labelWord(ports);
       const at = ports.now().toISOString();
       updateHostRecord(ports.stateDir, (r) => {
         const { attestation_pending: _none, ...rest } = r;
@@ -171,13 +158,12 @@ export async function hostGoLive(ports: HostPorts, args: readonly string[]): Pro
           ...rest,
           go_live: {
             state: "done",
-            label,
             started_at: r.go_live?.started_at ?? at,
             updated_at: at,
           },
         };
       });
-      return { state: "done", label };
+      return { state: "done" };
     }
     const why = attestationRefusal(attestation, {
       now: ports.now().getTime(),
@@ -260,49 +246,10 @@ export function alreadyLive(
   }
 }
 
-/** The trigger label's word: there, or not made sure of. Never throws: a
- * label that could not be tried is `failed`, and the reason is logged. */
-async function labelWord(ports: HostPorts): Promise<LabelWord> {
-  try {
-    const label = await ensureTriggerLabel(ports);
-    ports.log(`host go-live: trigger label: ${label.detail}`);
-    return label.ok ? "ok" : "failed";
-  } catch (err) {
-    try {
-      ports.log(`host go-live: trigger label: ${err instanceof Error ? err.message : String(err)}`);
-    } catch {
-      // nowhere to say it: the word is the answer
-    }
-    return "failed";
-  }
-}
-
-/** Make sure the trigger label exists in the reviewed repository, through
- * the wizard's own label writer. */
-async function ensureTriggerLabel(ports: HostPorts): Promise<{ ok: boolean; detail: string }> {
-  let config: string;
-  try {
-    config = ports.read(ports.configPath);
-  } catch {
-    return { ok: false, detail: `${ports.configPath} cannot be read` };
-  }
-  const repo = parseRepoSlug(configFacts(config).repo);
-  if (repo === null) return { ok: false, detail: "the config names no repository" };
-  const file = readTokenFile(ports.secretsDir(), (p) => ports.read(p));
-  if (!file.ok) return { ok: false, detail: `the token file is ${file.reason}` };
-  const name =
-    (readTomlKey(config, "github", "trigger_label") ?? "").trim() || DEFAULT_LABELS.trigger;
-  const choices = readChecklist(ports.stateDir)?.choices ?? {};
-  const label = labelSpecs(config, choices).find((l) => l.name === name);
-  if (label === undefined) return { ok: false, detail: `no trigger label named "${name}"` };
-  const check = await ensureLabel(ports.fetch, ports.apiBase, file.token, repo, label, true);
-  return { ok: check.ok, detail: `${check.name}: ${check.detail}` };
-}
-
 /**
  * Run the go-live walk under the lock `token` names. The process's exit
  * code: 0 when the go-live step succeeded (the reviewer is live), 1
- * otherwise. The host record says which, and how the trigger label went.
+ * otherwise. The host record says which.
  */
 export async function walkGoLive(ports: HostPorts, token: string): Promise<number> {
   if (sessionMarker(ports.env) !== null || ports.inImage) {
@@ -316,10 +263,7 @@ export async function walkGoLive(ports: HostPorts, token: string): Promise<numbe
   }
   const before = readHostRecord(ports.stateDir);
   const startedAt = before.go_live?.started_at ?? ports.now().toISOString();
-  const end = (
-    state: "done" | "failed",
-    o: { problem?: GoLiveProblem; label?: LabelWord } = {},
-  ): void => {
+  const end = (state: "done" | "failed", o: { problem?: GoLiveProblem } = {}): void => {
     updateHostRecord(ports.stateDir, (r) => {
       const { attestation_pending: _taken, ...rest } = r;
       return {
@@ -327,7 +271,6 @@ export async function walkGoLive(ports: HostPorts, token: string): Promise<numbe
         go_live: {
           state,
           ...(o.problem !== undefined ? { problem: o.problem } : {}),
-          ...(o.label !== undefined ? { label: o.label } : {}),
           started_at: startedAt,
           updated_at: ports.now().toISOString(),
         },
@@ -372,9 +315,7 @@ export async function walkGoLive(ports: HostPorts, token: string): Promise<numbe
       ...r,
       attestation: { ...pending, live_at: liveAt },
     }));
-    // The go-live is done from here, whatever the label does: it is said
-    // beside the outcome and is never the outcome.
-    end("done", { label: await labelWord(ports) });
+    end("done");
     return 0;
   } catch (err) {
     ports.log(

@@ -39,6 +39,11 @@
 // a reader prints it only while that day lasts. A count the daemon could not
 // make is left out, never written as zero.
 //
+// It also carries the trigger a host chose (`trigger_choice`, from the status
+// snapshot: src/triggerchoice.ts): a word, or null for no choice. Left out
+// when the daemon could not read its store, so a reader cannot take an
+// unread choice for none.
+//
 // No row carries a URL, a repository name or an identity. A host builds its
 // links from its own record of the repository and the integers here.
 //
@@ -54,7 +59,9 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RoundRow } from "@quickchatai/pi-quickreview/src/storerows.js";
 import { VERDICTS, normalizeVerdict, type Verdict } from "@quickchatai/pi-quickreview/src/types.js";
+import type { GithubTrigger } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import type { PrStateRow, ReviewFailureRow, StatusSnapshot } from "./state.js";
+import { triggerChoiceOf } from "./triggerchoice.js";
 
 /** The file's name in the daemon's state directory. */
 export const BOARD_FILE = "board.json";
@@ -167,6 +174,8 @@ export interface BoardFile {
   spend?: BoardSpend;
   /** Absent when the daemon could not count it (its store, or its timezone). */
   reviewed_today?: BoardReviewedToday;
+  /** The trigger a host chose; null for none. Absent: unknown. */
+  trigger_choice?: GithubTrigger | null;
   reviewing: BoardReviewingRow[];
   reviewed: BoardReviewedRow[];
   /** Absent until a reconcile pass has listed the open pull requests. */
@@ -380,6 +389,7 @@ export function buildBoardFile(
     },
     ...(spend ? { spend } : {}),
     ...(reviewedToday !== undefined ? { reviewed_today: reviewedToday } : {}),
+    ...(snapshot.trigger_choice !== undefined ? { trigger_choice: snapshot.trigger_choice } : {}),
     reviewing: reviewing.rows.map((w) => w.row),
     reviewed: reviewed.rows.map((p) => reviewedRow(p, roundsOf(p.number))),
     ...(open && snapshot.open_prs
@@ -568,6 +578,7 @@ export function parseBoardFile(fileText: string): BoardFile | null {
     health: v["health"] as unknown as BoardHealth,
     spend: readSpend(v["spend"]),
     reviewed_today: readReviewedToday(v["reviewed_today"]),
+    trigger_choice: triggerChoiceOf(v["trigger_choice"]),
     reviewing,
     reviewed,
     // the open list and the time it was listed go together or not at all

@@ -132,15 +132,24 @@ carries a closed `reason` and a `message` in words). The shape is
   sets the reviewer up on a host-supplied installation token (below). The
   slug is required. Before anything is written the verb asks GitHub who the
   token is and refuses, as `identity_mismatch`, a token that is not
-  `<slug>[bot]`. It then states `auth = "installation"`, `app_slug` and
-  `bot_login` beside the marker.
+  `<slug>[bot]` (case is not a difference, as on GitHub). It then states
+  `auth = "installation"`, `app_slug` and `bot_login` beside the marker, both
+  as GitHub spells the login: the reviewer recognises its own reviews and
+  threads by a comparison that does not ignore case. The account step writes
+  GitHub's spelling the same way, and its verify is red on a config that
+  names the App in another case.
 - **Host-managed installs only.** The verbs act for a host's attested
   operator, who exists only where the install's config carries
   `[github] token_source = "host"`. On a machine with no config, `host setup`
   writes that marker and the auth mode itself. On a config that is already
-  there without it, `host setup` and `host go-live` refuse
-  (`not_host_managed`) before anything is written: a host verb never turns an
-  install that keeps its own credential into a host-managed one.
+  there without it, `host setup` refuses (`not_host_managed`) before
+  anything is written: a host verb never turns an install that keeps its own
+  credential into a host-managed one. Every other verb (`review-now`,
+  `proof-start`, `proof-result`, `go-live`, `set-trigger`) refuses any
+  install without the marker the same way, before it takes the setup lock or
+  asks the daemon anything, so the proof record of an install no host manages
+  is its owner's alone. A config that is there and cannot be read answers
+  `config_unreadable` there, not `not_host_managed`.
 - **`host review-now <pr>`** asks the daemon to review one pull request now,
   as `qcr review-now` does.
 - **`host proof-start <pr>` and `host proof-result <pr>`** are the practice
@@ -158,19 +167,22 @@ carries a closed `reason` and a `message` in words). The shape is
   step, detached, and records the attestation. `dry_run` still moves only
   through that one step ([docs/ownership.md](docs/ownership.md) names "a
   host's attested operator"). The go-live is `done` once that step has
-  succeeded. The trigger label is made sure of after it and reported beside
-  it (`label`: `ok` or `failed`), and never fails a go-live: a host whose
-  token has only just been allowed to write commonly reads `failed` first.
-  Called again on an install that is already live, the verb answers `done`
-  with `label`, having tried the label again and nothing else: the go-live
-  step is not re-run and the daemon is not restarted.
+  succeeded, and it writes nothing to GitHub. Called again on an install
+  that is already live, the verb answers `done` and does nothing else: the
+  go-live step is not re-run and the daemon is not restarted.
+- **The trigger label is the live daemon's to make sure of**, through the
+  mutation gate's new ordinary kind `create_label` (a label's definition in
+  the repository; suppressed in dry-run, refused for `forceLive`, outside the
+  app-self-config class). Under `[github] trigger = "label"` the daemon reads
+  whether the label exists once when it starts and once after each change of
+  the trigger, and asks the gate to create it when it is missing; GitHub's
+  422 `already_exists` is success. No host verb writes to GitHub.
 - **Progress is in the board export.** `qcr --schema 3 board` now fills
   `setup` (`running` with the step, `done`, or `failed` with the step and a
   closed `problem`), `go_live` (the same, without a step) and `proof` (the
-  practice round, once `proof-result` has returned it). A go-live that is
-  `done` carries `label` beside it. A walk whose process is gone reads as
-  `failed`, `interrupted`. Both fields' words are closed sets in
-  `schemas/board.v1.json`.
+  practice round, once `proof-result` has returned it). A walk whose process
+  is gone reads as `failed`, `interrupted`. Both fields' words are closed
+  sets in `schemas/board.v1.json`.
 - **One writer of the setup checklist at a time.** The host verbs and the
   terminal home's switches take the same lock around their steps
   (`state/onboarding/checklist.lock`). Whichever finds it taken says by what
@@ -202,25 +214,46 @@ default. A second choice reviews every pull request.
   draft is picked up when it is marked ready; a closed pull request never is.
   Switching to `"all"` queues every open pull request that has no review yet,
   so set it knowing how many your repository has open.
+- **`"all"` takes nothing in dry-run**, and marks nothing. A practice review
+  of every open pull request would be one nobody is shown, and its once-only
+  mark would keep each of them from the live reviewer. So the first pass
+  after go-live takes every open pull request once. A practice review is
+  asked for by name (`qcr review-now`, a host's `proof-start`), and the label
+  still works in dry-run.
 - **A push still queues nothing by itself**, under either value: a pull
   request that is already reviewed is not reviewed again because commits
   landed on it. Ask again with the label, a review request, or
   `qcr review-now <pr>`; those work under both values. A round that failed is
   not asked for again by the trigger either.
-- **The running daemon follows the key without a restart.** It reads
-  `[github] trigger` again at every poll, so a change takes effect at the next
-  one and no round in flight is lost. It is the only key read that way. The
-  pickup is the poll's: on a webhook install a new pull request is picked up
-  at the next poll, not at the moment it is opened.
+- **The config's key is read when the daemon starts**, like every other key.
+  `config.toml` is on the round fingerprint's policy surface, so an edit of it
+  while a round runs is reported as the exec boundary's own controls changed
+  under that round. The pickup is the poll's: on a webhook install a new pull
+  request is picked up at the next poll, not at the moment it is opened.
 - **`host setup --trigger label|all`** records the choice in the config it
   writes; left out, the config's own stays (`label` on a new install).
-  **`host set-trigger label|all`** changes it later: one edit of the config,
-  under the setup lock (`busy` while a setup or a go-live runs), on
-  host-managed installs only (`not_host_managed` anywhere else). It starts and
-  restarts nothing, never touches `dry_run`, and answers `done` with
-  `trigger`.
-- **The board export carries `trigger`** (`label` or `all`), read off the
-  config as written; absent when the config cannot be read or states neither.
+  **`host set-trigger label|all`** changes it later without touching the
+  config: it sends a `set-trigger` command through the sealed operator
+  channel `review-now` uses, and the running daemon keeps the choice in its
+  own store (`trigger_choice` in state.db). From its next poll, and across
+  restarts, that choice wins over the config's `[github] trigger`, so a host
+  changes the trigger with rounds in flight and the round fingerprint never
+  moves. It runs under the setup lock (`busy` while a setup or a go-live
+  runs), on host-managed installs only (`not_host_managed` anywhere else),
+  and needs the reviewer set up and running (`not_set_up`,
+  `reviewer_not_running`, `reviewer_unreachable`). It answers `done` with
+  `trigger` once the daemon took it, `sent` while the daemon has not
+  answered, and `trigger_refused` when the daemon said no. It starts and
+  restarts nothing and never touches `dry_run`.
+- **The board export carries `trigger`** (`label` or `all`): on a
+  host-managed install the host's choice as the running daemon reports it,
+  else the config's word. Absent when it cannot be read: the config cannot be
+  read or states neither, or on a host-managed install the daemon is off.
+  The home's line about what auto-review picks up says the same: "every open
+  pull request that is not a draft" under `all`, and that it is unknown when
+  it cannot be read.
+- **`qcr checklist` knows `all`**: the queue comparison counts the rows the
+  every-pull-request trigger took, which no search lists, as owed.
 
 ## 1.6.0
 

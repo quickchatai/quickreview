@@ -24,9 +24,7 @@ import { acquireChecklistLock } from "../src/onboard/checklistlock.js";
 import { CHOICE_KEYS } from "../src/onboard/choices.js";
 import { GO_LIVE_CONFIRMATION, GO_LIVE_STEP_ID } from "../src/onboard/steps/golive.js";
 import {
-  REPO,
   TEMPLATE,
-  TOKEN,
   WALK_PID,
   finishedRound,
   hostWorld,
@@ -289,60 +287,26 @@ describe("the walk", () => {
     expect(record.attestation_pending).toBeUndefined();
   });
 
-  it("makes sure the trigger label exists, with the token file's token", async () => {
-    await admitted();
-    await runWalk();
-    const label = encodeURIComponent("AI review requested");
-    expect(w.github).toEqual([
-      {
-        method: "GET",
-        url: `https://api.github.test/repos/${REPO}/labels/${label}`,
-        authorization: `Bearer ${TOKEN}`,
-      },
-      {
-        method: "POST",
-        url: `https://api.github.test/repos/${REPO}/labels`,
-        authorization: `Bearer ${TOKEN}`,
-      },
-    ]);
-  });
-
-  it("a label that is already there is left as it is", async () => {
-    w.labelRead = 200;
+  // No host verb writes to GitHub: the trigger label is the live daemon's to
+  // make sure of, through the gate (src/triggerlabel.ts).
+  // MUTATION: make sure of the trigger label in walkGoLive again (the
+  // wizard's `ensureLabel` with the token file's token) — the walk reaches
+  // GitHub, and this fails.
+  it("writes nothing to GitHub: the trigger label is the live daemon's own", async () => {
     await admitted();
     expect(await runWalk()).toBe(0);
-    expect(w.github.map((c) => c.method)).toEqual(["GET"]);
-  });
-
-  // The go-live is the go-live step. The label is said beside it.
-  // MUTATION: end the walk `failed` when the label cannot be created — a
-  // reviewer that posts is reported as one that did not go live, and this fails.
-  it("is done once the go-live step has succeeded, whatever the label did", async () => {
-    w.labelCreate = 403;
-    await admitted();
-    expect(await runWalk()).toBe(0);
-    expect(progress().go_live).toEqual({ state: "done", label: "failed" });
-    expect(readHostRecord(w.stateDir).attestation?.live_at).toBeDefined();
-    // the reason is in the walk's log, never in the record
-    expect(w.logs.join("\n")).toMatch(/trigger label: .*could not create the label/);
-  });
-
-  it("says the label is there when it is, or was made", async () => {
-    await admitted();
-    expect(await runWalk()).toBe(0);
-    expect(progress().go_live).toEqual({ state: "done", label: "ok" });
-  });
-
-  it("a label that cannot even be tried is `failed`, and the go-live is still done", async () => {
-    await admitted();
-    // the host's token is gone by the time the walk gets to the label
-    w.ports.write(join(w.secretsDir, "github_token"), "");
-    expect(await runWalk()).toBe(0);
-    expect(progress().go_live).toEqual({ state: "done", label: "failed" });
     expect(w.github).toEqual([]);
   });
 
-  it("a go-live the step refuses fails with a closed problem, and no label is asked for", async () => {
+  it("is done once the go-live step has succeeded, and says nothing of a label", async () => {
+    await admitted();
+    expect(await runWalk()).toBe(0);
+    expect(progress().go_live).toEqual({ state: "done" });
+    expect(readHostRecord(w.stateDir).attestation?.live_at).toBeDefined();
+    expect(readHostRecord(w.stateDir).go_live).not.toHaveProperty("label");
+  });
+
+  it("a go-live the step refuses fails with a closed problem, and GitHub is asked nothing", async () => {
     w.refuseGoLive = "proof";
     await admitted();
     expect(await runWalk()).toBe(1);
@@ -404,15 +368,14 @@ describe("the walk", () => {
 });
 
 describe("a repeat call on an install that is already live", () => {
-  /** Live, as the walk leaves it: the step ran on the attestation, the config
-   * reads live, and the label could not be made the first time. */
+  /** Live, as the walk leaves it: the step ran on the attestation, and the
+   * config reads live. */
   const wentLive = async (): Promise<void> => {
     await practice();
-    w.labelCreate = 403;
     expect(await send()).toEqual({ state: "started" });
     expect(await runWalk()).toBe(0);
     flipConfig();
-    expect(progress().go_live).toEqual({ state: "done", label: "failed" });
+    expect(progress().go_live).toEqual({ state: "done" });
     w.ran.length = 0;
     w.calls.length = 0;
     w.github.length = 0;
@@ -421,29 +384,29 @@ describe("a repeat call on an install that is already live", () => {
   // MUTATION: drop the `alreadyLive` short-circuit from hostGoLive — the
   // repeat call starts a second walk, which runs the go-live step again and
   // restarts a daemon that posts; this fails.
-  it("only tries the label again: no walk, no step, no restart", async () => {
+  it("answers done and does nothing else: no walk, no step, no restart, no GitHub call", async () => {
     await wentLive();
-    w.labelCreate = 201;
     // the confirm is long stale by now, and that is no reason to refuse
     w.now += 3 * CONFIRM_MAX_AGE_MS;
     const stale = attestation({ confirmed_at: new Date(T_CONFIRMED).toISOString() });
-    expect(await send(stale)).toEqual({ state: "done", label: "ok" });
+    expect(await send(stale)).toEqual({ state: "done" });
     expect(w.launched).toHaveLength(1);
     expect(w.ran).toEqual([]);
     expect(w.calls).toEqual([]);
-    expect(w.github.map((c) => c.method)).toEqual(["GET", "POST"]);
-    expect(progress().go_live).toEqual({ state: "done", label: "ok" });
+    expect(w.github).toEqual([]);
+    expect(progress().go_live).toEqual({ state: "done" });
     // the lock was held for the call and is free again
     const free = acquireChecklistLock(w.stateDir, "home", { pid: WALK_PID });
     expect(free.ok).toBe(true);
     if (free.ok) free.lock.release();
   });
 
-  it("a label that still cannot be made is said again, and nothing else changes", async () => {
+  it("asked again and again, it answers the same, and nothing changes", async () => {
     await wentLive();
     const before = readHostRecord(w.stateDir).attestation;
-    expect(await send()).toEqual({ state: "done", label: "failed" });
-    expect(await send()).toEqual({ state: "done", label: "failed" });
+    expect(await send()).toEqual({ state: "done" });
+    expect(await send()).toEqual({ state: "done" });
+    expect(w.github).toEqual([]);
     expect(w.launched).toHaveLength(1);
     expect(w.ran).toEqual([]);
     expect(readHostRecord(w.stateDir).attestation).toEqual(before);

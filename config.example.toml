@@ -106,9 +106,12 @@ trigger_label = "AI review requested"
 #          knowing how many your repository opens.
 # Under either value a push to a pull request that is already reviewed queues
 # nothing by itself: ask again with the label, a review request, or
-# `qcr review-now <pr>`. The daemon reads this one key again at every poll, so
-# a change needs no restart. Switching to "all" queues every open pull request
-# that has no review yet.
+# `qcr review-now <pr>`. "all" takes nothing while dry_run is true, so the
+# first pass after going live takes every open pull request that has no review
+# yet. Read when the daemon starts, like every other key: this file is on the
+# round fingerprint's policy surface, so edit it between rounds and restart.
+# On a host-managed install (token_source = "host") the host's
+# `set-trigger` choice, kept by the daemon in its own state, wins over this.
 #trigger = "label"
 in_progress_label = "AI review in progress"
 reviewed_label = "Automatic Review"

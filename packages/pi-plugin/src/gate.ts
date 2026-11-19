@@ -14,6 +14,12 @@ import { postingMarker } from "./postingkey.js";
 export type MutationKind =
   | "add_label"
   | "remove_label"
+  // A label's DEFINITION in the reviewed repository (POST
+  // /repos/{o}/{r}/labels), never a label on a pull request: the running
+  // daemon makes sure the trigger label exists when it follows `[github]
+  // trigger = "label"` (src/triggerlabel.ts). An ordinary kind: suppressed in
+  // dry-run, never `forceLive`, never in APP_SELF_CONFIG_KINDS.
+  | "create_label"
   | "delete_team_review_request"
   // Reviewer nomination, the optional escalation feature's second delivery
   // shape (the never-hand-to-a-human rule). It is an ordinary kind and nothing about it
@@ -57,6 +63,7 @@ export type MutationKind =
 export const MUTATION_KINDS: readonly MutationKind[] = [
   "add_label",
   "remove_label",
+  "create_label",
   "delete_team_review_request",
   "request_reviewer",
   "create_review",

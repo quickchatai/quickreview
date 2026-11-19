@@ -150,6 +150,7 @@ function adaptersOver(m: Machine): HomeAdapters {
     autoReview: {
       status: async () => known({ state: m.auto, checkedAt: NOW - 30_000 }),
       trigger: async () => known("AI review requested"),
+      pickUp: async () => known("label" as const),
       control,
     },
     memory: { status: async () => known(m.memory), control: memory },

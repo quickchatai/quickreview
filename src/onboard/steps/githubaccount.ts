@@ -33,8 +33,8 @@
 //      15 most recently pushed are offered), then `GET /repos/{o}/{r}` proves
 //      the account can read it — enough to comment and review;
 //   4. the trigger labels, created exactly as the github_app step creates them
-//      (label DEFINITIONS, POST /repos/{o}/{r}/labels — not a MutationKind:
-//      never a review, a PR label, a comment or a push) with the person's
+//      (label DEFINITIONS, POST /repos/{o}/{r}/labels, before the daemon
+//      runs: never a review, a PR label, a comment or a push) with the person's
 //      token, when the account may (triage or better); otherwise skipped with
 //      the reason, since "review this one PR now" needs no label;
 //   5. config.toml: `[github] auth = "user"`, `bot_login = <login>`,
@@ -127,6 +127,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   HOST_MANAGED,
+  githubSpelledSlug,
   hostTokenProblem,
   readTokenFile,
   tokenIdentityProblem,
@@ -582,34 +583,47 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
     };
   }
 
-  /** Who the token file's token is, against the login the slug implies. */
+  /** Who the token file's token is, against the login the slug implies,
+   * and the slug as GitHub spells it when the token is that App's (null
+   * otherwise). The match ignores case, as GitHub does; the reviewer's
+   * own-content checks do not, so the config states GitHub's spelling. */
   async function identityCheck(
     ctx: StepContext,
     token: string,
     slug: string,
-  ): Promise<CheckResult> {
+  ): Promise<{ check: CheckResult; spelled: string | null }> {
     const expected = botLoginFor(slug);
     const who = await tokenOwnLogin(ctx.adapters.fetch, token, apiBase);
     if (!who.ok)
       return {
-        name: "identity",
-        ok: false,
-        detail:
-          who.status === 401
-            ? `GitHub rejected the token in the token file (HTTP 401): ${HOST_FIXES}`
-            : `could not check that the token posts as ${expected} (${who.detail}); run this step again`,
-      };
-    const problem = tokenIdentityProblem(expected, who.login);
-    return problem === null
-      ? {
-          name: "identity",
-          ok: true,
-          detail: `the token posts as ${who.login}, the login [github] app_slug = "${slug}" implies`,
-        }
-      : {
+        check: {
           name: "identity",
           ok: false,
-          detail: `${problem}. [github] app_slug is "${slug}"; the host that manages this install names the App, and must name the one its token belongs to`,
+          detail:
+            who.status === 401
+              ? `GitHub rejected the token in the token file (HTTP 401): ${HOST_FIXES}`
+              : `could not check that the token posts as ${expected} (${who.detail}); run this step again`,
+        },
+        spelled: null,
+      };
+    const problem = tokenIdentityProblem(expected, who.login);
+    const spelled = problem === null ? githubSpelledSlug(slug, who.login) : null;
+    return spelled !== null
+      ? {
+          check: {
+            name: "identity",
+            ok: true,
+            detail: `the token posts as ${who.login}, the login [github] app_slug = "${slug}" implies`,
+          },
+          spelled,
+        }
+      : {
+          check: {
+            name: "identity",
+            ok: false,
+            detail: `${problem ?? `the token in the token file acts as ${who.login}, which is not an App's bot login`}. [github] app_slug is "${slug}"; the host that manages this install names the App, and must name the one its token belongs to`,
+          },
+          spelled: null,
         };
   }
 
@@ -627,8 +641,8 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
           "installation token your host supplies. There is no sign-in here, nothing to pick, and no App key on this machine",
       },
     ];
-    const slug = configuredSlug(ctx);
-    if (slug === null) {
+    const namedSlug = configuredSlug(ctx);
+    if (namedSlug === null) {
       checks.push({
         name: "app",
         ok: false,
@@ -641,7 +655,12 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
       checks.push({ name: "token", ok: false, detail: hostTokenProblem(file) });
       return { ok: false, checks };
     }
-    const data = { route: "installation", app_slug: slug, cron: "host", gh_path: null };
+    const data = {
+      route: "installation",
+      app_slug: namedSlug,
+      cron: "host",
+      gh_path: null,
+    };
     const currentText = readTextOrNull(ctx.adapters.paths.configPath);
     const configured = currentText ? readTomlKey(currentText, "github", "repo") : null;
     const repo =
@@ -660,9 +679,11 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
     const access = await installationRepoRead(ctx.adapters.fetch, apiBase, file.token, repo);
     checks.push(access);
     if (!access.ok) return { ok: false, checks, data };
-    const identity = await identityCheck(ctx, file.token, slug);
-    checks.push(identity);
-    if (!identity.ok) return { ok: false, checks, data };
+    const identity = await identityCheck(ctx, file.token, namedSlug);
+    checks.push(identity.check);
+    if (identity.spelled === null) return { ok: false, checks, data };
+    // from here the slug is GitHub's spelling of it
+    const slug = identity.spelled;
     checks.push({
       name: "refresh",
       ok: true,
@@ -712,7 +733,14 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
     return {
       ok: checks.every((c) => c.ok),
       checks,
-      data: { ...data, login, repo: repoSlug, labels: false, restart_owed: delivery.restartOwed },
+      data: {
+        ...data,
+        app_slug: slug,
+        login,
+        repo: repoSlug,
+        labels: false,
+        restart_owed: delivery.restartOwed,
+      },
     };
   }
 
@@ -763,7 +791,18 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
     if (repo) {
       const access = await installationRepoRead(ctx.adapters.fetch, apiBase, file.token, repo);
       checks.push(access);
-      if (access.ok && slug !== null) checks.push(await identityCheck(ctx, file.token, slug));
+      if (access.ok && slug !== null) {
+        const identity = await identityCheck(ctx, file.token, slug);
+        checks.push(identity.check);
+        // a config that names the App in another case than GitHub's is not
+        // one the reviewer recognises its own reviews by
+        if (identity.spelled !== null && identity.spelled !== slug)
+          checks.push({
+            name: "identity-spelling",
+            ok: false,
+            detail: `[github] app_slug is "${slug}", but GitHub spells the App's login ${identity.spelled}[bot], and the reviewer recognises its own reviews by that exact spelling: run this step again`,
+          });
+      }
     } else {
       checks.push({
         name: "repo",

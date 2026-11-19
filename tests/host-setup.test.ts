@@ -7,6 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse } from "smol-toml";
+import { isOwnContent } from "@quickchatai/pi-quickreview/src/identity.js";
 import { parseCoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { configFacts } from "../src/boardexport.js";
@@ -165,7 +166,27 @@ describe("an installation token", () => {
     expect(w.calls).toEqual([]);
   });
 
-  // MUTATION: drop identityRefusal from hostSetup — a slug that names another
+  // MUTATION: write the slug as it was asked (`appSlug: asked.appSlug` in
+  // hostSetup's render) — the config says my-reviewer[bot], GitHub posts as
+  // My-Reviewer[bot], the reviewer's case-exact own-content check misses its
+  // own review, and this fails.
+  it("a slug asked in another case than GitHub's is written as GitHub spells it", async () => {
+    w.viewerAnswer = { status: 200, body: { data: { viewer: { login: "My-Reviewer[bot]" } } } };
+    expect(await hostSetup(w.ports, INSTALL)).toEqual({ state: "started" });
+    expect(github()).toMatchObject({ app_slug: "My-Reviewer", bot_login: "My-Reviewer[bot]" });
+    const loaded = parseCoreConfig(w.config()!).github;
+    expect(loaded).toMatchObject({ app_slug: "My-Reviewer", bot_login: "My-Reviewer[bot]" });
+    // a review GitHub shows under its own spelling of the login is the reviewer's
+    expect(isOwnContent(loaded, "My-Reviewer[bot]", "a review body")).toBe(true);
+    // the same call again, in the asked case, is the same reviewer and
+    // changes nothing
+    expect(await runWalk()).toBe(0);
+    const written = w.config();
+    expect(await hostSetup(w.ports, INSTALL)).toEqual({ state: "started" });
+    expect(w.config()).toBe(written);
+  });
+
+  // MUTATION: drop identityRead from hostSetup — a slug that names another
   // App is written, the reviewer never recognises its own reviews, and this fails.
   it("refuses a token that is not the App the slug names, naming both, before anything is written", async () => {
     w.viewerAnswer = { status: 200, body: { data: { viewer: { login: "other-app[bot]" } } } };

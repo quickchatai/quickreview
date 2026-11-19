@@ -107,6 +107,43 @@ export function closureReachesStateStore(
   return [...new Set(hits)].sort();
 }
 
+/**
+ * Every module in the runtime import closure of `entries` (repo-relative,
+ * sorted, the entries included): the same edges `closureReachesStateStore`
+ * follows (static and dynamic imports, into the review core through its
+ * package specifiers; type-only imports are not edges), with no stop at the
+ * store. For a fence that a module does not load another.
+ */
+export function runtimeClosure(root: string, entries: readonly string[]): string[] {
+  const files = new Set(
+    [...SRC_DIRS, ...EXTENSION_DIRS].flatMap((d) => tsFilesUnder(join(root, d))),
+  );
+  const seen = new Set<string>();
+  const queue: string[] = [];
+  for (const entry of entries) {
+    const start = join(root, entry);
+    if (!files.has(start)) throw new Error(`${entry} does not exist under ${root}`);
+    if (!seen.has(start)) {
+      seen.add(start);
+      queue.push(start);
+    }
+  }
+  while (queue.length > 0) {
+    const f = queue.shift()!;
+    for (const spec of runtimeSpecifiers(readFileSync(f, "utf8"))) {
+      const inCore = spec.startsWith(`${CORE_NAME}/`)
+        ? join(root, CORE_PACKAGE, spec.slice(CORE_NAME.length + 1))
+        : null;
+      if (inCore === null && !spec.startsWith(".")) continue;
+      const next = (inCore ?? resolve(dirname(f), spec)).replace(/\.js$/, ".ts");
+      if (!files.has(next) || seen.has(next)) continue;
+      seen.add(next);
+      queue.push(next);
+    }
+  }
+  return [...seen].map((f) => relative(root, f)).sort();
+}
+
 /** Words that name the store in the worker's own code (comments removed). */
 export function workerNamesTheStore(root: string, entry = "src/botworker.ts"): string[] {
   const file = join(root, entry);

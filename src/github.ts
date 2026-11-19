@@ -1406,6 +1406,49 @@ export class GitHubAdapter {
     }
   }
 
+  /** Is a label of this name defined in the repository? (`GET
+   * /repos/{o}/{r}/labels/{name}`: a read, direct; GitHub's 404 is no.) */
+  async hasLabel(name: string): Promise<boolean> {
+    try {
+      await this.request(
+        "GET",
+        `/repos/${this.owner}/${this.repo}/labels/${encodeURIComponent(name)}`,
+      );
+      return true;
+    } catch (err) {
+      if (err instanceof GitHubRequestError && err.status === 404) return false;
+      throw err;
+    }
+  }
+
+  /** Create a label's DEFINITION in the repository, through the gate
+   * (`create_label`; in dry-run it is recorded, not sent). A name GitHub
+   * already has (its 422 `already_exists`) is the outcome wanted, not an
+   * error: someone, or another process, got there first. */
+  async createLabel(label: {
+    name: string;
+    color: string;
+    description: string;
+  }): Promise<GateResult> {
+    try {
+      return await this.gate.execute({
+        kind: "create_label",
+        method: "POST",
+        path: `/repos/${this.owner}/${this.repo}/labels`,
+        body: { name: label.name, color: label.color, description: label.description },
+        note: `create the label "${label.name}" in ${this.owner}/${this.repo}`,
+      });
+    } catch (err) {
+      if (
+        err instanceof GitHubRequestError &&
+        err.status === 422 &&
+        err.detail.includes("already_exists")
+      )
+        return { executed: false, response: { already_exists: label.name } };
+      throw err;
+    }
+  }
+
   /** Consume the team trigger: DELETE with the JSON body, then verify. With
    * no `[github] review_team` there is no team request to clear, and nothing
    * is asked of the gate. */

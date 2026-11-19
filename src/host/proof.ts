@@ -25,6 +25,11 @@
 //                 here that writes the proof record: a go-live is admitted on
 //                 a practice round this verb returned, and on no other.
 //
+// All three act on installs a host manages, and on no other
+// (src/host/admit.ts): each refuses `not_host_managed` before it takes the
+// lock or asks the daemon anything. Elsewhere a review is asked for, and a
+// practice review shown, at the install's own home.
+//
 // The daemon's state is read as the operator would read it: its own
 // `qcr why <n> --json`, inside its container.
 import {
@@ -56,7 +61,7 @@ import {
 import type { StackTransport } from "../onboard/steps/transport.js";
 import { readConfigToml } from "@quickchatai/pi-quickreview/src/shippedconfig.js";
 import { configFacts } from "../boardexport.js";
-import { admit } from "./admit.js";
+import { admit, hostManagedRefusal } from "./admit.js";
 import {
   HOST_MESSAGE_CAP,
   PROOF_BODY_CAP,
@@ -107,14 +112,14 @@ const isMissingFile = (err: unknown): boolean =>
   (err as NodeJS.ErrnoException | null)?.code === "ENOENT";
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 
-interface Standing {
+export interface Standing {
   transport: StackTransport;
   /** The config's `dry_run`; null when the file does not say. */
   dryRun: boolean | null;
 }
 
 /** Is there a reviewer to ask: a repository set up, and a daemon running? */
-async function standing(ports: HostPorts): Promise<Standing | HostAnswer> {
+export async function standing(ports: HostPorts): Promise<Standing | HostAnswer> {
   let repo: string | undefined;
   let dryRun: boolean | null = null;
   try {
@@ -146,7 +151,7 @@ async function standing(ports: HostPorts): Promise<Standing | HostAnswer> {
   return { transport, dryRun };
 }
 
-const isAnswer = (v: Standing | HostAnswer): v is HostAnswer => "state" in v;
+export const isAnswer = (v: Standing | HostAnswer): v is HostAnswer => "state" in v;
 
 /** The daemon's own record of the pull request, or null when it cannot be read. */
 async function observe(transport: StackTransport, pr: number): Promise<RoundObservation | null> {
@@ -154,10 +159,11 @@ async function observe(transport: StackTransport, pr: number): Promise<RoundObse
   return r.code === 0 ? parseWhy(r.stdout) : null;
 }
 
-type Receipt = { kind: "queued" } | { kind: "refused"; reason: string } | { kind: "pending" };
+export type Receipt =
+  { kind: "queued" } | { kind: "refused"; reason: string } | { kind: "pending" };
 
 /** The daemon's answer to the command file `name`, read once. */
-async function receiptOf(transport: StackTransport, name: string): Promise<Receipt> {
+export async function receiptOf(transport: StackTransport, name: string): Promise<Receipt> {
   const read = await transport.exec(reviewNowResultArgv(name));
   const body = read.code === 0 ? read.stdout.trim() : "";
   if (body === "" || body === "pending") return { kind: "pending" };
@@ -210,6 +216,13 @@ const unwritten = (detail: string): HostAnswer =>
     `the request could not be handed to the reviewer (${detail}). Nothing changed`,
   );
 
+/** Asked of every verb here, before the lock and before the daemon is: on an
+ * install no host manages, a review is asked for and a practice review is
+ * shown at its own home, and the proof record is its owner's alone to write.
+ * A refusal leaves no file behind. */
+const NOT_A_HOSTS =
+  "this install's reviews and its practice review are asked for at its own home, by its owner";
+
 const daemonRefused = (pr: number, reason: string): HostAnswer =>
   refused("review_refused", `the reviewer refused to review #${pr}: ${reason}`);
 
@@ -222,6 +235,8 @@ export async function hostReviewNow(
   if (no !== null) return no;
   const pr = parsePrArg("review-now", args);
   if (typeof pr === "string") return refused("usage", pr);
+  const unmanaged = hostManagedRefusal(ports, NOT_A_HOSTS);
+  if (unmanaged !== null) return unmanaged;
   const at = await standing(ports);
   if (isAnswer(at)) return at;
   const asked = await askForReview(ports, at.transport, pr);
@@ -249,6 +264,8 @@ export async function hostProofStart(
   if (no !== null) return no;
   const pr = parsePrArg("proof-start", args);
   if (typeof pr === "string") return refused("usage", pr);
+  const unmanaged = hostManagedRefusal(ports, NOT_A_HOSTS);
+  if (unmanaged !== null) return unmanaged;
   const at = await standing(ports);
   if (isAnswer(at)) return at;
   if (at.dryRun === null)
@@ -471,6 +488,8 @@ export async function hostProofResult(
   if (no !== null) return no;
   const pr = parsePrArg("proof-result", args);
   if (typeof pr === "string") return refused("usage", pr);
+  const unmanaged = hostManagedRefusal(ports, NOT_A_HOSTS);
+  if (unmanaged !== null) return unmanaged;
   const request = readHostRecord(ports.stateDir).proof_request;
   if (request === undefined || request.pr !== pr) return { state: "not_started", pr };
   const at = await standing(ports);

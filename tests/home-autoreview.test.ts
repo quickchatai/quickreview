@@ -304,6 +304,42 @@ describe("the real adapter reads this machine's stack", () => {
     const live = composeOver({ ps: ok("") }, "dry_run = false\n").port;
     expect(await live.control!.dryRun()).toEqual(known(false));
   });
+
+  // Which pull requests it picks up, by the reading the daemon's own pass
+  // makes (src/triggerchoice.ts): on a host-managed install the host's
+  // choice, out of the running daemon's status.json.
+  // MUTATION: answer the config's word on a host-managed install without
+  // reading the daemon's choice — the home says `label` while the host
+  // chose `all`, and this fails; or answer it with the daemon off — the
+  // unknown case fails.
+  it("says the trigger it picks up by: the config's word, or a host's choice from the running daemon", async () => {
+    // an install that keeps its own credential: the config's word, Docker unasked
+    const own = composeOver({ ps: ok("") }, '[github]\ntrigger = "all"\n');
+    expect(await own.port.pickUp!()).toEqual(known("all"));
+    expect(own.calls).toEqual([]);
+    expect(await composeOver({ ps: ok("") }).port.pickUp!()).toEqual(known("label"));
+    expect(
+      (await composeOver({ ps: ok("") }, '[github]\ntrigger = "every"\n').port.pickUp!()).kind,
+    ).toBe("unknown");
+
+    const HOSTED = '[github]\ntoken_source = "host"\nauth = "user"\n';
+    const up = (choice: unknown) =>
+      composeOver(
+        { ps: ok(psRow("daemon", "running")), cat: ok(snapshot({ trigger_choice: choice })) },
+        HOSTED,
+      ).port.pickUp!();
+    expect(await up("all")).toEqual(known("all"));
+    expect(await up("label")).toEqual(known("label"));
+    // no choice made: the config's word
+    expect(await up(null)).toEqual(known("label"));
+    // an older daemon that does not report it, the daemon off, Docker silent
+    expect((await up(undefined)).kind).toBe("unknown");
+    const off = composeOver({ ps: ok(psRow("memory", "running")) }, HOSTED);
+    expect((await off.port.pickUp!()).kind).toBe("unknown");
+    expect(off.calls.some((c) => c.includes("cat"))).toBe(false);
+    const down = composeOver({ ps: { code: 1, stdout: "", stderr: "no docker" } }, HOSTED);
+    expect((await down.port.pickUp!()).kind).toBe("unknown");
+  });
 });
 
 // A host-managed install (`[github] token_source = "host"`): its host starts
@@ -375,6 +411,7 @@ describe("the switch on a host-managed install", () => {
 function adapters(
   auto: () => Promise<Known<AutoReviewStatus>>,
   trigger?: Known<string>,
+  pickUp: Known<"label" | "all"> = known("label"),
 ): HomeAdapters {
   return {
     login: { providers: async () => known(["openai-codex"]) },
@@ -386,22 +423,29 @@ function adapters(
     repo: { repo: async () => known("acme/widgets") },
     clock: { now: () => NOW },
     reviews: idleReviews(),
-    autoReview: { status: auto, ...(trigger ? { trigger: async () => trigger } : {}) },
+    autoReview: {
+      status: auto,
+      ...(trigger ? { trigger: async () => trigger, pickUp: async () => pickUp } : {}),
+    },
     memory: { status: async () => known("off" as const) },
     spend: { totals: async () => unknown("not yet") },
   };
 }
 
-async function panelFor(reading: AutoReviewReading, trigger?: Known<string>): Promise<string> {
+async function panelFor(
+  reading: AutoReviewReading,
+  trigger?: Known<string>,
+  o: { pickUp?: Known<"label" | "all">; width?: number } = {},
+): Promise<string> {
   const pi = fakePi();
   await createHome({
-    adapters: adapters(async () => autoReviewLabel(reading), trigger),
+    adapters: adapters(async () => autoReviewLabel(reading), trigger, o.pickUp),
     model: "openai-codex/gpt-6.1-sol",
     tools: "reviewer",
     every: () => () => {},
   })(pi.api);
   await pi.start();
-  return pi.render(100, 40).lines.join("\n");
+  return pi.render(o.width ?? 100, 40).lines.join("\n");
 }
 
 describe("the status line renders every label from a snapshot", () => {
@@ -459,5 +503,29 @@ describe("the status line renders every label from a snapshot", () => {
     expect(unread).toMatch(
       /picks up pull requests with the trigger label \(which one is unknown\) or a review request/,
     );
+  });
+
+  // The home's narrowest column is 74: each line is said whole there.
+  // MUTATION: drop the `all` branch of pickUpPhrase — the home says the
+  // label under `all`, a false fact about what is reviewed, and this fails.
+  // Or answer the label wording when the rule cannot be read — this fails.
+  it("says every open pull request under `all`, and unknown when which cannot be read, at 74 columns", async () => {
+    const all = await panelFor(running(snapshot()), known("AI review requested"), {
+      pickUp: known("all"),
+      width: 74,
+    });
+    expect(all).toMatch(/ {2}picks up every open pull request that is not a draft\s*│/);
+    expect(all).not.toMatch(/labelled "AI review requested"/);
+    const unread = await panelFor(running(snapshot()), known("AI review requested"), {
+      pickUp: unknown("the daemon is not running"),
+      width: 74,
+    });
+    expect(unread).toMatch(
+      / {2}picks up labelled pull requests or every one \(which is unknown\)\s*│/,
+    );
+    expect(unread).not.toMatch(/labelled "AI review requested"/);
+    for (const text of [all, unread])
+      for (const line of text.split("\n").filter((l) => l.includes("picks up")))
+        expect(line).not.toContain("…");
   });
 });

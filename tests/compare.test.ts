@@ -220,7 +220,10 @@ describe("(b) invariant scan", () => {
     expect(ALLOWED_MUTATION_KINDS).toContain("create_review");
     // An escalation review request is a legitimate intent.
     expect(ALLOWED_MUTATION_KINDS).toContain("request_reviewer");
-    expect(ALLOWED_MUTATION_KINDS).toHaveLength(11);
+    // The daemon's request for a missing trigger label's definition is a
+    // legitimate intent too.
+    expect(ALLOWED_MUTATION_KINDS).toContain("create_label");
+    expect(ALLOWED_MUTATION_KINDS).toHaveLength(12);
     // Every allowed kind is a gate kind, and the gate kinds refused are
     // exactly these two — a new gate kind lands here, refused, until it is
     // put on the allowlist on purpose.

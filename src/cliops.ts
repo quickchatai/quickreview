@@ -182,6 +182,20 @@ export function derivedQueueOf(
     .map((r) => r.number);
 }
 
+/** ② The rows of the derived queue the every-pull-request trigger took: a
+ * queued row that carries its once-only mark (`trigger_levels`, kind `all`,
+ * src/reconcile.ts). No search lists such a pull request, and it is owed its
+ * review, so the manual side counts it. Read whatever the trigger is now:
+ * going back to `label` takes nothing out of the queue. In dry-run the
+ * trigger takes nothing, so there are none. */
+export function allQueueOf(
+  rows: ReadonlyArray<{ number: number; state: string }>,
+  dryRun: boolean,
+  store: Pick<StateStore, "triggerLevel">,
+): number[] {
+  return derivedQueueOf(rows, dryRun).filter((n) => store.triggerLevel(n, "all") === true);
+}
+
 /** What the manual side reads to judge a search hit the way reconcile does. */
 export type TriggerEligibilityStore = Pick<
   StateStore,
@@ -227,21 +241,31 @@ export function manualQueueOf(
     .map((item) => item.number);
 }
 
+/**
+ * The webhook secret the checklist's tunnel probe signs with; "" when there
+ * is none to read. Under a token-file credential none is read at all: the
+ * person has no App, and a host-supplied installation's App is the host's.
+ * A file that cannot be read is "" too: the tunnel probe then fails with its
+ * own detail.
+ */
+export function checklistWebhookSecret(
+  github: Pick<Config["github"], "auth" | "secrets_dir">,
+  read: (path: string) => string = (path) => readFileSync(path, "utf8"),
+): string {
+  if (usesTokenFile(github)) return "";
+  try {
+    return read(join(github.secrets_dir, "webhook_secret")).trim();
+  } catch {
+    return "";
+  }
+}
+
 export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
   const root = sandboxRoot();
   const cfg = loadConfig();
   const p = parts ?? buildParts(root, cfg);
   const store = new StateStore(join(root, "state", "state.db"));
-  let secret = "";
-  // Under a token-file credential there is no webhook secret to read: the
-  // person has no App, and a host-supplied installation's App is the host's.
-  if (!usesTokenFile(cfg.github)) {
-    try {
-      secret = readFileSync(join(cfg.github.secrets_dir, "webhook_secret"), "utf8").trim();
-    } catch {
-      // No secrets on this machine — the tunnel probe will fail with detail.
-    }
-  }
+  const secret = checklistWebhookSecret(cfg.github);
   const deps: ChecklistDeps = {
     tunnel: {
       url: `http://127.0.0.1:${cfg.server.port}/webhook`,
@@ -276,6 +300,7 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
           botAccountLogin(cfg.github),
           store,
         ),
+      allTriggered: () => allQueueOf(store.allPrs(), cfg.dry_run, store),
       derivedQueue: () => derivedQueueOf(store.allPrs(), cfg.dry_run),
     },
     staleness: stalenessSimulation(cfg),

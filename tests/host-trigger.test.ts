@@ -1,9 +1,10 @@
 // What triggers a review, as a host says it for its operator: `host setup
-// --trigger label|all` records it (src/host/setup.ts), and `host set-trigger
-// label|all` changes it later (src/host/trigger.ts) with one edit of the
-// config (src/onboard/steps/triggerconfig.ts), under the checklist lock, on
-// installs a host manages and on no other. Nothing is started or restarted:
-// the running daemon follows the key by itself (tests/live-trigger.test.ts).
+// --trigger label|all` records it in the config it writes
+// (src/host/setup.ts), and `host set-trigger label|all` changes it later
+// (src/host/trigger.ts) by sending it to the running daemon through the
+// sealed operator channel, under the checklist lock, on installs a host
+// manages and on no other. The config is never rewritten by it: the daemon
+// keeps the choice (tests/trigger-choice.test.ts).
 //
 // Driven over the host rig: the config is a real file in a scratch directory,
 // GitHub and Docker are fakes.
@@ -13,13 +14,18 @@ import { parse } from "smol-toml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GITHUB_TRIGGERS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { configFacts } from "../src/boardexport.js";
+import { validateCommand } from "../src/commands.js";
 import { TRIGGER_WORDS } from "../src/host/outcomes.js";
 import { hostSetup, parseSetupArgs } from "../src/host/setup.js";
-import { SET_TRIGGER_USAGE, hostSetTrigger, parseTriggerArg } from "../src/host/trigger.js";
-import { liveTrigger, triggerOfToml } from "../src/livetrigger.js";
+import {
+  SET_TRIGGER_USAGE,
+  hostSetTrigger,
+  parseTriggerArg,
+  setTriggerWriteArgv,
+} from "../src/host/trigger.js";
 import { acquireChecklistLock } from "../src/onboard/checklistlock.js";
 import { renderHostConfig, type HostConfigChoice } from "../src/onboard/steps/hostconfig.js";
-import { renderTriggerConfig } from "../src/onboard/steps/triggerconfig.js";
+import { triggerOfToml } from "../src/triggerchoice.js";
 import {
   MARKER_ONLY,
   REPO,
@@ -33,107 +39,14 @@ import {
 type Doc = Record<string, unknown>;
 const doc = (text: string): Doc => parse(text) as Doc;
 const githubOf = (text: string): Doc => (doc(text)["github"] ?? {}) as Doc;
-/** The root `dry_run` line as written, comment and all. */
-const dryRunLine = (text: string): string | undefined => /^dry_run\s*=.*$/m.exec(text)?.[0];
-/** The lines two texts of the same length differ in, as the second has them. */
-const changedLines = (a: string, b: string): string[] => {
-  const before = a.split("\n");
-  return b.split("\n").filter((line, i) => line !== before[i]);
-};
-/** `text` read as TOML, without the trigger. */
-const withoutTrigger = (text: string): Doc => {
-  const d = doc(text);
-  const github = { ...((d["github"] ?? {}) as Doc) };
-  delete github["trigger"];
-  return { ...d, github };
-};
-const rendered = (existing: string, trigger: "label" | "all"): string => {
-  const r = renderTriggerConfig(existing, trigger);
-  if (!r.ok) throw new Error(r.why);
-  return r.text;
-};
 
-// ---- the one edit ----------------------------------------------------------------
-
-describe("the config text with the trigger in it", () => {
-  it("the shipped template documents the key, commented out: a config without it is label", () => {
+describe("the shipped template", () => {
+  it("documents the key, commented out: a config without it is label", () => {
     expect(TEMPLATE).toMatch(/^#trigger = "label"$/m);
     expect(githubOf(TEMPLATE)).not.toHaveProperty("trigger");
     expect(triggerOfToml(TEMPLATE)).toBe("label");
     // and it says what `all` costs, where the person who sets it reads
     expect(TEMPLATE).toMatch(/model usage on EVERY pull request/);
-  });
-
-  // MUTATION: append the key at the end of the file instead of patching the
-  // `[github]` table — a second line changes (or the key lands in another
-  // table), and this fails.
-  it("is that one line, in place: every other line is the config's own", () => {
-    const before = setUpConfig();
-    const after = rendered(before, "all");
-    expect(after.split("\n").length).toBe(before.split("\n").length);
-    expect(changedLines(before, after)).toEqual(['trigger = "all"']);
-    expect(githubOf(after)["trigger"]).toBe("all");
-    expect(withoutTrigger(after)).toEqual(withoutTrigger(before));
-    expect(dryRunLine(after)).toBe(dryRunLine(before));
-
-    // and back: the value alone is replaced
-    const back = rendered(after, "label");
-    expect(changedLines(after, back)).toEqual(['trigger = "label"']);
-    expect(triggerOfToml(back)).toBe("label");
-  });
-
-  it("a config that holds only a host's marker gets the key in its own table", () => {
-    const after = rendered(MARKER_ONLY, "all");
-    expect(doc(after)).toEqual({ github: { token_source: "host", trigger: "all" } });
-    expect(after.startsWith(MARKER_ONLY.trimEnd())).toBe(true);
-  });
-
-  it("a value's trailing comment survives, and a value that is neither is replaced", () => {
-    const text = '[github]\ntoken_source = "host"\ntrigger = "every"   # mine\n';
-    expect(rendered(text, "all")).toBe(
-      '[github]\ntoken_source = "host"\ntrigger = "all"   # mine\n',
-    );
-  });
-
-  // MUTATION: write the key whenever it is asked for — a call that changes
-  // nothing rewrites the config, and this fails.
-  it("a config that already says it is handed back as it is", () => {
-    const stated = rendered(setUpConfig(), "all");
-    expect(renderTriggerConfig(stated, "all")).toEqual({ ok: true, text: stated, changed: false });
-    // left out is label: asking for label writes nothing
-    const unstated = setUpConfig();
-    expect(renderTriggerConfig(unstated, "label")).toEqual({
-      ok: true,
-      text: unstated,
-      changed: false,
-    });
-    expect(renderTriggerConfig(MARKER_ONLY, "label")).toMatchObject({ changed: false });
-    expect(renderTriggerConfig(unstated, "all")).toMatchObject({ ok: true, changed: true });
-  });
-
-  // MUTATION: build the edit list in renderTriggerConfig with a second key
-  // (the flag, a cap) — the result no longer reads as "the config, and the
-  // trigger", and this fails for every posture.
-  it("never states another dry_run than the config had, whichever way it stood", () => {
-    for (const dryRun of [true, false]) {
-      const before = setUpConfig({ dryRun });
-      for (const trigger of ["all", "label"] as const) {
-        const after = rendered(rendered(before, "all"), trigger);
-        expect(doc(after)["dry_run"], `${dryRun} ${trigger}`).toBe(dryRun);
-        expect(dryRunLine(after)).toBe(dryRunLine(before));
-        expect(withoutTrigger(after)).toEqual(withoutTrigger(before));
-      }
-    }
-  });
-
-  it("refuses a text it cannot read, in one line", () => {
-    const bad = renderTriggerConfig("= not toml\nmore", "all");
-    expect(bad).toMatchObject({ ok: false });
-    expect(bad.ok === false && bad.why).toMatch(
-      /^the config is not valid TOML .*nothing was written$/,
-    );
-    expect(bad.ok === false && bad.why).not.toContain("\n");
-    expect(renderTriggerConfig('github = "a string"\n', "all")).toMatchObject({ ok: false });
   });
 });
 
@@ -244,12 +157,15 @@ describe("host set-trigger", () => {
   });
   afterEach(() => w.close());
 
-  /** Nothing was asked of Docker or GitHub, and nothing was started. */
+  /** The set-trigger commands handed to the daemon, as written. */
+  const sent = (): Record<string, unknown>[] =>
+    w.daemon.payloads.filter((p) => p["command"] === "set-trigger");
+  /** Nothing was asked of GitHub, and nothing was started or written. */
   const quiet = (): void => {
-    expect(w.calls).toEqual([]);
     expect(w.github).toEqual([]);
     expect(w.launched).toEqual([]);
     expect(w.ran).toEqual([]);
+    expect(writes).toEqual([]);
   };
   /** The lock is free: the next taker gets it. */
   const lockFree = (): void => {
@@ -270,60 +186,103 @@ describe("host set-trigger", () => {
       expect(out.message).toContain(SET_TRIGGER_USAGE);
     }
     expect(w.config()).toBe(before);
-    expect(writes).toEqual([]);
+    expect(w.calls).toEqual([]);
+    expect(sent()).toEqual([]);
     expect(existsSync(join(w.stateDir, "onboarding"))).toBe(false);
     quiet();
   });
 
-  // MUTATION: drop the `ports.write` from hostSetTrigger — the verb answers
-  // `done` and the config still says label, and this fails.
-  it("states the trigger in the config, and answers with it; nothing is started or restarted", async () => {
+  // MUTATION: drop the execAsRoot write from hostSetTrigger, or write the
+  // config instead — the daemon is handed nothing (or the config moves), and
+  // this fails.
+  it("hands the choice to the running daemon on its sealed channel, and answers done with it; the config is not touched", async () => {
     w.writeConfig(setUpConfig());
-    const before = w.config()!;
+    const before = w.config();
     expect(await hostSetTrigger(ports, ["all"])).toEqual({ state: "done", trigger: "all" });
-    const after = w.config()!;
-    expect(githubOf(after)["trigger"]).toBe("all");
-    expect(changedLines(before, after)).toEqual(['trigger = "all"']);
-    expect(writes).toEqual([w.configPath]);
+    expect(sent()).toEqual([{ command: "set-trigger", trigger: "all" }]);
+    expect(w.daemon.written).toEqual([expect.stringMatching(/-host-settrigger-all\.json$/)]);
+    // written as root, into the operator's directory
+    const write = w.calls.find((c) => c.includes("-u"));
+    expect(write?.at(-1)).toContain("/opt/qcr/commands/operator");
+    // what was written is what the daemon's validator takes, from that channel alone
+    expect(validateCommand(sent()[0], { issuer: "operator" })).toEqual({
+      ok: true,
+      command: { command: "set-trigger", trigger: "all" },
+    });
+    expect(validateCommand(sent()[0], { issuer: "session" }).ok).toBe(false);
+    expect(w.config()).toBe(before);
     quiet();
     lockFree();
 
-    // the export says it, and so does the reader the running daemon follows
-    expect(configFacts(after).trigger).toBe("all");
-    const follows = liveTrigger({ path: w.configPath, initial: "label" });
-    expect(follows()).toBe("all");
-
-    // and back
     expect(await hostSetTrigger(ports, ["label"])).toEqual({ state: "done", trigger: "label" });
-    expect(configFacts(w.config()!).trigger).toBe("label");
-    expect(follows()).toBe("label");
-    expect(writes).toEqual([w.configPath, w.configPath]);
-    quiet();
+    expect(sent().map((p) => p["trigger"])).toEqual(["all", "label"]);
+    expect(w.config()).toBe(before);
   });
 
-  it("a call that changes nothing answers done and writes nothing", async () => {
+  it("the command is built from the closed word alone", () => {
+    expect(() => setTriggerWriteArgv("x.json", "every" as never)).toThrow(/not a trigger/);
+    const [, , script] = setTriggerWriteArgv("x.json", "all");
+    expect(script).toMatch(/^printf '%s\\n' '\{"command":"set-trigger","trigger":"all"\}' \| \(/);
+  });
+
+  // MUTATION: answer `done` before the daemon's receipt (drop the receipt
+  // loop) — a choice the daemon never took reads as taken, and this fails.
+  it("sent: the daemon has not answered yet; refused when it says no", async () => {
     w.writeConfig(setUpConfig());
-    expect(await hostSetTrigger(ports, ["label"])).toEqual({ state: "done", trigger: "label" });
-    expect(await hostSetTrigger(ports, ["all"])).toEqual({ state: "done", trigger: "all" });
-    expect(await hostSetTrigger(ports, ["all"])).toEqual({ state: "done", trigger: "all" });
-    expect(writes).toEqual([w.configPath]);
+    w.daemon.receipt = "pending";
+    expect(await hostSetTrigger(ports, ["all"])).toEqual({ state: "sent", trigger: "all" });
+    expect(sent()).toHaveLength(1);
+    w.daemon.receipt = "refused";
+    const out = await hostSetTrigger(ports, ["all"]);
+    expect(out).toMatchObject({ state: "refused", reason: "trigger_refused" });
+    expect(out.message).toMatch(/refused the trigger "all"/);
+    quiet();
     lockFree();
   });
 
-  // The flag is the owner's: a host that changes the trigger moves nothing else.
-  it("leaves dry_run as it stood, on a reviewer in practice mode and on a live one", async () => {
+  it("needs a reviewer to tell: set up, running and reachable, or nothing is sent", async () => {
+    // before setup: the choice goes with `host setup --trigger`
+    w.writeConfig(MARKER_ONLY);
+    expect(await hostSetTrigger(ports, ["all"])).toMatchObject({
+      state: "refused",
+      reason: "not_set_up",
+    });
+    w.writeConfig(setUpConfig());
+    w.daemon.running = false;
+    expect(await hostSetTrigger(ports, ["all"])).toMatchObject({
+      state: "refused",
+      reason: "reviewer_not_running",
+    });
+    w.daemon.running = true;
+    w.daemon.psFails = true;
+    expect(await hostSetTrigger(ports, ["all"])).toMatchObject({
+      state: "refused",
+      reason: "reviewer_unreachable",
+    });
+    w.daemon.psFails = false;
+    w.daemon.writeFails = true;
+    const out = await hostSetTrigger(ports, ["all"]);
+    expect(out).toMatchObject({ state: "refused", reason: "reviewer_unreachable" });
+    expect(out.message).toMatch(/could not be handed to the reviewer.*Nothing changed/);
+    expect(sent()).toEqual([]);
+    quiet();
+    lockFree();
+  });
+
+  // The flag is the owner's: a host that changes the trigger moves nothing.
+  it("leaves the config byte for byte as it stood, on a reviewer in practice mode and on a live one", async () => {
     for (const dryRun of [true, false]) {
       w.writeConfig(setUpConfig({ dryRun }));
-      const before = w.config()!;
+      const before = w.config();
       expect(await hostSetTrigger(ports, ["all"])).toMatchObject({ state: "done" });
+      expect(w.config()).toBe(before);
       expect(doc(w.config()!)["dry_run"]).toBe(dryRun);
-      expect(dryRunLine(w.config()!)).toBe(dryRunLine(before));
-      expect(withoutTrigger(w.config()!)).toEqual(withoutTrigger(before));
     }
+    quiet();
   });
 
-  // MUTATION: drop `hostManaged` from hostSetTrigger — the verb rewrites the
-  // config of an install that keeps its own credential, and this fails.
+  // MUTATION: drop `hostManagedRefusal` from hostSetTrigger — the verb hands a
+  // choice to a daemon whose install keeps its own credential, and this fails.
   it("acts on a host-managed install only: any other is refused before anything is touched", async () => {
     // no config at all
     expect(await hostSetTrigger(ports, ["all"])).toMatchObject({
@@ -343,16 +302,18 @@ describe("host set-trigger", () => {
     // a config that is not TOML carries no marker
     w.writeConfig("= not toml");
     expect(await hostSetTrigger(ports, ["all"])).toMatchObject({ reason: "not_host_managed" });
-    expect(writes).toEqual([]);
-    // not even the lock was taken
+    // not even the lock was taken, and Docker was not asked
     expect(existsSync(join(w.stateDir, "onboarding"))).toBe(false);
+    expect(w.calls).toEqual([]);
+    expect(sent()).toEqual([]);
     quiet();
   });
 
   // The marker is asked twice: before the lock (so a refusal leaves no file
-  // behind), and again on the very text the edit is made from.
+  // behind), and again under it.
   // MUTATION: drop the second check, on the text read under the lock — a
-  // config that lost its marker between the two reads is rewritten; this fails.
+  // config that lost its marker between the two reads still has its daemon
+  // told, and this fails.
   it("reads the marker again under the lock: a config that lost it in between is left alone", async () => {
     w.writeConfig(setUpConfig());
     const own = setUpConfig({ hosted: false });
@@ -370,15 +331,14 @@ describe("host set-trigger", () => {
     expect(out).toMatchObject({ state: "refused", reason: "not_host_managed" });
     expect(reads).toBe(2);
     expect(w.config()).toBe(own);
-    expect(writes).toEqual([]);
+    expect(sent()).toEqual([]);
     lockFree();
   });
 
-  // MUTATION: drop the checklist lock from hostSetTrigger — the config is
-  // rewritten while a walk that writes the same file runs, and this fails.
-  it("is single-flight under the checklist lock: while anything holds it, busy and nothing changes", async () => {
+  // MUTATION: drop the checklist lock from hostSetTrigger — the choice is
+  // sent while a walk that may be restarting the daemon runs, and this fails.
+  it("is single-flight under the checklist lock: while anything holds it, busy and nothing is sent", async () => {
     w.writeConfig(setUpConfig());
-    const before = w.config();
     for (const holder of ["setup", "go_live", "proof", "home", "trigger"] as const) {
       const held = acquireChecklistLock(w.stateDir, holder, {
         pid: WALK_PID,
@@ -386,44 +346,11 @@ describe("host set-trigger", () => {
       });
       expect(held.ok).toBe(true);
       expect(await hostSetTrigger(ports, ["all"]), holder).toEqual({ state: "busy", holder });
-      expect(w.config()).toBe(before);
       if (held.ok) held.lock.release();
     }
-    expect(writes).toEqual([]);
+    expect(sent()).toEqual([]);
     // free again: the same call goes through, and gives the lock back
     expect(await hostSetTrigger(ports, ["all"])).toEqual({ state: "done", trigger: "all" });
     lockFree();
-  });
-
-  it("a config it cannot write is a refusal in words, with the lock given back", async () => {
-    w.writeConfig(setUpConfig());
-    const before = w.config();
-    const out = await hostSetTrigger(
-      {
-        ...w.ports,
-        write: () => {
-          throw new Error("EROFS: read-only file system");
-        },
-      },
-      ["all"],
-    );
-    expect(out).toMatchObject({ state: "refused", reason: "config_unreadable" });
-    expect(out.message).toMatch(/can't write .*EROFS.*Nothing changed/);
-    expect(w.config()).toBe(before);
-    lockFree();
-  });
-
-  // A host may write its marker before any setup: the choice made then is
-  // kept by the setup that follows.
-  it("before setup, on a config that holds only the marker: the setup that follows keeps the choice", async () => {
-    w.writeConfig(MARKER_ONLY);
-    expect(await hostSetTrigger(ports, ["all"])).toEqual({ state: "done", trigger: "all" });
-    expect(doc(w.config()!)).toEqual({ github: { token_source: "host", trigger: "all" } });
-
-    expect(await hostSetup(w.ports, ["--repo", REPO, "--auth", "user"])).toEqual({
-      state: "started",
-    });
-    expect(githubOf(w.config()!)).toMatchObject({ repo: REPO, trigger: "all" });
-    expect(doc(w.config()!)["dry_run"]).toBe(true);
   });
 });

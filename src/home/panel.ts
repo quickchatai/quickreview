@@ -200,9 +200,17 @@ export class HomePanel implements Component {
   /** What auto-review picks up, when the home knows where to read it. */
   private triggerRow(): string | null {
     const t = this.m.state.trigger;
-    if (t === null) return null;
-    if (t.kind === "pending") return this.c("dim", "  picks up … checking");
-    return this.c("dim", `  picks up ${pickUpPhrase(t.kind === "known" ? t.value : null)}`);
+    const p = this.m.state.pickUp;
+    if (t === null && p === null) return null;
+    if (t?.kind === "pending" || p?.kind === "pending")
+      return this.c("dim", "  picks up … checking");
+    return this.c(
+      "dim",
+      `  picks up ${pickUpPhrase({
+        rule: p?.kind === "known" ? p.value : null,
+        label: t?.kind === "known" ? t.value : null,
+      })}`,
+    );
   }
 
   private autoLine(): [string, string] {

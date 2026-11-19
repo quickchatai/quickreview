@@ -29,7 +29,10 @@
 // asked: it refuses an installation token. The account step and a host's
 // setup compare that login with the configured `bot_login`, so an install
 // whose slug names another App than the one the token belongs to is told so
-// instead of failing to recognise its own reviews.
+// instead of failing to recognise its own reviews. The comparison ignores
+// case, as GitHub does; what is then written is GitHub's own spelling
+// (`githubSpelledSlug`), since the reviewer recognises its own content by a
+// comparison that does not.
 //
 // Nothing here writes either file, and nothing here reads the environment.
 // The readers: the local review route's credential chain (ghcred.ts), the
@@ -237,6 +240,21 @@ export async function tokenOwnLogin(
         ? `GitHub did not say who the token is${words}`
         : `GitHub answered HTTP ${status} when asked who the token is${words}`,
   };
+}
+
+/**
+ * The App slug as GitHub spells it, from the login a token acts as: the
+ * `<slug>` of a `<slug>[bot]` login that names the App `asked` names, with
+ * case not a difference; null when the login is not that App's. GitHub
+ * compares logins without case, and the reviewer's own-content checks
+ * compare them with it, so an installation's config states the spelling
+ * GitHub answers with, never the one it was asked with.
+ */
+export function githubSpelledSlug(asked: string, login: string): string | null {
+  const suffix = "[bot]";
+  if (!login.endsWith(suffix)) return null;
+  const slug = login.slice(0, -suffix.length);
+  return slug !== "" && slug.toLowerCase() === asked.toLowerCase() ? slug : null;
 }
 
 /** Why a token whose own login is `actual` is not the identity `expected`

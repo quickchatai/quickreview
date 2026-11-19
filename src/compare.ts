@@ -91,6 +91,9 @@ export interface Finding {
 export const ALLOWED_MUTATION_KINDS = [
   "add_label",
   "remove_label",
+  // The trigger label's definition, asked for by the daemon when the label
+  // is missing (src/triggerlabel.ts): in dry-run its record is expected.
+  "create_label",
   "delete_team_review_request",
   "create_review",
   "create_review_comment_reply",

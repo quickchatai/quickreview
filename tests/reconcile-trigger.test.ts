@@ -9,7 +9,10 @@
 //           mark (`trigger_levels`, kind `all`).
 //
 // Under either, a push to a pull request that is already reviewed queues
-// nothing by itself.
+// nothing by itself. `all` takes nothing while the daemon is in dry-run, and
+// marks nothing, so the first live pass takes every open pull request once.
+// On a host-managed install the host's choice in the store
+// (src/triggerchoice.ts) wins over the config's word.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -28,11 +31,14 @@ import { StateStore } from "../src/state.js";
 const base: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
 );
+/** The fixture is in dry-run, where `all` takes nothing: the cases of the
+ * trigger itself run on a reviewer that posts. */
+const live: Config = { ...base, dry_run: false };
 const withGithub = (over: Partial<Config["github"]>): Config => ({
-  ...base,
-  github: { ...base.github, ...over },
+  ...live,
+  github: { ...live.github, ...over },
 });
-/** The fixture's App identity, picking up every pull request. */
+/** The fixture's App identity, picking up every pull request, posting. */
 const all = withGithub({ trigger: "all" });
 
 function ref(number: number, over: Partial<PrRef> = {}): PrRef {
@@ -431,45 +437,104 @@ describe("a push to a pull request that is already reviewed queues nothing by it
   });
 });
 
-describe("the trigger a running daemon follows", () => {
-  // MUTATION: read `cfg.github.trigger` alone in reconcileOnce (ignore
-  // `deps.trigger`) — the pass keeps the trigger the config was loaded with,
-  // and this fails.
-  it("is the config's word at this pass, over the one it was loaded with", async () => {
-    gh.open = [ref(5)];
-    let now: "label" | "all" = "label";
-    const trigger = () => now;
+describe("trigger = all in dry-run", () => {
+  const practice: Config = { ...all, dry_run: true };
+  const marks = (): number =>
+    (
+      store.db.prepare("SELECT COUNT(*) AS n FROM trigger_levels WHERE kind = 'all'").get() as {
+        n: number;
+      }
+    ).n;
 
-    // loaded as label, and the file still says label
-    expect((await pass(base, { trigger })).triggered).toEqual([]);
-    // the file now says all: followed at the next pass, with the same store
-    now = "all";
-    expect((await pass(base, { trigger })).triggered).toEqual([5]);
+  // MUTATION: drop `&& !cfg.dry_run` from the trigger-all step — every open
+  // pull request is queued for a practice review nobody is shown and marked,
+  // so the first live pass takes none of them, and this fails.
+  it("takes nothing and marks nothing; the same store, live, takes each open pull request once", async () => {
+    gh.open = [ref(5), ref(6, { author: "bo" }), ref(7, { draft: true })];
+    for (let i = 0; i < 3; i++) {
+      const report = await pass(practice);
+      expect(report.errors).toEqual([]);
+      expect(report.triggered).toEqual([]);
+    }
+    for (const n of [5, 6, 7]) {
+      expect(store.getPr(n), String(n)).toBeUndefined();
+      expect(store.triggerLevel(n, "all"), String(n)).toBeUndefined();
+      expect(takenOf(n)).toEqual([]);
+    }
+    expect(marks()).toBe(0);
+
+    // the first live pass: each open, ready pull request once
+    expect((await pass(all)).triggered).toEqual([5, 6]);
+    for (const n of [5, 6]) {
+      expect(store.getPr(n)?.state).toBe("queued");
+      expect(takenOf(n)).toEqual([{ head_sha: `sha${n}`, queued: true }]);
+    }
+    expect((await pass(all)).triggered).toEqual([]);
+    expect(triggersOf(5)).toHaveLength(1);
+    expect(triggersOf(6)).toHaveLength(1);
+    expect(store.getPr(7)).toBeUndefined();
+  });
+
+  it("the label is still picked up in dry-run", async () => {
+    gh.open = [ref(5), ref(6)];
+    gh.labelled = [item(5)];
+    expect((await pass(practice)).triggered).toEqual([5]);
+    expect(store.getPr(6)).toBeUndefined();
+    expect(store.triggerLevel(6, "all")).toBeUndefined();
+  });
+});
+
+describe("the trigger a host chose", () => {
+  /** A host-managed install whose config says `label`. */
+  const hosted = withGithub({ token_source: "host", trigger: "label" });
+
+  // MUTATION: read `cfg.github.trigger` alone in reconcileOnce (ignore the
+  // store's choice) — the host's `all` takes nothing, and this fails.
+  it("wins over the config's word on a host-managed install, read again at every pass", async () => {
+    gh.open = [ref(5)];
+    expect((await pass(hosted)).triggered).toEqual([]);
+    store.setTriggerChoice("all", "t1.json");
+    expect((await pass(hosted)).triggered).toEqual([5]);
     review(5);
     // and back: nothing new is taken, and what was reviewed stays reviewed
-    now = "label";
+    store.setTriggerChoice("label", "t2.json");
     gh.open = [ref(5), ref(6)];
-    expect((await pass(base, { trigger })).triggered).toEqual([]);
+    expect((await pass(hosted)).triggered).toEqual([]);
     expect(store.getPr(6)).toBeUndefined();
     expect(store.getPr(5)?.state).toBe("tracked");
-    expect(store.roundsFor(5)).toHaveLength(1);
-
-    // loaded as all, and the file says label: label
-    expect((await pass(all, { trigger })).triggered).toEqual([]);
+    // a host's `label` over a config that says `all`
+    expect((await pass(withGithub({ token_source: "host", trigger: "all" }))).triggered).toEqual(
+      [],
+    );
     expect(store.getPr(6)).toBeUndefined();
   });
 
-  it("a reader that says nothing, or throws, leaves the loaded trigger standing", async () => {
-    gh.open = [ref(5), ref(6)];
-    expect((await pass(base, { trigger: () => undefined })).triggered).toEqual([]);
-    const thrown = await pass(base, {
-      trigger: () => {
-        throw new Error("EIO");
+  it("is not read on an install no host manages: the config's word stands", async () => {
+    gh.open = [ref(5)];
+    store.setTriggerChoice("all", "t1.json");
+    expect((await pass(withGithub({ trigger: "label" }))).triggered).toEqual([]);
+    store.setTriggerChoice("label", "t2.json");
+    expect((await pass(all)).triggered).toEqual([5]);
+  });
+
+  // MUTATION: fall back to the config's word when the store cannot say — a
+  // store that fails for one pass would take every pull request on a config
+  // that says `all` while the host chose `label`, and this fails.
+  it("a store that cannot say takes nothing by itself, and is no error of the pass", async () => {
+    gh.open = [ref(5)];
+    const broken = Object.assign(Object.create(store) as StateStore, {
+      triggerChoice: () => {
+        throw new Error("SQLITE_BUSY");
       },
     });
-    expect(thrown.triggered).toEqual([]);
-    // never an error of the pass: the trigger it was loaded with is an answer
-    expect(thrown.errors).toEqual([]);
-    expect((await pass(all, { trigger: () => undefined })).triggered).toEqual([5, 6]);
+    const report = await reconcileOnce({
+      cfg: withGithub({ token_source: "host", trigger: "all" }),
+      store: broken,
+      adapter: gh,
+      hooks,
+    });
+    expect(report.triggered).toEqual([]);
+    expect(report.errors).toEqual([]);
+    expect(store.getPr(5)).toBeUndefined();
   });
 });

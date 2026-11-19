@@ -9,6 +9,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isOwnContent } from "@quickchatai/pi-quickreview/src/identity.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { CHOICE_KEYS } from "../src/onboard/choices.js";
@@ -613,6 +614,48 @@ describe("the installation route (a host-supplied App installation token)", () =
     expect(readFileSync(join(secretsDir, "github_token"), "utf8")).toBe(HOST_TOKEN);
     expect(w.calls.filter((c) => c.includes("/labels"))).toEqual([]);
     expect(w.labels.size).toBe(0);
+  });
+
+  // MUTATION: write the slug as the config named it (`installationConfig(
+  // source.text, namedSlug)` in runInstallation) — the config says
+  // acme-reviewer[bot], GitHub posts as Acme-Reviewer[bot], the reviewer's
+  // case-exact own-content check misses its own review, and this fails.
+  it("a slug in another case than GitHub's is written as GitHub spells it, so the reviewer knows its own reviews", async () => {
+    const w = installation();
+    const SPELLED = "Acme-Reviewer";
+    w.viewer = `${SPELLED}[bot]`;
+    const e = engineFor(w);
+    const r = await e.runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    const text = configText();
+    expect(readTomlKey(text, "github", "app_slug")).toBe(SPELLED);
+    expect(readTomlKey(text, "github", "bot_login")).toBe(`${SPELLED}[bot]`);
+    expect(e.choices()[CHOICE_KEYS.appSlug]).toBe(SPELLED);
+    expect(e.choices()[CHOICE_KEYS.botLogin]).toBe(`${SPELLED}[bot]`);
+    const github = loadConfig(join(root, "config.toml")).github;
+    // a review GitHub shows under its own spelling of the login is the reviewer's
+    expect(isOwnContent(github, `${SPELLED}[bot]`, "a review body")).toBe(true);
+    // and verify, asking again, agrees with what was written
+    const green = await engineFor(w).verifyAll();
+    expect(green.ok, green.results[0]!.failures.join("; ")).toBe(true);
+  });
+
+  // MUTATION: drop the identity-spelling check from verifyInstallation — a
+  // config whose slug differs from GitHub's spelling only in case verifies
+  // green while the reviewer misses its own reviews, and this fails.
+  it("verify is red on a config that names the App in another case than GitHub's", async () => {
+    const w = installation();
+    w.viewer = "Acme-Reviewer[bot]";
+    await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    // a hand edit back to the lower-case spelling
+    let text = setTomlKey(configText(), "github", "app_slug", SLUG)!;
+    text = setTomlKey(text, "github", "bot_login", BOT)!;
+    writeFileSync(join(root, "config.toml"), text);
+    const red = await engineFor(w).verifyAll();
+    expect(red.ok).toBe(false);
+    expect(red.results[0]!.failures.join(" ")).toMatch(
+      /GitHub spells the App's login Acme-Reviewer\[bot\]/,
+    );
   });
 
   // MUTATION: drop identityCheck from runInstallation — a slug that names

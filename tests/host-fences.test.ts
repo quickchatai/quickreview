@@ -3,9 +3,9 @@
 // the rules):
 //
 //   1. Nothing under the host-verb sources writes `dry_run`: they are walked
-//      as the home's are (tests/home-switchon.test.ts), and the two config
-//      writers they use (the setup's, the trigger's) are each held to the
-//      flag by what they return.
+//      as the home's are (tests/home-switchon.test.ts), and the one config
+//      writer they use (the setup's) is held to the flag by what it
+//      returns. `set-trigger` writes no config at all.
 //   2. The go-live path has exactly its allowed callers. The flag moves in
 //      one function, that function has one caller (the go-live step), the
 //      step is run with a confirm from one place (`runGoLive`), and
@@ -18,6 +18,10 @@
 //   4. An attestation takes only a host-managed install live: without the
 //      marker in the config as written, the verb refuses and its walk reaches
 //      no step.
+//   5. Every host verb refuses an install no host manages, before the lock:
+//      on one, no proof record is written and the daemon is asked nothing.
+//   6. No host verb writes to GitHub: nothing under src/host/ calls a label
+//      writer or sends a write method.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -28,19 +32,22 @@ import { admit, hostManaged } from "../src/host/admit.js";
 import { runHostVerb } from "../src/host/cli.js";
 import { hostGoLive, walkGoLive } from "../src/host/golive.js";
 import { HOST_VERBS, type HostVerb } from "../src/host/outcomes.js";
-import { hostProofResult, hostProofStart } from "../src/host/proof.js";
+import { hostProofResult, hostProofStart, hostReviewNow } from "../src/host/proof.js";
 import { readHostRecord } from "../src/host/record.js";
 import { SESSION_ENV_MARKERS, sessionMarker } from "../src/host/session.js";
 import { hostSetup } from "../src/host/setup.js";
 import { walkSetup } from "../src/host/walk.js";
 import { IMAGE_APP_ROOT, detectInstall } from "../src/installkind.js";
 import { PI_SESSION_ENV, cmdPi, type NpmVerbDeps } from "../src/npmverbs.js";
+import { acquireChecklistLock } from "../src/onboard/checklistlock.js";
+import { CHOICE_KEYS } from "../src/onboard/choices.js";
 import { GO_LIVE_STEP_ID } from "../src/onboard/steps/golive.js";
 import { sourceFiles, stripComments } from "./helpers/engine-fences.js";
 import {
   MARKER_ONLY,
   REPO,
   TEMPLATE,
+  WALK_PID,
   finishedRound,
   hostWorld,
   setUpConfig,
@@ -101,24 +108,22 @@ describe("nothing under the host-verb sources writes the flag", () => {
     }
   });
 
-  // Two verbs write the config: `setup` the whole of it, `set-trigger` its
-  // one key. Each writes once, and only the text its own pure renderer
-  // returned (both live outside src/host/, where nothing may patch).
-  // MUTATION: write the config in src/host/setup.ts or src/host/trigger.ts
-  // through anything but its renderer (a template string, patchToml), or
-  // from a third module under src/host/ — this fails.
-  it("a host verb writes the config in two places, each the text its own renderer returned", () => {
+  // One verb writes the config: `setup`, the whole of it, once, and only the
+  // text its pure renderer returned (outside src/host/, where nothing may
+  // patch). `set-trigger` writes none: the config is on the round
+  // fingerprint's policy surface, so its choice goes to the daemon's store.
+  // MUTATION: write the config in src/host/trigger.ts (the old one-key edit),
+  // or in src/host/setup.ts through anything but its renderer (a template
+  // string, patchToml), or from any other module under src/host/ — this fails.
+  it("a host verb writes the config in one place, the text its renderer returned", () => {
     const writers = readdirSync(HOST_DIR)
       .filter((f) => f.endsWith(".ts"))
       .filter((f) =>
         /ports\.write\s*\(/.test(stripComments(readFileSync(join(HOST_DIR, f), "utf8"))),
       )
       .sort();
-    expect(writers).toEqual(["setup.ts", "trigger.ts"]);
-    for (const [file, renderer] of [
-      ["setup.ts", "renderHostConfig"],
-      ["trigger.ts", "renderTriggerConfig"],
-    ] as const) {
+    expect(writers).toEqual(["setup.ts"]);
+    for (const [file, renderer] of [["setup.ts", "renderHostConfig"]] as const) {
       const code = stripComments(readFileSync(join(HOST_DIR, file), "utf8"));
       expect(code.match(/ports\.write\s*\([^)]*\)/g), file).toEqual([
         "ports.write(ports.configPath, rendered.text)",
@@ -140,20 +145,6 @@ describe("nothing under the host-verb sources writes the flag", () => {
     const asserts = code.match(/assertNoDryRunEdit\s*\(/g) ?? [];
     expect(patches).toHaveLength(2);
     expect(asserts).toHaveLength(2);
-  });
-
-  // The trigger's writer: tests/host-trigger.test.ts holds what it returns to
-  // "the config as it was, and that one key".
-  // MUTATION: give renderTriggerConfig a second edit or a second patchToml
-  // call, or drop its assertNoDryRunEdit — this fails.
-  it("the trigger's writer builds one edit, of one key, behind the same refusal", () => {
-    const code = stripComments(
-      readFileSync(join(ROOT, "src", "onboard", "steps", "triggerconfig.ts"), "utf8"),
-    );
-    expect(code).not.toMatch(/flipDryRunToFalse/);
-    expect(code.match(/key:\s*"[^"]*"/g)).toEqual(['key: "trigger"']);
-    expect(code.match(/patchToml\s*\(/g)).toHaveLength(1);
-    expect(code.match(/assertNoDryRunEdit\s*\(/g)).toHaveLength(1);
   });
 });
 
@@ -441,7 +432,7 @@ describe("an attestation takes only a host-managed install live", () => {
   // is on standard input; only the marker is missing. The attestation is
   // unauthenticated by design, so the marker is the one thing that says this
   // install's owner delegated the confirm to a host.
-  // MUTATION: drop the `hostManaged` check from hostGoLive — the verb answers
+  // MUTATION: drop the `hostManagedRefusal` check from hostGoLive — the verb answers
   // `started` on an unmarked config, its walk reaches the go-live step, and
   // this fails.
   it("without the marker the verb refuses and nothing goes live", async () => {
@@ -502,5 +493,149 @@ describe("an attestation takes only a host-managed install live", () => {
     expect(marked('token_source = "host"\n')).toBe(false);
     expect(marked("[github\n")).toBe(false);
     expect(marked(null)).toBe(false);
+  });
+});
+
+// Every host verb, the review and the two practice-review verbs included,
+// acts on an install a host manages and on no other. On any other install
+// the proof record is the owner's alone: it is written when they are shown a
+// practice review at their own home, and a go-live there is confirmed in
+// their own words.
+describe("every host verb refuses an install no host manages", () => {
+  let w: HostWorld;
+  beforeEach(() => {
+    w = hostWorld();
+    w.writeConfig(setUpConfig());
+  });
+  afterEach(() => w.close());
+
+  const proofChoice = (): unknown => w.checklist()?.choices[CHOICE_KEYS.proof];
+
+  /** A practice round of #7 asked for under the marker and finished since. */
+  async function finished(): Promise<void> {
+    expect(await hostProofStart(w.ports, ["7"])).toMatchObject({ state: "started" });
+    const done = finishedRound(7, 1);
+    w.daemon.rounds = [done.round];
+    w.daemon.dryrun = done.records;
+  }
+
+  // MUTATION: drop the `hostManagedRefusal` check from hostProofResult — on an
+  // unmarked install the verb reads the finished round, the checklist gains
+  // a proof record and host.json a `proof_shown`, and this fails.
+  it("proof-result on an unmarked install records no proof and marks nothing shown", async () => {
+    await finished();
+    const unmarkedConfigs = [setUpConfig({ hosted: false }), TEMPLATE, '[github]\nauth = "user"\n'];
+    for (const unmarked of unmarkedConfigs) {
+      w.writeConfig(unmarked);
+      expect(await hostProofResult(w.ports, ["7"]), unmarked.slice(0, 40)).toMatchObject({
+        state: "refused",
+        reason: "not_host_managed",
+      });
+    }
+    expect(proofChoice()).toBeUndefined();
+    expect(readHostRecord(w.stateDir).proof_shown).toBeUndefined();
+  });
+
+  // MUTATION: drop the `hostManagedRefusal` check from hostProofStart, or from
+  // hostReviewNow — the verb writes a review-now command into the daemon's
+  // channel on an unmarked install, and this fails.
+  it("proof-start and review-now on an unmarked install ask the daemon nothing", async () => {
+    w.writeConfig(setUpConfig({ hosted: false }));
+    for (const [verb, run] of [
+      ["proof-start", hostProofStart],
+      ["review-now", hostReviewNow],
+    ] as const)
+      expect(await run(w.ports, ["7"]), verb).toMatchObject({
+        state: "refused",
+        reason: "not_host_managed",
+      });
+    expect(w.daemon.written).toEqual([]);
+    expect(w.calls).toEqual([]);
+    expect(readHostRecord(w.stateDir).proof_request).toBeUndefined();
+  });
+
+  // Asked before the lock: with another holder on it, an unmarked install is
+  // still refused for what it is, never answered `busy`.
+  // MUTATION: move the `hostManagedRefusal` check in hostProofStart below
+  // acquireChecklistLock — the verb answers `busy`, and this fails.
+  it("the refusal comes before the lock", async () => {
+    w.writeConfig(setUpConfig({ hosted: false }));
+    const held = acquireChecklistLock(w.stateDir, "home", { pid: WALK_PID, alive: () => true });
+    expect(held.ok).toBe(true);
+    try {
+      for (const verb of ["proof-start", "proof-result", "review-now"] as const)
+        expect(await runHostVerb(verb, w.ports, ["7"]), verb).toMatchObject({
+          state: "refused",
+          reason: "not_host_managed",
+        });
+    } finally {
+      if (held.ok) held.lock.release();
+    }
+  });
+
+  // A config that is there and cannot be read says nothing of the marker:
+  // the verb says it could not read it, never that the install is not a
+  // host's (invariant 9), and a missing one is not a host's.
+  // MUTATION: make hostManagedRefusal (src/host/admit.ts) answer
+  // `not_host_managed` for every read error — this fails.
+  it("an unreadable config is config_unreadable, a missing one not_host_managed", async () => {
+    const eio = {
+      ...w.ports,
+      read: () => {
+        throw Object.assign(new Error("EIO: i/o error"), { code: "EIO" });
+      },
+    };
+    const none = { ...w.ports, configPath: `${w.configPath}.none` };
+    for (const [verb, args] of [
+      ["review-now", ["7"]],
+      ["proof-start", ["7"]],
+      ["proof-result", ["7"]],
+      ["set-trigger", ["all"]],
+      ["go-live", []],
+    ] as const) {
+      expect(await runHostVerb(verb, eio, args), verb).toMatchObject({
+        state: "refused",
+        reason: "config_unreadable",
+      });
+      expect(await runHostVerb(verb, none, args), verb).toMatchObject({
+        state: "refused",
+        reason: "not_host_managed",
+      });
+    }
+    expect(w.daemon.written).toEqual([]);
+  });
+
+  // The control: under the marker the same finished round is recorded, so
+  // the cases above fail for the marker and for nothing else.
+  it("with the marker the same round is recorded and shown", async () => {
+    await finished();
+    expect(await hostProofResult(w.ports, ["7"])).toMatchObject({ state: "done" });
+    expect(proofChoice()).toMatchObject({ pr: 7, round_no: 1 });
+    expect(readHostRecord(w.stateDir).proof_shown).toMatchObject({ pr: 7, round_no: 1 });
+  });
+});
+
+// No host verb writes to GitHub. The trigger label is the live daemon's to
+// make sure of, through the gate (src/triggerlabel.ts); a host verb reads
+// the repository and the token's own login, and writes nothing there.
+describe("no host verb writes to GitHub", () => {
+  // MUTATION: make sure of the trigger label from src/host/golive.ts again
+  // (import the wizard's `ensureLabel` and call it) — this fails.
+  it("nothing under src/host/ calls a label writer or sends a write method", () => {
+    const offenders = readdirSync(HOST_DIR)
+      .filter((f) => f.endsWith(".ts"))
+      .flatMap((f) => {
+        const code = stripComments(readFileSync(join(HOST_DIR, f), "utf8"));
+        return [
+          /\bensureLabel\b/,
+          /\bcreateLabel\b/,
+          /method:\s*["'`](?:POST|PATCH|PUT|DELETE)["'`]/,
+        ]
+          .filter((re) => re.test(code))
+          .map((re) => `src/host/${f}: ${re.source}`);
+      });
+    expect(offenders).toEqual([]);
+    // the walk is real: it read the go-live module
+    expect(readdirSync(HOST_DIR)).toContain("golive.ts");
   });
 });

@@ -5,13 +5,12 @@
 // in-memory store on a scripted clock (tests/helpers/board-rig.ts). The
 // daemon writing it is tests/board-file.test.ts; the export that prints the
 // number is tests/board-export.test.ts.
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseBoardFile } from "../src/boardfile.js";
 import { reviewedToday } from "../src/boardtoday.js";
 import { BoardWorld, T0, at } from "./helpers/board-rig.js";
-import { closureReachesStateStore } from "./helpers/worker-fences.js";
+import { closureReachesStateStore, runtimeClosure } from "./helpers/worker-fences.js";
 
 let w: BoardWorld;
 beforeEach(() => {
@@ -198,12 +197,19 @@ describe("absent, never zero, when it cannot be counted", () => {
   });
 
   // The count is the daemon's to make: the export's reader must not load the
-  // day arithmetic, which reaches modules it has no business loading.
+  // day arithmetic, which reaches modules it has no business loading. Asked
+  // of the export's whole runtime import closure, so an import of the
+  // counter by any module on the way is seen, not only by the board file.
+  // MUTATION: import reviewedToday into src/boardexport.ts (or into
+  // src/boardfile.ts as a value) — this fails.
   it("the export's reader does not import the counter", () => {
     const root = join(import.meta.dirname, "..");
-    const boardfile = readFileSync(join(root, "src", "boardfile.ts"), "utf8");
-    // a type is erased; a value import would load the module
-    expect(boardfile).not.toMatch(/^import \{[^}]*\} from "\.\/(?:boardtoday|eod)\.js"/m);
+    const closure = runtimeClosure(root, ["src/boardexport.ts"]);
+    // the walk is real: it reaches the board file the export reads
+    expect(closure).toContain("src/boardexport.ts");
+    expect(closure).toContain("src/boardfile.ts");
+    expect(closure).not.toContain("src/boardtoday.ts");
+    expect(closure).not.toContain("src/eod.ts");
     expect(closureReachesStateStore(root, ["src/boardexport.ts"])).toEqual([]);
   });
 });

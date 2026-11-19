@@ -29,11 +29,12 @@ export type HostVerb = (typeof HOST_VERBS)[number];
  *   running      that same work is already under way: nothing new was started
  *   queued       the daemon queued the pull request (review-now)
  *   sent         the request is written and the daemon has not answered yet
+ *                (review-now, proof-start; set-trigger, with `trigger`)
  *   done         the practice round finished: its review is in the payload
- *                (proof-result); or the reviewer was already live, nothing
- *                was restarted, and `label` says how making sure of its
- *                trigger label went (go-live); or the config says the
- *                trigger asked for, in `trigger` (set-trigger)
+ *                (proof-result); or the reviewer was already live and
+ *                nothing was run again or restarted (go-live); or the
+ *                daemon took the trigger asked for, in `trigger`
+ *                (set-trigger)
  *   not_started  no practice round was asked for on that pull request
  *   busy         something else holds the setup lock (`holder` says what)
  *   failed       the practice round did not produce a review (`reason`)
@@ -45,7 +46,7 @@ export const HOST_STATES = {
   "proof-start": ["started", "sent", "running", "busy", "refused"],
   "proof-result": ["running", "done", "failed", "not_started", "busy", "refused"],
   "go-live": ["started", "running", "done", "busy", "refused"],
-  "set-trigger": ["done", "busy", "refused"],
+  "set-trigger": ["done", "sent", "busy", "refused"],
 } as const satisfies Record<HostVerb, readonly string[]>;
 
 export type HostState<V extends HostVerb = HostVerb> = (typeof HOST_STATES)[V][number];
@@ -79,6 +80,8 @@ export const HOST_REASONS = [
   "reviewer_not_running",
   "reviewer_unreachable",
   "review_refused",
+  /** The daemon refused a host's choice of trigger. */
+  "trigger_refused",
   "round_failed",
   "no_dry_run_record",
   "record_failed",
@@ -151,15 +154,6 @@ export const GO_LIVE_PROBLEMS = [
 export type GoLiveProblem = (typeof GO_LIVE_PROBLEMS)[number];
 
 /**
- * How making sure of the trigger label went, once the reviewer is live: it is
- * in the repository, or it could not be read or created there. Said beside a
- * go-live and never as its outcome: a reviewer whose label is missing still
- * posts, and a repeat `host go-live` tries the label again.
- */
-export const LABEL_WORDS = ["ok", "failed"] as const;
-export type LabelWord = (typeof LABEL_WORDS)[number];
-
-/**
  * Which pull requests the reviewer picks up by itself (`[github] trigger`,
  * packages/pi-plugin/src/reviewconfig.ts GITHUB_TRIGGERS, the same two): the
  * ones that carry the trigger label, or every one. What `set-trigger` takes
@@ -228,10 +222,8 @@ export interface HostPayload {
   /** The refusal or failure in words, for a log; a host shows its own text. */
   message?: string;
   holder?: HostHolder;
-  /** The trigger label, with a go-live that answers `done`. */
-  label?: LabelWord;
-  /** What the config says the reviewer picks up by itself, with a
-   * set-trigger that answers `done`. */
+  /** The trigger a set-trigger sent, with `done` (the daemon took it) or
+   * `sent` (it has not answered yet). */
   trigger?: TriggerWord;
   /** The pull request the call named. */
   pr?: number;

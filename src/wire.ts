@@ -139,7 +139,7 @@ import { createWorkerLiveness, inFlightPrs } from "./workerliveness.js";
 import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
 import { readPinnedFromSweep, startEodPinWatch, type PinnedSweepSource } from "./eodpinwatch.js";
-import { liveTrigger } from "./livetrigger.js";
+import { chooseTrigger } from "./triggerchoice.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
 import { PiSessionManager, prSessionName } from "./sessions.js";
 import { SlackApiClient } from "./slack/api.js";
@@ -192,11 +192,6 @@ export interface ProductionParts {
    * the sidecar outside the image. The config's `openviking.enabled` is
    * already false; this is the reason the status block says. */
   memoryOff?: string;
-  /** The live config.toml `cfg` was loaded from. With it the daemon follows
-   * `[github] trigger` as that file says it at every poll
-   * (src/livetrigger.ts). Absent (tests, the CLI's own parts): the trigger
-   * is the one `cfg` was loaded with, and no file is read. */
-  configPath?: string;
 }
 
 /** A configured engine refused before it could open partial migrated state. */
@@ -986,15 +981,6 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         ),
     },
     hooks: botHost,
-    ...(parts.configPath
-      ? {
-          liveTrigger: liveTrigger({
-            path: parts.configPath,
-            initial: cfg.github.trigger ?? "label",
-            log,
-          }),
-        }
-      : {}),
     writeInbox,
     renderPrompt,
     ecosystem,
@@ -1775,6 +1761,16 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             },
           );
         },
+        // A host's choice of trigger: kept in the store, where the next
+        // reconcile pass reads it (src/triggerchoice.ts). No file is written:
+        // config.toml is on the round fingerprint's policy surface.
+        setTrigger(trigger, file) {
+          return chooseTrigger(
+            { store: d.store, hostManaged: cfg.github.token_source === "host", log },
+            trigger,
+            file,
+          );
+        },
         resolveTerminalFailure(payload) {
           return resolveTerminalFailure(
             {
@@ -2212,8 +2208,6 @@ async function main(): Promise<void> {
   const loaded = loadConfig();
   const daemon = createProductionDaemon({
     ...buildParts(root, loaded, hostFacts(root, loaded.openviking.enabled)),
-    // the file `loaded` came from: its trigger is followed between starts
-    configPath: liveConfigPath(),
   });
   const shutdown = (sig: string) => {
     void (async () => {

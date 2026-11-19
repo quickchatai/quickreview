@@ -50,6 +50,7 @@
         "reviewer_not_running",
         "reviewer_unreachable",
         "review_refused",
+        "trigger_refused",
         "round_failed",
         "no_dry_run_record",
         "record_failed",
@@ -59,11 +60,11 @@
         "proof_not_shown",
         "confirm_stale"
       ],
-      "description": "Why a verb refused, or why a practice round failed. Present with state refused or failed. not_host_managed: the install's config does not carry `[github] token_source = \"host\"`; setup refuses an existing config without it (on a machine with no config it writes the marker itself), and go-live and set-trigger refuse any install without it."
+      "description": "Why a verb refused, or why a practice round failed. Present with state refused or failed. not_host_managed: the install's config does not carry `[github] token_source = \"host\"`; setup refuses an existing config without it (on a machine with no config it writes the marker itself), and every other verb (review-now, proof-start, proof-result, go-live and set-trigger) refuses any install without it, before it takes the setup lock or asks the reviewer anything; a config that is there and cannot be read answers config_unreadable there, never not_host_managed. trigger_refused: the running reviewer refused a set-trigger's choice."
     },
     "holder": {
       "enum": ["home", "setup", "go_live", "proof", "trigger"],
-      "description": "What holds the setup lock, with state busy: the reviewer's own terminal home, or a host verb's work (setup, go_live, proof, and trigger for a set-trigger, which holds it only while its one edit takes)."
+      "description": "What holds the setup lock, with state busy: the reviewer's own terminal home, or a host verb's work (setup, go_live, proof, and trigger for a set-trigger, which holds it only while it hands its choice to the reviewer)."
     },
     "setup": {
       "type": "object",
@@ -207,7 +208,7 @@
         },
         "state": {
           "enum": ["started", "running", "done", "busy", "refused"],
-          "description": "started: the attestation was admitted and the go-live runs, detached; the board export's `go_live` field follows it, and `posting` says when the daemon posts. running: a go-live is already under way. done: the reviewer was already live on an attestation; nothing was run again and nothing restarted, the trigger label was tried once more, and `label` says how that went. busy: something else holds the setup lock (holder). refused: nothing was changed (reason)."
+          "description": "started: the attestation was admitted and the go-live runs, detached; the board export's `go_live` field follows it, and `posting` says when the daemon posts. running: a go-live is already under way. done: the reviewer was already live on an attestation; nothing was run again and nothing restarted, and nothing was written to GitHub. busy: something else holds the setup lock (holder). refused: nothing was changed (reason)."
         },
         "reason": {
           "$ref": "#/$defs/reason"
@@ -219,10 +220,6 @@
         },
         "holder": {
           "$ref": "#/$defs/holder"
-        },
-        "label": {
-          "enum": ["ok", "failed"],
-          "description": "With state done: the trigger label is in the repository (ok), or it could not be read or created there (failed). It never fails a go-live: the reviewer posts either way, and the call can be repeated."
         }
       },
       "additionalProperties": false
@@ -238,8 +235,8 @@
           "const": "set-trigger"
         },
         "state": {
-          "enum": ["done", "busy", "refused"],
-          "description": "done: the install's config says the trigger asked for (`trigger`); it was written, or it already said so. Nothing was started or restarted: a running reviewer follows at its next poll, and the board export's `trigger` says the same word. busy: something else holds the setup lock (holder), and nothing changed. refused: nothing changed (reason)."
+          "enum": ["done", "sent", "busy", "refused"],
+          "description": "done: the running reviewer took the trigger asked for (`trigger`) through its sealed operator channel; it follows it from its next poll, across restarts, over the config's own word, and the board export's `trigger` says the same word. The config is not rewritten, and nothing is started or restarted. sent: the choice is written to that channel and the reviewer has not answered yet; it takes it when it reads the channel. busy: something else holds the setup lock (holder), and nothing was sent. refused: nothing was sent, or the reviewer refused it (reason)."
         },
         "reason": {
           "$ref": "#/$defs/reason"
@@ -254,7 +251,7 @@
         },
         "trigger": {
           "enum": ["label", "all"],
-          "description": "With state done: what the reviewer picks up by itself. label: pull requests that carry the trigger label. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request."
+          "description": "With state done or sent: what the reviewer picks up by itself. label: pull requests that carry the trigger label. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request; while the reviewer is in dry-run it takes none of them, so the first pass after go-live takes each."
         }
       },
       "additionalProperties": false

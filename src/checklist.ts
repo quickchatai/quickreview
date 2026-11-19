@@ -125,6 +125,10 @@ export interface QueueDiffDeps {
   /** The two triggered-set searches, through the adapter (reads only). */
   labelTriggered: () => Promise<number[]>;
   teamTriggered: () => Promise<number[]>;
+  /** The queued rows the every-pull-request trigger took (`[github] trigger
+   * = "all"`): no search lists them, and each is owed its review. Absent:
+   * none are counted. */
+  allTriggered?: () => Promise<number[]> | number[];
   /** The daemon's derived queue — pr_state rows the reconcile poll owes work. */
   derivedQueue: () => Promise<number[]> | number[];
 }
@@ -147,10 +151,15 @@ export function diffQueues(manual: number[], derived: number[]): QueueDiff {
   };
 }
 
-/** ② The derived queue must match the union of the two trigger searches exactly. */
+/** ② The derived queue must match the union of the two trigger searches, and
+ * the rows the every-pull-request trigger took, exactly. */
 export async function probeQueueDiff(deps: QueueDiffDeps): Promise<ProbeResult> {
   const { item, name } = PROBE_META.queue;
-  const manual = [...(await deps.labelTriggered()), ...(await deps.teamTriggered())];
+  const manual = [
+    ...(await deps.labelTriggered()),
+    ...(await deps.teamTriggered()),
+    ...((await deps.allTriggered?.()) ?? []),
+  ];
   const diff = diffQueues(manual, await deps.derivedQueue());
   const detail =
     `manual=[${diff.manual.join(",")}] derived=[${diff.derived.join(",")}]` +
