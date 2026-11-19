@@ -162,6 +162,16 @@ Three reasons, each measured:
 
 So on that API a lens reads the pack file, as before. Whether the pack pays on a model with cheaper cached reads, no price step and fewer turns a lens was not measured: one such review costs about twenty times the ones above.
 
+## Measured: the open models on the chat completions API
+
+Measured on `glm-5.3-flash` and `deepseek-v4.1-flash` through an OpenAI-compatible endpoint (`openai-completions`), where a lens reads the pack file through a tool.
+
+- **The provider caches, and a shared prefix would be read.** A request that repeats a warm-up and extends it read 86% of itself from cache on both models: every time on the second (10 of 10), and with about one random miss in five on the first.
+- **A lens already reads its own conversation from cache.** In one real review of 31 files (18 lenses, about 42 requests a lens on either model), 93% and 98% of the lenses' input tokens were read from cache, and a later request read what the lens had sent before in 96% and 100% of cases.
+- **Pack first would not pay.** Recomputed from the same requests (the whole pack in every request at the cached price, against the part of the pack file each lens read, paid once): 5% more on the first model, whose cached tokens cost a fifth of the others, and no difference on the second, whose cached tokens cost a fiftieth. A lens there makes many requests, so a pack in every one of them costs about what reading half of it once does.
+
+So nothing is built for that API: its lenses read the pack file, and the cache they need is the one they already get.
+
 ## The measured run
 
 The pack moves each lens's instructions from the system prompt into a developer message after the pack, so it was measured before it was turned on. The run used a set of follow-up replay cases, each run under three arms on the bench: the old follow-up code, the new code with the pack off (cache groups on), and the new code with the pack on.
