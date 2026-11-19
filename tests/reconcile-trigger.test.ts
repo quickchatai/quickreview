@@ -493,11 +493,11 @@ describe("the trigger a host chose", () => {
   it("wins over the config's word on a host-managed install, read again at every pass", async () => {
     gh.open = [ref(5)];
     expect((await pass(hosted)).triggered).toEqual([]);
-    store.setTriggerChoice("all", "t1.json");
+    store.setTriggerChoice("all", "t1.json", "label");
     expect((await pass(hosted)).triggered).toEqual([5]);
     review(5);
     // and back: nothing new is taken, and what was reviewed stays reviewed
-    store.setTriggerChoice("label", "t2.json");
+    store.setTriggerChoice("label", "t2.json", "label");
     gh.open = [ref(5), ref(6)];
     expect((await pass(hosted)).triggered).toEqual([]);
     expect(store.getPr(6)).toBeUndefined();
@@ -511,9 +511,9 @@ describe("the trigger a host chose", () => {
 
   it("is not read on an install no host manages: the config's word stands", async () => {
     gh.open = [ref(5)];
-    store.setTriggerChoice("all", "t1.json");
+    store.setTriggerChoice("all", "t1.json", "label");
     expect((await pass(withGithub({ trigger: "label" }))).triggered).toEqual([]);
-    store.setTriggerChoice("label", "t2.json");
+    store.setTriggerChoice("label", "t2.json", "label");
     expect((await pass(all)).triggered).toEqual([5]);
   });
 

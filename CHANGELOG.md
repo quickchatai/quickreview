@@ -174,9 +174,14 @@ carries a closed `reason` and a `message` in words). The shape is
   mutation gate's new ordinary kind `create_label` (a label's definition in
   the repository; suppressed in dry-run, refused for `forceLive`, outside the
   app-self-config class). Under `[github] trigger = "label"` the daemon reads
-  whether the label exists once when it starts and once after each change of
-  the trigger, and asks the gate to create it when it is missing; GitHub's
-  422 `already_exists` is success. No host verb writes to GitHub.
+  whether the label exists after a reconcile pass that reached GitHub (one
+  that threw or could not list the open pull requests asks nothing), and asks
+  the gate to create it when it is missing; GitHub's 422 `already_exists` is
+  success. An answer ends the asking until the next start or change of the
+  trigger; a failure (a 5xx, a network not up yet, a token that may not
+  create labels yet) is tried again a minute later, then twice as long each
+  time, never more than an hour apart, and is logged once. No host verb
+  writes to GitHub.
 - **Progress is in the board export.** `qcr --schema 3 board` now fills
   `setup` (`running` with the step, `done`, or `failed` with the step and a
   closed `problem`), `go_live` (the same, without a step) and `proof` (the
@@ -238,7 +243,12 @@ default. A second choice reviews every pull request.
   own store (`trigger_choice` in state.db). From its next poll, and across
   restarts, that choice wins over the config's `[github] trigger`, so a host
   changes the trigger with rounds in flight and the round fingerprint never
-  moves. It runs under the setup lock (`busy` while a setup or a go-live
+  moves. The later of the two wins: the daemon keeps, with the choice, what
+  the config's `[github] trigger` line said when it was made, and a daemon
+  that starts on a config whose line says something else (a later `host
+  setup --trigger` that wrote another line) drops the choice, so the export's
+  `trigger` says what setup wrote. A setup that restates the line the choice
+  was made over leaves the choice standing. It runs under the setup lock (`busy` while a setup or a go-live
   runs), on host-managed installs only (`not_host_managed` anywhere else),
   and needs the reviewer set up and running (`not_set_up`,
   `reviewer_not_running`, `reviewer_unreachable`). It answers `done` with

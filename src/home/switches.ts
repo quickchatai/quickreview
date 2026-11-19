@@ -79,14 +79,27 @@ export interface PickUp {
   rule: "label" | "all" | null;
   /** The trigger label; null when it cannot be read. */
   label: string | null;
+  /** It runs in dry-run (true) or posts (false); null or left out when that
+   * cannot be read. Under `all` it decides what is taken: in dry-run nothing
+   * is taken by itself (src/reconcile.ts). */
+  dryRun?: boolean | null;
 }
 
-/** What auto-review picks up: every open pull request that is not a draft,
- * or the labelled ones (the label unknown when it can't be read) and a
- * review request; and when which of the two cannot be read, it says so
- * rather than naming one. */
+/** Every open pull request, as `all` takes them once it posts. */
+const EVERY_OPEN = "every open pull request that is not a draft, each once, then new ones";
+
+/** What auto-review picks up: the labelled ones (the label unknown when it
+ * can't be read) and a review request; under `all`, every open pull request
+ * that is not a draft once it posts, and nothing by itself while it is in
+ * dry-run, where a practice review is asked for; and when which of the two
+ * cannot be read, it says so rather than naming one. */
 export function pickUpPhrase(p: PickUp): string {
-  if (p.rule === "all") return "every open pull request that is not a draft";
+  if (p.rule === "all")
+    return p.dryRun === true
+      ? `nothing by itself in dry-run (a practice review is asked for); once posting, ${EVERY_OPEN}`
+      : p.dryRun === false
+        ? EVERY_OPEN
+        : `${EVERY_OPEN}, once posting (nothing by itself in dry-run)`;
   if (p.rule === null) return "labelled pull requests or every one (which is unknown)";
   return p.label === null
     ? "pull requests with the trigger label (which one is unknown) or a review request"
@@ -98,7 +111,29 @@ export function pickUpLine(p: PickUp): string {
   return `It picks up ${pickUpPhrase(p)}.`;
 }
 
-const pickUpOf = (host: SwitchHost): PickUp => ({ rule: host.pickUp(), label: host.trigger() });
+/** Switch-on's confirm, on what it reviews and whether it posts. */
+function switchOnPosture(p: PickUp, repo: string, dry: Known<boolean>): string {
+  const goLive = "Going live is its own step later: one review you read, then one more confirm.";
+  const everyOpenIn = `every open pull request in ${repo} that is not a draft, each once, then new ones`;
+  if (p.rule === "all")
+    return dry.kind === "unknown"
+      ? `Auto-review reviews ${everyOpenIn}, once it posts; while in dry-run it reviews nothing by itself. Whether it posts to GitHub is unknown: ${dry.why}.`
+      : !dry.value
+        ? `Auto-review reviews ${everyOpenIn}, and posts each review to GitHub.`
+        : `Auto-review starts in dry-run, and while in it, it reviews nothing in ${repo} by itself: a practice review is asked for, and it records what it would post instead of posting it. Once it posts, it reviews ${EVERY_OPEN}. ${goLive}`;
+  const picks = pickUpPhrase(p);
+  return dry.kind === "unknown"
+    ? `Auto-review reviews ${picks} in ${repo}. Whether it posts to GitHub is unknown: ${dry.why}.`
+    : !dry.value
+      ? `Auto-review reviews ${picks} in ${repo}, and posts each review to GitHub.`
+      : `Auto-review starts in dry-run: it reviews ${picks} in ${repo}, and records what it would post instead of posting it. ${goLive}`;
+}
+
+const pickUpOf = (host: SwitchHost, dryRun: boolean | null = null): PickUp => ({
+  rule: host.pickUp(),
+  label: host.trigger(),
+  dryRun,
+});
 
 /** Is auto-review, as last read, something to switch off? */
 function isOn(s: Slot<AutoReviewStatus>): boolean {
@@ -164,13 +199,7 @@ async function switchOn(
   // 4. the one confirm: it comes up in dry-run unless the config is live
   const dry = await control.dryRun();
   const repo = host.repo() ?? "your repository";
-  const picks = pickUpPhrase(pickUpOf(host));
-  const posture =
-    dry.kind === "unknown"
-      ? `Auto-review reviews ${picks} in ${repo}. Whether it posts to GitHub is unknown: ${dry.why}.`
-      : !dry.value
-        ? `Auto-review reviews ${picks} in ${repo}, and posts each review to GitHub.`
-        : `Auto-review starts in dry-run: it reviews ${picks} in ${repo}, and records what it would post instead of posting it. Going live is its own step later: one review you read, then one more confirm.`;
+  const posture = switchOnPosture(pickUpOf(host), repo, dry);
   const go = await ask.select(
     `${posture} It keeps running, across reboots, until you switch it off.`,
     [CHOICE.cancel, CHOICE.turnOn],
@@ -190,7 +219,11 @@ async function switchOn(
     host.release("memory");
   }
   await host.refresh();
-  if (outcome.ok) host.say(`${outcome.detail} ${pickUpLine(pickUpOf(host))}`, "ok");
+  if (outcome.ok)
+    host.say(
+      `${outcome.detail} ${pickUpLine(pickUpOf(host, outcome.live === null ? null : !outcome.live))}`,
+      "ok",
+    );
   else host.say(`Auto-review did not start: ${outcome.detail}`, "warn");
   return outcome.ok
     ? `${outcome.detail}\n${outcome.steps.join("\n")}`

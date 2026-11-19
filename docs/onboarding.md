@@ -542,7 +542,9 @@ it authenticated (shape: `schemas/host.v1.json`;
   request once. `set-trigger` writes no config: under the same lock it sends
   its choice through the sealed operator channel `review-now` uses, and the
   running daemon keeps it in its own state, where it wins over `[github]
-  trigger` from the next poll and across restarts. It restarts nothing, and
+  trigger` from the next poll and across restarts, until a later `host setup
+  --trigger` writes another line: the daemon's next start drops the choice,
+  and the line is followed. It restarts nothing, and
   answers `done` once the daemon took it or `sent` while it has not
   answered.
 

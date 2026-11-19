@@ -147,7 +147,7 @@ status.json `memory.curation` until it or a later day is receipted, and as
 | Table | Purpose | Key columns | Principal methods |
 | --- | --- | --- | --- |
 | `drain_state` | the deploy-window drain; exactly one row, `id = 1`, persistent so it survives the restart it exists for | `id` (PK, `CHECK (id = 1)`), `draining`, `drained_deliveries`, `since` | `drainState`, `engageDrain`, `liftDrain`, `countDrainedDelivery` |
-| `trigger_choice` | a host's choice of trigger, sent by `host set-trigger` through the sealed operator channel (the `set-trigger` command); at most one row, `id = 1`, and none until a host has chosen. On a host-managed install it wins over `[github] trigger` (`effectiveTrigger`, `src/triggerchoice.ts`); it is kept here, not in `config.toml`, because the config is on the round fingerprint's policy surface | `id` (PK, `CHECK (id = 1)`), `trigger` (`CHECK` in `label`, `all`), `chosen_at`, `file` | `triggerChoice`, `setTriggerChoice` |
+| `trigger_choice` | a host's choice of trigger, sent by `host set-trigger` through the sealed operator channel (the `set-trigger` command); at most one row, `id = 1`, and none until a host has chosen. On a host-managed install it wins over `[github] trigger` (`effectiveTrigger`, `src/triggerchoice.ts`); it is kept here, not in `config.toml`, because the config is on the round fingerprint's policy surface | `id` (PK, `CHECK (id = 1)`), `trigger` (`CHECK` in `label`, `all`), `chosen_at`, `file`, `config_trigger` (what the config's `[github] trigger` line said when it was chosen: `label`, `all`, or `unset` for no line; NULL for an older build's row, which is kept) | `triggerChoice`, `setTriggerChoice`, `dropTriggerChoiceSetOver` (at the daemon's start: the choice is dropped when the line says something else now) |
 | `lever_grants` | every bounded drain/pause a *session* was granted, and the minutes it drew from that day's budget | `id` (PK), `kind`, `pr`, `minutes`, `day`, `expires_at` | `recordLeverGrant`, `leverMinutesUsed` |
 | `operator_commands` | which operator command files have been handled; keyed by file *version*, not name | `version` (PK), `file`, `handled_at` | `operatorCommandHandled`, `markOperatorCommandHandled` |
 | `filed_items` | improvement PRs and issues this system filed, for the day/week caps | `id` (PK), `kind`, `title`, `ref`, `filed_at` | `recordFiledItem`, `filedSince` |
@@ -588,7 +588,10 @@ that is not a draft and not the reviewer's own, each once, which spends model
 usage on every pull request. Left out, the config's own stays (`label` on a
 new install). `set-trigger` changes it later without writing the config: the
 daemon keeps the choice in `trigger_choice`, reads it again at every poll, and
-it wins over the config's key from then on, across restarts. Neither restarts
+it wins over the config's key from then on, across restarts, until a daemon
+starts on a config whose `[github] trigger` line says something else than
+when the choice was made: a later `setup --trigger` wrote it, and the choice
+is dropped (`settleTriggerChoice`). Neither restarts
 anything, so the daemon follows with its rounds, its queue and its state
 untouched, and the export's `trigger` says the same word. The trigger is never part of what a reviewer is bound to: unlike the
 repository and the identity, it can change at any time.
@@ -618,9 +621,12 @@ printed as `failed` with `problem: "interrupted"`, and nothing is written.
 A go-live is `done` once the go-live step has succeeded, and no host verb
 writes to GitHub. The trigger label is the live daemon's to make sure of
 (`src/triggerlabel.ts`): under `[github] trigger = "label"` it reads whether
-the label exists once when it starts and once after each change of the
-trigger, and asks the mutation gate to create it (`create_label`, an
-ordinary kind, suppressed in dry-run) when it is missing.
+the label exists after a reconcile pass that reached GitHub, and asks the
+mutation gate to create it (`create_label`, an ordinary kind, suppressed in
+dry-run) when it is missing. An answer (there, created, recorded in dry-run,
+`already_exists`) ends the asking until the next start or change of the
+trigger; a failure is tried again with a doubling wait, from a minute up to
+an hour.
 
 ---
 
@@ -729,7 +735,7 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | `bot_login` | string | `""` (`<app_slug>[bot]`; the person's login under `auth = "user"`) |
 | `review_team` | string | `""` (`org/team`) |
 | `trigger_label` | string | `"AI review requested"` |
-| `trigger` | `"label"` \| `"all"` | `"label"` (`"all"`: every open pull request that is not a draft and not the reviewer's own is picked up once, as if labelled, which spends model usage on every pull request; a push to a reviewed one still queues nothing; nothing is taken in dry-run. Read at start; on a host-managed install a host's `set-trigger` choice in `trigger_choice` wins) |
+| `trigger` | `"label"` \| `"all"` | `"label"` (`"all"`: every open pull request that is not a draft and not the reviewer's own is picked up once, as if labelled, which spends model usage on every pull request; a push to a reviewed one still queues nothing; nothing is taken in dry-run. Read at start; on a host-managed install a host's `set-trigger` choice in `trigger_choice` wins, until a start finds this line changed since the choice) |
 | `in_progress_label` | string | `"AI review in progress"` |
 | `reviewed_label` | string | `"Automatic Review"` |
 | `improvement_label` | string | `"Bot improvement"` |

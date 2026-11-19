@@ -1,7 +1,8 @@
 // The trigger label's definition, made sure of by the running daemon
 // (src/triggerlabel.ts) through the gate's `create_label`. No host verb and
-// no walk writes it: the daemon asks once when it starts and once after each
-// change of the trigger it follows, never at every poll.
+// no walk writes it: the daemon asks after a pass that reached GitHub until
+// an answer settles it, again after each change of the trigger it follows,
+// never at every poll, and a failure is tried again later each time.
 //
 // The ensurer is driven over a fake adapter; the daemon is driven with a
 // fake GitHub at the HTTP level under the real GitHubAdapter and a real
@@ -21,6 +22,8 @@ import { labelSpecs } from "../src/onboard/steps/githubapp.js";
 import { StateStore } from "../src/state.js";
 import {
   TRIGGER_LABEL_LOOK,
+  TRIGGER_LABEL_RETRY,
+  triggerLabelBackoffMs,
   triggerLabelEnsurer,
   type TriggerLabelSpec,
 } from "../src/triggerlabel.js";
@@ -57,18 +60,18 @@ describe("the ensurer", () => {
       name: LABEL,
       log: () => {},
     });
-    expect(await ensure()).toBe("created");
-    expect(await ensure()).toBeNull();
-    expect(await ensure()).toBeNull();
+    expect(await ensure(true)).toBe("created");
+    expect(await ensure(true)).toBeNull();
+    expect(await ensure(true)).toBeNull();
     expect(gh.calls).toEqual([`has ${LABEL}`, `create ${LABEL}`]);
     // under `all` there is no label to need
     trigger = "all";
-    expect(await ensure()).toBe("not_needed");
+    expect(await ensure(true)).toBe("not_needed");
     expect(gh.calls).toHaveLength(2);
     // back to label: asked once more
     trigger = "label";
-    expect(await ensure()).toBe("created");
-    expect(await ensure()).toBeNull();
+    expect(await ensure(true)).toBe("created");
+    expect(await ensure(true)).toBeNull();
     expect(gh.calls).toHaveLength(4);
   });
 
@@ -80,7 +83,7 @@ describe("the ensurer", () => {
       name: LABEL,
       log: () => {},
     });
-    expect(await ensure()).toBe("present");
+    expect(await ensure(true)).toBe("present");
     expect(gh.calls).toEqual([`has ${LABEL}`]);
   });
 
@@ -96,34 +99,81 @@ describe("the ensurer", () => {
       name: LABEL,
       log: () => {},
     });
-    expect(await ensure()).toBeNull();
+    expect(await ensure(true)).toBeNull();
     expect(gh.calls).toEqual([]);
     trigger = "label";
-    expect(await ensure()).toBe("created");
+    expect(await ensure(true)).toBe("created");
   });
 
-  it("a failure is told once, never thrown, and not retried at every pass", async () => {
+  // MUTATION: settle on any outcome (drop the SETTLED check, so a failure
+  // ends the asking as an answer does) — a 502 at boot leaves the label
+  // missing for the life of the process, and this fails. Or retry with no
+  // wait (drop the `now() < dueAt` return): the second call asks again at
+  // once, and this fails.
+  it("a failure is told once, never thrown, and tried again later each time until an answer", async () => {
     const events: Array<{ kind: string; data: Record<string, unknown> }> = [];
     const logs: string[] = [];
+    let clock = 0;
+    let fails = 3;
     const gh = fake({
       create: async () => {
-        throw new Error("POST /repos/o/r/labels → 403: Resource not accessible by integration");
+        if (fails-- > 0) throw new Error("POST /repos/o/r/labels → 502: Bad Gateway");
+        return { executed: true };
       },
     });
     const ensure = triggerLabelEnsurer({
       adapter: gh.adapter,
+      now: () => clock,
       trigger: () => "label",
       name: LABEL,
       log: (l) => logs.push(l),
       logEvent: (kind, data) => events.push({ kind, data }),
     });
-    expect(await ensure()).toBe("failed");
-    expect(await ensure()).toBeNull();
-    expect(gh.calls).toHaveLength(2);
+    expect(await ensure(true)).toBe("failed");
+    // not again at the next pass: a minute first
+    expect(await ensure(true)).toBeNull();
+    clock += TRIGGER_LABEL_RETRY.firstMs - 1;
+    expect(await ensure(true)).toBeNull();
+    clock += 1;
+    expect(await ensure(true)).toBe("failed");
+    // then twice as long
+    clock += TRIGGER_LABEL_RETRY.firstMs;
+    expect(await ensure(true)).toBeNull();
+    clock += TRIGGER_LABEL_RETRY.firstMs;
+    expect(await ensure(true)).toBe("failed");
+    clock += 4 * TRIGGER_LABEL_RETRY.firstMs;
+    expect(await ensure(true)).toBe("created");
+    // an answer ends it
+    clock += TRIGGER_LABEL_RETRY.maxMs;
+    expect(await ensure(true)).toBeNull();
+    expect(gh.calls.filter((c) => c.startsWith("create"))).toHaveLength(4);
+    // the event once, the log at each try
     expect(events).toEqual([
       { kind: "trigger_label_failed", data: { label: LABEL, outcome: "failed" } },
     ]);
-    expect(logs.join("\n")).toMatch(/403/);
+    expect(logs.filter((l) => /502/.test(l))).toHaveLength(3);
+  });
+
+  it("the wait doubles from a minute and is never more than an hour", () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 8, 20].map(triggerLabelBackoffMs)).toEqual([
+      60_000, 120_000, 240_000, 480_000, 960_000, 1_920_000, 3_600_000, 3_600_000, 3_600_000,
+    ]);
+  });
+
+  // MUTATION: drop the `passReachedGitHub` early return — the label is
+  // asked of a pass that did not reach GitHub, and this fails.
+  it("a pass that did not reach GitHub asks nothing, and is no change", async () => {
+    const gh = fake();
+    const ensure = triggerLabelEnsurer({
+      adapter: gh.adapter,
+      trigger: () => "label",
+      name: LABEL,
+      log: () => {},
+    });
+    expect(await ensure(false)).toBeNull();
+    expect(await ensure(false)).toBeNull();
+    expect(gh.calls).toEqual([]);
+    expect(await ensure(true)).toBe("created");
   });
 
   it("an adapter with no label calls is asked nothing", async () => {
@@ -133,7 +183,7 @@ describe("the ensurer", () => {
       name: LABEL,
       log: () => {},
     });
-    expect(await ensure()).toBe("unsupported");
+    expect(await ensure(true)).toBe("unsupported");
   });
 
   // The look a label is created with is the wizard's own for the same label.
@@ -164,6 +214,8 @@ const pr = (number: number): PrRef => ({
 function fakeGitHub(o: { labels?: string[]; createAnswers422?: boolean } = {}) {
   const labels = new Set(o.labels ?? []);
   const calls: string[] = [];
+  /** While set, every label request answers this 5xx. */
+  const state = { down: 0 };
   const answer = (status: number, body: unknown): Response =>
     ({
       ok: status >= 200 && status < 300,
@@ -179,6 +231,7 @@ function fakeGitHub(o: { labels?: string[]; createAnswers422?: boolean } = {}) {
     calls.push(`${method} ${path}`);
     const m = /^\/repos\/[^/]+\/[^/]+\/labels(?:\/(.+))?$/.exec(path);
     if (m === null) return answer(404, { message: "Not Found" });
+    if (state.down !== 0) return answer(state.down, { message: "Bad Gateway" });
     if (method === "GET")
       return m[1] !== undefined && labels.has(m[1])
         ? answer(200, { name: m[1] })
@@ -195,7 +248,7 @@ function fakeGitHub(o: { labels?: string[]; createAnswers422?: boolean } = {}) {
     }
     return answer(405, { message: "Method Not Allowed" });
   }) as unknown as typeof fetch;
-  return { fetchFn, calls, labels };
+  return { fetchFn, calls, labels, state };
 }
 
 const minter = {
@@ -206,7 +259,12 @@ const minter = {
 
 /** The daemon's adapter: no pull request carries a label, and the label
  * calls are the real adapter's over the fake GitHub, through a real gate. */
-function adapterFor(cfg: Config, dryrunDir: string, github: ReturnType<typeof fakeGitHub>) {
+function adapterFor(
+  cfg: Config,
+  dryrunDir: string,
+  github: ReturnType<typeof fakeGitHub>,
+  listOpenPrs: () => Promise<PrRef[]> = async () => [pr(101)],
+) {
   let real!: GitHubAdapter;
   const gate = new MutationGate(cfg.dry_run, dryrunDir, (intent) => real.executeMutation(intent));
   real = new GitHubAdapter(cfg, minter, gate, github.fetchFn, "https://api.github.test", {
@@ -218,7 +276,7 @@ function adapterFor(cfg: Config, dryrunDir: string, github: ReturnType<typeof fa
     searchLabelTriggered: async () => [],
     searchTeamTriggered: async () => [],
     searchAwaitingEscalationReviewer: async () => [],
-    listOpenPrs: async () => [pr(101)],
+    listOpenPrs,
     getPr: async () => pr(101),
     stalenessScan: async () => [],
     listBotReviewComments: async () => [],
@@ -250,14 +308,20 @@ describe("the running daemon makes sure of the trigger label", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const daemonOn = (cfg: Config, github: ReturnType<typeof fakeGitHub>) =>
+  let clock = Date.parse("2026-11-19T12:00:00Z");
+  const daemonOn = (
+    cfg: Config,
+    github: ReturnType<typeof fakeGitHub>,
+    o: { store?: StateStore; listOpenPrs?: () => Promise<PrRef[]> } = {},
+  ) =>
     createDaemon({
       cfg,
       root,
-      store,
-      adapter: adapterFor(cfg, dryrunDir, github),
+      store: o.store ?? store,
+      adapter: adapterFor(cfg, dryrunDir, github, o.listOpenPrs),
       listen: false,
       log: () => {},
+      now: () => new Date(clock),
       hooks: { async inject() {}, async dispatchRound() {}, async archiveAndClose() {} },
     });
   const configured = (o: { dryRun: boolean; host?: boolean }): Config => {
@@ -352,14 +416,84 @@ describe("the running daemon makes sure of the trigger label", () => {
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const github = fakeGitHub();
-      store.setTriggerChoice("all", "set-trigger-1.json");
+      store.setTriggerChoice("all", "set-trigger-1.json", "label");
       const daemon = daemonOn(configured({ dryRun: false, host: true }), github);
       await daemon.reconcile();
       expect(github.calls).toEqual([]);
-      store.setTriggerChoice("label", "set-trigger-2.json");
+      store.setTriggerChoice("label", "set-trigger-2.json", "label");
       await daemon.reconcile();
       await daemon.reconcile();
       expect(posts(github)).toEqual(["POST /repos/example-org/example-app/labels"]);
+    },
+  );
+
+  // MUTATION: settle on the first outcome whatever it was (drop the SETTLED
+  // check in triggerLabelEnsurer) — a GitHub that answers 502 at boot leaves
+  // the label missing until the next start, and this fails.
+  it(
+    "a 5xx at boot is tried again later, and the label is created once GitHub answers",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const github = fakeGitHub();
+      github.state.down = 502;
+      const daemon = daemonOn(configured({ dryRun: false }), github);
+      await daemon.reconcile();
+      expect(github.labels.size).toBe(0);
+      expect(failures()).toBe(1);
+      github.state.down = 0;
+      // the next poll is inside the wait: nothing asked
+      const asked = github.calls.length;
+      await daemon.reconcile();
+      expect(github.calls).toHaveLength(asked);
+      // once the wait is over, the next pass creates it
+      clock += TRIGGER_LABEL_RETRY.firstMs;
+      await daemon.reconcile();
+      expect([...github.labels]).toEqual([LABEL]);
+      // and that ends it
+      expect(posts(github)).toEqual(["POST /repos/example-org/example-app/labels"]);
+      const after = github.calls.length;
+      clock += TRIGGER_LABEL_RETRY.maxMs;
+      await daemon.reconcile();
+      expect(github.calls).toHaveLength(after);
+      expect(failures()).toBe(1);
+    },
+  );
+
+  // MUTATION: hand the ensurer `true` whatever the pass did (drop
+  // `completed && listed` in the daemon's reconcile pass) — the label is
+  // asked of a boot pass that threw, and this fails.
+  it(
+    "a boot pass that threw, or could not list the open pull requests, asks nothing; the next good one does",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const github = fakeGitHub();
+      // the pass throws: the daemon's own read after the reconcile fails once
+      let throwOnce = true;
+      const flaky = Object.assign(Object.create(store) as StateStore, {
+        drainState: () => {
+          if (throwOnce) {
+            throwOnce = false;
+            throw new Error("SQLITE_BUSY");
+          }
+          return store.drainState();
+        },
+      });
+      let listFails = 1;
+      const daemon = daemonOn(configured({ dryRun: false }), github, {
+        store: flaky,
+        listOpenPrs: async () => {
+          // the second pass: GitHub does not list
+          if (!throwOnce && listFails-- > 0) throw new Error("GET /pulls → 503");
+          return [pr(101)];
+        },
+      });
+      await daemon.reconcile();
+      expect(github.calls).toEqual([]);
+      await daemon.reconcile();
+      expect(github.calls).toEqual([]);
+      await daemon.reconcile();
+      expect(posts(github)).toEqual(["POST /repos/example-org/example-app/labels"]);
+      expect([...github.labels]).toEqual([LABEL]);
     },
   );
 });

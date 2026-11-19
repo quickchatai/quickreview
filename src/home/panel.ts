@@ -197,19 +197,24 @@ export class HomePanel implements Component {
     return [left, this.c("dim", `${key} ${on ? "switches it off" : "turns it on"}`)];
   }
 
-  /** What auto-review picks up, when the home knows where to read it. */
-  private triggerRow(): string | null {
+  /** What auto-review picks up, when the home knows where to read it:
+   * wrapped to the column, so it is said whole at its narrowest. */
+  private triggerRows(w: number): string[] {
     const t = this.m.state.trigger;
     const p = this.m.state.pickUp;
-    if (t === null && p === null) return null;
+    if (t === null && p === null) return [];
     if (t?.kind === "pending" || p?.kind === "pending")
-      return this.c("dim", "  picks up … checking");
-    return this.c(
-      "dim",
-      `  picks up ${pickUpPhrase({
-        rule: p?.kind === "known" ? p.value : null,
-        label: t?.kind === "known" ? t.value : null,
-      })}`,
+      return [this.c("dim", "  picks up … checking")];
+    const a = this.m.state.autoReview;
+    const state = a.kind === "known" ? a.value.state : null;
+    const said = `picks up ${pickUpPhrase({
+      rule: p?.kind === "known" ? p.value : null,
+      label: t?.kind === "known" ? t.value : null,
+      // the status says it while the reviewer runs; anything else is unknown
+      dryRun: state === "on-dry" ? true : state === "on-live" ? false : null,
+    })}`;
+    return wrapTextWithAnsi(said, Math.max(10, w - 8)).map((l, i) =>
+      this.c("dim", `${i === 0 ? "  " : "    "}${l}`),
     );
   }
 
@@ -653,11 +658,11 @@ export class HomePanel implements Component {
     const [a, aRight] = this.autoRow();
     const [mem, spend] = this.memLine();
     const [login, tools] = this.loginLine();
-    const picks = this.triggerRow();
+    const picks = this.triggerRows(w);
     const body = [
       this.top(w),
       this.row(w, a, aRight),
-      ...(picks === null ? [] : [this.row(w, picks)]),
+      ...picks.map((l) => this.row(w, l)),
       this.row(w, mem, spend),
       this.row(w, login, tools),
     ];

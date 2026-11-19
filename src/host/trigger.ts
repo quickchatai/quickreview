@@ -13,8 +13,9 @@
 // as root into the daemon's `<commands>/operator/` (src/commands.ts), and its
 // receipt read for a moment. The daemon keeps the choice in its own store
 // (src/triggerchoice.ts), where its next reconcile pass reads it; from then
-// on it wins over the config's `[github] trigger`, across restarts. It starts
-// nothing and restarts nothing, and a round in flight runs on.
+// on it wins over the config's `[github] trigger`, across restarts, until a
+// later `host setup --trigger` writes another line there. It starts nothing
+// and restarts nothing, and a round in flight runs on.
 //
 // Nothing is written to config.toml. The config is on the round
 // fingerprint's policy surface (src/execboundary.ts): a rewrite while a round

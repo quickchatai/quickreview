@@ -509,13 +509,41 @@ describe("the status line renders every label from a snapshot", () => {
   // MUTATION: drop the `all` branch of pickUpPhrase — the home says the
   // label under `all`, a false fact about what is reviewed, and this fails.
   // Or answer the label wording when the rule cannot be read — this fails.
-  it("says every open pull request under `all`, and unknown when which cannot be read, at 74 columns", async () => {
-    const all = await panelFor(running(snapshot()), known("AI review requested"), {
+  // Or say every open pull request under `all` whatever the posture (drop
+  // the `dryRun` fact): in dry-run `all` takes nothing by itself, and this
+  // fails.
+  it("under `all`: nothing by itself in dry-run, every open pull request once posting, and unknown when which cannot be read, at 74 columns", async () => {
+    const flat = (t: string): string => t.replace(/[│\s]+/g, " ");
+    const practice = await panelFor(running(snapshot()), known("AI review requested"), {
       pickUp: known("all"),
       width: 74,
     });
-    expect(all).toMatch(/ {2}picks up every open pull request that is not a draft\s*│/);
-    expect(all).not.toMatch(/labelled "AI review requested"/);
+    expect(practice).toMatch(/Auto-review on · dry-run/);
+    expect(practice).toMatch(/ {2}picks up nothing by itself in dry-run \(a practice review is/);
+    expect(flat(practice)).toMatch(
+      /picks up nothing by itself in dry-run \(a practice review is asked for\); once posting, every open pull request that is not a draft, each once, then new ones/,
+    );
+    const live = await panelFor(
+      running(snapshot({ dry_run: false })),
+      known("AI review requested"),
+      { pickUp: known("all"), width: 74 },
+    );
+    expect(live).toMatch(/Auto-review on · live/);
+    expect(flat(live)).toMatch(
+      /picks up every open pull request that is not a draft, each once, then new ones/,
+    );
+    expect(live).not.toMatch(/nothing by itself/);
+    // switched off, the posture is not the status's to say: both halves
+    const off = await panelFor(
+      { container: known("stopped"), snapshot: known(null), now: NOW },
+      known("AI review requested"),
+      { pickUp: known("all"), width: 74 },
+    );
+    expect(flat(off)).toMatch(
+      /picks up every open pull request that is not a draft, each once, then new ones, once posting \(nothing by itself in dry-run\)/,
+    );
+    for (const text of [practice, live, off])
+      expect(text).not.toMatch(/labelled "AI review requested"/);
     const unread = await panelFor(running(snapshot()), known("AI review requested"), {
       pickUp: unknown("the daemon is not running"),
       width: 74,
@@ -524,8 +552,6 @@ describe("the status line renders every label from a snapshot", () => {
       / {2}picks up labelled pull requests or every one \(which is unknown\)\s*│/,
     );
     expect(unread).not.toMatch(/labelled "AI review requested"/);
-    for (const text of [all, unread])
-      for (const line of text.split("\n").filter((l) => l.includes("picks up")))
-        expect(line).not.toContain("…");
+    for (const text of [practice, live, off, unread]) expect(text).not.toContain("…");
   });
 });

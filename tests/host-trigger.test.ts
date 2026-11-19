@@ -25,7 +25,6 @@ import {
 } from "../src/host/trigger.js";
 import { acquireChecklistLock } from "../src/onboard/checklistlock.js";
 import { renderHostConfig, type HostConfigChoice } from "../src/onboard/steps/hostconfig.js";
-import { triggerOfToml } from "../src/triggerchoice.js";
 import {
   MARKER_ONLY,
   REPO,
@@ -44,7 +43,7 @@ describe("the shipped template", () => {
   it("documents the key, commented out: a config without it is label", () => {
     expect(TEMPLATE).toMatch(/^#trigger = "label"$/m);
     expect(githubOf(TEMPLATE)).not.toHaveProperty("trigger");
-    expect(triggerOfToml(TEMPLATE)).toBe("label");
+    expect(configFacts(TEMPLATE).trigger).toBe("label");
     // and it says what `all` costs, where the person who sets it reads
     expect(TEMPLATE).toMatch(/model usage on EVERY pull request/);
   });
@@ -109,9 +108,8 @@ describe("host setup --trigger", () => {
     expect(doc(text)["dry_run"]).toBe(true);
     // the template, line for line: the key was a line of it already
     expect(text.split("\n").length).toBe(TEMPLATE.split("\n").length);
-    // what the export says, and what the daemon's own reader says
+    // what the export says
     expect(configFacts(text).trigger).toBe("all");
-    expect(triggerOfToml(text)).toBe("all");
     expect(w.launched).toHaveLength(1);
   });
 

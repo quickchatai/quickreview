@@ -60,7 +60,7 @@
     },
     "trigger": {
       "enum": ["label", "all"],
-      "description": "What the reviewer picks up by itself. On an install a host manages it is the host's choice (`host set-trigger`), which the running reviewer keeps and reports, and where no choice was made the config's `[github] trigger`; on any other install it is the config's word. label: pull requests that carry the trigger label. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request; in dry-run it takes none of them, so the first pass after go-live takes each. Absent when it cannot be read: the config cannot be read or states neither, or on a host-managed install the reviewer is not running."
+      "description": "What the reviewer picks up by itself. On an install a host manages it is the host's choice (`host set-trigger`), which the running reviewer keeps and reports, and where no choice was made the config's `[github] trigger`; a later `host setup --trigger` that writes another `[github] trigger` line wins over an earlier choice from the reviewer's next start; on any other install it is the config's word. label: pull requests that carry the trigger label. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request; in dry-run it takes none of them, so the first pass after go-live takes each. Absent when it cannot be read: the config cannot be read or states neither, or on a host-managed install the reviewer is not running."
     },
     "poll": {
       "type": "object",

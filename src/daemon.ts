@@ -95,7 +95,8 @@ import {
   type ReviewRequestKind,
 } from "./securityrequest.js";
 import { STATE_REQUEST } from "./staterequest.js";
-import { effectiveTrigger } from "./triggerchoice.js";
+import type { GithubTrigger } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
+import { effectiveTrigger, settleTriggerChoice } from "./triggerchoice.js";
 import { triggerLabelEnsurer, type TriggerLabelAdapter } from "./triggerlabel.js";
 import {
   PostingOutbox,
@@ -232,6 +233,10 @@ export interface DaemonDeps {
   log?: (msg: string, extra?: unknown) => void;
   /** Shared deterministic clock for dispatch, verdict and stage supervision. */
   now?: () => Date;
+  /** The config's `[github] trigger` line as this start read it
+   * (src/triggerchoice.ts `triggerLineOf`): its word, null for no line.
+   * Absent: the parsed config's trigger stands in for it. */
+  triggerLine?: GithubTrigger | null;
   /** Skip binding the HTTP port (tests). */
   listen?: boolean;
   /** Latest digest headline for status.json (src/digest.ts). */
@@ -500,10 +505,21 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   store.setAnomalySink((signal) => wakePolicy.onAnomaly(signal));
 
   const gh: DaemonAdapter = deps.adapter ?? buildGitHubAdapter(cfg, stateDir);
+  // A host's choice of trigger that the config was set over since (its
+  // `[github] trigger` says something else than when the choice was made)
+  // is dropped as the daemon starts: the later of the two is followed
+  // (src/triggerchoice.ts).
+  settleTriggerChoice({
+    store,
+    hostManaged: cfg.github.token_source === "host",
+    configured: deps.triggerLine !== undefined ? deps.triggerLine : (cfg.github.trigger ?? null),
+    log: (line) => log(line),
+  });
   /** The trigger label made sure of when the daemon follows `label`: the
    * trigger is read as the reconcile pass reads it. */
   const ensureTriggerLabel = triggerLabelEnsurer({
     adapter: gh,
+    now: () => (deps.now ? deps.now() : new Date()).getTime(),
     trigger: () =>
       effectiveTrigger({
         hostManaged: cfg.github.token_source === "host",
@@ -972,6 +988,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     firstReconcileSeen = true;
     let completed = false;
     let thrown: unknown = undefined;
+    /** The pass's open list came from GitHub. */
+    let listed = false;
     await guard("reconcile", async () => {
       const report = await reconcileOnce({
         cfg,
@@ -1011,6 +1029,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       };
       // The board's "review a PR" list: kept from the last pass that listed.
       if (report.open_list) openPrs = { listed_at: report.ran_at, prs: report.open_list };
+      listed = report.open_list !== undefined;
       log(
         `reconcile: open=${report.open_prs} triggered=${report.triggered.length} ` +
           `closed=${report.closed.length} captured=${report.captured_comments} ` +
@@ -1063,10 +1082,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     // is owed, and asked again here once its backoff is due. Its own guard:
     // it never fails the pass.
     await guard("owed base rechecks", () => retryOwedBaseRechecks(recheckDeps));
-    // The trigger label's definition (src/triggerlabel.ts): asked once after
-    // the first pass and once after each change of the trigger, never at
-    // every pass, through the gate. It never fails the pass.
-    await guard("trigger label", () => ensureTriggerLabel());
+    // The trigger label's definition (src/triggerlabel.ts): asked after a
+    // pass that completed and listed the open pull requests, until an answer
+    // settles it, again after each change of the trigger, never at every
+    // pass, through the gate. It never fails the pass.
+    await guard("trigger label", () => ensureTriggerLabel(completed && listed));
     // The poll's outcome reaches status.json now, not at the next heartbeat:
     // "working" is judged on it.
     writeStatus();

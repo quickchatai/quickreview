@@ -47,6 +47,8 @@ interface Machine {
   answers: SwitchOnAnswers[];
   /** A host manages GitHub here (`[github] token_source = "host"`). */
   hosted?: boolean;
+  /** Which pull requests it picks up by itself; `label` when left out. */
+  pickUp?: "label" | "all";
 }
 
 function machine(over: Partial<Machine> = {}): Machine {
@@ -150,7 +152,7 @@ function adaptersOver(m: Machine): HomeAdapters {
     autoReview: {
       status: async () => known({ state: m.auto, checkedAt: NOW - 30_000 }),
       trigger: async () => known("AI review requested"),
-      pickUp: async () => known("label" as const),
+      pickUp: async () => known(m.pickUp ?? "label"),
       control,
     },
     memory: { status: async () => known(m.memory), control: memory },
@@ -169,7 +171,7 @@ interface Asked {
 async function home(
   m: Machine,
   answers: Array<string | undefined>,
-  o: { hasUI?: boolean } = {},
+  o: { hasUI?: boolean; width?: number } = {},
 ): Promise<{ pi: FakePi; asked: Asked[]; text: () => string }> {
   const asked: Asked[] = [];
   const pi = fakePi();
@@ -189,7 +191,7 @@ async function home(
     every: () => () => {},
   })(pi.api);
   await pi.start();
-  return { pi, asked, text: () => pi.render(100, 40).lines.join("\n") };
+  return { pi, asked, text: () => pi.render(o.width ?? 100, 40).lines.join("\n") };
 }
 
 describe("switching auto-review on", () => {
@@ -271,6 +273,50 @@ describe("switching auto-review on", () => {
     const h = await home(m, [CHOICE.here, CHOICE.notNow, CHOICE.turnOn]);
     await h.pi.tool("home_auto_review");
     expect(h.asked[2]!.title).toMatch(/^Auto-review reviews pull requests/);
+  });
+
+  // The home's narrowest column is 74: the notice and the row are said whole.
+  // MUTATION: drop the dry-run branch of switchOnPosture's `all` (say every
+  // open pull request whatever the posture) — the confirm promises reviews
+  // that practice mode never takes, and this fails. Or drop the `dryRun`
+  // fact from pickUpPhrase's `all`: the row says the same, and this fails.
+  it("under `all`, the confirm and the home say what practice mode takes, and what posting does, at 74 columns", async () => {
+    const practice = machine({ pickUp: "all", goesLive: false });
+    const h = await home(practice, [CHOICE.here, CHOICE.notNow, CHOICE.turnOn], { width: 74 });
+    await h.pi.tool("home_auto_review");
+    await drain();
+    const confirm = h.asked[2]!.title;
+    expect(confirm).toMatch(
+      /^Auto-review starts in dry-run, and while in it, it reviews nothing in acme\/widgets by itself: a practice review is asked for/,
+    );
+    expect(confirm).toMatch(
+      /Once it posts, it reviews every open pull request that is not a draft, each once, then new ones\./,
+    );
+    expect(confirm).not.toMatch(/it reviews every open pull request in acme\/widgets/);
+    const dryText = h.text();
+    expect(dryText).toMatch(/● Auto-review on · dry-run/);
+    expect(dryText.replace(/[│\s]+/g, " ")).toMatch(
+      /picks up nothing by itself in dry-run \(a practice review is asked for\); once posting, every open pull request that is not a draft, each once, then new ones/,
+    );
+    expect(dryText.replace(/[│\s]+/g, " ")).toMatch(
+      /It picks up nothing by itself in dry-run \(a practice review is asked for\); once posting, every open pull request that is not a draft, each once, then new ones\./,
+    );
+
+    const live = machine({ pickUp: "all", dryRun: known(false), goesLive: true });
+    const l = await home(live, [CHOICE.here, CHOICE.notNow, CHOICE.turnOn], { width: 74 });
+    await l.pi.tool("home_auto_review");
+    await drain();
+    expect(l.asked[2]!.title).toMatch(
+      /^Auto-review reviews every open pull request in acme\/widgets that is not a draft, each once, then new ones, and posts each review to GitHub\./,
+    );
+    expect(l.asked[2]!.title).not.toMatch(/nothing by itself/);
+    const liveText = l.text();
+    expect(liveText).toMatch(/● Auto-review on · live/);
+    expect(liveText.replace(/[│\s]+/g, " ")).toMatch(
+      /picks up every open pull request that is not a draft, each once, then new ones/,
+    );
+    expect(liveText).not.toMatch(/nothing by itself/);
+    for (const text of [dryText, liveText]) expect(text).not.toContain("…");
   });
 
   it("on a config whose dry_run can't be read, the confirm says posting is unknown", async () => {

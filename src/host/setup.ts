@@ -24,7 +24,10 @@
 // with the rest of the config. Left out, the config's own stays, and a new
 // config's is `label`. `host set-trigger` changes it later, and its choice
 // is the running daemon's to keep (src/host/trigger.ts): from then on it wins
-// over this key.
+// over this key, until a later setup writes another line here. The daemon
+// keeps the line the choice was made over, and its next start drops a choice
+// the config was set over since (src/triggerchoice.ts); a setup that restates
+// that very line leaves the choice standing.
 //
 // What it refuses, in words, before anything is written:
 //

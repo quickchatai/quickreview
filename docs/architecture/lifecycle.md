@@ -69,7 +69,8 @@ marks nothing, so the first live pass takes every open PR once. Which trigger
 a pass runs on is `effectiveTrigger` (`src/triggerchoice.ts`): the config's
 key as loaded at start, except on a host-managed install, where a host's
 `set-trigger` choice, kept in state.db (`trigger_choice`) and read again at
-every pass, wins. A choice that cannot be read leaves the trigger unknown, and
+every pass, wins (a start that finds the config's line changed since the
+choice drops it). A choice that cannot be read leaves the trigger unknown, and
 an unknown trigger takes nothing by itself.
 
 Both triggers are *consumed* at dispatch — the label is removed and the team
