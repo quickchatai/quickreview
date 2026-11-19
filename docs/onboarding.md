@@ -439,9 +439,9 @@ You can switch later by running the step again with the other answer. Nothing
 is deleted either way: an App's secrets and your token file stay where they are.
 
 **A host-managed install.** Where a host runs the reviewer for you, it sets
-`[github] token_source = "host"` in `config.toml`, beside `auth = "user"`. That
-key is the marker of a host-managed GitHub credential, and you would not set it
-by hand. The contract between the reviewer and such a host:
+`[github] token_source = "host"` in `config.toml`, beside `auth = "user"` or
+`auth = "installation"`. That key is the marker of a host-managed GitHub
+credential, and you would not set it by hand. The contract between the reviewer and such a host:
 
 - **the token** is the file `<secrets>/github_token`. The host writes it
   atomically (a rename), mode `0600`, the token alone, and keeps a token with
@@ -476,24 +476,75 @@ token:
   on demand from the home stays, on the same token. Switching auto-review off
   stays too.
 
+**The third route: an App installation.** A host may supply, instead of a
+person's token, the **installation token of a GitHub App it holds the key
+of**: `[github] auth = "installation"`, always beside the marker, with
+`app_slug` naming the App. The reviewer then posts as that App's bot
+(`<slug>[bot]`), with APPROVE / REQUEST_CHANGES / COMMENT reviews, and no App
+private key is ever on the machine. On this route:
+
+- this step takes the mode from the config its host wrote (its `github_auth`
+  input does not choose it) and records the route `installation`. The route
+  is never offered as an answer, and on an install no host manages it is
+  refused in words;
+- **the token is proved with a read of the configured repository**, never
+  `GET /user`, which refuses an installation token. Who the token is comes
+  from GraphQL's `viewer`, and it must be the `<slug>[bot]` the slug implies:
+  a slug that names another App than the token's fails the step and says so,
+  because a reviewer with the wrong `bot_login` never recognises its own
+  reviews;
+- the config the route owns is `auth = "installation"`, `app_slug`,
+  `bot_login = "<slug>[bot]"` and `[ingress] shape = "polling"`;
+- **steps 40 and 65 are off**: no App is created (it exists, and is the
+  host's), and no App is asked who it is (there is no key to ask with). The
+  proof round and the verification read the token file and sign no App JWT;
+  the interview's App-slug answer is the recorded slug;
+- `app_id`, `app.pem` and `webhook_secret` are never read, and the companion
+  gets no GitHub token at all.
+
 What the host does instead is the `host` family of the same contract,
 `qcr --schema 3 host <verb>`, run from the host's own process for the person
 it authenticated (shape: `schemas/host.v1.json`;
 [architecture/data-model.md](architecture/data-model.md) §4.8):
 
-- `host setup --repo owner/name --auth user` writes the config and runs this
+- `host setup --repo owner/name --auth user` (or `--auth installation
+  --app-slug <slug>`) writes the config and runs this
   walk's steps detached, with the same silent defaults the home's switch uses.
-  The reviewer comes up in dry-run;
+  With `installation` it first checks that the token's own login is
+  `<slug>[bot]`, and refuses (`identity_mismatch`) when it is not.
+  The reviewer comes up in dry-run. On a machine with no config yet it writes
+  the marker and the auth mode itself; a config that is already there without
+  the marker is refused (`not_host_managed`) before anything is written, so
+  an install that keeps its own credential is never made host-managed;
 - `host proof-start <pr>` and `host proof-result <pr>` are the proof round
   below, in two halves that never wait: the second prints the review as it
   would have been posted, for the host to show its operator;
 - `host go-live` is the go-live step below, on the operator's confirm of that
   practice review, sent as an attestation on standard input. The flag still
-  moves only in that step ([ownership.md](ownership.md)).
+  moves only in that step ([ownership.md](ownership.md)), and only on an
+  install that carries the marker. The go-live is done once that step has
+  succeeded; the trigger label is made sure of after it and reported beside
+  it (`label`: `ok` or `failed`), never as a failure of the go-live. Called
+  again on an install that is already live, the verb only tries the label
+  again: nothing is re-run and the daemon is not restarted;
+- `host setup --trigger label|all` and, later, `host set-trigger label|all`
+  say which pull requests the reviewer picks up by itself (`[github]
+  trigger`): the ones that carry the trigger label (the default), or every
+  open pull request that is not a draft and not the reviewer's own, each
+  once. **`all` spends model usage on every pull request**, and switching to
+  it queues every open pull request that has no review yet. Under either, a
+  push to a reviewed pull request queues nothing by itself, and a review
+  asked for by name (the label, `review-now`) still runs. `set-trigger` is
+  one edit of the config under the same lock; it restarts nothing, because
+  the daemon reads that key again at every poll.
 
 The host verbs and the home's switches take one lock around the checklist, so
-only one of them changes the setup at a time, and no host verb runs from
-inside an agent session or the daemon's container.
+only one of them changes the setup at a time. The lock's record carries the
+machine's boot id and its holder's start time: one left behind when a machine
+was stopped or restarted mid-setup is stale, and the next call takes it over.
+No host verb runs from inside an agent session this system starts (a review
+session, the companion, the home's own pi, `qcr pi`) or the daemon's
+container.
 
 ### 35 — The interview, and `config.toml`
 

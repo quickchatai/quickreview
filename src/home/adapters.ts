@@ -45,11 +45,11 @@ import { join } from "node:path";
 import { parse } from "smol-toml";
 import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { assetRoot } from "@quickchatai/pi-quickreview/src/assetroot.js";
-import { readTokenFile } from "@quickchatai/pi-quickreview/src/hosttoken.js";
+import { readTokenFile, tokenOwnLogin } from "@quickchatai/pi-quickreview/src/hosttoken.js";
 import { postSavedReview } from "@quickchatai/pi-quickreview/src/savedpost.js";
 import { HOME_DEFAULTS, sandboxRoot, type HomeToolSet } from "../config.js";
 import { loadOneShotConfig, locateConfig, stackRoot, stateHome } from "../homes.js";
-import { hostManagedAt, secretsDirAt } from "../hostmanaged.js";
+import { hostManagedAt, installationAuthAt, secretsDirAt } from "../hostmanaged.js";
 import type { OnboardAdapters, ProcessRunner } from "../onboard/engine.js";
 import { openStepMemoryForward } from "../onboard/stepforward.js";
 import { composeAutoReview, serviceState } from "./autoreview.js";
@@ -267,9 +267,15 @@ const GITHUB_READ_TIMEOUT_MS = 15_000;
  * `gh`, and no words that send the person to sign in: a token the host has
  * not written is "no credential yet" (`user` answers null), and one GitHub
  * refuses is unknown with the reason. The token is never in an answer.
+ *
+ * `installation()`: the token is an App installation's (`[github] auth =
+ * "installation"`). Who it is then comes from GraphQL's `viewer`
+ * (`tokenOwnLogin`): GitHub's user endpoint refuses an installation token,
+ * and is never asked with one.
  */
 export function tokenFileGithubPort(o: {
   secretsDir: () => string;
+  installation?: () => boolean;
   fetch?: typeof fetch;
   apiBase?: string;
 }): GithubPort {
@@ -323,6 +329,11 @@ export function tokenFileGithubPort(o: {
     user: async () => {
       const t = token();
       if (t.kind === "unknown" || t.value === null) return t;
+      if (o.installation?.() === true) {
+        const who = await tokenOwnLogin(fetchFn, t.value, apiBase);
+        if (who.ok) return known(who.login);
+        return unknown(who.status === 401 ? refusal(401) : who.detail);
+      }
       try {
         const r = await call(t.value, "/user");
         const login = (r.body as { login?: unknown } | null)?.login;
@@ -530,6 +541,7 @@ export function realHomeAdapters(o: {
       own: githubPort(o.runner ?? execRunner),
       host: tokenFileGithubPort({
         secretsDir: secretsDirAt(o.configPath, o.env ?? process.env),
+        installation: installationAuthAt(o.configPath),
         ...(o.fetch ? { fetch: o.fetch } : {}),
       }),
     }),

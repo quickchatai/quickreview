@@ -43,7 +43,11 @@ export const ADOPT_WAIT_MS = 250;
 /** The checklist lock the verb handed this walk, or null when none arrives. */
 export async function adoptLock(ports: HostPorts, token: string): Promise<HeldLock | null> {
   for (let attempt = 0; attempt < ADOPT_TRIES; attempt += 1) {
-    const lock = adoptChecklistLock(ports.stateDir, token, { pid: ports.pid });
+    const lock = adoptChecklistLock(ports.stateDir, token, {
+      pid: ports.pid,
+      bootId: () => ports.bootId(),
+      startTime: (pid) => ports.startTime(pid),
+    });
     if (lock !== null) return lock;
     await ports.sleep(ADOPT_WAIT_MS);
   }

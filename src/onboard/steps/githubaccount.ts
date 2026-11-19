@@ -59,10 +59,33 @@
 //   * writes the same config the "user" route owns, leaving the marker as it is.
 // Its verify re-proves the token and names the host, never a command, as the
 // one that puts a failure right. The App route is refused there in words.
+//
+// On such an install the host also names the IDENTITY, in the mode it writes
+// beside the marker, and the step's `github_auth` input does not choose it:
+//
+//   auth = "user"          the person's own account, as above.
+//   auth = "installation"  an App installation: the token in the file is one
+//                          the host minted for a GitHub App it holds the key
+//                          of, and `[github] app_slug` names that App. The
+//                          third route. Its token cannot ask GitHub's user
+//                          endpoint and is never sent there:
+//     * the token is proved with a read of the configured repository;
+//     * who the token is comes from GraphQL's `viewer`, and must be the
+//       login the slug implies (`<slug>[bot]`). A slug that names another
+//       App than the token's is said plainly and fails the step: the
+//       reviewer would otherwise never recognise its own reviews;
+//     * the config the route owns is `auth = "installation"`, the slug, the
+//       derived `bot_login` and `[ingress] shape = "polling"`;
+//     * no App is created and none is asked who it is: the github_app and
+//       app_slug_reconcile steps are off on this route, which has no App key.
+//   The route is recorded as `installation`, is never offered as an answer,
+//   and is refused in words on an install no host manages.
 import {
   CHOICE_KEYS,
+  GITHUB_AUTH_ANSWERS,
   GITHUB_AUTH_CHOICES,
   REPO_SLUG_RE,
+  botLoginFor,
   githubAuthOf,
   memberOf,
   type GithubAuth,
@@ -106,7 +129,10 @@ import {
   HOST_MANAGED,
   hostTokenProblem,
   readTokenFile,
+  tokenIdentityProblem,
+  tokenOwnLogin,
 } from "@quickchatai/pi-quickreview/src/hosttoken.js";
+import { APP_SLUG_RE } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 
 export const GITHUB_ACCOUNT_STEP_ID = "github_account";
 
@@ -133,6 +159,8 @@ function log(ctx: StepContext, line: string): void {
   ctx.adapters.log?.(`${GITHUB_ACCOUNT_STEP_ID}: ${line}`);
 }
 
+/** The route an input names. "installation" is read (so it can be refused
+ * in words, or met by the mode a host wrote) and is never offered. */
 function routeAnswer(input: Readonly<Record<string, unknown>>): GithubAuth | null {
   const raw = textOf(input.github_auth).trim().toLowerCase();
   if (raw === "own" || raw === "account" || raw === "personal" || raw === "me") return "user";
@@ -283,6 +311,69 @@ function offerRoutes(ghWorks: boolean): CheckResult {
   };
 }
 
+/** What a failure on a host-managed install ends with: whose it is to fix. */
+const HOST_FIXES =
+  "this install's GitHub credential is managed by its host, which writes the token file and keeps it fresh";
+const HOST_FIXES_SENTENCE = `${HOST_FIXES[0]!.toUpperCase()}${HOST_FIXES.slice(1)}`;
+
+/** The config edits the installation route owns: the mode, the App's slug,
+ * the login it implies, and polling. Returns the new text, or a reason. */
+function installationConfig(text: string, slug: string): string | string[] {
+  let next: string | null = text;
+  for (const [key, value] of [
+    ["auth", "installation"],
+    ["app_slug", slug],
+    ["bot_login", botLoginFor(slug)],
+  ] as const) {
+    next = next === null ? null : setTomlKey(next, "github", key, value);
+  }
+  if (next === null) return ["config.toml has no [github] table to write the route into"];
+  const polling = optionFor("polling")!;
+  return patchTomlSection(next, "ingress", ingressBlock(polling));
+}
+
+/** `GET /repos/{o}/{r}` with an installation token: is the repository one the
+ * installation reaches, under that name, and open to review? The answer's
+ * `permissions` are not read: they describe a person's role, and an
+ * installation's access is what its host minted the token with. */
+export async function installationRepoRead(
+  fetchFn: typeof fetch,
+  apiBase: string,
+  token: string,
+  repo: RepoSlug,
+): Promise<CheckResult> {
+  const slug = `${repo.owner}/${repo.name}`;
+  const r = await api(fetchFn, `${apiBase}/repos/${repo.owner}/${repo.name}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const no = (detail: string): CheckResult => ({ name: "repo access", ok: false, detail });
+  if (r.status === 401)
+    return no(
+      `GitHub rejected the token in the token file (HTTP 401) when reading ${slug}: ${HOST_FIXES}`,
+    );
+  if (r.status === 404 || r.status === 403)
+    return no(
+      `the installation token cannot read ${slug} (HTTP ${r.status}): the App is not installed on it, the repository is no ` +
+        `longer among the ones the installation selects, or the token was minted for another one. ${HOST_FIXES_SENTENCE}`,
+    );
+  if (r.status !== 200)
+    return no(
+      `could not read ${slug} with the installation token (HTTP ${r.status}); run this step again`,
+    );
+  const body = (r.body ?? {}) as Record<string, unknown>;
+  if (body.archived === true) return no(`${slug} is archived: nobody can review its pull requests`);
+  const name = typeof body.full_name === "string" ? body.full_name : slug;
+  if (name.toLowerCase() !== slug.toLowerCase())
+    return no(
+      `${slug} is not where GitHub keeps that repository now (it answers as ${name}): it was renamed or moved`,
+    );
+  return {
+    name: "repo access",
+    ok: true,
+    detail: `the installation token reads ${slug}: the token is proved with this read, and GitHub's user endpoint is never asked`,
+  };
+}
+
 /** The config edits the "user" route owns. Returns the new text, or a reason. */
 function userConfig(text: string, login: string): string | string[] {
   let next: string | null = text;
@@ -340,9 +431,33 @@ function hostManaged(ctx: StepContext): boolean {
   return text !== null && readTomlKey(text, "github", "token_source") === "host";
 }
 
-/** What a failure on a host-managed install ends with: whose it is to fix. */
-const HOST_FIXES =
-  "this install's GitHub credential is managed by its host, which writes the token file and keeps it fresh";
+/** The identity a host wrote beside its marker: the installation route when
+ * the config says `[github] auth = "installation"`, the person's own account
+ * otherwise (the mode a marked config has always meant). */
+function hostRoute(ctx: StepContext): Extract<GithubAuth, "user" | "installation"> {
+  const text = readTextOrNull(ctx.adapters.paths.configPath);
+  return text !== null && readTomlKey(text, "github", "auth") === "installation"
+    ? "installation"
+    : "user";
+}
+
+/** `[github] app_slug` as the config states it; null when it names no App. */
+function configuredSlug(ctx: StepContext): string | null {
+  const text = readTextOrNull(ctx.adapters.paths.configPath);
+  const slug = (text === null ? null : readTomlKey(text, "github", "app_slug"))?.trim() ?? "";
+  return APP_SLUG_RE.test(slug) ? slug : null;
+}
+
+/** The route is one only a host names; on an install that keeps its own
+ * credential it is refused, in words. */
+const INSTALLATION_NEEDS_HOST: CheckResult = {
+  name: "github_auth",
+  ok: false,
+  detail:
+    'the "installation" route is an App installation token that a host supplies ([github] token_source = "host"), and ' +
+    'this install keeps its own GitHub credential: nothing here can mint such a token. Run this step with github_auth: "user" ' +
+    '(your own account) or github_auth: "app" (a GitHub App created here). Nothing changed',
+};
 
 export function githubAccountStep(opts: GithubAccountStepOptions = {}): OnboardingStep {
   const apiBase = opts.apiBase ?? "https://api.github.com";
@@ -465,6 +580,198 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
         restart_owed: delivery.restartOwed,
       },
     };
+  }
+
+  /** Who the token file's token is, against the login the slug implies. */
+  async function identityCheck(
+    ctx: StepContext,
+    token: string,
+    slug: string,
+  ): Promise<CheckResult> {
+    const expected = botLoginFor(slug);
+    const who = await tokenOwnLogin(ctx.adapters.fetch, token, apiBase);
+    if (!who.ok)
+      return {
+        name: "identity",
+        ok: false,
+        detail:
+          who.status === 401
+            ? `GitHub rejected the token in the token file (HTTP 401): ${HOST_FIXES}`
+            : `could not check that the token posts as ${expected} (${who.detail}); run this step again`,
+      };
+    const problem = tokenIdentityProblem(expected, who.login);
+    return problem === null
+      ? {
+          name: "identity",
+          ok: true,
+          detail: `the token posts as ${who.login}, the login [github] app_slug = "${slug}" implies`,
+        }
+      : {
+          name: "identity",
+          ok: false,
+          detail: `${problem}. [github] app_slug is "${slug}"; the host that manages this install names the App, and must name the one its token belongs to`,
+        };
+  }
+
+  /** The installation route: prove the token the host wrote with a read of
+   * the repository, check it is the identity the slug names, and write the
+   * config the route owns. No gh, no crontab, no token write, no label, no
+   * App key, and never GitHub's user endpoint. */
+  async function runInstallation(ctx: StepContext): Promise<StepReport> {
+    const checks: CheckResult[] = [
+      {
+        name: "route",
+        ok: true,
+        detail:
+          `your GitHub identity and repository are ${HOST_MANAGED}: the reviewer posts as a GitHub App's bot, on an ` +
+          "installation token your host supplies. There is no sign-in here, nothing to pick, and no App key on this machine",
+      },
+    ];
+    const slug = configuredSlug(ctx);
+    if (slug === null) {
+      checks.push({
+        name: "app",
+        ok: false,
+        detail: `[github] app_slug names no GitHub App: on this route the App is ${HOST_MANAGED}, which writes its slug before the reviewer starts`,
+      });
+      return { ok: false, checks };
+    }
+    const file = readTokenFile(secretsDir(ctx));
+    if (!file.ok) {
+      checks.push({ name: "token", ok: false, detail: hostTokenProblem(file) });
+      return { ok: false, checks };
+    }
+    const data = { route: "installation", app_slug: slug, cron: "host", gh_path: null };
+    const currentText = readTextOrNull(ctx.adapters.paths.configPath);
+    const configured = currentText ? readTomlKey(currentText, "github", "repo") : null;
+    const repo =
+      parseRepoAnswer(ctx.input.repo) ??
+      parseRepoAnswer(ctx.choices[CHOICE_KEYS.accountRepo]) ??
+      (configured && REPO_SLUG_RE.test(configured) ? parseRepoSlug(configured) : null);
+    if (repo === null) {
+      checks.push({
+        name: "repo",
+        ok: false,
+        detail: `no repository is set yet: the repository is ${HOST_MANAGED}, which sets it before the reviewer starts`,
+      });
+      return { ok: false, checks, data };
+    }
+    log(ctx, "proving the installation token this install's host wrote");
+    const access = await installationRepoRead(ctx.adapters.fetch, apiBase, file.token, repo);
+    checks.push(access);
+    if (!access.ok) return { ok: false, checks, data };
+    const identity = await identityCheck(ctx, file.token, slug);
+    checks.push(identity);
+    if (!identity.ok) return { ok: false, checks, data };
+    checks.push({
+      name: "refresh",
+      ok: true,
+      detail: "your host keeps the token fresh: no crontab entry is installed, and no `gh` is used",
+    });
+    checks.push({
+      name: "labels",
+      ok: true,
+      detail:
+        "the trigger labels are not created here: the token your host wrote may be read-only until the reviewer posts, " +
+        "and reviewing one pull request needs no label",
+    });
+
+    const source = configText(ctx);
+    if (source.text === null) {
+      checks.push({ name: "config", ok: false, detail: source.detail });
+      return { ok: false, checks };
+    }
+    const next = installationConfig(source.text, slug);
+    if (Array.isArray(next)) {
+      checks.push({ name: "config", ok: false, detail: next.join("; ") });
+      return { ok: false, checks };
+    }
+    const changed = source.seeded || next !== source.text;
+    if (changed) writeAtomic(ctx.adapters.paths.configPath, next);
+    const login = botLoginFor(slug);
+    checks.push({
+      name: "config",
+      ok: true,
+      detail:
+        `[github] auth = "installation", app_slug = "${slug}", bot_login = "${login}" and [ingress] shape = "polling" ` +
+        `${changed ? `written to ${ctx.adapters.paths.configPath}` : "already in place"}; token_source = "host" is left as your host set it`,
+    });
+    const delivery = await deliverConfigChange(
+      ctx,
+      undefined,
+      (changed && !source.seeded) || ctx.data.restart_owed === true,
+      GITHUB_ACCOUNT_STEP_ID,
+    );
+    checks.push(...delivery.checks);
+
+    const repoSlug = `${repo.owner}/${repo.name}`;
+    ctx.recordChoice(CHOICE_KEYS.githubAuth, "installation");
+    ctx.recordChoice(CHOICE_KEYS.accountRepo, repoSlug);
+    ctx.recordChoice(CHOICE_KEYS.appSlug, slug);
+    ctx.recordChoice(CHOICE_KEYS.botLogin, login);
+    return {
+      ok: checks.every((c) => c.ok),
+      checks,
+      data: { ...data, login, repo: repoSlug, labels: false, restart_owed: delivery.restartOwed },
+    };
+  }
+
+  /** Verify on the installation route: the token file is there and private,
+   * still reads the repository, and is still the identity the config names. */
+  async function verifyInstallation(ctx: StepContext): Promise<StepReport> {
+    const checks: CheckResult[] = [];
+    const path = join(secretsDir(ctx), GITHUB_TOKEN_FILE);
+    const file = readTokenFile(secretsDir(ctx));
+    if (!file.ok)
+      return { ok: false, checks: [{ name: "token", ok: false, detail: hostTokenProblem(file) }] };
+    const m = mode(path);
+    checks.push(
+      m !== null && (m & 0o077) === 0
+        ? {
+            name: "token-file",
+            ok: true,
+            detail: `${path} is private to you (mode ${m.toString(8)})`,
+          }
+        : {
+            name: "token-file",
+            ok: false,
+            detail: `${path} is readable by others (mode ${m?.toString(8) ?? "unknown"}): the host that manages this install writes it, and must write it 0600`,
+          },
+    );
+    const text = readTextOrNull(ctx.adapters.paths.configPath) ?? "";
+    const auth = readTomlKey(text, "github", "auth");
+    const bot = readTomlKey(text, "github", "bot_login");
+    const slug = configuredSlug(ctx);
+    checks.push(
+      auth === "installation" && slug !== null && bot === botLoginFor(slug)
+        ? {
+            name: "config",
+            ok: true,
+            detail: `[github] auth = "installation", app_slug = "${slug}", bot_login = "${bot}"`,
+          }
+        : {
+            name: "config",
+            ok: false,
+            detail:
+              `config.toml says auth = ${JSON.stringify(auth ?? "(absent: app)")}, app_slug = ${JSON.stringify(slug ?? "")}, ` +
+              `bot_login = ${JSON.stringify(bot ?? "")}: on this route bot_login is the slug's "<slug>[bot]" — run this step again`,
+          },
+    );
+    const repo =
+      parseRepoAnswer(ctx.choices[CHOICE_KEYS.accountRepo]) ??
+      parseRepoSlug(readTomlKey(text, "github", "repo") ?? "");
+    if (repo) {
+      const access = await installationRepoRead(ctx.adapters.fetch, apiBase, file.token, repo);
+      checks.push(access);
+      if (access.ok && slug !== null) checks.push(await identityCheck(ctx, file.token, slug));
+    } else {
+      checks.push({
+        name: "repo",
+        ok: false,
+        detail: `no repository is set: the repository is ${HOST_MANAGED}`,
+      });
+    }
+    return { ok: checks.every((c) => c.ok), checks };
   }
 
   async function runUser(ctx: StepContext, switching: boolean): Promise<StepReport> {
@@ -764,7 +1071,7 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
       properties: {
         github_auth: {
           type: "string",
-          enum: GITHUB_AUTH_CHOICES,
+          enum: GITHUB_AUTH_ANSWERS,
           description:
             '"user" = your own GitHub account (recommended; the default when gh is signed in here); "app" = a GitHub App. ' +
             "Omit to take the default.",
@@ -796,9 +1103,15 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
               },
             ],
           };
-        return runHost(ctx);
+        // The identity is the one the host wrote beside its marker; the
+        // answer does not choose between the two a host can supply.
+        return hostRoute(ctx) === "installation" ? runInstallation(ctx) : runHost(ctx);
       }
       if (typed && answered === null) return { ok: false, checks: [offerRoutes(true)] };
+      // Only a host supplies an installation token: typed here, or left on
+      // record by an install that lost its marker, it is no route to walk.
+      if ((answered ?? recorded) === "installation")
+        return { ok: false, checks: [INSTALLATION_NEEDS_HOST] };
       let route = answered ?? recorded;
       let defaulted = false;
       if (route === null) {
@@ -847,6 +1160,7 @@ export function githubAccountStep(opts: GithubAccountStepOptions = {}): Onboardi
 
     async verify(ctx): Promise<StepReport> {
       const route = githubAuthOf(ctx.choices);
+      if (route === "installation") return verifyInstallation(ctx);
       if (route === "user") return verifyUser(ctx);
       if (route === "app")
         return {

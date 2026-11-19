@@ -5,12 +5,15 @@
 // The verb reads; it starts nothing and writes nothing. What it reads:
 //
 //   the daemon   whether it runs, and its board.json (src/boardfile.ts): the
-//                three lists, its poll, its spend and its own posting flag.
+//                three lists, its poll, its spend, its count of the pull
+//                requests reviewed today and its own posting flag.
 //                The daemon writes that file inside its state directory, so
 //                on a compose stack it is read out of the running container;
 //                with the daemon off there is nothing to read and the lists
 //                are absent.
-//   the config   the repository, the identity, the trigger label, and
+//   the config   the repository, the identity, the trigger label, what the
+//                reviewer picks up by itself (`trigger`: labelled pull
+//                requests, or all), and
 //                `dry_run` as the file says it now (read as text, never
 //                through the loader: before setup there is no config, and
 //                that is an answer too).
@@ -20,8 +23,9 @@
 //                whose GitHub credential is that file (`githubWord`): there,
 //                lapsed by its expiry note, or not there. GitHub is not asked.
 //   progress     `setup`, `go_live` and `proof`: how far a host's setup and
-//                go-live have got, and the practice review a go-live is
-//                confirmed against. The host verbs' record and the
+//                go-live have got (a go-live that is done says how its
+//                trigger label went beside it), and the practice review a
+//                go-live is confirmed against. The host verbs' record and the
 //                checklist's proof, read through one reader
 //                (`readBoardProgress`, src/host/record.ts).
 //
@@ -40,6 +44,10 @@ import { parse } from "smol-toml";
 import { hostPayloadVersion } from "@quickchatai/pi-quickreview/src/contract.js";
 import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { githubTokenHealth } from "@quickchatai/pi-quickreview/src/hosttoken.js";
+import {
+  githubTriggerOf,
+  type GithubTrigger,
+} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import {
   BOARD_FILE,
   parseBoardFile,
@@ -97,10 +105,15 @@ export interface BoardProof {
   completed_at?: string;
 }
 
+/** A go-live a host started. `label` is beside its outcome, never part of
+ * it: how making sure of the trigger label went once the reviewer was live
+ * (src/host/outcomes.ts LABEL_WORDS). */
+export type BoardGoLive = Omit<BoardStep, "step"> & { label?: "ok" | "failed" };
+
 /** The host verbs' records the export carries. */
 export interface BoardProgress {
   setup?: BoardStep;
-  go_live?: Omit<BoardStep, "step">;
+  go_live?: BoardGoLive;
   proof?: BoardProof;
 }
 
@@ -125,8 +138,12 @@ export interface BoardExport {
   trigger?: "label" | "all";
   poll?: { last_at?: string; ok?: boolean; interval_s: number };
   spend?: NonNullable<BoardFile["spend"]>;
+  /** The pull requests with a review round finished since midnight on the
+   * install's own calendar, open or closed, posted or practice. Absent when
+   * the daemon could not count them, or its count is of a day that is over. */
+  reviewed_today?: number;
   setup?: BoardStep;
-  go_live?: Omit<BoardStep, "step">;
+  go_live?: BoardGoLive;
   proof?: BoardProof;
   reviewing?: BoardReviewingRow[];
   reviewed?: BoardReviewedRow[];
@@ -198,6 +215,11 @@ interface ConfigFacts {
   repo?: string;
   identity?: { mode: IdentityMode; login?: string };
   trigger_label?: string;
+  /** `[github] trigger`, as the file says it now: the value it states, or
+   * `label` where it leaves the key out. Absent for a value that is neither
+   * of the two. The daemon reads the same key at every poll
+   * (src/livetrigger.ts), so this is what it follows. */
+  trigger?: GithubTrigger;
   /** Root `dry_run`, as the file says it now. */
   dry_run?: boolean;
 }
@@ -233,12 +255,14 @@ export function configFacts(toml: string): ConfigFacts {
         : undefined
       : IDENTITY_MODES.find((m) => m === auth);
   const label = text(github["trigger_label"]);
+  const trigger = githubTriggerOf(github["trigger"]);
   return {
     ...(repo !== undefined && REPO_RE.test(repo) ? { repo } : {}),
     ...(mode !== undefined
       ? { identity: { mode, ...(login !== undefined ? { login } : {}) } }
       : {}),
     ...(label !== undefined ? { trigger_label: label } : {}),
+    ...(trigger !== undefined ? { trigger } : {}),
     ...(typeof merged["dry_run"] === "boolean" ? { dry_run: merged["dry_run"] } : {}),
   };
 }
@@ -287,7 +311,8 @@ export function modelLoginWord(o: {
  * what the token file and its optional expiry note say
  * (packages/pi-plugin/src/hosttoken.ts `githubTokenHealth`).
  *
- * The file is the credential under `[github] auth = "user"`, and wherever a
+ * The file is the credential under `[github] auth = "user"` and `auth =
+ * "installation"` (a host-supplied installation token), and wherever a
  * host manages it (`token_source = "host"`: the marker is there before a
  * setup has written the mode beside it, and a host reads the field to see
  * whether its token has arrived). Undefined, so the field is absent, when the
@@ -310,7 +335,9 @@ export function githubWord(o: {
     return undefined;
   }
   if (!isObj(github)) return undefined;
-  if (github["auth"] !== "user" && github["token_source"] !== "host") return undefined;
+  const auth = github["auth"];
+  if (auth !== "user" && auth !== "installation" && github["token_source"] !== "host")
+    return undefined;
   const health = githubTokenHealth(
     { auth: "user", secrets_dir: o.secretsDir },
     { now: () => o.now, read: o.read },
@@ -426,6 +453,13 @@ export async function boardExport(ports: BoardPorts, contract: number): Promise<
     board !== null && utcDay(Date.parse(board.written_at)) === utcDay(now)
       ? board.spend
       : undefined;
+  // The daemon's count is of one day of its own calendar, written with that
+  // day's bounds: outside them it is yesterday's number, and is left out.
+  const counted = board?.reviewed_today;
+  const reviewedToday =
+    counted !== undefined && Date.parse(counted.since) <= now && now < Date.parse(counted.until)
+      ? counted.count
+      : undefined;
 
   return {
     schema_version: contract,
@@ -442,6 +476,8 @@ export async function boardExport(ports: BoardPorts, contract: number): Promise<
     ...(facts?.trigger_label !== undefined ? { trigger_label: facts.trigger_label } : {}),
     ...(poll !== undefined ? { poll } : {}),
     ...(spend !== undefined ? { spend } : {}),
+    ...(reviewedToday !== undefined ? { reviewed_today: reviewedToday } : {}),
+    ...(facts?.trigger !== undefined ? { trigger: facts.trigger } : {}),
     ...(progress.setup !== undefined ? { setup: progress.setup } : {}),
     ...(progress.go_live !== undefined ? { go_live: progress.go_live } : {}),
     ...(progress.proof !== undefined ? { proof: progress.proof } : {}),

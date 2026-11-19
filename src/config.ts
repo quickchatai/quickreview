@@ -1845,6 +1845,16 @@ export function parseConfig(toml: string, shipped: string = appShippedConfigText
         `Webhooks and the webhook self-heal need a GitHub App: use auth = "app" for them.`,
     );
   }
+  // A host-supplied installation token is polling-only for the same reason
+  // from the other side: the App exists, but its key and its webhook secret
+  // are the host's, so nothing here could verify a delivery or re-point a hook.
+  if (github.auth === "installation" && ingress.shape !== "polling") {
+    throw new Error(
+      `config.toml: [github] auth = "installation" runs polling-only — set [ingress] shape = "polling" ` +
+        `(got ${JSON.stringify(ingress.shape)}${raw.ingress === undefined ? ", the default for an absent [ingress]" : ""}). ` +
+        `Webhooks need the App's webhook secret on this machine, and under this mode the host that supplies the token keeps the App.`,
+    );
+  }
   const cfg: Config = {
     dry_run: Boolean(req(raw, "dry_run")),
     ops,

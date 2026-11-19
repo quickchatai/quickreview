@@ -24,7 +24,7 @@ import { loadOneShotConfig } from "../src/homes.js";
 import { readHostProgress } from "../src/host/record.js";
 import { hostSetup } from "../src/host/setup.js";
 import { walkSetup } from "../src/host/walk.js";
-import { secretsDirAt } from "../src/hostmanaged.js";
+import { hostManagedToml, secretsDirAt } from "../src/hostmanaged.js";
 import { CHOICE_KEYS } from "../src/onboard/choices.js";
 import type { OnboardAdapters } from "../src/onboard/engine.js";
 import { GITHUB_ACCOUNT_STEP_ID, githubAccountStep } from "../src/onboard/steps/githubaccount.js";
@@ -163,6 +163,185 @@ describe.each([
     // the token is still the host's word, not GitHub's: the file is there
     expect(tokenWord()).toBe("ok");
   });
+});
+
+// The verb acts on installs a host manages. A machine with no config is made
+// one by the verb itself; a config that is there without the marker is not
+// the verb's to write. Both with the wizard's real account step, because the
+// step is where an unmarked config would go wrong: its own-account route runs
+// `gh`, reads a token from the environment and writes it over the token file.
+describe("a machine with no config at all", () => {
+  const tokenFile = (): string => join(w.secretsDir, "github_token");
+
+  // MUTATION: have `host setup` write a new config without the marker (drop
+  // `marks` from renderHostConfig) — the real account step takes the person's
+  // own route: `gh` is run, and with no gh on the machine the walk fails at
+  // the account step; this fails.
+  it("is set up as its host's: no program but docker runs, and the host's token file is unchanged", async () => {
+    expect(w.config()).toBeNull();
+    const before = read(tokenFile());
+    expect(before).toBe(`${TOKEN}\n`);
+    expect(await hostSetup(w.ports, ARGS)).toEqual({ state: "started" });
+    // the verb wrote the marker and the mode itself
+    expect(hostManagedToml(w.config()!)).toBe(true);
+    expect(await runWalk(), w.logs.join("\n")).toBe(0);
+
+    expect([...new Set(w.calls.map((c) => c[0]))]).toEqual(["docker"]);
+    expect(read(tokenFile())).toBe(before);
+    // GitHub was read with the file's token, and nothing was written there
+    expect(w.github.length).toBeGreaterThan(1);
+    expect(w.github.map((c) => c.method)).toEqual(w.github.map(() => "GET"));
+    expect(w.github.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
+
+    const cfg = loadConfig(w.configPath);
+    expect(cfg.dry_run).toBe(true);
+    expect(cfg.github).toMatchObject({
+      token_source: "host",
+      auth: "user",
+      repo: REPO,
+      base_branch: "trunk",
+      bot_login: "octo-dev",
+    });
+    expect(oneShot().github).toMatchObject({ token_source: "host", auth: "user", repo: REPO });
+    expect(progress()).toEqual({ setup: { state: "done" } });
+    expect(w.checklist()!.choices).toMatchObject({
+      [CHOICE_KEYS.githubAuth]: "user",
+      [CHOICE_KEYS.accountRepo]: REPO,
+    });
+  });
+
+  // MUTATION: drop the marker check from hostSetup — the repository is
+  // written into the install's own config and a walk is started on it; this
+  // fails at the first assertion.
+  it("an install that keeps its own credential is refused before anything is written, and nothing runs", async () => {
+    const own = TEMPLATE.replace(/^#auth = "app"$/m, 'auth = "user"');
+    w.writeConfig(own);
+    const before = read(tokenFile());
+    const out = await hostSetup(w.ports, ARGS);
+    expect(out).toMatchObject({ state: "refused", reason: "not_host_managed" });
+    expect(w.config()).toBe(own);
+    expect(w.launched).toEqual([]);
+    expect(w.calls).toEqual([]);
+    expect(w.github).toEqual([]);
+    expect(w.ran).toEqual([]);
+    expect(w.checklist()).toBeNull();
+    expect(read(tokenFile())).toBe(before);
+    expect(progress()).toEqual({});
+  });
+});
+
+// The three lanes of a setup, met in one call: who posts (`--auth`), what the
+// reviewer picks up by itself (`--trigger`), and whose install it is (the
+// marker). Each has its own suite; this holds that every combination a host
+// can send leaves one config, which both loaders take.
+describe("every setup a host can ask for", () => {
+  const SLUG = "acme-reviewer";
+  const BOT = `${SLUG}[bot]`;
+  const AUTHS = [
+    ["user", ["--auth", "user"]],
+    ["installation", ["--auth", "installation", "--app-slug", SLUG]],
+  ] as const;
+  const TRIGGERS = [
+    ["no --trigger", [], "label"],
+    ["--trigger label", ["--trigger", "label"], "label"],
+    ["--trigger all", ["--trigger", "all"], "all"],
+  ] as const;
+  const STARTS = [
+    ["no config", null],
+    ["the marker alone", MARKER_ONLY],
+  ] as const;
+  const cases = AUTHS.flatMap(([auth, authArgs]) =>
+    TRIGGERS.flatMap(([said, triggerArgs, trigger]) =>
+      STARTS.map(
+        ([from, start]) =>
+          [
+            auth,
+            said,
+            from,
+            ["--repo", REPO, ...authArgs, ...triggerArgs],
+            trigger,
+            start,
+          ] as const,
+      ),
+    ),
+  );
+
+  beforeEach(() => {
+    // who the token is, where a setup asks (the installation route only)
+    w.viewerAnswer = { status: 200, body: { data: { viewer: { login: BOT } } } };
+  });
+
+  // MUTATION: drop the `trigger` edit from renderHostConfig's `more` list —
+  // `--trigger all` leaves a config that says `label`; this fails. Or drop
+  // the `app_slug` edit there — the installation config does not load.
+  it.each(cases)(
+    "--auth %s, %s, on %s: one config, in dry-run, that both loaders take",
+    async (auth, _said, _from, args, trigger, start) => {
+      if (start !== null) w.writeConfig(start);
+      expect(await hostSetup(w.ports, [...args])).toEqual({ state: "started" });
+      expect(hostManagedToml(w.config()!)).toBe(true);
+      // the verb alone leaves a config the home's own review loads
+      expect(oneShot().github).toMatchObject({
+        token_source: "host",
+        auth,
+        repo: REPO,
+        trigger,
+        ...(auth === "installation" ? { app_slug: SLUG, bot_login: BOT } : {}),
+      });
+      expect(configFacts(w.config()!)).toMatchObject({ repo: REPO, trigger, dry_run: true });
+      // the walk, with the real account step on the route the config names
+      expect(await runWalk(), w.logs.join("\n")).toBe(0);
+      expect([...new Set(w.calls.map((c) => c[0]))]).toEqual(["docker"]);
+      expect(read(join(w.secretsDir, "github_token"))).toBe(`${TOKEN}\n`);
+      const asked = w.github.map((c) => `${c.method} ${new URL(c.url).pathname}`);
+      expect([...new Set(asked)].sort()).toEqual(
+        auth === "installation"
+          ? [`GET /repos/${REPO}`, "POST /graphql"]
+          : [`GET /repos/${REPO}`, "GET /user"],
+      );
+      const cfg = loadConfig(w.configPath);
+      expect(cfg.dry_run).toBe(true);
+      expect(cfg.ingress.shape).toBe("polling");
+      expect(cfg.github).toMatchObject({
+        token_source: "host",
+        auth,
+        repo: REPO,
+        trigger,
+        bot_login: auth === "installation" ? BOT : "octo-dev",
+        ...(auth === "installation" ? { app_slug: SLUG } : {}),
+      });
+      expect(configFacts(w.config()!)).toMatchObject({
+        repo: REPO,
+        identity: { mode: auth, login: auth === "installation" ? BOT : "octo-dev" },
+        trigger,
+        dry_run: true,
+      });
+      expect(progress()).toEqual({ setup: { state: "done" } });
+      expect(w.checklist()!.choices).toMatchObject({ [CHOICE_KEYS.githubAuth]: auth });
+      // the same call again is the same reviewer
+      const before = w.config();
+      expect(await hostSetup(w.ports, [...args])).toEqual({ state: "started" });
+      expect(w.config()).toBe(before);
+    },
+  );
+
+  // MUTATION: drop the marker check from hostSetup — an install that keeps
+  // its own credential is written and walked under either mode; this fails.
+  it.each(AUTHS)(
+    "--auth %s on a config without the marker is refused, whatever the trigger, and nothing is written",
+    async (_auth, authArgs) => {
+      const own = TEMPLATE.replace(/^#auth = "app"$/m, 'auth = "user"');
+      for (const [, triggerArgs] of TRIGGERS) {
+        w.writeConfig(own);
+        const out = await hostSetup(w.ports, ["--repo", REPO, ...authArgs, ...triggerArgs]);
+        expect(out).toMatchObject({ state: "refused", reason: "not_host_managed" });
+        expect(w.config()).toBe(own);
+      }
+      expect(w.launched).toEqual([]);
+      expect(w.github).toEqual([]);
+      expect(w.checklist()).toBeNull();
+    },
+  );
 });
 
 describe("where the token file is", () => {

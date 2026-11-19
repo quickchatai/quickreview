@@ -58,7 +58,11 @@ import {
   githubCredential,
   type GitHubCredential,
 } from "@quickchatai/pi-quickreview/src/githubAuth.js";
-import { botAccountLogin, isPersonMode } from "@quickchatai/pi-quickreview/src/identity.js";
+import {
+  botAccountLogin,
+  isPersonMode,
+  usesTokenFile,
+} from "@quickchatai/pi-quickreview/src/identity.js";
 import {
   FeedbackEngine,
   FeedbackMemoryPump,
@@ -135,6 +139,7 @@ import { createWorkerLiveness, inFlightPrs } from "./workerliveness.js";
 import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
 import { readPinnedFromSweep, startEodPinWatch, type PinnedSweepSource } from "./eodpinwatch.js";
+import { liveTrigger } from "./livetrigger.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
 import { PiSessionManager, prSessionName } from "./sessions.js";
 import { SlackApiClient } from "./slack/api.js";
@@ -187,6 +192,11 @@ export interface ProductionParts {
    * the sidecar outside the image. The config's `openviking.enabled` is
    * already false; this is the reason the status block says. */
   memoryOff?: string;
+  /** The live config.toml `cfg` was loaded from. With it the daemon follows
+   * `[github] trigger` as that file says it at every poll
+   * (src/livetrigger.ts). Absent (tests, the CLI's own parts): the trigger
+   * is the one `cfg` was loaded with, and no file is read. */
+  configPath?: string;
 }
 
 /** A configured engine refused before it could open partial migrated state. */
@@ -976,6 +986,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         ),
     },
     hooks: botHost,
+    ...(parts.configPath
+      ? {
+          liveTrigger: liveTrigger({
+            path: parts.configPath,
+            initial: cfg.github.trigger ?? "label",
+            log,
+          }),
+        }
+      : {}),
     writeInbox,
     renderPrompt,
     ecosystem,
@@ -1923,8 +1942,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // gated PATCH rides the app-self-config class, so it executes even in
       // dry-run (AGENTS.md invariant 6) — loudly.
       // Never under the person's credential: there is no App whose webhook
-      // URL could be re-pointed (config load already refuses the shape).
-      if (cfg.ingress.shape === "tunnel-file" && !isPersonMode(cfg.github)) {
+      // URL could be re-pointed. Never under a host-supplied installation
+      // token either: the App's JWT, which the re-point rides, is the
+      // host's. (Config load already refuses the shape under both.)
+      if (cfg.ingress.shape === "tunnel-file" && !usesTokenFile(cfg.github)) {
         webhookHeal = new WebhookHealer({
           hostnameFile: ingressHostnameFile(cfg, root),
           readConfig: () => adapter.getAppWebhookConfig(),
@@ -2189,9 +2210,11 @@ async function main(): Promise<void> {
   // the release image it warns, and with no Docker its memory is off.
   const root = sandboxRoot();
   const loaded = loadConfig();
-  const daemon = createProductionDaemon(
-    buildParts(root, loaded, hostFacts(root, loaded.openviking.enabled)),
-  );
+  const daemon = createProductionDaemon({
+    ...buildParts(root, loaded, hostFacts(root, loaded.openviking.enabled)),
+    // the file `loaded` came from: its trigger is followed between starts
+    configPath: liveConfigPath(),
+  });
   const shutdown = (sig: string) => {
     void (async () => {
       console.log(`[quickreviewd] ${sig} — shutting down`);

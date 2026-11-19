@@ -36,7 +36,7 @@ import { join } from "node:path";
 import { mintAppJwt, USER_TOKEN_FILE } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import { loadConfig } from "../../config.js";
 import { operatorCommandWriteScriptAt } from "../../operatorwrite.js";
-import { CHOICE_KEYS, userAuthRecorded } from "../choices.js";
+import { CHOICE_KEYS, tokenFileRouteRecorded } from "../choices.js";
 import { readTextOrNull } from "../engine.js";
 import type {
   CheckResult,
@@ -428,16 +428,18 @@ export interface OpenPr {
   draft: boolean;
 }
 
-/** A token that can read the reviewed repo: the person's token file on the
- * own-account route, an App installation token on the App route; null when
- * neither is to hand (the offer is then skipped, never guessed). */
+/** A token that can read the reviewed repo: the token file on the own-account
+ * route and on the installation route (the person's token, or the one a host
+ * supplies; no App key is looked for there), an App installation token
+ * minted here on the App route; null when none is to hand (the offer is then
+ * skipped, never guessed). */
 async function readToken(
   ctx: StepContext,
   repo: RepoSlug,
   apiBase: string,
   secretsDir: string,
 ): Promise<string | null> {
-  if (userAuthRecorded(ctx.choices)) {
+  if (tokenFileRouteRecorded(ctx.choices)) {
     const token = (readTextOrNull(join(secretsDir, USER_TOKEN_FILE)) ?? "").trim();
     return token === "" ? null : token;
   }

@@ -23,6 +23,7 @@ import {
   type Config,
 } from "./config.js";
 import { buildBoardFile, roundTransitionKey, writeBoardJson } from "./boardfile.js";
+import { reviewedToday } from "./boardtoday.js";
 import { dispatchOnce, type DispatchAdapter, type PreparedTree } from "./dispatch.js";
 import {
   DaemonLoadMonitor,
@@ -39,6 +40,7 @@ import {
   isPersonMode,
   ownActorAlias,
   ownLogins,
+  usesTokenFile,
 } from "@quickchatai/pi-quickreview/src/identity.js";
 import { REVIEW_SET_ASIDE_STALE_WINDOW_MS, type FeedbackEvent } from "./feedback.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
@@ -141,6 +143,11 @@ export interface DaemonDeps {
    * in stub-wired daemons: never guess a mutation route from a partial stub. */
   postingDelivery?: PostingDeliveryAdapter;
   cfg?: Config;
+  /** `[github] trigger` as the live config says it now (src/livetrigger.ts):
+   * asked at every reconcile pass, so a change to that one key is followed
+   * without a restart. Absent ⇒ the trigger `cfg` was loaded with. */
+  liveTrigger?: () =>
+    import("@quickchatai/pi-quickreview/src/reviewconfig.js").GithubTrigger | undefined;
   root?: string;
   store?: StateStore;
   adapter?: DaemonAdapter;
@@ -353,9 +360,11 @@ export interface Daemon {
 
 /** The webhook HMAC secret — or "" under the polling shape, which takes no
  * webhooks and needs no secret (the `/webhook` route then refuses every
- * delivery, webhook.ts). `[github] auth = "user"` is always polling. */
+ * delivery, webhook.ts). `[github] auth = "user"` and `"installation"` are
+ * always polling; under them the file is never read, whatever the shape a
+ * hand-built config names. */
 function readWebhookSecret(cfg: Config): string {
-  if (!webhooksEnabled(cfg)) return "";
+  if (!webhooksEnabled(cfg) || usesTokenFile(cfg.github)) return "";
   return readFileSync(join(cfg.github.secrets_dir, "webhook_secret"), "utf8").trim();
 }
 
@@ -979,6 +988,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         // sweep reads session transcripts and is not needed for that, so it
         // starts on the next pass to keep the boot pass short.
         receiptSweep: !bootFirstPass,
+        // The one knob followed between starts: which pull requests the
+        // daemon picks up by itself.
+        ...(deps.liveTrigger ? { trigger: deps.liveTrigger } : {}),
       }).catch((err: unknown) => {
         thrown = err;
         throw err;
@@ -1250,7 +1262,13 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       try {
         writeBoardJson(
           stateDir,
-          buildBoardFile(snapshot, (pr) => store.roundsFor(pr)),
+          buildBoardFile(
+            snapshot,
+            (pr) => store.roundsFor(pr),
+            // the day's count, on the install's own calendar; left out when
+            // the store or the zone cannot say
+            reviewedToday(store, new Date(snapshot.written_at), cfg.ops.timezone),
+          ),
         );
         boardKey = roundTransitionKey(store);
       } catch (err) {

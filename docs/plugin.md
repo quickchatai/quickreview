@@ -169,7 +169,10 @@ Contract 3 is not a plugin's: it is the host contract, contract 2's three
 families plus the families a host that runs the reviewer reads and calls (the
 `board` export, `qcr --schema 3 board`, and the `host` verbs, `qcr --schema 3
 host <verb>`; see [architecture/data-model.md](architecture/data-model.md)
-§4.7 and §4.8). The skills stay on contract 2.
+§4.7 and §4.8). The skills stay on contract 2. The contracts a release
+supports are recorded in its `package.json` (`qcrContracts`) and printed by
+`qcr --schema 3 version`: a host that packages a release asks the release
+itself.
 
 Contract 1 is still printed, for skills rendered by an older release. Its
 review payload is a projection of the version-2 one (`toReviewV1`): the same

@@ -167,8 +167,17 @@ export function loginRouteLines(
  * (ADR 0001). */
 export const APP_PI_EXTENSIONS: readonly string[] = ["extensions/cli/selfimprove.ts"];
 
+/** What `qcr pi` marks the environment of its pi with, and so of every
+ * command the agent in it runs: the name the host verbs' session wall reads
+ * (src/host/session.ts SESSION_ENV_MARKERS), which no other code reads. */
+export const PI_SESSION_ENV = "QCR_SESSION";
+/** The mark's value where the caller's environment carries none. */
+export const PI_SESSION_MARK = "qcr-pi";
+
 /** `qcr pi [args]`: the pinned pi with the plugin and the app's own
- * extensions preloaded; pi's exit code. */
+ * extensions preloaded; pi's exit code. Its environment is the caller's with
+ * the session mark: an agent runs there, and a host verb started from it is
+ * refused as one started from any agent session is. */
 export function cmdPi(args: readonly string[], deps: NpmVerbDeps): number {
   let pi: string;
   let plugin: string;
@@ -180,7 +189,10 @@ export function cmdPi(args: readonly string[], deps: NpmVerbDeps): number {
     return 1;
   }
   const app = APP_PI_EXTENSIONS.flatMap((e) => ["-e", join(deps.pkgRoot, e)]);
-  const r = deps.run(deps.execPath, [pi, "-e", plugin, ...app, ...args], {});
+  const marked = (deps.env[PI_SESSION_ENV] ?? "").trim();
+  const r = deps.run(deps.execPath, [pi, "-e", plugin, ...app, ...args], {
+    env: { ...deps.env, [PI_SESSION_ENV]: marked !== "" ? marked : PI_SESSION_MARK },
+  });
   if (r.error) {
     deps.err(`qcr pi: pi could not start: ${r.error.message}`);
     return 1;

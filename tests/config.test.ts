@@ -18,6 +18,8 @@ import {
 } from "../src/config.js";
 import { tuiMemoryContainer } from "../src/tui/memforward.js";
 import {
+  GITHUB_AUTH_MODES,
+  HOST_MANAGED_AUTH_MODES,
   isModelSpec,
   isPinned,
   parseCoreConfig,
@@ -836,12 +838,50 @@ describe("[github] auth (the App, or the person's own credential)", () => {
 
   it("refuses an unknown auth value", () => {
     const text = shipped.replace("[github]\n", '[github]\nauth = "pat"\n');
-    expect(() => parseConfig(text)).toThrowError(/\[github\]: auth must be "app" or "user"/);
+    expect(() => parseConfig(text)).toThrowError(
+      /\[github\]: auth must be "app", "user" or "installation"/,
+    );
   });
 
   it("the review core parses the key too (parseCoreConfig)", () => {
     expect(parseCoreConfig(user()).github.auth).toBe("user");
     expect(parseCoreConfig(shipped).github.auth).toBe("app");
+  });
+});
+
+describe("[github] trigger (labelled pull requests, or every pull request)", () => {
+  const shipped = readFileSync(configPath, "utf8");
+  const github = (keys: string) => shipped.replace("[github]\n", `[github]\n${keys}\n`);
+
+  it("defaults to label: a config without the key is every install's behaviour until now", () => {
+    expect(shipped).not.toMatch(/^trigger\s*=/m);
+    expect(parseConfig(shipped).github.trigger).toBe("label");
+  });
+
+  it("parses both values", () => {
+    expect(parseConfig(github('trigger = "all"')).github.trigger).toBe("all");
+    expect(parseConfig(github('trigger = "label"')).github.trigger).toBe("label");
+  });
+
+  // MUTATION: default an unknown value to "label" in parseGithubSection — a
+  // typo for "all" loads as a reviewer that silently reviews nothing new, and
+  // this fails.
+  it("refuses any other value, naming the key and the two it takes", () => {
+    for (const bad of ['"every"', '"ALL"', '""', "true", '["all"]'])
+      expect(() => parseConfig(github(`trigger = ${bad}`)), bad).toThrowError(
+        /\[github\]: trigger must be "label" or "all"/,
+      );
+  });
+
+  it("the review core parses the key too (parseCoreConfig)", () => {
+    expect(parseCoreConfig(github('trigger = "all"')).github.trigger).toBe("all");
+    expect(parseCoreConfig(shipped).github.trigger).toBe("label");
+  });
+
+  it("the shipped template documents it, commented out, and says what all costs", () => {
+    const template = readFileSync(resolve(root, "config.example.toml"), "utf8");
+    expect(template).toMatch(/^#trigger = "label"$/m);
+    expect(template).toMatch(/model usage on EVERY pull request/);
   });
 });
 
@@ -888,6 +928,102 @@ describe("[github] token_source (the install's own credential, or a host's)", ()
       parseCoreConfig(github('auth = "user"\ntoken_source = "host"')).github.token_source,
     ).toBe("host");
     expect(parseCoreConfig(shipped).github.token_source).toBe("self");
+  });
+});
+
+describe('[github] auth = "installation" (an App installation\'s token, supplied by a host)', () => {
+  const shipped = readFileSync(configPath, "utf8");
+  const POLLING = '\n[ingress]\nshape = "polling"\n';
+  const INSTALLATION = 'auth = "installation"\ntoken_source = "host"';
+  /** The fixture with `keys` at the top of [github], and its slug and login
+   * lines replaced by `identity` (the lines a host writes, or leaves out). */
+  const github = (
+    keys: string,
+    identity = 'app_slug = "acme-reviewer"\nbot_login = "acme-reviewer[bot]"',
+    rest = POLLING,
+  ) =>
+    `${shipped
+      .replace(/^app_slug = .*\n/m, "")
+      .replace(/^bot_login = .*\n/m, "")
+      .replace("[github]\n", `[github]\n${keys}\n${identity}\n`)}${rest}`;
+
+  it("parses beside the marker, with polling and the App's slug", () => {
+    const cfg = parseConfig(github(INSTALLATION));
+    expect(cfg.github.auth).toBe("installation");
+    expect(cfg.github.token_source).toBe("host");
+    expect(cfg.github.app_slug).toBe("acme-reviewer");
+    expect(cfg.github.bot_login).toBe("acme-reviewer[bot]");
+    expect(webhooksEnabled(cfg)).toBe(false);
+  });
+
+  // MUTATION: drop `...(auth === "installation" ? installationIdentity(given) : {})`
+  // from parseGithubSection — the login stays as written (empty), and this fails.
+  it("derives bot_login from the slug when the file leaves it out or empty", () => {
+    for (const identity of [
+      'app_slug = "acme-reviewer"',
+      'app_slug = "acme-reviewer"\nbot_login = ""',
+    ])
+      expect(parseConfig(github(INSTALLATION, identity)).github.bot_login).toBe(
+        "acme-reviewer[bot]",
+      );
+  });
+
+  it("refuses a bot_login that is not the slug's, naming both", () => {
+    expect(() =>
+      parseConfig(github(INSTALLATION, 'app_slug = "acme-reviewer"\nbot_login = "other-app[bot]"')),
+    ).toThrowError(
+      /bot_login is "other-app\[bot\]".*derived from app_slug as "acme-reviewer\[bot\]"/,
+    );
+  });
+
+  it("refuses a missing, empty or malformed slug: the identity has no other source", () => {
+    for (const identity of ["", 'app_slug = ""', 'app_slug = "   "'])
+      expect(() => parseConfig(github(INSTALLATION, identity))).toThrowError(
+        /auth = "installation" needs app_slug/,
+      );
+    expect(() => parseConfig(github(INSTALLATION, 'app_slug = "not a slug"'))).toThrowError(
+      /app_slug "not a slug" is not a GitHub App slug/,
+    );
+  });
+
+  // MUTATION: drop the HOST_ONLY_AUTH_MODES check in parseGithubSection — an
+  // install that nothing supplies a token to loads, and this fails.
+  it("refuses the mode without the host marker: nothing here can mint such a token", () => {
+    for (const keys of ['auth = "installation"', 'auth = "installation"\ntoken_source = "self"'])
+      expect(() => parseConfig(github(keys))).toThrowError(
+        /auth = "installation" needs token_source = "host"/,
+      );
+  });
+
+  // MUTATION: drop the installation shape check in parseConfig — this fails.
+  it("refuses any shape but polling, saying what to set", () => {
+    for (const rest of [
+      "",
+      '\n[ingress]\nshape = "none"\n',
+      '\n[ingress]\nshape = "tunnel-file"\n',
+    ])
+      expect(() => parseConfig(github(INSTALLATION, undefined, rest))).toThrowError(
+        /auth = "installation" runs polling-only — set \[ingress\] shape = "polling"/,
+      );
+  });
+
+  it("a host can manage either token-file mode, and neither is the App's", () => {
+    expect(HOST_MANAGED_AUTH_MODES).toEqual(["user", "installation"]);
+    expect(GITHUB_AUTH_MODES).toEqual(["app", "user", "installation"]);
+  });
+
+  it("the review core parses the mode the same way (parseCoreConfig)", () => {
+    const cfg = parseCoreConfig(github(INSTALLATION, 'app_slug = "acme-reviewer"', ""));
+    expect(cfg.github).toMatchObject({
+      auth: "installation",
+      token_source: "host",
+      app_slug: "acme-reviewer",
+      bot_login: "acme-reviewer[bot]",
+    });
+    expect(() => parseCoreConfig(github('auth = "installation"'))).toThrowError(
+      /needs token_source = "host"/,
+    );
+    expect(() => parseCoreConfig(github(INSTALLATION, ""))).toThrowError(/needs app_slug/);
   });
 });
 

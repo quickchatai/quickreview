@@ -4,10 +4,12 @@
 // (tests/home-switchon.test.ts): the config and the host record are real
 // files in a scratch directory, GitHub and Docker are fakes, and the detached
 // process is the walk run in the test.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parse } from "smol-toml";
+import { parseCoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { configFacts } from "../src/boardexport.js";
 import { SWITCH_ON_ORDER, runSwitchOn } from "../src/home/switchon.js";
 import { SETUP_STEPS } from "../src/host/outcomes.js";
 import { readHostProgress, readHostRecord } from "../src/host/record.js";
@@ -38,7 +40,7 @@ afterEach(() => w.close());
 
 const github = (): Record<string, unknown> =>
   (parse(w.config() ?? "") as Record<string, Record<string, unknown>>)["github"] ?? {};
-const progress = () => readHostProgress(w.stateDir, { alive: (p) => w.alivePids.has(p) });
+const progress = () => readHostProgress(w.stateDir, w.facts());
 const lockOnDisk = (): Record<string, unknown> =>
   JSON.parse(readFileSync(checklistLockPath(w.stateDir), "utf8")) as Record<string, unknown>;
 /** Run the walk the verb started, as the detached process would. */
@@ -78,20 +80,156 @@ describe("the arguments", () => {
     expect(w.launched).toEqual([]);
   });
 
-  // MUTATION: let `--auth installation` through to the walk — this fails.
-  it("--auth installation is read, and refused as not in this release yet", async () => {
-    const out = await hostSetup(w.ports, [
-      "--repo",
-      REPO,
-      "--auth",
-      "installation",
-      "--app-slug",
-      "my-reviewer",
-    ]);
-    expect(out).toMatchObject({ state: "refused", reason: "unsupported_auth" });
-    expect(out.message).toMatch(/not supported by this release yet/);
+  // MUTATION: drop the "--auth installation needs --app-slug" check from
+  // parseSetupArgs — a config with the mode and no App is written, which no
+  // loader takes, and this fails.
+  it("--auth installation without --app-slug is a call it cannot read", async () => {
+    expect(parseSetupArgs(["--repo", REPO, "--auth", "installation"])).toMatch(
+      /--auth installation needs --app-slug/,
+    );
+    const out = await hostSetup(w.ports, ["--repo", REPO, "--auth", "installation"]);
+    expect(out).toMatchObject({ state: "refused", reason: "usage" });
     expect(w.config()).toBeNull();
+    expect(w.github).toEqual([]);
     expect(w.launched).toEqual([]);
+  });
+});
+
+// `--auth installation --app-slug <slug>`: an App installation's token that
+// the host supplies, and no App key on the machine.
+describe("an installation token", () => {
+  const SLUG = "my-reviewer";
+  const BOT = `${SLUG}[bot]`;
+  const INSTALL = ["--repo", REPO, "--auth", "installation", "--app-slug", SLUG];
+  beforeEach(() => {
+    w.viewerAnswer = { status: 200, body: { data: { viewer: { login: BOT } } } };
+  });
+  const refusedWith = async (reason: string, said: RegExp, args = INSTALL): Promise<void> => {
+    const before = w.config();
+    const out = await hostSetup(w.ports, args);
+    expect(out).toMatchObject({ state: "refused", reason });
+    expect(out.message).toMatch(said);
+    expect(w.config()).toBe(before);
+    expect(w.launched).toEqual([]);
+    expect(progress()).toEqual({});
+  };
+
+  // MUTATION: put the `unsupported_auth` refusal back at the top of hostSetup
+  // — nothing is written and no walk starts, and this fails.
+  it("records the mode, the App's slug and the login it implies, beside the marker", async () => {
+    expect(await hostSetup(w.ports, INSTALL)).toEqual({ state: "started" });
+    expect(github()).toMatchObject({
+      token_source: "host",
+      auth: "installation",
+      app_slug: SLUG,
+      bot_login: BOT,
+      repo: REPO,
+      base_branch: "trunk",
+    });
+    expect((parse(w.config()!) as Record<string, unknown>)["dry_run"]).toBe(true);
+    // the template, line for line: every key was a line of it already
+    expect(w.config()!.split("\n").length).toBe(TEMPLATE.split("\n").length);
+    expect(w.launched).toHaveLength(1);
+    expect(progress()).toEqual({ setup: { state: "running", step: "machine_checks" } });
+    // the export names the identity a host bound
+    expect(configFacts(w.config()!).identity).toEqual({ mode: "installation", login: BOT });
+  });
+
+  it("the config it writes loads as the review core reads it", async () => {
+    await hostSetup(w.ports, INSTALL);
+    expect(parseCoreConfig(w.config()!).github).toMatchObject({
+      auth: "installation",
+      token_source: "host",
+      app_slug: SLUG,
+      bot_login: BOT,
+    });
+  });
+
+  // MUTATION: prove the token with `GET /user` (the person's route) — GitHub
+  // refuses an installation token there, and here the call is seen; this fails.
+  it("proves the token with the repository read, asks who it is by GraphQL, and never the user endpoint", async () => {
+    await hostSetup(w.ports, INSTALL);
+    expect(w.github).toEqual([
+      {
+        method: "GET",
+        url: `https://api.github.test/repos/${REPO}`,
+        authorization: `Bearer ${TOKEN}`,
+      },
+      {
+        method: "POST",
+        url: "https://api.github.test/graphql",
+        authorization: `Bearer ${TOKEN}`,
+      },
+    ]);
+    expect(w.github.some((c) => /\/user$/.test(c.url))).toBe(false);
+    expect(w.calls).toEqual([]);
+  });
+
+  // MUTATION: drop identityRefusal from hostSetup — a slug that names another
+  // App is written, the reviewer never recognises its own reviews, and this fails.
+  it("refuses a token that is not the App the slug names, naming both, before anything is written", async () => {
+    w.viewerAnswer = { status: 200, body: { data: { viewer: { login: "other-app[bot]" } } } };
+    await refusedWith(
+      "identity_mismatch",
+      /acts as other-app\[bot\].*set up to post as my-reviewer\[bot\].*--app-slug my-reviewer/,
+    );
+    // case is not a difference: GitHub's logins compare without it
+    w.viewerAnswer = { status: 200, body: { data: { viewer: { login: "My-Reviewer[bot]" } } } };
+    expect(await hostSetup(w.ports, INSTALL)).toEqual({ state: "started" });
+  });
+
+  it("a token that cannot say who it is refuses the setup too: unknown is not a match", async () => {
+    w.viewerAnswer = { status: 200, body: { data: { viewer: null } } };
+    await refusedWith("github_unreachable", /did not say who the token is.*my-reviewer\[bot\]/);
+    w.viewerAnswer = { status: 0, body: null };
+    await refusedWith("github_unreachable", /could not be reached/);
+    w.viewerAnswer = { status: 401, body: { message: "Bad credentials" } };
+    await refusedWith("github_token_rejected", /refused the token/);
+  });
+
+  it("a person's token needs no such check: the user route asks GraphQL nothing", async () => {
+    expect(await hostSetup(w.ports, ARGS)).toEqual({ state: "started" });
+    expect(w.github.map((c) => c.url)).toEqual([`https://api.github.test/repos/${REPO}`]);
+  });
+
+  it("keeps the identity it was set up with: another mode, or another App, is refused", async () => {
+    expect(await hostSetup(w.ports, INSTALL)).toEqual({ state: "started" });
+    expect(await runWalk()).toBe(0);
+    const asked = w.github.length;
+    const written = w.config();
+    for (const [args, said] of [
+      [ARGS, /set up with auth = "installation", not "user"/],
+      [
+        ["--repo", REPO, "--auth", "installation", "--app-slug", "other-app"],
+        /set up to post as my-reviewer\[bot\], not other-app\[bot\]/,
+      ],
+    ] as const) {
+      const out = await hostSetup(w.ports, args);
+      expect(out).toMatchObject({ state: "refused", reason: "auth_mismatch" });
+      expect(out.message).toMatch(said);
+    }
+    // neither refusal asked GitHub anything, wrote anything or started a walk
+    expect(w.github).toHaveLength(asked);
+    expect(w.config()).toBe(written);
+    expect(w.launched).toHaveLength(1);
+    // the same call again is the same reviewer
+    expect(await hostSetup(w.ports, INSTALL)).toEqual({ state: "started" });
+    expect(w.config()).toBe(written);
+  });
+
+  it("the checklist's proved App counts where the config says nothing yet", () => {
+    const asked = { repo: REPO, auth: "installation" as const, appSlug: SLUG };
+    expect(bindingMismatch(asked, null, {})).toBeNull();
+    expect(bindingMismatch(asked, MARKER_ONLY, {})).toBeNull();
+    // a template's empty login, or a person's, names no App
+    expect(bindingMismatch(asked, TEMPLATE, {})).toBeNull();
+    expect(bindingMismatch(asked, null, { [CHOICE_KEYS.appSlug]: SLUG })).toBeNull();
+    expect(bindingMismatch(asked, null, { [CHOICE_KEYS.appSlug]: "other-app" })).toMatchObject({
+      reason: "auth_mismatch",
+    });
+    expect(bindingMismatch(asked, null, { [CHOICE_KEYS.githubAuth]: "user" })).toMatchObject({
+      reason: "auth_mismatch",
+    });
   });
 });
 
@@ -101,6 +239,8 @@ describe("starting the reviewer", () => {
     expect(out).toEqual({ state: "started" });
     // the config: the template, the repository as GitHub spells it, its own branch
     expect(github()).toMatchObject({ repo: REPO, base_branch: "trunk" });
+    // and the install is its host's from its first line: the marker, with the mode
+    expect(github()).toMatchObject({ token_source: "host", auth: "user" });
     expect((parse(w.config()!) as Record<string, unknown>)["dry_run"]).toBe(true);
     // one walk, told the lock's token
     expect(w.launched).toHaveLength(1);
@@ -251,6 +391,63 @@ describe("what it refuses, in words, before anything is written", () => {
     w.writeConfig("[github\nrepo = ");
     await refusedWith("config_invalid", /not valid TOML/);
   });
+
+  // A host verb acts on installs a host manages, and never makes one.
+  // MUTATION: drop the marker check from hostSetup — the repository is
+  // written into an install that keeps its own credential, a walk starts, and
+  // its account step takes the person's own route (`gh`, and its token over
+  // the file a host keeps); this fails.
+  it("a config that is there and does not carry the host-managed marker", async () => {
+    // the refusal comes before the lock: it leaves no file behind
+    w.writeConfig(TEMPLATE);
+    expect(await hostSetup(w.ports, ARGS)).toMatchObject({ reason: "not_host_managed" });
+    expect(existsSync(dirname(checklistLockPath(w.stateDir)))).toBe(false);
+    for (const unmarked of [
+      TEMPLATE,
+      setUpConfig({ hosted: false }),
+      '[github]\nauth = "user"\n',
+      '[github]\ntoken_source = "self"\nauth = "user"\n',
+      "",
+    ]) {
+      w.writeConfig(unmarked);
+      await refusedWith("not_host_managed", /never makes an install host-managed/);
+    }
+    // nothing was asked of GitHub, and no command was run
+    expect(w.github).toEqual([]);
+    expect(w.calls).toEqual([]);
+    // the same call on the marker is admitted
+    w.writeConfig(MARKER_ONLY);
+    expect(await hostSetup(w.ports, ARGS)).toEqual({ state: "started" });
+  });
+
+  // The marker is asked before the lock, and again under it on the text the
+  // config is written from.
+  // MUTATION: drop the second check, under the lock — a config whose owner
+  // took it back between the two reads has the repository written into it and
+  // a walk started on it; this fails.
+  it("a config that lost its marker between the first look and the lock", async () => {
+    w.writeConfig(MARKER_ONLY);
+    const own = setUpConfig({ hosted: false });
+    let reads = 0;
+    const racing = {
+      ...w.ports,
+      read: (path: string): string => {
+        const text = w.ports.read(path);
+        if (path === w.configPath && ++reads === 1) w.writeConfig(own);
+        return text;
+      },
+    };
+    const out = await hostSetup(racing, ARGS);
+    expect(out).toMatchObject({ state: "refused", reason: "not_host_managed" });
+    expect(w.config()).toBe(own);
+    expect(w.launched).toEqual([]);
+    expect(w.github).toEqual([]);
+    expect(progress()).toEqual({});
+    // the lock it took is free again
+    const free = acquireChecklistLock(w.stateDir, "home", { pid: WALK_PID });
+    expect(free.ok).toBe(true);
+    if (free.ok) free.lock.release();
+  });
 });
 
 describe("a host-managed install", () => {
@@ -269,10 +466,32 @@ describe("a host-managed install", () => {
     expect((cfg as Record<string, unknown>)["dry_run"]).toBe(true);
   });
 
-  it("an install that keeps its own credential keeps its filers", async () => {
-    await hostSetup(w.ports, ARGS);
+  // MUTATION: write a new config without the marker (drop `marks` from
+  // renderHostConfig) — the walk's account step would run `gh` on a machine
+  // its host set up, and this fails.
+  it("a machine with no config is made one: the marker, the mode, the filers off, in dry-run", async () => {
+    expect(w.config()).toBeNull();
+    expect(await hostSetup(w.ports, ARGS)).toEqual({ state: "started" });
     const cfg = parse(w.config()!) as Record<string, Record<string, unknown>>;
-    expect(cfg["caps"]).toEqual((parse(TEMPLATE) as typeof cfg)["caps"]);
+    expect(cfg["github"]).toMatchObject({
+      token_source: "host",
+      auth: "user",
+      repo: REPO,
+      base_branch: "trunk",
+    });
+    expect(cfg["caps"]).toMatchObject({
+      improvement_pr_per_day: 0,
+      improvement_pr_per_week: 0,
+      issues_per_day: 0,
+    });
+    expect((cfg as Record<string, unknown>)["dry_run"]).toBe(true);
+    // the template, line for line: the two keys were commented out in it
+    expect(w.config()!.split("\n").length).toBe(TEMPLATE.split("\n").length);
+    // and a second call finds the install it made, and rewrites nothing
+    const first = w.config();
+    expect(await runWalk()).toBe(0);
+    expect(await hostSetup(w.ports, ARGS)).toEqual({ state: "started" });
+    expect(w.config()).toBe(first);
   });
 
   it("a second setup of the same repository rewrites nothing", async () => {
@@ -427,6 +646,30 @@ describe("the walk", () => {
     expect(progress()).toEqual({
       setup: { state: "failed", step: "machine_checks", problem: "interrupted" },
     });
+  });
+
+  // A machine stopped or restarted mid-walk comes back with the lock file on
+  // disk and its pid given to some other process.
+  // MUTATION: judge the lock's holder by its pid alone — `host setup` answers
+  // `running` for ever and the export says the setup still runs; this fails.
+  it("a walk the machine was restarted under is interrupted, and the next call takes its lock over", async () => {
+    w.bootId = "boot-1";
+    w.startTimes.set(WALK_PID, "5000");
+    await started();
+    expect(lockOnDisk()).toMatchObject({ pid: WALK_PID, boot_id: "boot-1", start_time: "5000" });
+    expect(await hostSetup(w.ports, ARGS)).toEqual({ state: "running" });
+    // the restart: another boot, and the walk's pid is a living stranger's
+    w.bootId = "boot-2";
+    w.startTimes.set(WALK_PID, "17");
+    expect(w.alivePids.has(WALK_PID)).toBe(true);
+    expect(progress()).toEqual({
+      setup: { state: "failed", step: "machine_checks", problem: "interrupted" },
+    });
+    expect(await hostSetup(w.ports, ARGS)).toEqual({ state: "started" });
+    expect(w.launched).toHaveLength(2);
+    expect(lockOnDisk()).toMatchObject({ boot_id: "boot-2", token: w.launched[1]!.token });
+    expect(await runWalk()).toBe(0);
+    expect(progress()).toEqual({ setup: { state: "done" } });
   });
 });
 

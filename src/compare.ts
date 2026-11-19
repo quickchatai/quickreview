@@ -147,17 +147,33 @@ export function readDryrunDir(dir: string): DryrunRecord[] {
     });
 }
 
-/** The would-be review for a PR: the last substantive create_review record it
- * produced. A mechanically authored COMMENT (`reviewPurpose`) is not the
- * round's review, so it is never the one compared. */
-export function sandboxReviewFrom(records: DryrunRecord[], pr: number): ReviewSnapshot | null {
+/** The record of the would-be review for a PR: the last substantive
+ * create_review record it produced. A mechanically authored COMMENT
+ * (`reviewPurpose`) is not the round's review, so it is never the one. */
+export function sandboxReviewRecord(records: DryrunRecord[], pr: number): DryrunRecord | null {
   const reviews = records.filter(
     (r) =>
       r.kind === "create_review" &&
       r.reviewPurpose === undefined &&
       (r.pr === pr || r.path.includes(`/pulls/${pr}/`)),
   );
-  const last = reviews[reviews.length - 1];
+  return reviews[reviews.length - 1] ?? null;
+}
+
+/** The review event a dry-run record names, as written; undefined when it
+ * names none. `sandboxReviewFrom` reads a record with no event as a COMMENT,
+ * for the comparison; a reader that must not say more than the record does
+ * asks here. */
+export function recordedReviewEvent(record: DryrunRecord): string | undefined {
+  const body = record.body;
+  if (typeof body !== "object" || body === null) return undefined;
+  const event = (body as { event?: unknown }).event;
+  return typeof event === "string" && event !== "" ? event : undefined;
+}
+
+/** The would-be review for a PR, from the record `sandboxReviewRecord` picks. */
+export function sandboxReviewFrom(records: DryrunRecord[], pr: number): ReviewSnapshot | null {
+  const last = sandboxReviewRecord(records, pr);
   if (!last) return null;
   const body = (last.body ?? {}) as {
     event?: string;

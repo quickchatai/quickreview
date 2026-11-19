@@ -1,5 +1,6 @@
-// `host setup --repo owner/name --auth user|installation [--app-slug <slug>]`:
-// a host starts the reviewer for its operator.
+// `host setup --repo owner/name --auth user` (or `--auth installation
+// --app-slug <slug>`), with an optional `--trigger label|all`: a host starts
+// the reviewer for its operator.
 //
 // The verb itself is short. It checks what it can check at once, writes the
 // config, starts switch-on's walk as a detached process and answers
@@ -8,8 +9,26 @@
 // the checklist lock, which the verb takes and hands to the walk, so a second
 // call while the first walk runs answers `running` and starts nothing.
 //
+// It acts on installs a host manages, and on no other. On a machine with no
+// config yet it writes the marker itself (`[github] token_source = "host"`)
+// with the auth mode beside it: the install is its host's from its first
+// line. On a config that is already there and does not carry the marker it
+// refuses, before anything is written: a host verb never turns an install
+// that keeps its own credential into a host-managed one. (Without the marker
+// the walk's account step would take the person's own route: run `gh`, and
+// write its token over the file a host keeps.)
+//
+// `--trigger label|all` says which pull requests the reviewer picks up by
+// itself (`[github] trigger`): the ones that carry the trigger label, or
+// every one, which spends model usage on every pull request. It is written
+// with the rest of the config. Left out, the config's own stays, and a new
+// config's is `label`. `host set-trigger` changes it later
+// (src/host/trigger.ts).
+//
 // What it refuses, in words, before anything is written:
 //
+//   an install no host      a config that is there and does not carry the
+//   manages                 marker
 //   a missing model login   the stack reviews on the login of the pi on this
 //                           machine; with none there is nothing to share
 //   another repository, or  a reviewer keeps the repository and the identity
@@ -25,33 +44,49 @@
 // another `dry_run` than it did: the reviewer comes up in dry-run because the
 // template ships it so, and a later go-live is the only thing that moves it.
 //
-// `--auth installation` is read and refused: the credential mode it names is
-// not in this release.
-import { hostTokenProblem, readTokenFile } from "@quickchatai/pi-quickreview/src/hosttoken.js";
+// `--auth installation` sets the reviewer up on an App installation's token
+// that the host supplies in the token file, and needs `--app-slug`: the slug
+// of the GitHub App the token belongs to. There is no App key on the machine
+// to ask the App who it is, so the slug is the host's to name, and the verb
+// checks it before anything is written: the token's own login (GraphQL's
+// `viewer`; GitHub's user endpoint refuses an installation token and is
+// never asked) must be the `<slug>[bot]` the slug implies. A slug that names
+// another App is refused as `identity_mismatch`, since a reviewer that does
+// not know its own login never recognises its own reviews. The config then
+// states `auth = "installation"`, the slug and the login beside the marker.
+import {
+  hostTokenProblem,
+  readHostMarker,
+  readTokenFile,
+  tokenIdentityProblem,
+  tokenOwnLogin,
+} from "@quickchatai/pi-quickreview/src/hosttoken.js";
+import { APP_SLUG_RE, appBotLogin } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { configFacts, modelLoginWord } from "../boardexport.js";
 import { acquireChecklistLock } from "../onboard/checklistlock.js";
 import { CHOICE_KEYS, REPO_SLUG_RE } from "../onboard/choices.js";
 import { readChecklist } from "../onboard/engine.js";
 import { api } from "../onboard/steps/githubapp.js";
 import { renderHostConfig } from "../onboard/steps/hostconfig.js";
-import { admit } from "./admit.js";
-import { refused, type HostAnswer } from "./outcomes.js";
-import type { HostPorts } from "./ports.js";
+import { admit, notHostManaged } from "./admit.js";
+import { refused, type HostAnswer, type TriggerWord } from "./outcomes.js";
+import { lockOptions, type HostPorts } from "./ports.js";
 import { updateHostRecord } from "./record.js";
 
 export const SETUP_USAGE =
-  "usage: qcr --schema 3 host setup --repo <owner/name> --auth user|installation [--app-slug <slug>]";
+  "usage: qcr --schema 3 host setup --repo <owner/name> (--auth user | --auth installation --app-slug <slug>) [--trigger label|all]";
 
 /** The auth modes the verb reads. */
 export const SETUP_AUTH_MODES = ["user", "installation"] as const;
 export type SetupAuth = (typeof SETUP_AUTH_MODES)[number];
 
-/** A GitHub App slug, as GitHub writes one. */
-const APP_SLUG_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,98}[A-Za-z0-9])?$/;
-
 export interface SetupArgs {
   repo: string;
   auth: SetupAuth;
+  /** Which pull requests the reviewer picks up by itself, when the host
+   * said. Left out, the config's own stays: `label` on a new install. */
+  trigger?: TriggerWord;
+  /** The App the installation token belongs to: with `installation`, always. */
   appSlug?: string;
 }
 
@@ -62,7 +97,7 @@ export function parseSetupArgs(args: readonly string[]): SetupArgs | string {
     const arg = args[i]!;
     const eq = arg.indexOf("=");
     const name = eq < 0 ? arg : arg.slice(0, eq);
-    if (name !== "--repo" && name !== "--auth" && name !== "--app-slug")
+    if (name !== "--repo" && name !== "--auth" && name !== "--app-slug" && name !== "--trigger")
       return `${JSON.stringify(arg)} is not an argument of host setup`;
     if (values.has(name)) return `${name} is given twice`;
     const value = eq < 0 ? args[++i] : arg.slice(eq + 1);
@@ -72,6 +107,7 @@ export function parseSetupArgs(args: readonly string[]): SetupArgs | string {
   const repo = values.get("--repo");
   const auth = values.get("--auth");
   const appSlug = values.get("--app-slug");
+  const trigger = values.get("--trigger");
   if (repo === undefined) return "--repo is missing";
   if (!REPO_SLUG_RE.test(repo)) return `--repo ${JSON.stringify(repo)} is not owner/name`;
   if (auth === undefined) return "--auth is missing";
@@ -81,7 +117,16 @@ export function parseSetupArgs(args: readonly string[]): SetupArgs | string {
     return `--app-slug ${JSON.stringify(appSlug)} is not a GitHub App slug`;
   if (appSlug !== undefined && auth === "user")
     return "--app-slug goes with --auth installation: a person's account has no App";
-  return { repo, auth, ...(appSlug !== undefined ? { appSlug } : {}) };
+  if (appSlug === undefined && auth === "installation")
+    return "--auth installation needs --app-slug: the slug of the GitHub App the installation token belongs to";
+  if (trigger !== undefined && trigger !== "label" && trigger !== "all")
+    return `--trigger ${JSON.stringify(trigger)} is neither label nor all`;
+  return {
+    repo,
+    auth,
+    ...(appSlug !== undefined ? { appSlug } : {}),
+    ...(trigger !== undefined ? { trigger } : {}),
+  };
 }
 
 const sameRepo = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
@@ -113,6 +158,20 @@ export function bindingMismatch(
         "auth_mismatch",
         `this reviewer is set up with auth = "${recorded}", not "${asked.auth}": a reviewer keeps the identity it was set up with. Nothing changed`,
       );
+  // The same mode under another App is another identity too. The checklist
+  // says which App the walk proved; the config says it only once the mode on
+  // record is this one (a template's or a person's `bot_login` names no App).
+  if (asked.auth === "installation" && asked.appSlug !== undefined) {
+    const login = appBotLogin(asked.appSlug);
+    const proved = choice(CHOICE_KEYS.appSlug);
+    const written = facts.identity?.mode === "installation" ? facts.identity.login : undefined;
+    for (const recorded of [proved !== undefined ? appBotLogin(proved) : undefined, written])
+      if (recorded !== undefined && recorded.toLowerCase() !== login.toLowerCase())
+        return refused(
+          "auth_mismatch",
+          `this reviewer is set up to post as ${recorded}, not ${login}: a reviewer keeps the identity it was set up with. Nothing changed`,
+        );
+  }
   return null;
 }
 
@@ -170,23 +229,62 @@ async function readRepository(
   };
 }
 
+/**
+ * Why the token file's token is not the App `slug` names, or null when it
+ * is. Asked of GitHub once, before anything is written: a token that cannot
+ * say who it is refuses the setup as much as one that is another App's.
+ */
+async function identityRefusal(
+  ports: HostPorts,
+  token: string,
+  slug: string,
+): Promise<HostAnswer | null> {
+  const expected = appBotLogin(slug);
+  const who = await tokenOwnLogin(ports.fetch, token, ports.apiBase);
+  if (!who.ok)
+    return who.status === 401
+      ? refused(
+          "github_token_rejected",
+          "GitHub refused the token in the token file (HTTP 401): the host that manages it renews it",
+        )
+      : refused(
+          "github_unreachable",
+          `${who.detail}, so it could not be checked that it posts as ${expected}. Nothing changed`,
+        );
+  const problem = tokenIdentityProblem(expected, who.login);
+  return problem === null
+    ? null
+    : refused(
+        "identity_mismatch",
+        `${problem}. --app-slug ${slug} must be the slug of the App the token was minted for. Nothing changed`,
+      );
+}
+
+const NOT_A_HOSTS = (ports: Pick<HostPorts, "configPath">): string =>
+  `${ports.configPath} is the config of an install that keeps its own GitHub credential`;
+
+/** Is there a config here that reads as TOML and does not carry the
+ * host-managed marker? One that is absent, unreadable or not TOML says
+ * nothing either way, and is judged under the lock as what it is. */
+function keepsOwnCredential(ports: Pick<HostPorts, "read" | "configPath">): boolean {
+  try {
+    return readHostMarker(ports.read(ports.configPath))?.hostManaged === false;
+  } catch {
+    return false;
+  }
+}
+
 /** The `setup` verb. */
 export async function hostSetup(ports: HostPorts, args: readonly string[]): Promise<HostAnswer> {
   const no = admit(ports);
   if (no !== null) return no;
   const asked = parseSetupArgs(args);
   if (typeof asked === "string") return refused("usage", `${asked}. ${SETUP_USAGE}`);
-  if (asked.auth === "installation")
-    return refused(
-      "unsupported_auth",
-      "--auth installation is not supported by this release yet: a host-supplied installation token comes with a later one. Nothing changed",
-    );
-
-  const got = acquireChecklistLock(ports.stateDir, "setup", {
-    pid: ports.pid,
-    now: () => ports.now(),
-    alive: (pid) => ports.alive(pid),
-  });
+  // Asked before the lock, so a refusal leaves no file behind on an install
+  // that is not a host's, and again below on the text the config is written
+  // from.
+  if (keepsOwnCredential(ports)) return notHostManaged(NOT_A_HOSTS(ports));
+  const got = acquireChecklistLock(ports.stateDir, "setup", lockOptions(ports));
   if (!got.ok)
     return got.held.holder === "setup"
       ? { state: "running" }
@@ -194,6 +292,23 @@ export async function hostSetup(ports: HostPorts, args: readonly string[]): Prom
   const lock = got.lock;
   let handed = false;
   try {
+    let existing: string | null;
+    try {
+      existing = ports.read(ports.configPath);
+    } catch (err) {
+      if (!isMissingFile(err))
+        return refused(
+          "config_unreadable",
+          `can't read ${ports.configPath} (${message(err)}). Nothing changed`,
+        );
+      existing = null;
+    }
+    // A config that is there and reads as TOML either carries the marker or
+    // is not this verb's to write. (One that is not TOML says nothing either
+    // way, and is refused below as what it is.)
+    if (existing !== null && readHostMarker(existing)?.hostManaged === false)
+      return notHostManaged(NOT_A_HOSTS(ports));
+
     // the login the stack will review on
     const login = modelLoginWord({
       agentDir: ports.agentDir,
@@ -223,22 +338,17 @@ export async function hostSetup(ports: HostPorts, args: readonly string[]): Prom
         `${hostTokenProblem(file)}. Nothing changed`,
       );
 
-    let existing: string | null;
-    try {
-      existing = ports.read(ports.configPath);
-    } catch (err) {
-      if (!isMissingFile(err))
-        return refused(
-          "config_unreadable",
-          `can't read ${ports.configPath} (${message(err)}). Nothing changed`,
-        );
-      existing = null;
-    }
     const mismatch = bindingMismatch(asked, existing, readChecklist(ports.stateDir)?.choices ?? {});
     if (mismatch !== null) return mismatch;
 
     const seen = await readRepository(ports, file.token, asked.repo);
     if (!seen.ok) return seen.answer;
+
+    // an installation's identity is the slug's: is the token that App's?
+    if (asked.auth === "installation" && asked.appSlug !== undefined) {
+      const wrong = await identityRefusal(ports, file.token, asked.appSlug);
+      if (wrong !== null) return wrong;
+    }
 
     let template: string;
     try {
@@ -254,6 +364,10 @@ export async function hostSetup(ports: HostPorts, args: readonly string[]): Prom
       baseBranch: seen.defaultBranch,
       timezone: ports.timezone(),
       auth: asked.auth,
+      ...(asked.trigger !== undefined ? { trigger: asked.trigger } : {}),
+      ...(asked.auth === "installation" && asked.appSlug !== undefined
+        ? { appSlug: asked.appSlug }
+        : {}),
     });
     if (!rendered.ok) return refused("config_invalid", rendered.why);
     try {

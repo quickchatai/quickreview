@@ -19,7 +19,9 @@ should receive an acknowledgement within a few days.
   (`POST /webhook`, constant-time HMAC verification, delivery dedupe) and
   `GET /health`. Under `[ingress] shape = "polling"` the webhook endpoint
   refuses every delivery unread. The memory engine listens on loopback only.
-- The daemon's GitHub credential is one of two, chosen by `[github] auth`:
+- The daemon's GitHub credential is one of three, chosen by `[github] auth`
+  (hard rule 3 as amended: two were allowed, and a host-supplied installation
+  token is the third):
   - `"app"`, the default and the only route that takes webhooks: GitHub App
     credentials (short-lived JWT → installation token).
   - `"user"`: the operator's own GitHub token. Owner ruling 2026-10-24,
@@ -37,8 +39,8 @@ should receive an acknowledgement within a few days.
     is a copy of that file, not a down-scoped read-only token, so the
     companion guard's write veto is its only fence.
 
-    `[github] token_source = "host"` (with `auth = "user"`) is the marker of
-    a **host-managed** credential: a host that runs the reviewer writes that
+    `[github] token_source = "host"` (with `auth = "user"` or
+    `auth = "installation"`) is the marker of a **host-managed** credential: a host that runs the reviewer writes that
     same file (atomically, 0600, the token alone) and keeps a token with at
     least 15 minutes of life in it at all times, and may write the token's
     expiry beside it as `github_token.expires_at`, a note that is never a
@@ -53,6 +55,33 @@ should receive an acknowledgement within a few days.
     switch-on and no go-live of its own. The token's scope and lifetime are
     the host's to set; the reviewer assumes neither and never asks the person
     to sign in to GitHub on such an install.
+
+  - `"installation"`: a GitHub App **installation's** token that the host
+    which runs the reviewer mints and supplies. It exists only with
+    `token_source = "host"` (config load refuses it otherwise), and reaches
+    the daemon exactly as the host-managed token above does: the one file,
+    re-read on first use, every five minutes and after a 401. The identity is
+    the App's bot, named by `[github] app_slug` (config load requires it and
+    derives `bot_login` as `<slug>[bot]`), so reviews post as **APPROVE /
+    REQUEST_CHANGES / COMMENT**, as under `"app"`. The COMMENT-only rule is
+    bound to the person identity (`auth = "user"`), not to "the token came
+    from a file".
+
+    **No App private key is on the machine.** In this mode `app.pem`,
+    `app_id` and the webhook secret are never read, no App JWT is signed, and
+    every route that needs one is refused before anything is sent. So the mode
+    is **polling only** (config load refuses any other `[ingress] shape`), with
+    no webhooks, no webhook self-heal and no App self-config; the onboarding
+    steps that create an App or ask an App who it is are off. The token is
+    proved with a read of the configured repository, never GitHub's user
+    endpoint (which refuses an installation token), and the reviewer checks
+    that the token's own login is the configured `bot_login`: a slug that
+    names another App is refused in words instead of leaving a reviewer that
+    cannot recognise its own reviews. The companion gets **no** GitHub token
+    in this mode: there is no key to mint a read-only one from, and the
+    reviewer's own token, which can post, is never copied to it. The token's
+    permissions, repository and lifetime are the host's to set at mint; the
+    reviewer assumes none of them, nor the token's length.
 
   The local `qcr review` route and the GitHub Action may use the person's
   own credential chain. The daemon never reads one from the environment.

@@ -8,7 +8,13 @@
 # nothing else: no App, no JWT, no cache. --refresh re-reads the same file.
 # Under `[github] token_source = "host"` the same file is written by the host
 # that manages the install, and this prints it the same way: only the words
-# of a failure differ, since no command on the machine writes the file.
+# of a failure differ, since no command on the machine writes the file. The
+# marker is read first and decides by itself, whatever `auth` says or leaves
+# out: a config holding nothing but the marker is a host-managed install's.
+# `auth = "installation"` (an App installation's token, supplied by the host)
+# is that same file under that same marker: the file's token is printed as it
+# is, whatever its length, and no App id or key is looked for. Without the
+# marker the mode is refused: nothing on the machine can mint such a token.
 #
 # Otherwise (`auth = "app"`, the default) it is the shell equivalent of
 # packages/pi-plugin/src/githubAuth.ts:
@@ -72,13 +78,13 @@ cfg_sed() { # crude fallback: first `key = "value"` inside [section]
 # ~/.config/quickreview-bot). The same answer the daemon's loader reaches.
 SECRETS_DIR="$(qcr_locate_secrets "$(cfg github secrets_dir || true)")" || exit 1
 
-# ---- auth = "user": the person's token file, as written ---------------------
+# ---- the token file, as written: a host's, or the person's (auth = "user") ----
 
+TOKEN_SOURCE="$(cfg github token_source 2>/dev/null || true)"
 AUTH="$(cfg github auth 2>/dev/null || true)"
 AUTH="${AUTH:-app}"
-if [[ "$AUTH" == "user" ]]; then
+if [[ "$TOKEN_SOURCE" == "host" || "$AUTH" == "user" ]]; then
   TOKEN_FILE="$SECRETS_DIR/github_token"
-  TOKEN_SOURCE="$(cfg github token_source 2>/dev/null || true)"
   if [[ "$TOKEN_SOURCE" == "host" ]]; then
     FIX="[github] token_source = \"host\": the host that manages this install writes it and keeps it fresh"
   else
@@ -90,6 +96,8 @@ if [[ "$AUTH" == "user" ]]; then
   printf '%s\n' "$token"
   exit 0
 fi
+[[ "$AUTH" != "installation" ]] ||
+  die "[github] auth = \"installation\" needs token_source = \"host\": the host that manages the install supplies the token, and no App key is read here"
 [[ "$AUTH" == "app" ]] || die "[github] auth must be \"app\" or \"user\" (got \"$AUTH\")"
 
 APP_ID_FILE="$SECRETS_DIR/app_id"

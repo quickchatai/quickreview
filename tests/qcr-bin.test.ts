@@ -13,9 +13,12 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { SESSION_ENV_MARKERS, sessionMarker } from "../src/host/session.js";
 import { BIN_HELP, binRoute } from "../src/qcrbin.js";
 import {
   APP_PI_EXTENSIONS,
+  PI_SESSION_ENV,
+  PI_SESSION_MARK,
   cmdLogin,
   cmdPi,
   cmdUpdate,
@@ -174,8 +177,24 @@ describe("qcr pi", () => {
           "x/y",
           "hello",
         ],
+        // the caller's environment, with the mark of an agent session
+        env: { ...f.deps.env, [PI_SESSION_ENV]: PI_SESSION_MARK },
       },
     ]);
+  });
+
+  // An agent runs in that pi with the person's shell. The mark is what the
+  // host verbs' session wall reads (src/host/session.ts).
+  // MUTATION: launch pi with no `env` in cmdPi — the child inherits the
+  // caller's environment unmarked, and this fails.
+  it("marks its pi's environment as an agent session, and keeps a mark the caller carries", () => {
+    const f = fakeDeps({});
+    expect(cmdPi([], f.deps)).toBe(0);
+    expect(sessionMarker(f.ran[0]!.env ?? {})).toBe(PI_SESSION_ENV);
+    expect(SESSION_ENV_MARKERS).toContain(PI_SESSION_ENV);
+    const inside = fakeDeps({ env: { PATH: "/usr/bin", [PI_SESSION_ENV]: "companion" } });
+    expect(cmdPi([], inside.deps)).toBe(0);
+    expect(inside.ran[0]!.env).toEqual({ PATH: "/usr/bin", [PI_SESSION_ENV]: "companion" });
   });
 
   // The path is under the package root an npm install ships (`files` holds

@@ -14,6 +14,22 @@ and everything below that needs the App are off. Every review posts as a
 COMMENT that states its verdict. The App stays the default and the only
 webhook route.
 
+A third route, `[github] auth = "installation"`, is an App too, and none of
+this guide either: the App is registered and held by the **host** that runs
+the reviewer for you, which mints an installation token for your repository
+and writes it to `<secrets dir>/github_token` (always with
+`[github] token_source = "host"`). Nothing below is done on the machine: no
+App is created there, and `app_id`, `app.pem` and `webhook_secret` are never
+read. The config names the App by `app_slug`, and `bot_login` is derived from
+it as `<slug>[bot]`. Reviews post as APPROVE / REQUEST_CHANGES / COMMENT, as
+on this guide's route; the route is polling-only, as `auth = "user"` is. The
+reviewer checks that the token's own login is that `bot_login` and says so
+plainly when it is not. What such an App needs registered is the host's to
+decide: the reviewer writes reviews, review comments and replies, resolves
+its own threads, and (after go-live) makes sure of its trigger label, which
+is `pull_requests: write` with read access to contents, issues, checks,
+statuses, actions and metadata.
+
 This guide takes you from nothing to a working App. Everything the App needs —
 permissions and webhook events — is declared in
 [`deploy/github-app-manifest.json`](../deploy/github-app-manifest.json), which

@@ -396,6 +396,33 @@ describe("choosing a shape", () => {
     expect((await fake().engine.verifyAll()).ok).toBe(false);
   });
 
+  // MUTATION: read `userAuthRecorded` instead of `tokenFileRouteRecorded` in
+  // the ingress step's run — a tunnel is set up for an install whose App key
+  // and webhook secret are its host's, and this fails.
+  it("the installation route is polling only too: a tunnel is refused in its own words, and no answer means polling", async () => {
+    mkdirSync(join(root, "state", "onboarding"), { recursive: true });
+    writeFileSync(
+      join(root, "state", "onboarding", "checklist.json"),
+      JSON.stringify({
+        version: 1,
+        created_at: "2026-08-30T10:00:00Z",
+        updated_at: "2026-08-30T10:00:00Z",
+        completed_at: null,
+        choices: { github_auth: "installation", [INGRESS_CHOICE_KEY]: "quick" },
+        steps: {},
+      }),
+    );
+    const refused = await fake().engine.runStep(INGRESS_STEP_ID, { choice: "quick" });
+    expect(refused.ok).toBe(false);
+    expect(refused.failures.join(" ")).toMatch(/installation token its host supplies/);
+    // the way out is never "create an App here": the App is the host's
+    expect(refused.failures.join(" ")).not.toMatch(/github_auth: "app"/);
+    expect(readTomlKey(configText(), "ingress", "shape")).toBeNull();
+    const forced = await fake().engine.runStep(INGRESS_STEP_ID);
+    expect(forced.ok, forced.failures.join("; ")).toBe(true);
+    expect(readTomlKey(configText(), "ingress", "shape")).toBe("polling");
+  });
+
   it("a polling install from before the shape had its name still verifies (App route)", async () => {
     await fake().engine.runStep(INGRESS_STEP_ID, { choice: "polling" });
     writeFileSync(

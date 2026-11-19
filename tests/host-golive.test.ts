@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CONFIRM_MAX_AGE_MS,
   CONFIRM_SKEW_MS,
+  alreadyLive,
   attestationRefusal,
   goLiveProblem,
   hostGoLive,
@@ -24,6 +25,7 @@ import { CHOICE_KEYS } from "../src/onboard/choices.js";
 import { GO_LIVE_CONFIRMATION, GO_LIVE_STEP_ID } from "../src/onboard/steps/golive.js";
 import {
   REPO,
+  TEMPLATE,
   TOKEN,
   WALK_PID,
   finishedRound,
@@ -60,9 +62,14 @@ const send = (a: unknown = attestation()): Promise<Awaited<ReturnType<typeof hos
   w.stdin = typeof a === "string" ? a : JSON.stringify(a);
   return hostGoLive(w.ports, []);
 };
-const progress = () => readHostProgress(w.stateDir, { alive: (p) => w.alivePids.has(p) });
+const progress = () => readHostProgress(w.stateDir, w.facts());
+/** The config as the go-live step leaves it: the flag moved, nothing else. */
+const flipConfig = (): void => w.writeConfig(setUpConfig({ dryRun: false }));
 const runWalk = (): Promise<number> => walkGoLive(w.walker(), w.launched.at(-1)!.token);
 const dryRun = (): unknown => (parse(w.config()!) as Record<string, unknown>)["dry_run"];
+
+/** When the operator confirmed, in the attestation a host sends. */
+const T_CONFIRMED = Date.parse("2026-11-19T11:59:55Z");
 
 /** Nothing was started, nothing reached a step, and the lock is free. */
 function nothingHappened(): void {
@@ -206,6 +213,29 @@ describe("what it refuses, changing nothing", () => {
     nothingHappened();
   });
 
+  // An attestation admits a go-live where the install says a host manages
+  // it, and nowhere else: there is no attested operator on any other install.
+  // MUTATION: drop the marker check from hostGoLive — a self-written
+  // attestation starts a go-live on an install that keeps its own credential,
+  // and this fails.
+  it("an install whose config does not carry the host-managed marker", async () => {
+    await practice();
+    for (const unmarked of [setUpConfig({ hosted: false }), TEMPLATE, "", "[github\nrepo = "]) {
+      w.writeConfig(unmarked);
+      const out = await send();
+      expect(out).toMatchObject({ state: "refused", reason: "not_host_managed" });
+      expect(out.message).toMatch(/never makes an install host-managed/);
+      expect(w.config()).toBe(unmarked);
+    }
+    expect(w.launched).toEqual([]);
+    expect(w.ran).toEqual([]);
+    expect(readHostRecord(w.stateDir).go_live).toBeUndefined();
+    expect(readHostRecord(w.stateDir).attestation_pending).toBeUndefined();
+    // with the marker back, the same attestation is admitted
+    w.writeConfig(setUpConfig());
+    expect(await send()).toEqual({ state: "started" });
+  });
+
   it("a phrase on the command line, or no attestation on standard input", async () => {
     await practice();
     w.stdin = JSON.stringify(attestation());
@@ -284,12 +314,32 @@ describe("the walk", () => {
     expect(w.github.map((c) => c.method)).toEqual(["GET"]);
   });
 
-  it("a label that cannot be created fails the go-live by name, with posting on and attested", async () => {
+  // The go-live is the go-live step. The label is said beside it.
+  // MUTATION: end the walk `failed` when the label cannot be created — a
+  // reviewer that posts is reported as one that did not go live, and this fails.
+  it("is done once the go-live step has succeeded, whatever the label did", async () => {
     w.labelCreate = 403;
     await admitted();
-    expect(await runWalk()).toBe(1);
-    expect(progress().go_live).toEqual({ state: "failed", problem: "label_failed" });
+    expect(await runWalk()).toBe(0);
+    expect(progress().go_live).toEqual({ state: "done", label: "failed" });
     expect(readHostRecord(w.stateDir).attestation?.live_at).toBeDefined();
+    // the reason is in the walk's log, never in the record
+    expect(w.logs.join("\n")).toMatch(/trigger label: .*could not create the label/);
+  });
+
+  it("says the label is there when it is, or was made", async () => {
+    await admitted();
+    expect(await runWalk()).toBe(0);
+    expect(progress().go_live).toEqual({ state: "done", label: "ok" });
+  });
+
+  it("a label that cannot even be tried is `failed`, and the go-live is still done", async () => {
+    await admitted();
+    // the host's token is gone by the time the walk gets to the label
+    w.ports.write(join(w.secretsDir, "github_token"), "");
+    expect(await runWalk()).toBe(0);
+    expect(progress().go_live).toEqual({ state: "done", label: "failed" });
+    expect(w.github).toEqual([]);
   });
 
   it("a go-live the step refuses fails with a closed problem, and no label is asked for", async () => {
@@ -316,6 +366,20 @@ describe("the walk", () => {
     expect(readHostRecord(w.stateDir).attestation).toBeUndefined();
   });
 
+  // The walk asks again what the verb asked: is this an install a host manages?
+  // MUTATION: drop the marker check from walkGoLive — a walk started on an
+  // install whose marker is gone reaches the go-live step, and this fails.
+  it("goes live only on an install that still carries the marker", async () => {
+    await admitted();
+    w.writeConfig(setUpConfig({ hosted: false }));
+    expect(await runWalk()).toBe(1);
+    expect(w.ran).toEqual([]);
+    expect(progress().go_live).toEqual({ state: "failed", problem: "attestation_rejected" });
+    expect(readHostRecord(w.stateDir).attestation).toBeUndefined();
+    expect(w.github).toEqual([]);
+    expect(dryRun()).toBe(true);
+  });
+
   it("a walk with no attestation on record, or no lock handed to it, reaches no step", async () => {
     await admitted();
     expect(await walkGoLive(w.walker(), "not-the-token")).toBe(1);
@@ -336,6 +400,84 @@ describe("the walk", () => {
     w.alivePids.add(WALK_PID);
     await runWalk();
     expect(acquireChecklistLock(w.stateDir, "home", { pid: WALK_PID }).ok).toBe(true);
+  });
+});
+
+describe("a repeat call on an install that is already live", () => {
+  /** Live, as the walk leaves it: the step ran on the attestation, the config
+   * reads live, and the label could not be made the first time. */
+  const wentLive = async (): Promise<void> => {
+    await practice();
+    w.labelCreate = 403;
+    expect(await send()).toEqual({ state: "started" });
+    expect(await runWalk()).toBe(0);
+    flipConfig();
+    expect(progress().go_live).toEqual({ state: "done", label: "failed" });
+    w.ran.length = 0;
+    w.calls.length = 0;
+    w.github.length = 0;
+  };
+
+  // MUTATION: drop the `alreadyLive` short-circuit from hostGoLive — the
+  // repeat call starts a second walk, which runs the go-live step again and
+  // restarts a daemon that posts; this fails.
+  it("only tries the label again: no walk, no step, no restart", async () => {
+    await wentLive();
+    w.labelCreate = 201;
+    // the confirm is long stale by now, and that is no reason to refuse
+    w.now += 3 * CONFIRM_MAX_AGE_MS;
+    const stale = attestation({ confirmed_at: new Date(T_CONFIRMED).toISOString() });
+    expect(await send(stale)).toEqual({ state: "done", label: "ok" });
+    expect(w.launched).toHaveLength(1);
+    expect(w.ran).toEqual([]);
+    expect(w.calls).toEqual([]);
+    expect(w.github.map((c) => c.method)).toEqual(["GET", "POST"]);
+    expect(progress().go_live).toEqual({ state: "done", label: "ok" });
+    // the lock was held for the call and is free again
+    const free = acquireChecklistLock(w.stateDir, "home", { pid: WALK_PID });
+    expect(free.ok).toBe(true);
+    if (free.ok) free.lock.release();
+  });
+
+  it("a label that still cannot be made is said again, and nothing else changes", async () => {
+    await wentLive();
+    const before = readHostRecord(w.stateDir).attestation;
+    expect(await send()).toEqual({ state: "done", label: "failed" });
+    expect(await send()).toEqual({ state: "done", label: "failed" });
+    expect(w.launched).toHaveLength(1);
+    expect(w.ran).toEqual([]);
+    expect(readHostRecord(w.stateDir).attestation).toEqual(before);
+    expect(dryRun()).toBe(false);
+  });
+
+  it("still asks for an attestation it can read, the marker, and a place it may run", async () => {
+    await wentLive();
+    expect(await send("{")).toMatchObject({ state: "refused", reason: "attestation_invalid" });
+    w.env = { QCR_SESSION_NAME: "pr-7" };
+    expect(await send()).toMatchObject({ state: "refused", reason: "in_session" });
+    w.env = {};
+    w.writeConfig(setUpConfig({ dryRun: false, hosted: false }));
+    expect(await send()).toMatchObject({ state: "refused", reason: "not_host_managed" });
+    expect(w.github).toEqual([]);
+  });
+
+  // "Already live" is the flag as the config reads it and the attestation the
+  // step succeeded on. Anything less is a go-live like any other.
+  it("is not assumed: a live config with no go-live on record, or a recorded one whose config is dry-run", async () => {
+    await practice();
+    expect(alreadyLive(w.ports)).toBe(false);
+    // the flag moved by hand: no attestation went live here
+    flipConfig();
+    expect(alreadyLive(w.ports)).toBe(false);
+    expect(await send()).toEqual({ state: "started" });
+    expect(w.launched).toHaveLength(1);
+    expect(await runWalk()).toBe(0);
+    expect(alreadyLive(w.ports)).toBe(true);
+    // the config reads dry-run again (the fake step does not write it)
+    w.writeConfig(setUpConfig());
+    expect(alreadyLive(w.ports)).toBe(false);
+    w.writeConfig("[github\nrepo = ");
+    expect(alreadyLive(w.ports)).toBe(false);
   });
 });
 

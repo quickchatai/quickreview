@@ -41,6 +41,7 @@ import { yieldToLoop } from "@quickchatai/pi-quickreview/src/yieldloop.js";
 import {
   SECURITY_DEFAULTS,
   STATE_MACHINES_DEFAULTS,
+  type GithubTrigger,
 } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { STATE_REQUEST } from "./staterequest.js";
 import {
@@ -147,6 +148,11 @@ export interface ReconcileDeps {
   /** How long the sweep may keep STARTING claims in one pass; the rest are
    * carried to the next. Default RECEIPT_SWEEP_BUDGET_MS. */
   receiptSweepBudgetMs?: number;
+  /** `[github] trigger` as the install's config says it at this pass: the
+   * one knob a running daemon follows without a restart, so whoever changes
+   * it (a person's edit, a host's `set-trigger`) costs no round in flight.
+   * Absent, undefined or throwing ⇒ the value the config was loaded with. */
+  trigger?: () => GithubTrigger | undefined;
 }
 
 /**
@@ -290,6 +296,14 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // configured login is the person's: their PRs are reviewed, and their own
   // comments are told from the reviewer's by its marker (identity.ts).
   const botLogin = botAccountLogin(cfg.github);
+  // What the daemon picks up by itself: the config's word at this pass where
+  // the caller can read it, else the word it was loaded with.
+  let trigger: GithubTrigger = cfg.github.trigger ?? "label";
+  try {
+    trigger = deps.trigger?.() ?? trigger;
+  } catch (err) {
+    (deps.log ?? (() => {}))("reconcile: the config's trigger could not be read", err);
+  }
   const report: ReconcileReport = {
     ran_at: now().toISOString(),
     open_prs: 0,
@@ -572,6 +586,79 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       });
     }
   });
+
+  // ---- 2a. the every-pull-request trigger ----------------------------------
+  // `[github] trigger = "all"`: every open pull request that is not a draft
+  // and not the reviewer's own is taken as if it carried the trigger label,
+  // ONCE. A label is consumed when its round is dispatched, which is what
+  // keeps a labelled pull request from being queued again; here there is no
+  // label to remove, so the store keeps the mark instead (`trigger_levels`,
+  // kind `all`), written in the transaction that queues the pull request.
+  //
+  // A marked pull request is never taken by this trigger again. So a push to
+  // one that is reviewed queues nothing by itself, exactly as under the
+  // label, and a round that failed is not asked for again on every pass (its
+  // retry is the failed round's own). A pull request that already has a
+  // review, or a round queued or running, is marked without being queued: it
+  // has its review, or is about to. A draft, a paused pull request and one
+  // the open list did not carry are left unmarked, so each is taken by the
+  // first pass that finds it ready.
+  //
+  // "The reviewer's own" is read where every other site reads it: a bot
+  // account's pull request never enters the machine (`isBotAuthor` over
+  // `botAccountLogin`), and `isOwnContent` tells the reviewer's own from the
+  // person's where both are opened under one login. The pull request is
+  // queued as the poll's own derivation (`reconcile`), never as a person's
+  // request: a label, a review request or `review-now` still outranks it.
+  if (trigger === "all") {
+    await step("trigger-all", async () => {
+      if (!openListed) {
+        (deps.log ?? (() => {}))(
+          "reconcile: trigger = all skipped — the open-PR list was not read",
+        );
+        return;
+      }
+      for (const pr of open.values()) {
+        if (pr.draft) continue;
+        if (isBotAuthor(pr.author, botLogin)) continue;
+        if (isOwnContent(cfg.github, pr.author, pr.body)) continue;
+        const n = pr.number;
+        const local = store.getPr(n);
+        if (local?.state === "closed" || local?.paused) continue;
+        if (store.triggerLevel(n, "all") === true) continue;
+        const queued = store.db
+          .transaction(() => {
+            store.observeTriggerLevel(n, "all", true);
+            const row = store.getPr(n);
+            const covered =
+              row?.state === "queued" || row?.state === "reviewing"
+                ? "in-flight"
+                : store.reviewedHead(n) !== undefined ||
+                    store.roundsFor(n).some((r) => r.verdict !== null)
+                  ? "reviewed"
+                  : null;
+            store.logEvent("trigger_all_taken", n, {
+              head_sha: pr.head_sha,
+              queued: covered === null,
+              ...(covered !== null ? { covered } : {}),
+            });
+            if (covered !== null) return false;
+            const result = applyEvent(
+              store,
+              n,
+              { type: "trigger", source: "reconcile" },
+              { title: pr.title, head_sha: pr.head_sha, author: pr.author },
+              { botLogin, now, reason: "reconcile:all" },
+            );
+            return !result.skipped;
+          })
+          .immediate();
+        if (!queued) continue;
+        if (!report.triggered.includes(n)) report.triggered.push(n);
+        (deps.log ?? (() => {}))(`reconcile: trigger = all took #${n}`);
+      }
+    });
+  }
 
   // Commits outside a round never dispatch a review. A head advance WHILE an
   // older round owns the PR is different: it is recorded as durable successor

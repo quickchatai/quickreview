@@ -18,6 +18,7 @@ import {
   expiryInstant,
   githubTokenHealth,
   hostTokenProblem,
+  readHostMarker,
   readTokenFile,
 } from "@quickchatai/pi-quickreview/src/hosttoken.js";
 import { USER_TOKEN_FILE } from "@quickchatai/pi-quickreview/src/githubAuth.js";
@@ -175,6 +176,40 @@ describe('the marker: [github] token_source = "host", as written', () => {
     expect(hostManagedToml('[github]\n#token_source = "host"\n')).toBe(false);
     expect(hostManagedToml('token_source = "host"\n')).toBe(false);
     expect(hostManagedToml("")).toBe(false);
+  });
+
+  // One reading of the marker for every surface: the app's, the plugin's
+  // setup check, and (by the same key, first) the sessions' token helper.
+  // MUTATION: read the marker through the config loader in any of them — a
+  // config holding only the marker does not load, reads as unmarked, and the
+  // surfaces disagree; this fails here and in tests/pi-plugin.test.ts.
+  it("a config holding only the marker is a host-managed install's, with or without the rest", () => {
+    expect(readHostMarker('[github]\ntoken_source = "host"\n')).toEqual({
+      hostManaged: true,
+      secretsDir: null,
+    });
+    expect(
+      readHostMarker('[github]\ntoken_source = "host"\nsecrets_dir = "/srv/secrets"\n'),
+    ).toEqual({ hostManaged: true, secretsDir: "/srv/secrets" });
+    // an empty secrets_dir names none: the install's own secrets home is used
+    expect(readHostMarker('[github]\ntoken_source = "host"\nsecrets_dir = ""\n')).toEqual({
+      hostManaged: true,
+      secretsDir: null,
+    });
+    expect(readHostMarker('[github]\nauth = "user"\n')).toEqual({
+      hostManaged: false,
+      secretsDir: null,
+    });
+    expect(readHostMarker("")).toEqual({ hostManaged: false, secretsDir: null });
+    expect(readHostMarker('github = "a string"\n')).toEqual({
+      hostManaged: false,
+      secretsDir: null,
+    });
+    // not TOML: it says nothing either way, which is not "unmarked"
+    expect(readHostMarker("[github\n")).toBeNull();
+    // the app's reader is this one
+    for (const text of ['[github]\ntoken_source = "host"\n', '[github]\nauth = "user"\n', "[x"])
+      expect(hostManagedToml(text)).toBe(readHostMarker(text)?.hostManaged === true);
   });
 
   it("a config that is absent, unreadable or not TOML carries no marker", () => {

@@ -60,7 +60,7 @@
     },
     "trigger": {
       "enum": ["label", "all"],
-      "description": "What the reviewer picks up by itself: pull requests that carry the label, or every pull request."
+      "description": "What the reviewer picks up by itself, as the install's config says it now (`[github] trigger`; a running daemon follows that key at every poll). label: pull requests that carry the trigger label. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request. Absent when the config cannot be read or states neither."
     },
     "poll": {
       "type": "object",
@@ -95,6 +95,11 @@
         "month_unknown_rounds": { "type": "integer", "minimum": 1 }
       },
       "description": "What the daemon recorded as spent on model calls in the current UTC day and month."
+    },
+    "reviewed_today": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many pull requests had a review round finish since midnight in the install's configured timezone ([ops] timezone): each pull request once, open or closed now, posted or practice. Counted by the daemon from its round store when it writes the board. Absent when the daemon is off, when it could not count (its store or its timezone could not be read), and once the day the count is of has ended: never zero by default."
     },
     "setup": { "$ref": "#/$defs/setup" },
     "go_live": { "$ref": "#/$defs/go_live" },
@@ -191,15 +196,18 @@
             "proof_unverified",
             "config_failed",
             "restart_failed",
-            "label_failed",
             "go_live_failed",
             "interrupted",
             "internal_error"
           ],
-          "description": "Why it failed. label_failed: the reviewer posts, and its trigger label could not be created. interrupted: the process that ran it is gone and left no result."
+          "description": "Why it failed. attestation_rejected: the attestation on record no longer admits a go-live (it went stale, its proof is no longer the one on record, or the install is not one a host manages). interrupted: the process that ran it is gone and left no result."
+        },
+        "label": {
+          "enum": ["ok", "failed"],
+          "description": "With state done: how making sure of the trigger label went once the reviewer was live. ok: the label is in the repository. failed: it could not be read or created there (a token that cannot write yet, most often); the reviewer posts all the same, and a repeat `qcr --schema 3 host go-live` tries the label again and restarts nothing. Absent while nothing has tried it."
         }
       },
-      "description": "The go-live `qcr --schema 3 host go-live` started. Absent when none was. Whether the reviewer posts is `posting`, the running daemon's own flag."
+      "description": "The go-live `qcr --schema 3 host go-live` started: done once the go-live step has succeeded, whatever the trigger label did (`label` says that, beside it). Absent when none was. Whether the reviewer posts is `posting`, the running daemon's own flag."
     },
     "reviewing": {
       "type": "object",

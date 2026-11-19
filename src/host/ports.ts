@@ -14,7 +14,13 @@ import { sandboxRoot } from "../config.js";
 import { secretsDirAt } from "../hostmanaged.js";
 import { locateConfig, stackRoot } from "../homes.js";
 import { detectInstall } from "../installkind.js";
-import { processAlive } from "../onboard/checklistlock.js";
+import {
+  machineBootId,
+  processAlive,
+  processStartTime,
+  type LockOptions,
+  type ProcessFacts,
+} from "../onboard/checklistlock.js";
 import {
   OnboardingEngine,
   readChecklist,
@@ -83,9 +89,35 @@ export interface HostPorts {
   stdin(): Promise<string>;
   /** Does process `pid` exist? */
   alive(pid: number): boolean;
+  /** This boot of the machine, as the checklist lock records it; null where
+   * it cannot be read. */
+  bootId(): string | null;
+  /** When process `pid` started, as the checklist lock records it; null
+   * where it cannot be read. */
+  startTime(pid: number): string | null;
   sleep(ms: number): Promise<void>;
   /** A line for whoever reads the walk's own log. */
   log(line: string): void;
+}
+
+/** What these ports say of a process: what the checklist lock is judged by
+ * (src/onboard/checklistlock.ts), wherever a verb or a walk reads it. */
+export function processFacts(
+  ports: Pick<HostPorts, "alive" | "bootId" | "startTime">,
+): Required<ProcessFacts> {
+  return {
+    alive: (pid) => ports.alive(pid),
+    bootId: () => ports.bootId(),
+    startTime: (pid) => ports.startTime(pid),
+  };
+}
+
+/** The checklist lock as a verb takes it: as its own process, on its own
+ * clock, judged by what its machine says of the holder on record. */
+export function lockOptions(
+  ports: Pick<HostPorts, "pid" | "now" | "alive" | "bootId" | "startTime">,
+): LockOptions {
+  return { pid: ports.pid, now: () => ports.now(), ...processFacts(ports) };
 }
 
 /** The stack as the steps reach it, decided where every step decides it
@@ -195,6 +227,8 @@ export function realHostPorts(
     },
     stdin: () => readStdin(),
     alive: processAlive,
+    bootId: () => machineBootId(),
+    startTime: (pid) => processStartTime(pid),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     log: (line) => console.log(line),
   };

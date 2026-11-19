@@ -12,6 +12,10 @@
 // The verb refuses unless all of these hold, and changes nothing when it
 // refuses:
 //
+//   * the install is one a host manages: its config, as written, carries
+//     `[github] token_source = "host"`. Only there is the person who owns the
+//     flag the one a host authenticated; on any other install an attestation
+//     admits nothing, whoever sends it;
 //   * the proof is the practice round the checklist records;
 //   * that round was returned by `host proof-result`, which is what marks a
 //     practice review as shown;
@@ -30,9 +34,22 @@
 // path has (tests/host-fences.test.ts pins both).
 //
 // Once the reviewer is live the walk makes sure the trigger label exists in
-// the repository, as the wizard's account step does: a label definition,
-// created with the install's own token, and no review, comment or push.
+// the repository, through the function the wizard's steps create their
+// labels with (`ensureLabel`, src/onboard/steps/githubapp.ts): a label
+// definition, read and if missing created with the install's own token, and
+// no review, comment or push. The mutation gate has no kind for a label's
+// definition (its label kinds put a label on a pull request), so this is the
+// wizard's one writer and no second one. The label is not the go-live: the
+// walk ends `done` once the go-live step has succeeded, and says beside it
+// how the label went (`label`: `ok` or `failed`). A host that has only just
+// let its token write commonly sees `failed` first.
+//
+// A repeat call on an install that is already live (the config reads
+// `dry_run = false` and the attestation it went live on is on record) tries
+// the label again and does nothing else: no go-live step, no restart of a
+// daemon that may be mid-round. It answers `done` with the label's word.
 import { expiryInstant, readTokenFile } from "@quickchatai/pi-quickreview/src/hosttoken.js";
+import { readConfigToml } from "@quickchatai/pi-quickreview/src/shippedconfig.js";
 import { configFacts } from "../boardexport.js";
 import { acquireChecklistLock } from "../onboard/checklistlock.js";
 import { readChecklist } from "../onboard/engine.js";
@@ -44,15 +61,16 @@ import {
 } from "../onboard/steps/githubapp.js";
 import { readTomlKey } from "../onboard/steps/ingress.js";
 import { runGoLive } from "../home/switchon.js";
-import { admit } from "./admit.js";
+import { admit, hostManaged, notHostManaged } from "./admit.js";
 import {
   refused,
   type GoLiveProblem,
   type HostAnswer,
   type HostProof,
   type HostReason,
+  type LabelWord,
 } from "./outcomes.js";
-import type { HostPorts } from "./ports.js";
+import { lockOptions, type HostPorts } from "./ports.js";
 import {
   attestationOf,
   proofWasShown,
@@ -120,6 +138,8 @@ export async function hostGoLive(ports: HostPorts, args: readonly string[]): Pro
   const no = admit(ports);
   if (no !== null) return no;
   if (args.length > 0) return refused("usage", `host go-live takes no argument. ${GO_LIVE_USAGE}`);
+  if (!hostManaged(ports))
+    return notHostManaged("this install's go-live is its owner's own, at the reviewer's home");
   let sent: unknown;
   try {
     sent = JSON.parse(await ports.stdin());
@@ -133,11 +153,7 @@ export async function hostGoLive(ports: HostPorts, args: readonly string[]): Pro
       "the attestation is not {operator: {host, id}, confirmed_at, proof: {pr, round_no}}. Nothing changed",
     );
 
-  const got = acquireChecklistLock(ports.stateDir, "go_live", {
-    pid: ports.pid,
-    now: () => ports.now(),
-    alive: (pid) => ports.alive(pid),
-  });
+  const got = acquireChecklistLock(ports.stateDir, "go_live", lockOptions(ports));
   if (!got.ok)
     return got.held.holder === "go_live"
       ? { state: "running" }
@@ -145,6 +161,24 @@ export async function hostGoLive(ports: HostPorts, args: readonly string[]): Pro
   const lock = got.lock;
   let handed = false;
   try {
+    // Already live, on an attestation: the label is all that is left to try.
+    if (alreadyLive(ports)) {
+      const label = await labelWord(ports);
+      const at = ports.now().toISOString();
+      updateHostRecord(ports.stateDir, (r) => {
+        const { attestation_pending: _none, ...rest } = r;
+        return {
+          ...rest,
+          go_live: {
+            state: "done",
+            label,
+            started_at: r.go_live?.started_at ?? at,
+            updated_at: at,
+          },
+        };
+      });
+      return { state: "done", label };
+    }
     const why = attestationRefusal(attestation, {
       now: ports.now().getTime(),
       recorded: recordedProofIn(ports.stateDir),
@@ -208,7 +242,43 @@ export function goLiveProblem(detail: string): GoLiveProblem {
   }
 }
 
-/** Make sure the trigger label exists in the reviewed repository. */
+/**
+ * Did this install go live on a host's attestation already? The config reads
+ * `dry_run = false`, as the daemon reads it, and the record holds the
+ * attestation with the time the go-live step succeeded on it. Anything less
+ * (a flag that moved and a step that did not finish, a config that cannot be
+ * read) is not: that go-live runs, or is refused, as any other.
+ */
+export function alreadyLive(
+  ports: Pick<HostPorts, "read" | "configPath" | "template" | "stateDir">,
+): boolean {
+  if (readHostRecord(ports.stateDir).attestation?.live_at === undefined) return false;
+  try {
+    return readConfigToml(ports.read(ports.configPath), ports.template())["dry_run"] === false;
+  } catch {
+    return false;
+  }
+}
+
+/** The trigger label's word: there, or not made sure of. Never throws: a
+ * label that could not be tried is `failed`, and the reason is logged. */
+async function labelWord(ports: HostPorts): Promise<LabelWord> {
+  try {
+    const label = await ensureTriggerLabel(ports);
+    ports.log(`host go-live: trigger label: ${label.detail}`);
+    return label.ok ? "ok" : "failed";
+  } catch (err) {
+    try {
+      ports.log(`host go-live: trigger label: ${err instanceof Error ? err.message : String(err)}`);
+    } catch {
+      // nowhere to say it: the word is the answer
+    }
+    return "failed";
+  }
+}
+
+/** Make sure the trigger label exists in the reviewed repository, through
+ * the wizard's own label writer. */
 async function ensureTriggerLabel(ports: HostPorts): Promise<{ ok: boolean; detail: string }> {
   let config: string;
   try {
@@ -231,8 +301,8 @@ async function ensureTriggerLabel(ports: HostPorts): Promise<{ ok: boolean; deta
 
 /**
  * Run the go-live walk under the lock `token` names. The process's exit
- * code: 0 when the reviewer is live and its trigger label exists, 1
- * otherwise. The host record says which.
+ * code: 0 when the go-live step succeeded (the reviewer is live), 1
+ * otherwise. The host record says which, and how the trigger label went.
  */
 export async function walkGoLive(ports: HostPorts, token: string): Promise<number> {
   if (sessionMarker(ports.env) !== null || ports.inImage) {
@@ -246,14 +316,18 @@ export async function walkGoLive(ports: HostPorts, token: string): Promise<numbe
   }
   const before = readHostRecord(ports.stateDir);
   const startedAt = before.go_live?.started_at ?? ports.now().toISOString();
-  const end = (state: "done" | "failed", problem?: GoLiveProblem): void => {
+  const end = (
+    state: "done" | "failed",
+    o: { problem?: GoLiveProblem; label?: LabelWord } = {},
+  ): void => {
     updateHostRecord(ports.stateDir, (r) => {
       const { attestation_pending: _taken, ...rest } = r;
       return {
         ...rest,
         go_live: {
           state,
-          ...(problem !== undefined ? { problem } : {}),
+          ...(o.problem !== undefined ? { problem: o.problem } : {}),
+          ...(o.label !== undefined ? { label: o.label } : {}),
           started_at: startedAt,
           updated_at: ports.now().toISOString(),
         },
@@ -263,9 +337,12 @@ export async function walkGoLive(ports: HostPorts, token: string): Promise<numbe
   try {
     // The attestation the verb admitted, admitted again: this walk goes live
     // on a confirm that is on record and still holds, and on nothing else.
+    // And the install is still one a host manages: an attestation admits a
+    // go-live there and nowhere else, whatever started this walk.
     const pending = before.attestation_pending;
-    const why =
-      pending === undefined
+    const why = !hostManaged(ports)
+      ? { message: 'the config does not carry [github] token_source = "host"' }
+      : pending === undefined
         ? { message: "no attestation is on record for this walk" }
         : attestationRefusal(pending, {
             now: ports.now().getTime(),
@@ -274,7 +351,7 @@ export async function walkGoLive(ports: HostPorts, token: string): Promise<numbe
           });
     if (pending === undefined || why !== null) {
       ports.log(`host go-live: not admitted: ${why?.message ?? "unknown"}`);
-      end("failed", "attestation_rejected");
+      end("failed", { problem: "attestation_rejected" });
       return 1;
     }
     updateHostRecord(ports.stateDir, (r) => {
@@ -287,7 +364,7 @@ export async function walkGoLive(ports: HostPorts, token: string): Promise<numbe
     const went = await runGoLive(checklist, { confirmed: true });
     ports.log(`host go-live: ${went.detail}`);
     if (!went.ok) {
-      end("failed", goLiveProblem(went.detail));
+      end("failed", { problem: goLiveProblem(went.detail) });
       return 1;
     }
     const liveAt = ports.now().toISOString();
@@ -295,20 +372,16 @@ export async function walkGoLive(ports: HostPorts, token: string): Promise<numbe
       ...r,
       attestation: { ...pending, live_at: liveAt },
     }));
-    const label = await ensureTriggerLabel(ports);
-    ports.log(`host go-live: trigger label: ${label.detail}`);
-    if (!label.ok) {
-      end("failed", "label_failed");
-      return 1;
-    }
-    end("done");
+    // The go-live is done from here, whatever the label does: it is said
+    // beside the outcome and is never the outcome.
+    end("done", { label: await labelWord(ports) });
     return 0;
   } catch (err) {
     ports.log(
       `host go-live: the walk stopped: ${err instanceof Error ? err.message : String(err)}`,
     );
     try {
-      end("failed", "internal_error");
+      end("failed", { problem: "internal_error" });
     } catch {
       // the record cannot be written either: the export says `interrupted`
     }

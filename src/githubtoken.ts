@@ -94,8 +94,11 @@ export function tokenKind(token: string): TokenKind {
   return { prefix: "unknown", label: "token of an unrecognised kind", expires: null };
 }
 
-/** A token is one line of word characters; anything else is not a token. */
-const TOKEN_RE = /^[A-Za-z0-9_]{20,255}$/;
+/** A token is one word of GitHub's token alphabet (base64url segments joined
+ * by `.`); anything else is not a token. Its length is GitHub's to choose and
+ * is not assumed: the bound only keeps a file's worth of text from passing
+ * for one. */
+export const TOKEN_RE = /^[A-Za-z0-9_.-]{20,4096}$/;
 
 export type TokenSource = "gh" | "env:GH_TOKEN" | "env:GITHUB_TOKEN";
 

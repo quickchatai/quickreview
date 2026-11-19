@@ -28,6 +28,7 @@ import {
   routes,
   seedMark,
   setGuardKnobs,
+  setInstallationMode,
   setPersonMode,
   setPr,
   type Blocked,
@@ -1708,6 +1709,62 @@ const personMode: ParityCase[] = [
   },
 ];
 
+// Installation mode (`[github] auth = "installation"`): the token is read
+// from a file a host keeps, and the identity is an App's bot. The COMMENT-only
+// rule is bound to the person identity, never to where the token came from:
+// a verdict event passes as it is, and every guard binds as it does for the
+// App whose key is on the machine.
+// MUTATION: build the route's guard with `personMode: usesTokenFile(cfg.github)`
+// (helpers/guards-parity.ts) — the first two cases post COMMENT, and fail.
+const installationMode: ParityCase[] = [
+  {
+    what: "an approval is admitted as an APPROVE",
+    action: APPROVE,
+    world: setInstallationMode,
+    want: { sent: "APPROVE", bodyHas: ["Automated review body."], bodyLacks: ["Verdict:"] },
+  },
+  {
+    what: "a REQUEST_CHANGES is admitted as a REQUEST_CHANGES",
+    action: RC,
+    world: setInstallationMode,
+    want: {
+      sent: "REQUEST_CHANGES",
+      bodyHas: ["Automated review body."],
+      bodyLacks: ["Verdict:"],
+    },
+  },
+  {
+    what: "a COMMENT passes as it is",
+    action: COMMENT,
+    world: setInstallationMode,
+    want: { sent: "COMMENT", bodyLacks: ["Verdict:"] },
+  },
+  {
+    what: "red CI still withholds the approval (guard 4)",
+    action: APPROVE,
+    world: (s) => {
+      setInstallationMode(s);
+      s.checkRuns = [run1("unit", "failure")];
+    },
+    want: { sent: "COMMENT" },
+  },
+  {
+    what: "a merged PR is still refused (guard 3)",
+    action: RC,
+    world: (s) => {
+      setInstallationMode(s);
+      setPr(s, { state: "closed", merged: true });
+    },
+    want: { sent: null, blocked: "pr-merged" },
+  },
+  {
+    what: "the same world on a person's account still posts the approval as a COMMENT",
+    action: APPROVE,
+    world: setPersonMode,
+    want: { sent: "COMMENT", bodyHas: ["Verdict: APPROVE"], noteHas: "person mode" },
+  },
+];
+
 function expectOutcome(route: Route, got: Outcome, c: ParityCase): void {
   const want: Want = { ...c.want, ...(c.node ?? {}) };
   const at = `${route.name} route`;
@@ -1729,6 +1786,7 @@ describe("the posting guards over the Node route", () => {
     ["guard 4 (red CI withholds an approval)", guard4],
     ["guard 5 (the head moved)", guard5],
     ["person mode (auth = user: every review is a COMMENT)", personMode],
+    ["installation mode (auth = installation: an App's verdict events)", installationMode],
   ];
   for (const [title, cases] of groups) {
     describe(title, () => {

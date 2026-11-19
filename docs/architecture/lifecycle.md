@@ -51,6 +51,22 @@ A push (`synchronize`) is explicitly **not** a trigger: `applyInterpretation`
 refreshes metadata and logs the push instant, then hands the event to the
 post-approval recheck path (§7). Opening a PR is not a trigger either.
 
+That is `[github] trigger = "label"`, the default. Under `trigger = "all"` the
+reconcile poll adds a third source: every open pull request that is not a
+draft and not the reviewer's own (a bot account's by `isBotAuthor`, the
+reviewer's own under a person's login by `isOwnContent`) is queued as if it
+carried the trigger label, **once**, and model usage is spent on every pull
+request. There is no label to consume, so the store keeps the mark instead
+(`trigger_levels`, kind `all`), written in the transaction that queues the
+PR. A marked PR is never taken by this trigger again: a push to a reviewed PR
+still queues nothing, and a failed round is retried by its own machinery, not
+re-asked at every poll. A PR that already has a review, or a round queued or
+running, is marked without being queued; a draft and a paused PR are left
+unmarked and taken by the first pass that finds them ready. The pickup is
+system-provenance (`reconcile`), so a label, a team request or `review-now`
+still outranks it. The daemon reads this one key again at every pass
+(`src/livetrigger.ts`), so changing it needs no restart.
+
 Both triggers are *consumed* at dispatch — the label is removed and the team
 review request is deleted through the gated adapter (`consumeTriggers` in
 `src/dispatch.ts`) — so a completed round leaves nothing that would re-queue the
@@ -153,7 +169,9 @@ cannot stall the daemon (failures land in `report.errors`):
    fires the push recheck (§7) and its lost-recheck backstop.
 2. **triggered-set derivation** — both searches (label, team), with durable
    per-kind level observations so a *remove → re-add* reads as a fresh human
-   edge even when its webhook was lost.
+   edge even when its webhook was lost. Under `[github] trigger = "all"` its
+   own step follows (`trigger-all`): every open, ready pull request that is
+   not the reviewer's own and not yet marked is queued once (§1).
 3. **successor obligations** — promote durable fresh-head work whose
    predecessor round became terminal.
 4. **undelivered recheck-claim sweep** — releases a recheck claim whose prompt

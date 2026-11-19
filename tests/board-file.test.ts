@@ -27,6 +27,7 @@ import {
   writeBoardJson,
   type BoardFile,
 } from "../src/boardfile.js";
+import { reviewedToday } from "../src/boardtoday.js";
 import { loadConfig } from "../src/config.js";
 import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
 import type { PrRef } from "../src/github.js";
@@ -697,6 +698,57 @@ describe("the daemon writes it", () => {
       expect(board().reviewed).toEqual([
         expect.objectContaining({ number: PR, verdict: "REQUEST_CHANGES", rounds: 1 }),
       ]);
+    },
+  );
+
+  // The day's count is made where the store is open: by the daemon, when it
+  // writes the board, on its configured calendar (`[ops] timezone`).
+  // MUTATION: drop the `reviewedToday(...)` argument from the daemon's
+  // buildBoardFile call — the board carries no count, and this fails.
+  it(
+    "counts the pull requests reviewed today from its round store, a closed one included",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const config = cfg();
+      store.upsertPr({
+        number: PR,
+        state: "queued",
+        head_sha: "headsha1",
+        title: "test PR",
+        author: "someone",
+        trigger_ts: new Date().toISOString(),
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      const daemon = createDaemon({
+        cfg: config,
+        root,
+        store,
+        adapter: fakeAdapter(join(root, "state", "dryrun")),
+        listen: false,
+        log: () => {},
+        hooks: {
+          inject: async () => {},
+          dispatchRound: async () => {},
+          async archiveAndClose() {},
+        },
+      });
+      await daemon.pump();
+      // a round runs and none has finished: a count of zero, with its day
+      const before = board().reviewed_today;
+      expect(before).toEqual(reviewedToday(store, new Date(), config.ops.timezone));
+      expect(before).toMatchObject({ count: 0 });
+      expect(Date.parse(before!.since)).toBeLessThanOrEqual(Date.now());
+      expect(Date.parse(before!.until)).toBeGreaterThan(Date.now());
+
+      // the round ends, and the pull request is then closed: in no list, and counted
+      const round = store.roundsFor(PR)[0]!;
+      store.finishRound(round.id, "REQUEST_CHANGES", null);
+      store.setPrState(PR, "closed");
+      await daemon.pump();
+      expect(board().reviewed_today).toMatchObject({ count: 1 });
+      expect(board().reviewing).toEqual([]);
+      expect(board().reviewed).toEqual([]);
     },
   );
 

@@ -242,6 +242,35 @@ describe("host proof-result", () => {
     expect(w.github).toEqual([]);
   });
 
+  // What the record does not say is not printed: no event is no event, never
+  // a COMMENT the reader supplied.
+  // MUTATION: read the event off the comparison's snapshot (`review.state`,
+  // which fills a missing event with COMMENT) — a review whose record names
+  // no event is shown to the operator as a COMMENT, and this fails.
+  it("leaves `event` out when the dry-run record names none, or one GitHub does not take", async () => {
+    const shownWith = async (event: unknown): Promise<Record<string, unknown>> => {
+      w.close();
+      w = hostWorld();
+      w.writeConfig(setUpConfig());
+      await start();
+      finish();
+      const review = w.daemon.dryrun.find((r) => r["kind"] === "create_review")!;
+      const body = review["body"] as Record<string, unknown>;
+      if (event === undefined) delete body["event"];
+      else body["event"] = event;
+      const out = await hostProofResult(w.ports, ["7"]);
+      expect(out.state).toBe("done");
+      return out.review as unknown as Record<string, unknown>;
+    };
+    expect(await shownWith("REQUEST_CHANGES")).toMatchObject({ event: "REQUEST_CHANGES" });
+    for (const none of [undefined, "", "DISMISS", 7, null]) {
+      const review = await shownWith(none);
+      expect(review, String(none)).not.toHaveProperty("event");
+      // the rest of the review is printed as recorded
+      expect(review).toMatchObject({ body: "Two blockers.", comments_total: 1 });
+    }
+  });
+
   it("asked again, returns the same review and records nothing new", async () => {
     await start();
     finish();
@@ -337,7 +366,7 @@ describe("the review, as printed", () => {
 
   // MUTATION: print every comment — this fails.
   it("carries at most 50 comments, and says how many there were", () => {
-    const out = cappedReview(snapshot(PROOF_COMMENT_CAP + 7));
+    const out = cappedReview(snapshot(PROOF_COMMENT_CAP + 7), "COMMENT");
     expect(PROOF_COMMENT_CAP).toBe(50);
     expect(out.comments).toHaveLength(50);
     expect(out.comments_total).toBe(57);
@@ -346,33 +375,40 @@ describe("the review, as printed", () => {
 
   // MUTATION: print the body and each comment whole — this fails.
   it("cuts the body, each comment and each path at its cap, and says so", () => {
-    const long = cappedReview({
-      ...snapshot(1, "b".repeat(PROOF_BODY_CAP + 1)),
-      comments: [
-        {
-          path: "p".repeat(PROOF_PATH_CAP + 9),
-          line: 3,
-          body: "c".repeat(PROOF_COMMENT_BODY_CAP + 1),
-        },
-      ],
-    });
+    const long = cappedReview(
+      {
+        ...snapshot(1, "b".repeat(PROOF_BODY_CAP + 1)),
+        comments: [
+          {
+            path: "p".repeat(PROOF_PATH_CAP + 9),
+            line: 3,
+            body: "c".repeat(PROOF_COMMENT_BODY_CAP + 1),
+          },
+        ],
+      },
+      "COMMENT",
+    );
     expect(long.body).toHaveLength(PROOF_BODY_CAP);
     expect(long.body_truncated).toBe(true);
     expect(long.comments[0]!.body).toHaveLength(PROOF_COMMENT_BODY_CAP);
     expect(long.comments[0]!.truncated).toBe(true);
     expect(long.comments[0]!.path).toHaveLength(PROOF_PATH_CAP);
-    const short = cappedReview(snapshot(1));
+    const short = cappedReview(snapshot(1), "COMMENT");
     expect(short).not.toHaveProperty("body_truncated");
     expect(short.comments[0]).not.toHaveProperty("truncated");
   });
 
-  it("names the event only when it is one GitHub takes, and a line only when it is one", () => {
-    expect(cappedReview(snapshot(0)).event).toBe("REQUEST_CHANGES");
-    expect(cappedReview({ ...snapshot(0), state: "ESCALATE" })).not.toHaveProperty("event");
-    const odd = cappedReview({
-      ...snapshot(0),
-      comments: [{ path: "a.ts", line: -3, body: "x" }],
-    });
+  // MUTATION: fall back to the snapshot's `state` when the record names no
+  // event — the second and third assertions fail.
+  it("names the event the record names, only when it is one GitHub takes, and a line only when it is one", () => {
+    expect(cappedReview(snapshot(0), "REQUEST_CHANGES").event).toBe("REQUEST_CHANGES");
+    // the snapshot's own state is never read for it
+    expect(cappedReview(snapshot(0), undefined)).not.toHaveProperty("event");
+    expect(cappedReview(snapshot(0), "ESCALATE")).not.toHaveProperty("event");
+    const odd = cappedReview(
+      { ...snapshot(0), comments: [{ path: "a.ts", line: -3, body: "x" }] },
+      "COMMENT",
+    );
     expect(odd.comments[0]!.line).toBe(0);
   });
 });

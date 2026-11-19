@@ -14,7 +14,11 @@ the state database.
   `broken`), whether it posts or records (`posting`, and `posting_pending`
   when the config already says live and the daemon has not restarted), the
   host's model login, the trigger label, the last poll, today's and the
-  month's spend, and three lists of at most 50 pull requests each, newest
+  month's spend, how many pull requests were reviewed today
+  (`reviewed_today`: each pull request with a review round finished since
+  midnight in the install's `[ops] timezone`, open or closed, posted or
+  practice; absent, never zero, when the daemon could not count), and three
+  lists of at most 50 pull requests each, newest
   first: `reviewing` (queued, running, posting, failed with a closed
   `problem`, paused), `reviewed` (the verdict, and separately what GitHub
   holds: `posted_event`, absent for a round that posted nothing) and `open`.
@@ -31,10 +35,10 @@ the state database.
   first status write after an update.
 - **Host contract 3.** `--schema` takes a third contract: contract 2's
   review, scan and version families, plus the host families, of which
-  `board` is the first. `qcr --schema 3 version` lists it under `contracts`
-  and names the host families this release has under `host_families`, and
-  `package.json` records both in a `qcrContracts` block for a host that
-  packages a release without running it. Contracts 1 and 2 are unchanged;
+  `board` is the first. The contracts a release supports are recorded in its
+  `package.json` (`qcrContracts`: the contract numbers, and the host
+  families with their versions) and printed by `qcr --schema 3 version`
+  (`contracts`, `host_families`). Contracts 1 and 2 are unchanged;
   `--schema 1 board` and `--schema 2 board` are refused with exit 3, as a
   contract with no board.
 
@@ -43,8 +47,8 @@ the state database.
 A host that runs the reviewer for a person can now keep the GitHub credential
 itself, so nothing on the machine signs in to GitHub.
 
-- **`[github] token_source = "host"`**, beside `auth = "user"`, is the
-  marker. The host writes `<secrets>/github_token` (atomically, `0600`, the
+- **`[github] token_source = "host"`**, beside `auth = "user"` (or
+  `auth = "installation"`, below), is the marker. The host writes `<secrets>/github_token` (atomically, `0600`, the
   token alone) and keeps a token with at least 15 minutes of life in it at
   all times. The daemon reads the file exactly as before: on first use, every
   five minutes, and after a 401. The default, `"self"`, is every install's
@@ -65,6 +69,44 @@ itself, so nothing on the machine signs in to GitHub.
   never prints `gh auth login` there. Reviewing a pull request on demand
   stays, and so does switching auto-review off.
 
+### A host-supplied installation token: a bot identity with no key on the machine
+
+A third credential mode, for a host that holds a GitHub App's private key
+and runs the reviewer for a person: the reviewer posts as the App's bot, and
+the key never leaves the host.
+
+- **`[github] auth = "installation"`**, always with `token_source = "host"`
+  (config load refuses it without the marker). The host mints an
+  installation token for the one repository and writes it to
+  `<secrets>/github_token`, under the host-managed contract above. The
+  daemon reads the file exactly as before.
+- **`app_slug` is required, and `bot_login` is derived** from it as
+  `<slug>[bot]`; a stated `bot_login` that says anything else is refused.
+  The route is polling-only: any `[ingress] shape` but `"polling"` is
+  refused, as under `auth = "user"`.
+- **Reviews post as APPROVE / REQUEST_CHANGES / COMMENT**, as under
+  `auth = "app"`. The COMMENT-only rule stays bound to the person identity
+  (`auth = "user"`), not to "the token came from a file". The label search
+  and own-thread matching work from `app_slug`, as in App mode.
+- **No `app.pem`, `app_id` or webhook secret is read**, no App JWT is signed,
+  and every route that needs one is refused. `scripts/mint-token.sh` prints
+  the file's token. The companion gets no GitHub token in this mode.
+- **The token is proved with a read of the configured repository**, never
+  GitHub's user endpoint, and the reviewer checks that the token's own login
+  (GraphQL's `viewer`) is the configured `bot_login`. A slug that names
+  another App than the token's is said plainly, by the account step and by
+  `host setup`, instead of leaving a reviewer that cannot recognise its own
+  reviews.
+- **Onboarding has a third route.** The account step takes the mode from the
+  config its host wrote; the App-creation and slug-reconcile steps are off on
+  it, and the proof and verify steps read the token file.
+- **Token length is not assumed.** A token of any length GitHub issues is
+  read, written and masked whole: the sync verb's token shape no longer caps
+  it at 255 characters or excludes `.` and `-`, and the mask on GitHub's
+  error text now covers a token's whole word.
+- `SECURITY.md` and `docs/architecture/boundaries.md` state the amended rule:
+  three credential modes over two implementations.
+
 ### Host verbs: a host starts the reviewer, shows a practice review and takes it live
 
 The second family of host contract 3, `host: 1`. A host that has
@@ -83,11 +125,22 @@ carries a closed `reason` and a `message` in words). The shape is
   answers `started`; a second call while the first runs answers `running`.
   The reviewer comes up in dry-run. It refuses, in words, a missing model
   login, a token file it cannot use, and a repository or auth mode other than
-  the one already on record. On a host-managed install
-  (`[github] token_source = "host"`) it also states the auth mode beside the
-  marker and sets the improvement-PR and bot-filed-issue caps to zero, so the
-  host's token never needs to write contents or issues. `--auth installation` is read and refused: that
-  credential mode is not in this release.
+  the one already on record. It states the auth mode beside the marker and
+  sets the improvement-PR and bot-filed-issue caps to zero, so the host's
+  token never needs to write contents or issues.
+- **`host setup --repo owner/name --auth installation --app-slug <slug>`**
+  sets the reviewer up on a host-supplied installation token (below). The
+  slug is required. Before anything is written the verb asks GitHub who the
+  token is and refuses, as `identity_mismatch`, a token that is not
+  `<slug>[bot]`. It then states `auth = "installation"`, `app_slug` and
+  `bot_login` beside the marker.
+- **Host-managed installs only.** The verbs act for a host's attested
+  operator, who exists only where the install's config carries
+  `[github] token_source = "host"`. On a machine with no config, `host setup`
+  writes that marker and the auth mode itself. On a config that is already
+  there without it, `host setup` and `host go-live` refuse
+  (`not_host_managed`) before anything is written: a host verb never turns an
+  install that keeps its own credential into a host-managed one.
 - **`host review-now <pr>`** asks the daemon to review one pull request now,
   as `qcr review-now` does.
 - **`host proof-start <pr>` and `host proof-result <pr>`** are the practice
@@ -102,26 +155,72 @@ carries a closed `reason` and a `message` in words). The shape is
   round_no}}`. It refuses unless the proof is the recorded one, was returned
   by `proof-result`, the confirm is under ten minutes old, and the process
   was not started from an agent session. Then it runs the existing go-live
-  step, detached, records the attestation, and makes sure the trigger label
-  exists. `dry_run` still moves only through that one step
-  ([docs/ownership.md](docs/ownership.md) names "a host's attested
-  operator").
+  step, detached, and records the attestation. `dry_run` still moves only
+  through that one step ([docs/ownership.md](docs/ownership.md) names "a
+  host's attested operator"). The go-live is `done` once that step has
+  succeeded. The trigger label is made sure of after it and reported beside
+  it (`label`: `ok` or `failed`), and never fails a go-live: a host whose
+  token has only just been allowed to write commonly reads `failed` first.
+  Called again on an install that is already live, the verb answers `done`
+  with `label`, having tried the label again and nothing else: the go-live
+  step is not re-run and the daemon is not restarted.
 - **Progress is in the board export.** `qcr --schema 3 board` now fills
   `setup` (`running` with the step, `done`, or `failed` with the step and a
   closed `problem`), `go_live` (the same, without a step) and `proof` (the
-  practice round, once `proof-result` has returned it). A walk whose process
-  is gone reads as `failed`, `interrupted`. Both fields' words are closed
-  sets in `schemas/board.v1.json`.
+  practice round, once `proof-result` has returned it). A go-live that is
+  `done` carries `label` beside it. A walk whose process is gone reads as
+  `failed`, `interrupted`. Both fields' words are closed sets in
+  `schemas/board.v1.json`.
 - **One writer of the setup checklist at a time.** The host verbs and the
   terminal home's switches take the same lock around their steps
   (`state/onboarding/checklist.lock`). Whichever finds it taken says by what
   and runs nothing: a verb answers `busy` with the holder, and the home says
-  that its host is working and to try again.
-- **No agent can run them.** Every host verb refuses when it was started from
-  a review session, the companion or the home's own pi, and inside the
-  daemon's container.
-- `qcr --schema 3 version` lists `host` under `host_families`, and
-  `package.json`'s `qcrContracts` block records it.
+  that its host is working and to try again. The lock's record carries the
+  machine's boot id and its holder's start time, so a lock left behind by a
+  machine that was stopped or restarted mid-walk is stale and is taken over
+  instead of answering `running` for ever.
+- **No agent session this system starts can run them.** Every host verb
+  refuses when it was started from a review session, the companion, the
+  home's own pi or `qcr pi`, and inside the daemon's container.
+- `package.json` records `host` under `qcrContracts.host_families`, and
+  `qcr --schema 3 version` prints it under `host_families`.
+- **The practice review's `event` is the record's own.** `host proof-result`
+  leaves `event` out when the dry-run record names none, and a failure's
+  `message` is capped at 600 characters as a refusal's is.
+
+### Review every pull request: `[github] trigger`
+
+Until now the reviewer picked up a pull request only when somebody asked: the
+trigger label, or a review request to the review team. That stays the
+default. A second choice reviews every pull request.
+
+- **`[github] trigger = "label" | "all"`**, default `"label"`. A config
+  without the key behaves exactly as before.
+- **`"all"` spends model usage on every pull request.** Under it every open
+  pull request that is not a draft and was not opened by the reviewer itself
+  or by another bot is picked up as if it carried the trigger label, once. A
+  draft is picked up when it is marked ready; a closed pull request never is.
+  Switching to `"all"` queues every open pull request that has no review yet,
+  so set it knowing how many your repository has open.
+- **A push still queues nothing by itself**, under either value: a pull
+  request that is already reviewed is not reviewed again because commits
+  landed on it. Ask again with the label, a review request, or
+  `qcr review-now <pr>`; those work under both values. A round that failed is
+  not asked for again by the trigger either.
+- **The running daemon follows the key without a restart.** It reads
+  `[github] trigger` again at every poll, so a change takes effect at the next
+  one and no round in flight is lost. It is the only key read that way. The
+  pickup is the poll's: on a webhook install a new pull request is picked up
+  at the next poll, not at the moment it is opened.
+- **`host setup --trigger label|all`** records the choice in the config it
+  writes; left out, the config's own stays (`label` on a new install).
+  **`host set-trigger label|all`** changes it later: one edit of the config,
+  under the setup lock (`busy` while a setup or a go-live runs), on
+  host-managed installs only (`not_host_managed` anywhere else). It starts and
+  restarts nothing, never touches `dry_run`, and answers `done` with
+  `trigger`.
+- **The board export carries `trigger`** (`label` or `all`), read off the
+  config as written; absent when the config cannot be read or states neither.
 
 ## 1.6.0
 

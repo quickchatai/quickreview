@@ -554,6 +554,74 @@ describe('mint-token under [github] auth = "user"', () => {
     }
   });
 
+  // A host writes the marker before a setup has written the mode beside it.
+  // The marker is read first and decides by itself, as it does for every
+  // other reader of it.
+  // MUTATION: test `auth` before `token_source` in mint-token.sh — a config
+  // holding only the marker takes the App route and dies on app_id, and this fails.
+  it("host-managed: a config holding only the marker prints the host's file too", () => {
+    const MARKER_ONLY = '[github]\ntoken_source = "host"\nsecrets_dir = ""\n';
+    // no file yet: the host is named, never the App's files or the refresher
+    const missing = runUser(MARKER_ONLY, null);
+    expect(missing.status).not.toBe(0);
+    expect(missing.stderr).toContain('token_source = "host"');
+    expect(missing.stderr).not.toContain("app_id");
+    expect(missing.stderr).not.toContain("qcr github-token sync");
+    const r = runUser(MARKER_ONLY, "ghu_markeronly1\n");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe("ghu_markeronly1\n");
+  });
+
+  // `[github] auth = "installation"`: an App installation's token, supplied by
+  // the host in that same file. The helper prints the file and looks for no
+  // App id or key.
+  const INSTALLATION_TOML =
+    '[github]\nauth = "installation"\ntoken_source = "host"\napp_slug = "acme-reviewer"\nsecrets_dir = ""\n';
+
+  it("installation: prints the token file the host wrote, --refresh too, and needs no App secrets", () => {
+    const r = runUser(INSTALLATION_TOML, "ghs_installed123\n");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe("ghs_installed123\n");
+    const again = runUser(INSTALLATION_TOML, "ghs_installed456", ["--refresh"]);
+    expect(again.status, again.stderr).toBe(0);
+    expect(again.stdout).toBe("ghs_installed456\n");
+  });
+
+  it("installation: a token of 600 characters, dots and dashes included, is printed whole", () => {
+    // built here: no token-shaped literal of that size is written out
+    let token = "ghs_";
+    for (let i = 0; token.length < 600; i += 1) token += `${(i * 7919).toString(36)}-${i}.`;
+    token = `${token.slice(0, 599)}z`;
+    expect(token).toHaveLength(600);
+    const r = runUser(INSTALLATION_TOML, `${token}\n`);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe(`${token}\n`);
+  });
+
+  it("installation: a missing file names the host, never the App's files or the refresher", () => {
+    const r = runUser(INSTALLATION_TOML, null);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("github_token");
+    expect(r.stderr).toContain('token_source = "host"');
+    expect(r.stderr).not.toContain("app_id");
+    expect(r.stderr).not.toContain("app.pem");
+    expect(r.stderr).not.toContain("qcr github-token sync");
+  });
+
+  // MUTATION: drop the `"$AUTH" != "installation"` line from mint-token.sh —
+  // an unmarked installation config falls through to the generic refusal,
+  // which does not say what the mode needs, and this fails.
+  it("installation without the marker is refused in words, and no App key is looked for", () => {
+    const r = runUser(
+      '[github]\nauth = "installation"\napp_slug = "acme-reviewer"\nsecrets_dir = ""\n',
+      "ghs_never_printed",
+    );
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain('needs token_source = "host"');
+    expect(r.stderr).not.toContain("unreadable app");
+  });
+
   it("a config without the key is the App route (auth defaults to app)", () => {
     const r = runUser('[github]\nsecrets_dir = ""\n', "ghu_never_printed");
     expect(r.status).not.toBe(0);

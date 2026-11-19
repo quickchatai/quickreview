@@ -16,6 +16,7 @@ export const HOST_VERBS = [
   "proof-start",
   "proof-result",
   "go-live",
+  "set-trigger",
 ] as const;
 export type HostVerb = (typeof HOST_VERBS)[number];
 
@@ -29,6 +30,10 @@ export type HostVerb = (typeof HOST_VERBS)[number];
  *   queued       the daemon queued the pull request (review-now)
  *   sent         the request is written and the daemon has not answered yet
  *   done         the practice round finished: its review is in the payload
+ *                (proof-result); or the reviewer was already live, nothing
+ *                was restarted, and `label` says how making sure of its
+ *                trigger label went (go-live); or the config says the
+ *                trigger asked for, in `trigger` (set-trigger)
  *   not_started  no practice round was asked for on that pull request
  *   busy         something else holds the setup lock (`holder` says what)
  *   failed       the practice round did not produce a review (`reason`)
@@ -39,7 +44,8 @@ export const HOST_STATES = {
   "review-now": ["queued", "sent", "refused"],
   "proof-start": ["started", "sent", "running", "busy", "refused"],
   "proof-result": ["running", "done", "failed", "not_started", "busy", "refused"],
-  "go-live": ["started", "running", "busy", "refused"],
+  "go-live": ["started", "running", "done", "busy", "refused"],
+  "set-trigger": ["done", "busy", "refused"],
 } as const satisfies Record<HostVerb, readonly string[]>;
 
 export type HostState<V extends HostVerb = HostVerb> = (typeof HOST_STATES)[V][number];
@@ -50,8 +56,9 @@ export const HOST_REASONS = [
   "usage",
   "in_session",
   "not_on_host",
+  /** The install's config does not say a host manages it. */
+  "not_host_managed",
   // setup
-  "unsupported_auth",
   "model_login_missing",
   "model_login_unreadable",
   "github_token_missing",
@@ -61,6 +68,8 @@ export const HOST_REASONS = [
   "repo_unreachable",
   "repo_mismatch",
   "auth_mismatch",
+  /** The token file's token is not the App `--app-slug` names. */
+  "identity_mismatch",
   "config_unreadable",
   "config_invalid",
   "launch_failed",
@@ -135,13 +144,29 @@ export const GO_LIVE_PROBLEMS = [
   "proof_unverified",
   "config_failed",
   "restart_failed",
-  /** Posting is on; the trigger label could not be created. */
-  "label_failed",
   "go_live_failed",
   "interrupted",
   "internal_error",
 ] as const;
 export type GoLiveProblem = (typeof GO_LIVE_PROBLEMS)[number];
+
+/**
+ * How making sure of the trigger label went, once the reviewer is live: it is
+ * in the repository, or it could not be read or created there. Said beside a
+ * go-live and never as its outcome: a reviewer whose label is missing still
+ * posts, and a repeat `host go-live` tries the label again.
+ */
+export const LABEL_WORDS = ["ok", "failed"] as const;
+export type LabelWord = (typeof LABEL_WORDS)[number];
+
+/**
+ * Which pull requests the reviewer picks up by itself (`[github] trigger`,
+ * packages/pi-plugin/src/reviewconfig.ts GITHUB_TRIGGERS, the same two): the
+ * ones that carry the trigger label, or every one. What `set-trigger` takes
+ * and answers with, and what the board export's `trigger` says.
+ */
+export const TRIGGER_WORDS = ["label", "all"] as const;
+export type TriggerWord = (typeof TRIGGER_WORDS)[number];
 
 // ---- the practice review's caps ----------------------------------------------
 
@@ -203,6 +228,11 @@ export interface HostPayload {
   /** The refusal or failure in words, for a log; a host shows its own text. */
   message?: string;
   holder?: HostHolder;
+  /** The trigger label, with a go-live that answers `done`. */
+  label?: LabelWord;
+  /** What the config says the reviewer picks up by itself, with a
+   * set-trigger that answers `done`. */
+  trigger?: TriggerWord;
   /** The pull request the call named. */
   pr?: number;
   proof?: HostProof;

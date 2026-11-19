@@ -2894,6 +2894,42 @@ describe("/qcr-setup", () => {
     expect(JSON.stringify([waiting, there])).not.toMatch(/secret-value|ghu_hostWritten/);
   });
 
+  // A host writes the marker before a setup has written the mode beside it,
+  // and a config holding only the marker does not load. The check reads the
+  // marker off the file as written, as every app-side reader does.
+  // MUTATION: detect the marker through loadOneShotConfig again — the load
+  // fails, the check falls through to the gh chain, and `gh auth login` is
+  // named on a box its host manages; this fails.
+  it("a config holding only the host's marker is host-managed too, before any setup", async () => {
+    // no gh on this machine: the gh chain, where it is reached, names a sign-in
+    const host = fakeHost({ runner: scriptedRunner({}, ["qcr", "git", "npm"]) });
+    const home = join(host.env["XDG_CONFIG_HOME"]!, "qcr", "default");
+    mkdirSync(join(home, "secrets"), { recursive: true });
+    const step = async () =>
+      (await runSetupChecks({ host, range, root: () => ROOT })).find(
+        (l) => l.id === PLUGIN_SETUP_STEPS.github,
+      )!;
+    writeFileSync(join(home, "config.toml"), '[github]\ntoken_source = "host"\n');
+    const waiting = await step();
+    expect(waiting.status).toBe("pending");
+    expect(waiting.note).toMatch(/managed by its host/);
+    expect(waiting.note).toContain(join(home, "secrets", "github_token"));
+    expect(waiting.note).not.toMatch(/gh auth login|GH_TOKEN|GITHUB_TOKEN/);
+    writeFileSync(join(home, "secrets", "github_token"), "ghu_hostWrittenToken0123\n");
+    expect((await step()).found).toBe("managed by your host (for PR targets)");
+    // the secrets dir the marker's own config names is the one read
+    const elsewhere = join(home, "elsewhere");
+    mkdirSync(elsewhere, { recursive: true });
+    writeFileSync(
+      join(home, "config.toml"),
+      `[github]\ntoken_source = "host"\nsecrets_dir = "${elsewhere}"\n`,
+    );
+    expect((await step()).note).toContain(join(elsewhere, "github_token"));
+    // without the marker the same machine is asked for a credential of its own
+    writeFileSync(join(home, "config.toml"), '[github]\nauth = "user"\n');
+    expect((await step()).note).toMatch(/gh auth login/);
+  });
+
   it("finds this repo's .qcr/profile.toml at the repo's top level", async () => {
     const host = fakeHost();
     mkdirSync(join(host.cwd, ".qcr"), { recursive: true });

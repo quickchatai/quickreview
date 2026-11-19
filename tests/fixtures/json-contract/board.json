@@ -21,6 +21,8 @@
     "today_usd": 0.25,
     "month_usd": 0.25
   },
+  "reviewed_today": 1,
+  "trigger": "label",
   "setup": {
     "state": "done"
   },

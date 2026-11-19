@@ -34,7 +34,7 @@
 // server, a curl on the box). Layer 3 needs no transport at all: it reads
 // GitHub's OWN delivery log, which is the same record wherever the daemon
 // runs, and that is exactly why it is the layer that proves the path.
-import { CHOICE_KEYS, userAuthRecorded } from "../choices.js";
+import { CHOICE_KEYS, installationAuthRecorded, userAuthRecorded } from "../choices.js";
 import { mintAppJwt } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { ingressOptionOf, secretsDirFor, readConfigText } from "./compose.js";
@@ -431,6 +431,20 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
         detail:
           'not checked — this install runs on your own GitHub account ([github] auth = "user"), which has no GitHub App, ' +
           "so there is no webhook and no App delivery log to read; the reconcile poll is the only trigger path",
+      });
+      return { ok: checks.every((c) => c.ok), checks };
+    }
+    // The installation route has an App, and its key is the host's: no App
+    // JWT can be signed here, so the hook config and the delivery log cannot
+    // be read, and the route polls. Skipped on the route itself, whatever
+    // ingress a checklist recorded before it.
+    if (installationAuthRecorded(ctx.choices)) {
+      checks.push({
+        name: "ping-delivery",
+        ok: true,
+        detail:
+          'not checked — this install posts on an installation token its host supplies ([github] auth = "installation"): ' +
+          "the App's key is not on this machine, so its webhook and delivery log are not read here; the reconcile poll is the only trigger path",
       });
       return { ok: checks.every((c) => c.ok), checks };
     }

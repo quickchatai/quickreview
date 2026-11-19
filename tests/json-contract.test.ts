@@ -299,7 +299,12 @@ describe("qcr board", () => {
       w.pr(3);
       w.tick(0);
       w.open = [openPr(1), openPr(2), openPr(3), openPr(4)];
-      const text = w.boardText();
+      // the day's count, as the daemon makes it when it writes the board
+      const text = w.boardText(undefined, {
+        count: 1,
+        since: at(-12 * 3600),
+        until: at(12 * 3600),
+      });
       const live = await boardExport(
         fakeBoardPorts({
           boardFile: async () => known(text),
@@ -317,6 +322,7 @@ describe("qcr board", () => {
       expect(live.reviewing).toHaveLength(1);
       expect(live.reviewed).toHaveLength(1);
       expect(live.open).toHaveLength(2);
+      expect(live.reviewed_today).toBe(1);
     } finally {
       w.close();
     }

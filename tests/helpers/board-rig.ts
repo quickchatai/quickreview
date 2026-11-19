@@ -2,7 +2,7 @@
 // in-memory store on a scripted clock, the status snapshot the daemon would
 // build from it, and the export's ports as fakes. No Docker, no files.
 import type { BoardPorts } from "../../src/boardexport.js";
-import { buildBoardFile, type BoardFile } from "../../src/boardfile.js";
+import { buildBoardFile, type BoardFile, type BoardReviewedToday } from "../../src/boardfile.js";
 import { known } from "../../src/home/ports.js";
 import {
   StateStore,
@@ -94,13 +94,16 @@ export class BoardWorld {
     return snapshot;
   }
 
-  board(snapshot: StatusSnapshot = this.snapshot()): BoardFile {
-    return buildBoardFile(snapshot, (pr) => this.store.roundsFor(pr));
+  /** The board the daemon builds. `reviewedToday` is the day's count as the
+   * daemon made it (src/boardtoday.ts); without one the board carries none,
+   * as when the daemon could not count. */
+  board(snapshot: StatusSnapshot = this.snapshot(), reviewedToday?: BoardReviewedToday): BoardFile {
+    return buildBoardFile(snapshot, (pr) => this.store.roundsFor(pr), reviewedToday);
   }
 
   /** board.json's text, as the daemon writes it. */
-  boardText(snapshot?: StatusSnapshot): string {
-    return JSON.stringify(this.board(snapshot));
+  boardText(snapshot?: StatusSnapshot, reviewedToday?: BoardReviewedToday): string {
+    return JSON.stringify(this.board(snapshot, reviewedToday));
   }
 
   close(): void {

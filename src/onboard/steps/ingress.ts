@@ -40,7 +40,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { INGRESS_DEFAULTS } from "../../config.js";
 import { locateSecrets } from "../../install.js";
-import { CHOICE_KEYS, INGRESS_CHOICES, userAuthRecorded, type IngressChoice } from "../choices.js";
+import {
+  CHOICE_KEYS,
+  INGRESS_CHOICES,
+  installationAuthRecorded,
+  tokenFileRouteRecorded,
+  type IngressChoice,
+} from "../choices.js";
 import { topologyOf } from "./topology.js";
 import {
   readTextOrNull,
@@ -498,6 +504,19 @@ function userRouteRefusal(choice: IngressChoice): CheckResult {
   };
 }
 
+/** The installation route has no webhook here: the App's webhook secret and
+ * key are with the host that supplies the token. */
+function installationRouteRefusal(choice: IngressChoice): CheckResult {
+  return {
+    name: "choice",
+    ok: false,
+    detail:
+      `"${choice}" needs webhooks, and this install posts on an installation token its host supplies ([github] auth = ` +
+      "\"installation\"): the App's webhook secret and key are the host's, so a delivery could not be verified here. It is " +
+      'polling only: run this step with choice: "polling" (or with no choice).',
+  };
+}
+
 function credentialPresent(file: string): boolean {
   return existsSync(file) && readFileSync(file, "utf8").trim() !== "";
 }
@@ -537,7 +556,8 @@ export function ingressStep(opts: { stream?: StreamRunner } = {}): OnboardingSte
     },
 
     async run(ctx): Promise<StepReport> {
-      const userRoute = userAuthRecorded(ctx.choices);
+      // Both token-file routes poll: neither has a webhook to receive.
+      const userRoute = tokenFileRouteRecorded(ctx.choices);
       const typed = ctx.input.choice;
       const typedAnswer = typeof typed === "string" && typed.trim() !== "";
       let choice = chosen(ctx);
@@ -550,7 +570,15 @@ export function ingressStep(opts: { stream?: StreamRunner } = {}): OnboardingSte
       if (userRoute && choice !== "polling") {
         // A shape recorded before the route was switched is not an answer now.
         if (!typedAnswer) choice = "polling";
-        else return { ok: false, checks: [userRouteRefusal(choice)] };
+        else
+          return {
+            ok: false,
+            checks: [
+              installationAuthRecorded(ctx.choices)
+                ? installationRouteRefusal(choice)
+                : userRouteRefusal(choice),
+            ],
+          };
       }
       const option = optionFor(choice)!;
       const root = sandboxRootOf(ctx.adapters);
@@ -764,7 +792,7 @@ export function ingressStep(opts: { stream?: StreamRunner } = {}): OnboardingSte
             }
           : shape === option.shape ||
               // a polling install from before the shape had its own name
-              (option.id === "polling" && shape === "none" && !userAuthRecorded(ctx.choices))
+              (option.id === "polling" && shape === "none" && !tokenFileRouteRecorded(ctx.choices))
             ? { name: "config", ok: true, detail: `[ingress] shape = "${shape}"` }
             : {
                 name: "config",

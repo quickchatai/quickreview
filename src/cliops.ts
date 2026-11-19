@@ -1,7 +1,7 @@
 // qcr checklist / qcr compare — production wiring of the cutover harnesses. Local
 // runs exercise the offline halves; the live halves (tunnel, real searches,
 // live rounds) light up on the VM where the daemon and pi are running.
-import { botAccountLogin } from "@quickchatai/pi-quickreview/src/identity.js";
+import { botAccountLogin, usesTokenFile } from "@quickchatai/pi-quickreview/src/identity.js";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runChecklist, type ChecklistDeps } from "./checklist.js";
@@ -233,10 +233,14 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
   const p = parts ?? buildParts(root, cfg);
   const store = new StateStore(join(root, "state", "state.db"));
   let secret = "";
-  try {
-    secret = readFileSync(join(cfg.github.secrets_dir, "webhook_secret"), "utf8").trim();
-  } catch {
-    // No secrets on this machine — the tunnel probe will fail with detail.
+  // Under a token-file credential there is no webhook secret to read: the
+  // person has no App, and a host-supplied installation's App is the host's.
+  if (!usesTokenFile(cfg.github)) {
+    try {
+      secret = readFileSync(join(cfg.github.secrets_dir, "webhook_secret"), "utf8").trim();
+    } catch {
+      // No secrets on this machine — the tunnel probe will fail with detail.
+    }
   }
   const deps: ChecklistDeps = {
     tunnel: {

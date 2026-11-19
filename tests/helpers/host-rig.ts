@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { StepRegistry, type SetupStep } from "@quickchatai/pi-quickreview/src/setupchecklist.js";
 import { SWITCH_ON_ORDER } from "../../src/home/switchon.js";
 import type { HostPorts, WalkKind } from "../../src/host/ports.js";
+import type { ProcessFacts } from "../../src/onboard/checklistlock.js";
 import {
   OnboardingEngine,
   type OnboardAdapters,
@@ -92,6 +93,10 @@ export interface HostWorld {
   repoAnswer: { status: number; body: unknown };
   /** What GitHub answers `GET /user` with: whose token the file holds. */
   userAnswer: { status: number; body: unknown };
+  /** What GitHub answers GraphQL's `viewer` with: who the token itself is.
+   * Status 0: GitHub cannot be reached. By default the endpoint is not there
+   * (404), so a walk that should never ask it is caught asking. */
+  viewerAnswer: { status: number; body: unknown };
   /** Real steps that stand in for the fake of the same id. */
   real: SetupStep<OnboardAdapters>[];
   /** What GitHub answers a label read and a label create with. */
@@ -107,6 +112,11 @@ export interface HostWorld {
   /** `launch` fails with this. */
   launchError: string | null;
   alivePids: Set<number>;
+  /** This boot of the machine, as the checklist lock records it; null: the
+   * machine cannot say (the lock then judges a holder by its pid alone). */
+  bootId: string | null;
+  /** When each process started, by pid; a pid not listed cannot be read. */
+  startTimes: Map<number, string>;
   stdin: string;
   logs: string[];
   seeded: number;
@@ -116,6 +126,8 @@ export interface HostWorld {
   ports: HostPorts;
   /** The ports of the walk a verb started. */
   walker(): HostPorts;
+  /** What this machine says of a process, for a reader of the lock. */
+  facts(): Required<ProcessFacts>;
   config(): string | null;
   writeConfig(text: string): void;
   checklist(): { choices: Record<string, unknown>; steps: Record<string, unknown> } | null;
@@ -190,6 +202,10 @@ function githubOver(w: HostWorld): typeof fetch {
       return answer(w.repoAnswer.status, w.repoAnswer.body);
     }
     if (/\/user$/.test(url)) return answer(w.userAnswer.status, w.userAnswer.body);
+    if (/\/graphql$/.test(url) && method === "POST") {
+      if (w.viewerAnswer.status === 0) throw new Error("getaddrinfo ENOTFOUND api.github.test");
+      return answer(w.viewerAnswer.status, w.viewerAnswer.body);
+    }
     if (/\/labels\/[^/]+$/.test(url)) return answer(w.labelRead, w.labelRead === 200 ? {} : null);
     if (/\/labels$/.test(url) && method === "POST") return answer(w.labelCreate, {});
     return answer(404, { message: "Not Found" });
@@ -265,6 +281,7 @@ export function hostWorld(): HostWorld {
       body: { full_name: REPO, default_branch: "trunk", archived: false },
     },
     userAnswer: { status: 200, body: { login: "octo-dev" } },
+    viewerAnswer: { status: 404, body: { message: "Not Found" } },
     real: [],
     labelRead: 404,
     labelCreate: 201,
@@ -274,6 +291,8 @@ export function hostWorld(): HostWorld {
     launched: [],
     launchError: null,
     alivePids: new Set([VERB_PID, WALK_PID]),
+    bootId: null,
+    startTimes: new Map<number, string>(),
     stdin: "",
     logs: [],
     seeded: 0,
@@ -327,6 +346,8 @@ export function hostWorld(): HostWorld {
     },
     stdin: async () => w.stdin,
     alive: (p) => w.alivePids.has(p),
+    bootId: () => w.bootId,
+    startTime: (p) => w.startTimes.get(p) ?? null,
     sleep: async () => {},
     log: (line) => {
       w.logs.push(line);
@@ -335,6 +356,11 @@ export function hostWorld(): HostWorld {
 
   w.ports = portsFor(VERB_PID);
   w.walker = () => portsFor(WALK_PID);
+  w.facts = () => ({
+    alive: (p) => w.alivePids.has(p),
+    bootId: () => w.bootId,
+    startTime: (p) => w.startTimes.get(p) ?? null,
+  });
   w.config = () => {
     try {
       return readFileSync(configPath, "utf8");

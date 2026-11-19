@@ -50,7 +50,7 @@ import {
   tomlString,
   type TomlEdit,
 } from "./configfill.js";
-import { CHOICE_KEYS, botLoginFor, userAuthRecorded } from "../choices.js";
+import { CHOICE_KEYS, botLoginFor, tokenFileRouteRecorded } from "../choices.js";
 import { api, readCredentials } from "./githubapp.js";
 
 export const APP_SLUG_STEP_ID = "app_slug_reconcile";
@@ -256,7 +256,10 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
     order: 65,
     // There is no App slug on the own-account route: `[github] app_slug` is ""
     // and bot_login is the person's login (the github_account step writes both).
-    enabled: (choices) => !userAuthRecorded(choices),
+    // On the installation route the slug is the host's to name and there is
+    // no App key to ask the App with: the github_account step checks the
+    // token's own login against it instead.
+    enabled: (choices) => !tokenFileRouteRecorded(choices),
     async run(ctx): Promise<StepReport> {
       return reconcile(ctx, true);
     },

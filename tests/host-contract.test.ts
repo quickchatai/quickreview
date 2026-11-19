@@ -16,8 +16,10 @@ import {
   hostFamilies,
   hostPayloadVersion,
 } from "@quickchatai/pi-quickreview/src/contract.js";
+import { GITHUB_TRIGGERS } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { POSTED_EVENTS } from "../src/boardfile.js";
 import { HOST_USAGE, cmdHost } from "../src/host/cli.js";
+import { walkGoLive } from "../src/host/golive.js";
 import {
   GO_LIVE_PROBLEMS,
   HOST_HOLDERS,
@@ -25,6 +27,7 @@ import {
   HOST_REASONS,
   HOST_STATES,
   HOST_VERBS,
+  LABEL_WORDS,
   PROGRESS_STATES,
   PROOF_BODY_CAP,
   PROOF_COMMENT_BODY_CAP,
@@ -33,11 +36,12 @@ import {
   REVIEW_EVENTS,
   SETUP_PROBLEMS,
   SETUP_STEPS,
+  TRIGGER_WORDS,
   exitCodeOf,
   refused,
   type HostVerb,
 } from "../src/host/outcomes.js";
-import { WALK_KINDS } from "../src/host/ports.js";
+import { WALK_KINDS, type HostPorts } from "../src/host/ports.js";
 import { LOCK_HOLDERS, acquireChecklistLock } from "../src/onboard/checklistlock.js";
 import { binRoute } from "../src/qcrbin.js";
 import { SCHEMA_VERBS, forgetRequestedContract, parseSchemaFlag } from "../src/schemaflag.js";
@@ -152,6 +156,7 @@ describe("the schema file and the code's closed sets", () => {
       "proof-start": "proof_start",
       "proof-result": "proof_result",
       "go-live": "go_live",
+      "set-trigger": "set_trigger",
     };
     expect(Object.keys(names)).toEqual([...HOST_VERBS]);
     expect((schema["oneOf"] as Json[]).map((x) => x["$ref"])).toEqual(
@@ -170,6 +175,19 @@ describe("the schema file and the code's closed sets", () => {
     expect(d["reason"]!["enum"]).toEqual([...HOST_REASONS]);
     expect(d["holder"]!["enum"]).toEqual([...HOST_HOLDERS]);
     expect([...HOST_HOLDERS]).toEqual([...LOCK_HOLDERS]);
+    // the trigger label's word: go-live's alone, and the same closed set in
+    // the board export
+    expect(props(d["go_live"]!)["label"]!["enum"]).toEqual([...LABEL_WORDS]);
+    for (const verb of HOST_VERBS)
+      expect("label" in props(d[names[verb]]!), verb).toBe(verb === "go-live");
+    // what the reviewer picks up by itself: set-trigger's word alone, and the
+    // same closed set as the board export's `trigger` and the config key's
+    expect(props(d["set_trigger"]!)["trigger"]!["enum"]).toEqual([...TRIGGER_WORDS]);
+    expect(props(board)["trigger"]!["enum"]).toEqual([...TRIGGER_WORDS]);
+    expect([...TRIGGER_WORDS]).toEqual([...GITHUB_TRIGGERS]);
+    for (const verb of HOST_VERBS)
+      expect("trigger" in props(d[names[verb]]!), verb).toBe(verb === "set-trigger");
+    expect(HOST_REASONS).toContain("not_host_managed");
   });
 
   // MUTATION: raise PROOF_COMMENT_CAP, or a length cap, without the schema — this fails.
@@ -195,6 +213,9 @@ describe("the schema file and the code's closed sets", () => {
     expect(setup["problem"]!["enum"]).toEqual([...SETUP_PROBLEMS]);
     expect(goLive["state"]!["enum"]).toEqual([...PROGRESS_STATES]);
     expect(goLive["problem"]!["enum"]).toEqual([...GO_LIVE_PROBLEMS]);
+    // the label is its own closed field, never a problem
+    expect(goLive["label"]!["enum"]).toEqual([...LABEL_WORDS]);
+    expect(GO_LIVE_PROBLEMS.filter((p) => /label/.test(p))).toEqual([]);
     expect(goLive).not.toHaveProperty("step");
     expect(props(board)["setup"]).toEqual({ $ref: "#/$defs/setup" });
     expect(props(board)["go_live"]).toEqual({ $ref: "#/$defs/go_live" });
@@ -252,6 +273,13 @@ describe("what a call prints", () => {
     });
     expect(await ok("setup", setup)).toMatchObject({ state: "running" });
     expect(await ok("proof-start", ["7"])).toMatchObject({ state: "busy", holder: "setup" });
+    // the walk writes the config: the trigger is not changed under it
+    expect(await ok("set-trigger", ["all"])).toEqual({
+      schema_version: 3,
+      verb: "set-trigger",
+      state: "busy",
+      holder: "setup",
+    });
     expect(await ok("go-live", [])).toMatchObject({
       state: "refused",
       reason: "attestation_invalid",
@@ -301,6 +329,45 @@ describe("what a call prints", () => {
     expect(await ok("go-live", [])).toMatchObject({ state: "running" });
     expect(await ok("proof-result", ["7"])).toMatchObject({ state: "done" });
 
+    // the walk goes live; a repeat call only tries the trigger label again
+    expect(await walkGoLive(w.walker(), w.launched.at(-1)!.token)).toBe(0);
+    w.writeConfig(w.config()!.replace(/^dry_run = true$/m, "dry_run = false"));
+    expect(await ok("go-live", [])).toEqual({
+      schema_version: 3,
+      verb: "go-live",
+      state: "done",
+      label: "ok",
+    });
+    w.labelCreate = 403;
+    expect(await ok("go-live", [])).toMatchObject({ state: "done", label: "failed" });
+
+    // which pull requests it picks up by itself, changed with one call
+    expect(await ok("set-trigger", ["all"])).toEqual({
+      schema_version: 3,
+      verb: "set-trigger",
+      state: "done",
+      trigger: "all",
+    });
+    expect(await ok("set-trigger", ["every"])).toMatchObject({
+      state: "refused",
+      reason: "usage",
+    });
+
+    // an install that keeps its own credential is not a host verb's to act on
+    w.writeConfig(setUpConfig({ dryRun: false, hosted: false }));
+    expect(await ok("go-live", [])).toMatchObject({
+      state: "refused",
+      reason: "not_host_managed",
+    });
+    expect(await ok("setup", setup)).toMatchObject({
+      state: "refused",
+      reason: "not_host_managed",
+    });
+    expect(await ok("set-trigger", ["label"])).toMatchObject({
+      state: "refused",
+      reason: "not_host_managed",
+    });
+
     // the states a host must be ready for were all printed at least once
     for (const state of [
       "setup:started",
@@ -317,7 +384,11 @@ describe("what a call prints", () => {
       "proof-result:failed",
       "go-live:started",
       "go-live:running",
+      "go-live:done",
       "go-live:refused",
+      "set-trigger:done",
+      "set-trigger:busy",
+      "set-trigger:refused",
     ])
       expect([...seen]).toContain(state);
   });
@@ -330,6 +401,7 @@ describe("what a call prints", () => {
       ["review-now", "7"],
       ["proof-start", "7"],
       ["proof-result", "7"],
+      ["set-trigger", "all"],
     ])
       lines.push(...(await call(args)).out);
     expect(lines.length).toBeGreaterThan(3);
@@ -352,6 +424,33 @@ describe("what a call prints", () => {
     expect(refused("usage", "m".repeat(HOST_MESSAGE_CAP + 50)).message).toHaveLength(
       HOST_MESSAGE_CAP,
     );
+  });
+
+  // A step's failure can be any length ("step threw: <an error's text>").
+  // MUTATION: put the failure's words in `message` whole (drop the slice in
+  // proof.ts `failed`) — the payload breaks the schema's maxLength, and this fails.
+  it("a failure's message is capped as a refusal's is, whatever a step said", async () => {
+    w.writeConfig(setUpConfig());
+    expect((await call(["proof-start", "7"])).payload).toMatchObject({ state: "started" });
+    const done = finishedRound(7, 1);
+    w.daemon.rounds = [done.round];
+    w.daemon.dryrun = done.records;
+    const long = `step threw: ${"x".repeat(5 * HOST_MESSAGE_CAP)}`;
+    const failing = {
+      runStep: async () => ({ ok: false, checks: [], failures: [long] }),
+    } as unknown as ReturnType<HostPorts["checklist"]>;
+    const out: string[] = [];
+    const code = await cmdHost(["proof-result", "7"], {
+      contract: 3,
+      ports: { ...w.ports, checklist: () => failing },
+      out: (l) => out.push(l),
+      err: () => {},
+    });
+    expect(code).toBe(1);
+    const payload = JSON.parse(out[0]!) as Json;
+    expect(payload).toMatchObject({ state: "failed", reason: "record_failed", pr: 7 });
+    expect(String(payload["message"])).toHaveLength(HOST_MESSAGE_CAP);
+    expect(validate(schema, payload)).toEqual([]);
   });
 
   it("a word that is not a host verb prints nothing on stdout: usage, exit 2", async () => {

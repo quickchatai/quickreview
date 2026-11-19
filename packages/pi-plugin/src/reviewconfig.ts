@@ -39,11 +39,20 @@ import {
 } from "./types.js";
 
 /** `[github] auth`: whose credential the daemon runs on. `app` (the default)
- * is a GitHub App's installation token; `user` is the person's own GitHub
- * token, read from the `github_token` file in the secrets dir. `user` is
- * polling-only: no webhooks, no App self-config, every review a COMMENT. */
-export type GithubAuthMode = "app" | "user";
-export const GITHUB_AUTH_MODES: readonly GithubAuthMode[] = ["app", "user"];
+ * is a GitHub App's installation token, minted here from the App's key;
+ * `user` is the person's own GitHub token, read from the `github_token` file
+ * in the secrets dir; `installation` is an App installation's token that a
+ * host supplies in that same file, so the identity is the App's bot and no
+ * App key is on the machine. `user` and `installation` are polling-only: no
+ * webhooks, no App self-config. Every review is a COMMENT under `user` alone:
+ * that rule is the person identity's, not the token file's. */
+export type GithubAuthMode = "app" | "user" | "installation";
+export const GITHUB_AUTH_MODES: readonly GithubAuthMode[] = ["app", "user", "installation"];
+/** The auth modes whose credential is the token file (`<secrets dir>/
+ * github_token`): no App key, App id or webhook secret is read under them. */
+export const TOKEN_FILE_AUTH_MODES: readonly GithubAuthMode[] = ["user", "installation"];
+/** A GitHub App slug, as GitHub writes one. */
+export const APP_SLUG_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,98}[A-Za-z0-9])?$/;
 
 /** `[github] token_source`: who keeps the daemon's GitHub credential.
  * `self` (the default) is the reviewer's own doing: the App's key, or under
@@ -55,7 +64,27 @@ export const GITHUB_AUTH_MODES: readonly GithubAuthMode[] = ["app", "user"];
 export type GithubTokenSource = "self" | "host";
 export const GITHUB_TOKEN_SOURCES: readonly GithubTokenSource[] = ["self", "host"];
 /** The auth modes whose credential is the token file: what a host can manage. */
-export const HOST_MANAGED_AUTH_MODES: readonly GithubAuthMode[] = ["user"];
+export const HOST_MANAGED_AUTH_MODES: readonly GithubAuthMode[] = TOKEN_FILE_AUTH_MODES;
+/** The auth modes only a host can supply: there is no way for the install to
+ * get such a token by itself, so they need `token_source = "host"`. */
+export const HOST_ONLY_AUTH_MODES: readonly GithubAuthMode[] = ["installation"];
+
+/** `[github] trigger`: which pull requests the daemon picks up by itself.
+ * `label` (the default) is the ones a person asked for: the trigger label,
+ * or a review request to the review team. `all` adds every open pull request
+ * that is not a draft and not the reviewer's own, each taken once, as if it
+ * carried the label: model usage is spent on every pull request. Under
+ * either, a push to a pull request that is already reviewed queues nothing
+ * by itself, and a review asked for by name still runs. */
+export type GithubTrigger = "label" | "all";
+export const GITHUB_TRIGGERS: readonly GithubTrigger[] = ["label", "all"];
+
+/** The trigger a `[github] trigger` value names: itself when it is one of
+ * the two, `label` when the key is left out, undefined for anything else. */
+export function githubTriggerOf(value: unknown): GithubTrigger | undefined {
+  if (value === undefined) return "label";
+  return GITHUB_TRIGGERS.find((t) => t === value);
+}
 
 export interface GithubConfig {
   repo: string;
@@ -63,14 +92,17 @@ export interface GithubConfig {
   auth?: GithubAuthMode;
   /** Always set after parse; absent (a hand-built config) means "self". */
   token_source?: GithubTokenSource;
-  /** The App's slug. May be "" under `auth = "user"`, where no App exists. */
+  /** The App's slug. May be "" under `auth = "user"`, where no App exists;
+   * never "" under `auth = "installation"`, whose identity it names. */
   app_slug: string;
-  /** The login the system posts as: the App's `<slug>[bot]`, or under
-   * `auth = "user"` the person's own login (onboarding reads it from
-   * `GET /user`). */
+  /** The login the system posts as: the App's `<slug>[bot]` (derived from
+   * the slug under `auth = "installation"`), or under `auth = "user"` the
+   * person's own login (onboarding reads it from `GET /user`). */
   bot_login: string;
   review_team: string;
   trigger_label: string;
+  /** Always set after parse; absent (a hand-built config) means "label". */
+  trigger?: GithubTrigger;
   in_progress_label: string;
   reviewed_label: string;
   improvement_label: string;
@@ -1907,7 +1939,7 @@ export function parseGithubSection(raw: Record<string, any>): GithubConfig {
   const auth = given.auth ?? "app";
   if (!GITHUB_AUTH_MODES.includes(auth))
     throw new Error(
-      `config.toml [github]: auth must be "app" or "user" (got ${JSON.stringify(auth)})`,
+      `config.toml [github]: auth must be "app", "user" or "installation" (got ${JSON.stringify(auth)})`,
     );
   const token_source = given.token_source ?? "self";
   if (!GITHUB_TOKEN_SOURCES.includes(token_source))
@@ -1921,15 +1953,66 @@ export function parseGithubSection(raw: Record<string, any>): GithubConfig {
       `config.toml [github]: token_source = "host" needs ${HOST_MANAGED_AUTH_MODES.map((m) => `auth = "${m}"`).join(" or ")} ` +
         `(got auth = ${JSON.stringify(auth)}): a host keeps the token file, and that mode does not read one`,
     );
+  // An installation token is one a host mints for the App it holds the key
+  // of: nothing on the machine can get one, so the mode exists only where a
+  // host keeps the file.
+  if (HOST_ONLY_AUTH_MODES.includes(auth) && token_source !== "host")
+    throw new Error(
+      `config.toml [github]: auth = "${auth}" needs token_source = "host" ` +
+        `(got token_source = ${JSON.stringify(token_source)}): an installation token is supplied by the host that ` +
+        `manages the install, and nothing on this machine can mint one. For an App whose key is here, use auth = "app"`,
+    );
+  const trigger = githubTriggerOf(given.trigger);
+  if (trigger === undefined)
+    throw new Error(
+      `config.toml [github]: trigger must be "label" or "all" (got ${JSON.stringify(given.trigger)})`,
+    );
   return {
     base_branch: "main",
     clone_dir: "",
     // No App under the person's own credential: its slug may be left out.
     ...(auth === "user" ? { app_slug: "" } : {}),
     ...given,
+    ...(auth === "installation" ? installationIdentity(given) : {}),
     auth,
     token_source,
+    trigger,
   } as GithubConfig;
+}
+
+/** The App bot's login, from the App's slug: how GitHub names the account an
+ * App posts under. */
+export function appBotLogin(slug: string): string {
+  return `${slug}[bot]`;
+}
+
+/**
+ * `auth = "installation"`: the identity is the App the slug names. The slug
+ * is required (there is no App key here to ask who the App is), and the login
+ * the reviewer posts under is derived from it, never stated apart: a
+ * `bot_login` that says anything else is refused, so the two cannot drift.
+ */
+function installationIdentity(
+  given: Partial<GithubConfig>,
+): Pick<GithubConfig, "app_slug" | "bot_login"> {
+  const slug = typeof given.app_slug === "string" ? given.app_slug.trim() : "";
+  if (slug === "")
+    throw new Error(
+      'config.toml [github]: auth = "installation" needs app_slug, the slug of the GitHub App whose installation token ' +
+        "the host supplies: the reviewer's own login is derived from it",
+    );
+  if (!APP_SLUG_RE.test(slug))
+    throw new Error(
+      `config.toml [github]: app_slug ${JSON.stringify(given.app_slug)} is not a GitHub App slug (letters, digits and dashes)`,
+    );
+  const login = appBotLogin(slug);
+  const stated = typeof given.bot_login === "string" ? given.bot_login.trim() : "";
+  if (stated !== "" && stated !== login)
+    throw new Error(
+      `config.toml [github]: bot_login is ${JSON.stringify(given.bot_login)}, but under auth = "installation" it is ` +
+        `derived from app_slug as "${login}": leave bot_login out, or state exactly that`,
+    );
+  return { app_slug: slug, bot_login: login };
 }
 
 /** The `[github]` keys every config names. */

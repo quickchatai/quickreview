@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readBoardProgress } from "../src/boardexport.js";
 import {
   GO_LIVE_PROBLEMS,
+  LABEL_WORDS,
   PROGRESS_STATES,
   SETUP_PROBLEMS,
   SETUP_STEPS,
@@ -188,11 +189,66 @@ describe("what the board export prints", () => {
     updateHostRecord(stateDir, (r) => ({
       ...r,
       setup: { state: "done", started_at: AT, updated_at: AT },
-      go_live: { state: "failed", problem: "label_failed", started_at: AT, updated_at: AT },
+      go_live: { state: "failed", problem: "restart_failed", started_at: AT, updated_at: AT },
     }));
     expect(readHostProgress(stateDir, { alive })).toEqual({
       setup: { state: "done" },
-      go_live: { state: "failed", problem: "label_failed" },
+      go_live: { state: "failed", problem: "restart_failed" },
+    });
+  });
+
+  // The label is beside a go-live that ended live, in its own closed word.
+  // MUTATION: print `label` as a `problem`, or pass any string through as the
+  // label — a host reads a word its schema does not list, and this fails.
+  it("a go-live that is done says how its trigger label went, in a closed word", () => {
+    const goLive = (over: Record<string, unknown>): void => {
+      mkdirSync(join(stateDir, "onboarding"), { recursive: true });
+      writeFileSync(
+        hostRecordPath(stateDir),
+        JSON.stringify({ go_live: { state: "done", started_at: AT, updated_at: AT, ...over } }),
+      );
+    };
+    goLive({ label: "failed" });
+    expect(readHostRecord(stateDir).go_live).toMatchObject({ state: "done", label: "failed" });
+    expect(readHostProgress(stateDir, { alive }).go_live).toEqual({
+      state: "done",
+      label: "failed",
+    });
+    goLive({ label: "ok" });
+    expect(readHostProgress(stateDir, { alive }).go_live).toEqual({ state: "done", label: "ok" });
+    // nothing has tried the label, or the word is not one of the two: absent
+    goLive({});
+    expect(readHostProgress(stateDir, { alive }).go_live).toEqual({ state: "done" });
+    goLive({ label: "label_failed" });
+    expect(readHostProgress(stateDir, { alive }).go_live).toEqual({ state: "done" });
+    // a go-live that did not end live says nothing of a label
+    goLive({ state: "failed", problem: "restart_failed", label: "ok" });
+    expect(readHostProgress(stateDir, { alive }).go_live).toEqual({
+      state: "failed",
+      problem: "restart_failed",
+    });
+    expect([...LABEL_WORDS]).toEqual(["ok", "failed"]);
+    expect(GO_LIVE_PROBLEMS).not.toContain("label_failed");
+  });
+
+  // A lock left by another boot of the machine holds nothing.
+  // MUTATION: read the lock's holder by its pid alone in readHostProgress —
+  // a setup the machine was restarted under reads as running, and this fails.
+  it("a walk whose lock is another boot's is failed, interrupted", () => {
+    let boot = "boot-1";
+    const facts = { alive, bootId: () => boot, startTime: () => "100" };
+    const lock = acquireChecklistLock(stateDir, "setup", { pid: 77, ...facts });
+    expect(lock.ok).toBe(true);
+    updateHostRecord(stateDir, (r) => ({
+      ...r,
+      setup: { state: "running", step: "bringup", started_at: AT, updated_at: AT },
+    }));
+    expect(readHostProgress(stateDir, facts).setup).toEqual({ state: "running", step: "bringup" });
+    boot = "boot-2";
+    expect(readHostProgress(stateDir, facts).setup).toEqual({
+      state: "failed",
+      step: "bringup",
+      problem: "interrupted",
     });
   });
 

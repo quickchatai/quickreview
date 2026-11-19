@@ -215,6 +215,29 @@ describe("picking the PR", () => {
     expect(h.calls.some((c) => c.includes("-u"))).toBe(false);
   });
 
+  // On the installation route the token for the offer is the file a host
+  // keeps; there is no App key here to mint one from.
+  // MUTATION: read `userAuthRecorded` instead of `tokenFileRouteRecorded` in
+  // the proof step's readToken — the step looks for app_id and app.pem, finds
+  // none, offers nothing, and this fails.
+  it("on the installation route the offer is read with the token file, and no App key is looked for", async () => {
+    seed({
+      github_auth: "installation",
+      github_app_slug: "acme-reviewer",
+      reviewed_repo: "acme/web",
+    });
+    const h = harness();
+    const r = await h.engine.runStep(PROOF_STEP_ID);
+    expect(r.ok).toBe(false);
+    const ask = r.failures.join("\n");
+    expect(ask).toMatch(/#21 My change — by dana-op/);
+    // nobody signed in: no pull request is marked as the person's own
+    expect(ask).not.toMatch(/\(yours\)/);
+    expect(h.fetched).toEqual([
+      "/repos/acme/web/pulls?state=open&sort=updated&direction=desc&per_page=5",
+    ]);
+  });
+
   it("takes a number, #n, or the PR's URL — and refuses a URL into another repo", async () => {
     expect(parsePrAnswer(17)).toEqual({ pr: 17, repo: null });
     expect(parsePrAnswer("#17")).toEqual({ pr: 17, repo: null });

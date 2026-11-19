@@ -63,6 +63,7 @@ import {
   type ChoiceName,
   botLoginFor,
   ingressChoiceOf,
+  installationAuthRecorded,
   userAuthRecorded,
   type IngressChoice,
 } from "../choices.js";
@@ -245,8 +246,10 @@ export interface FillFacts {
   secrets_dir: string;
   topology: string;
   ingress: string;
-  /** The GitHub route the github_account step recorded ("user" | "app"), ""
-   * while unanswered — which is the App route's interview. */
+  /** The GitHub route the github_account step recorded ("user" | "app" |
+   * "installation"), "" while unanswered — which is the App route's
+   * interview. The installation route keeps the App route's derivations (the
+   * login follows the slug); only its secrets differ. */
   github_auth?: string;
   /** The person's own login on the "user" route (`GET /user`). */
   account_login?: string;
@@ -1081,7 +1084,17 @@ export function changedEdits(text: string, edits: readonly TomlEdit[]): TomlEdit
 }
 
 /** What the secrets dir holds, at the one resolution every step uses. */
-function secretsReport(dir: string, userRoute: boolean): CheckResult {
+function secretsReport(dir: string, userRoute: boolean, installationRoute = false): CheckResult {
+  if (installationRoute) {
+    const missing = USER_ROUTE_SECRETS.filter((f) => !existsSync(join(dir, f)));
+    return {
+      name: "secrets",
+      ok: true,
+      detail: missing.length
+        ? `${dir}: still missing ${missing.join(", ")} — the host that manages this install writes it (no App secrets on this route)`
+        : `${dir}: the installation token your host supplies is present — no App key, App id or webhook secret is needed here`,
+    };
+  }
   if (userRoute) {
     const missing = USER_ROUTE_SECRETS.filter((f) => !existsSync(join(dir, f)));
     return {
@@ -1321,12 +1334,22 @@ export function configFillStep(opts: { transport?: TransportOptions } = {}): Onb
         detail:
           `topology ${facts.topology || "(unrecorded — filled for a daemon on this machine, so [tui] ssh_host stays empty)"}, ` +
           `ingress ${facts.ingress || "(unrecorded — filled for an ingress that assigns its own hostname, so [server] hostname stays empty)"}, ` +
-          `github ${facts.github_auth === "user" ? "own account (no App questions, no App secrets)" : "App"}` +
+          `github ${
+            facts.github_auth === "user"
+              ? "own account (no App questions, no App secrets)"
+              : facts.github_auth === "installation"
+                ? "an App installation on a token your host supplies (no App secrets here)"
+                : "App"
+          }` +
           `${str(ctx.choices, CHOICE_KEYS.model) ? `, model: ${str(ctx.choices, CHOICE_KEYS.model)}` : ""}`,
       });
       // Read after the write, so the dir is the one the written config names.
       checks.push(
-        secretsReport(secretsDirFor(ctx.adapters, ctx.choices), userAuthRecorded(ctx.choices)),
+        secretsReport(
+          secretsDirFor(ctx.adapters, ctx.choices),
+          userAuthRecorded(ctx.choices),
+          installationAuthRecorded(ctx.choices),
+        ),
       );
 
       const ok = checks.every((c) => c.ok);

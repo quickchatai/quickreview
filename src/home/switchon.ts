@@ -324,6 +324,10 @@ export function switchOnInput(
     case TOPOLOGY_STEP_ID:
       return { choice: "local" };
     case GITHUB_ACCOUNT_STEP_ID:
+      // "user" is the silent default where the person's own gh decides. On a
+      // host-managed install the step takes the identity its host wrote in
+      // the config instead (the person's account, or an App installation),
+      // and this answer chooses nothing.
       return { github_auth: "user", ...(a.repo ? { repo: a.repo } : {}) };
     case ESCALATION_STEP_ID:
       return { enable: "no" };

@@ -352,6 +352,29 @@ describe("the polling topology", () => {
     expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(/polling/);
     expect(h.urls.filter((u) => u.includes(API))).toEqual([]);
   });
+
+  // The installation route has an App, and its key is the host's: no JWT can
+  // be signed here, whatever ingress an older checklist recorded.
+  // MUTATION: drop the `installationAuthRecorded` branch from the layers —
+  // with a tunnel shape on record the step reads the App's key to sign a JWT
+  // (here: the fixture's), asks GitHub for the hook config, and this fails.
+  it("the installation route asks the App nothing: no JWT is signed, whatever ingress is on record", async () => {
+    seedChoices({ github_auth: "installation", [INGRESS_CHOICE_KEY]: "quick", topology: "local" });
+    const h = harness({
+      services: [
+        { Service: "daemon", State: "running" },
+        { Service: "memory", State: "running" },
+        { Service: "tunnel-quick", State: "running" },
+      ],
+      deliveries: [ping({ status_code: 502, status: "Bad Gateway" })],
+    });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    const delivery = result.checks.find((c) => c.name === "ping-delivery")!;
+    expect(delivery.ok).toBe(true);
+    expect(delivery.detail).toMatch(/installation token its host supplies/);
+    expect(delivery.detail).toMatch(/key is not on this machine/);
+    expect(h.urls.filter((u) => u.includes(API))).toEqual([]);
+  });
 });
 
 describe("a red layer blocks progress plainly", () => {

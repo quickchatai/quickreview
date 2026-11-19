@@ -53,6 +53,8 @@ interface World {
   repoStatus: number;
   labels: Set<string>;
   calls: string[];
+  /** Who GraphQL's `viewer` says the token is; null: it names nobody. */
+  viewer: string | null;
 }
 
 function world(over: Partial<World> = {}): World {
@@ -64,6 +66,7 @@ function world(over: Partial<World> = {}): World {
     repoStatus: 200,
     labels: new Set(),
     calls: [],
+    viewer: null,
     ...over,
   };
 }
@@ -106,6 +109,8 @@ function adapters(w: World, over: Partial<OnboardAdapters> = {}): OnboardAdapter
     if (new Headers(init?.headers).get("authorization") !== `Bearer ${w.token}`)
       return json(401, { message: "Bad credentials" });
     if (url.pathname === "/user") return json(200, { login: "dana-op" });
+    if (method === "POST" && url.pathname === "/graphql")
+      return json(200, { data: { viewer: w.viewer === null ? null : { login: w.viewer } } });
     if (url.pathname === "/user/repos")
       return json(
         200,
@@ -169,6 +174,18 @@ describe("which of the GitHub steps run, by route", () => {
 
   it("user: github_account only", () => {
     expect(matrix({ [CHOICE_KEYS.githubAuth]: "user" })).toEqual({
+      github_account: true,
+      github_app: false,
+      app_slug_reconcile: false,
+    });
+  });
+
+  // MUTATION: leave github_app or app_slug_reconcile enabled on the
+  // installation route (`!userAuthRecorded` instead of
+  // `!tokenFileRouteRecorded`) — a second App would be created, or the App
+  // asked who it is with a key that is not here; this fails.
+  it("installation: github_account only — no App is created and none is asked who it is", () => {
+    expect(matrix({ [CHOICE_KEYS.githubAuth]: "installation" })).toEqual({
       github_account: true,
       github_app: false,
       app_slug_reconcile: false,
@@ -494,5 +511,215 @@ describe("a host-managed install", () => {
     expect(lapsed.ok).toBe(false);
     expect(lapsed.results[0]!.failures.join(" ")).toMatch(/managed by its host/);
     expect(lapsed.results[0]!.failures.join(" ")).not.toMatch(/github-token sync|gh auth login/);
+  });
+});
+
+// `[github] auth = "installation"` beside the marker: the token in the file
+// is an App installation's, minted by the host that holds the App's key. The
+// third route. It is the host-managed route in everything a sign-in would
+// touch, and differs in how the token is proved and whose login it is.
+describe("the installation route (a host-supplied App installation token)", () => {
+  const SLUG = "acme-reviewer";
+  const BOT = `${SLUG}[bot]`;
+  const HOST_TOKEN = "ghs_hostMintedTokenValue0123456789ab";
+  /** No role at all, as GitHub reports a repository to an installation token:
+   * a proof that read `permissions` would refuse it. */
+  const NO_ROLE = { pull: false, triage: false, push: false, maintain: false, admin: false };
+  /** The config as a host's setup leaves it, and the token file as the host
+   * writes it. */
+  const installation = (o: { slug?: string | null; token?: string | null } = {}): World => {
+    let text = setTomlKey(configText(), "github", "token_source", "host")!;
+    text = setTomlKey(text, "github", "auth", "installation")!;
+    if (o.slug !== null) text = setTomlKey(text, "github", "app_slug", o.slug ?? SLUG)!;
+    writeFileSync(join(root, "config.toml"), text);
+    const token = o.token === undefined ? HOST_TOKEN : o.token;
+    if (token !== null) {
+      mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
+      writeFileSync(join(secretsDir, "github_token"), token, { mode: 0o600 });
+    }
+    return world({
+      token: token ?? "gho_neverWrittenByTheHost0123456789ab",
+      perms: NO_ROLE,
+      viewer: BOT,
+    });
+  };
+  const signInCalls = (w: World): string[] =>
+    w.calls.filter((c) => /^(sh |crontab|gh |\/usr\/local\/bin\/gh )/.test(c));
+  const check = (r: { checks: Array<{ name: string; detail: string }> }, name: string): string =>
+    r.checks.find((c) => c.name === name)?.detail ?? "";
+
+  // MUTATION: send a marked config whose auth is "installation" down runHost
+  // (drop the `hostRoute(ctx) === "installation"` branch) — the token is sent
+  // to `GET /user`, which GitHub refuses for an installation token, and this fails.
+  it("proves the token with the repository read, asks who it is by GraphQL, and never the user endpoint", async () => {
+    const w = installation();
+    const e = engineFor(w);
+    const r = await e.runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(w.calls).toContain("GET /repos/acme/web");
+    expect(w.calls).toContain("POST /graphql");
+    expect(w.calls).not.toContain("GET /user");
+    expect(w.calls).not.toContain("GET /user/repos");
+    expect(signInCalls(w)).toEqual([]);
+    expect(check(r, "repo access")).toMatch(/proved with this read/);
+    expect(check(r, "identity")).toMatch(/posts as acme-reviewer\[bot\]/);
+    expect(JSON.stringify(r)).not.toContain(HOST_TOKEN);
+    expect(JSON.stringify(r)).not.toMatch(/gh auth login|github-token sync/);
+  });
+
+  it("writes the route's config beside the marker, and both the file and the loader agree", async () => {
+    const w = installation();
+    const e = engineFor(w);
+    const r = await e.runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    const text = configText();
+    expect(readTomlKey(text, "github", "token_source")).toBe("host");
+    expect(readTomlKey(text, "github", "auth")).toBe("installation");
+    expect(readTomlKey(text, "github", "app_slug")).toBe(SLUG);
+    expect(readTomlKey(text, "github", "bot_login")).toBe(BOT);
+    expect(readTomlKey(text, "ingress", "shape")).toBe("polling");
+    const loaded = loadConfig(join(root, "config.toml"));
+    expect(loaded.github).toMatchObject({
+      auth: "installation",
+      token_source: "host",
+      app_slug: SLUG,
+      bot_login: BOT,
+    });
+    // the third route is on record, with the App the token was proved to be
+    expect(e.choices()[CHOICE_KEYS.githubAuth]).toBe("installation");
+    expect(e.choices()[CHOICE_KEYS.accountRepo]).toBe("acme/web");
+    expect(e.choices()[CHOICE_KEYS.appSlug]).toBe(SLUG);
+    expect(e.choices()[CHOICE_KEYS.botLogin]).toBe(BOT);
+    // no person's login is recorded: nobody signed in
+    expect(e.choices()[CHOICE_KEYS.accountLogin]).toBeUndefined();
+  });
+
+  it("the mode is the one the host wrote: switch-on's silent `user` answer does not choose it", async () => {
+    const w = installation();
+    const e = engineFor(w);
+    const r = await e.runStep(GITHUB_ACCOUNT_STEP_ID, { github_auth: "user", repo: "acme/web" });
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(e.choices()[CHOICE_KEYS.githubAuth]).toBe("installation");
+    expect(readTomlKey(configText(), "github", "auth")).toBe("installation");
+    expect(w.calls).not.toContain("GET /user");
+  });
+
+  it("touches nothing a sign-in would: no gh, no crontab entry, no token write, no label", async () => {
+    const w = installation();
+    const r = await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(signInCalls(w)).toEqual([]);
+    expect(w.crontab).toBeNull();
+    expect(readFileSync(join(secretsDir, "github_token"), "utf8")).toBe(HOST_TOKEN);
+    expect(w.calls.filter((c) => c.includes("/labels"))).toEqual([]);
+    expect(w.labels.size).toBe(0);
+  });
+
+  // MUTATION: drop identityCheck from runInstallation — a slug that names
+  // another App than the token's passes, the reviewer never recognises its
+  // own reviews, and this fails.
+  it("a token that is another App's than the slug names is red, said plainly, and nothing is recorded", async () => {
+    const w = installation();
+    w.viewer = "other-app[bot]";
+    const before = configText();
+    const e = engineFor(w);
+    const r = await e.runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok).toBe(false);
+    const said = r.failures.join(" ");
+    expect(said).toMatch(/acts as other-app\[bot\]/);
+    expect(said).toMatch(/set up to post as acme-reviewer\[bot\]/);
+    expect(said).toMatch(/app_slug is "acme-reviewer"/);
+    expect(configText()).toBe(before);
+    expect(e.choices()[CHOICE_KEYS.githubAuth]).toBeUndefined();
+  });
+
+  it("a token that cannot say who it is is red too: unknown is not a match", async () => {
+    const w = installation();
+    w.viewer = null;
+    const r = await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(
+      /could not check that the token posts as acme-reviewer\[bot\]/,
+    );
+  });
+
+  it("a repository the token cannot read is red, names the host, and the login is not asked", async () => {
+    const w = installation();
+    w.repoStatus = 404;
+    const r = await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/installation token cannot read acme\/web/);
+    expect(r.failures.join(" ")).toMatch(/managed by its host/);
+    expect(w.calls).not.toContain("POST /graphql");
+  });
+
+  it("a config that names no App is red before GitHub is asked anything", async () => {
+    const w = installation({ slug: "" });
+    const r = await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/app_slug names no GitHub App/);
+    expect(w.calls.some((c) => /^(GET|POST) /.test(c))).toBe(false);
+  });
+
+  it("a token the host has not written yet is red, naming the host and no command", async () => {
+    const w = installation({ token: null });
+    const r = await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok).toBe(false);
+    expect(r.failures.join(" ")).toMatch(/managed by its host/);
+    expect(r.failures.join(" ")).not.toMatch(/gh auth login|github-token sync|GH_TOKEN/);
+    expect(w.calls.some((c) => /^(GET|POST) /.test(c))).toBe(false);
+  });
+
+  it("takes a token of any length GitHub issues", async () => {
+    // generated here: no token-shaped literal of that size is written out
+    let token = "ghs_";
+    for (let i = 0; token.length < 600; i += 1) token += `${(i * 7919).toString(36)}.`;
+    token = `${token.slice(0, 599)}z`;
+    expect(token).toHaveLength(600);
+    const w = installation({ token });
+    const r = await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    expect(r.ok, r.failures.join("; ")).toBe(true);
+    expect(JSON.stringify(r)).not.toContain(token.slice(0, 40));
+  });
+
+  it("verify re-reads the repository and the token's own login; a drift names both logins", async () => {
+    const w = installation();
+    await engineFor(w).runStep(GITHUB_ACCOUNT_STEP_ID, { repo: "acme/web" });
+    w.calls.length = 0;
+    const green = await engineFor(w).verifyAll();
+    expect(green.ok, green.results[0]!.failures.join("; ")).toBe(true);
+    expect(w.calls).toContain("GET /repos/acme/web");
+    expect(w.calls).toContain("POST /graphql");
+    expect(w.calls).not.toContain("GET /user");
+    expect(signInCalls(w)).toEqual([]);
+
+    w.viewer = "other-app[bot]";
+    const drifted = await engineFor(w).verifyAll();
+    expect(drifted.ok).toBe(false);
+    expect(drifted.results[0]!.failures.join(" ")).toMatch(/acts as other-app\[bot\]/);
+
+    w.viewer = BOT;
+    w.token = "ghs_theTokenGitHubNowExpects0123456789";
+    const lapsed = await engineFor(w).verifyAll();
+    expect(lapsed.ok).toBe(false);
+    expect(lapsed.results[0]!.failures.join(" ")).toMatch(/managed by its host/);
+    expect(lapsed.results[0]!.failures.join(" ")).not.toMatch(/github-token sync|gh auth login/);
+  });
+
+  // MUTATION: drop the INSTALLATION_NEEDS_HOST refusal from the step's run —
+  // on an install that keeps its own credential the answer falls through to
+  // the person's own route (gh, the crontab entry), and this fails.
+  it("is refused in words as an answer on an install no host manages", async () => {
+    const w = world();
+    const before = configText();
+    const e = engineFor(w);
+    const typed = await e.runStep(GITHUB_ACCOUNT_STEP_ID, { github_auth: "installation" });
+    expect(typed.ok).toBe(false);
+    expect(typed.failures.join(" ")).toMatch(/installation token that a host supplies/);
+    expect(typed.failures.join(" ")).toMatch(/github_auth: "user"/);
+    expect(configText()).toBe(before);
+    expect(e.choices()[CHOICE_KEYS.githubAuth]).toBeUndefined();
+    expect(signInCalls(w)).toEqual([]);
+    expect(w.crontab).toBeNull();
   });
 });

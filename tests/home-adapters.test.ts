@@ -408,6 +408,71 @@ describe("the GitHub port on a host-managed install: the host's token file", () 
     expect(gh.calls).toEqual([]);
     expect(api.calls.every((c) => c.auth === `Bearer ${HOSTS}`)).toBe(true);
   });
+
+  // `[github] auth = "installation"`: the token is an App installation's, and
+  // GitHub's user endpoint refuses one.
+  const VIEWER = { data: { viewer: { login: "acme-reviewer[bot]" } } };
+
+  // MUTATION: drop the `o.installation?.()` branch from tokenFileGithubPort's
+  // `user` — the installation token is sent to `GET /user`, and this fails.
+  it("an installation token's account is asked of GraphQL's viewer, never of the user endpoint", async () => {
+    const gh = github({ graphql: VIEWER });
+    const port = tokenFileGithubPort({
+      secretsDir: () => secrets(HOSTS),
+      installation: () => true,
+      fetch: gh.fetch,
+    });
+    expect(await port.user()).toEqual({ kind: "known", value: "acme-reviewer[bot]" });
+    expect(gh.calls.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /graphql"]);
+    expect(gh.calls[0]!.auth).toBe(`Bearer ${HOSTS}`);
+    expect(gh.calls[0]!.body?.query).toMatch(/viewer/);
+  });
+
+  it("an installation token that cannot say who it is is unknown, with no sign-in named", async () => {
+    for (const o of [{ graphql: { data: { viewer: null } } }, { status: 401 }]) {
+      const who = await tokenFileGithubPort({
+        secretsDir: () => secrets(HOSTS),
+        installation: () => true,
+        fetch: github(o).fetch,
+      }).user();
+      expect(who.kind).toBe("unknown");
+      expect(who.kind === "unknown" ? who.why : "").not.toMatch(/gh auth login|ghu_/);
+    }
+    // no token yet is still "no account", and GitHub is not asked
+    const gh = github({ graphql: VIEWER });
+    const none = tokenFileGithubPort({
+      secretsDir: () => secrets(null),
+      installation: () => true,
+      fetch: gh.fetch,
+    });
+    expect(await none.user()).toEqual({ kind: "known", value: null });
+    expect(gh.calls).toEqual([]);
+  });
+
+  it("the real adapters take the mode from the config, read again on every call", async () => {
+    const dir = mkdtempSync(join(tmp, "install-"));
+    const cfg = join(dir, "config.toml");
+    const kept = secrets(HOSTS);
+    const api = github({ graphql: VIEWER });
+    const adapters = realHomeAdapters({
+      agentDir: join(dir, "agent"),
+      configPath: () => cfg,
+      reviews: idleReviews(),
+      runner: fakeGh(() => ({ stdout: "octo\n" })),
+      env: { HOME: join(dir, "home") },
+      fetch: api.fetch,
+    });
+    const config = (auth: string): string =>
+      `[github]\nrepo = "acme/widgets"\nauth = "${auth}"\ntoken_source = "host"\napp_slug = "acme-reviewer"\nsecrets_dir = ${JSON.stringify(kept)}\n`;
+    writeFileSync(cfg, config("installation"));
+    expect(await adapters.github.user()).toEqual({ kind: "known", value: "acme-reviewer[bot]" });
+    expect(api.calls.map((c) => c.path)).toEqual(["/graphql"]);
+    // a person's token on the same install shape is still asked of the user endpoint
+    writeFileSync(cfg, config("user"));
+    api.calls.length = 0;
+    expect(await adapters.github.user()).toEqual({ kind: "known", value: "dana-op" });
+    expect(api.calls.map((c) => c.path)).toEqual(["/user"]);
+  });
 });
 
 describe("the repository port", () => {

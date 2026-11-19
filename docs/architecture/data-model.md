@@ -49,7 +49,7 @@ Timestamps are ISO-8601 strings in `TEXT` columns throughout. Booleans are
 | `approval_withheld` | one row per PR whose approval was withheld for red or missing CI | `pr` (PK), `head_sha`, `ci_state`, `reason` | `recordApprovalWithheld`, `approvalWithheld`, `clearApprovalWithheld` |
 | `rechecks` | post-approval delta rechecks actually nudged; the unique key is the runaway guard | `(pr, fingerprint)` (PK), `head_sha`, `trigger` | `claimRecheck`, `hasRecheck`, `releaseRecheck`, `recheckClaimsBefore` |
 | `owed_base_rechecks` | base-advance recheck questions a run could not answer (a failed read, a head that moved under the reads, a failure before the durable handoff), owed until the reconcile pass asks them (`retryOwedBaseRechecks`) | `(pr, branch, after_sha)` (PK), `before_sha`, `attempts`, `next_attempt_at`, `last_error` | `oweBaseRecheck`, `owedBaseRecheck`, `dueBaseRechecks`, `settleBaseRecheck` |
-| `trigger_levels` | the previous reconcile observation of each trigger level, so a level already present cannot look like a fresh request | `(pr, kind)` (PK), `present`, `observed_at` | `triggerLevel`, `observeTriggerLevel` |
+| `trigger_levels` | the previous reconcile observation of each trigger level (kinds `label`, `team_request`), so a level already present cannot look like a fresh request; and under `[github] trigger = "all"` the mark of a pull request that trigger has taken (kind `all`, written present once and never absent), so it is taken once | `(pr, kind)` (PK), `present`, `observed_at` | `triggerLevel`, `observeTriggerLevel` |
 | `successor_obligations` | a newer head seen while an older round owned the PR — durable work owed | `pr` (PK), `predecessor_round_id`, `head_sha`, `provenance` | `recordSuccessor`, `successorFor`, `settleSuccessor`, `clearSuccessor` |
 | `pr_review_requests` | a standing request for an extra review of one kind (today only `security`: the label, `@<bot> security`, `qcr review-now --security`); served once as new evidence, withdrawn when the label comes off, dropped when the PR closes (`src/securityrequest.ts`) | `(pr, kind)` (PK), `source`, `requested_by` (`''` when the asker is unknown), `comment_id`, `requested_at`, `served_at` | `recordReviewRequest`, `reviewRequest`, `unservedReviewRequests`, `reviewRequestPrs`, `markReviewRequestServed`, `clearReviewRequests` |
 
@@ -245,7 +245,7 @@ losing the review record, except `state.db` itself.
 | `state/slack/origin/` | JSON | `OriginStore` (`src/slack/origin.ts`) | which Slack message caused which daemon action |
 | `state/ingress/hostname` | one bare hostname | the tunnel sidecar | default path from `ingressHostnameFile` (`src/config.ts`) when `[ingress] hostname_file` is empty |
 | `state/onboarding/` | `checklist.json`, `config.candidate.toml`, `pi-sessions/` | `src/onboard/` | the wizard's own state |
-| `state/onboarding/checklist.lock` | JSON, one record | `src/onboard/checklistlock.ts` | who is writing the checklist now (the home, or a host verb's work): holder, pid, token. Created whole, removed on release; one whose process is gone is taken over |
+| `state/onboarding/checklist.lock` | JSON, one record | `src/onboard/checklistlock.ts` | who is writing the checklist now (the home, or a host verb's work): holder, pid, token, and the machine's boot id and the holder's start time where `/proc` gives them. Created whole, removed on release. Stale, and taken over, when its process is gone, when the machine has booted since, or when its pid is another process's now |
 | `state/onboarding/host.json` | JSON | the host verbs (`src/host/record.ts`), under the checklist lock | how far a host's setup and go-live have got, the practice round asked for and the one returned, and the attestation a go-live ran on (§4.8); written temp + rename |
 | `state/onboarding/host-setup.log`, `host-go-live.log` | text | the detached walks (`src/host/walk.ts`, `src/host/golive.ts`) | what each step said; append-only, for a person |
 | `state/changes/` | `change-register.json` | `src/tui/index.ts` | the TUI change log |
@@ -486,7 +486,7 @@ whenever a round moved since the last write (`roundTransitionKey`: a pull
 request queued, a round started, a review posted, a round ended or failed).
 It holds `written_at`, a `health` block (the slice of the snapshot the
 reviewer's label is judged on, the daemon's own `dry_run` and its `poll`
-record among it), `spend`, and the lists:
+record among it), `spend`, `reviewed_today`, and the lists:
 
 | List | A pull request is in it when | A row carries |
 | --- | --- | --- |
@@ -504,6 +504,15 @@ began, `reviewed` by the pull request's last change in the daemon's record,
 `open` and `listed_at` are absent until a pass has listed the open pull
 requests. No row carries a URL, a repository name or an identity.
 
+`reviewed_today` is the one number the lists cannot give: how many pull
+requests had a review round finish since midnight on the install's own
+calendar (`[ops] timezone`), each once, open or closed now, posted or
+practice. The daemon counts it from its round store when it writes the file
+(`reviewedToday`, `src/boardtoday.ts`, over `prsReviewedSince` in
+`src/state.ts`) and writes the day beside the count (`count`, `since`,
+`until`). A count it cannot make (the store or the zone cannot be read) is
+left out of the file, never written as zero.
+
 **The export** is what `qcr --schema 3 board` prints (`src/boardexport.ts`;
 shape in `schemas/board.v1.json`, the `board` family of host contract 3 in
 `packages/pi-plugin/src/contract.ts`). It reads that one file out of the
@@ -512,8 +521,10 @@ running daemon's state and merges what the daemon does not know:
 | Field | Source |
 | --- | --- |
 | `written_at`, `posting`, `poll`, `spend`, `reviewing`, `reviewed`, `open`, `listed_at`, `more` | `board.json`, read only while the daemon runs |
+| `reviewed_today` | `board.json`'s count, printed as a number only while the day it is the count of lasts; absent when the daemon wrote none |
 | `reviewer` (`off`, `starting`, `on`, `paused_login`, `broken`) | whether the daemon's container runs, then the file's `health` block, by the rule the home shows auto-review by (`autoReviewLabel`) |
 | `repo`, `identity`, `trigger_label` | the install's `config.toml`, read as text; `posting_pending: "live"` when it says `dry_run = false` and the running daemon is still in dry-run |
+| `trigger` (`label`, `all`) | the same file's `[github] trigger`: what the reviewer picks up by itself. `label` where the key is left out; absent where the config cannot be read or states neither. The running daemon reads the same key at every poll (`src/livetrigger.ts`), so this is the word it follows |
 | `model_login` (`ok`, `expired`, `missing`) | pi's `auth.json` on the host and, while the daemon runs, its refresher's record; readable before any setup |
 | `github` | the token file's own word (`githubWord`, over `githubTokenHealth` in `packages/pi-plugin/src/hosttoken.ts`): `ok`, `expired` by its expiry note, or `missing`, where the file is the credential (`[github] auth = "user"`, or a host's `token_source = "host"`). Absent where an App mints its own token and where the file or the note cannot be read; GitHub is not asked |
 | `setup`, `go_live`, `proof` | the host verbs' record and the checklist's practice round, through `readBoardProgress` (§4.8) |
@@ -529,8 +540,8 @@ it prints nothing on stdout and exits non-zero.
 ### 4.8 Host verbs — `qcr --schema 3 host <verb>` and `state/onboarding/host.json`
 
 A host that has authenticated its own operator starts the reviewer, asks for
-reviews, shows a practice review and takes the reviewer live through five
-non-interactive verbs (`src/host/`; shape in `schemas/host.v1.json`, the
+reviews, shows a practice review, takes the reviewer live and says which
+pull requests it picks up by itself through six non-interactive verbs (`src/host/`; shape in `schemas/host.v1.json`, the
 `host` family of host contract 3). Each prints one JSON object:
 `schema_version` (the contract's number, 3), `verb`, and `state`, one of the
 verb's closed set (`HOST_STATES` in `src/host/outcomes.ts`). A refusal
@@ -540,17 +551,45 @@ text.
 
 | Verb | Answers | What it does |
 | --- | --- | --- |
-| `setup --repo o/n --auth user` | `started`, `running`, `busy`, `refused` | writes the config from the shipped template (`renderHostConfig`, `src/onboard/steps/hostconfig.ts`) and starts switch-on's steps detached |
+| `setup --repo o/n --auth user` | `started`, `running`, `busy`, `refused` | writes the config from the shipped template (`renderHostConfig`, `src/onboard/steps/hostconfig.ts`) and starts switch-on's steps detached. With no config yet it writes the host-managed marker and the auth mode itself; a config that is there without the marker is refused (`not_host_managed`) |
 | `review-now <pr>` | `queued`, `sent`, `refused` | one `review-now` command into the daemon's operator channel |
 | `proof-start <pr>` | `started`, `sent`, `running`, `busy`, `refused` | the same request, as a practice round; refuses when the config says the reviewer posts |
 | `proof-result <pr>` | `running`, `done`, `failed`, `not_started`, `busy`, `refused` | looks once; when the round has finished, records the proof and prints the review (`body`, at most 50 `comments` of `path`, `line`, `body`, each length-capped) |
-| `go-live` | `started`, `running`, `busy`, `refused` | admits the attestation on standard input and starts the go-live step detached |
+| `go-live` | `started`, `running`, `done`, `busy`, `refused` | admits the attestation on standard input and starts the go-live step detached; refuses an install without the host-managed marker (`not_host_managed`). On an install that is already live on an attestation it answers `done` with `label`, having tried the trigger label again and restarted nothing |
+| `set-trigger label\|all` | `done`, `busy`, `refused` | states `[github] trigger` in the config with one edit (`renderTriggerConfig`, `src/onboard/steps/triggerconfig.ts`), under the checklist lock, and answers `done` with `trigger`; a config that already says it is not rewritten. Starts and restarts nothing: the running daemon follows the key at its next poll. Refuses an install without the host-managed marker (`not_host_managed`) |
 
 Long work runs in a detached process (`host walk`, started by the verb and by
 nothing else) under the checklist lock, which the verb takes and hands to it:
 a second call answers `running`, and anything else that wants the checklist
 (another verb, the home's switches) answers `busy` or says so and runs
-nothing.
+nothing. The lock's record carries the machine's boot id and the holder's
+start time, so one left behind by a machine that was stopped or restarted
+mid-walk is stale and is taken over, whatever process has its pid now.
+
+The verbs act for a host's attested operator, who exists only where the
+install says a host manages it (`[github] token_source = "host"`, read off
+the config as written). `setup` writes that marker on a machine with no
+config and refuses a config that is there without it; `go-live`, its walk and
+`set-trigger` refuse without it. No host verb turns an install that keeps its own
+credential into a host-managed one.
+
+`setup` takes either identity a host can supply: `--auth user` (a person's
+token) or `--auth installation --app-slug <slug>` (an App installation's
+token; the slug is required). With `installation` it asks GitHub who the
+token is before anything is written and refuses a token that is not
+`<slug>[bot]` (`identity_mismatch`), then states `auth`, `app_slug` and the
+derived `bot_login` beside the marker. The same mode under another slug than
+the one on record is `auth_mismatch`, as another mode is.
+
+`setup` also takes `--trigger label|all` and states it as `[github] trigger`
+(§5): pull requests that carry the trigger label, or every open pull request
+that is not a draft and not the reviewer's own, each once, which spends model
+usage on every pull request. Left out, the config's own stays (`label` on a
+new install). `set-trigger` changes it later. Neither restarts anything: the
+daemon reads that one key again at every poll, so it follows with its rounds,
+its queue and its state untouched, and the export's `trigger` says the same
+word. The trigger is never part of what a reviewer is bound to: unlike the
+repository and the identity, it can change at any time.
 
 **`state/onboarding/host.json`** (`HostRecord` in `src/host/record.ts`) is
 what the verbs keep between calls:
@@ -558,7 +597,7 @@ what the verbs keep between calls:
 | Part | Written by | Holds |
 | --- | --- | --- |
 | `setup` | `host setup` and its walk | `state` (`running`, `done`, `failed`), the `step` it is at or stopped at (`SETUP_STEPS`), a `problem` (`SETUP_PROBLEMS`), and when it started and last moved |
-| `go_live` | `host go-live` and its walk | `state`, a `problem` (`GO_LIVE_PROBLEMS`), and the two times |
+| `go_live` | `host go-live` and its walk | `state`, a `problem` (`GO_LIVE_PROBLEMS`), `label` (`ok` or `failed`) once the reviewer is live, and the two times |
 | `proof_request` | `host proof-start` | the pull request, and the newest round that had already ended when it was asked (`floor`): only a later round answers the request |
 | `proof_shown` | `host proof-result` | the practice round it returned. A go-live is admitted only on a round with this mark |
 | `attestation_pending`, `attestation` | `host go-live`, then its walk | who confirmed (`operator.host`, `operator.id`), `confirmed_at`, the `proof` it names, when it was received, and `live_at` once the go-live step succeeded |
@@ -573,6 +612,13 @@ The board export prints `setup` and `go_live` from this file. A walk recorded
 as `running` whose process no longer holds the lock did not finish: it is
 printed as `failed` with `problem: "interrupted"`, and nothing is written.
 `proof` is printed once `proof_shown` matches the checklist's record.
+
+A go-live is `done` once the go-live step has succeeded. The trigger label is
+made sure of after that, through the wizard's own label writer (`ensureLabel`,
+`src/onboard/steps/githubapp.ts`; the mutation gate has no kind for a label's
+definition), and is said beside the outcome as `label`: it never fails a
+go-live. A host that has only just let its token write commonly reads
+`failed` first, and calls `go-live` again.
 
 ---
 
@@ -681,6 +727,7 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | `bot_login` | string | `""` (`<app_slug>[bot]`; the person's login under `auth = "user"`) |
 | `review_team` | string | `""` (`org/team`) |
 | `trigger_label` | string | `"AI review requested"` |
+| `trigger` | `"label"` \| `"all"` | `"label"` (`"all"`: every open pull request that is not a draft and not the reviewer's own is picked up once, as if labelled, which spends model usage on every pull request; a push to a reviewed one still queues nothing. Read again at every poll: a change needs no restart) |
 | `in_progress_label` | string | `"AI review in progress"` |
 | `reviewed_label` | string | `"Automatic Review"` |
 | `improvement_label` | string | `"Bot improvement"` |

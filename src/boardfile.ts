@@ -30,6 +30,15 @@
 // that at least one was cut. A field the daemon cannot read is left out of its
 // row: absent means unknown, never a zero or a default.
 //
+// Beside the lists the daemon counts the pull requests it reviewed today
+// (`reviewed_today`): those with a review round that finished since midnight
+// on the install's own calendar (`[ops] timezone`), open or closed, posted or
+// practice. The lists cannot give that number (a closed pull request is in
+// none of them), so it is counted from the round store when the board is
+// written (src/boardtoday.ts), and carried with the day it is the count of:
+// a reader prints it only while that day lasts. A count the daemon could not
+// make is left out, never written as zero.
+//
 // No row carries a URL, a repository name or an identity. A host builds its
 // links from its own record of the repository and the integers here.
 //
@@ -142,11 +151,22 @@ export interface BoardSpend {
   month_unknown_rounds?: number;
 }
 
+/** How many pull requests had a review round finish in one day of the
+ * install's own calendar, and which day: from its midnight (`since`) to the
+ * next (`until`), as instants. */
+export interface BoardReviewedToday {
+  count: number;
+  since: string;
+  until: string;
+}
+
 export interface BoardFile {
   format: typeof BOARD_FILE_FORMAT;
   written_at: string;
   health: BoardHealth;
   spend?: BoardSpend;
+  /** Absent when the daemon could not count it (its store, or its timezone). */
+  reviewed_today?: BoardReviewedToday;
   reviewing: BoardReviewingRow[];
   reviewed: BoardReviewedRow[];
   /** Absent until a reconcile pass has listed the open pull requests. */
@@ -322,11 +342,14 @@ function boardSpend(s: StatusSnapshot): BoardSpend | undefined {
 /**
  * The board, from the status snapshot the daemon has just built and the
  * rounds of the pull requests it lists as reviewed. `roundsOf` is asked only
- * for the rows that survive the cap.
+ * for the rows that survive the cap. `reviewedToday` is the day's count as
+ * the daemon made it (src/boardtoday.ts); undefined, it could not, and the
+ * board carries none.
  */
 export function buildBoardFile(
   snapshot: StatusSnapshot,
   roundsOf: (pr: number) => readonly BoardRound[],
+  reviewedToday?: BoardReviewedToday,
 ): BoardFile {
   const tracked = snapshot.prs.filter((p) => p.state !== "closed");
   const working: Array<{ number: number; pr: SnapshotPr; row: BoardReviewingRow }> = [];
@@ -356,6 +379,7 @@ export function buildBoardFile(
       ...(snapshot.provider ? { provider: snapshot.provider } : {}),
     },
     ...(spend ? { spend } : {}),
+    ...(reviewedToday !== undefined ? { reviewed_today: reviewedToday } : {}),
     reviewing: reviewing.rows.map((w) => w.row),
     reviewed: reviewed.rows.map((p) => reviewedRow(p, roundsOf(p.number))),
     ...(open && snapshot.open_prs
@@ -506,6 +530,18 @@ function readSpend(v: unknown): BoardSpend | undefined {
   });
 }
 
+/** The day's count, whole or not at all: a count with no day it is the count
+ * of cannot be told from yesterday's. */
+function readReviewedToday(v: unknown): BoardReviewedToday | undefined {
+  if (!isObj(v)) return undefined;
+  const n = count(v["count"], 0);
+  const since = text(v["since"]);
+  const until = text(v["until"]);
+  if (n === undefined || since === undefined || until === undefined) return undefined;
+  if (!(Date.parse(since) < Date.parse(until))) return undefined;
+  return { count: n, since, until };
+}
+
 /**
  * board.json's text as a board, every field re-read; null when it is not one
  * (not JSON, not this format, or with no `reviewing` and `reviewed` lists).
@@ -531,6 +567,7 @@ export function parseBoardFile(fileText: string): BoardFile | null {
     written_at: writtenAt,
     health: v["health"] as unknown as BoardHealth,
     spend: readSpend(v["spend"]),
+    reviewed_today: readReviewedToday(v["reviewed_today"]),
     reviewing,
     reviewed,
     // the open list and the time it was listed go together or not at all

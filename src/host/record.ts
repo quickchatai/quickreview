@@ -2,7 +2,9 @@
 // the setup checklist (state/onboarding/host.json).
 //
 //   setup, go_live      how far a detached walk has got, and how it ended:
-//                       what the board export prints as `setup` and `go_live`
+//                       what the board export prints as `setup` and `go_live`.
+//                       A go-live that ended `done` carries `label` beside
+//                       it: how making sure of the trigger label went
 //   proof_request       the practice round `proof-start` asked for: the pull
 //                       request, and the newest round that had already ended
 //                       then, so only a later round answers it
@@ -24,19 +26,26 @@
 //
 // `readHostProgress` is the board export's reader. A walk recorded as running
 // whose process is gone did not finish: it is said as failed, `interrupted`,
-// from the lock (which names the living holder), and nothing is written.
+// from the lock (which names the living holder, and is stale once the machine
+// has booted again or its pid is another process's), and nothing is written.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readChecklistFile } from "@quickchatai/pi-quickreview/src/setupchecklist.js";
-import { checklistLockHolder, type LockHolder } from "../onboard/checklistlock.js";
+import {
+  checklistLockHolder,
+  type LockHolder,
+  type ProcessFacts,
+} from "../onboard/checklistlock.js";
 import { CHOICE_KEYS } from "../onboard/choices.js";
 import {
   GO_LIVE_PROBLEMS,
+  LABEL_WORDS,
   PROGRESS_STATES,
   SETUP_PROBLEMS,
   SETUP_STEPS,
   type GoLiveProblem,
   type HostProof,
+  type LabelWord,
   type ProgressState,
   type SetupProblem,
   type SetupStepId,
@@ -65,6 +74,9 @@ export interface SetupProgress {
 export interface GoLiveProgress {
   state: ProgressState;
   problem?: GoLiveProblem;
+  /** The trigger label, once the reviewer is live: there, or not made sure
+   * of. Absent while nothing has tried it. */
+  label?: LabelWord;
   started_at: string;
   updated_at: string;
 }
@@ -141,9 +153,11 @@ function goLiveOf(v: unknown): GoLiveProgress | undefined {
   const started = str(v["started_at"]);
   if (state === undefined || started === undefined) return undefined;
   const problem = member(GO_LIVE_PROBLEMS, v["problem"]);
+  const label = member(LABEL_WORDS, v["label"]);
   return {
     state,
     ...(problem !== undefined ? { problem } : {}),
+    ...(label !== undefined ? { label } : {}),
     started_at: started,
     updated_at: str(v["updated_at"]) ?? started,
   };
@@ -256,7 +270,7 @@ export function updateHostRecord(
 /** What the board export prints of a host's long steps and practice review. */
 export interface HostProgress {
   setup?: { state: ProgressState; step?: SetupStepId; problem?: SetupProblem };
-  go_live?: { state: ProgressState; problem?: GoLiveProblem };
+  go_live?: { state: ProgressState; problem?: GoLiveProblem; label?: LabelWord };
   proof?: HostProof;
 }
 
@@ -298,10 +312,7 @@ export function proofWasShown(
  * `proof` is the practice round a go-live would be admitted on: the one the
  * checklist records, and only once `proof-result` has returned it.
  */
-export function readHostProgress(
-  stateDir: string,
-  o: { alive?: (pid: number) => boolean } = {},
-): HostProgress {
+export function readHostProgress(stateDir: string, o: ProcessFacts = {}): HostProgress {
   const record = readHostRecord(stateDir);
   const holder: LockHolder | undefined = checklistLockHolder(stateDir, o)?.holder;
   const out: HostProgress = {};
@@ -328,6 +339,8 @@ export function readHostProgress(
         : g.problem !== undefined
           ? { problem: g.problem }
           : {}),
+      // the label is said of a go-live that ended live, and of no other
+      ...(g.state === "done" && g.label !== undefined ? { label: g.label } : {}),
     };
   }
   const proof = recordedProofIn(stateDir);

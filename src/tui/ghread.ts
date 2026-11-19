@@ -31,6 +31,14 @@
 // mode `companion-guard`'s veto of write-shaped calls is the only fence, and
 // the env file's header says so.
 //
+// Under `[github] auth = "installation"` (an App installation's token that
+// the install's host supplies) the companion gets NO GitHub token. There is
+// no App key here to mint a down-scoped one from, and the token in the file
+// is the reviewer's own, with write access to pull requests: a copy would
+// put a credential that can post in the container, with the guard's veto as
+// the only fence. So nothing is read and nothing is handed over, and an env
+// file left by an earlier mode is removed.
+//
 // Everything here is total at the edge the TUI calls: `refresh()` answers an
 // outcome, never throws — a companion without GitHub is under-equipped, never
 // a companion that does not start.
@@ -280,6 +288,11 @@ export function tokenOutcomeLine(o: TokenOutcome): string {
   }
 }
 
+/** Why the companion holds no GitHub token under `auth = "installation"`. */
+export const COMPANION_NO_TOKEN_UNDER_INSTALLATION =
+  'the reviewer posts on an installation token its host supplies ([github] auth = "installation"): there is no App key ' +
+  "here to mint a read-only token from, and the reviewer's own token is never copied to the companion";
+
 export interface CompanionGithubTokenOptions {
   /** Host dir the env file lives in (`companionGithubDir()`). */
   dir: string;
@@ -289,8 +302,9 @@ export interface CompanionGithubTokenOptions {
    * `auth = "user"`). Read here, on the host; under "app" nothing from it is
    * ever written into `dir`. */
   secretsDir: string;
-  /** `[github] auth`. Absent ⇒ "app". */
-  auth?: "app" | "user";
+  /** `[github] auth`. Absent ⇒ "app". Under "installation" no token is
+   * handed over at all. */
+  auth?: "app" | "user" | "installation";
   fetchFn?: FetchFn;
   apiBase?: string;
   now?: () => number;
@@ -310,6 +324,7 @@ export class CompanionGithubToken {
   }
 
   private async doRefresh(): Promise<TokenOutcome> {
+    if (this.opts.auth === "installation") return this.withhold();
     if (this.opts.auth === "user") return this.copyUserToken();
     const now = (this.opts.now ?? Date.now)();
     const current = tokenExpiry(this.opts.dir, this.opts.repo);
@@ -340,6 +355,21 @@ export class CompanionGithubToken {
     } catch (err) {
       return { kind: "failed", reason: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  /** `auth = "installation"`: hand over nothing. The secrets dir is not
+   * read, GitHub is not asked, and an env file an earlier mode left in the
+   * hand-over dir is removed, so the container holds no token from it. */
+  private withhold(): TokenOutcome {
+    try {
+      rmSync(join(this.opts.dir, TOKEN_FILE), { force: true });
+    } catch (err) {
+      return {
+        kind: "failed",
+        reason: `an earlier GitHub token file could not be removed from ${this.opts.dir} (${err instanceof Error ? err.message : String(err)})`,
+      };
+    }
+    return { kind: "unavailable", reason: COMPANION_NO_TOKEN_UNDER_INSTALLATION };
   }
 
   /** `auth = "user"`: copy the person's token file in when it differs from

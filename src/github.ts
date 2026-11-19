@@ -33,6 +33,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/githubAuth.js";
 import {
   excludeOwnAppQualifier,
+  isInstallationMode,
   isOwnContent,
   isPersonMode,
   ownActorAlias,
@@ -422,8 +423,9 @@ export class GitHubAdapter {
 
   constructor(
     private readonly cfg: Config,
-    /** The one credential source: the App's minter, or under
-     * `[github] auth = "user"` the person's token file (githubAuth.ts). */
+    /** The one credential source: the App's minter, or the token file
+     * under `[github] auth = "user"` (the person's token) and `auth =
+     * "installation"` (a host-supplied installation token) (githubAuth.ts). */
     private readonly credential: GitHubCredential,
     readonly gate: MutationGate,
     private readonly fetchFn: FetchFn = fetch,
@@ -489,8 +491,15 @@ export class GitHubAdapter {
   }
 
   /** The App JWT, for the App's own routes only. Absent under the person's
-   * credential, where there is no App: refused before anything is sent. */
+   * credential, where there is no App, and under a host-supplied installation
+   * token, where the App's key is the host's: refused before anything is
+   * sent, whatever the credential object offers. */
   private async appJwt(path: string): Promise<string> {
+    if (isInstallationMode(this.cfg.github))
+      throw new Error(
+        `${path} needs the GitHub App's JWT, and under [github] auth = "installation" the App's key is with the host ` +
+          "that supplies the token, never on this machine — this route is off in that mode",
+      );
     if (!this.credential.appJwt || isPersonMode(this.cfg.github))
       throw new Error(
         `${path} needs the GitHub App's JWT, and [github] auth = "user" has no App — this route is off in that mode`,

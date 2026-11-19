@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "host.v1.json",
   "title": "qcr --schema 3 host <verb>, host family version 1",
-  "description": "What each host verb prints: one object per call, for a host that runs the reviewer for a person it has authenticated itself. The verbs are setup, review-now, proof-start, proof-result and go-live. Each is non-interactive and answers within seconds; long work is started detached and followed through the board export (schemas/board.v1.json: `setup`, `go_live`, `proof`). `state` is one of the verb's closed set, and a refusal or failure carries a closed `reason`: a host maps both to its own text. The exit code is 0 when the verb did what it was asked or says what is already under way, 2 for a call it could not read (reason usage), 1 for any other refusal or failure; the object is printed in each case. No field carries a URL or a credential.",
+  "description": "What each host verb prints: one object per call, for a host that runs the reviewer for a person it has authenticated itself, on an install that host manages. The verbs are setup, review-now, proof-start, proof-result, go-live and set-trigger. Each is non-interactive and answers within seconds; long work is started detached and followed through the board export (schemas/board.v1.json: `setup`, `go_live`, `proof`). `state` is one of the verb's closed set, and a refusal or failure carries a closed `reason`: a host maps both to its own text. The exit code is 0 when the verb did what it was asked or says what is already under way, 2 for a call it could not read (reason usage), 1 for any other refusal or failure; the object is printed in each case. No field carries a URL or a credential.",
   "type": "object",
   "required": ["schema_version", "verb", "state"],
   "oneOf": [
@@ -20,6 +20,9 @@
     },
     {
       "$ref": "#/$defs/go_live"
+    },
+    {
+      "$ref": "#/$defs/set_trigger"
     }
   ],
   "$defs": {
@@ -28,7 +31,7 @@
         "usage",
         "in_session",
         "not_on_host",
-        "unsupported_auth",
+        "not_host_managed",
         "model_login_missing",
         "model_login_unreadable",
         "github_token_missing",
@@ -38,6 +41,7 @@
         "repo_unreachable",
         "repo_mismatch",
         "auth_mismatch",
+        "identity_mismatch",
         "config_unreadable",
         "config_invalid",
         "launch_failed",
@@ -55,11 +59,11 @@
         "proof_not_shown",
         "confirm_stale"
       ],
-      "description": "Why a verb refused, or why a practice round failed. Present with state refused or failed."
+      "description": "Why a verb refused, or why a practice round failed. Present with state refused or failed. not_host_managed: the install's config does not carry `[github] token_source = \"host\"`; setup refuses an existing config without it (on a machine with no config it writes the marker itself), and go-live and set-trigger refuse any install without it."
     },
     "holder": {
-      "enum": ["home", "setup", "go_live", "proof"],
-      "description": "What holds the setup lock, with state busy: the reviewer's own terminal home, or a host verb's work (setup, go_live, proof)."
+      "enum": ["home", "setup", "go_live", "proof", "trigger"],
+      "description": "What holds the setup lock, with state busy: the reviewer's own terminal home, or a host verb's work (setup, go_live, proof, and trigger for a set-trigger, which holds it only while its one edit takes)."
     },
     "setup": {
       "type": "object",
@@ -202,8 +206,8 @@
           "const": "go-live"
         },
         "state": {
-          "enum": ["started", "running", "busy", "refused"],
-          "description": "started: the attestation was admitted and the go-live runs, detached; the board export's `go_live` field follows it, and `posting` says when the daemon posts. running: a go-live is already under way. busy: something else holds the setup lock (holder). refused: nothing was changed (reason)."
+          "enum": ["started", "running", "done", "busy", "refused"],
+          "description": "started: the attestation was admitted and the go-live runs, detached; the board export's `go_live` field follows it, and `posting` says when the daemon posts. running: a go-live is already under way. done: the reviewer was already live on an attestation; nothing was run again and nothing restarted, the trigger label was tried once more, and `label` says how that went. busy: something else holds the setup lock (holder). refused: nothing was changed (reason)."
         },
         "reason": {
           "$ref": "#/$defs/reason"
@@ -215,6 +219,42 @@
         },
         "holder": {
           "$ref": "#/$defs/holder"
+        },
+        "label": {
+          "enum": ["ok", "failed"],
+          "description": "With state done: the trigger label is in the repository (ok), or it could not be read or created there (failed). It never fails a go-live: the reviewer posts either way, and the call can be repeated."
+        }
+      },
+      "additionalProperties": false
+    },
+    "set_trigger": {
+      "type": "object",
+      "required": ["schema_version", "verb", "state"],
+      "properties": {
+        "schema_version": {
+          "const": 3
+        },
+        "verb": {
+          "const": "set-trigger"
+        },
+        "state": {
+          "enum": ["done", "busy", "refused"],
+          "description": "done: the install's config says the trigger asked for (`trigger`); it was written, or it already said so. Nothing was started or restarted: a running reviewer follows at its next poll, and the board export's `trigger` says the same word. busy: something else holds the setup lock (holder), and nothing changed. refused: nothing changed (reason)."
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "The refusal or failure in words, for a log. A host shows its own text for `reason`."
+        },
+        "holder": {
+          "$ref": "#/$defs/holder"
+        },
+        "trigger": {
+          "enum": ["label", "all"],
+          "description": "With state done: what the reviewer picks up by itself. label: pull requests that carry the trigger label. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request."
         }
       },
       "additionalProperties": false

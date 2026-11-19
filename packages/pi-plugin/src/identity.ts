@@ -1,9 +1,14 @@
-// "Is this ours?" — the one answer, for both credential modes.
+// "Is this ours?" — the one answer, for every credential mode.
 //
 // Under `[github] auth = "app"` the system posts as a GitHub App, whose
 // account is a bot account: everything under its login (`<slug>[bot]`, or the
 // bare slug GraphQL names the same actor by) is the system's, and a PR that
 // account opened is a bot's PR.
+//
+// Under `auth = "installation"` the identity is the same kind: an App's bot
+// account, named by `app_slug`. Only where the token comes from differs (a
+// host supplies it; no App key is here), and nothing in this file asks that.
+// Every rule below that is not person mode's holds for it as for "app".
 //
 // Under `auth = "user"` ("person mode") the system posts AS the person, on
 // their own token. The login then carries two kinds of words: the person's
@@ -22,12 +27,33 @@ import type { GithubAuthMode, GithubConfig } from "./reviewconfig.js";
 export type GithubIdentity = Pick<GithubConfig, "auth" | "bot_login" | "app_slug">;
 
 export function authMode(g: Pick<GithubConfig, "auth">): GithubAuthMode {
-  return g.auth === "user" ? "user" : "app";
+  return g.auth === "user" || g.auth === "installation" ? g.auth : "app";
 }
 
-/** `[github] auth = "user"`: the person's own credential, posting as them. */
+/** `[github] auth = "user"`: the person's own credential, posting as them.
+ * The one mode whose reviews are all COMMENTs. An App installation's token
+ * read from a file is not it: what a review may say follows who posts it,
+ * never where the token was read from. */
 export function isPersonMode(g: Pick<GithubConfig, "auth">): boolean {
   return authMode(g) === "user";
+}
+
+/** `[github] auth = "installation"`: an App installation's identity on a
+ * token its host supplies. */
+export function isInstallationMode(g: Pick<GithubConfig, "auth">): boolean {
+  return authMode(g) === "installation";
+}
+
+/** Is the credential the token file (`<secrets dir>/github_token`)? True of
+ * the person's own token and of a host-supplied installation token: under
+ * either there is no App key, App id or webhook secret to read, no App JWT,
+ * and so no webhook and no App self-config. The modes are the config's
+ * `TOKEN_FILE_AUTH_MODES` (reviewconfig.ts), spelled out here because this
+ * module imports types only: nothing that reads the identity rules can reach
+ * a runtime module through them (tests/review-history.test.ts). */
+export function usesTokenFile(g: Pick<GithubConfig, "auth">): boolean {
+  const mode = authMode(g);
+  return mode === "user" || mode === "installation";
 }
 
 /** Every hidden marker the system writes opens `<!-- qcr-` or `<!-- qcr:`

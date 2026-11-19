@@ -45,9 +45,15 @@ export type IngressChoice = (typeof INGRESS_CHOICES)[number];
 
 /** How the daemon authenticates to GitHub (`config.toml [github] auth`):
  * "user" is the person's own account (polling only, no App), "app" a GitHub
- * App. Answered as the github_account step's input; absent ⇒ unanswered. */
-export const GITHUB_AUTH_CHOICES = ["user", "app"] as const;
+ * App whose key is on this machine, "installation" an App installation whose
+ * token the install's host supplies (polling only, no App key here). Absent
+ * ⇒ unanswered. */
+export const GITHUB_AUTH_CHOICES = ["user", "app", "installation"] as const;
 export type GithubAuth = (typeof GITHUB_AUTH_CHOICES)[number];
+/** The routes a person can answer the github_account step with. The third
+ * route is never an answer: only a host that supplies the token names it, in
+ * the config it writes (`[github] auth = "installation"`). */
+export const GITHUB_AUTH_ANSWERS = ["user", "app"] as const satisfies readonly GithubAuth[];
 
 /** "owner/name" — the reviewed repo as the interview records it and the App
  * step parses it: no URL, no trailing `.git`. */
@@ -86,10 +92,11 @@ export const CHOICE_KEYS = {
   model: "llm_model",
 
   /** `GithubAuth`. Written by the github_account step (the operator's answer,
-   * defaulted to "user" where `gh auth token` works); read by everything that
-   * differs between the own-account route and the App route — which of
-   * github_account / github_app / app_slug_reconcile is enabled, the
-   * interview's App questions, the ingress shapes on offer, verification. */
+   * defaulted to "user" where `gh auth token` works; on a host-managed
+   * install, the mode its host wrote in the config); read by everything that
+   * differs between the routes — which of github_account / github_app /
+   * app_slug_reconcile is enabled, the interview's App questions, the ingress
+   * shapes on offer, verification. */
   githubAuth: "github_auth",
   /** The person's GitHub login, from `GET /user` with their own token (own-
    * account route). The interview's owner-login answer and `[github]
@@ -122,7 +129,9 @@ export const CHOICE_KEYS = {
   labels: "github_labels",
 
   /** The App slug. Written by the interview (the operator's answer), then
-   * corrected by the App step and the slug reconcile from GitHub itself. */
+   * corrected by the App step and the slug reconcile from GitHub itself. On
+   * the installation route the github_account step records the slug its host
+   * wrote in the config, once the token's own login has been checked against it. */
   appSlug: "github_app_slug",
   /** `botLoginFor(slug)` — how the daemon recognises its own reviews. */
   botLogin: "github_bot_login",
@@ -189,7 +198,7 @@ export const CHOICE_WRITERS: Record<ChoiceName, readonly string[]> = {
   configPath: ["config_fill"],
   dryRun: ["config_fill"],
   labels: ["config_fill"],
-  appSlug: ["config_fill", "github_app", "app_slug_reconcile"],
+  appSlug: ["config_fill", "github_account", "github_app", "app_slug_reconcile"],
   botLogin: ["github_account", "github_app", "app_slug_reconcile"],
   appId: ["github_app"],
   appTarget: ["github_app"],
@@ -249,6 +258,21 @@ export function githubAuthOf(choices: Readonly<Record<string, unknown>>): Github
 /** Is the own-account route recorded? (Unanswered is NOT user mode.) */
 export function userAuthRecorded(choices: Readonly<Record<string, unknown>>): boolean {
   return githubAuthOf(choices) === "user";
+}
+
+/** Is the host-supplied installation route recorded? */
+export function installationAuthRecorded(choices: Readonly<Record<string, unknown>>): boolean {
+  return githubAuthOf(choices) === "installation";
+}
+
+/** Is a route recorded on which the credential is the token file: the
+ * person's own account, or a host-supplied installation token? On both there
+ * is no App key on this machine, so nothing creates an App, asks an App who
+ * it is, or reads a webhook; the token for a GitHub read is the file's.
+ * (Unanswered is neither.) */
+export function tokenFileRouteRecorded(choices: Readonly<Record<string, unknown>>): boolean {
+  const route = githubAuthOf(choices);
+  return route === "user" || route === "installation";
 }
 
 /** The recorded ingress shape, or null when the ingress step has not run. */

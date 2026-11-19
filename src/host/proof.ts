@@ -27,7 +27,12 @@
 //
 // The daemon's state is read as the operator would read it: its own
 // `qcr why <n> --json`, inside its container.
-import { sandboxReviewFrom, type ReviewSnapshot } from "../compare.js";
+import {
+  recordedReviewEvent,
+  sandboxReviewFrom,
+  sandboxReviewRecord,
+  type ReviewSnapshot,
+} from "../compare.js";
 import { acquireChecklistLock } from "../onboard/checklistlock.js";
 import { CHOICE_KEYS } from "../onboard/choices.js";
 import type { OnboardingStep, StepReport } from "../onboard/engine.js";
@@ -53,6 +58,7 @@ import { readConfigToml } from "@quickchatai/pi-quickreview/src/shippedconfig.js
 import { configFacts } from "../boardexport.js";
 import { admit } from "./admit.js";
 import {
+  HOST_MESSAGE_CAP,
   PROOF_BODY_CAP,
   PROOF_COMMENT_BODY_CAP,
   PROOF_COMMENT_CAP,
@@ -64,7 +70,7 @@ import {
   type HostReview,
   type HostVerb,
 } from "./outcomes.js";
-import { transportOf, type HostPorts } from "./ports.js";
+import { lockOptions, transportOf, type HostPorts } from "./ports.js";
 import {
   proofWasShown,
   readHostRecord,
@@ -255,11 +261,7 @@ export async function hostProofStart(
       "already_live",
       "the reviewer posts live: a practice review is one that cannot post, and this one would. Nothing changed",
     );
-  const got = acquireChecklistLock(ports.stateDir, "proof", {
-    pid: ports.pid,
-    now: () => ports.now(),
-    alive: (p) => ports.alive(p),
-  });
+  const got = acquireChecklistLock(ports.stateDir, "proof", lockOptions(ports));
   if (!got.ok) return { state: "busy", holder: got.held.holder };
   try {
     const obs = await observe(at.transport, pr);
@@ -296,10 +298,19 @@ export async function hostProofStart(
 const cut = (text: string, cap: number): { text: string; cut: boolean } =>
   text.length > cap ? { text: text.slice(0, cap), cut: true } : { text, cut: false };
 
-/** The review as it would have been posted, within the verb's caps. */
-export function cappedReview(review: ReviewSnapshot): HostReview {
+/**
+ * The review as it would have been posted, within the verb's caps.
+ * `recordedEvent` is the event the dry-run record itself names
+ * (src/compare.ts `recordedReviewEvent`): the review's own `state` is not
+ * read for it, because a record that names no event is given one there, and
+ * what the record does not say is not printed.
+ */
+export function cappedReview(
+  review: Pick<ReviewSnapshot, "body" | "comments">,
+  recordedEvent: string | undefined,
+): HostReview {
   const body = cut(review.body, PROOF_BODY_CAP);
-  const event = REVIEW_EVENTS.find((e) => e === review.state);
+  const event = REVIEW_EVENTS.find((e) => e === recordedEvent);
   return {
     ...(event !== undefined ? { event } : {}),
     body: body.text,
@@ -352,10 +363,12 @@ export function hostProofStep(observed: () => ProofRecord | null): OnboardingSte
   };
 }
 
+/** A practice round that produced no review: the words are capped as a
+ * refusal's are, whatever a step or the daemon put in them. */
 const failed = (reason: HostReason, text: string, pr: number): HostAnswer => ({
   state: "failed",
   reason,
-  message: text,
+  message: text.slice(0, HOST_MESSAGE_CAP),
   pr,
 });
 
@@ -371,8 +384,9 @@ async function show(
     pr,
   });
   const records = roundRecords(read.records, round).filter((r) => recordForPr(r, pr));
-  const review = read.problem !== "" ? null : sandboxReviewFrom(records, pr);
-  if (review === null)
+  const record = read.problem !== "" ? null : sandboxReviewRecord(records, pr);
+  const review = record === null ? null : sandboxReviewFrom(records, pr);
+  if (record === null || review === null)
     return failed(
       "no_dry_run_record",
       `round ${round.round_no} of #${pr} finished, and no review of it is in the dry-run record: nothing was recorded as a practice review`,
@@ -386,7 +400,7 @@ async function show(
     state: "done",
     pr,
     proof: { pr, round_no: round.round_no, verdict: round.verdict, completed_at: recorded },
-    review: cappedReview(review),
+    review: cappedReview(review, recordedReviewEvent(record)),
   };
 }
 
@@ -400,11 +414,7 @@ async function recordProof(
   pr: number,
   round: ObservedRound & { verdict: string },
 ): Promise<string | HostAnswer> {
-  const got = acquireChecklistLock(ports.stateDir, "proof", {
-    pid: ports.pid,
-    now: () => ports.now(),
-    alive: (p) => ports.alive(p),
-  });
+  const got = acquireChecklistLock(ports.stateDir, "proof", lockOptions(ports));
   if (!got.ok) return { state: "busy", holder: got.held.holder, pr };
   try {
     const at = ports.now().toISOString();

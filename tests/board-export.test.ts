@@ -109,6 +109,8 @@ const SETUP = {
   identity: { mode: "user", login: "octo-dev" },
   model_login: "ok",
   trigger_label: "AI review requested",
+  // the rig's config leaves the key out: labelled pull requests
+  trigger: "label",
 };
 
 /** The fields that are the running daemon's: gone whenever its board is. */
@@ -118,6 +120,7 @@ const DAEMON_FIELDS = [
   "posting_pending",
   "poll",
   "spend",
+  "reviewed_today",
   "reviewing",
   "reviewed",
   "open",
@@ -168,6 +171,7 @@ describe("a working install", () => {
       "trigger_label",
       "poll",
       "spend",
+      "trigger",
       "reviewing",
       "reviewed",
       "open",
@@ -309,6 +313,61 @@ describe("absent means unknown: the daemon", () => {
   });
 });
 
+describe("`reviewed_today`: the daemon's count of the day", () => {
+  /** The day the fixture board is written in, on the install's calendar:
+   * twelve hours either side of the write. */
+  const day = (count: number) => ({ count, since: at(-12 * 3600), until: at(12 * 3600) });
+  /** The small board, with the count the daemon made (or none). */
+  const boardWith = (reviewedToday?: ReturnType<typeof day>): string => {
+    smallBoard();
+    return w.boardText(undefined, reviewedToday);
+  };
+
+  it("is the daemon's number, printed after `spend`, and a zero it counted is a zero", async () => {
+    const out = await read(withBoard(boardWith(day(3))));
+    expect(out.reviewed_today).toBe(3);
+    const keys = Object.keys(out);
+    expect(keys.indexOf("reviewed_today")).toBe(keys.indexOf("spend") + 1);
+    expect(validate(schema, out)).toEqual([]);
+    // counted, and nobody was reviewed: zero is a reading
+    const none = await read(withBoard(w.boardText(undefined, day(0))));
+    expect(none.reviewed_today).toBe(0);
+    // the schema takes a count, and nothing else
+    for (const bad of [-1, 1.5, "3", null])
+      expect(validate(schema, { ...out, reviewed_today: bad }), String(bad)).not.toEqual([]);
+  });
+
+  // MUTATION: print 0 where the board carries no count — a daemon that could
+  // not read its store or its timezone says nobody was reviewed, and this fails.
+  it("is absent, never zero, when the daemon could not count", async () => {
+    const out = await read(withBoard(boardWith()));
+    expect(out).not.toHaveProperty("reviewed_today");
+    // everything else the board carries is still printed
+    expect(out.reviewed).toHaveLength(1);
+    expect(out.spend).toBeDefined();
+  });
+
+  // MUTATION: print the board's count whatever the time — yesterday's number
+  // is shown as today's once the day has turned, and this fails.
+  it("is absent once the day it is the count of is over, or has not begun", async () => {
+    const text = boardWith(day(3));
+    const readAt = (now: number) => read(withBoard(text, { now: () => now }));
+    expect((await readAt(NOW)).reviewed_today).toBe(3);
+    // the last millisecond of the day, then the first of the next
+    const until = Date.parse(at(12 * 3600));
+    expect((await readAt(until - 1)).reviewed_today).toBe(3);
+    expect(await readAt(until)).not.toHaveProperty("reviewed_today");
+    expect(await readAt(Date.parse(at(-12 * 3600)) - 1)).not.toHaveProperty("reviewed_today");
+  });
+
+  it("is the running daemon's: gone with its board", async () => {
+    const out = await read(
+      withBoard(boardWith(day(3)), { daemon: async () => known("stopped" as const) }),
+    );
+    expect(out).not.toHaveProperty("reviewed_today");
+  });
+});
+
 describe("absent means unknown: the config", () => {
   const off = { daemon: async () => known("stopped" as const) };
 
@@ -334,6 +393,60 @@ describe("absent means unknown: the config", () => {
     // identity nobody chose is printed, and this fails.
     expect(out).not.toHaveProperty("identity");
     // the label is the shipped one the daemon would run on
+    expect(out.trigger_label).toBe("AI review requested");
+  });
+
+  // What the reviewer picks up by itself is the config's own word, read where
+  // the running daemon reads it at every poll.
+  // MUTATION: drop `trigger` from configFacts, or from boardExport's object —
+  // a host cannot say which of the two the person chose, and this fails.
+  it("`trigger` is the config's word: label where the key is left out, all where it says so", async () => {
+    const withTrigger = (value: string): string =>
+      CONFIG.replace("[github]\n", `[github]\ntrigger = ${value}\n`);
+    expect(configFacts(CONFIG).trigger).toBe("label");
+    expect(configFacts(withTrigger('"label"')).trigger).toBe("label");
+    expect(configFacts(withTrigger('"all"')).trigger).toBe("all");
+
+    const out = await read(fakeBoardPorts({ ...off, config: () => known(withTrigger('"all"')) }));
+    expect(out.trigger).toBe("all");
+    expect(validate(schema, out)).toEqual([]);
+    // printed after the day's count, before the host's own records
+    const live = await read(
+      withBoard(smallBoard(), {
+        config: () => known(withTrigger('"all"')),
+        progress: () => ({ setup: { state: "done" } }),
+      }),
+    );
+    const keys = Object.keys(live);
+    expect(keys.indexOf("trigger")).toBeGreaterThan(keys.indexOf("poll"));
+    expect(keys.indexOf("trigger")).toBe(keys.indexOf("setup") - 1);
+    // the schema takes the two words, and nothing else
+    for (const bad of ["every", "", true, null])
+      expect(validate(schema, { ...out, trigger: bad }), String(bad)).not.toEqual([]);
+  });
+
+  // MUTATION: default an unreadable value to "label" in configFacts — a
+  // config that says something this release does not know prints as the
+  // default, and this fails.
+  it("`trigger` is absent when the config cannot say: unreadable, not TOML, or a value that is neither", async () => {
+    for (const config of [
+      () => unknown("permission denied"),
+      () => known("= not toml"),
+      () => known(null),
+      () => known(CONFIG.replace("[github]\n", '[github]\ntrigger = "every"\n')),
+      () => known(CONFIG.replace("[github]\n", "[github]\ntrigger = true\n")),
+    ]) {
+      const out = await read(fakeBoardPorts({ ...off, config }));
+      expect(out).not.toHaveProperty("trigger");
+    }
+    // the rest of that config is still said: one bad key costs its own field
+    const out = await read(
+      fakeBoardPorts({
+        ...off,
+        config: () => known(CONFIG.replace("[github]\n", '[github]\ntrigger = "every"\n')),
+      }),
+    );
+    expect(out.repo).toBe("acme/webapp");
     expect(out.trigger_label).toBe("AI review requested");
   });
 
@@ -511,6 +624,27 @@ describe("the records a host's verbs leave", () => {
       },
     });
     expect(await read(failing)).toEqual(bare);
+  });
+
+  // The trigger label is beside a go-live that is done, in its own closed
+  // word: it never makes one failed.
+  // MUTATION: say the label as a `problem` of the go-live — the schema's
+  // closed set of problems has no such word, and this fails.
+  it("a go-live that is done carries how its trigger label went, beside it", async () => {
+    for (const label of ["ok", "failed"] as const) {
+      const out = await read(
+        fakeBoardPorts({ progress: () => ({ go_live: { state: "done", label } }) }),
+      );
+      expect(out.go_live).toEqual({ state: "done", label });
+      expect(validate(schema, out)).toEqual([]);
+    }
+    const base = await read(fakeBoardPorts());
+    expect(validate(schema, { ...base, go_live: { state: "done", label: "missing" } })).not.toEqual(
+      [],
+    );
+    expect(
+      validate(schema, { ...base, go_live: { state: "failed", problem: "label_failed" } }),
+    ).not.toEqual([]);
   });
 });
 
@@ -705,12 +839,15 @@ describe("the contract", () => {
       expect(parseSchemaFlag(["--schema", "3", verb]).kind, verb).toBe("ok");
   });
 
-  it("`qcr version` and the published package manifest name contract 3 and its families", () => {
+  // The contracts a release supports are recorded in its package.json
+  // (`qcrContracts`) and printed by `qcr --schema 3 version`: a host that
+  // packages a release asks the release itself.
+  it("`qcr version` and package.json's `qcrContracts` name contract 3 and its families", () => {
     const v = versionInfo(ROOT, null);
     expect(v.contracts).toEqual([1, 2, 3]);
     expect(v.host_families).toEqual({ board: 1, host: 1 });
     // MUTATION: add a contract in contract.ts and not in package.json's
-    // qcrContracts block (what a host's packager reads) — this fails.
+    // `qcrContracts` (what a host that packages a release reads) — this fails.
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
       qcrContracts: { supported: number[]; host_families: Record<string, number> };
     };

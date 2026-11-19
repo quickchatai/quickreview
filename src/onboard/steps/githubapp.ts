@@ -48,7 +48,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { isAbsolute, join } from "node:path";
 import type { Socket } from "node:net";
 import { mintAppJwt } from "@quickchatai/pi-quickreview/src/githubAuth.js";
-import { CHOICE_KEYS, REPO_SLUG_RE, botLoginFor, userAuthRecorded } from "../choices.js";
+import { CHOICE_KEYS, REPO_SLUG_RE, botLoginFor, tokenFileRouteRecorded } from "../choices.js";
 import { CONFIG_FILL_STEP_ID } from "./configfill.js";
 import { readTomlKey, secretsDirFor } from "./ingress.js";
 import {
@@ -1400,9 +1400,11 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
     // before the bring-up steps.
     order: 40,
     // The App route only. The own-account route (github_account, order 33)
-    // needs no App at all; an unanswered route keeps this step, so a
-    // checklist from before the question existed still verifies its App.
-    enabled: (choices) => !userAuthRecorded(choices),
+    // needs no App at all, and on the installation route the App is the
+    // host's: it exists already, its key is not here, and creating a second
+    // one would be a different identity. An unanswered route keeps this step,
+    // so a checklist from before the question existed still verifies its App.
+    enabled: (choices) => !tokenFileRouteRecorded(choices),
     // The reviewed repo is NOT a parameter: it is the interview's answer, read
     // from the checklist (CHOICE_KEYS.repo). The only thing the operator may
     // supply here is what nothing else can derive — the App's display name.

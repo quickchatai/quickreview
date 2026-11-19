@@ -3,7 +3,13 @@
 // through the config fill's writer (configfill.ts) and never touching
 // `dry_run`.
 //
-// Three things happen to the text, in order:
+// A host's setup acts on installs a host manages. A config that is not there
+// yet is written as one: the shipped template with the marker
+// (`[github] token_source = "host"`) and the auth mode the host named. A
+// config that is there is never given the marker here: its own decides, and
+// the verb refuses one without it before this writer is asked.
+//
+// Four things happen to the text, in order:
 //
 //   1. A config that leaves the root `dry_run` key out is completed from the
 //      shipped template. A host may have written a config holding nothing
@@ -19,7 +25,8 @@
 //   2. The repository and its default branch are written, as the home's
 //      repository pick writes them (repoconfig.ts), with the machine's
 //      timezone where the config names none of its own.
-//   3. On a host-managed install (`[github] token_source = "host"`) the
+//   3. On a host-managed install (`[github] token_source = "host"`: the
+//      marker the text carries, or the one a new config is written with) the
 //      improvement-PR filer and the bot's own issues are turned off: their
 //      caps go to zero, and a cap of zero is reached before the first one is
 //      filed (src/improvements.ts). The token such a host supplies then never
@@ -27,13 +34,23 @@
 //      stated beside the marker, which does not load without one
 //      (packages/pi-plugin/src/reviewconfig.ts `parseGithubSection`): the
 //      home's own review reads this config before the walk's account step
-//      has written the rest of the identity.
+//      has written the rest of the identity. Under `auth = "installation"`
+//      the App's slug and the login it implies (`<slug>[bot]`) are stated
+//      with it: that mode does not load without the slug, the session
+//      helpers read the login off the file as written, and there is no App
+//      key on the machine to ask either from.
+//
+//   4. On such an install the trigger the host named (`[github] trigger`:
+//      labelled pull requests, or every pull request) is stated too. A host
+//      that named none leaves the config's own. Changing it later is another
+//      writer's one edit (triggerconfig.ts).
 //
 // The last check is the rule itself: the text that comes out states the same
 // `dry_run` as the text that went in, read as the daemon reads it. Anything
 // else is refused and nothing is written (invariant 6).
 import { isDeepStrictEqual } from "node:util";
 import { parse } from "smol-toml";
+import type { GithubTrigger } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { heldBack, readConfigToml } from "@quickchatai/pi-quickreview/src/shippedconfig.js";
 import {
   assertNoDryRunEdit,
@@ -42,6 +59,7 @@ import {
   tomlString,
   type TomlEdit,
 } from "./configfill.js";
+import { botLoginFor } from "../choices.js";
 import { renderRepoConfig } from "./repoconfig.js";
 
 /** An error in one line: a TOML parser's message goes on to quote the
@@ -65,10 +83,18 @@ export interface HostConfigChoice {
   baseBranch: string | null;
   /** The machine's IANA timezone; fills an empty `[ops] timezone` only. */
   timezone: string | null;
-  /** The auth mode the host named. Written on a host-managed install only,
-   * beside the marker; elsewhere the account step writes it with the rest of
-   * the identity. Absent: the config's own is left as it is. */
-  auth?: "user";
+  /** Which pull requests the reviewer picks up by itself (`[github]
+   * trigger`), when the host said. Left out, the config's own stays: `label`
+   * on a new one. Written on a host-managed config only. */
+  trigger?: GithubTrigger;
+  /** The auth mode the host named. Written beside the marker: with it on a
+   * new config, and on a config that already carries it. A config without
+   * the marker is left its own (the verb refuses such a config; this writer
+   * never marks one). */
+  auth: "user" | "installation";
+  /** The slug of the App an installation token belongs to: with
+   * `installation`, always. Written with the login it implies. */
+  appSlug?: string;
 }
 
 /** The caps that switch the improvement-PR filer and the bot's own issues
@@ -234,13 +260,24 @@ export function renderHostConfig(
   let hostManaged: boolean;
   try {
     const github = (parse(text) as Table)["github"];
-    hostManaged = isTable(github) && github["token_source"] === "host";
+    // A new config is its host's from its first line; one that is there
+    // says for itself whether a host manages it.
+    const marks = existing === null;
+    hostManaged = marks || (isTable(github) && github["token_source"] === "host");
     const more: TomlEdit[] = [
+      ...(marks ? [{ section: "github", key: "token_source", value: tomlString("host") }] : []),
       ...(timezoneOpen && choice.timezone
         ? [{ section: "ops", key: "timezone", value: tomlString(choice.timezone) }]
         : []),
-      ...(hostManaged && choice.auth !== undefined
-        ? [{ section: "github", key: "auth", value: tomlString(choice.auth) }]
+      ...(hostManaged ? [{ section: "github", key: "auth", value: tomlString(choice.auth) }] : []),
+      ...(hostManaged && choice.auth === "installation" && choice.appSlug !== undefined
+        ? [
+            { section: "github", key: "app_slug", value: tomlString(choice.appSlug) },
+            { section: "github", key: "bot_login", value: tomlString(botLoginFor(choice.appSlug)) },
+          ]
+        : []),
+      ...(hostManaged && choice.trigger !== undefined
+        ? [{ section: "github", key: "trigger", value: tomlString(choice.trigger) }]
         : []),
       ...(hostManaged ? HOST_MANAGED_CAPS : []),
     ];

@@ -35,17 +35,24 @@ direction** — is the owner's explicit call, never an agent's (AGENTS.md invari
   it. The host relays that confirm and decides nothing. Its `go-live` verb
   (`qcr --schema 3 host go-live`, `src/host/golive.ts`) takes an attestation
   on standard input, naming the operator, the instant of the confirm and the
-  practice round, and refuses unless that round is the one the checklist
-  records, was returned by `host proof-result` (which is what marks a practice
-  review as shown), the confirm is under ten minutes old, and the process was
-  not started from an agent session. Then it calls the same go-live step as
-  the wizard and the home, with every check above intact, and records the
-  attestation. The host's other verbs cannot reach the flag: `host setup`
-  writes the config through the same key-refusing writer and comes up in
-  dry-run. `tests/host-fences.test.ts` holds that nothing under `src/host/`
-  writes the flag, that the go-live path has exactly two callers (the home's
-  switch and this verb's walk), and that no agent session can run a host
-  verb. The home on such an install offers no go-live of its own.
+  practice round, and refuses unless the install's config, as written, carries
+  that marker, that round is the one the checklist records, was returned by
+  `host proof-result` (which is what marks a practice review as shown), the
+  confirm is under ten minutes old, and the process was not started from an
+  agent session. Then it calls the same go-live step as the wizard and the
+  home, with every check above intact, and records the attestation. The
+  attested operator exists only under the marker: on every other install an
+  attestation admits nothing (`not_host_managed`), whoever sends it, and no
+  host verb writes the marker into a config that is already there. The
+  host's other verbs cannot reach the flag: `host setup` writes the config
+  through the same key-refusing writer and comes up in dry-run, and
+  `host set-trigger` writes one other key through it (`[github] trigger`),
+  its result held to "the config as it was, and that key".
+  `tests/host-fences.test.ts` holds that nothing under `src/host/` writes the
+  flag, that the go-live path has exactly two callers (the home's switch and
+  this verb's walk), that an install without the marker does not go live on
+  an attestation, and that no agent session this system starts can run a
+  host verb. The home on such an install offers no go-live of its own.
 - One narrow, closed exception to "dry-run executes nothing":
   the App-self-config class, a single mutation kind that re-points **the App's
   own webhook URL** when a rotating tunnel hostname changes. It touches only
@@ -54,6 +61,8 @@ direction** — is the owner's explicit call, never an agent's (AGENTS.md invari
   so a second kind fails a test. Under `[github] auth = "user"` there is no
   App, so this class cannot run at all: the adapter refuses every App-JWT
   route, and config load refuses the `tunnel-file` ingress that drives it.
+  The same holds under `auth = "installation"`: the App exists, but its key
+  is with the host that supplies the token, so no App JWT can be signed here.
 
 ## 2. RATIFIED fences
 

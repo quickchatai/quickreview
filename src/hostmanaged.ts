@@ -15,6 +15,7 @@
 // the unmarked behaviour, which is every install's before this key existed.
 import { readFileSync } from "node:fs";
 import { parse } from "smol-toml";
+import { readHostMarker } from "@quickchatai/pi-quickreview/src/hosttoken.js";
 import { locateConfig, locateSecrets, type InstallEnv } from "./homes.js";
 
 type ReadText = (path: string) => string;
@@ -34,9 +35,11 @@ function githubTable(toml: string): Record<string, unknown> | null {
     : null;
 }
 
-/** Does this config text carry the host-managed marker? */
+/** Does this config text carry the host-managed marker? The one reading of
+ * it (packages/pi-plugin/src/hosttoken.ts `readHostMarker`), shared with the
+ * plugin's own setup check. */
 export function hostManagedToml(toml: string): boolean {
-  return githubTable(toml)?.["token_source"] === "host";
+  return readHostMarker(toml)?.hostManaged === true;
 }
 
 function tableAt(configPath: () => string, read: ReadText): Record<string, unknown> | null {
@@ -51,6 +54,17 @@ function tableAt(configPath: () => string, read: ReadText): Record<string, unkno
  * on every call: a host may write the marker while the home is open. */
 export function hostManagedAt(configPath: () => string, read: ReadText = readUtf8): () => boolean {
   return () => tableAt(configPath, read)?.["token_source"] === "host";
+}
+
+/** Does the install at `configPath()` post on a host-supplied installation
+ * token (`[github] auth = "installation"`, as written)? Read again on every
+ * call. The home asks before a whole config would load: who the token is must
+ * be read another way there (GitHub's user endpoint refuses such a token). */
+export function installationAuthAt(
+  configPath: () => string,
+  read: ReadText = readUtf8,
+): () => boolean {
+  return () => tableAt(configPath, read)?.["auth"] === "installation";
 }
 
 /** The same, for the install a process's environment names. */

@@ -96,6 +96,21 @@ export function setPersonMode(s: GuardsWorld, login = "pr-author"): void {
   writeFileSync(path, text);
 }
 
+/** Installation mode (`[github] auth = "installation"`, always beside the
+ * host marker) in the rig's config.toml: the posting login is the App bot's,
+ * derived from its slug. The token is read from a file, as in person mode;
+ * the identity is an App's, as in App mode. */
+export function setInstallationMode(s: GuardsWorld, slug = "example-review"): void {
+  const path = join(s.dir, "config.toml");
+  const text = readFileSync(path, "utf8")
+    .replace(
+      "[github]\n",
+      `[github]\nauth = "installation"\ntoken_source = "host"\napp_slug = "${slug}"\n`,
+    )
+    .replace(/^bot_login = .*$/m, `bot_login = "${slug}[bot]"`);
+  writeFileSync(path, text);
+}
+
 /** Switch [guards] knobs in the one config.toml the route parse. */
 export function setGuardKnobs(s: GuardsWorld, knobs: Record<string, boolean>): void {
   const path = join(s.dir, "config.toml");
@@ -145,7 +160,13 @@ function nodeConfig(s: GuardsWorld): Config {
     readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
   );
   const rig = parse(readFileSync(join(s.dir, "config.toml"), "utf8")) as {
-    github: { repo: string; bot_login: string; auth?: "app" | "user" };
+    github: {
+      repo: string;
+      bot_login: string;
+      auth?: "app" | "user" | "installation";
+      token_source?: "self" | "host";
+      app_slug?: string;
+    };
     guards?: Partial<Config["guards"]>;
   };
   return {
@@ -155,6 +176,8 @@ function nodeConfig(s: GuardsWorld): Config {
       repo: rig.github.repo,
       bot_login: rig.github.bot_login,
       auth: rig.github.auth ?? "app",
+      ...(rig.github.token_source ? { token_source: rig.github.token_source } : {}),
+      ...(rig.github.app_slug !== undefined ? { app_slug: rig.github.app_slug } : {}),
     },
     guards: { ...GUARDS_DEFAULTS, ...(rig.guards ?? {}) },
   };

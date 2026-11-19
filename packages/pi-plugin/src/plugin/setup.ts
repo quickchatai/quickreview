@@ -24,7 +24,7 @@
 // Only what the plugin itself can do: nothing here installs anything. The app
 // builds its own checklist from these steps plus its own (pluginSetupSteps
 // onto its StepRegistry); a step it registers is never on this one.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { assetRoot } from "../assetroot.js";
 import {
@@ -37,8 +37,13 @@ import {
   type StepStatusLine,
 } from "../setupchecklist.js";
 import { contextFrom } from "../engine/context.js";
-import { homeProfilePlaces, loadOneShotConfig } from "../homes.js";
-import { HOST_MANAGED, hostTokenProblem, readTokenFile } from "../hosttoken.js";
+import {
+  homeProfilePlaces,
+  loadOneShotConfig,
+  locateSecrets,
+  oneShotConfigFile,
+} from "../homes.js";
+import { HOST_MANAGED, hostTokenProblem, readHostMarker, readTokenFile } from "../hosttoken.js";
 import { LENS_TUNING_KEYS } from "../lenstuning.js";
 import { REPO_PROFILE_DIR, REPO_TOML_KEYS } from "../profileoverrides.js";
 import { PROFILES_DIR } from "../profilelookup.js";
@@ -132,11 +137,23 @@ function reviewRoute(
 
 /** The secrets dir of a host-managed install (`[github] token_source =
  * "host"`), where its host keeps the token file; null on an install that
- * keeps its own credential, or whose config cannot be read. */
+ * keeps its own credential, or whose config cannot be read.
+ *
+ * The marker is read off the located config's own text (hosttoken.ts
+ * `readHostMarker`), never through the loader: a host writes the marker
+ * before a setup has written the mode a config needs beside it to load, and
+ * a marked install is host-managed from that moment on. The secrets dir is
+ * located as the loader locates it. */
 function hostManagedSecrets(host: PluginHost, root: () => string): string | null {
   try {
-    const { cfg } = loadOneShotConfig({ root: root(), env: { ...host.env, HOME: host.home } });
-    return cfg.github.token_source === "host" ? cfg.github.secrets_dir : null;
+    const env = { ...host.env, HOME: host.home };
+    const { path, file } = oneShotConfigFile({ root: root(), env });
+    // no config of the install's own: the shipped defaults carry no marker
+    if (path === null) return null;
+    const marker = readHostMarker(readFileSync(file, "utf8"));
+    return marker?.hostManaged === true
+      ? locateSecrets({ configured: marker.secretsDir, env }).path
+      : null;
   } catch {
     return null;
   }

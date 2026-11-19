@@ -57,6 +57,16 @@ repo = ""                                    # ← FILL (1): the repo to review,
 #          never from the environment or a command line. app_slug may be "";
 #          bot_login is your own GitHub login. The App secrets (app_id,
 #          app.pem, webhook_secret) are not needed.
+#   "installation" — a GitHub App INSTALLATION's token that the host which
+#          runs the reviewer for you mints and supplies; the App's private key
+#          stays with that host and is never on this machine. Always with
+#          token_source = "host" (config load refuses it otherwise), and
+#          polling only, like "user". The identity is the App's bot, so
+#          reviews post as APPROVE / REQUEST_CHANGES / COMMENT, like "app".
+#          app_slug is required: it names the App the token belongs to, and
+#          bot_login is derived from it as "<app_slug>[bot]" (leave bot_login
+#          empty, or state exactly that). app_id, app.pem and webhook_secret
+#          are never read. A host sets this; you would not set it by hand.
 #auth = "app"
 # Who keeps that credential:
 #   "self" (the default; a missing key means "self") — this install does: the
@@ -67,8 +77,9 @@ repo = ""                                    # ← FILL (1): the repo to review,
 #          the token alone) and keeps a token with at least 15 minutes of life
 #          in it at all times; it may write the token's expiry beside it as
 #          <secrets dir>/github_token.expires_at (one ISO 8601 instant). Needs
-#          auth = "user". The daemon reads the file exactly as it does under
-#          "self" (first use, every five minutes, after a 401). Nothing on the
+#          auth = "user" or auth = "installation". The daemon reads the file
+#          exactly as it does under "self" (first use, every five minutes,
+#          after a 401). Nothing on the
 #          machine signs in to GitHub or refreshes the token: the onboarding
 #          account step proves the file's token and installs no crontab entry,
 #          `qcr github-token sync` refuses, and the home shows the identity
@@ -84,6 +95,21 @@ review_team = ""                            # ← FILL (4): "org/team" whose rev
 # about a particular KIND of change, that is the optional [escalation] section
 # further down — off by default.
 trigger_label = "AI review requested"
+# Which pull requests the reviewer picks up by itself:
+#   "label" (the default; a missing key means "label") — the ones somebody
+#          asked for: the trigger label above, or a review request to
+#          review_team.
+#   "all"  — every open pull request that is not a draft and was not opened
+#          by the reviewer itself or by another bot, each ONCE, as if it
+#          carried the trigger label; a draft is picked up when it is marked
+#          ready. This spends model usage on EVERY pull request, so set it
+#          knowing how many your repository opens.
+# Under either value a push to a pull request that is already reviewed queues
+# nothing by itself: ask again with the label, a review request, or
+# `qcr review-now <pr>`. The daemon reads this one key again at every poll, so
+# a change needs no restart. Switching to "all" queues every open pull request
+# that has no review yet.
+#trigger = "label"
 in_progress_label = "AI review in progress"
 reviewed_label = "Automatic Review"
 improvement_label = "Bot improvement"

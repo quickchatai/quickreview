@@ -80,6 +80,14 @@ export type PrLifecycleState = "tracked" | "queued" | "reviewing" | "awaiting_au
  * default is a full round. */
 export type TriggerProvenance = "human" | "system";
 
+/** What a `trigger_levels` row is an observation of. `label` and
+ * `team_request` are GitHub's levels, observed present or absent at every
+ * poll. `all` is the every-pull-request trigger's own mark (`[github] trigger
+ * = "all"`, src/reconcile.ts): written present once, when that trigger takes
+ * a pull request, and never absent. There is no label to remove there, so the
+ * row is what keeps the pull request from being taken a second time. */
+export type TriggerLevelKind = "label" | "team_request" | "all";
+
 export type TerminalReviewFailureDisposition = "closed" | "absent";
 
 export type ExactHeadReviewedFailureResolution =
@@ -4375,6 +4383,28 @@ export class StateStore {
   }
 
   /**
+   * How many distinct pull requests had a review round finish at or after
+   * `sinceIso` (a UTC instant as `ts()` writes them, so the comparison is on
+   * the text): a round that ended with a verdict, whether the pull request is
+   * open or closed now and whether the review reached GitHub or was recorded
+   * in dry-run. A round that ended without a verdict (cancelled, overdue,
+   * expired) reviewed nothing, and a row imported from GitHub's history is no
+   * round of this daemon's; neither is counted (the rule `priorRoundCount`
+   * counts by). The board's `reviewed_today` (src/boardtoday.ts).
+   */
+  prsReviewedSince(sinceIso: string): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(DISTINCT pr) AS n FROM rounds
+           WHERE verdict IS NOT NULL AND backfilled = 0
+             AND finished_at IS NOT NULL AND finished_at >= ?`,
+        )
+        .get(sinceIso) as { n: number }
+    ).n;
+  }
+
+  /**
    * est_usd is the one spend field (legacy spend_usd is folded into it at
    * boot).
    *
@@ -6386,14 +6416,14 @@ export class StateStore {
 
   // ---- trigger-level observations --------------------------------------
 
-  triggerLevel(pr: number, kind: "label" | "team_request"): boolean | undefined {
+  triggerLevel(pr: number, kind: TriggerLevelKind): boolean | undefined {
     const row = this.db
       .prepare("SELECT present FROM trigger_levels WHERE pr = ? AND kind = ?")
       .get(pr, kind) as { present: number } | undefined;
     return row === undefined ? undefined : row.present === 1;
   }
 
-  observeTriggerLevel(pr: number, kind: "label" | "team_request", present: boolean): void {
+  observeTriggerLevel(pr: number, kind: TriggerLevelKind, present: boolean): void {
     this.db
       .transaction(() => {
         if (present && this.triggerLevel(pr, kind) === false && this.getPr(pr)?.state !== "closed")

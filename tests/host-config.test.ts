@@ -1,11 +1,13 @@
 // The config a host's setup writes (src/onboard/steps/hostconfig.ts): the
 // repository on the shipped template or on the install's own config, the
-// filers off on a host-managed install, and never another `dry_run` than the
-// text had. Pure: every case is a text in and a text out, over the real
+// host-managed marker on a config that is new (and on no other), the filers
+// off on a host-managed install, and never another `dry_run` than the text
+// had. Pure: every case is a text in and a text out, over the real
 // shipped template.
 import { readFileSync } from "node:fs";
 import { parse } from "smol-toml";
 import { describe, expect, it } from "vitest";
+import { parseCoreConfig } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { readConfigToml } from "@quickchatai/pi-quickreview/src/shippedconfig.js";
 import { parseCaps } from "../src/config.js";
 import {
@@ -21,6 +23,7 @@ const CHOICE: HostConfigChoice = {
   repo: "acme/widgets",
   baseBranch: "trunk",
   timezone: "Europe/Warsaw",
+  auth: "user",
 };
 
 type Doc = Record<string, unknown>;
@@ -48,10 +51,38 @@ describe("a new config", () => {
     expect(text.split("\n").length).toBe(TEMPLATE.split("\n").length);
   });
 
-  it("an install that keeps its own credential keeps its filers", () => {
+  // A machine with no config is set up as its host's: the marker and the
+  // mode are written with the first line of it.
+  // MUTATION: drop `marks` from renderHostConfig — a new config carries no
+  // marker, the account step takes the person's own route, and this fails.
+  it("is a host-managed install's: the marker, the auth mode beside it, and the filers off", () => {
     const r = renderHostConfig(null, TEMPLATE, CHOICE);
-    expect(r).toMatchObject({ ok: true, hostManaged: false, completed: false });
-    expect(table(rendered(null), "caps")).toEqual(table(TEMPLATE, "caps"));
+    expect(r).toMatchObject({ ok: true, hostManaged: true, completed: false });
+    const text = rendered(null);
+    expect(table(text, "github")).toMatchObject({ token_source: "host", auth: "user" });
+    expect(table(text, "caps")).toMatchObject({
+      improvement_pr_per_day: 0,
+      improvement_pr_per_week: 0,
+      issues_per_day: 0,
+    });
+    // both keys were commented out in the template, and are stated in place
+    expect(text.split("\n").length).toBe(TEMPLATE.split("\n").length);
+    // written once: what it wrote is what a second setup finds, and leaves
+    expect(rendered(text)).toBe(text);
+  });
+
+  // The marker is written on a config that is new, and on no other.
+  // MUTATION: mark every config renderHostConfig is handed — an install that
+  // keeps its own credential is turned into a host-managed one, and this fails.
+  it("a config that is already there is never given the marker", () => {
+    for (const own of [TEMPLATE, TEMPLATE.replace(/^#auth = "app"$/m, 'auth = "user"')]) {
+      const r = renderHostConfig(own, TEMPLATE, CHOICE);
+      expect(r).toMatchObject({ ok: true, hostManaged: false });
+      const text = rendered(own);
+      expect(table(text, "github")).not.toHaveProperty("token_source");
+      expect(table(text, "github")["auth"]).toBe(table(own, "github")["auth"]);
+      expect(table(text, "caps")).toEqual(table(TEMPLATE, "caps"));
+    }
   });
 
   it("a branch GitHub did not name leaves the template's", () => {
@@ -90,15 +121,13 @@ describe("a config holding only a host's marker", () => {
   // MUTATION: write `auth` on every install — an install that keeps its own
   // credential then states a route its account step has not set up; this fails.
   it("states the auth mode the host named, beside the marker and nowhere else", () => {
-    const named = { ...CHOICE, auth: "user" as const };
-    expect(table(rendered(MARKER_ONLY, named), "github")["auth"]).toBe("user");
-    // a host that named none leaves the config's own
-    expect(table(rendered(MARKER_ONLY), "github")).not.toHaveProperty("auth");
+    expect(table(rendered(MARKER_ONLY), "github")["auth"]).toBe("user");
     // an install that keeps its own credential: the account step writes the mode
-    expect(table(rendered(null, named), "github")).not.toHaveProperty("auth");
-    // already there: nothing is rewritten
+    expect(table(rendered(TEMPLATE), "github")).not.toHaveProperty("auth");
+    // already there: the line is left as it is
     const both = '[github]\ntoken_source = "host"\nauth = "user"\n';
-    expect(rendered(both, named)).toBe(rendered(both));
+    expect(table(rendered(both), "github")["auth"]).toBe("user");
+    expect(rendered(rendered(both))).toBe(rendered(both));
   });
 
   // MUTATION: drop HOST_MANAGED_CAPS from the edits — this fails.
@@ -151,6 +180,7 @@ describe("a config that is already there", () => {
     const text = rendered(before);
     const changed = text.split("\n").filter((line, i) => line !== before.split("\n")[i]);
     expect(changed.map((l) => l.split("=")[0]!.trim()).sort()).toEqual([
+      "auth",
       "base_branch",
       "improvement_pr_per_day",
       "improvement_pr_per_week",
@@ -165,6 +195,61 @@ describe("a config that is already there", () => {
     const r = renderHostConfig("[github\nrepo = ", TEMPLATE, CHOICE);
     expect(r.ok).toBe(false);
     expect(!r.ok && r.why).toMatch(/not valid TOML.*nothing was written/);
+  });
+});
+
+// `auth = "installation"`: the App's slug and the login it implies go in with
+// the mode. That mode does not load without the slug, the session helpers
+// read `bot_login` off the file as written, and no App key is on the machine
+// to ask either from.
+describe("an installation's identity", () => {
+  const INSTALLATION: HostConfigChoice = {
+    ...CHOICE,
+    auth: "installation",
+    appSlug: "acme-reviewer",
+  };
+  const identity = {
+    auth: "installation",
+    app_slug: "acme-reviewer",
+    bot_login: "acme-reviewer[bot]",
+  };
+
+  // MUTATION: drop the app_slug / bot_login edits from renderHostConfig's
+  // `more` list — the written config names the mode and no App, and this fails.
+  it("a new config states the mode, the slug and the derived login beside the marker", () => {
+    const text = rendered(null, INSTALLATION);
+    expect(table(text, "github")).toMatchObject({ token_source: "host", ...identity });
+    // each was a line of the template already: nothing is appended
+    expect(text.split("\n").length).toBe(TEMPLATE.split("\n").length);
+    expect(doc(text)["dry_run"]).toBe(true);
+    expect(parseCaps(table(text, "caps")).improvement_pr_per_day).toBe(0);
+  });
+
+  it("a config holding only the marker gets the same three keys, and loads", () => {
+    const text = rendered(MARKER_ONLY, INSTALLATION);
+    expect(table(text, "github")).toMatchObject({ token_source: "host", ...identity });
+    expect(parseCoreConfig(text).github).toMatchObject({ token_source: "host", ...identity });
+  });
+
+  it("a config that is there without the marker is given none of it", () => {
+    const text = rendered(TEMPLATE, INSTALLATION);
+    const github = table(text, "github");
+    expect(github["token_source"]).toBeUndefined();
+    expect(github["auth"]).toBeUndefined();
+    expect(github["app_slug"]).toBe("");
+    expect(github["bot_login"]).toBe("");
+  });
+
+  it("a person's token writes no App: the slug and the login stay the template's", () => {
+    const github = table(rendered(null), "github");
+    expect(github["auth"]).toBe("user");
+    expect(github["app_slug"]).toBe("");
+    expect(github["bot_login"]).toBe("");
+  });
+
+  it("the same call twice writes the same text", () => {
+    const once = rendered(null, INSTALLATION);
+    expect(rendered(once, INSTALLATION)).toBe(once);
   });
 });
 

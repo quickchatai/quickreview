@@ -1,5 +1,7 @@
 // The daemon's GitHub credential, behind one seam (`GitHubCredential`), in
-// one of two shapes chosen by `[github] auth`:
+// one of two shapes. `[github] auth` chooses: "app" is the first, and "user"
+// and "installation" are both the second, since under both the credential is
+// one file:
 //
 //  * "app" (the default) — `TokenMinter`: RS256 app JWTs and cached
 //    installation tokens. The JWT is backdated 60 s against clock skew and
@@ -17,6 +19,13 @@
 //    through the one gate, and the token reaches the daemon as that file,
 //    never through the environment or a command line (SECURITY.md, hard
 //    rule 3 as amended). Nothing here reads the environment.
+//    "installation" — the same `UserTokenSource` over the same file, holding
+//    an App installation's token that the install's host mints and writes
+//    (this mode exists only with `token_source = "host"`). The reading is
+//    identical; the identity is the App's bot, so reviews keep their APPROVE
+//    / REQUEST_CHANGES events. No `app_id`, `app.pem` or webhook secret is
+//    read: the key stays with the host, there is no App JWT here, and every
+//    JWT-authed App route is refused as it is under "user".
 //
 // `[github] token_source = "host"` changes who writes that file, and nothing
 // about how it is read: a host that manages the install writes it (atomically,
@@ -55,14 +64,17 @@ export interface GitHubCredential {
   appJwt?(): string | Promise<string>;
 }
 
-/** The person's token file under the secrets dir (`auth = "user"`). */
+/** The token file under the secrets dir: the person's token (`auth =
+ * "user"`), or a host-supplied installation token (`auth = "installation"`). */
 export const USER_TOKEN_FILE = "github_token";
 /** How long a read of the token file is trusted before it is read again. */
 export const USER_TOKEN_REREAD_MS = 5 * 60 * 1000;
 
-/** The person's own GitHub token, as its writer last wrote it: the host-side
+/** The token file's token, as its writer last wrote it: the host-side
  * refresher (`qcr github-token sync`), or under `token_source = "host"` the
- * host that manages the install. */
+ * host that manages the install (the person's token, or an App installation's).
+ * The token's length and alphabet are GitHub's and are not assumed here: it
+ * is one word, whatever its size. */
 export class UserTokenSource implements GitHubCredential {
   private token: string | null = null;
   private readAt = 0;
@@ -122,12 +134,18 @@ export class UserTokenSource implements GitHubCredential {
 }
 
 /** The credential `[github] auth` names: the App minter by default, the
- * person's token file under "user" (whoever `token_source` says writes it). */
+ * token file under "user" and "installation" (whoever `token_source` says
+ * writes it). The minter, the one reader of the App's key, is built under
+ * "app" alone. */
 export function githubCredential(
-  g: { auth?: "app" | "user"; token_source?: "self" | "host"; secrets_dir: string },
+  g: {
+    auth?: "app" | "user" | "installation";
+    token_source?: "self" | "host";
+    secrets_dir: string;
+  },
   fetchFn: FetchFn = fetch,
 ): GitHubCredential {
-  return g.auth === "user"
+  return g.auth === "user" || g.auth === "installation"
     ? new UserTokenSource(g.secrets_dir, Date.now, { hostManaged: g.token_source === "host" })
     : new TokenMinter(g.secrets_dir, fetchFn);
 }

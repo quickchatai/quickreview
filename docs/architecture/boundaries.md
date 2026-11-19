@@ -1,8 +1,10 @@
 # The gate and the boundaries
 
 The reviewer is an LLM driving a terminal inside a container that holds a
-GitHub credential: a GitHub App's by default, or under `[github] auth = "user"`
-the operator's own token (see "The credential" below). Nothing about that
+GitHub credential: a GitHub App's by default, under `[github] auth = "user"`
+the operator's own token, or under `auth = "installation"` an App
+installation's token that the install's host supplies (see "The credential"
+below). Nothing about that
 arrangement is safe on its own. What
 makes it safe is a small number of **deterministic boundaries written in
 plain code**, each of which the model cannot reason its way past because the
@@ -38,7 +40,10 @@ Related pages: [the exec boundary in full](../exec-boundary.md),
 
 **`packages/pi-plugin/src/githubAuth.ts`.** The adapter (`src/github.ts`)
 authenticates through one seam, `GitHubCredential`, which has exactly two
-implementations, picked by `[github] auth`:
+implementations and three modes, picked by `[github] auth` (hard rule 3 as
+amended: the App, the person's own token, and a host-supplied installation
+token). Two of the modes share an implementation, because under both the
+credential is one file:
 
 - **`"app"`** (the default; a missing key means it): `TokenMinter`, App JWT →
   installation token. This is the only route that takes webhooks.
@@ -60,6 +65,52 @@ implementations, picked by `[github] auth`:
   `src/hostmanaged.ts` (tests: `tests/hosttoken.test.ts`). On such an install
   `qcr github-token sync` refuses, and the local review route's credential
   chain is that file alone.
+
+- **`"installation"`**: `UserTokenSource` again, over the same file, holding
+  a GitHub App **installation's** token that the install's host mints and
+  writes. The mode exists only with `token_source = "host"`; config load
+  refuses it without the marker, requires `[github] app_slug`, and derives
+  `bot_login` as `<slug>[bot]` (a stated `bot_login` that differs is
+  refused). `TokenMinter`, the one reader of `app_id` and `app.pem`, is never
+  built: **no App private key is on the machine**, and the webhook secret is
+  not read either (`readWebhookSecret`, `src/daemon.ts`).
+
+What `"installation"` changes, and what it does not:
+
+- **The identity is an App's.** `identity.ts` asks one question, "is this the
+  person's own account?" (`isPersonMode`), and the answer is no. So reviews
+  post as APPROVE / REQUEST_CHANGES / COMMENT, own content is recognised by
+  login, the label search excludes the App's own pull requests by
+  `app_slug`, and own-thread matching accepts the bare App actor, all exactly
+  as under `"app"`. The COMMENT-only rule below is bound to the person
+  identity, never to "the token came from a file": `usesTokenFile` answers
+  the other question (is there an App key here?) and no posting rule reads it.
+- **Polling only, and no App JWT.** Config load refuses any `[ingress]
+  shape` but `"polling"`. The adapter refuses the App's own routes by the
+  mode itself, whatever credential object it was handed, and the webhook
+  self-heal is never started.
+- **The token is proved without the user endpoint.** An installation token is
+  refused by `GET /user`, so nothing sends it there: the proof is a read of
+  the configured repository, and who the token is comes from GraphQL's
+  `viewer` (`tokenOwnLogin`, `packages/pi-plugin/src/hosttoken.ts`). The
+  account step and `host setup` compare that login with `<slug>[bot]` and
+  refuse a mismatch in words, since a reviewer with the wrong `bot_login`
+  would never recognise its own reviews.
+- **Onboarding's third route.** The account step takes the mode from the
+  config its host wrote and records the route `installation`; the App-creation
+  and slug-reconcile steps are off on it, and the proof and verify steps read
+  the token file and sign no JWT. The route is never offered as an answer and
+  is refused on an install no host manages.
+- **The session token helper prints the file.** `scripts/mint-token.sh` reads
+  the marker first and prints the file's token whatever its length.
+- **The companion gets no GitHub token** (`src/tui/ghread.ts`): there is no
+  key to mint a down-scoped one from, and the reviewer's own token is never
+  copied to it.
+
+Not guaranteed under `"installation"`: the token's permissions, repository
+and lifetime are whatever the host minted. The reviewer asks for none of
+them and cannot narrow them; a host that wants practice mode enforced mints
+a read-only token until the reviewer goes live.
 
 What `"user"` changes, and what it does not:
 
