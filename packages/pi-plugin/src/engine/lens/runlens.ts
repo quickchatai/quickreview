@@ -310,6 +310,18 @@ interface Reading {
   failure: string | undefined;
 }
 
+/** Whether a session event is an assistant answer that asks for a tool: the
+ * model means to go on. */
+function asksForTool(event: unknown): boolean {
+  if (typeof event !== "object" || event === null) return false;
+  const e = event as { type?: unknown; message?: { role?: unknown; stopReason?: unknown } | null };
+  return (
+    e.type === "message_end" &&
+    e.message?.role === "assistant" &&
+    e.message.stopReason === "toolUse"
+  );
+}
+
 /** What the session's first request paid for and read from cache: the usage
  * of its first assistant message. Undefined when it has none, or when that
  * request failed or was cut: pi writes such a message with no usage at all,
@@ -707,6 +719,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       let repeat: ReturnType<typeof setInterval> | undefined;
       let turnSettled = false;
       const onStop = (): void => {
+        if (repeat !== undefined) return;
         const again = (): void => {
           if (turnSettled) {
             if (repeat !== undefined) clearInterval(repeat);
@@ -718,10 +731,23 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         repeat = setInterval(again, 100);
       };
       stop.addEventListener("abort", onStop, { once: true });
+      // A warm-up is one request: the pack is in the cache when its answer
+      // ends. A model that answers a pack with a tool call, not the one word
+      // it is asked for, would go on request after request to the time limit
+      // with its group's passes waiting, so it is ended at that answer.
+      let answered = false;
+      const unhear = s.subscribe((event) => {
+        if (answered || !asksForTool(event)) return;
+        answered = true;
+        onStop();
+      });
       try {
         await s.prompt(WARMUP_REPLY_TASK);
+      } catch (e) {
+        if (!answered) throw e;
       } finally {
         turnSettled = true;
+        unhear();
         stop.removeEventListener("abort", onStop);
         if (repeat !== undefined) clearInterval(repeat);
       }
@@ -730,9 +756,10 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       turn1 = read.turn1;
       // Only a warm-up whose request went through is what a lens can read
       // from cache: one that failed or was cut has no first turn (firstTurnOf).
-      if (turn1 !== undefined && !stop.aborted)
+      if (turn1 !== undefined && (answered || !stop.aborted))
         lease.warmedInput(turn1.input + turn1.cacheRead + (turn1.cacheWrite ?? 0));
-      if (stop.aborted) failure = "warm-up stopped after its time limit";
+      if (answered) failure = undefined;
+      else if (stop.aborted) failure = "warm-up stopped after its time limit";
       else if (read.reading.stopReason === "error" || read.reading.stopReason === "aborted")
         failure = read.reading.errorMessage ?? `warm-up ended ${read.reading.stopReason}`;
     } catch (e) {
