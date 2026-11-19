@@ -22,6 +22,7 @@
 // Seen in production at pi 1.3.0: cleanupSessionResources closes by session id
 // alone (groups disposed their sessions together, and no sibling lens failed after).
 import { CacheGrouper, type CacheSlot } from "./cache-group.js";
+import { prefixDifference, type PrefixDigest } from "./leaf-cache.js";
 
 /** The longest a packed group's lens waits for its warm-up. */
 export const WARMUP_WAIT_MS = 30_000;
@@ -31,6 +32,25 @@ export const WARMUP_REPLY_TASK = "Reply with the single word OK.";
 /** What the group disposes: a pi session, as far as the group knows it. */
 export interface Retired {
   dispose(): void;
+}
+
+/** A lens's first turn counts as read from its group's warm-up when it read at
+ * least this share of what the warm-up sent. */
+export const TURN1_HOT_SHARE = 0.9;
+
+/** What a cache key's sessions were seen to do, for as long as the runner
+ * lives: a late pass joins a key whose first members are long done. */
+export interface CacheKeyFacts {
+  /** The warm-up's first request, as sent. */
+  warmup?: PrefixDigest;
+  /** The tokens the warm-up's request held (uncached and cached). */
+  warmupInput?: number;
+  /** Passes of the key whose first turn was read. */
+  turn1: number;
+  /** Those that read the warm-up from cache (TURN1_HOT_SHARE). */
+  turn1Hot: number;
+  /** A pass's request did not extend the warm-up's, and this was said. */
+  differenceTold: boolean;
 }
 
 /** One group's shared state while any member is alive. */
@@ -53,7 +73,42 @@ export class CacheLease {
     readonly delayMs: number,
     private readonly life: Lifetime,
     private readonly leave: () => void,
+    private readonly facts: CacheKeyFacts,
   ) {}
+
+  /** The warm-up's first request, as it was sent. */
+  warmedWith(digest: PrefixDigest): void {
+    this.facts.warmup ??= digest;
+  }
+
+  /** How many tokens the warm-up's request held. */
+  warmedInput(tokens: number): void {
+    if (tokens > 0) this.facts.warmupInput ??= tokens;
+  }
+
+  /**
+   * The part in which a pass's first request does not extend the group's
+   * warm-up, the first time one does not; undefined when it does, when the
+   * warm-up's request is not known, and for every later pass of the key (one
+   * line per key says it).
+   */
+  differenceFromWarmup(digest: PrefixDigest): string | undefined {
+    if (this.facts.warmup === undefined || this.facts.differenceTold) return undefined;
+    const part = prefixDifference(this.facts.warmup, digest);
+    if (part !== undefined) this.facts.differenceTold = true;
+    return part;
+  }
+
+  /** A pass's first turn: what it paid for and what it read from cache. True
+   * when it read the warm-up; undefined when the warm-up's size is not known. */
+  firstTurn(turn: { input: number; cacheRead: number }): boolean | undefined {
+    const warm = this.facts.warmupInput;
+    if (warm === undefined) return undefined;
+    const hot = turn.cacheRead >= TURN1_HOT_SHARE * warm;
+    this.facts.turn1 += 1;
+    if (hot) this.facts.turn1Hot += 1;
+    return hot;
+  }
 
   /** A finished session, to be disposed with the group, never before. */
   keep(session: Retired): void {
@@ -108,6 +163,8 @@ export function cacheGroupKey(spec: string, tools: readonly string[] | undefined
 export class CacheGroups {
   private readonly grouper: CacheGrouper;
   private readonly lives = new Map<string, Lifetime>();
+  /** Per cache key, never pruned: a round has a handful of keys. */
+  private readonly facts = new Map<string, CacheKeyFacts>();
 
   /** `onDisposed` is told each time a group's sessions are disposed: the
    * production evidence the cleanupSessionResources pin rests on. */
@@ -130,9 +187,24 @@ export class CacheGroups {
     }
     life.members += 1;
     const held = life;
-    return new CacheLease(slot.key, slot.first, slot.delayMs, held, () =>
-      this.settle(slot.key, held),
+    let facts = this.facts.get(slot.key);
+    if (facts === undefined) {
+      facts = { turn1: 0, turn1Hot: 0, differenceTold: false };
+      this.facts.set(slot.key, facts);
+    }
+    return new CacheLease(
+      slot.key,
+      slot.first,
+      slot.delayMs,
+      held,
+      () => this.settle(slot.key, held),
+      facts,
     );
+  }
+
+  /** What the sessions of `key` were seen to do so far. */
+  factsOf(key: string): Readonly<CacheKeyFacts> | undefined {
+    return this.facts.get(key);
   }
 
   private settle(key: string, life: Lifetime): void {

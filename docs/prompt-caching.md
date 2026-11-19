@@ -29,6 +29,21 @@ The extend case is also how a child's own later turns are cached today.
 
 So a prefix the lenses share is reused only if each lens request extends a request that held just that prefix. Two lens requests that diverge after it do not share it.
 
+### Where the tool declarations sit
+
+Measured again on the request pi 1.4.0 builds, on `gpt-6-luna` and `gpt-6.1-sol`: a warm-up over a ~33k-token pack, then lens requests with a 1,500-word lens text each. pi 1.4.0 declares the tools in the request's input, as an `additional_tools` item at its head, and no longer in a top-level `tools` field.
+
+| Where the tool item is | What a lens request reads of the warm-up |
+|---|---|
+| Top-level `tools` (the older request) | 32,640 of ~35,300 tokens |
+| At the head of the input, ahead of the pack, in both | 33,024 of ~35,700 |
+| After the pack in both, ahead of the lens text | 33,024 of ~35,700 |
+| After the pack in the warm-up, after the lens text in the lens | **0** |
+
+The last row held whether the lenses were sent the instant the warm-up ended or 5 s later, alone or four at once, over SSE or the WebSocket. So two requests share a prefix only when their tool declarations come before the point where they part. A request whose declarations come after it reads nothing, not even the part the two do share.
+
+The last row is what the rewrite sent from the day pi moved the declarations into the input until it was fixed: the pack went ahead of the whole input, the tool item with it. Every lens of every packed group then paid for the pack again, and the warm-up bought nothing. The rewrite now leaves pi's leading tool declarations where they are and puts the pack after them.
+
 ## Shape
 
 **Cache groups** (`[engine] lens_cache_group`, default 5; `packages/pi-plugin/src/engine/lens/cache-group.ts`, `cache-run.ts`).
@@ -49,9 +64,13 @@ So a prefix the lenses share is reused only if each lens request extends a reque
   - every session of the group waits for the warm-up to finish, at most 30 s, before it starts.
 - **The lens extension.** `packages/pi-plugin/src/engine/lens/leaf-cache.ts`, loaded into a packed group's sessions as an in-process extension, rewrites each request:
   - the lens body comes out of pi's `<addendum>` block in `instructions`;
-  - the input becomes the pack (user role, fenced data), then the lens body as a **developer** message, then the task.
+  - the input becomes pi's tool declarations where pi put them (its head), then the pack (user role, fenced data), then the lens body as a **developer** message, then the task.
 
 The warm-up's request is exactly that shared prefix, and every lens request of the group extends it.
+
+Measured on the SDK runner at pi 1.4.0 (the real host and runner, a 36k-token pack): four lenses and one that started 20 s after them each read 35,584 tokens of their first request from cache and paid for about 2,500, on `gpt-6-luna` and on `gpt-6.1-sol`. The late lens joined the group's key and needed no warm-up of its own.
+
+**The bench runs the same path.** A bench case's pack sits beside its ledger, and the bench's lens config (`roundLensConfig`, `packages/pi-plugin/src/engine/lens/round-lens.ts`) carries it as `qcr review`'s does. Bench runs between 2026-10-19 and this change carried no pack in the prompt: their lenses read the pack file through a tool, so their cost figures are of a path no production round runs.
 
 The task files tell the lens that the pack is the first message of its conversation, and to read the pack file instead when it is not there.
 
@@ -88,6 +107,17 @@ The pack moves each lens's instructions from the system prompt into a developer 
 
 The pack was about 40% cheaper than the same code without it, case by case, with no loss of verdict agreement with the recorded rounds and no loss of recall on their blockers, so it is on by default. The pack-off arm cost more than the old code because the early pre-approval sweep then ran in rounds that ended in REQUEST_CHANGES; the early start was removed afterwards (docs/follow-up-rounds.md). The cache groups change nothing the model sees.
 
-## Debugging
+## Telemetry
 
-`prefixDigest` (`packages/pi-plugin/src/engine/lens/leaf-cache.ts`) gives a short hash of each request's prefix parts (`instructions`, `tools`, `input0…`). Comparing two lens sessions' digests shows where they diverge. A session's `turn1 cacheRead` shows whether it hit.
+Whether the cache hit is recorded for every run of a cache group, in the round's `lens-ledger.jsonl`:
+
+- `turn1`: the tokens the run's first request paid for (`input`) and read from cache (`cacheRead`). A warm-up's is its only request.
+- `group`: the cache group's key.
+- `prefix`: short hashes of the parts of the first request, as it was sent, for a packed group's runs. It holds `other`, `reasoning`, `instructions`, `tools`, one `inputN` per input item through the pack, `pack_at` and `tools_after_pack`. It never holds text.
+
+Two lines go to the run's log:
+
+- When a pass's first request does not extend its group's warm-up, one warning per group names the part: `other`, `instructions`, `tools`, `inputN`, `pack` (the request carries no pack) or `tool-declarations` (a tool is declared after the pack). The thinking level is not compared, because the passes of one group think at different levels and still share the prefix.
+- When a group's sessions are disposed: `cache group <key>: turn1_hot=<n>/<passes> warmup_input=<tokens>`. A first turn is hot when it read at least nine tenths of what the warm-up sent.
+
+`tests/pi-canary/canary-16-pack-first-prefix.test.ts` runs pi's own request builder through the rewrite, so a pi that changes what it puts in the input fails there and not on the bill.

@@ -20,7 +20,12 @@ import {
   resolveCacheStagger,
   resolveMaxConcurrency,
 } from "@quickchatai/pi-quickreview/src/engine/lens/env.js";
-import { packFirstPayload } from "@quickchatai/pi-quickreview/src/engine/lens/leaf-cache.js";
+import {
+  packFirstPayload,
+  prefixDifference,
+  prefixDigest,
+  renderPrefixDigest,
+} from "@quickchatai/pi-quickreview/src/engine/lens/leaf-cache.js";
 import {
   CHARS_PER_TOKEN,
   mustSeeCandidates,
@@ -128,6 +133,46 @@ describe("the pack-first payload (child side)", () => {
     expect(warm.input as unknown[]).toHaveLength(2);
   });
 
+  // pi declares the tools in the input, at its head (pi-ai's
+  // `additional_tools` item). The backend shares a prefix between two requests
+  // only as far as those declarations sit in one place: with the pack ahead of
+  // them they came after the pack in a warm-up and after the lens body in a
+  // lens, and every lens of a group read 0 tokens of its warm-up.
+  // MUTATION: put the pack ahead of the whole input in packFirstPayload
+  // (`[pack, ...input]`, both forms) - this fails.
+  it("pi's tool declarations stay at the head, so a lens repeats its warm-up up to the end of the pack", () => {
+    const tools = {
+      type: "additional_tools",
+      role: "developer",
+      tools: [{ type: "function", name: "read" }],
+    };
+    const task = {
+      role: "user",
+      content: [{ type: "input_text", text: "Task: Task file: /x.md." }],
+    };
+    const withTools = (instructions: string) => ({
+      ...payload(instructions),
+      input: [tools, task],
+    });
+    const pack = { role: "user", content: [{ type: "input_text", text: "PACK" }] };
+    const warm = packFirstPayload(
+      withTools(`${base}\n\n<cwd>\n/opt/quickreview/sandbox\n</cwd>`),
+      "",
+      "PACK",
+    )!;
+    const lensed = packFirstPayload(withTools(piInstructions(lens)), lens, "PACK")!;
+    expect(warm.input).toEqual([tools, pack, task]);
+    expect(lensed.input).toEqual([
+      tools,
+      pack,
+      { role: "developer", content: [{ type: "input_text", text: lens }] },
+      task,
+    ]);
+    expect(
+      prefixDifference(prefixDigest(warm, "PACK")!, prefixDigest(lensed, "PACK")!),
+    ).toBeUndefined();
+  });
+
   it("a body appended bare at the end is lifted out too", () => {
     expect(packFirstPayload(payload(`${base}\n\n${lens}\n`), lens, "PACK")!.instructions).toBe(
       base,
@@ -160,6 +205,70 @@ describe("the pack-first payload (child side)", () => {
     });
     expect(packFirstPayload(inInput(piInstructions(lens)), lens, "PACK")).toBeUndefined();
     expect(packFirstPayload(inInput(base), "", "PACK")).toBeUndefined();
+  });
+});
+
+describe("the request digest (what a warm-up and its lenses are compared by)", () => {
+  const pack = { role: "user", content: [{ type: "input_text", text: "PACK TEXT" }] };
+  const task = (t: string) => ({ role: "user", content: [{ type: "input_text", text: t }] });
+  const request = (over: Record<string, unknown> = {}) => ({
+    model: "m",
+    instructions: "base",
+    input: [pack, task("Task: Reply with the single word OK.")],
+    prompt_cache_key: "group",
+    reasoning: { effort: "high" },
+    ...over,
+  });
+  const digest = (over: Record<string, unknown> = {}) => prefixDigest(request(over), "PACK TEXT")!;
+
+  it("a lens that extends the warm-up differs in nothing, whatever follows the pack", () => {
+    const lens = digest({
+      input: [
+        pack,
+        { role: "developer", content: [{ type: "input_text", text: "lens" }] },
+        task("Task: x"),
+      ],
+    });
+    expect(lens.packAt).toBe(0);
+    expect(prefixDifference(digest(), lens)).toBeUndefined();
+  });
+
+  // The passes of one cache group think at different levels (the group's key
+  // leaves the level out), so a digest that folded `reasoning` into the rest
+  // would cry wolf on most groups.
+  // MUTATION: drop "reasoning" from the keys prefixDigest leaves out of
+  // `other` - this fails.
+  it("the thinking level alone is no difference, and neither is the cache key", () => {
+    const lens = digest({ reasoning: { effort: "medium" }, prompt_cache_key: "another" });
+    expect(lens.reasoning).not.toBe(digest().reasoning);
+    expect(prefixDifference(digest(), lens)).toBeUndefined();
+  });
+
+  it("names the first part a lens does not repeat", () => {
+    expect(prefixDifference(digest(), digest({ instructions: "other base" }))).toBe("instructions");
+    expect(prefixDifference(digest(), digest({ tools: [{ name: "read" }] }))).toBe("tools");
+    expect(prefixDifference(digest(), digest({ text: { verbosity: "high" } }))).toBe("other");
+    // Something ahead of the pack that the warm-up did not send.
+    const displaced = digest({ input: [task("lens body first"), pack, task("Task: x")] });
+    expect(displaced.packAt).toBe(1);
+    expect(prefixDifference(digest(), displaced)).toBe("input0");
+    // The tools declared after the pack: the prefix through the pack is the
+    // same and the backend still shares none of it.
+    const toolsLate = digest({
+      input: [pack, task("lens body"), { type: "additional_tools", tools: [] }, task("Task: x")],
+    });
+    expect(toolsLate.toolsAfterPack).toBe(1);
+    expect(prefixDifference(digest(), toolsLate)).toBe("tool-declarations");
+    // A request that never got the pack.
+    expect(prefixDifference(digest(), digest({ input: [task("Task: x")] }))).toBe("pack");
+  });
+
+  it("holds hashes only: no text of the pack, the instructions or the task", () => {
+    const line = renderPrefixDigest(digest());
+    expect(line).toMatch(
+      /^other=[0-9a-f]{10} reasoning=[0-9a-f]{10} instructions=[0-9a-f]{10} tools=[0-9a-f]{10} input0=[0-9a-f]{10} pack_at=0 tools_after_pack=0$/,
+    );
+    expect(prefixDigest(null)).toBeUndefined();
   });
 });
 

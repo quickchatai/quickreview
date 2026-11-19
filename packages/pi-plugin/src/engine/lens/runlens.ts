@@ -65,6 +65,8 @@ import {
   isLensTool,
   ledgerLineOf,
   serializeLedgerLine,
+  type LensCacheFacts,
+  type LensFirstTurn,
   type LensMessage,
   type LensResult,
   type LensUsage,
@@ -88,7 +90,7 @@ import {
 } from "./cache-run.js";
 import { LensActivityTracker, type LensActivity } from "./activity.js";
 import { ProviderRetryWatch, passTimeoutMessage, runUnderDeadline } from "./deadline.js";
-import { isPackFirstApi, leafCache } from "./leaf-cache.js";
+import { isPackFirstApi, leafCache, renderPrefixDigest, type PrefixDigest } from "./leaf-cache.js";
 import type { AgentRegistry, LensAgent } from "./registry.js";
 import { localPermits, type Permit, type Permits } from "./permits.js";
 import { WeightedSemaphore } from "./semaphore.js";
@@ -302,9 +304,24 @@ interface Reading {
   failure: string | undefined;
 }
 
+/** What the session's first request paid for and read from cache: the usage
+ * of its first assistant message. Undefined when it has none. */
+function firstTurnOf(messages: readonly LensMessage[]): LensFirstTurn | undefined {
+  for (const m of messages) {
+    if (m.role !== "assistant") continue;
+    const usage = m["usage"];
+    if (typeof usage !== "object" || usage === null) return undefined;
+    const u = usage as Record<string, unknown>;
+    const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    return { input: n(u["input"]), cacheRead: n(u["cacheRead"]) };
+  }
+  return undefined;
+}
+
 function readSession(session: AgentSession): {
   reading: Omit<Reading, "failure">;
   usage: LensUsage;
+  turn1: LensFirstTurn | undefined;
 } {
   // The system message carries the whole prompt; a native child's stream never
   // had it, and no consumer reads it.
@@ -334,6 +351,7 @@ function readSession(session: AgentSession): {
       cacheRead: stats.tokens.cacheRead,
       cost: stats.cost,
     },
+    turn1: firstTurnOf(messages),
   };
 }
 
@@ -368,9 +386,14 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
   const cache = config.cache !== undefined && config.cache.size >= 1 ? config.cache : undefined;
   const groups =
     cache !== undefined
-      ? new CacheGroups(cache.size, cache.staggerMs, undefined, (key, n) =>
-          debug(`pin-evidence cache-group-disposed key=${key} sessions=${n}`),
-        )
+      ? new CacheGroups(cache.size, cache.staggerMs, undefined, (key, n) => {
+          debug(`pin-evidence cache-group-disposed key=${key} sessions=${n}`);
+          const facts = groups?.factsOf(key);
+          if (facts?.warmupInput !== undefined)
+            debug(
+              `cache group ${key}: turn1_hot=${facts.turn1Hot}/${facts.turn1} warmup_input=${facts.warmupInput}`,
+            );
+        })
       : undefined;
   const sessionGapMs = config.sessionGapMs ?? DEFAULT_SESSION_GAP_MS;
 
@@ -488,17 +511,25 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     }
   };
 
+  /** What a run in a cache group was seen to do, by run id, until its ledger
+   * line is written. */
+  const cacheFacts = new Map<string, LensCacheFacts>();
+
   const record = (
     id: string,
     result: LensResult,
     startedAtMs: number,
     kind: "lens" | "warmup" = "lens",
   ): void => {
+    const facts = cacheFacts.get(id);
+    cacheFacts.delete(id);
     try {
       mkdirSync(dirname(config.ledgerPath), { recursive: true });
       appendFileSync(
         config.ledgerPath,
-        serializeLedgerLine(ledgerLineOf(kind, id, result, { endedAtMs: now(), startedAtMs })),
+        serializeLedgerLine(
+          ledgerLineOf(kind, id, result, { endedAtMs: now(), startedAtMs }, facts),
+        ),
       );
     } catch (e) {
       warn(`ledger append failed for ${id}: ${String(e)}`);
@@ -628,6 +659,8 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     let session: AgentSession | undefined;
     let failure: string | undefined;
     let unexpected = false;
+    let sent: PrefixDigest | undefined;
+    let turn1: LensFirstTurn | undefined;
     try {
       await awaitCreationSlot(config.host, sessionGapMs, stop);
       stop.throwIfAborted();
@@ -635,7 +668,15 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         ...baseSpec(agent, on, [
           config.bashGuard,
           ...config.leafTools(agent),
-          leafCache({ pack, cacheKey: lease.key, onUnexpected: () => (unexpected = true) }),
+          leafCache({
+            pack,
+            cacheKey: lease.key,
+            onUnexpected: () => (unexpected = true),
+            onFirstRequest: (digest) => {
+              sent = digest;
+              lease.warmedWith(digest);
+            },
+          }),
         ]),
         sessionId: lease.key,
         onExtensionError: (e) => config.onExtensionError?.("warmup", id, e),
@@ -668,6 +709,10 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       }
       const read = readSession(s);
       spent = addUsage(spent, read.usage);
+      turn1 = read.turn1;
+      // Only a warm-up that ended well is what a lens can read from cache.
+      if (turn1 !== undefined && !stop.aborted && read.reading.stopReason !== "error")
+        lease.warmedInput(turn1.input + turn1.cacheRead);
       if (stop.aborted) failure = "warm-up stopped after its time limit";
       else if (read.reading.stopReason === "error" || read.reading.stopReason === "aborted")
         failure = read.reading.errorMessage ?? `warm-up ended ${read.reading.stopReason}`;
@@ -682,6 +727,11 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       }
     }
     if (unexpected) warn(`warm-up ${id}: request shape not as expected; sent unchanged`);
+    cacheFacts.set(id, {
+      group: lease.key,
+      ...(turn1 !== undefined ? { turn1 } : {}),
+      ...(sent !== undefined ? { prefix: renderPrefixDigest(sent) } : {}),
+    });
     record(
       id,
       {
@@ -769,6 +819,10 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     if (thinking !== null && !THINKING_LEVEL_SET.has(thinking))
       return fail(`agent ${agent.name} asks for an unknown thinking level "${thinking}"`);
 
+    /** What the pass's ledger line says of its cache group. */
+    const seen: LensCacheFacts = lease !== undefined ? { group: lease.key } : {};
+    cacheFacts.set(id, seen);
+
     /** Dispose a finished session: now, or with its cache group, which shares
      * its id and so its transports. */
     const retire = (s: AgentSession): void => {
@@ -799,6 +853,14 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
                       warn(
                         `lens ${agent.name} ${id}: request shape not as expected; sent unchanged`,
                       ),
+                    onFirstRequest: (digest) => {
+                      seen.prefix ??= renderPrefixDigest(digest);
+                      const part = lease.differenceFromWarmup(digest);
+                      if (part !== undefined)
+                        warn(
+                          `cache group ${lease.key}: the request of ${agent.name} does not extend its warm-up's (it differs in ${part}), so its lenses read nothing of the warm-up from cache`,
+                        );
+                    },
                   }),
                 ]
               : []),
@@ -862,8 +924,13 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         const failure = await turn;
         signal.removeEventListener("abort", onAbort);
         if (repeat !== undefined) clearInterval(repeat);
-        const { reading, usage } = readSession(session);
+        const { reading, usage, turn1 } = readSession(session);
         spent = addUsage(spent, usage);
+        // The pass's first turn is its first attempt's.
+        if (turn1 !== undefined && seen.turn1 === undefined) {
+          seen.turn1 = turn1;
+          if (pack !== undefined) lease?.firstTurn(turn1);
+        }
         retire(session);
         leave(sessionId);
         entered = false;

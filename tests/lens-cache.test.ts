@@ -164,6 +164,10 @@ function codexLike(
   seen: Seen[],
   transport: FakeTransport,
   work: (s: Seen, o: SimpleStreamOptions | undefined) => Promise<void> = async () => {},
+  /** Changes to the request before pi's hook sees it. */
+  dress: {
+    raw?: (raw: Record<string, unknown>, task: string) => Record<string, unknown>;
+  } = {},
 ) {
   return async (
     c: TranscriptContext,
@@ -185,7 +189,7 @@ function codexLike(
           x.sessionId === o?.sessionId &&
           JSON.stringify(x.messages).includes(JSON.stringify(task).slice(1, -1)),
       )?.systemPrompt ?? "";
-    const raw = {
+    const built: Record<string, unknown> = {
       model: "gpt-6.1-sol",
       instructions: system,
       input: c.messages.map((m) => ({
@@ -194,6 +198,7 @@ function codexLike(
       })),
       prompt_cache_key: o?.sessionId,
     };
+    const raw = dress.raw?.(built, task) ?? built;
     const hooked = (await o?.onPayload?.(raw, model as never)) ?? raw;
     const entry: Seen = {
       sessionId: o?.sessionId,
@@ -294,6 +299,98 @@ describe("[cache groups] one shared session id per group", () => {
     expect(seen.every((s) => !JSON.stringify(s.payload["input"]).includes("PR CONTEXT"))).toBe(
       true,
     );
+  });
+});
+
+describe("[cache telemetry] what a packed group's runs say of their first request", () => {
+  const packed = (over: Partial<LensRunConfig> = {}) =>
+    config({ cache: { size: 3, staggerMs: 0, pack: PACK, warmupWaitMs: 5_000 }, ...over });
+  const isWarmup = (task: string): boolean => task.includes(WARMUP_REPLY_TASK);
+
+  // MUTATION: leave `cacheFacts` unset in attemptsOf and warmUp (runlens.ts) —
+  // the lines carry no group, first turn or hashes; this fails.
+  it("every ledger line carries its group, its first turn and hashes of its first request, never the pack", async () => {
+    respondWith(3, codexLike([], new FakeTransport()));
+    const said: string[] = [];
+    const runner = createLensRunner(packed({ debug: (m) => said.push(m) }));
+    await Promise.all(["pass-a", "pass-b"].map((agent) => runner.run({ agent, task: agent })));
+    const lines = ledger();
+    expect(lines.map((l) => l.kind).sort()).toEqual(["lens", "lens", "warmup"]);
+    const warm = lines.find((l) => l.kind === "warmup")!;
+    expect(warm.group).toMatch(/^[0-9a-f-]{36}$/);
+    for (const line of lines) {
+      expect(line.group).toBe(warm.group);
+      expect(line.prefix).toMatch(/^other=[0-9a-f]{10} reasoning=[0-9a-f]{10} instructions=/);
+      expect(line.prefix).toMatch(/ pack_at=0 tools_after_pack=0$/);
+      // The faux provider's own count of the request: what the first turn sent.
+      expect(line.turn1!.input + line.turn1!.cacheRead).toBeGreaterThan(0);
+    }
+    const text = readFileSync(join(dir, "round", "lens-ledger.jsonl"), "utf8");
+    expect(text).not.toContain("PR CONTEXT PACK");
+    expect(text).not.toContain("Report findings.");
+    // And the group's own count, once its sessions are disposed.
+    const size = warm.turn1!.input + warm.turn1!.cacheRead;
+    expect(
+      said.filter((m) =>
+        new RegExp(`^cache group ${warm.group}: turn1_hot=\\d/2 warmup_input=${size}$`).test(m),
+      ),
+    ).toHaveLength(1);
+  });
+
+  // MUTATION: count every first turn as hot in CacheLease.firstTurn
+  // (cache-run.ts) — the second pass counts too; this fails.
+  it("CacheGroups: a first turn is hot when it read nine tenths of what the warm-up sent", () => {
+    const groups = new CacheGroups(3, 0, () => "k");
+    const warm = groups.join("m", 0);
+    // Before the warm-up's size is known nothing is counted.
+    expect(warm.firstTurn({ input: 10, cacheRead: 990 })).toBeUndefined();
+    warm.warmedInput(1000);
+    expect(warm.firstTurn({ input: 60, cacheRead: 940 })).toBe(true);
+    expect(warm.firstTurn({ input: 1100, cacheRead: 0 })).toBe(false);
+    expect(warm.firstTurn({ input: 200, cacheRead: 899 })).toBe(false);
+    warm.release();
+    // A late pass joins the key after its first members are gone: the key's
+    // facts are still there.
+    const late = groups.join("m", 1);
+    expect(late.key).toBe("k");
+    expect(late.firstTurn({ input: 50, cacheRead: 960 })).toBe(true);
+    expect(groups.factsOf("k")).toMatchObject({ turn1: 4, turn1Hot: 2, warmupInput: 1000 });
+  });
+
+  // The passes' requests must repeat the warm-up's up to the end of the pack;
+  // a pi or a host that makes them differ leaves every lens cold, silently.
+  // MUTATION: never call lease.differenceFromWarmup in attemptsOf (runlens.ts)
+  // — no warning; this fails.
+  it("a pass whose request does not extend the warm-up's is said once per group, with the part", async () => {
+    respondWith(
+      3,
+      codexLike([], new FakeTransport(), undefined, {
+        raw: (raw, task) => (isWarmup(task) ? raw : { ...raw, text: { verbosity: "high" } }),
+      }),
+    );
+    const warnings: string[] = [];
+    const runner = createLensRunner(packed({ warn: (m) => warnings.push(m), debug: () => {} }));
+    await Promise.all(["pass-a", "pass-b"].map((agent) => runner.run({ agent, task: agent })));
+    const told = warnings.filter((m) => m.includes("does not extend its warm-up"));
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatch(
+      /^cache group \S+: the request of pass-[ab] does not extend its warm-up's \(it differs in other\)/,
+    );
+  });
+
+  // The passes of one group think at different levels.
+  // MUTATION: compare `reasoning` in prefixDifference (leaf-cache.ts) — this fails.
+  it("passes that differ from the warm-up in their thinking level alone are not said to differ", async () => {
+    respondWith(
+      3,
+      codexLike([], new FakeTransport(), undefined, {
+        raw: (raw, task) => ({ ...raw, reasoning: { effort: isWarmup(task) ? "high" : "medium" } }),
+      }),
+    );
+    const warnings: string[] = [];
+    const runner = createLensRunner(packed({ warn: (m) => warnings.push(m), debug: () => {} }));
+    await Promise.all(["pass-a", "pass-b"].map((agent) => runner.run({ agent, task: agent })));
+    expect(warnings).toEqual([]);
   });
 });
 
