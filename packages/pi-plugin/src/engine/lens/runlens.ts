@@ -90,7 +90,13 @@ import {
 } from "./cache-run.js";
 import { LensActivityTracker, type LensActivity } from "./activity.js";
 import { ProviderRetryWatch, passTimeoutMessage, runUnderDeadline } from "./deadline.js";
-import { isPackFirstApi, leafCache, renderPrefixDigest, type PrefixDigest } from "./leaf-cache.js";
+import {
+  leafCache,
+  packFirstApplies,
+  renderPrefixDigest,
+  type PackModel,
+  type PrefixDigest,
+} from "./leaf-cache.js";
 import type { AgentRegistry, LensAgent } from "./registry.js";
 import { localPermits, type Permit, type Permits } from "./permits.js";
 import { WeightedSemaphore } from "./semaphore.js";
@@ -313,7 +319,12 @@ function firstTurnOf(messages: readonly LensMessage[]): LensFirstTurn | undefine
     if (typeof usage !== "object" || usage === null) return undefined;
     const u = usage as Record<string, unknown>;
     const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-    return { input: n(u["input"]), cacheRead: n(u["cacheRead"]) };
+    const written = n(u["cacheWrite"]);
+    return {
+      input: n(u["input"]),
+      cacheRead: n(u["cacheRead"]),
+      ...(written > 0 ? { cacheWrite: written } : {}),
+    };
   }
   return undefined;
 }
@@ -440,30 +451,30 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     (agent !== undefined ? routeSpec : undefined) ??
     "unknown";
 
-  /** The API the sessions of `on` will speak, or undefined when the host
-   * cannot say before a session exists. It follows the host's own resolution
-   * (pisdk.ts `resolveModel`): no model is the host's route, as the runner
-   * already holds it; a named provider with a credential is itself; one
-   * without runs on the credentialed provider that serves the same id, when
-   * that is not a guess. An id the host's catalog does not hold, a move the
-   * host would settle by the remembered provider and a host that throws all
-   * answer undefined: the group is then not packed, which is right on every
-   * API. */
-  const apiOf = async (on: PassModel): Promise<string | undefined> => {
+  /** The model the sessions of `on` will run on, as the host's catalog holds
+   * it, or undefined when the host cannot say before a session exists. It
+   * follows the host's own resolution (pisdk.ts `resolveModel`): no model is
+   * the host's route, as the runner already holds it; a named provider with a
+   * credential is itself; one without runs on the credentialed provider that
+   * serves the same id, when that is not a guess. An id the host's catalog
+   * does not hold, a move the host would settle by the remembered provider
+   * and a host that throws all answer undefined: the group is then not
+   * packed, which is right on every API. */
+  const modelOf = async (on: PassModel): Promise<PackModel | undefined> => {
     try {
       const { host } = config;
       if (on.model === undefined)
         return routeModel !== undefined
-          ? host.modelRuntime.getModel(routeModel.provider, routeModel.id)?.api
+          ? host.modelRuntime.getModel(routeModel.provider, routeModel.id)
           : undefined;
       const named = splitProvider(on.model);
       if (named === null) return undefined;
       const inventory = await host.inventory();
       if (inventory.some((e) => e.provider === named.provider))
-        return host.modelRuntime.getModel(named.provider, named.rest)?.api;
+        return host.modelRuntime.getModel(named.provider, named.rest);
       const move = moveToCredentialed({ provider: named.provider, id: named.rest }, inventory);
       return move !== null && "provider" in move
-        ? host.modelRuntime.getModel(move.provider, named.rest)?.api
+        ? host.modelRuntime.getModel(move.provider, named.rest)
         : undefined;
     } catch {
       return undefined;
@@ -477,7 +488,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
   const packedOn = (on: PassModel): Promise<boolean> => {
     let known = packedSpecs.get(on.spec);
     if (known === undefined) {
-      known = apiOf(on).then(isPackFirstApi);
+      known = modelOf(on).then(packFirstApplies);
       packedSpecs.set(on.spec, known);
     }
     return known;
@@ -712,7 +723,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       turn1 = read.turn1;
       // Only a warm-up that ended well is what a lens can read from cache.
       if (turn1 !== undefined && !stop.aborted && read.reading.stopReason !== "error")
-        lease.warmedInput(turn1.input + turn1.cacheRead);
+        lease.warmedInput(turn1.input + turn1.cacheRead + (turn1.cacheWrite ?? 0));
       if (stop.aborted) failure = "warm-up stopped after its time limit";
       else if (read.reading.stopReason === "error" || read.reading.stopReason === "aborted")
         failure = read.reading.errorMessage ?? `warm-up ended ${read.reading.stopReason}`;

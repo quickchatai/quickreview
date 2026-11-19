@@ -76,24 +76,47 @@ The task files tell the lens that the pack is the first message of its conversat
 
 Measured end to end (real pi 1.0.0 parent, the retired native glue): two lenses with different instructions over a 24k-token pack. Each paid ~1.2k uncached tokens and read 23,808 from cache, against ~25k uncached each without it.
 
-## Which APIs the pack applies to
+## Which models the pack applies to
 
-The warm-up and the rewrite build the request of one API family, so they are an optimisation for that family and nothing more. The family is keyed on the model's API as pi names it (a model's `api`), never on a provider or a model name. `PACK_FIRST_APIS` in `packages/pi-plugin/src/engine/lens/leaf-cache.ts` holds it:
+The warm-up and the rewrite build the request of two API families, so they are an optimisation for those families and nothing more. A family is keyed on the model's API as pi names it (a model's `api`), never on a provider or a model name. `PACK_FIRST_APIS` in `packages/pi-plugin/src/engine/lens/leaf-cache.ts` holds them:
 
 - `openai-codex-responses`
+- `anthropic-messages`, on a model that takes a system message after the first user message (pi's `supportsMidConvoSystemMessages`)
 
-A cache group is **packed** when the round has a pack and the model the group's sessions run on has that as its API. The model is the one the session really gets: the route's for a lens that names none, and the credentialed provider's when a pinned provider has no credential and another serves the same id. A group whose model the runner cannot name before a session exists is not packed.
+A cache group is **packed** when the round has a pack and the pack applies to the model the group's sessions run on (`packFirstApplies`). The model is the one the session really gets: the route's for a lens that names none, and the credentialed provider's when a pinned provider has no credential and another serves the same id. A group whose model the runner cannot name before a session exists is not packed.
 
-Inside the family the rewrite is fail-open. It expects the system prompt as a string in `instructions` and the conversation in `input`, which is the request pi builds for `openai-codex-responses`. A request of another shape is sent as pi built it, and the runner writes one warning line for that session. At pi 1.4.0 the `openai-responses` and `azure-openai-responses` requests carry the system prompt as the first input message, so the rewrite has nothing to move there: those two APIs are outside the family, and a group on one runs as any other API's does.
+**The Responses request** (`openai-codex-responses`) is laid out as the section above says: tool declarations, the pack, the lens body as a developer message, the task.
 
-A group on any other API (`openai-responses`, `azure-openai-responses`, `anthropic-messages`, `openai-completions`, `google-generative-ai` and the rest):
+**The Messages request** (`anthropic-messages`) has no developer role, and its cache reads a prefix in the order tools, system prompt, messages. So:
+
+- the lens body comes out of the system prompt, which is then the same for every lens of the round;
+- the first user message opens with the pack, as a block of its own that ends on a cache breakpoint (the one pi gave the system prompt, with its lifetime);
+- the lens body follows that message as a **system message** inside the conversation. It keeps the operator's voice there. The pack, which holds text a pull request wrote, stays in the user's.
+
+A request may carry four cache breakpoints. pi marks the tools, the system prompt and the last message; the pack's is the fourth. Where pi marked two system blocks (a login's request), the earlier one gives way: the last covers both. A request pi marked nowhere has caching off, and is sent as it came.
+
+A model that takes no system message there (an older one) is not packed: the lens body would have to stay ahead of the pack, where it differs per lens, and no lens could read the warm-up.
+
+Measured on `claude-haiku-5-5`, on the real runner, over a pack of about 54,000 tokens (the same text is about 36,000 tokens on GPT):
+
+| | Without the pack in the prompt | Pack first |
+|---|---|---|
+| What a lens does with the pack | reads the file through a tool, in three reads, and writes it into a cache of its own | reads 55,982 of ~59,400 tokens of its first request from the group's cache |
+| Requests before a lens starts its work | 4 | 1 |
+| Cost, as measured | three lenses: $0.026 | four lenses and the warm-up: $0.016 |
+
+A lens that started 20 s after the others joined the group's key and read the same cache. Lenses that think at different levels share the pack: pi sends the level as a marker after the first user message, behind the pack.
+
+Inside the family the rewrite is fail-open. It expects the system prompt as a string in `instructions` and the conversation in `input`, or the system prompt as the blocks of `system` and the conversation in `messages`. A request of another shape is sent as pi built it, and the runner writes one warning line for that session. At pi 1.4.0 the `openai-responses` and `azure-openai-responses` requests carry the system prompt as the first input message, so the rewrite has nothing to move there: those two APIs are outside the family, and a group on one runs as any other API's does.
+
+A group on any other API (`openai-responses`, `azure-openai-responses`, `openai-completions`, `google-generative-ai` and the rest), or on a model of the family the pack does not apply to:
 - gets no warm-up, no 30 s wait and no rewrite;
 - starts its later sessions after the stagger, as a round without a pack does;
 - sends each lens's request as pi built it. The lens then reads the pack file, which its task names for exactly this case.
 
 The pack file is written for every round with `context_pack = "pack-first"`, whatever the model. Only what the runner does with it differs.
 
-The savings on this page were measured on GPT-6.1 Sol only, through `openai-codex-responses`. Nothing here was measured on another model or another API. The measured cost estimate (`packages/pi-plugin/src/measured.ts`) is shown for the same family and no other, because the pack is what its token mix rests on; a test holds its API list equal to `PACK_FIRST_APIS`. So the measured model reached through another API (an API key on `openai-responses`, Azure, a gateway) shows no estimate and runs under the spend limit of an unmeasured model ([docs/llm-setup.md](llm-setup.md)).
+The savings in "The measured run" below were measured on GPT-6.1 Sol only, through `openai-codex-responses`; the cache reads above are all that was measured on Claude. The measured cost estimate (`packages/pi-plugin/src/measured.ts`) is shown for the API it was fitted on and no other: the pack is what its token mix rests on, so a test holds its API list inside `PACK_FIRST_APIS`, and an API joins it only when reviews on it were recorded and fitted. So the measured model reached through another API (an API key on `openai-responses`, Azure, a gateway) shows no estimate and runs under the spend limit of an unmeasured model ([docs/llm-setup.md](llm-setup.md)).
 
 ## The measured run
 
@@ -111,13 +134,13 @@ The pack was about 40% cheaper than the same code without it, case by case, with
 
 Whether the cache hit is recorded for every run of a cache group, in the round's `lens-ledger.jsonl`:
 
-- `turn1`: the tokens the run's first request paid for (`input`) and read from cache (`cacheRead`). A warm-up's is its only request.
+- `turn1`: the tokens the run's first request paid for in full (`input`), read from cache (`cacheRead`) and, where the provider bills it apart, wrote to the cache (`cacheWrite`). A warm-up's is its only request.
 - `group`: the cache group's key.
 - `prefix`: short hashes of the parts of the first request, as it was sent, for a packed group's runs. It holds `other`, `reasoning`, `instructions`, `tools`, one `inputN` per input item through the pack, `pack_at` and `tools_after_pack`. It never holds text.
 
 Two lines go to the run's log:
 
 - When a pass's first request does not extend its group's warm-up, one warning per group names the part: `other`, `instructions`, `tools`, `inputN`, `pack` (the request carries no pack) or `tool-declarations` (a tool is declared after the pack). The thinking level is not compared, because the passes of one group think at different levels and still share the prefix.
-- When a group's sessions are disposed: `cache group <key>: turn1_hot=<n>/<passes> warmup_input=<tokens>`. A first turn is hot when it read at least nine tenths of what the warm-up sent.
+- When a group's sessions are disposed: `cache group <key>: turn1_hot=<n>/<passes> warmup_input=<tokens>`. A first turn is hot when it read at least nine tenths of what the warm-up sent (all of its request: what it paid for, read and wrote).
 
 `tests/pi-canary/canary-16-pack-first-prefix.test.ts` runs pi's own request builder through the rewrite, so a pi that changes what it puts in the input fails there and not on the bill.

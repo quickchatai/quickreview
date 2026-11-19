@@ -95,10 +95,13 @@ export interface LensLedgerLine {
   prefix?: string;
 }
 
-/** A run's first request, in tokens. */
+/** A run's first request, in tokens: what it paid for in full (`input`),
+ * what it read from cache, and, where the provider bills writing to the cache
+ * apart, what it wrote there. The three add up to the request. */
 export interface LensFirstTurn {
   input: number;
   cacheRead: number;
+  cacheWrite?: number;
 }
 
 /** What a run in a cache group adds to its ledger line. */
@@ -131,6 +134,18 @@ export function lensUsageOf(value: unknown): LensUsage {
     output: finite(u?.["output"]),
     cacheRead: finite(u?.["cacheRead"]),
     cost: costOf(u?.["cost"]),
+  };
+}
+
+/** A first turn as a ledger line holds it: finite numbers, the cache write
+ * only when there was one. */
+function firstTurnFrom(value: unknown): LensFirstTurn {
+  const t = record(value);
+  const written = finite(t?.["cacheWrite"]);
+  return {
+    input: finite(t?.["input"]),
+    cacheRead: finite(t?.["cacheRead"]),
+    ...(written > 0 ? { cacheWrite: written } : {}),
   };
 }
 
@@ -192,9 +207,7 @@ export function ledgerLineOf(
     ...(result.stopReason !== undefined ? { stopReason: result.stopReason } : {}),
     ...(result.errorMessage !== undefined ? { errorMessage: result.errorMessage } : {}),
     ...(result.timedOut !== undefined ? { timedOut: result.timedOut } : {}),
-    ...(cache.turn1 !== undefined
-      ? { turn1: { input: finite(cache.turn1.input), cacheRead: finite(cache.turn1.cacheRead) } }
-      : {}),
+    ...(cache.turn1 !== undefined ? { turn1: firstTurnFrom(cache.turn1) } : {}),
     ...(cache.group !== undefined ? { group: cache.group } : {}),
     ...(cache.prefix !== undefined ? { prefix: cache.prefix } : {}),
   };
@@ -228,14 +241,7 @@ export function ledgerLineFrom(value: unknown): LensLedgerLine | null {
     ...(typeof r["stopReason"] === "string" ? { stopReason: r["stopReason"] } : {}),
     ...(typeof r["errorMessage"] === "string" ? { errorMessage: r["errorMessage"] } : {}),
     ...(typeof r["timedOut"] === "boolean" ? { timedOut: r["timedOut"] } : {}),
-    ...(record(r["turn1"])
-      ? {
-          turn1: {
-            input: finite(record(r["turn1"])!["input"]),
-            cacheRead: finite(record(r["turn1"])!["cacheRead"]),
-          },
-        }
-      : {}),
+    ...(record(r["turn1"]) ? { turn1: firstTurnFrom(r["turn1"]) } : {}),
     ...(typeof r["group"] === "string" ? { group: r["group"] } : {}),
     ...(typeof r["prefix"] === "string" ? { prefix: r["prefix"] } : {}),
   };
