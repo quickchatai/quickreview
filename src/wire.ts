@@ -52,7 +52,6 @@ import { opsDay, promptReader, startEodTimer, type EodTimer } from "./eod.js";
 import { MutationGate, type MutationIntent } from "@quickchatai/pi-quickreview/src/gate.js";
 import { GitHubAdapter } from "./github.js";
 import { priorSidecarPath } from "@quickchatai/pi-quickreview/src/priorfindings.js";
-import type { GithubTrigger } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { completeRecordedFindings } from "./recordedfindings.js";
 import { makePostingGuard } from "@quickchatai/pi-quickreview/src/guards.js";
 import {
@@ -140,7 +139,7 @@ import { createWorkerLiveness, inFlightPrs } from "./workerliveness.js";
 import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
 import { readPinnedFromSweep, startEodPinWatch, type PinnedSweepSource } from "./eodpinwatch.js";
-import { chooseTrigger, triggerLineOf } from "./triggerchoice.js";
+import { chooseTrigger } from "./triggerchoice.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
 import { PiSessionManager, prSessionName } from "./sessions.js";
 import { SlackApiClient } from "./slack/api.js";
@@ -193,11 +192,6 @@ export interface ProductionParts {
    * the sidecar outside the image. The config's `openviking.enabled` is
    * already false; this is the reason the status block says. */
   memoryOff?: string;
-  /** The config's `[github] trigger` line as the boot read it
-   * (src/triggerchoice.ts `triggerLineOf`): what a host's choice is kept
-   * beside, and compared with at the next start. Absent: the parsed
-   * config's trigger stands in for it. */
-  triggerLine?: GithubTrigger | null;
 }
 
 /** A configured engine refused before it could open partial migrated state. */
@@ -721,8 +715,6 @@ export function slackOriginStore(root: string, now?: () => Date): OriginStore {
 
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
   const { cfg, root, gate, adapter, sessions } = parts;
-  const triggerLine =
-    parts.triggerLine !== undefined ? parts.triggerLine : (cfg.github.trigger ?? null);
   const memoryBootAt = new Date();
   const log = (msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? "");
   // The last run's heartbeat, read before start() writes this boot's first
@@ -963,7 +955,6 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     root,
     store,
     adapter,
-    triggerLine,
     ...(parts.runHost ? { runHost: parts.runHost } : {}),
     postingDelivery: {
       // Every daemon delivery of an APPROVE carries the CI pre-check: CI
@@ -1771,17 +1762,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           );
         },
         // A host's choice of trigger: kept in the store, where the next
-        // reconcile pass reads it (src/triggerchoice.ts), with what the
-        // config's own line says now. No file is written: config.toml is on
-        // the round fingerprint's policy surface.
+        // reconcile pass reads it (src/triggerchoice.ts). No file is written:
+        // config.toml is on the round fingerprint's policy surface.
         setTrigger(trigger, file) {
           return chooseTrigger(
-            {
-              store: d.store,
-              hostManaged: cfg.github.token_source === "host",
-              configured: triggerLine,
-              log,
-            },
+            { store: d.store, hostManaged: cfg.github.token_source === "host", log },
             trigger,
             file,
           );
@@ -2221,17 +2206,8 @@ async function main(): Promise<void> {
   // the release image it warns, and with no Docker its memory is off.
   const root = sandboxRoot();
   const loaded = loadConfig();
-  // The trigger line as written, beside the parsed config (where no line
-  // reads as `label`): a host's choice is kept with it (src/triggerchoice.ts).
-  let triggerLine: GithubTrigger | null | undefined;
-  try {
-    triggerLine = triggerLineOf(readFileSync(liveConfigPath(), "utf8"));
-  } catch {
-    triggerLine = undefined;
-  }
   const daemon = createProductionDaemon({
     ...buildParts(root, loaded, hostFacts(root, loaded.openviking.enabled)),
-    ...(triggerLine !== undefined ? { triggerLine } : {}),
   });
   const shutdown = (sig: string) => {
     void (async () => {

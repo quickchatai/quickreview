@@ -416,11 +416,11 @@ describe("the running daemon makes sure of the trigger label", () => {
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const github = fakeGitHub();
-      store.setTriggerChoice("all", "set-trigger-1.json", "label");
+      store.setTriggerChoice("all", "set-trigger-1.json");
       const daemon = daemonOn(configured({ dryRun: false, host: true }), github);
       await daemon.reconcile();
       expect(github.calls).toEqual([]);
-      store.setTriggerChoice("label", "set-trigger-2.json", "label");
+      store.setTriggerChoice("label", "set-trigger-2.json");
       await daemon.reconcile();
       await daemon.reconcile();
       expect(posts(github)).toEqual(["POST /repos/example-org/example-app/labels"]);

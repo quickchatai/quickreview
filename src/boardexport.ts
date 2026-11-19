@@ -6,16 +6,17 @@
 //
 //   the daemon   whether it runs, and its board.json (src/boardfile.ts): the
 //                three lists, its poll, its spend, its count of the pull
-//                requests reviewed today and its own posting flag.
+//                requests reviewed today, its own posting flag, and the
+//                trigger it follows (`trigger`: labelled pull requests, or
+//                all; src/triggerchoice.ts). That is the daemon's word, never
+//                the config's `[github] trigger`, which is only the starting
+//                value where no choice was ever stored and can say something
+//                else than the running daemon follows.
 //                The daemon writes that file inside its state directory, so
 //                on a compose stack it is read out of the running container;
 //                with the daemon off there is nothing to read and the lists
 //                are absent.
-//   the config   the repository, the identity, the trigger label, what the
-//                reviewer picks up by itself (`trigger`: labelled pull
-//                requests, or all; on a host-managed install the host's
-//                choice in the daemon's board wins, src/triggerchoice.ts,
-//                and with no board to read it from the field is absent), and
+//   the config   the repository, the identity, the trigger label, and
 //                `dry_run` as the file says it now (read as text, never
 //                through the loader: before setup there is no config, and
 //                that is an answer too).
@@ -46,10 +47,6 @@ import { hostPayloadVersion } from "@quickchatai/pi-quickreview/src/contract.js"
 import { loginSummary } from "@quickchatai/pi-quickreview/src/engine/auth.js";
 import { githubTokenHealth } from "@quickchatai/pi-quickreview/src/hosttoken.js";
 import {
-  githubTriggerOf,
-  type GithubTrigger,
-} from "@quickchatai/pi-quickreview/src/reviewconfig.js";
-import {
   BOARD_FILE,
   parseBoardFile,
   type BoardFile,
@@ -71,7 +68,6 @@ import { CONTAINER_STATE_DIR, DAEMON_SERVICE, daemonExec } from "./onboard/steps
 import { piAgentDir } from "./piagentdir.js";
 import { requestedContract } from "./schemaflag.js";
 import { readAppConfigToml } from "./shippeddefaults.js";
-import { effectiveTrigger } from "./triggerchoice.js";
 
 // ---- the export's shape ---------------------------------------------------------
 
@@ -134,7 +130,9 @@ export interface BoardExport {
   model_login?: CredentialWord;
   github?: CredentialWord;
   trigger_label?: string;
-  /** What the reviewer picks up by itself: labelled pull requests, or all. */
+  /** What the reviewer picks up by itself, labelled pull requests or all:
+   * the trigger the running daemon follows, from its board. Absent with the
+   * daemon off. */
   trigger?: "label" | "all";
   poll?: { last_at?: string; ok?: boolean; interval_s: number };
   spend?: NonNullable<BoardFile["spend"]>;
@@ -215,14 +213,6 @@ interface ConfigFacts {
   repo?: string;
   identity?: { mode: IdentityMode; login?: string };
   trigger_label?: string;
-  /** `[github] trigger`, as the file says it now: the value it states, or
-   * `label` where it leaves the key out. Absent for a value that is neither
-   * of the two. The export's `trigger` is this word read with the host's
-   * choice (src/triggerchoice.ts `effectiveTrigger`). */
-  trigger?: GithubTrigger;
-  /** The file carries the host-managed marker (`[github] token_source =
-   * "host"`). */
-  host_managed?: true;
   /** Root `dry_run`, as the file says it now. */
   dry_run?: boolean;
 }
@@ -258,15 +248,12 @@ export function configFacts(toml: string): ConfigFacts {
         : undefined
       : IDENTITY_MODES.find((m) => m === auth);
   const label = text(github["trigger_label"]);
-  const trigger = githubTriggerOf(github["trigger"]);
   return {
     ...(repo !== undefined && REPO_RE.test(repo) ? { repo } : {}),
     ...(mode !== undefined
       ? { identity: { mode, ...(login !== undefined ? { login } : {}) } }
       : {}),
     ...(label !== undefined ? { trigger_label: label } : {}),
-    ...(trigger !== undefined ? { trigger } : {}),
-    ...(writtenGithub["token_source"] === "host" ? { host_managed: true as const } : {}),
     ...(typeof merged["dry_run"] === "boolean" ? { dry_run: merged["dry_run"] } : {}),
   };
 }
@@ -464,16 +451,10 @@ export async function boardExport(ports: BoardPorts, contract: number): Promise<
     counted !== undefined && Date.parse(counted.since) <= now && now < Date.parse(counted.until)
       ? counted.count
       : undefined;
-  // What the reviewer picks up by itself: the one reading the daemon's own
-  // pass makes. A host's choice is the running daemon's, read off its board.
-  const trigger =
-    facts === undefined
-      ? undefined
-      : effectiveTrigger({
-          hostManaged: facts.host_managed === true,
-          chosen: board === null ? undefined : board.trigger_choice,
-          configured: facts.trigger,
-        });
+  // What the reviewer picks up by itself: the trigger the running daemon
+  // follows, as it wrote it on its board. With the daemon off there is no
+  // board, and the field is absent.
+  const trigger = board?.trigger;
 
   return {
     schema_version: contract,

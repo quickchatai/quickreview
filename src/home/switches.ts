@@ -74,36 +74,62 @@ const NEEDS_PERSON =
 
 /** What auto-review picks up, as the install says it now. */
 export interface PickUp {
-  /** Which pull requests it takes by itself (src/triggerchoice.ts); null
-   * when that cannot be read. */
+  /** Which pull requests it takes by itself: the trigger the daemon follows
+   * (src/triggerchoice.ts); null when that cannot be read. */
   rule: "label" | "all" | null;
   /** The trigger label; null when it cannot be read. */
   label: string | null;
   /** It runs in dry-run (true) or posts (false); null or left out when that
-   * cannot be read. Under `all` it decides what is taken: in dry-run nothing
-   * is taken by itself (src/reconcile.ts). */
+   * cannot be read. Under `all` it decides what is taken: in dry-run only
+   * the labelled and review-requested ones, as under `label`
+   * (src/reconcile.ts). */
   dryRun?: boolean | null;
 }
 
 /** Every open pull request, as `all` takes them once it posts. */
 const EVERY_OPEN = "every open pull request that is not a draft, each once, then new ones";
 
-/** What auto-review picks up: the labelled ones (the label unknown when it
- * can't be read) and a review request; under `all`, every open pull request
- * that is not a draft once it posts, and nothing by itself while it is in
- * dry-run, where a practice review is asked for; and when which of the two
- * cannot be read, it says so rather than naming one. */
+/** The pull requests somebody asked for: the trigger label (unknown when it
+ * can't be read) or a review request. Under `label` these are all it takes;
+ * under `all` they are taken as well, in dry-run as when posting
+ * (src/reconcile.ts runs both searches under either trigger). */
+function askedFor(label: string | null): string {
+  return label === null
+    ? "pull requests with the trigger label (which one is unknown) or a review request"
+    : `pull requests labelled "${label}" or with a review request`;
+}
+
+/** The same, said short: the row and the notice say it whole at the home's
+ * narrowest column. */
+function askedForShort(label: string | null): string {
+  return label === null
+    ? "pull requests with the trigger label (which one is unknown) or a review request"
+    : `labelled "${label}" or review-requested pull requests`;
+}
+
+/** Every open pull request, said short, as `all` takes them once it posts. */
+const EVERY_OPEN_SHORT = "every open non-draft one once, and new ones";
+
+/** The same ones again, as `all` takes them after its once-only pick-up. */
+function askedForAgain(label: string | null): string {
+  return label === null
+    ? "again any with the trigger label (which one is unknown) or a review request"
+    : `again any labelled "${label}" or with a review request`;
+}
+
+/** What auto-review picks up: the labelled ones and a review request; under
+ * `all` the same ones in dry-run, as practice reviews and nothing else, and
+ * once it posts every open pull request that is not a draft as well; and
+ * when which of the two cannot be read, it says so rather than naming one. */
 export function pickUpPhrase(p: PickUp): string {
   if (p.rule === "all")
     return p.dryRun === true
-      ? `nothing by itself in dry-run (a practice review is asked for); once posting, ${EVERY_OPEN}`
+      ? `only ${askedForShort(p.label)} until posting, as practice reviews; then ${EVERY_OPEN_SHORT}`
       : p.dryRun === false
-        ? EVERY_OPEN
-        : `${EVERY_OPEN}, once posting (nothing by itself in dry-run)`;
+        ? `${EVERY_OPEN}, and ${askedForAgain(p.label)}`
+        : `${askedForShort(p.label)}; once posting, also ${EVERY_OPEN_SHORT} (in dry-run nothing else)`;
   if (p.rule === null) return "labelled pull requests or every one (which is unknown)";
-  return p.label === null
-    ? "pull requests with the trigger label (which one is unknown) or a review request"
-    : `pull requests labelled "${p.label}" or with a review request`;
+  return askedFor(p.label);
 }
 
 /** The same, as a sentence. */
@@ -117,10 +143,10 @@ function switchOnPosture(p: PickUp, repo: string, dry: Known<boolean>): string {
   const everyOpenIn = `every open pull request in ${repo} that is not a draft, each once, then new ones`;
   if (p.rule === "all")
     return dry.kind === "unknown"
-      ? `Auto-review reviews ${everyOpenIn}, once it posts; while in dry-run it reviews nothing by itself. Whether it posts to GitHub is unknown: ${dry.why}.`
+      ? `Auto-review reviews ${askedFor(p.label)} in ${repo}, and once it posts, also ${EVERY_OPEN}; in dry-run it takes nothing else. Whether it posts to GitHub is unknown: ${dry.why}.`
       : !dry.value
-        ? `Auto-review reviews ${everyOpenIn}, and posts each review to GitHub.`
-        : `Auto-review starts in dry-run, and while in it, it reviews nothing in ${repo} by itself: a practice review is asked for, and it records what it would post instead of posting it. Once it posts, it reviews ${EVERY_OPEN}. ${goLive}`;
+        ? `Auto-review reviews ${everyOpenIn}, and ${askedForAgain(p.label)}, and posts each review to GitHub.`
+        : `Auto-review starts in dry-run: it practice-reviews ${askedFor(p.label)} in ${repo}, records what it would post instead of posting it, and takes nothing else until it posts. Once it posts, it also reviews ${EVERY_OPEN}. ${goLive}`;
   const picks = pickUpPhrase(p);
   return dry.kind === "unknown"
     ? `Auto-review reviews ${picks} in ${repo}. Whether it posts to GitHub is unknown: ${dry.why}.`

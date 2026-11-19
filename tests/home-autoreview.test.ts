@@ -305,40 +305,51 @@ describe("the real adapter reads this machine's stack", () => {
     expect(await live.control!.dryRun()).toEqual(known(false));
   });
 
-  // Which pull requests it picks up, by the reading the daemon's own pass
-  // makes (src/triggerchoice.ts): on a host-managed install the host's
-  // choice, out of the running daemon's status.json.
-  // MUTATION: answer the config's word on a host-managed install without
-  // reading the daemon's choice — the home says `label` while the host
-  // chose `all`, and this fails; or answer it with the daemon off — the
-  // unknown case fails.
-  it("says the trigger it picks up by: the config's word, or a host's choice from the running daemon", async () => {
-    // an install that keeps its own credential: the config's word, Docker unasked
-    const own = composeOver({ ps: ok("") }, '[github]\ntrigger = "all"\n');
-    expect(await own.port.pickUp!()).toEqual(known("all"));
-    expect(own.calls).toEqual([]);
-    expect(await composeOver({ ps: ok("") }).port.pickUp!()).toEqual(known("label"));
-    expect(
-      (await composeOver({ ps: ok("") }, '[github]\ntrigger = "every"\n').port.pickUp!()).kind,
-    ).toBe("unknown");
-
-    const HOSTED = '[github]\ntoken_source = "host"\nauth = "user"\n';
-    const up = (choice: unknown) =>
+  // Which pull requests it picks up: the trigger the running daemon follows,
+  // out of its status.json, never the config file's word (src/triggerchoice.ts).
+  // With the daemon off: unknown on a host-managed install, where a stored
+  // choice may stand over the file; on any other the config's word, which
+  // is what it starts on.
+  // MUTATION: answer the config's word while the daemon runs (skip reading
+  // its status) — the home says the file's `label` while the daemon follows
+  // `all`, and this fails; or answer it on a host-managed install with the
+  // daemon off — the unknown case fails.
+  it("says the trigger the running daemon follows, whatever the config file says", async () => {
+    const HOSTED = '[github]\ntoken_source = "host"\nauth = "user"\ntrigger = "label"\n';
+    const OWN = '[github]\ntrigger = "label"\n';
+    const up = (config: string, followed: unknown) =>
       composeOver(
-        { ps: ok(psRow("daemon", "running")), cat: ok(snapshot({ trigger_choice: choice })) },
-        HOSTED,
+        { ps: ok(psRow("daemon", "running")), cat: ok(snapshot({ trigger: followed })) },
+        config,
       ).port.pickUp!();
-    expect(await up("all")).toEqual(known("all"));
-    expect(await up("label")).toEqual(known("label"));
-    // no choice made: the config's word
-    expect(await up(null)).toEqual(known("label"));
-    // an older daemon that does not report it, the daemon off, Docker silent
-    expect((await up(undefined)).kind).toBe("unknown");
+    for (const config of [HOSTED, OWN]) {
+      expect(await up(config, "all")).toEqual(known("all"));
+      expect(await up(config, "label")).toEqual(known("label"));
+      // an older daemon that does not say, or says a word this release does not know
+      for (const said of [undefined, null, "every"])
+        expect((await up(config, said)).kind, String(said)).toBe("unknown");
+    }
+    // a status that cannot be read is unknown, never the file's word
+    const unread = composeOver(
+      { ps: ok(psRow("daemon", "running")), cat: { code: 1, stdout: "", stderr: "gone" } },
+      OWN,
+    );
+    expect((await unread.port.pickUp!()).kind).toBe("unknown");
+
+    // the daemon off, on a host-managed install: unknown, its status unasked
     const off = composeOver({ ps: ok(psRow("memory", "running")) }, HOSTED);
     expect((await off.port.pickUp!()).kind).toBe("unknown");
     expect(off.calls.some((c) => c.includes("cat"))).toBe(false);
     const down = composeOver({ ps: { code: 1, stdout: "", stderr: "no docker" } }, HOSTED);
     expect((await down.port.pickUp!()).kind).toBe("unknown");
+    // and on an install that keeps its own credential: the config it starts on
+    const own = composeOver({ ps: ok("") }, '[github]\ntrigger = "all"\n');
+    expect(await own.port.pickUp!()).toEqual(known("all"));
+    expect(own.calls.some((c) => c.includes("cat"))).toBe(false);
+    expect(await composeOver({ ps: ok("") }).port.pickUp!()).toEqual(known("label"));
+    expect(
+      (await composeOver({ ps: ok("") }, '[github]\ntrigger = "every"\n').port.pickUp!()).kind,
+    ).toBe("unknown");
   });
 });
 
@@ -507,21 +518,20 @@ describe("the status line renders every label from a snapshot", () => {
 
   // The home's narrowest column is 74: each line is said whole there.
   // MUTATION: drop the `all` branch of pickUpPhrase — the home says the
-  // label under `all`, a false fact about what is reviewed, and this fails.
-  // Or answer the label wording when the rule cannot be read — this fails.
-  // Or say every open pull request under `all` whatever the posture (drop
-  // the `dryRun` fact): in dry-run `all` takes nothing by itself, and this
-  // fails.
-  it("under `all`: nothing by itself in dry-run, every open pull request once posting, and unknown when which cannot be read, at 74 columns", async () => {
+  // label alone under `all`, and this fails. Or answer the label wording
+  // when the rule cannot be read — this fails. Or drop the labelled and
+  // review-requested ones from the dry-run wording under `all` (say it
+  // takes nothing by itself): they are taken in dry-run as under `label`
+  // (src/reconcile.ts), and this fails.
+  it("under `all`: the labelled and review-requested ones in dry-run and nothing else, every open pull request once posting, and unknown when which cannot be read, at 74 columns", async () => {
     const flat = (t: string): string => t.replace(/[│\s]+/g, " ");
     const practice = await panelFor(running(snapshot()), known("AI review requested"), {
       pickUp: known("all"),
       width: 74,
     });
     expect(practice).toMatch(/Auto-review on · dry-run/);
-    expect(practice).toMatch(/ {2}picks up nothing by itself in dry-run \(a practice review is/);
     expect(flat(practice)).toMatch(
-      /picks up nothing by itself in dry-run \(a practice review is asked for\); once posting, every open pull request that is not a draft, each once, then new ones/,
+      /picks up only labelled "AI review requested" or review-requested pull requests until posting, as practice reviews; then every open non-draft one once, and new ones/,
     );
     const live = await panelFor(
       running(snapshot({ dry_run: false })),
@@ -530,9 +540,9 @@ describe("the status line renders every label from a snapshot", () => {
     );
     expect(live).toMatch(/Auto-review on · live/);
     expect(flat(live)).toMatch(
-      /picks up every open pull request that is not a draft, each once, then new ones/,
+      /picks up every open pull request that is not a draft, each once, then new ones, and again any labelled "AI review requested" or with a review request/,
     );
-    expect(live).not.toMatch(/nothing by itself/);
+    expect(live).not.toMatch(/practice/);
     // switched off, the posture is not the status's to say: both halves
     const off = await panelFor(
       { container: known("stopped"), snapshot: known(null), now: NOW },
@@ -540,10 +550,8 @@ describe("the status line renders every label from a snapshot", () => {
       { pickUp: known("all"), width: 74 },
     );
     expect(flat(off)).toMatch(
-      /picks up every open pull request that is not a draft, each once, then new ones, once posting \(nothing by itself in dry-run\)/,
+      /picks up labelled "AI review requested" or review-requested pull requests; once posting, also every open non-draft one once, and new ones \(in dry-run nothing else\)/,
     );
-    for (const text of [practice, live, off])
-      expect(text).not.toMatch(/labelled "AI review requested"/);
     const unread = await panelFor(running(snapshot()), known("AI review requested"), {
       pickUp: unknown("the daemon is not running"),
       width: 74,

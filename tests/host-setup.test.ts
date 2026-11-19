@@ -15,7 +15,7 @@ import { SWITCH_ON_ORDER, runSwitchOn } from "../src/home/switchon.js";
 import { SETUP_STEPS } from "../src/host/outcomes.js";
 import { readHostProgress, readHostRecord } from "../src/host/record.js";
 import { bindingMismatch, hostSetup, parseSetupArgs } from "../src/host/setup.js";
-import { setupProblem, walkSetup } from "../src/host/walk.js";
+import { SET_TRIGGER_STEP_ID, setupProblem, walkSetup } from "../src/host/walk.js";
 import { acquireChecklistLock, checklistLockPath } from "../src/onboard/checklistlock.js";
 import { CHOICE_KEYS } from "../src/onboard/choices.js";
 import { GO_LIVE_CONFIRMATION, GO_LIVE_STEP_ID } from "../src/onboard/steps/golive.js";
@@ -584,6 +584,75 @@ describe("the walk", () => {
     expect(JSON.stringify(readHostRecord(w.stateDir))).not.toMatch(/it broke/);
   });
 
+  // setup's `--trigger` reaches the reviewer through the channel set-trigger
+  // uses, as the walk's own last step, recorded as the others are.
+  // MUTATION: drop the `set_trigger` step from walkSetup — nothing is handed
+  // and the running daemon keeps the trigger it had, and this fails. Or
+  // record no step for it (skip `at(SET_TRIGGER_STEP_ID)`) — the export
+  // says the walk is still at verify_stack while it hands the word, and this
+  // fails.
+  it("hands setup's --trigger to the running reviewer as its last step, set_trigger", async () => {
+    w.writeConfig(MARKER_ONLY);
+    let during: unknown;
+    w.daemon.serve = async (payload) => {
+      during = progress();
+      return { ok: true, trigger: payload["trigger"] };
+    };
+    expect(await hostSetup(w.ports, [...ARGS, "--trigger", "all"])).toEqual({ state: "started" });
+    expect(await runWalk()).toBe(0);
+    expect(during).toEqual({ setup: { state: "running", step: "set_trigger" } });
+    expect(w.daemon.payloads).toEqual([{ command: "set-trigger", trigger: "all" }]);
+    expect(w.daemon.written).toEqual([expect.stringMatching(/-host-settrigger-all\.json$/)]);
+    // after the reviewer is up: every switch-on step ran first
+    expect(w.ran.map((r) => r.id)).toEqual(
+      SWITCH_ON_ORDER.slice(0, SWITCH_ON_ORDER.indexOf(PROOF_STEP_ID)),
+    );
+    expect(progress()).toEqual({ setup: { state: "done" } });
+    expect(w.logs.join("\n")).toMatch(/the reviewer follows the trigger "all"/);
+    // the word asked is the walk's alone: the export prints none of it
+    expect(JSON.stringify(progress())).not.toMatch(/all/);
+
+    // a setup with no --trigger hands nothing
+    w.daemon.payloads.length = 0;
+    expect(await hostSetup(w.ports, ARGS)).toEqual({ state: "started" });
+    expect(await runWalk()).toBe(0);
+    expect(w.daemon.payloads).toEqual([]);
+    expect(progress()).toEqual({ setup: { state: "done" } });
+  });
+
+  // MUTATION: record the walk as done whatever handTrigger answered — a word
+  // the reviewer never took reads as set up, and this fails.
+  it("a --trigger that cannot be handed over fails the walk at set_trigger, as trigger_failed", async () => {
+    w.writeConfig(MARKER_ONLY);
+    for (const [why, set] of [
+      ["the reviewer refuses it", () => void (w.daemon.receipt = "refused")],
+      ["the channel cannot be written", () => void (w.daemon.writeFails = true)],
+      ["the reviewer is not running", () => void (w.daemon.running = false)],
+    ] as const) {
+      w.daemon.receipt = "queued";
+      w.daemon.writeFails = false;
+      w.daemon.running = true;
+      set();
+      expect(await hostSetup(w.ports, [...ARGS, "--trigger", "all"]), why).toEqual({
+        state: "started",
+      });
+      expect(await runWalk(), why).toBe(1);
+      expect(progress(), why).toEqual({
+        setup: { state: "failed", step: "set_trigger", problem: "trigger_failed" },
+      });
+      expect(w.logs.at(-1), why).toMatch(/the trigger "all" could not be handed to the reviewer/);
+    }
+    // a daemon that has not answered yet has it on its channel: handed
+    w.daemon.running = true;
+    w.daemon.receipt = "pending";
+    expect(await hostSetup(w.ports, [...ARGS, "--trigger", "label"])).toEqual({
+      state: "started",
+    });
+    expect(await runWalk()).toBe(0);
+    expect(progress()).toEqual({ setup: { state: "done" } });
+    expect(w.logs.join("\n")).toMatch(/takes it when it reads its channel/);
+  });
+
   it("a machine that cannot run it fails at the machine checks, by its failed check", async () => {
     for (const [check, problem] of [
       ["docker", "docker_unavailable"],
@@ -697,10 +766,11 @@ describe("the walk", () => {
 describe("the closed words", () => {
   // MUTATION: add a step to switch-on's order without the host's closed set
   // (and the board schema) — this fails.
-  it("the steps a setup can be at are switch-on's, without the two it never walks", () => {
-    expect([...SETUP_STEPS]).toEqual(
-      SWITCH_ON_ORDER.filter((id) => id !== PROOF_STEP_ID && id !== GO_LIVE_STEP_ID),
-    );
+  it("the steps a setup can be at are switch-on's, without the two it never walks, then its own set_trigger", () => {
+    expect([...SETUP_STEPS]).toEqual([
+      ...SWITCH_ON_ORDER.filter((id) => id !== PROOF_STEP_ID && id !== GO_LIVE_STEP_ID),
+      SET_TRIGGER_STEP_ID,
+    ]);
   });
 
   it("every step has a problem word, and an unknown one is `step_failed`", () => {

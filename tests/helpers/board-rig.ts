@@ -1,6 +1,7 @@
 // Fixture state for the board (src/boardfile.ts, src/boardexport.ts): a real
 // in-memory store on a scripted clock, the status snapshot the daemon would
 // build from it, and the export's ports as fakes. No Docker, no files.
+import type { GithubTrigger } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import type { BoardPorts } from "../../src/boardexport.js";
 import { buildBoardFile, type BoardFile, type BoardReviewedToday } from "../../src/boardfile.js";
 import { known } from "../../src/home/ports.js";
@@ -52,6 +53,8 @@ export class BoardWorld {
   /** What the last reconcile pass listed; undefined: no pass has listed. */
   open: OpenPrSummary[] | undefined;
   dryRun = true;
+  /** The trigger the fixture daemon follows; undefined: it does not say. */
+  trigger: GithubTrigger | undefined = "label";
 
   /** Move the clock `s` seconds from the board's write time. */
   tick(s: number): void {
@@ -77,8 +80,8 @@ export class BoardWorld {
     return id;
   }
 
-  /** The snapshot the daemon builds at the clock, with its poll record and
-   * the open list, as its status writer adds them. */
+  /** The snapshot the daemon builds at the clock, with its poll record, the
+   * open list and the trigger it follows, as its status writer adds them. */
   snapshot(): StatusSnapshot {
     const snapshot = buildStatusSnapshot(this.store, this.dryRun, undefined, () => this.clock);
     snapshot.poll = {
@@ -91,6 +94,7 @@ export class BoardWorld {
         listed_at: new Date(this.clock.getTime() - 60_000).toISOString(),
         prs: this.open,
       };
+    if (this.trigger !== undefined) snapshot.trigger = this.trigger;
     return snapshot;
   }
 

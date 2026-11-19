@@ -24,7 +24,7 @@ import {
   type GithubTrigger,
 } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
 import { readAppConfigToml } from "../shippeddefaults.js";
-import { effectiveTrigger, triggerChoiceOf } from "../triggerchoice.js";
+import { followedTriggerOf } from "../triggerchoice.js";
 import { snapshotHeartbeat } from "../heartbeat.js";
 import { lockHolderWords, withChecklistLock } from "../onboard/checklistlock.js";
 import { OnboardingEngine, type OnboardAdapters, type ProcessRunner } from "../onboard/engine.js";
@@ -442,44 +442,40 @@ export function composeAutoReview(o: ComposeAutoReviewOptions): AutoReviewPort {
         ? known(label.trim())
         : unknown(`${o.configPath()} has no [github] trigger_label`);
     },
-    // Which pull requests it picks up by itself, by the one reading the
-    // daemon's own pass makes (src/triggerchoice.ts). On a host-managed
-    // install the host's choice is the running daemon's, out of its
-    // status.json; with the daemon off it cannot be read, and the home says
-    // so rather than naming the config's word.
+    // Which pull requests it picks up by itself: the trigger the running
+    // daemon follows, out of its status.json, never the config file's word
+    // (src/triggerchoice.ts). With the daemon off: on a host-managed install
+    // unknown, since a stored choice may stand over the file; on any other
+    // install no choice applies, and the config's word is what it starts on.
     pickUp: async () => {
-      const c = config();
-      if (typeof c === "string") return unknown(c);
-      const github: Obj = isObj(c["github"]) ? c["github"] : {};
-      const hostManaged = github["token_source"] === "host";
-      let chosen: GithubTrigger | null | undefined = null;
-      if (hostManaged) {
-        const container = await serviceState(o.runner, o.root, DAEMON_SERVICE);
-        const t =
-          container.kind === "known" && container.value === "running"
-            ? await statusText()
-            : unknown("the daemon is not running");
-        chosen = undefined;
-        if (t.kind === "known" && t.value !== null) {
+      const container = await serviceState(o.runner, o.root, DAEMON_SERVICE);
+      if (container.kind === "known" && container.value === "running") {
+        const t = await statusText();
+        if (t.kind === "unknown") return t;
+        let followed: GithubTrigger | undefined;
+        if (t.value !== null)
           try {
             const v: unknown = JSON.parse(t.value);
-            chosen = isObj(v) ? triggerChoiceOf(v["trigger_choice"]) : undefined;
+            followed = isObj(v) ? followedTriggerOf(v["trigger"]) : undefined;
           } catch {
             // not JSON: unknown
           }
-        }
+        return followed !== undefined
+          ? known(followed)
+          : unknown("the running daemon's status does not say which trigger it follows");
       }
-      const rule = effectiveTrigger({
-        hostManaged,
-        chosen,
-        configured: githubTriggerOf(github["trigger"]),
-      });
+      const c = config();
+      if (typeof c === "string") return unknown(c);
+      const github: Obj = isObj(c["github"]) ? c["github"] : {};
+      if (github["token_source"] === "host")
+        return unknown(
+          container.kind === "unknown"
+            ? container.why
+            : "the trigger is the running daemon's, and the daemon is not running",
+        );
+      const rule = githubTriggerOf(github["trigger"]);
       return rule === undefined
-        ? unknown(
-            hostManaged
-              ? "the host's choice is the running daemon's, and it could not be read"
-              : `${o.configPath()} states a [github] trigger that is neither label nor all`,
-          )
+        ? unknown(`${o.configPath()} states a [github] trigger that is neither label nor all`)
         : known(rule);
     },
     control,

@@ -9,6 +9,13 @@
 // before the home asks anything. It comes up in dry-run: the walk never runs
 // the practice review or the go-live, and is handed no confirm for either.
 //
+// Its last step is its own (`set_trigger`), walked when setup was given
+// `--trigger`: once the reviewer is up, the word is handed to it through the
+// sealed operator channel `host set-trigger` uses (src/host/trigger.ts), so
+// the daemon's stored choice, the one it follows, is setup's word. A word
+// that cannot be handed fails the walk as `trigger_failed`; the reviewer is
+// up then, on the trigger it followed before.
+//
 // How far it has got is written to the host record after every step, which
 // is what the board export prints as `setup`: `running` with the step, then
 // `done`, or `failed` with the step it stopped at and a closed word for why.
@@ -34,6 +41,10 @@ import { SETUP_STEPS, type SetupProblem, type SetupStepId } from "./outcomes.js"
 import type { HostPorts } from "./ports.js";
 import { readHostRecord, updateHostRecord } from "./record.js";
 import { sessionMarker } from "./session.js";
+import { handTrigger } from "./trigger.js";
+
+/** The walk's own last step: setup's `--trigger`, handed to the reviewer. */
+export const SET_TRIGGER_STEP_ID = "set_trigger" satisfies SetupStepId;
 
 /** How often, and how long apart, a walk looks for the lock handed to it:
  * the verb rewrites the record right after it starts the walk. */
@@ -114,7 +125,10 @@ export async function walkSetup(ports: HostPorts, token: string): Promise<number
     ports.log("host setup: no setup lock was handed to this walk; nothing was run");
     return 1;
   }
-  const startedAt = readHostRecord(ports.stateDir).setup?.started_at ?? ports.now().toISOString();
+  const begun = readHostRecord(ports.stateDir).setup;
+  const startedAt = begun?.started_at ?? ports.now().toISOString();
+  /** The `--trigger` the verb was given: handed to the reviewer last. */
+  const trigger = begun?.trigger;
   let current: SetupStepId | undefined = MACHINE_CHECKS_STEP_ID;
   const write = (
     state: "running" | "done" | "failed",
@@ -189,6 +203,25 @@ export async function walkSetup(ports: HostPorts, token: string): Promise<number
             : "step_failed",
       );
       return 1;
+    }
+    // setup's `--trigger`, handed to the reviewer now it is up, the way
+    // `set-trigger` hands it: the daemon's stored choice is the one it
+    // follows, so a setup run again with another word takes effect at once
+    if (trigger !== undefined) {
+      at(SET_TRIGGER_STEP_ID);
+      const handed = await handTrigger(ports, trigger);
+      if (handed.state !== "done" && handed.state !== "sent") {
+        ports.log(
+          `host setup: the trigger "${trigger}" could not be handed to the reviewer: ${handed.message ?? handed.reason ?? handed.state}`,
+        );
+        write("failed", SET_TRIGGER_STEP_ID, "trigger_failed");
+        return 1;
+      }
+      ports.log(
+        handed.state === "done"
+          ? `host setup: the reviewer follows the trigger "${trigger}"`
+          : `host setup: the trigger "${trigger}" is handed to the reviewer, which takes it when it reads its channel`,
+      );
     }
     write("done", undefined);
     return 0;

@@ -1,17 +1,23 @@
 // A host's choice of trigger (src/triggerchoice.ts): `host set-trigger`
-// sends it through the sealed operator channel, the daemon keeps it in its own
-// store, and it wins over the config's `[github] trigger` on a host-managed
-// install, across restarts, without config.toml ever being rewritten.
+// sends it through the sealed operator channel, and so does `host setup
+// --trigger` once the reviewer is up; the daemon keeps it in its own store,
+// the latest choice wins, and it wins over the config's `[github] trigger` (the
+// starting value) on a host-managed install, across restarts, without
+// config.toml ever being rewritten by it.
 //
-//   the one reading    `effectiveTrigger`, which the reconcile pass, the
-//                      board export and the home all ask
+//   the one reading    `effectiveTrigger`, which the daemon's reconcile pass
+//                      and its trigger label follow; it writes the word it
+//                      follows for the board export and the home
 //   the channel        the `set-trigger` operator command: the operator's
 //                      alone, strict, and a forged or malformed file changes
 //                      nothing
 //   the fingerprint    a set-trigger while a round runs leaves the round's
 //                      policy fingerprint (src/execboundary.ts) as it was
 //   the restart        a daemon started again on the same store still runs
-//                      on the host's choice, over the config's word
+//                      on the latest choice, over the config's word
+//   setup again        a `host setup --trigger` on a running reviewer takes
+//                      effect with no restart, and the latest of it and
+//                      `set-trigger` is followed
 //
 // Driven over a real store (a file where a restart is the point), fake
 // GitHub and Docker, and the daemon's real command watcher.
@@ -19,6 +25,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse } from "smol-toml";
 import type { GateResult } from "@quickchatai/pi-quickreview/src/gate.js";
 import {
   GITHUB_TRIGGERS,
@@ -46,20 +53,19 @@ import {
 } from "../src/execboundary.js";
 import type { PrRef } from "../src/github.js";
 import { known, unknown } from "../src/home/ports.js";
+import { readHostProgress } from "../src/host/record.js";
 import { hostSetup } from "../src/host/setup.js";
 import { hostSetTrigger } from "../src/host/trigger.js";
+import { walkSetup } from "../src/host/walk.js";
 import { StateStore } from "../src/state.js";
 import {
-  TRIGGER_CHOICE_DROPPED_EVENT,
   TRIGGER_CHOSEN_EVENT,
   chooseTrigger,
   effectiveTrigger,
-  settleTriggerChoice,
-  triggerChoiceOf,
-  triggerLineOf,
+  followedTriggerOf,
 } from "../src/triggerchoice.js";
 import { fakeBoardPorts } from "./helpers/board-rig.js";
-import { REPO, hostWorld, setUpConfig } from "./helpers/host-rig.js";
+import { REPO, hostWorld, setUpConfig, type HostWorld } from "./helpers/host-rig.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -74,22 +80,11 @@ const sealed: OperatorSeal = {
       : { uid: 0, gid: 0, mode: 0o755, kind: "dir" },
 };
 
-/** A config's trigger line, where the text says one way or the other. */
-const lineOf = (text: string): GithubTrigger | null => {
-  const line = triggerLineOf(text);
-  if (line === undefined) throw new Error("the config's trigger line cannot be read");
-  return line;
-};
-
 /** The daemon's handler, as wire.ts builds it, over `store`. */
-const handlerOver = (
-  store: StateStore,
-  hostManaged = true,
-  configured: GithubTrigger | null = "label",
-): CommandDeps =>
+const handlerOver = (store: StateStore, hostManaged = true): CommandDeps =>
   ({
     setTrigger: (trigger: GithubTrigger, file: string) =>
-      chooseTrigger({ store, hostManaged, configured }, trigger, file),
+      chooseTrigger({ store, hostManaged }, trigger, file),
   }) as unknown as CommandDeps;
 
 // ---- the one reading ---------------------------------------------------------------
@@ -119,37 +114,15 @@ describe("the trigger the reviewer runs on", () => {
         expect(effectiveTrigger({ hostManaged: false, chosen, configured })).toBe(configured);
   });
 
-  it("a reported choice is re-read: a word, null for none, and nothing else", () => {
-    expect(triggerChoiceOf("all")).toBe("all");
-    expect(triggerChoiceOf("label")).toBe("label");
-    expect(triggerChoiceOf(null)).toBeNull();
-    for (const v of [undefined, "ALL", "every", "", true, 1, ["all"], {}])
-      expect(triggerChoiceOf(v), JSON.stringify(v)).toBeUndefined();
-  });
-
-  // MUTATION: answer "label" for a config with no line in triggerLineOf (as
-  // the parsed config does) — a setup that writes `trigger = "label"` over a
-  // config that had none cannot be told from it, and this fails (and so does
-  // the restart case below).
-  it("what a config's text writes on its trigger line: the word, null for none, and undefined where it cannot say", () => {
-    expect([...GITHUB_TRIGGERS]).toEqual(["label", "all"]);
-    expect(triggerLineOf('[github]\ntrigger = "all"\n')).toBe("all");
-    expect(triggerLineOf('[github]\ntrigger = "label"\n')).toBe("label");
-    expect(triggerLineOf('[github]\nrepo = "acme/widgets"\n')).toBeNull();
-    expect(triggerLineOf("dry_run = true\n")).toBeNull();
-    // the trigger label's name is another key
-    expect(triggerLineOf('[github]\ntrigger_label = "all"\n')).toBeNull();
-    // the shipped template documents the key and leaves it out
-    expect(triggerLineOf(readFileSync(join(ROOT, "config.example.toml"), "utf8"))).toBeNull();
-    for (const text of [
-      "= not toml",
-      '[github]\ntrigger = "every"\n',
-      '[github]\ntrigger = "ALL"\n',
-      "[github]\ntrigger = true\n",
-      'github = "a string"\n',
-    ])
-      expect(triggerLineOf(text), text).toBeUndefined();
-    // the reviewer itself reads no line as label
+  // MUTATION: default a missing word to "label" in followedTriggerOf — an
+  // older daemon's status, which says nothing, reads as `label`, and this
+  // fails.
+  it("the trigger a daemon wrote it follows is re-read: one of the two words, and nothing else", () => {
+    expect(followedTriggerOf("all")).toBe("all");
+    expect(followedTriggerOf("label")).toBe("label");
+    for (const v of [undefined, null, "ALL", "every", "", true, 1, ["all"], {}])
+      expect(followedTriggerOf(v), JSON.stringify(v)).toBeUndefined();
+    // the reviewer itself reads a config with no line as label: the starting value
     expect(githubTriggerOf(undefined)).toBe("label");
   });
 });
@@ -160,16 +133,12 @@ describe("the daemon keeps the choice in its own store", () => {
   it("none until a host chooses; the last choice stands, and each is logged", () => {
     const store = new StateStore(":memory:");
     expect(store.triggerChoice()).toBeNull();
-    expect(
-      chooseTrigger({ store, hostManaged: true, configured: "label" }, "all", "a.json"),
-    ).toEqual({
+    expect(chooseTrigger({ store, hostManaged: true }, "all", "a.json")).toEqual({
       ok: true,
       trigger: "all",
     });
     expect(store.triggerChoice()).toBe("all");
-    expect(
-      chooseTrigger({ store, hostManaged: true, configured: "label" }, "label", "b.json"),
-    ).toMatchObject({
+    expect(chooseTrigger({ store, hostManaged: true }, "label", "b.json")).toMatchObject({
       ok: true,
     });
     expect(store.triggerChoice()).toBe("label");
@@ -190,7 +159,7 @@ describe("the daemon keeps the choice in its own store", () => {
   // and this fails.
   it("refuses on an install no host manages, and keeps nothing", () => {
     const store = new StateStore(":memory:");
-    const out = chooseTrigger({ store, hostManaged: false, configured: "label" }, "all", "a.json");
+    const out = chooseTrigger({ store, hostManaged: false }, "all", "a.json");
     expect(out).toMatchObject({ ok: false });
     expect(String(out.reason)).toMatch(/token_source = "host"/);
     expect(store.triggerChoice()).toBeNull();
@@ -210,46 +179,6 @@ describe("the daemon keeps the choice in its own store", () => {
         .run(),
     ).toThrow(/CHECK/);
     expect(store.triggerChoice()).toBeNull();
-    store.close();
-  });
-
-  // MUTATION: store a config with no line as `label` in setTriggerChoice
-  // (`configured ?? "label"`) — a setup that writes `trigger = "label"` over
-  // a config that had no line leaves an earlier `all` standing, and this
-  // fails. Or drop the `config_trigger === null` keep: an older build's row
-  // is dropped at the first start, and this fails.
-  it("is dropped at a start whose config says another trigger than when it was chosen", () => {
-    const logs: string[] = [];
-    const store = new StateStore(":memory:");
-    const settle = (configured: GithubTrigger | null) =>
-      settleTriggerChoice({ store, hostManaged: true, configured, log: (l) => logs.push(l) });
-    // none made: nothing to drop
-    expect(settle("label")).toBeNull();
-    // made over a config with no line
-    store.setTriggerChoice("all", "a.json", null);
-    expect(settle(null)).toBeNull();
-    expect(store.triggerChoice()).toBe("all");
-    // an install no host manages is not asked
-    expect(settleTriggerChoice({ store, hostManaged: false, configured: "label" })).toBeNull();
-    expect(store.triggerChoice()).toBe("all");
-    // the config now states label: set after the choice
-    expect(settle("label")).toBe("all");
-    expect(store.triggerChoice()).toBeNull();
-    const dropped = store.db
-      .prepare("SELECT payload FROM events WHERE kind = ?")
-      .all(TRIGGER_CHOICE_DROPPED_EVENT) as Array<{ payload: string }>;
-    expect(dropped.map((r) => JSON.parse(r.payload) as unknown)).toEqual([
-      { trigger: "all", config_was: null, config_is: "label" },
-    ]);
-    expect(logs.join("\n")).toMatch(/dropped/);
-    // made over `label`, restated `label`: it stands
-    store.setTriggerChoice("all", "b.json", "label");
-    expect(settle("label")).toBeNull();
-    expect(store.triggerChoice()).toBe("all");
-    // a row an older build wrote says nothing of the config, and stands
-    store.db.prepare("UPDATE trigger_choice SET config_trigger = NULL").run();
-    expect(settle("all")).toBeNull();
-    expect(store.triggerChoice()).toBe("all");
     store.close();
   });
 
@@ -544,10 +473,9 @@ describe("after a daemon restart the stored trigger still wins", () => {
   // MUTATION: read `cfg.github.trigger` alone in reconcileOnce (ignore the
   // store's choice) — the restarted daemon runs on the config's `label` and
   // takes nothing, and this fails. Or keep the choice in memory only: the
-  // restarted daemon has none, and this fails the same way. Or keep no line
-  // with the choice (`setTriggerChoice(trigger, file, null)` in
-  // chooseTrigger): the restart reads the unchanged `label` line as a later
-  // setup, drops the choice, and this fails.
+  // restarted daemon has none, and this fails the same way. Or write the
+  // config's word into the snapshot's `trigger` — the export says `label`
+  // while the daemon follows `all`, and this fails.
   it(
     "over the config's word, with no file rewritten, in the reconcile pass and the board",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -608,12 +536,12 @@ describe("after a daemon restart the stored trigger still wins", () => {
         const status = JSON.parse(
           readFileSync(join(root, "state", "status.json"), "utf8"),
         ) as Record<string, unknown>;
-        expect(status["trigger_choice"]).toBe("all");
+        expect(status["trigger"]).toBe("all");
         const board = readFileSync(join(root, "state", "board.json"), "utf8");
         const read = (over: Parameters<typeof fakeBoardPorts>[0]) =>
           boardExport(fakeBoardPorts({ boardFile: async () => known(board), ...over }), 3);
         expect((await read({ config: () => known(HOSTED) })).trigger).toBe("all");
-        // the daemon off: the choice cannot be read, so the trigger is unknown
+        // the daemon off: nothing it follows can be read, so the trigger is unknown
         const off = await read({
           config: () => known(HOSTED),
           daemon: async () => known("stopped" as const),
@@ -622,103 +550,179 @@ describe("after a daemon restart the stored trigger still wins", () => {
         expect(
           await read({ config: () => known(HOSTED), daemon: async () => unknown("no docker") }),
         ).not.toHaveProperty("trigger");
-        // an install no host manages: the config's own word, whatever the board says
-        const own = HOSTED.replace('token_source = "host"\n', "");
-        expect((await read({ config: () => known(own) })).trigger).toBe("label");
       } finally {
         store.close();
       }
     },
   );
+});
 
-  // MUTATION: drop the settleTriggerChoice call from createDaemon — the
-  // restarted daemon still follows the host's earlier `all` while the config
-  // setup wrote says `label`, and this fails.
+// ---- setup again ----------------------------------------------------------------------
+
+describe("the latest of setup's --trigger and set-trigger is followed, on a running reviewer", () => {
+  let w: HostWorld;
+  let store: StateStore;
+  let dbPath: string;
+  /** The open pull requests GitHub lists. */
+  let open: PrRef[];
+  const ARGS = ["--repo", REPO, "--auth", "user"];
+  beforeEach(() => {
+    w = hostWorld();
+    for (const d of ["state/dryrun", "verdict", "inject"])
+      mkdirSync(join(w.root, d), { recursive: true });
+    dbPath = join(w.stateDir, "state.db");
+    store = new StateStore(dbPath);
+    open = [pr(101)];
+    // the daemon reads its sealed channel as each file lands, with the
+    // handler wire.ts builds, over whichever store it has open now
+    w.daemon.serve = async (payload, name) => {
+      const v = validateCommand(payload, { issuer: "operator" });
+      if (!v.ok) return { ok: false, reason: v.reason };
+      return (await executeCommand(v.command, handlerOver(store), {
+        file: name,
+        issuer: "operator",
+      })) as unknown as Record<string, unknown>;
+    };
+  });
+  afterEach(() => {
+    store.close();
+    w.close();
+  });
+
+  /** The daemon's own reader over the config as it is now, as the walk's
+   * ingress step leaves it (polling, which a person's login needs). */
+  const daemonReads = (): Config => {
+    const walked = join(w.root, "walked.toml");
+    writeFileSync(
+      walked,
+      w.config()!.replace(/^#\[ingress\]\n#shape = .*$/m, '[ingress]\nshape = "polling"'),
+    );
+    return loadConfig(walked);
+  };
+  /** The daemon, started on the config as it is now and the store as it is. */
+  const start = () =>
+    createDaemon({
+      cfg: daemonReads(),
+      root: w.root,
+      store,
+      adapter: fakeAdapter(() => open),
+      listen: false,
+      log: () => {},
+      hooks: { async inject() {}, async dispatchRound() {}, async archiveAndClose() {} },
+    });
+  /** What a host reads: the export over the daemon's own board. */
+  const exported = async (daemon: "running" | "stopped" = "running") =>
+    boardExport(
+      fakeBoardPorts({
+        boardFile: async () => known(readFileSync(join(w.stateDir, "board.json"), "utf8")),
+        config: () => known(w.config()!),
+        daemon: async () => known(daemon),
+      }),
+      3,
+    );
+  /** `host setup` and the walk it starts, to its end. */
+  const setUp = async (trigger: GithubTrigger): Promise<void> => {
+    expect(await hostSetup(w.ports, [...ARGS, "--trigger", trigger])).toEqual({
+      state: "started",
+    });
+    expect(await walkSetup(w.walker(), w.launched.at(-1)!.token)).toBe(0);
+    expect(readHostProgress(w.stateDir, w.facts())).toEqual({ setup: { state: "done" } });
+  };
+  const sent = () =>
+    w.daemon.payloads.filter((p) => p["command"] === "set-trigger").map((p) => p["trigger"]);
+  const lineOf = (): unknown =>
+    ((parse(w.config()!) as Record<string, Record<string, unknown>>)["github"] ?? {})["trigger"];
+
+  // MUTATION: drop the `set_trigger` step from walkSetup (hand nothing) —
+  // the running daemon goes on following `label` after setup said `all`, and
+  // this fails at the first pass after setup. Or prefer the config's word
+  // over the stored choice in effectiveTrigger (`configured ?? chosen`) — the
+  // restarted daemon follows the file's `all` over the later `label`, and
+  // this fails after the restart.
   it(
-    "a later `host setup --trigger` wins at the next start, and the export says what setup wrote",
+    "setup --trigger all, then set-trigger label, then a restart: label",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
-      const w = hostWorld();
-      try {
-        // the install as its first setup left it: no trigger line
-        w.writeConfig(setUpConfig());
-        for (const d of ["state/dryrun", "verdict", "inject"])
-          mkdirSync(join(w.root, d), { recursive: true });
-        const dbPath = join(w.stateDir, "state.db");
-        const first = new StateStore(dbPath);
-        // the daemon's own reader, over the config as the walk's ingress step
-        // leaves it (polling, which a person's login needs)
-        const daemonReads = (): Config => {
-          const walked = join(w.root, "walked.toml");
-          writeFileSync(
-            walked,
-            w.config()!.replace(/^#\[ingress\]\n#shape = .*$/m, '[ingress]\nshape = "polling"'),
-          );
-          return loadConfig(walked);
-        };
-        const running = daemonReads();
-        // the parsed config reads no line as label; the line itself is none
-        expect(running.github.trigger).toBe("label");
-        expect(triggerLineOf(w.config()!)).toBeNull();
-        // the host's set-trigger all, as the daemon on that config takes it
-        expect(await hostSetTrigger(w.ports, ["all"])).toEqual({ state: "done", trigger: "all" });
-        const v = validateCommand(w.daemon.payloads[0], { issuer: "operator" });
-        expect(v.ok).toBe(true);
-        if (v.ok)
-          await executeCommand(v.command, handlerOver(first, true, lineOf(w.config()!)), {
-            file: w.daemon.written[0]!,
-            issuer: "operator",
-          });
-        expect(first.triggerChoice()).toBe("all");
-        first.close();
+      // a reviewer that runs, set up without a trigger line: label
+      w.writeConfig(setUpConfig({ dryRun: false }));
+      let daemon = start();
+      await daemon.reconcile();
+      expect(store.getPr(101)).toBeUndefined();
+      expect((await exported()).trigger).toBe("label");
 
-        // then setup again, with --trigger label: it rewrites the config's line
-        expect(
-          await hostSetup(w.ports, ["--repo", REPO, "--auth", "user", "--trigger", "label"]),
-        ).toEqual({ state: "started" });
-        const cfg = daemonReads();
-        expect(cfg.github.trigger).toBe("label");
-        expect(triggerLineOf(w.config()!)).toBe("label");
+      // setup again, with --trigger all: the config's starting value, and the
+      // same word handed to the running daemon, which follows it at once
+      await setUp("all");
+      expect(lineOf()).toBe("all");
+      expect(sent()).toEqual(["all"]);
+      expect(store.triggerChoice()).toBe("all");
+      await daemon.reconcile();
+      expect(["queued", "reviewing"]).toContain(store.getPr(101)?.state);
+      expect((await exported()).trigger).toBe("all");
 
-        // the daemon starts again on the same store
-        const store = new StateStore(dbPath);
-        try {
-          const daemon = createDaemon({
-            cfg,
-            root: w.root,
-            store,
-            adapter: fakeAdapter(() => [pr(101)]),
-            // as the production boot reads it (src/wire.ts)
-            triggerLine: lineOf(w.config()!),
-            listen: false,
-            log: () => {},
-            hooks: { async inject() {}, async dispatchRound() {}, async archiveAndClose() {} },
-          });
-          expect(store.triggerChoice()).toBeNull();
-          expect(
-            effectiveTrigger({
-              hostManaged: true,
-              chosen: store.triggerChoice(),
-              configured: cfg.github.trigger,
-            }),
-          ).toBe("label");
-          await daemon.reconcile();
-          expect(store.getPr(101)).toBeUndefined();
-          const board = readFileSync(join(w.stateDir, "board.json"), "utf8");
-          const exported = await boardExport(
-            fakeBoardPorts({
-              boardFile: async () => known(board),
-              config: () => known(w.config()!),
-            }),
-            3,
-          );
-          expect(exported.trigger).toBe("label");
-        } finally {
-          store.close();
-        }
-      } finally {
-        w.close();
-      }
+      // then set-trigger label: the file still says all, the daemon follows label
+      expect(await hostSetTrigger(w.ports, ["label"])).toEqual({ state: "done", trigger: "label" });
+      await daemon.reconcile();
+      expect(lineOf()).toBe("all");
+      expect((await exported()).trigger).toBe("label");
+
+      // the daemon starts again, on the same store and the config that says all
+      store.close();
+      store = new StateStore(dbPath);
+      expect(daemonReads().github.trigger).toBe("all");
+      daemon = start();
+      open = [pr(101), pr(102)];
+      await daemon.reconcile();
+      expect(store.triggerChoice()).toBe("label");
+      expect(store.getPr(102)).toBeUndefined();
+      expect((await exported()).trigger).toBe("label");
+      // with the daemon off, nothing it follows can be read
+      expect(await exported("stopped")).not.toHaveProperty("trigger");
     },
   );
+
+  // The case a comparison of the config's line could not tell: setup restates
+  // the very line a later set-trigger was made over.
+  // MUTATION: keep setup's `--trigger` out of the host record in hostSetup
+  // (or drop the `set_trigger` step) — the walk hands nothing, the daemon
+  // keeps following the earlier `label`, and this fails.
+  it(
+    "setup --trigger all after set-trigger label, on a running reviewer: all, with no restart",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      w.writeConfig(setUpConfig({ dryRun: false }));
+      const daemon = start();
+      // a first setup with --trigger all, then the host's set-trigger label
+      await setUp("all");
+      expect(lineOf()).toBe("all");
+      expect(await hostSetTrigger(w.ports, ["label"])).toEqual({ state: "done", trigger: "label" });
+      await daemon.reconcile();
+      expect(store.getPr(101)).toBeUndefined();
+      expect((await exported()).trigger).toBe("label");
+
+      // setup again with the line the config already says: the file does not
+      // change, and the word is handed all the same
+      const before = w.config();
+      await setUp("all");
+      expect(w.config()).toBe(before);
+      expect(sent()).toEqual(["all", "label", "all"]);
+      expect(store.triggerChoice()).toBe("all");
+      // the same daemon, no restart
+      await daemon.reconcile();
+      expect(["queued", "reviewing"]).toContain(store.getPr(101)?.state);
+      expect((await exported()).trigger).toBe("all");
+    },
+  );
+
+  // MUTATION: hand setup's word when none was given (the config's line, say)
+  // — a re-run of setup with no --trigger undoes the host's later choice,
+  // and this fails.
+  it("setup with no --trigger hands nothing, and the daemon's choice stands", async () => {
+    w.writeConfig(setUpConfig());
+    expect(await hostSetTrigger(w.ports, ["all"])).toEqual({ state: "done", trigger: "all" });
+    expect(await hostSetup(w.ports, ARGS)).toEqual({ state: "started" });
+    expect(await walkSetup(w.walker(), w.launched.at(-1)!.token)).toBe(0);
+    expect(sent()).toEqual(["all"]);
+    expect(store.triggerChoice()).toBe("all");
+  });
 });

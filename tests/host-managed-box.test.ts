@@ -47,8 +47,9 @@ const MARKER = '[github]\ntoken_source = "host"\nauth = "user"\n';
 let w: HostWorld;
 beforeEach(() => {
   w = hostWorld();
-  // a new box: no stack runs yet
+  // a new box: no stack runs yet, until the walk's daemon_start brings it up
   w.daemon.running = false;
+  w.daemon.upAtStart = true;
   w.real = [
     githubAccountStep({ apiBase: "https://api.github.test", env: {}, secretsDir: w.secretsDir }),
   ];
@@ -288,7 +289,7 @@ describe("every setup a host can ask for", () => {
         trigger,
         ...(auth === "installation" ? { app_slug: SLUG, bot_login: BOT } : {}),
       });
-      expect(configFacts(w.config()!)).toMatchObject({ repo: REPO, trigger, dry_run: true });
+      expect(configFacts(w.config()!)).toMatchObject({ repo: REPO, dry_run: true });
       // the walk, with the real account step on the route the config names
       expect(await runWalk(), w.logs.join("\n")).toBe(0);
       expect([...new Set(w.calls.map((c) => c[0]))]).toEqual(["docker"]);
@@ -313,7 +314,6 @@ describe("every setup a host can ask for", () => {
       expect(configFacts(w.config()!)).toMatchObject({
         repo: REPO,
         identity: { mode: auth, login: auth === "installation" ? BOT : "octo-dev" },
-        trigger,
         dry_run: true,
       });
       expect(progress()).toEqual({ setup: { state: "done" } });

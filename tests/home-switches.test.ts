@@ -278,28 +278,33 @@ describe("switching auto-review on", () => {
   // The home's narrowest column is 74: the notice and the row are said whole.
   // MUTATION: drop the dry-run branch of switchOnPosture's `all` (say every
   // open pull request whatever the posture) — the confirm promises reviews
-  // that practice mode never takes, and this fails. Or drop the `dryRun`
-  // fact from pickUpPhrase's `all`: the row says the same, and this fails.
+  // that practice mode never takes, and this fails. Or drop the labelled and
+  // review-requested ones from it (say it reviews nothing by itself in
+  // dry-run): they are practice-reviewed there as under `label`
+  // (src/reconcile.ts), and this fails. Or drop the `dryRun` fact from
+  // pickUpPhrase's `all`: the row says the live wording, and this fails.
   it("under `all`, the confirm and the home say what practice mode takes, and what posting does, at 74 columns", async () => {
+    const flat = (t: string): string => t.replace(/[│\s]+/g, " ");
     const practice = machine({ pickUp: "all", goesLive: false });
     const h = await home(practice, [CHOICE.here, CHOICE.notNow, CHOICE.turnOn], { width: 74 });
     await h.pi.tool("home_auto_review");
     await drain();
     const confirm = h.asked[2]!.title;
     expect(confirm).toMatch(
-      /^Auto-review starts in dry-run, and while in it, it reviews nothing in acme\/widgets by itself: a practice review is asked for/,
+      /^Auto-review starts in dry-run: it practice-reviews pull requests labelled "[^"]+" or with a review request in acme\/widgets, records what it would post instead of posting it, and takes nothing else until it posts\./,
     );
     expect(confirm).toMatch(
-      /Once it posts, it reviews every open pull request that is not a draft, each once, then new ones\./,
+      /Once it posts, it also reviews every open pull request that is not a draft, each once, then new ones\./,
     );
+    expect(confirm).not.toMatch(/reviews nothing|nothing by itself/);
     expect(confirm).not.toMatch(/it reviews every open pull request in acme\/widgets/);
     const dryText = h.text();
     expect(dryText).toMatch(/● Auto-review on · dry-run/);
-    expect(dryText.replace(/[│\s]+/g, " ")).toMatch(
-      /picks up nothing by itself in dry-run \(a practice review is asked for\); once posting, every open pull request that is not a draft, each once, then new ones/,
+    expect(flat(dryText)).toMatch(
+      /picks up only labelled "[^"]+" or review-requested pull requests until posting, as practice reviews; then every open non-draft one once, and new ones/,
     );
-    expect(dryText.replace(/[│\s]+/g, " ")).toMatch(
-      /It picks up nothing by itself in dry-run \(a practice review is asked for\); once posting, every open pull request that is not a draft, each once, then new ones\./,
+    expect(flat(dryText)).toMatch(
+      /It picks up only labelled "[^"]+" or review-requested pull requests until posting, as practice reviews; then every open non-draft one once, and new ones\./,
     );
 
     const live = machine({ pickUp: "all", dryRun: known(false), goesLive: true });
@@ -307,15 +312,15 @@ describe("switching auto-review on", () => {
     await l.pi.tool("home_auto_review");
     await drain();
     expect(l.asked[2]!.title).toMatch(
-      /^Auto-review reviews every open pull request in acme\/widgets that is not a draft, each once, then new ones, and posts each review to GitHub\./,
+      /^Auto-review reviews every open pull request in acme\/widgets that is not a draft, each once, then new ones, and again any labelled "[^"]+" or with a review request, and posts each review to GitHub\./,
     );
-    expect(l.asked[2]!.title).not.toMatch(/nothing by itself/);
+    expect(l.asked[2]!.title).not.toMatch(/practice|nothing else/);
     const liveText = l.text();
     expect(liveText).toMatch(/● Auto-review on · live/);
-    expect(liveText.replace(/[│\s]+/g, " ")).toMatch(
-      /picks up every open pull request that is not a draft, each once, then new ones/,
+    expect(flat(liveText)).toMatch(
+      /picks up every open pull request that is not a draft, each once, then new ones, and again any labelled "[^"]+" or with a review request/,
     );
-    expect(liveText).not.toMatch(/nothing by itself/);
+    expect(liveText).not.toMatch(/practice reviews/);
     for (const text of [dryText, liveText]) expect(text).not.toContain("…");
   });
 

@@ -538,13 +538,15 @@ it authenticated (shape: `schemas/host.v1.json`;
   it queues every open pull request that has no review yet. Under either, a
   push to a reviewed pull request queues nothing by itself, and a review
   asked for by name (the label, `review-now`) still runs. In dry-run `all`
-  takes nothing, so the first pass after go-live takes every open pull
-  request once. `set-trigger` writes no config: under the same lock it sends
+  takes only what `label` takes (the label, a review request), so the first
+  pass after go-live takes every other open pull request once. `set-trigger` writes no config: under the same lock it sends
   its choice through the sealed operator channel `review-now` uses, and the
   running daemon keeps it in its own state, where it wins over `[github]
-  trigger` from the next poll and across restarts, until a later `host setup
-  --trigger` writes another line: the daemon's next start drops the choice,
-  and the line is followed. It restarts nothing, and
+  trigger` from the next poll and across restarts: the latest choice is
+  followed, and the config's line is only the starting value. `host setup
+  --trigger` writes that starting value and, once the reviewer is up, hands
+  the same word the same way (the walk's last step, `set_trigger`), so a
+  setup run again with another word takes effect with no restart. It restarts nothing, and
   answers `done` once the daemon took it or `sent` while it has not
   answered.
 

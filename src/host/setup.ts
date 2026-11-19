@@ -19,15 +19,17 @@
 // write its token over the file a host keeps.)
 //
 // `--trigger label|all` says which pull requests the reviewer picks up by
-// itself (`[github] trigger`): the ones that carry the trigger label, or
-// every one, which spends model usage on every pull request. It is written
-// with the rest of the config. Left out, the config's own stays, and a new
-// config's is `label`. `host set-trigger` changes it later, and its choice
-// is the running daemon's to keep (src/host/trigger.ts): from then on it wins
-// over this key, until a later setup writes another line here. The daemon
-// keeps the line the choice was made over, and its next start drops a choice
-// the config was set over since (src/triggerchoice.ts); a setup that restates
-// that very line leaves the choice standing.
+// itself: the ones that carry the trigger label, or every one, which spends
+// model usage on every pull request. The daemon's stored choice is the one
+// source of truth for it, and the latest choice wins (src/triggerchoice.ts).
+// So the word goes two ways. It is written into the config (`[github]
+// trigger`) as the starting value, followed where no choice was ever stored;
+// and the walk's last step (`set_trigger`, src/host/walk.ts) hands it to the
+// reviewer once it is up, through the sealed operator channel `host
+// set-trigger` uses (src/host/trigger.ts). A setup run again with another
+// word therefore takes effect at once, with no restart, and a `set-trigger`
+// after it wins over it in turn. Left out, the config's own stays (a new
+// config's is `label`), nothing is handed, and the reviewer's choice stands.
 //
 // What it refuses, in words, before anything is written:
 //
@@ -398,9 +400,17 @@ export async function hostSetup(ports: HostPorts, args: readonly string[]): Prom
 
     // from here the walk owns the work: its record first, then the process
     const at = ports.now().toISOString();
+    // with the `--trigger` asked, which the walk hands to the reviewer once
+    // it is up; none asked, none kept, and the reviewer's own choice stands
     updateHostRecord(ports.stateDir, (r) => ({
       ...r,
-      setup: { state: "running", step: "machine_checks", started_at: at, updated_at: at },
+      setup: {
+        state: "running",
+        step: "machine_checks",
+        ...(asked.trigger !== undefined ? { trigger: asked.trigger } : {}),
+        started_at: at,
+        updated_at: at,
+      },
     }));
     const failed = (why: string): HostAnswer => {
       const now = ports.now().toISOString();

@@ -96,7 +96,7 @@ import {
 } from "./securityrequest.js";
 import { STATE_REQUEST } from "./staterequest.js";
 import type { GithubTrigger } from "@quickchatai/pi-quickreview/src/reviewconfig.js";
-import { effectiveTrigger, settleTriggerChoice } from "./triggerchoice.js";
+import { effectiveTrigger } from "./triggerchoice.js";
 import { triggerLabelEnsurer, type TriggerLabelAdapter } from "./triggerlabel.js";
 import {
   PostingOutbox,
@@ -233,10 +233,6 @@ export interface DaemonDeps {
   log?: (msg: string, extra?: unknown) => void;
   /** Shared deterministic clock for dispatch, verdict and stage supervision. */
   now?: () => Date;
-  /** The config's `[github] trigger` line as this start read it
-   * (src/triggerchoice.ts `triggerLineOf`): its word, null for no line.
-   * Absent: the parsed config's trigger stands in for it. */
-  triggerLine?: GithubTrigger | null;
   /** Skip binding the HTTP port (tests). */
   listen?: boolean;
   /** Latest digest headline for status.json (src/digest.ts). */
@@ -505,27 +501,21 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   store.setAnomalySink((signal) => wakePolicy.onAnomaly(signal));
 
   const gh: DaemonAdapter = deps.adapter ?? buildGitHubAdapter(cfg, stateDir);
-  // A host's choice of trigger that the config was set over since (its
-  // `[github] trigger` says something else than when the choice was made)
-  // is dropped as the daemon starts: the later of the two is followed
-  // (src/triggerchoice.ts).
-  settleTriggerChoice({
-    store,
-    hostManaged: cfg.github.token_source === "host",
-    configured: deps.triggerLine !== undefined ? deps.triggerLine : (cfg.github.trigger ?? null),
-    log: (line) => log(line),
-  });
-  /** The trigger label made sure of when the daemon follows `label`: the
-   * trigger is read as the reconcile pass reads it. */
+  /** The trigger this daemon follows, read as the reconcile pass reads it
+   * (src/triggerchoice.ts): the store's latest choice on a host-managed
+   * install, else the config it started on. Throws when the store cannot
+   * say. */
+  const followedTrigger = (): GithubTrigger | undefined =>
+    effectiveTrigger({
+      hostManaged: cfg.github.token_source === "host",
+      chosen: store.triggerChoice(),
+      configured: cfg.github.trigger ?? "label",
+    });
+  /** The trigger label made sure of when the daemon follows `label`. */
   const ensureTriggerLabel = triggerLabelEnsurer({
     adapter: gh,
     now: () => (deps.now ? deps.now() : new Date()).getTime(),
-    trigger: () =>
-      effectiveTrigger({
-        hostManaged: cfg.github.token_source === "host",
-        chosen: store.triggerChoice(),
-        configured: cfg.github.trigger ?? "label",
-      }),
+    trigger: followedTrigger,
     name: cfg.github.trigger_label,
     log: (line) => log(line),
     logEvent: (kind, data) => store.logEvent(kind, null, data),
@@ -1287,12 +1277,14 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         ...(lastPoll?.error !== undefined ? { error: lastPoll.error } : {}),
         interval_s: cfg.daemon.poll_interval_s,
       };
-      // A host's choice of trigger (src/triggerchoice.ts), for the home and
-      // the board; left out when the store cannot say, never "none".
+      // The trigger this daemon follows, for the home and the board: they
+      // report this word, never the config file's (src/triggerchoice.ts).
+      // Left out when the store cannot say.
       try {
-        snapshot.trigger_choice = store.triggerChoice();
+        const followed = followedTrigger();
+        if (followed !== undefined) snapshot.trigger = followed;
       } catch (err) {
-        log("trigger choice read failed (the snapshot leaves it out)", err);
+        log("trigger read failed (the snapshot leaves it out)", err);
       }
       if (deps.runHost) snapshot.run_host = deps.runHost;
       writeStatusJson(stateDir, snapshot);

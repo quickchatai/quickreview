@@ -109,8 +109,6 @@ const SETUP = {
   identity: { mode: "user", login: "octo-dev" },
   model_login: "ok",
   trigger_label: "AI review requested",
-  // the rig's config leaves the key out: labelled pull requests
-  trigger: "label",
 };
 
 /** The fields that are the running daemon's: gone whenever its board is. */
@@ -121,6 +119,7 @@ const DAEMON_FIELDS = [
   "poll",
   "spend",
   "reviewed_today",
+  "trigger",
   "reviewing",
   "reviewed",
   "open",
@@ -138,6 +137,8 @@ describe("a working install", () => {
       ...SETUP,
       posting: "dry_run",
       reviewer: "on",
+      // the trigger the rig's daemon follows, from its board
+      trigger: "label",
       poll: { last_at: at(-60), ok: true, interval_s: 300 },
       spend: { today_usd: 0.25, month_usd: 0.25 },
       reviewing: [{ ...row(1), state: "queued" }],
@@ -396,20 +397,36 @@ describe("absent means unknown: the config", () => {
     expect(out.trigger_label).toBe("AI review requested");
   });
 
-  // What the reviewer picks up by itself is the config's own word, read where
-  // the running daemon reads it at every poll.
-  // MUTATION: drop `trigger` from configFacts, or from boardExport's object —
-  // a host cannot say which of the two the person chose, and this fails.
-  it("`trigger` is the config's word: label where the key is left out, all where it says so", async () => {
+  // What the reviewer picks up by itself is the trigger the running daemon
+  // follows, as it wrote it on its board, never the config file's word: the
+  // file is only the starting value, and a choice the daemon stored (a
+  // host's `set-trigger`, or setup's `--trigger` handed over) stands over it.
+  // MUTATION: print the config's `[github] trigger` in boardExport again (or
+  // read it through effectiveTrigger with the board's word as the choice) —
+  // the export says `label` while the daemon follows `all`, and this fails.
+  it("`trigger` is the daemon's word from its board, whatever the config file says", async () => {
     const withTrigger = (value: string): string =>
       CONFIG.replace("[github]\n", `[github]\ntrigger = ${value}\n`);
-    expect(configFacts(CONFIG).trigger).toBe("label");
-    expect(configFacts(withTrigger('"label"')).trigger).toBe("label");
-    expect(configFacts(withTrigger('"all"')).trigger).toBe("all");
-
-    const out = await read(fakeBoardPorts({ ...off, config: () => known(withTrigger('"all"')) }));
-    expect(out.trigger).toBe("all");
-    expect(validate(schema, out)).toEqual([]);
+    const hosted = (text: string): string =>
+      text.replace("[github]\n", '[github]\ntoken_source = "host"\n');
+    const following = (trigger: "label" | "all"): string => {
+      smallBoard();
+      w.trigger = trigger;
+      return w.boardText();
+    };
+    for (const [config, daemon] of [
+      [CONFIG, "all"],
+      [withTrigger('"label"'), "all"],
+      [withTrigger('"all"'), "label"],
+      [hosted(withTrigger('"all"')), "label"],
+      [hosted(CONFIG), "all"],
+    ] as const) {
+      w.close();
+      w = new BoardWorld();
+      const out = await read(withBoard(following(daemon), { config: () => known(config) }));
+      expect(out.trigger, `${config} / ${daemon}`).toBe(daemon);
+      expect(validate(schema, out)).toEqual([]);
+    }
     // printed after the day's count, before the host's own records
     const live = await read(
       withBoard(smallBoard(), {
@@ -422,62 +439,30 @@ describe("absent means unknown: the config", () => {
     expect(keys.indexOf("trigger")).toBe(keys.indexOf("setup") - 1);
     // the schema takes the two words, and nothing else
     for (const bad of ["every", "", true, null])
-      expect(validate(schema, { ...out, trigger: bad }), String(bad)).not.toEqual([]);
+      expect(validate(schema, { ...live, trigger: bad }), String(bad)).not.toEqual([]);
   });
 
-  // MUTATION: default an unreadable value to "label" in configFacts — a
-  // config that says something this release does not know prints as the
-  // default, and this fails.
-  it("`trigger` is absent when the config cannot say: unreadable, not TOML, or a value that is neither", async () => {
-    for (const config of [
-      () => unknown("permission denied"),
-      () => known("= not toml"),
-      () => known(null),
-      () => known(CONFIG.replace("[github]\n", '[github]\ntrigger = "every"\n')),
-      () => known(CONFIG.replace("[github]\n", "[github]\ntrigger = true\n")),
-    ]) {
-      const out = await read(fakeBoardPorts({ ...off, config }));
-      expect(out).not.toHaveProperty("trigger");
-    }
-    // the rest of that config is still said: one bad key costs its own field
-    const out = await read(
-      fakeBoardPorts({
-        ...off,
-        config: () => known(CONFIG.replace("[github]\n", '[github]\ntrigger = "every"\n')),
-      }),
-    );
-    expect(out.repo).toBe("acme/webapp");
-    expect(out.trigger_label).toBe("AI review requested");
-  });
-
-  // On a host-managed install the host's choice (`host set-trigger`) is the
-  // running daemon's, carried in its board (src/triggerchoice.ts).
-  // MUTATION: print `facts.trigger` again in boardExport (skip
-  // effectiveTrigger) — the export says the config's `label` while the
-  // reviewer runs on the host's `all`, and this fails; or say the config's
-  // word with the daemon off — the absent case fails.
-  it("`trigger` on a host-managed install: the host's choice from the daemon's board, absent without one", async () => {
-    const hosted = CONFIG.replace("[github]\n", '[github]\ntoken_source = "host"\n');
-    const boardWithChoice = (choice: unknown): string =>
-      JSON.stringify({ ...(JSON.parse(smallBoard()) as Json), trigger_choice: choice });
-    const at = (text: string, over: Parameters<typeof fakeBoardPorts>[0] = {}) =>
-      read(withBoard(text, { config: () => known(hosted), ...over }));
-    expect((await at(boardWithChoice("all"))).trigger).toBe("all");
-    expect((await at(boardWithChoice("label"))).trigger).toBe("label");
-    // no choice made: the config's word
-    expect((await at(boardWithChoice(null))).trigger).toBe("label");
-    // a board that does not say (an older daemon, a store it could not read)
-    expect(await at(boardWithChoice(undefined))).not.toHaveProperty("trigger");
-    expect(await at(boardWithChoice("every"))).not.toHaveProperty("trigger");
-    // the daemon off: its choice cannot be read
+  // MUTATION: fall back to the config's word when there is no board (the
+  // daemon off) — the file's `all` is printed for a daemon nobody runs, and
+  // this fails; or default a board's missing word to "label" in
+  // parseBoardFile — an older daemon's board says a trigger it never wrote.
+  it("`trigger` is absent with the daemon off, and when its board does not say", async () => {
+    const all = CONFIG.replace("[github]\n", '[github]\ntrigger = "all"\n');
+    const config = () => known(all);
+    expect(await read(fakeBoardPorts({ ...off, config }))).not.toHaveProperty("trigger");
     expect(
-      await at(boardWithChoice("all"), { daemon: async () => known("stopped" as const) }),
+      await read(
+        withBoard(smallBoard(), { config, daemon: async () => known("stopped" as const) }),
+      ),
     ).not.toHaveProperty("trigger");
-    // an install no host manages: the config's word, whatever the board says
-    expect(
-      (await read(withBoard(boardWithChoice("all"), { config: () => known(CONFIG) }))).trigger,
-    ).toBe("label");
-    expect(validate(schema, await at(boardWithChoice("all")))).toEqual([]);
+    for (const said of [undefined, "every", null, true]) {
+      const board = { ...(JSON.parse(smallBoard()) as Json), trigger: said };
+      if (said === undefined) delete board["trigger"];
+      const out = await read(withBoard(JSON.stringify(board), { config }));
+      expect(out, String(said)).not.toHaveProperty("trigger");
+      // the rest of the board is still said: one bad key costs its own field
+      expect(out.reviewer).toBe("on");
+    }
   });
 
   it("the identity is the mode the file names and the login it posts under", () => {

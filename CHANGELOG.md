@@ -219,12 +219,12 @@ default. A second choice reviews every pull request.
   draft is picked up when it is marked ready; a closed pull request never is.
   Switching to `"all"` queues every open pull request that has no review yet,
   so set it knowing how many your repository has open.
-- **`"all"` takes nothing in dry-run**, and marks nothing. A practice review
-  of every open pull request would be one nobody is shown, and its once-only
-  mark would keep each of them from the live reviewer. So the first pass
-  after go-live takes every open pull request once. A practice review is
-  asked for by name (`qcr review-now`, a host's `proof-start`), and the label
-  still works in dry-run.
+- **In dry-run `"all"` takes only what `"label"` takes**, and marks nothing.
+  A practice review of every open pull request would be one nobody is shown,
+  and its once-only mark would keep each of them from the live reviewer. So
+  the first pass after go-live takes every open pull request once. A
+  practice review is asked for by name (`qcr review-now`, a host's
+  `proof-start`), and the label and review requests still work in dry-run.
 - **A push still queues nothing by itself**, under either value: a pull
   request that is already reviewed is not reviewed again because commits
   landed on it. Ask again with the label, a review request, or
@@ -235,33 +235,39 @@ default. A second choice reviews every pull request.
   while a round runs is reported as the exec boundary's own controls changed
   under that round. The pickup is the poll's: on a webhook install a new pull
   request is picked up at the next poll, not at the moment it is opened.
-- **`host setup --trigger label|all`** records the choice in the config it
-  writes; left out, the config's own stays (`label` on a new install).
-  **`host set-trigger label|all`** changes it later without touching the
-  config: it sends a `set-trigger` command through the sealed operator
-  channel `review-now` uses, and the running daemon keeps the choice in its
-  own store (`trigger_choice` in state.db). From its next poll, and across
-  restarts, that choice wins over the config's `[github] trigger`, so a host
-  changes the trigger with rounds in flight and the round fingerprint never
-  moves. The later of the two wins: the daemon keeps, with the choice, what
-  the config's `[github] trigger` line said when it was made, and a daemon
-  that starts on a config whose line says something else (a later `host
-  setup --trigger` that wrote another line) drops the choice, so the export's
-  `trigger` says what setup wrote. A setup that restates the line the choice
-  was made over leaves the choice standing. It runs under the setup lock (`busy` while a setup or a go-live
+- **The daemon's stored choice is the one source of truth for the trigger,
+  and the latest choice wins.** **`host set-trigger label|all`** sends a
+  `set-trigger` command through the sealed operator channel `review-now`
+  uses, without touching the config, and the running daemon keeps the choice
+  in its own store (`trigger_choice` in state.db). From its next poll, and
+  across restarts, that choice wins over the config's `[github] trigger`,
+  which is only the starting value followed where no choice was ever stored,
+  so a host changes the trigger with rounds in flight and the round
+  fingerprint never moves. **`host setup --trigger label|all`** writes that
+  starting value into the config and, once the reviewer is up, hands the same
+  word through the same channel, as the setup walk's last step
+  (`set_trigger`; a word that cannot be handed over fails the walk there
+  with the problem `trigger_failed`). A setup run again with another word
+  therefore takes effect on a running reviewer with no restart, and a
+  `set-trigger` after it wins over it in turn. Left out, the config's own
+  stays (`label` on a new install), nothing is handed, and the daemon's
+  choice stands. `set-trigger` runs under the setup lock (`busy` while a setup or a go-live
   runs), on host-managed installs only (`not_host_managed` anywhere else),
   and needs the reviewer set up and running (`not_set_up`,
   `reviewer_not_running`, `reviewer_unreachable`). It answers `done` with
   `trigger` once the daemon took it, `sent` while the daemon has not
   answered, and `trigger_refused` when the daemon said no. It starts and
   restarts nothing and never touches `dry_run`.
-- **The board export carries `trigger`** (`label` or `all`): on a
-  host-managed install the host's choice as the running daemon reports it,
-  else the config's word. Absent when it cannot be read: the config cannot be
-  read or states neither, or on a host-managed install the daemon is off.
-  The home's line about what auto-review picks up says the same: "every open
-  pull request that is not a draft" under `all`, and that it is unknown when
-  it cannot be read.
+- **The board export carries `trigger`** (`label` or `all`): the trigger the
+  running daemon follows, as it writes it itself into its status snapshot and
+  `board.json`, never the config file's word. Absent with the daemon off, or
+  when its board does not say. The home's line about what auto-review picks
+  up reads the same writing (with the daemon off, on an install no host
+  manages, the config's word it starts on). Under `all` in dry-run it says
+  that the labelled and review-requested pull requests are practice-reviewed
+  and nothing else is taken until posting; once posting, every open pull
+  request that is not a draft as well, and again any labelled or
+  review-requested one. The switch-on confirm says the same.
 - **`qcr checklist` knows `all`**: the queue comparison counts the rows the
   every-pull-request trigger took, which no search lists, as owed.
 

@@ -78,7 +78,7 @@
         },
         "state": {
           "enum": ["started", "running", "busy", "refused"],
-          "description": "started: the config is written and the setup walk runs, detached; the board export's `setup` field follows it. running: a setup walk is already under way, and nothing new was started. busy: something else holds the setup lock (holder). refused: nothing was started (reason)."
+          "description": "started: the config is written and the setup walk runs, detached; the board export's `setup` field follows it. Given --trigger, the walk's last step (set_trigger) hands that word to the reviewer once it is up, as set-trigger does, so it is followed at once, with no restart. running: a setup walk is already under way, and nothing new was started. busy: something else holds the setup lock (holder). refused: nothing was started (reason)."
         },
         "reason": {
           "$ref": "#/$defs/reason"
@@ -251,7 +251,7 @@
         },
         "trigger": {
           "enum": ["label", "all"],
-          "description": "With state done or sent: what the reviewer picks up by itself. label: pull requests that carry the trigger label. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request; while the reviewer is in dry-run it takes none of them, so the first pass after go-live takes each."
+          "description": "With state done or sent: what the reviewer picks up by itself. label: pull requests that carry the trigger label or a review request. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request, and the labelled and review-requested ones as under label; while the reviewer is in dry-run it takes only the labelled and review-requested ones, so the first pass after go-live takes each of the others."
         }
       },
       "additionalProperties": false

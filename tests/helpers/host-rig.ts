@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StepRegistry, type SetupStep } from "@quickchatai/pi-quickreview/src/setupchecklist.js";
-import { SWITCH_ON_ORDER } from "../../src/home/switchon.js";
+import { DAEMON_START_STEP_ID, SWITCH_ON_ORDER } from "../../src/home/switchon.js";
 import type { HostPorts, WalkKind } from "../../src/host/ports.js";
 import type { ProcessFacts } from "../../src/onboard/checklistlock.js";
 import {
@@ -70,6 +70,16 @@ export interface FakeDaemon {
   written: string[];
   /** What each command file written carries, in the order written. */
   payloads: Record<string, unknown>[];
+  /** A daemon that reads its channel as each file lands: handed every
+   * command written, by name, its answer is that file's receipt (in place
+   * of `receipt`). Unset: the fake answers with `receipt` alone. */
+  serve?: (payload: Record<string, unknown>, name: string) => Promise<Record<string, unknown>>;
+  /** The receipts `serve` wrote, by command file name. */
+  served: Map<string, Record<string, unknown>>;
+  /** The walk's (fake) daemon_start step brings the daemon up, as the real
+   * one does on a stack that is not running yet. Off: `running` is only
+   * what a test sets. */
+  upAtStart: boolean;
 }
 
 export interface GithubCall {
@@ -164,10 +174,16 @@ function dockerOver(w: HostWorld): OnboardAdapters["runner"] {
           /'([^']+-host-settrigger-[a-z]+\.json)'/.exec(script)?.[1];
         if (name !== undefined) d.written.push(name);
         const payload = /^printf '%s\\n' '(\{[^']*\})'/.exec(script)?.[1];
-        if (payload !== undefined) d.payloads.push(JSON.parse(payload) as Record<string, unknown>);
+        if (payload !== undefined) {
+          const command = JSON.parse(payload) as Record<string, unknown>;
+          d.payloads.push(command);
+          if (d.serve && name !== undefined) d.served.set(name, await d.serve(command, name));
+        }
         return ok();
       }
       if (script.includes(".result.json")) {
+        const served = [...d.served].find(([name]) => script.includes(name))?.[1];
+        if (served !== undefined) return ok(JSON.stringify(served));
         if (d.receipt === "pending") return ok("pending\n");
         return ok(
           JSON.stringify(
@@ -235,6 +251,7 @@ function fakeStep(w: HostWorld, id: string, i: number): SetupStep<OnboardAdapter
           ok: false,
           checks: [{ name: w.refuseGoLive, ok: false, detail: "the step said no" }],
         };
+      if (id === DAEMON_START_STEP_ID && w.daemon.upAtStart) w.daemon.running = true;
       return { ok: true, checks: [{ name: id, ok: true, detail: `${id} ok` }] };
     },
     verify: async () => ({ ok: true, checks: [] }),
@@ -275,6 +292,8 @@ export function hostWorld(): HostWorld {
       writeFails: false,
       written: [],
       payloads: [],
+      served: new Map(),
+      upAtStart: false,
     },
     calls: [],
     github: [],

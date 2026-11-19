@@ -103,7 +103,9 @@ export const PROGRESS_STATES = ["running", "done", "failed"] as const;
 export type ProgressState = (typeof PROGRESS_STATES)[number];
 
 /** The steps a setup walk can be at, or stop at: switch-on's, without the two
- * that are never walked (the practice review and the go-live). */
+ * that are never walked (the practice review and the go-live), and then the
+ * walk's own last step, `set_trigger`: setup's `--trigger`, handed to the
+ * reviewer once it is up, through the channel `set-trigger` uses. */
 export const SETUP_STEPS = [
   "machine_checks",
   "topology",
@@ -117,6 +119,7 @@ export const SETUP_STEPS = [
   "bringup",
   "memory_user_keys",
   "verify_stack",
+  "set_trigger",
 ] as const;
 export type SetupStepId = (typeof SETUP_STEPS)[number];
 
@@ -133,6 +136,9 @@ export const SETUP_PROBLEMS = [
   "verify_failed",
   "config_unreadable",
   "step_failed",
+  /** Setup's `--trigger` could not be handed to the reviewer, or the
+   * reviewer refused it. */
+  "trigger_failed",
   /** The walk's process is gone and left no result. */
   "interrupted",
   "internal_error",

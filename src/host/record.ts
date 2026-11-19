@@ -3,6 +3,8 @@
 //
 //   setup, go_live      how far a detached walk has got, and how it ended:
 //                       what the board export prints as `setup` and `go_live`
+//                       (and, for its walk alone, the `--trigger` a setup
+//                       was given)
 //   proof_request       the practice round `proof-start` asked for: the pull
 //                       request, and the newest round that had already ended
 //                       then, so only a later round answers it
@@ -40,11 +42,13 @@ import {
   PROGRESS_STATES,
   SETUP_PROBLEMS,
   SETUP_STEPS,
+  TRIGGER_WORDS,
   type GoLiveProblem,
   type HostProof,
   type ProgressState,
   type SetupProblem,
   type SetupStepId,
+  type TriggerWord,
 } from "./outcomes.js";
 
 export const HOST_RECORD_VERSION = 1;
@@ -63,6 +67,11 @@ export interface SetupProgress {
   state: ProgressState;
   step?: SetupStepId;
   problem?: SetupProblem;
+  /** The `--trigger` this setup was given, which its walk reads as it
+   * starts and hands to the reviewer once it is up (the `set_trigger` step).
+   * Absent: it was given none, and the reviewer's own choice stands. Not
+   * printed by the export. */
+  trigger?: TriggerWord;
   started_at: string;
   updated_at: string;
 }
@@ -131,10 +140,12 @@ function setupOf(v: unknown): SetupProgress | undefined {
   if (state === undefined || started === undefined) return undefined;
   const step = member(SETUP_STEPS, v["step"]);
   const problem = member(SETUP_PROBLEMS, v["problem"]);
+  const trigger = member(TRIGGER_WORDS, v["trigger"]);
   return {
     state,
     ...(step !== undefined ? { step } : {}),
     ...(problem !== undefined ? { problem } : {}),
+    ...(trigger !== undefined ? { trigger } : {}),
     started_at: started,
     updated_at: str(v["updated_at"]) ?? started,
   };

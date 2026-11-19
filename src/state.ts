@@ -1220,21 +1220,18 @@ CREATE TABLE IF NOT EXISTS drain_state (
   updated_at         TEXT NOT NULL
 );
 -- Which pull requests the reviewer picks up by itself, as a host chose it
--- through the sealed operator channel (the 'set-trigger' command,
--- src/triggerchoice.ts): ONE row, id = 1, and no row until a host has chosen.
--- It wins over the config's [github] trigger on a host-managed install, and
--- lives here rather than in config.toml because the config is on the round
--- fingerprint's policy surface: a routine change must not rewrite it.
--- config_trigger is what the config's [github] trigger said when the choice
--- was made ('unset' for no line; NULL for a row an older build wrote): a
--- daemon that starts on a config saying something else drops the choice, as
--- the config was set after it.
+-- through the sealed operator channel (the 'set-trigger' command, sent by
+-- 'host set-trigger' and by 'host setup --trigger'; src/triggerchoice.ts):
+-- ONE row, id = 1, and no row until a host has chosen. The latest choice is
+-- the one source of truth on a host-managed install, over the config's
+-- [github] trigger (only the starting value), and lives here rather than in
+-- config.toml because the config is on the round fingerprint's policy
+-- surface: a routine change must not rewrite it.
 CREATE TABLE IF NOT EXISTS trigger_choice (
-  id             INTEGER PRIMARY KEY CHECK (id = 1),
-  trigger        TEXT NOT NULL CHECK (trigger IN ('label', 'all')),
-  chosen_at      TEXT NOT NULL,
-  file           TEXT NOT NULL,
-  config_trigger TEXT CHECK (config_trigger IN ('label', 'all', 'unset'))
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  trigger    TEXT NOT NULL CHECK (trigger IN ('label', 'all')),
+  chosen_at  TEXT NOT NULL,
+  file       TEXT NOT NULL
 );
 -- Worker crash-loop breaker: consecutive worker failures per PR. A PR
 -- with parked_at set gets no worker until the operator's rerun-round or
@@ -1896,9 +1893,6 @@ export class StateStore {
       // configuration surface and this system's own policy surface
       // (config.toml, scripts/, dist/, …) despite the column's name.
       "ALTER TABLE rounds ADD COLUMN git_config_fingerprint TEXT",
-      // What the config's [github] trigger said when a host chose — nullable,
-      // additive. NULL: an older build's row, which is kept.
-      "ALTER TABLE trigger_choice ADD COLUMN config_trigger TEXT CHECK (config_trigger IN ('label', 'all', 'unset'))",
       "ALTER TABLE bot_comments ADD COLUMN round_no INTEGER",
       // Measured usage — nullable, additive.
       "ALTER TABLE rounds ADD COLUMN tokens_in INTEGER",
@@ -6471,51 +6465,19 @@ export class StateStore {
     throw new Error(`state.db trigger_choice holds ${JSON.stringify(row.trigger)}`);
   }
 
-  /** Record a host's choice of trigger, from the command file `file`, with
-   * what the config's `[github] trigger` line says as it is made
-   * (`configured`; null where the config has no such line). What the store
-   * held before it, null for none. */
-  setTriggerChoice(
-    trigger: GithubTrigger,
-    file: string,
-    configured: GithubTrigger | null,
-  ): GithubTrigger | null {
+  /** Record a host's choice of trigger, from the command file `file`. What
+   * the store held before it, null for none. */
+  setTriggerChoice(trigger: GithubTrigger, file: string): GithubTrigger | null {
     return this.db
       .transaction(() => {
         const was = this.triggerChoice();
         this.db
           .prepare(
-            `INSERT INTO trigger_choice (id, trigger, chosen_at, file, config_trigger) VALUES (1, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET trigger=excluded.trigger, chosen_at=excluded.chosen_at,
-               file=excluded.file, config_trigger=excluded.config_trigger`,
+            `INSERT INTO trigger_choice (id, trigger, chosen_at, file) VALUES (1, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET trigger=excluded.trigger, chosen_at=excluded.chosen_at, file=excluded.file`,
           )
-          .run(trigger, this.ts(), file, configured ?? "unset");
+          .run(trigger, this.ts(), file);
         return was;
-      })
-      .immediate();
-  }
-
-  /** Drop the host's choice when the config's `[github] trigger` line says
-   * something else now (`configured`, null for no line) than it did when the
-   * choice was made: the config was set after it. What was dropped, or null
-   * when the choice stands (none made, the line unchanged, or a row that
-   * does not say). */
-  dropTriggerChoiceSetOver(
-    configured: GithubTrigger | null,
-  ): { trigger: GithubTrigger; was_configured: GithubTrigger | null } | null {
-    return this.db
-      .transaction(() => {
-        const row = this.db
-          .prepare("SELECT trigger, config_trigger FROM trigger_choice WHERE id = 1")
-          .get() as { trigger: string; config_trigger: string | null } | undefined;
-        if (row === undefined || row.config_trigger === null) return null;
-        if (row.config_trigger === (configured ?? "unset")) return null;
-        const trigger = this.triggerChoice();
-        if (trigger === null) return null;
-        this.db.prepare("DELETE FROM trigger_choice WHERE id = 1").run();
-        const was = row.config_trigger;
-        const wasConfigured: GithubTrigger | null = was === "label" || was === "all" ? was : null;
-        return { trigger, was_configured: wasConfigured };
       })
       .immediate();
   }
@@ -8755,10 +8717,11 @@ export interface StatusSnapshot {
   /** Where the daemon runs (src/runhost.ts). Absent: not reported (an older
    * daemon, or one assembled without its host facts). */
   run_host?: import("./runhost.js").RunHostStatus;
-  /** The trigger a host chose through the operator channel, null when none
-   * was chosen (src/triggerchoice.ts). Absent: the daemon could not read its
-   * store, or predates the field — unknown, never "none". */
-  trigger_choice?: GithubTrigger | null;
+  /** The trigger this daemon follows (src/triggerchoice.ts
+   * `effectiveTrigger`, over its store's choice and the config it started
+   * on). Absent: the daemon could not read its store, or predates the field —
+   * unknown, never a default. */
+  trigger?: GithubTrigger;
   /** Every open pull request of the reviewed repo, as the last successful
    * reconcile pass listed it (tracked or not): what the board offers to
    * review. Absent until a pass has listed them. */

@@ -60,7 +60,7 @@
     },
     "trigger": {
       "enum": ["label", "all"],
-      "description": "What the reviewer picks up by itself. On an install a host manages it is the host's choice (`host set-trigger`), which the running reviewer keeps and reports, and where no choice was made the config's `[github] trigger`; a later `host setup --trigger` that writes another `[github] trigger` line wins over an earlier choice from the reviewer's next start; on any other install it is the config's word. label: pull requests that carry the trigger label. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request; in dry-run it takes none of them, so the first pass after go-live takes each. Absent when it cannot be read: the config cannot be read or states neither, or on a host-managed install the reviewer is not running."
+      "description": "What the reviewer picks up by itself: the trigger the running reviewer follows, as it writes it itself, never the config file's word. On an install a host manages it is the latest choice the reviewer has stored: `host set-trigger`, or `host setup --trigger`, which hands its word the same way once the reviewer is up (the setup step set_trigger); the latest wins, with no restart, and the config's `[github] trigger` is only the starting value, followed where no choice was ever stored. On any other install it is the config's word as the reviewer started on it. label: pull requests that carry the trigger label or a review request. all: every open pull request that is not a draft and not the reviewer's own, each once, which spends model usage on every pull request, and the labelled and review-requested ones as under label; in dry-run it takes only the labelled and review-requested ones, so the first pass after go-live takes each of the others. Absent when the reviewer is not running, or does not say."
     },
     "poll": {
       "type": "object",
@@ -160,9 +160,10 @@
             "daemon_start",
             "bringup",
             "memory_user_keys",
-            "verify_stack"
+            "verify_stack",
+            "set_trigger"
           ],
-          "description": "The step it is at, or stopped at."
+          "description": "The step it is at, or stopped at. set_trigger: setup's --trigger handed to the running reviewer, the same way set-trigger hands it; walked only when setup was given --trigger."
         },
         "problem": {
           "enum": [
@@ -177,10 +178,11 @@
             "verify_failed",
             "config_unreadable",
             "step_failed",
+            "trigger_failed",
             "interrupted",
             "internal_error"
           ],
-          "description": "Why it failed. interrupted: the process that ran it is gone and left no result."
+          "description": "Why it failed. trigger_failed: setup's --trigger could not be handed to the running reviewer, or the reviewer refused it; the reviewer is up and follows the trigger it followed before. interrupted: the process that ran it is gone and left no result."
         }
       },
       "description": "The setup `qcr --schema 3 host setup` started: running with the step it is at, done, or failed with the step it stopped at and why. Absent when no setup was started."

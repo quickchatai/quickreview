@@ -12,16 +12,19 @@
 // command channel `review-now` uses: one `set-trigger` command file, written
 // as root into the daemon's `<commands>/operator/` (src/commands.ts), and its
 // receipt read for a moment. The daemon keeps the choice in its own store
-// (src/triggerchoice.ts), where its next reconcile pass reads it; from then
-// on it wins over the config's `[github] trigger`, across restarts, until a
-// later `host setup --trigger` writes another line there. It starts nothing
-// and restarts nothing, and a round in flight runs on.
+// (src/triggerchoice.ts), where its next reconcile pass reads it; it is the
+// one source of truth for the trigger, and the latest choice wins, across
+// restarts. A later `host setup --trigger` hands its word the same way
+// (`handTrigger`, the setup walk's `set_trigger` step), so it wins over an
+// earlier choice, and a later `set-trigger` wins over it in turn. It starts
+// nothing and restarts nothing, and a round in flight runs on.
 //
 // Nothing is written to config.toml. The config is on the round
 // fingerprint's policy surface (src/execboundary.ts): a rewrite while a round
 // runs is reported as the exec boundary's own controls changed under it, and
 // a host changes the trigger as routine, with rounds in flight. Only `host
-// setup --trigger` writes the config's key, before the daemon runs.
+// setup --trigger` writes the config's key: the starting value, followed
+// where no choice was ever stored.
 //
 //   done     the daemon took the choice
 //   sent     the command is written and the daemon has not answered yet; it
@@ -90,6 +93,38 @@ export function setTriggerWriteArgv(name: string, trigger: TriggerWord): string[
   ];
 }
 
+/**
+ * Hand `trigger` to the running daemon through the sealed operator channel,
+ * and read its receipt for a moment: `done` once it took the choice, `sent`
+ * when it has not answered yet, or a refusal. The caller holds the checklist
+ * lock: the verb below, or the setup walk's `set_trigger` step
+ * (src/host/walk.ts), which hands setup's `--trigger` the same way.
+ */
+export async function handTrigger(ports: HostPorts, trigger: TriggerWord): Promise<HostAnswer> {
+  const at = await standing(ports);
+  if (isAnswer(at)) return at;
+  const name = setTriggerFileName(ports.now(), trigger);
+  const write = await at.transport.execAsRoot(setTriggerWriteArgv(name, trigger));
+  if (write.code !== 0)
+    return refused(
+      "reviewer_unreachable",
+      `the choice could not be handed to the reviewer (${
+        oneLine(write.stderr || write.stdout).slice(0, 200) || `exit ${write.code}`
+      }). Nothing changed`,
+    );
+  for (let attempt = 0; attempt < RECEIPT_TRIES; attempt += 1) {
+    await ports.sleep(RECEIPT_WAIT_MS);
+    const receipt = await receiptOf(at.transport, name);
+    if (receipt.kind === "queued") return { state: "done", trigger };
+    if (receipt.kind === "refused")
+      return refused(
+        "trigger_refused",
+        `the reviewer refused the trigger "${trigger}": ${receipt.reason}`,
+      );
+  }
+  return { state: "sent", trigger };
+}
+
 /** The `set-trigger` verb. */
 export async function hostSetTrigger(
   ports: HostPorts,
@@ -119,28 +154,7 @@ export async function hostSetTrigger(
     }
     // the marker again, under the lock
     if (!hostManagedToml(existing)) return notHostManaged(NOT_A_HOSTS);
-    const at = await standing(ports);
-    if (isAnswer(at)) return at;
-    const name = setTriggerFileName(ports.now(), asked);
-    const write = await at.transport.execAsRoot(setTriggerWriteArgv(name, asked));
-    if (write.code !== 0)
-      return refused(
-        "reviewer_unreachable",
-        `the choice could not be handed to the reviewer (${
-          oneLine(write.stderr || write.stdout).slice(0, 200) || `exit ${write.code}`
-        }). Nothing changed`,
-      );
-    for (let attempt = 0; attempt < RECEIPT_TRIES; attempt += 1) {
-      await ports.sleep(RECEIPT_WAIT_MS);
-      const receipt = await receiptOf(at.transport, name);
-      if (receipt.kind === "queued") return { state: "done", trigger: asked };
-      if (receipt.kind === "refused")
-        return refused(
-          "trigger_refused",
-          `the reviewer refused the trigger "${asked}": ${receipt.reason}`,
-        );
-    }
-    return { state: "sent", trigger: asked };
+    return await handTrigger(ports, asked);
   } finally {
     got.lock.release();
   }

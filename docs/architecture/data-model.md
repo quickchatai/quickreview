@@ -147,7 +147,7 @@ status.json `memory.curation` until it or a later day is receipted, and as
 | Table | Purpose | Key columns | Principal methods |
 | --- | --- | --- | --- |
 | `drain_state` | the deploy-window drain; exactly one row, `id = 1`, persistent so it survives the restart it exists for | `id` (PK, `CHECK (id = 1)`), `draining`, `drained_deliveries`, `since` | `drainState`, `engageDrain`, `liftDrain`, `countDrainedDelivery` |
-| `trigger_choice` | a host's choice of trigger, sent by `host set-trigger` through the sealed operator channel (the `set-trigger` command); at most one row, `id = 1`, and none until a host has chosen. On a host-managed install it wins over `[github] trigger` (`effectiveTrigger`, `src/triggerchoice.ts`); it is kept here, not in `config.toml`, because the config is on the round fingerprint's policy surface | `id` (PK, `CHECK (id = 1)`), `trigger` (`CHECK` in `label`, `all`), `chosen_at`, `file`, `config_trigger` (what the config's `[github] trigger` line said when it was chosen: `label`, `all`, or `unset` for no line; NULL for an older build's row, which is kept) | `triggerChoice`, `setTriggerChoice`, `dropTriggerChoiceSetOver` (at the daemon's start: the choice is dropped when the line says something else now) |
+| `trigger_choice` | a host's latest choice of trigger, sent through the sealed operator channel (the `set-trigger` command) by `host set-trigger`, and by `host setup --trigger` once the reviewer is up; at most one row, `id = 1`, and none until a host has chosen. It is the one source of truth for the trigger on a host-managed install, and the latest choice wins: `[github] trigger` is only the starting value, followed where no row was ever written (`effectiveTrigger`, `src/triggerchoice.ts`). It is kept here, not in `config.toml`, because the config is on the round fingerprint's policy surface | `id` (PK, `CHECK (id = 1)`), `trigger` (`CHECK` in `label`, `all`), `chosen_at`, `file` | `triggerChoice`, `setTriggerChoice` |
 | `lever_grants` | every bounded drain/pause a *session* was granted, and the minutes it drew from that day's budget | `id` (PK), `kind`, `pr`, `minutes`, `day`, `expires_at` | `recordLeverGrant`, `leverMinutesUsed` |
 | `operator_commands` | which operator command files have been handled; keyed by file *version*, not name | `version` (PK), `file`, `handled_at` | `operatorCommandHandled`, `markOperatorCommandHandled` |
 | `filed_items` | improvement PRs and issues this system filed, for the day/week caps | `id` (PK), `kind`, `title`, `ref`, `filed_at` | `recordFiledItem`, `filedSince` |
@@ -525,7 +525,7 @@ running daemon's state and merges what the daemon does not know:
 | `reviewed_today` | `board.json`'s count, printed as a number only while the day it is the count of lasts; absent when the daemon wrote none |
 | `reviewer` (`off`, `starting`, `on`, `paused_login`, `broken`) | whether the daemon's container runs, then the file's `health` block, by the rule the home shows auto-review by (`autoReviewLabel`) |
 | `repo`, `identity`, `trigger_label` | the install's `config.toml`, read as text; `posting_pending: "live"` when it says `dry_run = false` and the running daemon is still in dry-run |
-| `trigger` (`label`, `all`) | what the reviewer picks up by itself, by the reading its own reconcile pass makes (`effectiveTrigger`, `src/triggerchoice.ts`): on a host-managed install the host's `set-trigger` choice as `board.json`'s `trigger_choice` carries it, and where none was made the same file's `[github] trigger` (`label` where the key is left out); on any other install that key alone. Absent where it cannot be read: the config cannot be read or states neither, or on a host-managed install the daemon is off or its board does not say |
+| `trigger` (`label`, `all`) | what the reviewer picks up by itself: the trigger the running daemon follows (`effectiveTrigger`, `src/triggerchoice.ts`), as it writes it itself into its status snapshot and `board.json` (`trigger`), never the config file's word, which can say something else than the daemon follows. Absent with the daemon off, or when its board does not say |
 | `model_login` (`ok`, `expired`, `missing`) | pi's `auth.json` on the host and, while the daemon runs, its refresher's record; readable before any setup |
 | `github` | the token file's own word (`githubWord`, over `githubTokenHealth` in `packages/pi-plugin/src/hosttoken.ts`): `ok`, `expired` by its expiry note, or `missing`, where the file is the credential (`[github] auth = "user"`, or a host's `token_source = "host"`). Absent where an App mints its own token and where the file or the note cannot be read; GitHub is not asked |
 | `setup`, `go_live`, `proof` | the host verbs' record and the checklist's practice round, through `readBoardProgress` (§4.8) |
@@ -552,7 +552,7 @@ text.
 
 | Verb | Answers | What it does |
 | --- | --- | --- |
-| `setup --repo o/n --auth user` | `started`, `running`, `busy`, `refused` | writes the config from the shipped template (`renderHostConfig`, `src/onboard/steps/hostconfig.ts`) and starts switch-on's steps detached. With no config yet it writes the host-managed marker and the auth mode itself; a config that is there without the marker is refused (`not_host_managed`) |
+| `setup --repo o/n --auth user` | `started`, `running`, `busy`, `refused` | writes the config from the shipped template (`renderHostConfig`, `src/onboard/steps/hostconfig.ts`) and starts switch-on's steps detached, then, given `--trigger`, its own last step `set_trigger`. With no config yet it writes the host-managed marker and the auth mode itself; a config that is there without the marker is refused (`not_host_managed`) |
 | `review-now <pr>` | `queued`, `sent`, `refused` | one `review-now` command into the daemon's operator channel; refuses an install without the host-managed marker (`not_host_managed`), before it asks the daemon anything |
 | `proof-start <pr>` | `started`, `sent`, `running`, `busy`, `refused` | the same request, as a practice round; refuses when the config says the reviewer posts, and refuses an install without the host-managed marker (`not_host_managed`) before it takes the lock |
 | `proof-result <pr>` | `running`, `done`, `failed`, `not_started`, `busy`, `refused` | looks once; when the round has finished, records the proof and prints the review (`body`, at most 50 `comments` of `path`, `line`, `body`, each length-capped); refuses an install without the host-managed marker (`not_host_managed`) before it takes the lock, so no proof record is written there |
@@ -585,15 +585,19 @@ the one on record is `auth_mismatch`, as another mode is.
 `setup` also takes `--trigger label|all` and states it as `[github] trigger`
 (§5): pull requests that carry the trigger label, or every open pull request
 that is not a draft and not the reviewer's own, each once, which spends model
-usage on every pull request. Left out, the config's own stays (`label` on a
-new install). `set-trigger` changes it later without writing the config: the
-daemon keeps the choice in `trigger_choice`, reads it again at every poll, and
-it wins over the config's key from then on, across restarts, until a daemon
-starts on a config whose `[github] trigger` line says something else than
-when the choice was made: a later `setup --trigger` wrote it, and the choice
-is dropped (`settleTriggerChoice`). Neither restarts
-anything, so the daemon follows with its rounds, its queue and its state
-untouched, and the export's `trigger` says the same word. The trigger is never part of what a reviewer is bound to: unlike the
+usage on every pull request. That line is the starting value: the daemon's
+stored choice (`trigger_choice`) is the one source of truth, and the latest
+choice wins. `set-trigger` makes a choice without writing the config, and so
+does `setup --trigger` once the reviewer is up: the walk's last step,
+`set_trigger`, hands the word through the same sealed channel (`handTrigger`,
+`src/host/trigger.ts`), and a word that cannot be handed over fails the walk
+there as `trigger_failed`. The daemon reads the choice again at every poll,
+across restarts, so a setup run again with another word takes effect on a
+running reviewer with no restart, and a `set-trigger` after it wins over it in
+turn. Left out, the config's own stays (`label` on a new install), nothing is
+handed, and the choice stands. Neither restarts anything, so the daemon
+follows with its rounds, its queue and its state untouched, and the export's
+`trigger` says the word it follows. The trigger is never part of what a reviewer is bound to: unlike the
 repository and the identity, it can change at any time.
 
 **`state/onboarding/host.json`** (`HostRecord` in `src/host/record.ts`) is
@@ -601,7 +605,7 @@ what the verbs keep between calls:
 
 | Part | Written by | Holds |
 | --- | --- | --- |
-| `setup` | `host setup` and its walk | `state` (`running`, `done`, `failed`), the `step` it is at or stopped at (`SETUP_STEPS`), a `problem` (`SETUP_PROBLEMS`), and when it started and last moved |
+| `setup` | `host setup` and its walk | `state` (`running`, `done`, `failed`), the `step` it is at or stopped at (`SETUP_STEPS`), a `problem` (`SETUP_PROBLEMS`), and when it started and last moved; and, for the walk alone (the export never prints it), the `trigger` setup was given |
 | `go_live` | `host go-live` and its walk | `state`, a `problem` (`GO_LIVE_PROBLEMS`), and the two times |
 | `proof_request` | `host proof-start` | the pull request, and the newest round that had already ended when it was asked (`floor`): only a later round answers the request |
 | `proof_shown` | `host proof-result` | the practice round it returned. A go-live is admitted only on a round with this mark |
@@ -735,7 +739,7 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | `bot_login` | string | `""` (`<app_slug>[bot]`; the person's login under `auth = "user"`) |
 | `review_team` | string | `""` (`org/team`) |
 | `trigger_label` | string | `"AI review requested"` |
-| `trigger` | `"label"` \| `"all"` | `"label"` (`"all"`: every open pull request that is not a draft and not the reviewer's own is picked up once, as if labelled, which spends model usage on every pull request; a push to a reviewed one still queues nothing; nothing is taken in dry-run. Read at start; on a host-managed install a host's `set-trigger` choice in `trigger_choice` wins, until a start finds this line changed since the choice) |
+| `trigger` | `"label"` \| `"all"` | `"label"` (`"all"`: every open pull request that is not a draft and not the reviewer's own is picked up once, as if labelled, which spends model usage on every pull request; a push to a reviewed one still queues nothing; in dry-run it takes only what `"label"` takes. Read at start; on a host-managed install it is the starting value only, and the latest choice in `trigger_choice` (`set-trigger`, or `setup --trigger` handed over) wins) |
 | `in_progress_label` | string | `"AI review in progress"` |
 | `reviewed_label` | string | `"Automatic Review"` |
 | `improvement_label` | string | `"Bot improvement"` |
