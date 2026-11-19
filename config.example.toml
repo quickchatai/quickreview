@@ -416,7 +416,9 @@ session_dir = "state/pi-sessions"
 #                          the daemon's [daemon] lens_permits is the bot's
 #                          cross-worker budget
 #   lens_cache_group       lens sessions per shared provider prompt-cache key
-#                          (default 5; 0 = a random id each, no cache hits)
+#                          (default 32: a round's lenses on one model, tool
+#                          list and thinking level share one key and one
+#                          warm-up; 0 = a random id each, no cache hits)
 #   lens_cache_stagger_ms  how long a group's later sessions wait after its
 #                          first, so the cache is written first (default 2500)
 #   lens_pass_deadline_min per-pass deadline in minutes: a pass still running
@@ -425,7 +427,7 @@ session_dir = "state/pi-sessions"
 # [engine]
 # runtime = "sdk"
 # lens_max_concurrency = 4
-# lens_cache_group = 5
+# lens_cache_group = 32
 # lens_cache_stagger_ms = 2500
 # lens_pass_deadline_min = 8
 

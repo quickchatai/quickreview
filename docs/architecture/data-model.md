@@ -656,7 +656,7 @@ and spend is the cost pi reports for each call.
 **`[pi]`** — `package` (`"@earendil-works/pi-coding-agent"`), `version`
 (pinned; mirrored in `package.json` and the deploy variables), `session_dir`
 (`"state/pi-sessions"`), `lens_runtime`, `engine_wave`. The lens tool's width, cache group and deadline are
-`[engine] lens_max_concurrency` (`4`), `lens_cache_group` (`5`),
+`[engine] lens_max_concurrency` (`4`), `lens_cache_group` (`32`),
 `lens_cache_stagger_ms` and `lens_pass_deadline_min`; the old `[pi] subagent_*`
 keys are refused.
 

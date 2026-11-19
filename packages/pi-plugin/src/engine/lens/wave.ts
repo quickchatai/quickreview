@@ -16,7 +16,7 @@
 import { randomUUID } from "node:crypto";
 import type { Runtime } from "../port.js";
 import type { LensActivity } from "./activity.js";
-import type { LaunchUnit } from "./launch-plan.js";
+import { unitMessage, type LaunchUnit } from "./launch-plan.js";
 import type { LensRequest, LensRun } from "./runlens.js";
 
 /** What a wave needs of the runner: start one pass. */
@@ -32,7 +32,8 @@ export interface WaveRow {
   key: string;
   unit: LaunchUnit;
   origin: WaveOrigin;
-  /** The task text the row was started with (its pointer plus any `extra`). */
+  /** The task the row was started with, as the plan names it: its pointer
+   * plus any `extra`. The lens itself is sent the file's text (`unitMessage`). */
   task: string;
   /** Settles with the pass's result; never rejects. */
   done: Promise<LensRun>;
@@ -112,7 +113,9 @@ export class LensWave {
     } as WaveRow;
     row.done = runSafely(runner, {
       agent: unit.agent,
-      task: unit.task,
+      // The lens is sent its task file's text; the row keeps the pointer,
+      // which is what names it to the session.
+      task: unitMessage(unit),
       ...(signal ? { signal } : {}),
       onActivity: (activity) => {
         row.activity = activity;

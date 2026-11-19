@@ -85,6 +85,32 @@ export interface LensLedgerLine {
   stopReason?: string;
   errorMessage?: string;
   timedOut?: boolean;
+  /** The run's first request: what it paid for and what it read from cache.
+   * A warm-up's is its only request. Absent when that request failed or was
+   * cut, and when the deadline ended the first attempt: a retry's first
+   * request is not the run's. */
+  turn1?: LensFirstTurn;
+  /** Its cache group's key, when it ran in one. */
+  group?: string;
+  /** Hashes of the parts of its first request, as sent (leaf-cache.ts
+   * `renderPrefixDigest`): never their text. A packed group's runs only. */
+  prefix?: string;
+}
+
+/** A run's first request, in tokens: what it paid for in full (`input`),
+ * what it read from cache, and, where the provider bills writing to the cache
+ * apart, what it wrote there. The three add up to the request. */
+export interface LensFirstTurn {
+  input: number;
+  cacheRead: number;
+  cacheWrite?: number;
+}
+
+/** What a run in a cache group adds to its ledger line. */
+export interface LensCacheFacts {
+  turn1?: LensFirstTurn;
+  group?: string;
+  prefix?: string;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -110,6 +136,18 @@ export function lensUsageOf(value: unknown): LensUsage {
     output: finite(u?.["output"]),
     cacheRead: finite(u?.["cacheRead"]),
     cost: costOf(u?.["cost"]),
+  };
+}
+
+/** A first turn as a ledger line holds it: finite numbers, the cache write
+ * only when there was one. */
+function firstTurnFrom(value: unknown): LensFirstTurn {
+  const t = record(value);
+  const written = finite(t?.["cacheWrite"]);
+  return {
+    input: finite(t?.["input"]),
+    cacheRead: finite(t?.["cacheRead"]),
+    ...(written > 0 ? { cacheWrite: written } : {}),
   };
 }
 
@@ -151,6 +189,7 @@ export function ledgerLineOf(
   id: string,
   result: Omit<LensResult, "id" | "messages"> & { messages?: unknown },
   timing: { endedAtMs: number; startedAtMs?: number },
+  cache: LensCacheFacts = {},
 ): LensLedgerLine {
   return {
     v: 1,
@@ -170,6 +209,9 @@ export function ledgerLineOf(
     ...(result.stopReason !== undefined ? { stopReason: result.stopReason } : {}),
     ...(result.errorMessage !== undefined ? { errorMessage: result.errorMessage } : {}),
     ...(result.timedOut !== undefined ? { timedOut: result.timedOut } : {}),
+    ...(cache.turn1 !== undefined ? { turn1: firstTurnFrom(cache.turn1) } : {}),
+    ...(cache.group !== undefined ? { group: cache.group } : {}),
+    ...(cache.prefix !== undefined ? { prefix: cache.prefix } : {}),
   };
 }
 
@@ -201,6 +243,9 @@ export function ledgerLineFrom(value: unknown): LensLedgerLine | null {
     ...(typeof r["stopReason"] === "string" ? { stopReason: r["stopReason"] } : {}),
     ...(typeof r["errorMessage"] === "string" ? { errorMessage: r["errorMessage"] } : {}),
     ...(typeof r["timedOut"] === "boolean" ? { timedOut: r["timedOut"] } : {}),
+    ...(record(r["turn1"]) ? { turn1: firstTurnFrom(r["turn1"]) } : {}),
+    ...(typeof r["group"] === "string" ? { group: r["group"] } : {}),
+    ...(typeof r["prefix"] === "string" ? { prefix: r["prefix"] } : {}),
   };
 }
 

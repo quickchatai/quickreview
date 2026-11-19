@@ -46,14 +46,14 @@
 // are the run's (the round clears the board when it starts), so a caller that
 // runs reviews side by side builds a runtime per run (packages/pi-plugin/src/reviewapi.ts asks
 // for one per run) and disposes it after.
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { appendFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { lensRunConfigFromEnv } from "../../extensions/lens.js";
-import { CONTEXT_PACK_FILE } from "../contextpack.js";
 import type { SkippedLogin } from "../modelroute.js";
 import { agentDirSettings } from "./agentdir.js";
 import { borrowedCredentials } from "./auth.js";
 import { engineLensTools, type EngineLensTools } from "./lens/engine-tools.js";
+import { withRoundPack } from "./lens/round-lens.js";
 import type { LensRunConfig } from "./lens/runlens.js";
 import { LensWave, type EngineRoute, type EngineRouteRuntime } from "./lens/wave.js";
 import { PiHost, type PiHostOptions } from "./pisdk.js";
@@ -148,15 +148,14 @@ export function engineLensConfig(host: PiHost, spec: SessionSpec): LensRunConfig
   const root = spec.env["QCR_SANDBOX_ROOT"];
   if (root === undefined)
     throw new Error("a round's spec names its production tree (QCR_SANDBOX_ROOT)");
-  const ledger = spec.env["QCR_LEDGER_FILE"];
-  const packPath = ledger === undefined ? undefined : join(dirname(ledger), CONTEXT_PACK_FILE);
-  const pack = packPath !== undefined && existsSync(packPath) ? readFileSync(packPath, "utf8") : "";
-  return {
-    ...base,
-    agentsFiles: [reviewerStub(root, spec.cwd)],
-    bashEnv: { allow: BASH_ENV_ALLOW },
-    ...(base.cache && pack ? { cache: { ...base.cache, pack } } : {}),
-  };
+  return withRoundPack(
+    {
+      ...base,
+      agentsFiles: [reviewerStub(root, spec.cwd)],
+      bashEnv: { allow: BASH_ENV_ALLOW },
+    },
+    spec.env,
+  );
 }
 
 /** `SessionSpec.env` names this dir: the run's private pi agent dir. */

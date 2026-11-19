@@ -20,8 +20,9 @@
 //     context files ride as data; the pass reads the same bytes a native child
 //     reads (tests/lens-prompt-parity.test.ts).
 //   - Cache-grouped, when asked (config.cache). The passes of one group, per
-//     model and tool list (cacheGroupKey: the request's `tools` field is part
-//     of the cached prefix), share ONE session id, which is what routes their requests to one
+//     model, tool list and thinking level (cacheGroupKey: the declared tools
+//     are part of the cached prefix, and the provider keeps a cache per
+//     level), share ONE session id, which is what routes their requests to one
 //     provider cache. Disposing a session closes the transports held for its id,
 //     so a grouped session is kept until the group's last pass is done and the
 //     group is disposed together (cache-run.ts): one pass finishing never ends
@@ -29,9 +30,13 @@
 //   - Packed, where the API is the one the pack is built for. With a context
 //     pack, a group whose model speaks an API of the pack-first family
 //     (leaf-cache.ts PACK_FIRST_APIS, read off the model's `api`, never off a
-//     provider or a model name) is packed: its first pass starts a warm-up (no
-//     permit, the pack and "reply OK") that every pass of the group waits for,
-//     at most 30 s, and every request is rewritten pack-first. Any other group,
+//     provider or a model name) is packed: the first pass of its key starts a
+//     warm-up (no permit; the pack and the message that closes it, leaf-cache.ts
+//     PACK_CLOSING, and nothing else) that the passes beside it wait for, at
+//     most 30 s, and every request is rewritten pack-first, so that it extends
+//     the warm-up's. A pass that joins a warmed key later waits for nothing;
+//     one that joins a key whose warm-up failed starts it again, once
+//     (cache-run.ts WARMUP_ATTEMPTS). Any other group,
 //     and every group of a round with no pack, is not: no warm-up, no wait, no
 //     rewrite; its later passes start after a stagger, and a lens reads the
 //     pack file its task names.
@@ -65,6 +70,8 @@ import {
   isLensTool,
   ledgerLineOf,
   serializeLedgerLine,
+  type LensCacheFacts,
+  type LensFirstTurn,
   type LensMessage,
   type LensResult,
   type LensUsage,
@@ -88,7 +95,7 @@ import {
 } from "./cache-run.js";
 import { LensActivityTracker, type LensActivity } from "./activity.js";
 import { ProviderRetryWatch, passTimeoutMessage, runUnderDeadline } from "./deadline.js";
-import { isPackFirstApi, leafCache } from "./leaf-cache.js";
+import { isPackFirstApi, leafCache, renderPrefixDigest, type PrefixDigest } from "./leaf-cache.js";
 import type { AgentRegistry, LensAgent } from "./registry.js";
 import { localPermits, type Permit, type Permits } from "./permits.js";
 import { WeightedSemaphore } from "./semaphore.js";
@@ -108,7 +115,8 @@ export interface LensProgressSink {
 
 /** Lens cache groups. */
 export interface LensCacheConfig {
-  /** Passes per group, per model and tool list; below 1 there are no groups. */
+  /** Passes per group, per model, tool list and thinking level; below 1 there
+   * are no groups. */
   size: number;
   /** How long the later passes of a group that is not packed start after its first. */
   staggerMs: number;
@@ -302,9 +310,32 @@ interface Reading {
   failure: string | undefined;
 }
 
+/** What the session's first request paid for and read from cache: the usage
+ * of its first assistant message. Undefined when it has none, or when that
+ * request failed or was cut: pi writes such a message with no usage at all,
+ * and an unknown first turn is not a first turn that read nothing. */
+function firstTurnOf(messages: readonly LensMessage[]): LensFirstTurn | undefined {
+  for (const m of messages) {
+    if (m.role !== "assistant") continue;
+    if (m["stopReason"] === "error" || m["stopReason"] === "aborted") return undefined;
+    const usage = m["usage"];
+    if (typeof usage !== "object" || usage === null) return undefined;
+    const u = usage as Record<string, unknown>;
+    const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    const written = n(u["cacheWrite"]);
+    return {
+      input: n(u["input"]),
+      cacheRead: n(u["cacheRead"]),
+      ...(written > 0 ? { cacheWrite: written } : {}),
+    };
+  }
+  return undefined;
+}
+
 function readSession(session: AgentSession): {
   reading: Omit<Reading, "failure">;
   usage: LensUsage;
+  turn1: LensFirstTurn | undefined;
 } {
   // The system message carries the whole prompt; a native child's stream never
   // had it, and no consumer reads it.
@@ -334,6 +365,7 @@ function readSession(session: AgentSession): {
       cacheRead: stats.tokens.cacheRead,
       cost: stats.cost,
     },
+    turn1: firstTurnOf(messages),
   };
 }
 
@@ -368,9 +400,14 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
   const cache = config.cache !== undefined && config.cache.size >= 1 ? config.cache : undefined;
   const groups =
     cache !== undefined
-      ? new CacheGroups(cache.size, cache.staggerMs, undefined, (key, n) =>
-          debug(`pin-evidence cache-group-disposed key=${key} sessions=${n}`),
-        )
+      ? new CacheGroups(cache.size, cache.staggerMs, undefined, (key, n) => {
+          debug(`pin-evidence cache-group-disposed key=${key} sessions=${n}`);
+          const facts = groups?.factsOf(key);
+          if (facts?.warmupInput !== undefined)
+            debug(
+              `cache group ${key}: turn1_hot=${facts.turn1Hot}/${facts.turn1} warmup_input=${facts.warmupInput}`,
+            );
+        })
       : undefined;
   const sessionGapMs = config.sessionGapMs ?? DEFAULT_SESSION_GAP_MS;
 
@@ -488,17 +525,25 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     }
   };
 
+  /** What a run in a cache group was seen to do, by run id, until its ledger
+   * line is written. */
+  const cacheFacts = new Map<string, LensCacheFacts>();
+
   const record = (
     id: string,
     result: LensResult,
     startedAtMs: number,
     kind: "lens" | "warmup" = "lens",
   ): void => {
+    const facts = cacheFacts.get(id);
+    cacheFacts.delete(id);
     try {
       mkdirSync(dirname(config.ledgerPath), { recursive: true });
       appendFileSync(
         config.ledgerPath,
-        serializeLedgerLine(ledgerLineOf(kind, id, result, { endedAtMs: now(), startedAtMs })),
+        serializeLedgerLine(
+          ledgerLineOf(kind, id, result, { endedAtMs: now(), startedAtMs }, facts),
+        ),
       );
     } catch (e) {
       warn(`ledger append failed for ${id}: ${String(e)}`);
@@ -579,13 +624,16 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     // before any other pass of the group looks for it.
     const pack = groups !== undefined ? await packFor(on) : undefined;
     // Keyed by tool list too: a warm-up warms the prefix of its first pass's
-    // tools, and the request's `tools` field is part of that prefix.
+    // tools, which are part of that prefix. And by thinking level: the
+    // provider keeps a cache per level, so a warm-up serves its own.
     const lease =
-      groups !== undefined ? groups.join(cacheGroupKey(on.spec, agent.tools), now()) : undefined;
+      groups !== undefined
+        ? groups.join(cacheGroupKey(on.spec, agent.tools, agent.thinking), now())
+        : undefined;
     try {
       return await executeIn(id, agent, request, on, lease, pack);
     } finally {
-      lease?.release();
+      lease?.release(now());
     }
   }
 
@@ -608,8 +656,9 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     ...(config.bashEnv ? { bashEnv: config.bashEnv } : {}),
   });
 
-  /** A group's warm-up: the first pass's model and tools, no lens text, the
-   * pack and "reply OK", under the group's session id. It takes no permit (it
+  /** A group's warm-up: the first pass's model, tools and thinking level, no
+   * lens text, the pack and the message that closes it (its whole prompt),
+   * under the group's session id. It takes no permit (it
    * runs beside the first pass, which holds one) and never rejects: the group
    * is released when it finishes, whatever happened. Its session is kept for
    * the group's disposal. One ledger line, kind "warmup". */
@@ -628,6 +677,8 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     let session: AgentSession | undefined;
     let failure: string | undefined;
     let unexpected = false;
+    let sent: PrefixDigest | undefined;
+    let turn1: LensFirstTurn | undefined;
     try {
       await awaitCreationSlot(config.host, sessionGapMs, stop);
       stop.throwIfAborted();
@@ -635,7 +686,15 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         ...baseSpec(agent, on, [
           config.bashGuard,
           ...config.leafTools(agent),
-          leafCache({ pack, cacheKey: lease.key, onUnexpected: () => (unexpected = true) }),
+          leafCache({
+            pack,
+            cacheKey: lease.key,
+            onUnexpected: () => (unexpected = true),
+            onFirstRequest: (digest) => {
+              sent = digest;
+              lease.warmedWith(digest);
+            },
+          }),
         ]),
         sessionId: lease.key,
         onExtensionError: (e) => config.onExtensionError?.("warmup", id, e),
@@ -660,7 +719,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       };
       stop.addEventListener("abort", onStop, { once: true });
       try {
-        await s.prompt(`Task: ${WARMUP_REPLY_TASK}`);
+        await s.prompt(WARMUP_REPLY_TASK);
       } finally {
         turnSettled = true;
         stop.removeEventListener("abort", onStop);
@@ -668,6 +727,11 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       }
       const read = readSession(s);
       spent = addUsage(spent, read.usage);
+      turn1 = read.turn1;
+      // Only a warm-up whose request went through is what a lens can read
+      // from cache: one that failed or was cut has no first turn (firstTurnOf).
+      if (turn1 !== undefined && !stop.aborted)
+        lease.warmedInput(turn1.input + turn1.cacheRead + (turn1.cacheWrite ?? 0));
       if (stop.aborted) failure = "warm-up stopped after its time limit";
       else if (read.reading.stopReason === "error" || read.reading.stopReason === "aborted")
         failure = read.reading.errorMessage ?? `warm-up ended ${read.reading.stopReason}`;
@@ -682,6 +746,11 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       }
     }
     if (unexpected) warn(`warm-up ${id}: request shape not as expected; sent unchanged`);
+    cacheFacts.set(id, {
+      group: lease.key,
+      ...(turn1 !== undefined ? { turn1 } : {}),
+      ...(sent !== undefined ? { prefix: renderPrefixDigest(sent) } : {}),
+    });
     record(
       id,
       {
@@ -698,10 +767,12 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
   }
 
   /** Wait until the pass's group is ready for it. A packed group (`pack` is
-   * its pack, from packFor): the group's warm-up (started by the first
-   * pass), at most the wait; a warm-up that fails or runs late releases the
-   * group all the same. Any other group: the stagger after the group's first
-   * pass, an awaited delay, and no warm-up. */
+   * its pack, from packFor): the group's warm-up, at most the wait; a warm-up
+   * that fails or runs late releases the group all the same. The warm-up is
+   * started by the first pass of a key, and by a later one only when the key
+   * was never warmed (its warm-up failed): a pass that joins a warmed key
+   * late reads that cache and waits for nothing. Any other group: the stagger
+   * after the group's first pass, an awaited delay, and no warm-up. */
   async function groupReady(
     agent: LensAgent,
     on: PassModel,
@@ -714,7 +785,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       return;
     }
     const waitMs = cache?.warmupWaitMs ?? WARMUP_WAIT_MS;
-    const warm = lease.first
+    const warm = lease.needsWarmup()
       ? lease.startWarmup((keep) => warmUp(agent, on, lease, pack, keep, waitMs * 2))
       : lease.warmup();
     if (warm === undefined) return;
@@ -769,6 +840,11 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     if (thinking !== null && !THINKING_LEVEL_SET.has(thinking))
       return fail(`agent ${agent.name} asks for an unknown thinking level "${thinking}"`);
 
+    /** What the pass's ledger line says of its cache group. */
+    const seen: LensCacheFacts = lease !== undefined ? { group: lease.key } : {};
+    let attemptsRead = 0;
+    cacheFacts.set(id, seen);
+
     /** Dispose a finished session: now, or with its cache group, which shares
      * its id and so its transports. */
     const retire = (s: AgentSession): void => {
@@ -799,6 +875,14 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
                       warn(
                         `lens ${agent.name} ${id}: request shape not as expected; sent unchanged`,
                       ),
+                    onFirstRequest: (digest) => {
+                      seen.prefix ??= renderPrefixDigest(digest);
+                      const part = lease.differenceFromWarmup(digest);
+                      if (part !== undefined)
+                        warn(
+                          `cache group ${lease.key}: the request of ${agent.name} does not extend its warm-up's (it differs in ${part}), so its lenses read nothing of the warm-up from cache`,
+                        );
+                    },
                   }),
                 ]
               : []),
@@ -862,8 +946,16 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
         const failure = await turn;
         signal.removeEventListener("abort", onAbort);
         if (repeat !== undefined) clearInterval(repeat);
-        const { reading, usage } = readSession(session);
+        const { reading, usage, turn1 } = readSession(session);
         spent = addUsage(spent, usage);
+        // The pass's first turn is its first attempt's, or unknown: a later
+        // attempt may read what the first one left in the cache, and that
+        // says nothing of the warm-up.
+        attemptsRead += 1;
+        if (turn1 !== undefined && attemptsRead === 1) {
+          seen.turn1 = turn1;
+          if (pack !== undefined) lease?.firstTurn(turn1);
+        }
         retire(session);
         leave(sessionId);
         entered = false;

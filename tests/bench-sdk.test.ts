@@ -38,6 +38,9 @@ import {
   mkRoot,
   mkTree,
 } from "./helpers/round-rig.js";
+import { CONTEXT_PACK_FILE } from "@quickchatai/pi-quickreview/src/contextpack.js";
+import { PACK_FIRST_APIS } from "@quickchatai/pi-quickreview/src/engine/lens/leaf-cache.js";
+import { parseLedger } from "@quickchatai/pi-quickreview/src/lensresult.js";
 import { useOfflineGuard } from "./pi-canary/harness.js";
 
 vi.stubEnv("QCR_CONFIG", FIXTURE_CONFIG);
@@ -91,8 +94,14 @@ function agentDirWith(agents: string[] = []): string {
 function fauxHost(
   responses: Array<(context: unknown) => ReturnType<typeof fauxAssistantMessage>>,
   seen: unknown[] = [],
+  /** The API the faux model speaks; omitted, the faux provider's own. */
+  api?: string,
 ) {
-  const faux = pricedFaux(() => 0.1, { provider: "faux", models: [{ id: "m" }] });
+  const faux = pricedFaux(() => 0.1, {
+    provider: "faux",
+    models: [{ id: "m" }],
+    ...(api !== undefined ? { api } : {}),
+  });
   faux.appendResponses(
     responses.map((r) => async (context: unknown) => {
       seen.push(context);
@@ -344,6 +353,76 @@ describe("a bench review round on the SDK with the engine's planned wave", () =>
     expect(ledger).toHaveLength(2);
     expect(r.usage?.children).toBe(2);
     expect(readFileSync(join(outDir, "round-order.md"), "utf8")).toContain("lens_wave");
+  });
+
+  // The bench runs the round production runs: with a context pack beside the
+  // case's ledger, a cache group on the pack's API is warmed with it. Without
+  // that the bench measured lenses that read the pack file through a tool,
+  // which no production round does.
+  // MUTATION: build roundLensConfig without withRoundPack (round-lens.ts) — the
+  // packed round runs no warm-up; this fails.
+  it.each([
+    { name: "a case with a context pack warms its lens group with it", pack: true, warmups: 1 },
+    { name: "a case without one runs no warm-up", pack: false, warmups: 0 },
+  ])("$name", async ({ pack, warmups }) => {
+    const agentDir = agentDirWith(["pass-a", "pass-b"]);
+    const outDir = join(tmp, `out-${n++}`);
+    const lensWave = (): ReturnType<typeof fauxAssistantMessage> =>
+      fauxAssistantMessage([fauxToolCall("lens_wave", {})], { stopReason: "toolUse" });
+    const runtime = benchSdkRuntime({
+      plannedWave: true,
+      makeHost: fauxHost(
+        [
+          () => {
+            mkdirSync(outDir, { recursive: true });
+            writeFileSync(join(outDir, "findings-record.json"), RECORD);
+            writeFileSync(join(outDir, "outcome.json"), OUTCOME);
+            return lensWave();
+          },
+          // The warm-up when there is one, the two passes, the main session's end.
+          ...Array.from({ length: warmups + 2 }, () => () => fauxAssistantMessage("ok")),
+          () => fauxAssistantMessage("done"),
+        ],
+        [],
+        [...PACK_FIRST_APIS][0],
+      ),
+    });
+    const cfg = benchConfig("");
+    cfg.models.model = "faux/m";
+    const r = await runRound(
+      {
+        root: mkRoot(tmp, `root-${n++}`),
+        agentDir,
+        agentScope: "user",
+        tree: mkTree(tmp, `tree-${n++}`),
+        files: FILES,
+        target: TARGET,
+        outDir,
+        cfg,
+        ecosystem: ecosystemFor("none"),
+        timeoutMs: 10 * 60_000,
+        prompts: {
+          system: "You are the reviewer.",
+          order: "ROUND ORDER: review the PR.",
+          plannedLenses: ["pass-a", "pass-b"],
+          passPlan: [],
+          taskFiles: ["01-pass-a.md", "02-pass-b.md"].map((f) => ({
+            path: join(outDir, "tasks", f),
+            text: `task ${f}\n`,
+          })),
+          ...(pack
+            ? { contextPack: { path: join(outDir, CONTEXT_PACK_FILE), text: "THE CASE'S PACK\n" } }
+            : {}),
+        },
+      },
+      runtime,
+    );
+    expect(r.error).toBeUndefined();
+    const kinds = parseLedger(readFileSync(join(outDir, "lens-ledger.jsonl"), "utf8")).map(
+      (l) => l.kind,
+    );
+    expect(kinds.filter((k) => k === "lens")).toHaveLength(2);
+    expect(kinds.filter((k) => k === "warmup")).toHaveLength(warmups);
   });
 
   it("the engine setting without the wave leaves the launch to the main session", () => {

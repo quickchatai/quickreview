@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  CACHE_GROUP_MAX_AGE_MS,
+  CACHE_GROUP_MAX_IDLE_MS,
   CacheGrouper,
 } from "@quickchatai/pi-quickreview/src/engine/lens/cache-group.js";
 import {
@@ -20,7 +20,13 @@ import {
   resolveCacheStagger,
   resolveMaxConcurrency,
 } from "@quickchatai/pi-quickreview/src/engine/lens/env.js";
-import { packFirstPayload } from "@quickchatai/pi-quickreview/src/engine/lens/leaf-cache.js";
+import {
+  PACK_CLOSING,
+  packFirstPayload,
+  prefixDifference,
+  prefixDigest,
+  renderPrefixDigest,
+} from "@quickchatai/pi-quickreview/src/engine/lens/leaf-cache.js";
 import {
   CHARS_PER_TOKEN,
   mustSeeCandidates,
@@ -40,22 +46,45 @@ describe("cache groups", () => {
   it("one key per group of `size` per model; the first child at once, the rest after the stagger", () => {
     let n = 0;
     const g = new CacheGrouper(3, 2500, () => `k${++n}`);
-    expect(g.next(1000, "m")).toEqual({ key: "k1", first: true, delayMs: 0 });
-    expect(g.next(1000, "m")).toEqual({ key: "k1", first: false, delayMs: 2500 });
-    expect(g.next(2000, "m")).toEqual({ key: "k1", first: false, delayMs: 1500 });
+    expect(g.next(1000, "m")).toEqual({ key: "k1", delayMs: 0 });
+    expect(g.next(1000, "m")).toEqual({ key: "k1", delayMs: 2500 });
+    expect(g.next(2000, "m")).toEqual({ key: "k1", delayMs: 1500 });
     // Another model: its own group (the cache is per model).
-    expect(g.next(2000, "other")).toEqual({ key: "k2", first: true, delayMs: 0 });
+    expect(g.next(2000, "other")).toEqual({ key: "k2", delayMs: 0 });
     // Full: a new group, a new first child.
-    expect(g.next(2000, "m")).toEqual({ key: "k3", first: true, delayMs: 0 });
+    expect(g.next(2000, "m")).toEqual({ key: "k3", delayMs: 0 });
     // Past the stagger a member waits no longer.
-    expect(g.next(9000, "m")).toEqual({ key: "k3", first: false, delayMs: 0 });
+    expect(g.next(9000, "m")).toEqual({ key: "k3", delayMs: 0 });
   });
 
-  it("a stale group starts afresh (the provider's cache is short-lived)", () => {
+  it("a group idle too long starts afresh (the provider's cache is short-lived)", () => {
     let n = 0;
     const g = new CacheGrouper(10, 2500, () => `k${++n}`);
     g.next(0);
-    expect(g.next(CACHE_GROUP_MAX_AGE_MS + 1).key).toBe("k2");
+    expect(g.next(CACHE_GROUP_MAX_IDLE_MS + 1).key).toBe("k2");
+  });
+
+  // A round's later rows (the validator, a retry) come minutes after its
+  // first wave began and seconds after it ended. Counting from the group's
+  // first pass gave each of them a new key, and a warm-up that paid for the
+  // whole pack again.
+  // MUTATION: count the idle time from `leaderAt` in CacheGrouper.next — the
+  // late row gets "k2"; this fails.
+  it("a group is idle from its last use, not from its first pass: a late row joins it", () => {
+    let n = 0;
+    const g = new CacheGrouper(10, 2500, () => `k${++n}`);
+    expect(g.next(0, "m")).toMatchObject({ key: "k1" });
+    // A pass of the group was still in use five minutes on.
+    g.used(5 * 60_000, "m", "k1");
+    expect(g.next(6 * 60_000, "m")).toMatchObject({ key: "k1", delayMs: 0 });
+    // A join is a use too.
+    expect(g.next(9 * 60_000, "m").key).toBe("k1");
+    // Idle past the limit after that: afresh.
+    expect(g.next(9 * 60_000 + CACHE_GROUP_MAX_IDLE_MS + 1, "m").key).toBe("k2");
+    // A use of a group that is no longer the model's current one changes nothing.
+    g.used(60 * 60_000, "m", "k1");
+    expect(g.current("m")).toBe("k2");
+    expect(g.next(60 * 60_000, "m").key).toBe("k3");
   });
 
   it("the knobs read from the environment; anything unreadable is off / the default", () => {
@@ -96,11 +125,12 @@ describe("the pack-first payload (child side)", () => {
   const piInstructions = (body: string) =>
     `${base}\n\n<addendum>\n${body}\n\n</addendum>\n\n<cwd>\n/opt/quickreview/sandbox\n</cwd>`;
 
-  it("moves the lens body behind the pack: base instructions, pack (user), lens (developer), the task", () => {
+  it("moves the lens body behind the pack: base instructions, pack (user), the closing message, lens (developer), the task", () => {
     const out = packFirstPayload(payload(piInstructions(lens)), lens, "PACK")!;
     expect(out.instructions).toBe(`${base}\n\n<cwd>\n/opt/quickreview/sandbox\n</cwd>`);
     expect(out.input).toEqual([
       { role: "user", content: [{ type: "input_text", text: "PACK" }] },
+      { role: "user", content: [{ type: "input_text", text: PACK_CLOSING }] },
       { role: "developer", content: [{ type: "input_text", text: lens }] },
       { role: "user", content: [{ type: "input_text", text: "Task: Task file: /x.md." }] },
     ]);
@@ -126,6 +156,76 @@ describe("the pack-first payload (child side)", () => {
     expect(warm.instructions).toBe(lensed.instructions);
     expect((warm.input as unknown[])[0]).toEqual((lensed.input as unknown[])[0]);
     expect(warm.input as unknown[]).toHaveLength(2);
+  });
+
+  // pi declares the tools in the input, at its head (pi-ai's
+  // `additional_tools` item). The backend shares a prefix between two requests
+  // only as far as those declarations sit in one place: with the pack ahead of
+  // them they came after the pack in a warm-up and after the lens body in a
+  // lens, and every lens of a group read 0 tokens of its warm-up.
+  // MUTATION: put the pack ahead of the whole input in packFirstPayload
+  // (`[pack, ...input]`, both forms) - this fails.
+  it("pi's tool declarations stay at the head, so a lens repeats its warm-up up to the end of the pack", () => {
+    const tools = {
+      type: "additional_tools",
+      role: "developer",
+      tools: [{ type: "function", name: "read" }],
+    };
+    const task = {
+      role: "user",
+      content: [{ type: "input_text", text: "Task: Task file: /x.md." }],
+    };
+    // A warm-up's whole prompt is the message that closes the pack.
+    const closing = { role: "user", content: [{ type: "input_text", text: PACK_CLOSING }] };
+    const withTools = (instructions: string, prompt: unknown = task) => ({
+      ...payload(instructions),
+      input: [tools, prompt],
+    });
+    const pack = { role: "user", content: [{ type: "input_text", text: "PACK" }] };
+    const warm = packFirstPayload(
+      withTools(`${base}\n\n<cwd>\n/opt/quickreview/sandbox\n</cwd>`, closing),
+      "",
+      "PACK",
+    )!;
+    const lensed = packFirstPayload(withTools(piInstructions(lens)), lens, "PACK")!;
+    expect(warm.input).toEqual([tools, pack, closing]);
+    expect(lensed.input).toEqual([
+      tools,
+      pack,
+      closing,
+      { role: "developer", content: [{ type: "input_text", text: lens }] },
+      task,
+    ]);
+    expect(
+      prefixDifference(prefixDigest(warm, "PACK")!, prefixDigest(lensed, "PACK")!),
+    ).toBeUndefined();
+  });
+
+  // The backend keeps one reusable point per request, near its end. A lens
+  // that parted from its warm-up right after the pack read the cache only
+  // when that point happened to fall inside the pack: at some pack sizes
+  // never. So a lens repeats the WHOLE of its warm-up's conversation.
+  // MUTATION: leave PACK_CLOSING out of a lens's input in packFirstPayload —
+  // the lens parts from the warm-up at the closing message; this fails.
+  it("a lens extends its warm-up: every item of the warm-up's conversation opens the lens's", () => {
+    const closing = { role: "user", content: [{ type: "input_text", text: PACK_CLOSING }] };
+    const warm = packFirstPayload(
+      { ...payload(`${base}\n\n<cwd>\n/opt/quickreview/sandbox\n</cwd>`), input: [closing] },
+      "",
+      "PACK",
+    )!;
+    const lensed = packFirstPayload(payload(piInstructions(lens)), lens, "PACK")!;
+    const items = warm.input as unknown[];
+    expect((lensed.input as unknown[]).slice(0, items.length)).toEqual(items);
+    // And the digest says so: a lens without the closing message differs there.
+    const digest = (sent: unknown) => prefixDigest(sent, "PACK")!;
+    expect(digest(warm).input).toHaveLength(2);
+    expect(prefixDifference(digest(warm), digest(lensed))).toBeUndefined();
+    const parted = {
+      ...lensed,
+      input: (lensed.input as unknown[]).filter((_, i) => i !== 1),
+    };
+    expect(prefixDifference(digest(warm), digest(parted))).toBe("input1");
   });
 
   it("a body appended bare at the end is lifted out too", () => {
@@ -160,6 +260,73 @@ describe("the pack-first payload (child side)", () => {
     });
     expect(packFirstPayload(inInput(piInstructions(lens)), lens, "PACK")).toBeUndefined();
     expect(packFirstPayload(inInput(base), "", "PACK")).toBeUndefined();
+  });
+});
+
+describe("the request digest (what a warm-up and its lenses are compared by)", () => {
+  const pack = { role: "user", content: [{ type: "input_text", text: "PACK TEXT" }] };
+  const task = (t: string) => ({ role: "user", content: [{ type: "input_text", text: t }] });
+  const request = (over: Record<string, unknown> = {}) => ({
+    model: "m",
+    instructions: "base",
+    input: [pack, task("Task: Reply with the single word OK.")],
+    prompt_cache_key: "group",
+    reasoning: { effort: "high" },
+    ...over,
+  });
+  const digest = (over: Record<string, unknown> = {}) => prefixDigest(request(over), "PACK TEXT")!;
+
+  it("a lens that extends the warm-up differs in nothing, whatever follows the pack", () => {
+    const lens = digest({
+      input: [
+        pack,
+        { role: "developer", content: [{ type: "input_text", text: "lens" }] },
+        task("Task: x"),
+      ],
+    });
+    expect(lens.packAt).toBe(0);
+    expect(prefixDifference(digest(), lens)).toBeUndefined();
+  });
+
+  // Where a request carries the thinking level, the provider keeps a cache
+  // per level: a lens at another level than its warm-up reads none of it. It
+  // is named apart from the rest of the request, so the line says what to fix.
+  // MUTATION: drop the `reasoning` comparison from prefixDifference - this fails.
+  it("another thinking level than the warm-up's is a difference, named `reasoning`", () => {
+    const lens = digest({ reasoning: { effort: "medium" } });
+    expect(lens.other).toBe(digest().other);
+    expect(prefixDifference(digest(), lens)).toBe("reasoning");
+  });
+
+  it("the cache key alone is no difference: it names the group, not what was sent", () => {
+    expect(prefixDifference(digest(), digest({ prompt_cache_key: "another" }))).toBeUndefined();
+  });
+
+  it("names the first part a lens does not repeat", () => {
+    expect(prefixDifference(digest(), digest({ instructions: "other base" }))).toBe("instructions");
+    expect(prefixDifference(digest(), digest({ tools: [{ name: "read" }] }))).toBe("tools");
+    expect(prefixDifference(digest(), digest({ text: { verbosity: "high" } }))).toBe("other");
+    // Something ahead of the pack that the warm-up did not send.
+    const displaced = digest({ input: [task("lens body first"), pack, task("Task: x")] });
+    expect(displaced.packAt).toBe(1);
+    expect(prefixDifference(digest(), displaced)).toBe("input0");
+    // The tools declared after the pack: the prefix through the pack is the
+    // same and the backend still shares none of it.
+    const toolsLate = digest({
+      input: [pack, task("lens body"), { type: "additional_tools", tools: [] }, task("Task: x")],
+    });
+    expect(toolsLate.toolsAfterPack).toBe(1);
+    expect(prefixDifference(digest(), toolsLate)).toBe("tool-declarations");
+    // A request that never got the pack.
+    expect(prefixDifference(digest(), digest({ input: [task("Task: x")] }))).toBe("pack");
+  });
+
+  it("holds hashes only: no text of the pack, the instructions or the task", () => {
+    const line = renderPrefixDigest(digest());
+    expect(line).toMatch(
+      /^other=[0-9a-f]{10} reasoning=[0-9a-f]{10} instructions=[0-9a-f]{10} tools=[0-9a-f]{10} input0=[0-9a-f]{10} pack_at=0 tools_after_pack=0$/,
+    );
+    expect(prefixDigest(null)).toBeUndefined();
   });
 });
 
