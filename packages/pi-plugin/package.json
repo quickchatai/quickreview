@@ -1,6 +1,6 @@
 {
   "name": "@quickchatai/pi-quickreview",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "private": false,
   "description": "QuickReview for pi, an open-source AI code reviewer. Adds /qcr-review, /qcr-scan and /qcr-setup to your pi session.",
   "keywords": [
