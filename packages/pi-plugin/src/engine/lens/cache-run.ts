@@ -70,8 +70,6 @@ export class CacheLease {
 
   constructor(
     readonly key: string,
-    /** Whether this member is the group's first. */
-    readonly first: boolean,
     /** How long a member of a group that is not packed should wait before starting. */
     readonly delayMs: number,
     private readonly life: Lifetime,
@@ -221,7 +219,6 @@ export class CacheGroups {
     }
     return new CacheLease(
       slot.key,
-      slot.first,
       slot.delayMs,
       held,
       () => this.settle(slot.key, held),

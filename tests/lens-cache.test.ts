@@ -29,6 +29,7 @@ import {
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { createBashGuard } from "@quickchatai/pi-quickreview/extensions/bash-guard.js";
+import { CACHE_GROUP_MAX_IDLE_MS } from "@quickchatai/pi-quickreview/src/engine/lens/cache-group.js";
 import {
   CacheGroups,
   WARMUP_REPLY_TASK,
@@ -445,6 +446,48 @@ describe("[cache groups] one thinking level per group, one key per round", () =>
     expect(new Set(lines.map((l) => l.group)).size).toBe(1);
   });
 
+  // MUTATION: drop the `grouper.used` refresh in CacheGroups.join, or
+  // `this.used(nowMs)` in CacheLease.release (cache-run.ts) — the late row
+  // gets "k2"; this fails.
+  it("CacheGroups: a group is in use while a pass runs and until its last release", () => {
+    let n = 0;
+    const groups = new CacheGroups(8, 0, () => `k${++n}`);
+    const a = groups.join("m", 0);
+    // `a` is still running five minutes on: the join finds the group in use.
+    const b = groups.join("m", 5 * 60_000);
+    expect(b.key).toBe("k1");
+    a.release(5 * 60_000);
+    b.release(8 * 60_000);
+    // Counted from the last release, the group is not idle too long yet.
+    const c = groups.join("m", 8 * 60_000 + CACHE_GROUP_MAX_IDLE_MS);
+    expect(c.key).toBe("k1");
+    c.release(8 * 60_000 + CACHE_GROUP_MAX_IDLE_MS);
+    // Idle past the limit after that last release: afresh.
+    expect(groups.join("m", 8 * 60_000 + 2 * CACHE_GROUP_MAX_IDLE_MS + 1).key).toBe("k2");
+  });
+
+  // The validator starts minutes after its round's first pass and seconds
+  // after its last: it reads the cache the wave left.
+  // MUTATION: `lease?.release()` with no clock in execute (runlens.ts) — the
+  // late pass gets a new key and a second warm-up; this fails.
+  it("a pass that starts long after the group's first pass, soon after its last, joins the key", async () => {
+    let t = 0;
+    respondWith(
+      3,
+      codexLike([], new FakeTransport(), async (s) => {
+        // The first pass is still at work five minutes after the group began.
+        if (s.task.includes("first")) t = 5 * 60_000;
+      }),
+    );
+    const runner = createLensRunner(packed({ now: () => t }));
+    expect((await runner.run({ agent: "pass-a", task: "first" })).result.exitCode).toBe(0);
+    t = 8 * 60_000;
+    expect((await runner.run({ agent: "pass-b", task: "late" })).result.exitCode).toBe(0);
+    const lines = ledger();
+    expect(lines.filter((l) => l.kind === "warmup")).toHaveLength(1);
+    expect(new Set(lines.map((l) => l.group)).size).toBe(1);
+  });
+
   // MUTATION: answer false from needsWarmup once the key had a first pass
   // (cache-run.ts) — a key whose warm-up failed is never warmed; this fails.
   it("CacheLease.needsWarmup: the first pass, and a later one only while the key was never warmed", async () => {
@@ -455,7 +498,7 @@ describe("[cache groups] one thinking level per group, one key per round", () =>
     await first.startWarmup(async () => {});
     first.release(1);
     const second = groups.join("m", 2);
-    expect(second.first).toBe(false);
+    expect(second.key).toBe(first.key);
     expect(second.needsWarmup()).toBe(true);
     // One that ended well.
     let done!: () => void;
@@ -655,7 +698,11 @@ describe("[cache groups] the warm-up", () => {
     );
     expect(runs.every((r) => r.result.exitCode === 0)).toBe(true);
     expect(seen).toHaveLength(4);
-    expect(seen[0]!.task).toContain(WARMUP_REPLY_TASK);
+    // The warm-up's whole prompt is the message that closes the pack: its
+    // request then ends where the shared prefix ends, and a lens extends it.
+    // MUTATION: send the warm-up as `Task: ` + WARMUP_REPLY_TASK in warmUp
+    // (runlens.ts) — its request ends in words of its own; this fails.
+    expect(seen[0]!.task).toBe(WARMUP_REPLY_TASK);
     for (const s of seen.slice(1)) expect(s.at).toBeGreaterThanOrEqual(warmEnd);
     // The warm-up has no lens text and the pack first, on the group's id.
     expect(JSON.stringify(seen[0]!.payload["input"])).toContain("PR CONTEXT PACK");
@@ -746,6 +793,65 @@ describe("[cache groups] the warm-up", () => {
     expect(run.result.exitCode).toBe(0);
     const warm = ledger().find((l) => l.kind === "warmup");
     expect(warm).toMatchObject({ exitCode: 1, stopReason: "error" });
+  });
+
+  // A key whose warm-up failed was never warmed: the next pass that joins it
+  // starts the warm-up again, and does not run on a cache that is not there.
+  // MUTATION: mark the key warmed when its warm-up settles, whatever its end
+  // (`lease.warmedInput(1)` after the catch in warmUp, runlens.ts) — the late
+  // pass starts no warm-up; this fails.
+  it("a pass that joins a key whose warm-up failed starts the warm-up again", async () => {
+    const seen: Seen[] = [];
+    const ok = codexLike(seen, new FakeTransport());
+    family.setResponses([
+      () => {
+        throw new Error("provider down");
+      },
+      ok,
+      ok,
+      ok,
+    ]);
+    const runner = createLensRunner(
+      config({ cache: { size: 8, staggerMs: 0, pack: PACK, warmupWaitMs: 5_000 } }),
+    );
+    expect((await runner.run({ agent: "pass-a", task: "first" })).result.exitCode).toBe(0);
+    expect(runner.liveSessions()).toBe(0);
+    expect((await runner.run({ agent: "pass-b", task: "late" })).result.exitCode).toBe(0);
+    const lines = ledger();
+    expect(lines.filter((l) => l.kind === "warmup").map((l) => l.exitCode)).toEqual([1, 0]);
+    expect(new Set(lines.map((l) => l.group)).size).toBe(1);
+  });
+
+  // pi writes a request that failed as an assistant message with no usage. A
+  // warm-up that ended so warmed nothing, and a lens whose first request
+  // ended so has no first turn to report: not a turn that read nothing.
+  // MUTATION: drop the stopReason test from firstTurnOf (runlens.ts) — the
+  // failed warm-up counts as warmed and the late pass starts none, and the
+  // failed lens is counted as a cold first turn; this fails.
+  it("a request that failed is no first turn: a failed warm-up warms nothing, a failed lens is not counted cold", async () => {
+    const failed = () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "boom" });
+    const ok = codexLike([], new FakeTransport());
+    // The warm-up fails, pass-a runs; then a second warm-up, and pass-b's request fails.
+    family.setResponses([failed, ok, ok, failed]);
+    const said: string[] = [];
+    const runner = createLensRunner(
+      config({
+        cache: { size: 8, staggerMs: 0, pack: PACK, warmupWaitMs: 5_000 },
+        debug: (m) => said.push(m),
+      }),
+    );
+    expect((await runner.run({ agent: "pass-a", task: "first" })).result.exitCode).toBe(0);
+    expect(runner.liveSessions()).toBe(0);
+    expect((await runner.run({ agent: "pass-b", task: "late" })).result.exitCode).toBe(1);
+    const lines = ledger();
+    const warm = lines.filter((l) => l.kind === "warmup");
+    expect(warm).toHaveLength(2);
+    expect(warm[0]!.turn1).toBeUndefined();
+    expect(warm[1]!.turn1).toBeDefined();
+    expect(lines.find((l) => l.agent === "pass-b")!.turn1).toBeUndefined();
+    // The group counted no first turn for the lens whose request failed.
+    expect(said.filter((m) => /turn1_hot=\d+\/0 /.test(m)).length).toBeGreaterThan(0);
+    expect(said.some((m) => /turn1_hot=\d+\/[1-9]/.test(m))).toBe(false);
   });
 
   // The warm-up is a session with tools, so it carries the guard like any pass.

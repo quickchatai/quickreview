@@ -85,18 +85,20 @@ Measured on the SDK runner, lenses of five turns each over a 36k-token pack, all
 | `gpt-6-luna`, 12 lenses, 4 at a time, one group | 1 | 12 of 12 | 0 of 48 |
 | `gpt-6.1-sol`, 12 lenses, 4 at a time, one group | 1 | 12 of 12 | 0 of 48 |
 | `gpt-6-luna`, 16 lenses, 8 at a time, one group | 1 | 16 of 16 | 0 of 64 |
+| `gpt-6-luna`, 20 lenses, 20 at a time, one group, three runs | 1 | 20 of 20, 20 of 20, 7 of 20 | 0 of 80, 0 of 80, 16 of 80 |
+| `gpt-6-luna`, 20 lenses, 20 at a time, groups of 8, two runs beside them | 3 | 19 of 20, 20 of 20 | 9 of 80, 0 of 80 |
 
-A key that carries a whole round's lenses loses nothing, and each group after the first only pays for the pack again. That is why the default group is larger than a round.
+A key that carries a whole round's lenses loses nothing, and each group after the first only pays for the pack again. That is why the default group is larger than a round. The one bad run at twenty at a time came in minutes when smaller groups lost turns too: it is the provider's noise (below), not the width.
 
 ## Shape
 
 **Cache groups** (`[engine] lens_cache_group`, default 32; `packages/pi-plugin/src/engine/lens/cache-group.ts`, `cache-run.ts`).
 - A lens session is created with its group's key as its session id, which pi turns into the provider's cache key and routing headers. The group shares one id (see docs/probes/p4.6-codex-cache-routing.md), so the sessions of a group are disposed together once the whole group is done: one lens's dispose would otherwise close a sibling's live transport.
 - A group is the lenses of one model, one tool list and one thinking level (see "One warm-up per thinking level" above).
-- A group holds up to N sessions over its life. The default is more than a round has, so a round has one key, and one warm-up, for each model, tool list and level. A key never carries more sessions at a time than `[engine] lens_max_concurrency`, whatever N is.
+- A group holds up to N sessions over its life. The default is more than a round has, so a round has one key, and one warm-up, for each model, tool list and level. A key never carries more sessions at a time than the lens cap, whatever N is: `[engine] lens_max_concurrency` under `qcr review` and the bench, and the daemon's `[daemon] lens_permits`, across every worker, on the bot.
 - A group none of whose sessions was in use for 4 minutes starts afresh, with a new key and a new warm-up. A row that comes later in the round (the validator, a retry, a coverage row) joins its group's key and reads the same cache, with no warm-up of its own.
 - The groups are for every provider. Where an API has no cache routing keyed on the session id, the shared id changes nothing.
-- A group that is not packed (a round without a pack, or a model outside the pack's API family, below) starts its later sessions `[engine] lens_cache_stagger_ms` (2500) after its first. Rows of one agent whose prompts differ only in a short task pointer, such as the sweep rows, then share their system prompt.
+- A group that is not packed (a round without a pack, or a model outside the pack's API family, below) starts its later sessions `[engine] lens_cache_stagger_ms` (2500) after its first, so the first session's request is in the cache before the others are sent. Lenses whose prompts differ by a few words only (the same agent, launched by the session with short tasks) then share their system prompt. A planned row is sent its task file's text (below), so two planned rows of one agent part by a whole task file; what they still share is not measured here.
 
 **The context pack** (`[review] context_pack = "pack-first"`, the default; `"off"` restores the old prompts). Three pieces:
 - **The pack file.** `packages/pi-plugin/src/contextpack.ts` renders the round's pack, written beside its task files as `<passes>/context-pack.md`. It holds, within `context_pack_max_tokens` (40,000):
@@ -115,6 +117,8 @@ A key that carries a whole round's lenses loses nothing, and each group after th
 The warm-up's request is exactly that shared prefix, and every lens request of the group extends it: the lens repeats the warm-up's whole conversation, the closing message included, and adds its own after it (see "A lens extends its warm-up" above).
 
 Measured on the SDK runner at pi 1.4.0 (the real host and runner, a 36k-token pack): four lenses and one that started 20 s after them each read 35,584 tokens of their first request from cache and paid for about 2,500, on `gpt-6-luna` and on `gpt-6.1-sol`. The late lens joined the group's key and needed no warm-up of its own.
+
+And in a whole review (21 lenses on two models, a change of 1,500 lines, the default settings): 21 of 21 lenses read their warm-up on their first request, none of 74 later requests missed what its lens had sent before, and 88% of the lenses' input tokens were read from cache.
 
 **The bench runs the same path.** A bench case's pack sits beside its ledger, and the bench's lens config (`roundLensConfig`, `packages/pi-plugin/src/engine/lens/round-lens.ts`) carries it as `qcr review`'s does. Bench runs between 2026-10-19 and this change carried no pack in the prompt: their lenses read the pack file through a tool, so their cost figures are of a path no production round runs.
 
@@ -141,7 +145,7 @@ A group on any other API (`openai-responses`, `azure-openai-responses`, `anthrop
 
 The pack file is written for every round with `context_pack = "pack-first"`, whatever the model. Only what the runner does with it differs.
 
-The savings on this page were measured on GPT-6.1 Sol only, through `openai-codex-responses`. Nothing here was measured on another model or another API. The measured cost estimate (`packages/pi-plugin/src/measured.ts`) is shown for the same family and no other, because the pack is what its token mix rests on; a test holds its API list equal to `PACK_FIRST_APIS`. So the measured model reached through another API (an API key on `openai-responses`, Azure, a gateway) shows no estimate and runs under the spend limit of an unmeasured model ([docs/llm-setup.md](llm-setup.md)).
+The savings of the measured run below were measured on GPT-6.1 Sol only, through `openai-codex-responses`; the cache reads above were measured on `gpt-6-luna` as well, through the same API. Two other APIs were measured and showed no saving: they are the next two sections. The measured cost estimate (`packages/pi-plugin/src/measured.ts`) is shown for the same family and no other, because the pack is what its token mix rests on; a test holds its API list equal to `PACK_FIRST_APIS`. So the measured model reached through another API (an API key on `openai-responses`, Azure, a gateway) shows no estimate and runs under the spend limit of an unmeasured model ([docs/llm-setup.md](llm-setup.md)).
 
 ## Measured and not adopted: the pack on the Messages API
 

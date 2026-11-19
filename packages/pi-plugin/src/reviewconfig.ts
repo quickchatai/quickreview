@@ -949,11 +949,12 @@ export const DEFAULT_LENS_MAX_CONCURRENCY = 4;
 
 /** `[engine] lens_cache_group` when the file does not set it: more than a
  * round has lenses on one model, tool list and thinking level, so each of
- * those gets one cache key, and one warm-up, a round. A key carries at most
- * `lens_max_concurrency` sessions at a time whatever this number is, and one
- * key served sixteen lenses, eight at a time, with every later turn read from
- * cache (docs/prompt-caching.md); a smaller group only buys a warm-up for
- * every group after the first. */
+ * those gets one cache key, and one warm-up, a round. A key never carries
+ * more sessions at a time than the lens cap, whatever this number is
+ * (`lens_max_concurrency` on a one-shot route, the daemon's `lens_permits`
+ * on the bot), and one key served twenty lenses at once as well as groups
+ * of eight did (docs/prompt-caching.md); a smaller group only buys a warm-up
+ * for every group after the first. */
 export const DEFAULT_LENS_CACHE_GROUP = 32;
 
 /** What hosts a pi session (`[engine] runtime`): the pi SDK, in-process

@@ -208,7 +208,7 @@ describe("the pack-first payload (child side)", () => {
   // that parted from its warm-up right after the pack read the cache only
   // when that point happened to fall inside the pack: at some pack sizes
   // never. So a lens repeats the WHOLE of its warm-up's conversation.
-  // MUTATION: leave PACK_CLOSING out of a lens's input in packFirstResponses —
+  // MUTATION: leave PACK_CLOSING out of a lens's input in packFirstPayload —
   // the lens parts from the warm-up at the closing message; this fails.
   it("a lens extends its warm-up: every item of the warm-up's conversation opens the lens's", () => {
     const closing = { role: "user", content: [{ type: "input_text", text: PACK_CLOSING }] };

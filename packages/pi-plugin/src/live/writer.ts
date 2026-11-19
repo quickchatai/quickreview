@@ -81,7 +81,7 @@ export function subagentExecutions(args: Bag): LiveExecution[] {
     const agent = text(task?.agent);
     if (!agent) return [];
     const pointer = text(task?.task)?.match(
-      /^Task file: [^\n]*[/]tasks(-sweep|-optional|-post)?[/]([^\n]+)\. (?:Read it first|Its text follows);/,
+      /^Task file: [^\n]*[/]tasks(-sweep|-optional|-post)?[/]([^\n]+)\. Read it first;/,
     );
     const phase: LiveExecution["phase"] | undefined = pointer
       ? pointer[1] === "-sweep"
