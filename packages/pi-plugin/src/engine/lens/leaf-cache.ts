@@ -1,32 +1,19 @@
 // leaf-cache, the pack-first payload rewrite and the SDK lens's extension that
 // applies it.
 //
-// The rewrite takes the lens body out of the system prompt pi built (its
-// `<addendum>` block) and lays the request out so that everything up to the
-// end of the round's context pack is the same in a cache group's warm-up and
-// in every lens of the group: the prefix each lens request extends, and so
-// reads from the provider's cache (docs/prompt-caching.md). It builds the
-// request of two API families, told apart by the request's own shape:
+// The request layout: the lens body comes out of pi's `<addendum>` block in
+// `instructions`; the input becomes pi's tool declarations where pi put them
+// (its head), then the pack (user role, fenced data), then the message that
+// closes the pack (PACK_CLOSING, a warm-up's whole prompt), then the lens body
+// as a developer message, then the task. A cache group's warm-up holds exactly
+// what comes before the lens body, so every lens request of the group extends
+// it and reads it from the provider's cache (docs/prompt-caching.md).
 //
-//   - The Responses request (`instructions`, `input`): pi's tool declarations
-//     where pi put them (the head of the input), then the pack (user role,
-//     fenced data), then the message that closes the pack (PACK_CLOSING, a
-//     warm-up's whole prompt), then the lens body as a developer message,
-//     then the task.
-//     The tool declarations stay ahead of the pack because the backend shares
-//     a prefix between two requests only as far as their tool declarations sit
-//     in the same place: with the declarations after the pack in a warm-up and
-//     after the lens body in a lens, a lens read nothing of the warm-up from
-//     cache (measured: 0 of ~36k tokens; with them at the head, 33k of 36k).
-//
-//   - The Messages request (`system`, `messages`): the system prompt without
-//     the lens body; the first user message opening with the pack, as a block
-//     of its own that ends on a cache breakpoint; then the lens body as a
-//     system message, right after that user message. The lens body keeps the
-//     operator's voice there, and the pack, which holds text a pull request
-//     wrote, stays in the user's (measured: a lens read 50,751 of ~54,400
-//     tokens of its warm-up; without the pack in the prompt each lens wrote
-//     the pack into a cache of its own, through a tool).
+// The tool declarations stay ahead of the pack because the backend shares a
+// prefix between two requests only as far as their tool declarations sit in
+// the same place: with the declarations after the pack in a warm-up and after
+// the lens body in a lens, a lens read nothing of the warm-up from cache
+// (measured: 0 of ~36k tokens; with them at the head, 33k of 36k).
 //
 // leafCache({ pack, cacheKey }) rewrites each request pack-first, and on a payload that carries
 // a `prompt_cache_key` sets it to the group's key. Under the shared session id
@@ -36,21 +23,19 @@
 // not the expected shape goes out unchanged, and a throw inside the handler is
 // pi's to contain (it reports it as an extension error), never the request's.
 //
-// The rewrite is an optimisation for the API families it builds a request
-// for, PACK_FIRST_APIS, so the runner attaches this extension only to a cache
-// group whose model the pack applies to (`packFirstApplies`, asked by
-// runlens.ts). A lens on any other model gets its own request untouched and
-// reads the pack file its task names.
+// The rewrite is an optimisation for one API family, PACK_FIRST_APIS: the
+// request it builds is that family's, so the runner attaches this extension
+// only to a cache group whose model speaks one of those APIs (runlens.ts). A
+// lens on any other API gets its own request untouched and reads the pack file
+// its task names.
 //
 // VERIFY-ON-PIN (pi 1.3.0, re-read at 1.4.0): `before_provider_request` may return a replacement
-// payload. The codex payload carries `instructions` (string), `input` (an array
-// of `{ role, content: [{ type: "input_text", text }] }`) and `prompt_cache_key`;
-// at 1.4.0 its tools are declared in the input, by `{ type: "additional_tools" }`
-// items starting at its head, and no longer in a top-level `tools` field. The
-// Messages payload carries `system` (an array of `{ type: "text", text }`
-// blocks, the last with the request's `cache_control`) and `messages`, whose
-// first is the user's turn. tests/pi-canary/canary-16-pack-first-prefix.test.ts
-// holds the rewrite to pi's real request for both.
+// payload; the codex payload carries `instructions` (string), `input` (an array
+// of `{ role, content: [{ type: "input_text", text }] }`) and `prompt_cache_key`.
+// At 1.4.0 the tools are declared in the input, by `{ type: "additional_tools" }`
+// items starting at its head, and no longer in a top-level `tools` field
+// (tests/pi-canary/canary-16-pack-first-prefix.test.ts holds the rewrite to
+// pi's real request).
 import { createHash } from "node:crypto";
 import type { KnownApi } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
@@ -59,132 +44,57 @@ const ADDENDUM_OPEN = "<addendum>";
 const ADDENDUM_CLOSE = "</addendum>";
 
 /**
- * The message that closes the pack: the whole of a warm-up's prompt, and, on
- * the Responses API, a message every lens request repeats right after the
- * pack. A lens request then EXTENDS its warm-up's, word for word, and does not
- * part from it after the pack.
+ * The message that closes the pack: the whole of a warm-up's prompt, and a
+ * message every lens request repeats right after the pack. A lens request then
+ * EXTENDS its warm-up's, word for word, and does not part from it after the
+ * pack.
  *
  * That matters because the backend keeps one reusable point per request, at
  * the last 128-token boundary before the request's end, and a later request
  * reads the cache only if it repeats the earlier one up to that point. A
  * warm-up that ended in words of its own ("reply OK") put that point inside
  * those words whenever a boundary fell there, and then every lens of the group
- * read nothing (measured: 0 of 8 lenses in 3 runs of 4 at one pack size, 8 of
- * 8 at its neighbours; 24 of 24 at that size with the lenses extending). The
- * Messages API marks the pack's end with a breakpoint of its own and needs no
- * such message.
+ * read nothing (measured: 0 of 16 lenses while the warm-up's size was 82 to 90
+ * tokens past a boundary; no group lost over a whole 128-token cycle with the
+ * lenses extending).
  *
  * For a lens the sentence is inert: its instructions and its task follow.
  */
 export const PACK_CLOSING =
   "The context pack ends here. If no instructions and no task follow this message, reply with the single word OK and nothing else.";
 
-// VERIFY-ON-PIN (pi 1.4.0): pi-ai's own names (`KnownApi`, a model's `api`)
-// for the APIs whose request the rewrite builds. The annotation holds each
-// name to that union, so a pi that renames or drops one stops the build.
-//   - `openai-codex-responses` carries the system prompt as a string in
-//     `instructions`. pi's other Responses APIs (`openai-responses`,
-//     `azure-openai-responses`) send it as the first input message: the
-//     rewrite would leave their request as it is, so they are not in the
-//     family, and a group on one gets no warm-up to wait for.
-//   - `anthropic-messages` carries it as the blocks of `system`.
-// An API is added here by hand, once pi builds its request in a shape the
-// rewrite reads (a test holds that) and a lens was measured to read its
-// warm-up there.
-const PACK_FIRST_FAMILY: readonly KnownApi[] = ["openai-codex-responses", "anthropic-messages"];
-
-/** pi's name for the Messages API, whose pack needs more than the API: see
- * `packFirstApplies`. */
-const MESSAGES_API: KnownApi = "anthropic-messages";
+// VERIFY-ON-PIN (pi 1.4.0): pi-ai's own name (`KnownApi`, a model's `api`) for
+// the one API whose request carries the system prompt as a string in
+// `instructions`, which is what the rewrite moves. The annotation holds the
+// name to that union, so a pi that renames or drops it stops the build. pi's
+// other Responses APIs (`openai-responses`, `azure-openai-responses`) send the
+// system prompt as the first input message: the rewrite would leave their
+// request as it is, so they are not in the family, and a group on one gets no
+// warm-up to wait for. An API is added here by hand, once pi builds its
+// request in the shape the rewrite reads (a test holds that) and a whole
+// review on it was measured to cost less with the pack than without: on the
+// Messages API every lens read the pack from cache and the round cost twice
+// as much (docs/prompt-caching.md).
+const PACK_FIRST_FAMILY: readonly KnownApi[] = ["openai-codex-responses"];
 
 /**
- * The API families the pack-first rewrite is built for, as pi's API names:
- * what a model's `api` says, never a provider and never a model. A cache group
- * is packed (warm-up, wait, rewrite) only when its model's API is in this set
- * and the model takes the request the rewrite builds (`packFirstApplies`).
- * Inside the family the rewrite is still fail-open: a request that is not a
- * shape it expects goes out unchanged, with one warning line.
+ * The API family the pack-first rewrite is built for, as pi's API names: what
+ * a model's `api` says, never a provider and never a model. A cache group is
+ * packed (warm-up, wait, rewrite) only when its model's API is in this set.
+ * Inside the family the rewrite is still fail-open: a request that is not the
+ * shape it expects (the system prompt as a string in `instructions`, the
+ * conversation in `input`) goes out unchanged, with one warning line.
  *
- * The measured cost estimate (measured.ts `MEASURED.apis`) is true for APIs
- * of this set only, since the pack is what its token mix rests on; it was
- * measured on fewer than the pack applies to, and a test holds its list
- * inside this one.
+ * The measured cost estimate is true for this family alone, since the pack is
+ * what its token mix rests on: `MEASURED.apis` (measured.ts) is this set, and
+ * a test holds the two equal.
  */
 export const PACK_FIRST_APIS: ReadonlySet<string> = new Set<string>(PACK_FIRST_FAMILY);
 
-/** Whether `api` is one the rewrite builds a request for. An API the host
- * could not name is not in the family. */
+/** Whether a model that speaks `api` gets the pack first. An API the host could
+ * not name is not in the family. */
 export function isPackFirstApi(api: string | undefined): boolean {
   return api !== undefined && PACK_FIRST_APIS.has(api);
-}
-
-/** What the runner knows of a model before a session exists: pi's own model
- * object, as far as the pack reads it. */
-export interface PackModel {
-  api?: string;
-  compat?: unknown;
-}
-
-/**
- * Whether a cache group on `model` is packed. Its API must be in the family,
- * and on the Messages API the model must take a system message after the
- * first user message, which is where the lens body goes (pi's
- * `supportsMidConvoSystemMessages`): without it the body would have to stay
- * ahead of the pack, where it differs per lens, and no lens could read the
- * warm-up. A model the host could not name is not packed.
- */
-export function packFirstApplies(model: PackModel | undefined): boolean {
-  if (model === undefined || !isPackFirstApi(model.api)) return false;
-  if (model.api !== MESSAGES_API) return true;
-  const compat = model.compat;
-  return (
-    typeof compat === "object" &&
-    compat !== null &&
-    (compat as { supportsMidConvoSystemMessages?: unknown }).supportsMidConvoSystemMessages === true
-  );
-}
-
-/**
- * Whether the pack pays for a pass on `model` whose instructions are `body`,
- * given the round's `pack`. On the Responses API it always does. On the
- * Messages API a packed pass pays for its instructions twice: they follow the
- * pack as a system message, which the provider reads from cache only once an
- * assistant turn follows it, so they are sent in full on the first turn and
- * written to the cache on the second (measured: a breakpoint on that message
- * is read by an identical request and by no later turn). Against that the
- * pass reads the pack from the group's cache and does not write it into its
- * own. With a cache write at about 1.25 times the input price and a read at a
- * tenth of it, the pack pays once it is about as long as the instructions, the
- * warm-up's share included; so a pass takes the pack when the pack is the
- * longer of the two, and otherwise runs as an unpacked pass does and reads
- * the pack file.
- */
-export function packPaysOff(model: PackModel | undefined, pack: string, body: string): boolean {
-  return model?.api !== MESSAGES_API || pack.length > body.length;
-}
-
-/**
- * Whether the provider keeps a cache per thinking level for `model`, so that
- * a warm-up serves only the passes that think at its level and a cache group
- * must hold one level (cache-run.ts `cacheGroupKey`).
- *
- * It does on the Responses API: a lens at medium read 0 of ~35k tokens behind
- * a warm-up at high, and 33k behind one at medium (measured, on two models).
- * It does not on the Messages API where pi sends the level as a marker inside
- * the conversation, behind the pack (pi's `supportsMidConvoEffort`): lenses at
- * medium and high read all of a warm-up sent at low (measured). Anywhere else
- * nothing was measured, and apart is the safe answer: a group that mixes
- * levels where the cache is split wastes its warm-up on every other level,
- * while a split that was not needed costs one warm-up more.
- */
-export function cacheSplitsByLevel(model: PackModel | undefined): boolean {
-  if (model?.api !== MESSAGES_API) return true;
-  const compat = model.compat;
-  return !(
-    typeof compat === "object" &&
-    compat !== null &&
-    (compat as { supportsMidConvoEffort?: unknown }).supportsMidConvoEffort === true
-  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -206,47 +116,23 @@ function leadingToolDeclarations(input: readonly unknown[]): number {
   return n;
 }
 
-/** The conversation of a request: a Responses `input` or a Messages `messages`. */
-function conversationOf(p: Record<string, unknown>): unknown[] {
-  if (Array.isArray(p["input"])) return p["input"] as unknown[];
-  if (Array.isArray(p["messages"])) return p["messages"] as unknown[];
-  return [];
-}
-
-/** Where the pack is in `items`: the item that holds it and the block of that
- * item's content that is the pack's text, whole. */
-function packPlace(items: readonly unknown[], pack: string): { item: number; block: number } {
-  for (let item = 0; item < items.length; item++) {
-    const content = isRecord(items[item]) ? (items[item] as { content?: unknown }).content : null;
-    if (!Array.isArray(content)) continue;
-    const block = content.findIndex((b) => isRecord(b) && b["text"] === pack);
-    if (block >= 0) return { item, block };
-  }
-  return { item: -1, block: -1 };
-}
-
-/** Whether `item` is the message that closes the pack: its one text, whole. */
-function isClosing(item: unknown): boolean {
+/** The one text of a message item, or undefined when it holds anything else. */
+function onlyText(item: unknown): string | undefined {
   const content = isRecord(item) ? item["content"] : null;
-  return (
-    Array.isArray(content) &&
-    content.length === 1 &&
-    isRecord(content[0]) &&
-    content[0]["text"] === PACK_CLOSING
-  );
+  if (!Array.isArray(content) || content.length !== 1 || !isRecord(content[0])) return undefined;
+  const text = content[0]["text"];
+  return typeof text === "string" ? text : undefined;
 }
 
 /**
  * Short hashes of the parts that make up a request's cacheable prefix, in
- * request order: never their content. `reasoning` is its own part: where a
- * request carries the thinking level there, the provider keeps a cache per
- * level, so a difference in it alone is a cold lens and is named as such.
- * The cache key is left out, since it names the group and says nothing of
- * what was sent. `input` holds one hash per item of the
- * conversation, through the pack when the request carries it (`packAt`; the
- * item that holds the pack is hashed up to the pack's end) and through the
- * message that closes the pack when one follows it, else the first three.
- * `instructions` is the system prompt, wherever the API puts it.
+ * request order: never their content. `reasoning` is its own part: the
+ * provider keeps a cache per thinking level, so a difference in it alone is a
+ * cold lens and is named as such. The cache key is left out, since it names
+ * the group and says nothing of what was sent. `input` holds one hash per
+ * input item, through the pack when the request carries it (`packAt`) and
+ * through the message that closes the pack when one follows it, else the
+ * first three.
  */
 export interface PrefixDigest {
   other: string;
@@ -254,7 +140,7 @@ export interface PrefixDigest {
   instructions: string;
   tools: string;
   input: string[];
-  /** Where the pack is in the conversation; -1 when the request does not carry it. */
+  /** Where the pack is in the input; -1 when the request does not carry it. */
   packAt: number;
   /** How many tool declarations the input holds after the pack. The backend
    * shares nothing between two requests whose declarations come after the
@@ -272,9 +158,7 @@ const digestOf = (v: unknown): string =>
 /** The parts of a request a digest sets apart from `other`. */
 const DIGEST_OWN_PARTS: readonly string[] = [
   "instructions",
-  "system",
   "input",
-  "messages",
   "tools",
   "reasoning",
   "prompt_cache_key",
@@ -284,31 +168,23 @@ const DIGEST_OWN_PARTS: readonly string[] = [
  * should carry it. Undefined for a payload that is not an object. */
 export function prefixDigest(payload: unknown, pack?: string): PrefixDigest | undefined {
   if (!isRecord(payload)) return undefined;
-  const items = conversationOf(payload);
+  const input = Array.isArray(payload["input"]) ? (payload["input"] as unknown[]) : [];
   const rest = Object.fromEntries(
     Object.entries(payload).filter(([k]) => !DIGEST_OWN_PARTS.includes(k)),
   );
-  const place = pack === undefined ? { item: -1, block: -1 } : packPlace(items, pack);
+  const packAt = pack === undefined ? -1 : input.findIndex((item) => onlyText(item) === pack);
   // The shared prefix runs through the pack, and through the message that
   // closes it where the request carries one right after.
-  const closed = place.item >= 0 && isClosing(items[place.item + 1]);
-  const shared = place.item >= 0 ? place.item + (closed ? 2 : 1) : 3;
-  const through = items.slice(0, shared).map((item, i) => {
-    if (i !== place.item) return item;
-    // What follows the pack in its own item (a Messages request's task) is
-    // not part of the shared prefix.
-    const held = item as { content: unknown[] };
-    return { ...held, content: held.content.slice(0, place.block + 1) };
-  });
+  const closed = packAt >= 0 && onlyText(input[packAt + 1]) === PACK_CLOSING;
+  const shared = packAt >= 0 ? packAt + (closed ? 2 : 1) : 3;
   return {
     other: digestOf(rest),
     reasoning: digestOf(payload["reasoning"]),
-    instructions: digestOf(payload["instructions"] ?? payload["system"]),
+    instructions: digestOf(payload["instructions"]),
     tools: digestOf(payload["tools"]),
-    input: through.map(digestOf),
-    packAt: place.item,
-    toolsAfterPack:
-      place.item < 0 ? 0 : items.slice(place.item + 1).filter(isToolDeclaration).length,
+    input: input.slice(0, shared).map(digestOf),
+    packAt,
+    toolsAfterPack: packAt < 0 ? 0 : input.slice(packAt + 1).filter(isToolDeclaration).length,
   };
 }
 
@@ -328,9 +204,9 @@ export function renderPrefixDigest(d: PrefixDigest): string {
 /**
  * The first part in which a lens request does not extend its group's warm-up,
  * or undefined when it does: the warm-up's request up to the end of the pack
- * is what the lens must repeat, at the warm-up's thinking level, and neither
- * may declare a tool after it. A request that carries no pack differs in
- * `pack`.
+ * (and of its closing message) is what the lens must repeat, at the warm-up's
+ * thinking level, and neither may declare a tool after the pack. A request
+ * that carries no pack differs in `pack`.
  */
 export function prefixDifference(warmup: PrefixDigest, lens: PrefixDigest): string | undefined {
   if (warmup.other !== lens.other) return "other";
@@ -355,40 +231,21 @@ function textMessage(role: string, text: string): InputMessage {
 }
 
 /**
- * `prompt` without the lens body pi appended to it, or undefined when the
- * body is not there exactly once or nothing else is. The whole
- * `<addendum>…</addendum>` block goes when the body is all it holds.
+ * The pack-first payload, or undefined to send the original. Pure.
+ * `appended` is the lens body as pi appended it; `pack` the pack's text.
  */
-function withoutBody(prompt: string, body: string): string | undefined {
-  const at = prompt.indexOf(body);
-  if (at < 0 || prompt.indexOf(body, at + 1) >= 0) return undefined;
-  let start = at;
-  let end = at + body.length;
-  const open = prompt.lastIndexOf(ADDENDUM_OPEN, at);
-  const close = prompt.indexOf(ADDENDUM_CLOSE, end);
-  if (
-    open >= 0 &&
-    close >= 0 &&
-    prompt.slice(open + ADDENDUM_OPEN.length, at).trim() === "" &&
-    prompt.slice(end, close).trim() === ""
-  ) {
-    start = open;
-    end = close + ADDENDUM_CLOSE.length;
-  }
-  const before = prompt.slice(0, start).trimEnd();
-  const after = prompt.slice(end).trim();
-  if (!before) return undefined;
-  return after ? `${before}\n\n${after}` : before;
-}
-
-/** The Responses request, pack-first. */
-function packFirstResponses(
-  p: Record<string, unknown>,
-  instructions: string,
-  input: unknown[],
-  body: string,
+export function packFirstPayload(
+  payload: unknown,
+  appended: string,
   pack: string,
 ): Record<string, unknown> | undefined {
+  if (!isRecord(payload)) return undefined;
+  const p = payload;
+  const instructions = p["instructions"];
+  const held = p["input"];
+  const body = appended.trim();
+  if (typeof instructions !== "string" || !Array.isArray(held) || !pack.trim()) return undefined;
+  const input = held as unknown[];
   // pi's tool declarations stay where pi put them, ahead of the pack: in the
   // same place in a warm-up and in a lens, or the two share no prefix.
   const lead = leadingToolDeclarations(input);
@@ -398,8 +255,26 @@ function packFirstResponses(
   // prompt, which is the closing message. Its request is then exactly the
   // prefix every lens request of the group extends.
   if (!body) return { ...p, input: [...head, textMessage("user", pack), ...tail] };
-  const base = withoutBody(instructions, body);
-  if (base === undefined) return undefined;
+  const at = instructions.indexOf(body);
+  if (at < 0 || instructions.indexOf(body, at + 1) >= 0) return undefined;
+  let start = at;
+  let end = at + body.length;
+  // The whole `<addendum>…</addendum>` block when the body is all it holds.
+  const open = instructions.lastIndexOf(ADDENDUM_OPEN, at);
+  const close = instructions.indexOf(ADDENDUM_CLOSE, end);
+  if (
+    open >= 0 &&
+    close >= 0 &&
+    instructions.slice(open + ADDENDUM_OPEN.length, at).trim() === "" &&
+    instructions.slice(end, close).trim() === ""
+  ) {
+    start = open;
+    end = close + ADDENDUM_CLOSE.length;
+  }
+  const before = instructions.slice(0, start).trimEnd();
+  const after = instructions.slice(end).trim();
+  if (!before) return undefined;
+  const base = after ? `${before}\n\n${after}` : before;
   return {
     ...p,
     instructions: base,
@@ -411,99 +286,6 @@ function packFirstResponses(
       ...tail,
     ],
   };
-}
-
-/** The most cache breakpoints one Messages request may carry. */
-const MAX_CACHE_BREAKPOINTS = 4;
-
-function hasBreakpoint(block: unknown): boolean {
-  return isRecord(block) && isRecord(block["cache_control"]);
-}
-
-function breakpointsIn(blocks: unknown): number {
-  return Array.isArray(blocks) ? blocks.filter(hasBreakpoint).length : 0;
-}
-
-/** The Messages request, pack-first. */
-function packFirstMessages(
-  p: Record<string, unknown>,
-  system: unknown[],
-  messages: unknown[],
-  body: string,
-  pack: string,
-): Record<string, unknown> | undefined {
-  const first = messages[0];
-  if (!isRecord(first) || first["role"] !== "user") return undefined;
-  const held = first["content"];
-  const content: unknown[] | undefined =
-    typeof held === "string"
-      ? [{ type: "text", text: held }]
-      : Array.isArray(held)
-        ? (held as unknown[])
-        : undefined;
-  if (content === undefined) return undefined;
-  // The pack ends on the breakpoint pi gave the system prompt (its lifetime
-  // with it). A request pi marked nowhere is one with caching off: a pack in
-  // it would be paid in full by every lens, so it goes out as it came.
-  const marked = system.findLast(hasBreakpoint);
-  if (!isRecord(marked)) return undefined;
-  const packBlock = { type: "text", text: pack, cache_control: marked["cache_control"] };
-
-  let nextSystem = system;
-  if (body) {
-    const textOf = (block: unknown): string =>
-      isRecord(block) && typeof block["text"] === "string" ? block["text"] : "";
-    const holders = system.flatMap((block, i) => (textOf(block).includes(body) ? [i] : []));
-    const holder = holders[0];
-    if (holders.length !== 1 || holder === undefined) return undefined;
-    const base = withoutBody(textOf(system[holder]), body);
-    if (base === undefined) return undefined;
-    nextSystem = system.map((block, i) =>
-      i === holder ? { ...(block as Record<string, unknown>), text: base } : block,
-    );
-  }
-  // The pack's breakpoint is one more than pi counted. A request already at
-  // the limit gives up the system prompt's earlier ones: its last covers them.
-  const others =
-    breakpointsIn(p["tools"]) +
-    messages.reduce<number>((n, m) => n + (isRecord(m) ? breakpointsIn(m["content"]) : 0), 0);
-  let spare = MAX_CACHE_BREAKPOINTS - 1 - others - breakpointsIn(nextSystem);
-  if (spare < 0) {
-    const last = nextSystem.findLastIndex(hasBreakpoint);
-    nextSystem = nextSystem.map((block, i) => {
-      if (spare >= 0 || i === last || !hasBreakpoint(block)) return block;
-      spare += 1;
-      const { cache_control: _dropped, ...kept } = block as Record<string, unknown>;
-      return kept;
-    });
-  }
-  if (spare < 0) return undefined;
-
-  const packed = { ...first, content: [packBlock, ...content] };
-  // A lens's body follows the first user message as a system message: after
-  // the pack, in the operator's voice, in the same place on every turn.
-  const lens = body ? [{ role: "system", content: body }] : [];
-  return { ...p, system: nextSystem, messages: [packed, ...lens, ...messages.slice(1)] };
-}
-
-/**
- * The pack-first payload, or undefined to send the original. Pure.
- * `appended` is the lens body as pi appended it; `pack` the pack's text. The
- * request's shape says which API's it is.
- */
-export function packFirstPayload(
-  payload: unknown,
-  appended: string,
-  pack: string,
-): Record<string, unknown> | undefined {
-  if (!isRecord(payload) || !pack.trim()) return undefined;
-  const body = appended.trim();
-  const { instructions, input, system, messages } = payload;
-  if (typeof instructions === "string" && Array.isArray(input))
-    return packFirstResponses(payload, instructions, input as unknown[], body, pack);
-  if (Array.isArray(system) && Array.isArray(messages))
-    return packFirstMessages(payload, system as unknown[], messages as unknown[], body, pack);
-  return undefined;
 }
 
 /** The payload with `prompt_cache_key` set to `cacheKey`, or undefined when it

@@ -37,10 +37,7 @@ import {
 } from "@quickchatai/pi-quickreview/src/engine/lens/cache-run.js";
 import {
   PACK_FIRST_APIS,
-  cacheSplitsByLevel,
   isPackFirstApi,
-  packFirstApplies,
-  packPaysOff,
   leafCache,
   packFirstPayload,
 } from "@quickchatai/pi-quickreview/src/engine/lens/leaf-cache.js";
@@ -87,7 +84,7 @@ const agentFile = (name: string, tools: string, model: string | null = FAMILY_MO
 
 beforeEach(async () => {
   family = fauxProvider({ api: "openai-codex-responses", provider: "faux-family" });
-  outside = fauxProvider({ api: "openai-completions", provider: "faux-outside" });
+  outside = fauxProvider({ api: "anthropic-messages", provider: "faux-outside" });
   rig = await createHostRig({
     configureModels: (runtime) => {
       runtime.registerNativeProvider(family.provider);
@@ -431,22 +428,6 @@ describe("[cache groups] one thinking level per group, one key per round", () =>
     const groupOf = (agent: string) => lines.find((l) => l.agent === agent)!.group;
     expect(groupOf("pass-hi")).toBe(groupOf("pass-hi2"));
     expect(groupOf("pass-lo")).not.toBe(groupOf("pass-hi"));
-  });
-
-  it("cacheSplitsByLevel: apart everywhere but the Messages API with the level sent inside the conversation", () => {
-    expect(cacheSplitsByLevel(undefined)).toBe(true);
-    expect(cacheSplitsByLevel({ api: "openai-codex-responses" })).toBe(true);
-    expect(cacheSplitsByLevel({ api: "openai-completions" })).toBe(true);
-    expect(cacheSplitsByLevel({ api: "anthropic-messages" })).toBe(true);
-    expect(
-      cacheSplitsByLevel({ api: "anthropic-messages", compat: { supportsMidConvoEffort: true } }),
-    ).toBe(false);
-    expect(
-      cacheSplitsByLevel({
-        api: "openai-codex-responses",
-        compat: { supportsMidConvoEffort: true },
-      }),
-    ).toBe(true);
   });
 
   // A row that comes after its group's first wave (the validator, a retry)
@@ -974,14 +955,7 @@ describe("[pack-first family] the pack is for its API family only", () => {
     // A Responses API whose request has no `instructions`: the rewrite would
     // do nothing there, so the group is not packed and waits for no warm-up.
     ["a Responses API outside the family: not packed", "azure-openai-responses", 0],
-    // In the family, but the faux model takes no system message after the
-    // first user message, which is where a lens body goes on that API.
-    [
-      "an API of the family on a model the pack does not apply to: not packed",
-      "anthropic-messages",
-      0,
-    ],
-    ["another API: not packed", "openai-completions", 0],
+    ["another API: not packed", "anthropic-messages", 0],
   ] as const)(
     "passes on the host's route follow the route's model, %s",
     async (_what, api, warmups) => {
@@ -1023,52 +997,6 @@ describe("[pack-first family] the pack is for its API family only", () => {
     for (const api of PACK_FIRST_APIS) expect(isPackFirstApi(api), api).toBe(true);
   });
 
-  // On the Messages API a lens body goes into a system message after the
-  // first user message. A model that refuses one there would fail every lens
-  // request of a packed group.
-  // MUTATION: answer true for every model of the family in packFirstApplies
-  // (leaf-cache.ts) — this fails.
-  it("the pack applies to a model: its API in the family, and on the Messages API a system message mid-conversation", () => {
-    const midConvo = { supportsMidConvoSystemMessages: true };
-    expect(packFirstApplies(undefined)).toBe(false);
-    expect(packFirstApplies({})).toBe(false);
-    expect(packFirstApplies({ api: "openai-codex-responses" })).toBe(true);
-    expect(packFirstApplies({ api: "anthropic-messages" })).toBe(false);
-    expect(packFirstApplies({ api: "anthropic-messages", compat: {} })).toBe(false);
-    expect(packFirstApplies({ api: "anthropic-messages", compat: midConvo })).toBe(true);
-    expect(packFirstApplies({ api: "openai-completions", compat: midConvo })).toBe(false);
-  });
-
-  // On the Messages API a packed pass pays for its instructions twice (they
-  // follow the pack as a system message, read from cache only once an
-  // assistant turn follows), so the pack must be worth more than that.
-  // MUTATION: answer true for every pass in packPaysOff (leaf-cache.ts) — a
-  // pass with instructions longer than the pack takes it at a loss; this fails.
-  it("the pack pays on the Messages API only when it is longer than the pass's instructions", () => {
-    const messages = {
-      api: "anthropic-messages",
-      compat: { supportsMidConvoSystemMessages: true },
-    };
-    expect(packPaysOff(messages, "p".repeat(1000), "b".repeat(999))).toBe(true);
-    expect(packPaysOff(messages, "p".repeat(1000), "b".repeat(1000))).toBe(false);
-    expect(packPaysOff(messages, "p".repeat(1000), "b".repeat(5000))).toBe(false);
-    // Everywhere else the instructions are paid once either way.
-    expect(packPaysOff({ api: "openai-codex-responses" }, "p", "b".repeat(5000))).toBe(true);
-    expect(packPaysOff(undefined, "p", "b".repeat(5000))).toBe(true);
-  });
-
-  // A family API whose every model fails `packFirstApplies` is packed nowhere.
-  it("pi's catalog holds a model the pack applies to, for every API of the family", () => {
-    const models = getBuiltinProviders().flatMap((p) =>
-      getBuiltinModels(p as Parameters<typeof getBuiltinModels>[0]),
-    );
-    for (const api of PACK_FIRST_APIS)
-      expect(
-        models.some((m) => m.api === api && packFirstApplies(m)),
-        api,
-      ).toBe(true);
-  });
-
   // The names are pi's API names, checked against the catalog this pi ships:
   // an API no model speaks would turn the pack off for everyone, silently.
   // MUTATION: misspell an entry of PACK_FIRST_FAMILY in leaf-cache.ts past the
@@ -1083,35 +1011,27 @@ describe("[pack-first family] the pack is for its API family only", () => {
     for (const api of PACK_FIRST_APIS) expect(spoken.has(api), api).toBe(true);
   });
 
-  // The rewrite reads the system prompt where the API's request carries it,
-  // so an API whose request pi builds another way would be packed in name
-  // only: a warm-up, a wait and a request sent unchanged.
-  // MUTATION: add "openai-responses" to PACK_FIRST_FAMILY in leaf-cache.ts —
-  // it has no row here, and pi builds it with no `instructions`; this fails.
-  it("pi builds every API of the family with the system prompt where the rewrite reads it", () => {
-    const whereTheSystemPromptIs: Record<string, RegExp> = {
-      "openai-codex-responses": /\binstructions\s*:/,
-      "anthropic-messages": /\bparams\.system\s*=/,
-    };
-    expect(Object.keys(whereTheSystemPromptIs).sort()).toEqual([...PACK_FIRST_APIS].sort());
-    for (const [api, sets] of Object.entries(whereTheSystemPromptIs)) {
+  // The rewrite reads the system prompt off `instructions`, so an API whose
+  // request pi builds without that field would be packed in name only: a
+  // warm-up, a wait and a request sent unchanged.
+  // MUTATION: add "openai-responses" to PACK_FIRST_FAMILY in leaf-cache.ts
+  // (and to MEASURED.apis, to pass the fence below) - this fails.
+  it("pi builds every API of the family with the system prompt in `instructions`", () => {
+    for (const api of PACK_FIRST_APIS) {
       const built = readFileSync(
         join(process.cwd(), "node_modules/@earendil-works/pi-ai/dist/api", `${api}.js`),
         "utf8",
       );
-      expect(sets.test(built), api).toBe(true);
+      expect(/\binstructions\s*:/.test(built), api).toBe(true);
     }
   });
 
-  // The measured estimate is fitted to runs the pack shaped, so it can be
-  // true only where the pack applies. It was measured on fewer APIs than the
-  // pack applies to: an API joins `MEASURED.apis` when reviews on it were
-  // recorded and fitted, never because the pack reached it.
-  // MUTATION: add "openai-responses" to MEASURED.apis in measured.ts — an
-  // estimate for an API with no pack; this fails.
-  it("the measured estimate's APIs are among the pack's", () => {
-    expect(MEASURED.apis.length).toBeGreaterThan(0);
-    for (const api of MEASURED.apis) expect(PACK_FIRST_APIS.has(api), api).toBe(true);
+  // The measured estimate is fitted to runs the pack shaped, so it is true
+  // where the pack applies and nowhere else.
+  // MUTATION: add "anthropic-messages" to PACK_FIRST_FAMILY in leaf-cache.ts,
+  // or drop an entry from MEASURED.apis in measured.ts - this fails.
+  it("the measured estimate's APIs are the pack's: MEASURED.apis equals PACK_FIRST_APIS", () => {
+    expect([...MEASURED.apis].sort()).toEqual([...PACK_FIRST_APIS].sort());
   });
 });
 

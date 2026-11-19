@@ -163,16 +163,15 @@ export class CacheLease {
 
 /**
  * The key a pass's cache group is shared under: its model spec, its tool
- * allowlist, in order, and, where the provider keeps a cache per thinking
- * level, that level (`level`; the runner passes none where it does not,
- * leaf-cache.ts `cacheSplitsByLevel`). Two passes on one model whose sessions
- * hold different tools declare different tools, which are part of the cached
- * prefix (leaf-cache.ts), so they share no prefix; and where the cache is per
- * level, a pass reads nothing of a warm-up sent at another (measured: 0 of
- * ~35k tokens at medium behind a warm-up at high, 33k at high). A group that
- * mixed either would warm the prefix of whichever pass came first, for that
- * pass's like alone. Undefined tools (no allowlist) is its own key, never the
- * same as an empty list.
+ * allowlist, in order, and its thinking level when it has one. Two passes on
+ * one model whose sessions hold different tools declare different tools,
+ * which are part of the cached prefix (leaf-cache.ts), so they share no
+ * prefix; and the provider keeps a cache per thinking level, so a pass reads
+ * nothing of a warm-up sent at another (measured: 0 of ~35k tokens at medium
+ * behind a warm-up at high, 33k behind one at medium). A group that mixed
+ * either would warm the prefix of whichever pass came first, for that pass's
+ * like alone. Undefined tools (no allowlist) is its own key, never the same
+ * as an empty list.
  */
 export function cacheGroupKey(
   spec: string,

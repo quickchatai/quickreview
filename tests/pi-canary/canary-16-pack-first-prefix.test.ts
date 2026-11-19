@@ -10,24 +10,20 @@
 // of its warm-up, with every test green.
 //
 // So this runs pi-ai's own request builder for every API of the pack's
-// family, on a model the pack applies to, for a warm-up and for two lenses
-// with tools, sends each through the rewrite, and holds the property itself.
-// Nothing is sent: the payload hook keeps the request and ends it there (the
-// offline guard holds that).
+// family, for a warm-up and for two lenses with tools, sends each through the
+// rewrite, and holds the property itself. Nothing is sent: the payload hook
+// keeps the request and ends it there (the offline guard holds that).
 //
-// MUTATION: in packFirstResponses put the pack ahead of the whole input
-// (`[pack, ...input]`, both forms) - the last two tests fail for that API.
-// MUTATION: in packFirstResponses leave the closing message out of a lens's
-// input - the last two tests fail for that API.
-// MUTATION: in packFirstMessages leave the lens body in `system` - the
-// "repeats the warm-up" test fails for that API.
+// MUTATION: in packFirstPayload put the pack ahead of the whole input
+// (`[pack, ...input]`, both forms) - the last two tests fail.
+// MUTATION: in packFirstPayload leave the closing message out of a lens's
+// input - the last two tests fail.
 import { describe, expect, it } from "vitest";
 import { Type, type Api, type Model } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import {
   PACK_FIRST_APIS,
-  packFirstApplies,
   packFirstPayload,
   prefixDifference,
   prefixDigest,
@@ -66,12 +62,12 @@ const token = (): string =>
     "s",
   ].join(".");
 
-/** One model the pack applies to for each API of the family, from pi's own catalog. */
+/** One model of each API in the pack-first family, from pi's own catalog. */
 function familyModels(): Model<Api>[] {
   const found = new Map<string, Model<Api>>();
   for (const provider of getBuiltinProviders())
     for (const model of getBuiltinModels(provider) as Model<Api>[])
-      if (packFirstApplies(model) && !found.has(model.api)) found.set(model.api, model);
+      if (PACK_FIRST_APIS.has(model.api) && !found.has(model.api)) found.set(model.api, model);
   return [...found.values()];
 }
 
@@ -104,12 +100,11 @@ async function piRequest(
 
 type Sent = Record<string, unknown>;
 
-/** The request's conversation, whichever field the API keeps it in. */
-const conversation = (sent: Sent): unknown[] =>
-  (Array.isArray(sent["input"]) ? sent["input"] : sent["messages"]) as unknown[];
+/** The request's conversation. */
+const conversation = (sent: Sent): unknown[] => sent["input"] as unknown[];
 /** The request without its conversation. */
 const around = (sent: Sent): string => {
-  const { input: _input, messages: _messages, ...other } = sent;
+  const { input: _input, ...other } = sent;
   return JSON.stringify(other);
 };
 
@@ -176,23 +171,17 @@ describe("canary 16: pi's real request, pack-first", () => {
           .map((item) => (item as { type?: string }).type ?? (item as { role?: string }).role);
       const body = conversation(a)[shared];
       expect(JSON.stringify(body)).toContain("You are pass-a. Report findings.");
-      expect(["developer", "system"]).toContain((body as { role: string }).role);
+      expect((body as { role: string }).role).toBe("developer");
       // The body is nowhere ahead of the pack's end: not in the system prompt.
       expect(around(a)).not.toContain("You are pass-a.");
-      if (Array.isArray(a["input"])) {
-        // The Responses request has no breakpoint to mark the pack's end, so
-        // a lens EXTENDS its warm-up: the warm-up's conversation, whole, then
-        // the lens's body and task.
-        expect(conversation(warm)).toHaveLength(shared);
-        expect(JSON.stringify(conversation(a).slice(0, shared))).toBe(
-          JSON.stringify(conversation(warm)),
-        );
-        expect(kinds(a, shared)).toEqual(["developer", "user"]);
-      } else {
-        // The Messages request marks the pack's end with a breakpoint; after
-        // the body a lens holds what the warm-up holds after the pack.
-        expect(kinds(a, shared + 1)).toEqual(kinds(warm, shared));
-      }
+      // The request has no breakpoint to mark the pack's end, so a lens
+      // EXTENDS its warm-up: the warm-up's conversation, whole, then the
+      // lens's body and task.
+      expect(conversation(warm)).toHaveLength(shared);
+      expect(JSON.stringify(conversation(a).slice(0, shared))).toBe(
+        JSON.stringify(conversation(warm)),
+      );
+      expect(kinds(a, shared)).toEqual(["developer", "user"]);
     });
   }
 });

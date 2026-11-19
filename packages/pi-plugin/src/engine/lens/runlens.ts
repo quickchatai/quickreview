@@ -90,15 +90,7 @@ import {
 } from "./cache-run.js";
 import { LensActivityTracker, type LensActivity } from "./activity.js";
 import { ProviderRetryWatch, passTimeoutMessage, runUnderDeadline } from "./deadline.js";
-import {
-  cacheSplitsByLevel,
-  leafCache,
-  packFirstApplies,
-  packPaysOff,
-  renderPrefixDigest,
-  type PackModel,
-  type PrefixDigest,
-} from "./leaf-cache.js";
+import { isPackFirstApi, leafCache, renderPrefixDigest, type PrefixDigest } from "./leaf-cache.js";
 import type { AgentRegistry, LensAgent } from "./registry.js";
 import { localPermits, type Permit, type Permits } from "./permits.js";
 import { WeightedSemaphore } from "./semaphore.js";
@@ -453,61 +445,57 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     (agent !== undefined ? routeSpec : undefined) ??
     "unknown";
 
-  /** The model the sessions of `on` will run on, as the host's catalog holds
-   * it, or undefined when the host cannot say before a session exists. It
-   * follows the host's own resolution (pisdk.ts `resolveModel`): no model is
-   * the host's route, as the runner already holds it; a named provider with a
-   * credential is itself; one without runs on the credentialed provider that
-   * serves the same id, when that is not a guess. An id the host's catalog
-   * does not hold, a move the host would settle by the remembered provider
-   * and a host that throws all answer undefined: the group is then not
-   * packed, which is right on every API. */
-  const modelOf = async (on: PassModel): Promise<PackModel | undefined> => {
+  /** The API the sessions of `on` will speak, or undefined when the host
+   * cannot say before a session exists. It follows the host's own resolution
+   * (pisdk.ts `resolveModel`): no model is the host's route, as the runner
+   * already holds it; a named provider with a credential is itself; one
+   * without runs on the credentialed provider that serves the same id, when
+   * that is not a guess. An id the host's catalog does not hold, a move the
+   * host would settle by the remembered provider and a host that throws all
+   * answer undefined: the group is then not packed, which is right on every
+   * API. */
+  const apiOf = async (on: PassModel): Promise<string | undefined> => {
     try {
       const { host } = config;
       if (on.model === undefined)
         return routeModel !== undefined
-          ? host.modelRuntime.getModel(routeModel.provider, routeModel.id)
+          ? host.modelRuntime.getModel(routeModel.provider, routeModel.id)?.api
           : undefined;
       const named = splitProvider(on.model);
       if (named === null) return undefined;
       const inventory = await host.inventory();
       if (inventory.some((e) => e.provider === named.provider))
-        return host.modelRuntime.getModel(named.provider, named.rest);
+        return host.modelRuntime.getModel(named.provider, named.rest)?.api;
       const move = moveToCredentialed({ provider: named.provider, id: named.rest }, inventory);
       return move !== null && "provider" in move
-        ? host.modelRuntime.getModel(move.provider, named.rest)
+        ? host.modelRuntime.getModel(move.provider, named.rest)?.api
         : undefined;
     } catch {
       return undefined;
     }
   };
 
-  /** The model of a spec, asked once per model of the run: every pass of a
-   * group, and every group of a model, then takes one path. */
-  const models = new Map<string, Promise<PackModel | undefined>>();
-  const knownModel = (on: PassModel): Promise<PackModel | undefined> => {
-    let known = models.get(on.spec);
+  /** Whether the groups of a model are packed, by the spec that keys their
+   * group: asked once per model of the run, so every pass of a group, and
+   * every group of a model, takes one path. */
+  const packedSpecs = new Map<string, Promise<boolean>>();
+  const packedOn = (on: PassModel): Promise<boolean> => {
+    let known = packedSpecs.get(on.spec);
     if (known === undefined) {
-      known = modelOf(on);
-      models.set(on.spec, known);
+      known = apiOf(on).then(isPackFirstApi);
+      packedSpecs.set(on.spec, known);
     }
     return known;
   };
 
-  /** Whether the groups of a model are packed. */
-  const packedOn = (on: PassModel): Promise<boolean> => knownModel(on).then(packFirstApplies);
-
-  /** The round's pack for `agent`'s pass on `on` when the pass is packed, else
-   * undefined. A pass is packed when the round has a pack, the pack applies
-   * to its group's model (the rewrite builds that model's request and no
-   * other) and the pack pays for a pass with its instructions
-   * (leaf-cache.ts `packPaysOff`). Never rejects. */
-  const packFor = async (on: PassModel, agent: LensAgent): Promise<string | undefined> => {
+  /** The round's pack for a pass on `on` when its cache group is packed, else
+   * undefined. A group is packed when the round has a pack and the group's
+   * model speaks an API of the pack-first family: the rewrite builds that
+   * family's request and no other. Never rejects. */
+  const packFor = async (on: PassModel): Promise<string | undefined> => {
     const pack = cache?.pack;
     if (pack === undefined || !pack.trim()) return undefined;
-    if (!(await packedOn(on))) return undefined;
-    return packPaysOff(await knownModel(on), pack, agent.body) ? pack : undefined;
+    return (await packedOn(on)) ? pack : undefined;
   };
 
   const transition = (id: string, entry: ProgressTransition): void => {
@@ -625,15 +613,14 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
     // Decided before the pass joins its group, so joining and waiting on the
     // group stay one step: a group's first pass has started the warm-up
     // before any other pass of the group looks for it.
-    const pack = groups !== undefined ? await packFor(on, agent) : undefined;
+    const pack = groups !== undefined ? await packFor(on) : undefined;
     // Keyed by tool list too: a warm-up warms the prefix of its first pass's
-    // tools, which are part of that prefix. And by thinking level, where the
-    // provider keeps a cache per level: a warm-up then serves its own level.
-    let lease: CacheLease | undefined;
-    if (groups !== undefined) {
-      const level = cacheSplitsByLevel(await knownModel(on)) ? agent.thinking : null;
-      lease = groups.join(cacheGroupKey(on.spec, agent.tools, level), now());
-    }
+    // tools, which are part of that prefix. And by thinking level: the
+    // provider keeps a cache per level, so a warm-up serves its own.
+    const lease =
+      groups !== undefined
+        ? groups.join(cacheGroupKey(on.spec, agent.tools, agent.thinking), now())
+        : undefined;
     try {
       return await executeIn(id, agent, request, on, lease, pack);
     } finally {
