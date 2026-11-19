@@ -194,12 +194,19 @@ export function renderNitScopeNote(roundNo: number): string {
 }
 
 /**
- * The NIT POLICY note (`[review] nits = "open"`): the round lifts the nit
- * limits the round prompt otherwise sets — volume no longer comes out of nits,
- * and every true nit a pass raises is posted. Strict rounds render nothing, so
- * a default install's prompt is unchanged.
+ * The NIT POLICY note. `"quiet"` (`[review] quiet`, the default): the round
+ * posts no `[nit]` and nothing below `P2` — the passes were told not to raise
+ * them and the validator kills them, and this tells the session the same, so
+ * a survivor it still holds is not posted (the posting step withholds one
+ * that reaches it anyway). `"open"` (`[review] nits = "open"`, quiet off): the
+ * round lifts the nit limits the round prompt otherwise sets — volume no
+ * longer comes out of nits, and every true nit a pass raises is posted.
+ * Strict rounds with quiet off render nothing, so their prompt is the one
+ * from before quiet existed. The placeholder sits outside every RATIFIED
+ * fence in the four round templates.
  */
-export function renderNitPolicyNote(policy: "open" | undefined, reviewNo = 1): string {
+export function renderNitPolicyNote(policy: "open" | "quiet" | undefined, reviewNo = 1): string {
+  if (policy === "quiet") return renderQuietNote(reviewNo);
   if (policy !== "open") return "";
   // From review 3 the NIT SCOPE note is armed: open lifts
   // the volume limits, never the treadmill rule, so the posting order defers
@@ -224,6 +231,30 @@ export function renderNitPolicyNote(policy: "open" | undefined, reviewNo = 1): s
     "a nit must be true, must name the change it asks for, and style still comes",
     "only from `pass-style` and the repo's written guide. The blocker bar does",
     "not move.",
+    "",
+  ].join("\n");
+}
+
+/** The QUIET note — `renderNitPolicyNote("quiet")`. It narrows which
+ * survivors post and never moves the posting map's tags or the blocker bar:
+ * a `P3` takes no tag at all because it is not posted. */
+function renderQuietNote(reviewNo: number): string {
+  return [
+    "",
+    "**QUIET REVIEW (`[review] quiet = true`).** This review posts nothing below",
+    "`P2`: no `[nit]`, and no `P3` `[question]`. The passes were told not to raise",
+    "them and the validator kills them `below-bar`; a `nit` or `P3` survivor that",
+    "reaches you anyway is not posted — not inline, not in the body, no `### Nits`",
+    "section (the posting step withholds one that slips through). Never raise or",
+    "lower a severity to change what posts. Everything else stands: blockers, `P2`",
+    "questions (the reachability gate's), `[check this]` items and security",
+    "questions post as before, and the blocker bar does not move.",
+    ...(reviewNo >= 3
+      ? [
+          "The NIT SCOPE block below is still copied into the task strings; it binds",
+          "nothing this round, since no nit is raised.",
+        ]
+      : []),
     "",
   ].join("\n");
 }

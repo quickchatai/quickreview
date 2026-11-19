@@ -441,6 +441,11 @@ escalation_mention_default = "example-maintainer"
 # repo profile under profiles/ ("" = no profile — the generic addenda
 # set only). Tests select a profile explicitly where one is under test.
 profile = ""
+# The quiet review is the shipped default; the fixture reviews as before it
+# (nits, P3 questions, pass-intent), the machinery most suites pin. The quiet
+# default is tested where it is under test (tests/quiet-review.test.ts and
+# the quiet pins of tests/posting-default-identity.test.ts).
+quiet = false
 
 # session lever bounds (minutes; budgets per [ops] timezone day).
 [levers]

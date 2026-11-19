@@ -271,8 +271,10 @@ export interface RoundOrder {
   /** The rendered third-party-sources block (packages/pi-plugin/src/depsources.ts), carried
    * into every pass's task string. Absent or "" ⇒ nothing was unpacked. */
   dependency_note?: string;
-  /** `[review] nits = "open"`: the round lifts the nit limits. Absent ⇒ strict. */
-  nit_policy?: "open";
+  /** `"quiet"` (`[review] quiet`, the default): the round posts no `[nit]`
+   * and nothing below `P2`. `"open"` (`[review] nits = "open"` with quiet
+   * off): the round lifts the nit limits. Absent ⇒ strict, quiet off. */
+  nit_policy?: "open" | "quiet";
   /** The profile's `[posting]` policy (packages/pi-plugin/src/postingpolicy.ts). Absent ⇒
    * the default posting: no note renders and nothing is enforced. */
   posting_policy?: PostingPolicy;

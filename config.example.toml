@@ -852,9 +852,23 @@ preset = "default"
 # or a "Code style" section in CONTRIBUTING) and applies only that guide.
 # quality_lenses = false
 # style_lens = false
-# How many nits a review posts: "strict" (default — true-but-trivial nits are
-# dropped, and review volume comes out of nits) or "open" (every true nit
-# posts; style still needs your written guide).
+# The quiet review (on by default): a PR review raises and posts no nit and
+# nothing below P2 — no P3 question, no polish (naming, style, structure,
+# duplication, leftovers, doc wording, missing-test asks) unless it names a
+# wrong behaviour someone can hit. Blockers, P2 questions (a likely defect in
+# a rare state), [check this] items and security questions still post, and
+# the verdict is unchanged: it depends on blockers only. Under quiet the style
+# lens reports only breaks of rules your repo enforces (a lint, format or type
+# check its CI runs, or a written house rule whose break does something), the
+# intent lens is not planned, and whatever slips through is withheld at
+# posting. Whole-repo scans are never quieted. quiet = false restores the
+# review as it was before quiet became the default: nits and P3 questions,
+# the intent lens, and the nits policy below.
+# quiet = false
+# With quiet = false only: how many nits a review posts — "strict" (default:
+# true-but-trivial nits are dropped, and review volume comes out of nits) or
+# "open" (every true nit posts; style still needs your written guide). Under
+# quiet no nit is raised, whatever this says.
 # nits = "open"
 # Per-lens cost knobs — both off by default, and the defaults are the review
 # as shipped. skip_lenses lists passes never planned nor addable (known pass

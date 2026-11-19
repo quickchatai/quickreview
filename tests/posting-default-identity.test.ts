@@ -189,6 +189,37 @@ describe("[posting] — the default profile builds and renders byte-identically"
   });
 });
 
+// `[review] quiet` (the shipped default). The fixture pins `quiet = false`, so
+// every pin above and below is the review as it was before quiet became the
+// default — byte for byte the hashes from before the knob existed, which is
+// the proof that `quiet = false` restores it. These two pin the quiet
+// default itself: the orders gain the QUIET note (this fixture's body is
+// under pass-intent's bar, so its plan is the same either way), and the
+// agents gain `quiet-lenses`, `quiet-style` and `quiet-validate` and lose
+// `validate-demote-not-kill` from pass-validate.
+// MUTATION: drop the `if (quiet)` push in configAddenda (include.ts) — "built
+// agents" fails; drop the quiet branch of nit_policy in buildRoundOrder
+// (planner.ts) — "rendered round orders" fails.
+describe("[review] quiet — the shipped default builds and renders its own pinned bytes", () => {
+  const quiet = () => {
+    const cfg = defaultCfg();
+    cfg.review.quiet = true;
+    return cfg;
+  };
+  it("rendered round orders", { timeout: HEAVY_TIMEOUT_MS }, () => {
+    expect(renderedOrders(quiet())).toEqual(GOLDEN_ORDERS_QUIET);
+  });
+  it("built agents", { timeout: HEAVY_TIMEOUT_MS }, () => {
+    expect(builtAgents(quiet())).toBe(GOLDEN_AGENTS_QUIET);
+  });
+  it("quiet = false is the pre-quiet build exactly", { timeout: HEAVY_TIMEOUT_MS }, () => {
+    const cfg = defaultCfg();
+    expect(cfg.review.quiet).toBe(false);
+    expect(renderedOrders(cfg)).toEqual(GOLDEN_ORDERS);
+    expect(builtAgents(cfg)).toBe(GOLDEN_AGENTS);
+  });
+});
+
 // docs/duplicate-merge.md: with `[review] dedup_merge = false` and no profile
 // posting policy, the orders and the agents are the pins without the
 // duplicate merge.
@@ -285,3 +316,13 @@ const GOLDEN_AGENTS_NO_DEDUP = "b3616b9dc81b176a6d6103c4788a489c3fe71ed73ff4961a
 // (pass-validate, `[review] dedup_merge` on by default) and the default
 // profile's posting addendum for `repeat_sites = false`.
 const GOLDEN_AGENTS = "352c0390d941fc4b31676a0de5654e491d685f2a72151d6b04de09f30726cf62";
+// The quiet default (`[review] quiet = true`) over the default profile: the
+// default pins above with the QUIET note in every order, and the three quiet
+// addenda in the agents. Pinned when quiet became the
+// default; re-pin deliberately, never to make `[posting]` pass.
+const GOLDEN_ORDERS_QUIET: Record<string, string> = {
+  first: "f133f833843773dd74320e87388cf1ecc193b4244216b6bb5cb25fee22078275",
+  "re-review": "001e9cf86e93201289bfa12253e83fd522ba114f5dad9970575117e4f714b57b",
+  staleness: "a0d55c74d84d4c5bb040a3d55c83adf291e0beee81d27a50875f3e3e522539f7",
+};
+const GOLDEN_AGENTS_QUIET = "f1c4b03e0b4330bd77635272105ca936b06fd29d47e592f45e8a6bad869acf72";

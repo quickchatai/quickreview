@@ -100,13 +100,18 @@ export function renderConfig(
     profileStateMachines?: typeof loadProfileStateMachines;
   } = { config: loadConfig, profilePosting: loadProfilePosting },
 ): { cfg: PostedRenderConfig; unread?: string } {
-  let review: PostedRenderConfig["review"] = { dedup_merge: REVIEW_DEFAULTS.dedup_merge };
+  // `quiet` rides along so the live route withholds what the quiet review
+  // withholds on every other render route (postedRenderOptions).
+  let review: PostedRenderConfig["review"] = {
+    dedup_merge: REVIEW_DEFAULTS.dedup_merge,
+    quiet: REVIEW_DEFAULTS.quiet,
+  };
   let posting: PostedRenderConfig["posting"];
   let fold = false;
   let unread: string | undefined;
   try {
     const loaded = load.config();
-    review = { dedup_merge: loaded.review.dedup_merge };
+    review = { dedup_merge: loaded.review.dedup_merge, quiet: loaded.review.quiet };
     const lookup = homeProfileLookup();
     // The profile's `[posting]` policy, overlaid exactly as the daemon does
     // (wire.ts buildParts) — so this route enforces the cut the bench does.

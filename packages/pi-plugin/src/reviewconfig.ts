@@ -248,13 +248,29 @@ export interface ReviewConfig {
    * rules cover a changed file (packages/pi-plugin/src/lintconfig.ts), reporting only changed
    * lines that would fail that job. */
   lint_conformance: boolean;
-  /** How many nits a review may post. `strict` (the default, production's
-   * behaviour): the validator drops true-but-trivial candidates (`below-bar`),
-   * a nit must name the change it asks for, and review volume comes
-   * out of nits. `open`: none of those limits — every true nit posts. Meant
+  /** How many nits a review may post, read only with `quiet = false` (under
+   * the quiet default no nit is raised at all). `strict` (the default): the
+   * validator drops true-but-trivial candidates (`below-bar`), a nit must
+   * name the change it asks for, and review volume comes out of nits. `open`: none of those limits — every true nit posts. Meant
    * for benchmarks whose references reward nits; a repo that wants every nit
    * can set it too. Style still needs the repo's written guide either way. */
   nits: NitPolicy;
+  /** The quiet review (the default): a PR review generates and posts no
+   * `nit` and nothing below `P2` — no `P3` question, no polish. Blockers,
+   * `P2` questions (the reachability gate's), `[check this]` items and
+   * security questions stay, and the verdict, which reads blockers only, is
+   * unchanged. Under quiet the lenses and the validator carry the quiet
+   * addenda (include.ts `configAddenda`, PR builds only: a scan is never
+   * quieted), `pass-style` reports only breaks of rules the repository
+   * enforces, `pass-intent` is not planned (planner.ts), the round order
+   * carries the QUIET note (templates.ts `renderNitPolicyNote`), and the
+   * render step withholds a `[nit]` or a question below `P2` that slips
+   * through (postingpolicy.ts `quietWithholdWord`; with
+   * `render_outputs = false` no render step runs and only the prompts and
+   * the note apply). `nits` and
+   * `validate_demote` matter only with `quiet = false`, which is the
+   * review as it was before quiet became the default. */
+  quiet: boolean;
   /** The validator demotes a confirmed, actionable observation instead of
    * killing it for a small consequence (`validate-demote-not-kill`).
    * On by default; off reproduces the earlier validator for a benchmark. */
@@ -464,6 +480,7 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   preset: "default",
   ...LEAN_LEVERS,
   nits: "strict",
+  quiet: true,
   validate_demote: true,
   skip_lenses: [],
   validate_consequence_rule: false,
@@ -2048,6 +2065,11 @@ export function validateReviewSection(cfg: Pick<CoreConfig, "review" | "models">
         `config.toml [review]: follow_up_small_delta_lines must be a whole number >= 0 (got ${JSON.stringify(n)})`,
       );
     }
+  }
+  if (typeof cfg.review.quiet !== "boolean") {
+    throw new Error(
+      `config.toml [review]: quiet must be true or false (got ${JSON.stringify(cfg.review.quiet)}) — true (the default) posts nothing below P2; false restores nits and P3 questions`,
+    );
   }
   if (cfg.review.nits !== "strict" && cfg.review.nits !== "open") {
     throw new Error(

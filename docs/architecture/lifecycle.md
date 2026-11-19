@@ -271,7 +271,9 @@ artifact is the title and body only, and it is selected only when the body
 clears a substance bar of `INTENT_MIN_SUBSTANCE_WORDS` (60; 20 under the `max`
 preset) words of real prose
 after template comments, code and links are stripped — below that the lens's
-only honest output is NONE, so it is never dispatched.
+only honest output is NONE, so it is never dispatched. Under the quiet review
+(`[review] quiet`, the default) it is not planned at all: every finding it may
+return is capped below what a quiet review posts. It stays addable.
 
 Two lenses are deliberately **addable-only** and are never selected by shape:
 `pass-concurrency` and `pass-ask-human`. A read-modify-write race has no

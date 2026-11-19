@@ -807,6 +807,68 @@ resembles a dismissed one (flagged, never dismissed by the scan). The order
 is the tools': validity tier first, most severe first inside it. Pinned by
 `tests/scan-cli.test.ts` and `tests/scan-cli-lease.test.ts`.
 
+## The quiet review — `[review] quiet`
+
+A PR review is quiet by default: it raises and posts no `nit` and nothing
+below `P2`. Blockers, `P2` questions (a likely defect in a rare state, the
+reachability gate's), `[check this]` items and security questions stay, and
+the verdict is unchanged, since it reads blockers only. Quiet is a
+`config.toml` knob, not a profile key (`profile.toml` has no `[review]`
+table): `quiet = false` under `[review]` restores the review as it was before
+quiet became the default, nits and `P3` questions included, and only then is
+`[review] nits` (`"strict"` or `"open"`) read.
+
+Quiet changes four things, each in its own place:
+
+1. **The prompts.** `configAddenda` (`packages/pi-plugin/src/include.ts`)
+   composes three entries into PR builds only — a whole-repo scan is never
+   quieted, and keeps every entry it had:
+   - `quiet-lenses` (every lens): no polish and nothing below `P2`, honest
+     severities in both directions, and an out-of-lane defect raised at its
+     honest severity — never below `P2` — in place of the placement,
+     simplicity and intent lenses' "ONE `P3` question" routing, which the
+     lens files keep word for word;
+   - `quiet-style` (`pass-style`): only breaks of rules the repository
+     enforces — a lint, format or type check its CI runs, or a written house
+     rule whose break does something — raised as defects at their honest
+     severity, never a cosmetic nit;
+   - `quiet-validate` (`pass-validate`): wherever a rule says demote to or
+     keep as `P3`/`nit`, the candidate is killed `below-bar` instead; DOUBTED,
+     the reachability questions, `[check this]`, the security demotion and
+     the security fold are untouched.
+
+   `validate-demote-not-kill` and `nits-open` are not composed into a quiet
+   PR build.
+2. **The plan.** `pass-intent` is not planned (its findings are capped at
+   `P3`); it stays addable, and a profile's `plan = "always"` still plans it.
+3. **The round order.** The QUIET note (`{{nit_policy_note}}`,
+   `renderNitPolicyNote` in `packages/pi-plugin/src/templates.ts`) tells the
+   session that a `nit` or `P3` survivor is not posted.
+4. **Posting.** The render step both routes run, the legacy
+   `assembleReview` and the benchmark's hand-written-case policing withhold a
+   `[nit]` (`nits-off`) and a non-security question below `P2`
+   (`question-not-blocking`) that slips through (`quietWithholdWord`,
+   `packages/pi-plugin/src/postingpolicy.ts`). They never withhold a blocker,
+   a `[check this]`, a `P2` question, a question of unreadable severity or a
+   security question. With `[review] render_outputs = false` the session
+   posts its own result files and no render step runs, so there only the
+   prompts and the QUIET note apply.
+
+**Profiles and quiet.** The quiet rules are composed before a profile's pack,
+so a pack rule that asks for a nit composes after them; the quiet text says
+it outranks such a request, and the posting step withholds whatever is
+raised anyway. A pack written for nits (`profiles/example-django`'s
+migration, test-doctrine and declared-shape addenda ask for some) therefore
+posts its blocker-class rules unchanged and its nits only with
+`quiet = false`. Quiet is not a `[posting]` policy: `cfg.posting` is the
+profile's alone, so no POSTING POLICY note or `posting-policy-validate`
+addendum renders because of quiet, and the two compose — a profile's budget
+or scope still applies to what quiet lets through.
+
+The benchmark reviews with quiet off unless an arm's `--config` names
+`review.quiet` (`benchQuiet`, `src/bench/runner.ts`): every published
+number was measured on the review before quiet became the default.
+
 ## The posting policy — `[posting]`
 
 What a review FINDS and what it POSTS are separate questions. Everything
@@ -921,6 +983,9 @@ is chosen with `--config review.profile=snappy` (or `--profile snappy`).
 
 No lens is removed or disabled for being expensive — abstraction, placement
 and backcompat included. A profile's `[lenses.<pass>] enabled` stays the ONLY off switch.
+The one lens a configuration leaves out of the plan is `pass-intent` under
+the quiet review (`[review] quiet`, above): not for its cost, but because
+every finding it may return sits below what a quiet review posts.
 Instead each lens is planned where its concern is actually present, and every
 planned row of the pass plan says WHY it was chosen (`PassPlanEntry.why`,
 `src/dispatch.ts` — the path-shaped lenses, the sub-lenses, the tests and

@@ -147,7 +147,23 @@ export function contextFor(
   warn?: (line: string) => void,
 ): { cfg: Config; ecosystem: Ecosystem } {
   const ctx = installContextFor(root, profile, overrides, warn);
-  return { ...ctx, cfg: withAuthModels(ctx.cfg) };
+  return { ...ctx, cfg: withAuthModels(benchQuiet(ctx.cfg, overrides)) };
+}
+
+/**
+ * The bench reviews with `[review] quiet` OFF unless the run's `--config`
+ * names `review.quiet`: every published number (README, BENCHMARKS.md, the
+ * paper) was measured on the review before quiet became the default, and an
+ * arm that reproduces one must review the same way. An arm measuring the
+ * quiet review says so: `--config review.quiet=true`.
+ */
+export function benchQuiet<C extends { review: { quiet: boolean } }>(cfg: C, overrides: string): C {
+  const named = overrides
+    .split(",")
+    .some((p) => p.slice(0, Math.max(p.indexOf("="), 0)).trim() === "review.quiet");
+  return named || cfg.review.quiet === false
+    ? cfg
+    : { ...cfg, review: { ...cfg.review, quiet: false } };
 }
 
 export interface RunnerOptions {
@@ -270,6 +286,9 @@ export interface RunFingerprint {
     quality_min_added_lines?: number;
     style_lens?: boolean;
     nits?: string;
+    /** `[review] quiet`, recorded only when on: every published run was
+     * reviewed with it off, so a run reproducing one keeps its fingerprint. */
+    quiet?: boolean;
     validate_demote?: boolean;
     skip_lenses?: string[];
     validate_consequence_rule?: boolean;
@@ -411,6 +430,7 @@ export function runFingerprint(
       quality_min_added_lines: cfg.review.quality_min_added_lines,
       style_lens: cfg.review.style_lens,
       nits: cfg.review.nits,
+      ...(cfg.review.quiet === true ? { quiet: true } : {}),
       validate_demote: cfg.review.validate_demote,
       skip_lenses: [...(cfg.review.skip_lenses ?? [])],
       validate_consequence_rule: cfg.review.validate_consequence_rule ?? false,
@@ -959,8 +979,11 @@ export async function reviewCase(
     } else if (outcome !== undefined) {
       // A hand-written case (no render): the profile's policy, or — under the
       // default — the partial-chain cut alone, when the record posts one.
-      const enforce = benchPolicyToEnforce(caseDir, ctx.cfg.posting);
-      const policed = enforce ? enforceBenchPosting(caseDir, enforce, headPatches) : null;
+      const quiet = ctx.cfg.review.quiet === true;
+      const enforce = benchPolicyToEnforce(caseDir, ctx.cfg.posting, quiet);
+      const policed = enforce
+        ? enforceBenchPosting(caseDir, enforce, headPatches, { quiet })
+        : null;
       if (policed) {
         summary.posting = policed;
         log(

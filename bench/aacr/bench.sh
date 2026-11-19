@@ -439,8 +439,9 @@ case "$cmd" in
     #      — what the published runs were built with;
     #   3. the checkout's config.example.toml — a fresh clone has no install,
     #      and the example's [models] and every [review] lever equal the
-    #      published runs' (the differences are deployment-only, and the bench
-    #      clears review.profile itself). Only the persona's two identity tokens
+    #      published runs' (the differences are deployment-only, the bench
+    #      clears review.profile itself, and it reviews with [review] quiet off
+    #      unless --config sets it: src/bench/runner.ts benchQuiet). Only the persona's two identity tokens
     #      render as the neutral fallbacks instead of an operator's names.
     . "$REPO/scripts/install-locator.sh"
     if [[ -n "${QCR_BENCH_CONFIG:-}" ]]; then

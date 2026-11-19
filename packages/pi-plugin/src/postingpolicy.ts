@@ -453,10 +453,41 @@ export interface Selection<T> {
 }
 
 /**
+ * `[review] quiet` at posting time — the mechanical backstop under the quiet
+ * addenda and the round's QUIET note: the word a quiet review withholds an
+ * item with, or null when it posts. A `[nit]` is `nits-off`; a question whose
+ * recorded severity is below `P2` is `question-not-blocking`. Never withheld:
+ * a blocker, a `[check this]` (or any other marker item, class `check`), a
+ * question at `P0`–`P2` or of unknown severity (it cannot be shown below the
+ * bar), and a security question (the security demotion and the security
+ * fold keep a security suspicion as a question at its own severity). Quiet is
+ * not a `[posting]` policy: `cfg.posting` is untouched, so no posting note or
+ * validator addendum renders because of it.
+ */
+export function quietWithholdWord(v: PolicyView): WithholdWord | null {
+  if (v.cls === "nit") return "nits-off";
+  if (v.cls !== "question" || v.security === true) return null;
+  // A severity off the P0..nit scale reads as unknown: it cannot be shown
+  // below P2, so the question is kept.
+  const rank = severityRank(v.severity);
+  if (rank !== undefined && rank > 2) return "question-not-blocking";
+  return null;
+}
+
+/** What the posting step reads besides the `[posting]` policy. */
+export interface SelectOptions {
+  /** `[review] quiet`: withhold what `quietWithholdWord` names, under any
+   * policy or none. */
+  quiet?: boolean;
+}
+
+/**
  * Apply the policy to the items a round would post, in the order they would
  * post. Deterministic and order-preserving for what it keeps:
  *   0. a partial exploit chain is withheld (`partial-chain`) under ANY policy,
- *      the default included — the one rule that runs with no policy;
+ *      the default included — the one rule that runs with no policy — and,
+ *      under `opts.quiet`, what `quietWithholdWord` names, likewise under any
+ *      policy;
  *   1. scope and tag rules — `scope = security` (`security-scope`, a
  *      non-security blocker included), `scope = state` (`state-scope`, the
  *      same for the state-machine family), `nits = off`,
@@ -481,12 +512,15 @@ export function selectPosted<T>(
   items: readonly T[],
   view: (t: T) => PolicyView,
   p: PostingPolicy | undefined,
+  opts: SelectOptions = {},
 ): Selection<T> {
   const withheld: Selection<T>["withheld"] = [];
   const viewed: Array<{ item: T; v: PolicyView; i: number }> = [];
   items.forEach((item, i) => {
     const v = view(item);
     if (v.partialChain === true) return void withheld.push({ item, word: "partial-chain" });
+    const quiet = opts.quiet === true ? quietWithholdWord(v) : null;
+    if (quiet !== null) return void withheld.push({ item, word: quiet });
     viewed.push({ item, v, i });
   });
   if (p === undefined || isDefaultPosting(p)) return { kept: viewed.map((e) => e.item), withheld };
