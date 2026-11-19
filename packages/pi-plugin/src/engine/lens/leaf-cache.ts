@@ -10,7 +10,9 @@
 //
 //   - The Responses request (`instructions`, `input`): pi's tool declarations
 //     where pi put them (the head of the input), then the pack (user role,
-//     fenced data), then the lens body as a developer message, then the task.
+//     fenced data), then the message that closes the pack (PACK_CLOSING, a
+//     warm-up's whole prompt), then the lens body as a developer message,
+//     then the task.
 //     The tool declarations stay ahead of the pack because the backend shares
 //     a prefix between two requests only as far as their tool declarations sit
 //     in the same place: with the declarations after the pack in a warm-up and
@@ -55,6 +57,27 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 const ADDENDUM_OPEN = "<addendum>";
 const ADDENDUM_CLOSE = "</addendum>";
+
+/**
+ * The message that closes the pack: the whole of a warm-up's prompt, and, on
+ * the Responses API, a message every lens request repeats right after the
+ * pack. A lens request then EXTENDS its warm-up's, word for word, and does not
+ * part from it after the pack.
+ *
+ * That matters because the backend keeps one reusable point per request, at
+ * the last 128-token boundary before the request's end, and a later request
+ * reads the cache only if it repeats the earlier one up to that point. A
+ * warm-up that ended in words of its own ("reply OK") put that point inside
+ * those words whenever a boundary fell there, and then every lens of the group
+ * read nothing (measured: 0 of 8 lenses in 3 runs of 4 at one pack size, 8 of
+ * 8 at its neighbours; 24 of 24 at that size with the lenses extending). The
+ * Messages API marks the pack's end with a breakpoint of its own and needs no
+ * such message.
+ *
+ * For a lens the sentence is inert: its instructions and its task follow.
+ */
+export const PACK_CLOSING =
+  "The context pack ends here. If no instructions and no task follow this message, reply with the single word OK and nothing else.";
 
 // VERIFY-ON-PIN (pi 1.4.0): pi-ai's own names (`KnownApi`, a model's `api`)
 // for the APIs whose request the rewrite builds. The annotation holds each
@@ -183,6 +206,17 @@ function packPlace(items: readonly unknown[], pack: string): { item: number; blo
   return { item: -1, block: -1 };
 }
 
+/** Whether `item` is the message that closes the pack: its one text, whole. */
+function isClosing(item: unknown): boolean {
+  const content = isRecord(item) ? item["content"] : null;
+  return (
+    Array.isArray(content) &&
+    content.length === 1 &&
+    isRecord(content[0]) &&
+    content[0]["text"] === PACK_CLOSING
+  );
+}
+
 /**
  * Short hashes of the parts that make up a request's cacheable prefix, in
  * request order: never their content. `reasoning` is its own part: where a
@@ -191,8 +225,9 @@ function packPlace(items: readonly unknown[], pack: string): { item: number; blo
  * The cache key is left out, since it names the group and says nothing of
  * what was sent. `input` holds one hash per item of the
  * conversation, through the pack when the request carries it (`packAt`; the
- * item that holds the pack is hashed up to the pack's end), else the first
- * three. `instructions` is the system prompt, wherever the API puts it.
+ * item that holds the pack is hashed up to the pack's end) and through the
+ * message that closes the pack when one follows it, else the first three.
+ * `instructions` is the system prompt, wherever the API puts it.
  */
 export interface PrefixDigest {
   other: string;
@@ -235,7 +270,11 @@ export function prefixDigest(payload: unknown, pack?: string): PrefixDigest | un
     Object.entries(payload).filter(([k]) => !DIGEST_OWN_PARTS.includes(k)),
   );
   const place = pack === undefined ? { item: -1, block: -1 } : packPlace(items, pack);
-  const through = items.slice(0, place.item >= 0 ? place.item + 1 : 3).map((item, i) => {
+  // The shared prefix runs through the pack, and through the message that
+  // closes it where the request carries one right after.
+  const closed = place.item >= 0 && isClosing(items[place.item + 1]);
+  const shared = place.item >= 0 ? place.item + (closed ? 2 : 1) : 3;
+  const through = items.slice(0, shared).map((item, i) => {
     if (i !== place.item) return item;
     // What follows the pack in its own item (a Messages request's task) is
     // not part of the shared prefix.
@@ -280,7 +319,8 @@ export function prefixDifference(warmup: PrefixDigest, lens: PrefixDigest): stri
   if (warmup.instructions !== lens.instructions) return "instructions";
   if (warmup.tools !== lens.tools) return "tools";
   if (warmup.packAt < 0 || lens.packAt < 0) return "pack";
-  for (let i = 0; i <= warmup.packAt; i++)
+  // Every item the warm-up shares: through the pack, and its closing message.
+  for (let i = 0; i < warmup.input.length; i++)
     if (warmup.input[i] !== lens.input[i]) return `input${i}`;
   if (warmup.toolsAfterPack > 0 || lens.toolsAfterPack > 0) return "tool-declarations";
   return undefined;
@@ -335,15 +375,22 @@ function packFirstResponses(
   const lead = leadingToolDeclarations(input);
   const head = input.slice(0, lead);
   const tail = input.slice(lead);
-  // A group's WARM-UP (no lens text): only the pack goes in, so its request
-  // is exactly the prefix every lens request of the group extends.
+  // A group's WARM-UP (no lens text): only the pack goes in, ahead of its
+  // prompt, which is the closing message. Its request is then exactly the
+  // prefix every lens request of the group extends.
   if (!body) return { ...p, input: [...head, textMessage("user", pack), ...tail] };
   const base = withoutBody(instructions, body);
   if (base === undefined) return undefined;
   return {
     ...p,
     instructions: base,
-    input: [...head, textMessage("user", pack), textMessage("developer", body), ...tail],
+    input: [
+      ...head,
+      textMessage("user", pack),
+      textMessage("user", PACK_CLOSING),
+      textMessage("developer", body),
+      ...tail,
+    ],
   };
 }
 

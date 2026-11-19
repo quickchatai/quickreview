@@ -719,7 +719,7 @@ export function createLensRunner(config: LensRunConfig): LensRunner {
       };
       stop.addEventListener("abort", onStop, { once: true });
       try {
-        await s.prompt(`Task: ${WARMUP_REPLY_TASK}`);
+        await s.prompt(WARMUP_REPLY_TASK);
       } finally {
         turnSettled = true;
         stop.removeEventListener("abort", onStop);

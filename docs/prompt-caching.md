@@ -59,6 +59,25 @@ A second lens at medium, sent after the first one, read nothing of it either: th
 
 On `claude-haiku-5-5` lenses at medium and at high read all of a warm-up sent at low. pi sends the level there as a marker inside the conversation, behind the pack, so the prefix is the same at every level, and a group on such a model holds every level.
 
+### A lens extends its warm-up
+
+The backend keeps one point per request from which a later request can read: the last 128-token boundary before the request's own end. A later request reads the cache only if it repeats the earlier one up to that point.
+
+A warm-up that ended in words of its own (a "reply OK" task after the pack) put that point inside those words whenever a boundary fell there. A lens parts from such a warm-up right after the pack, so it read nothing. Measured on the SDK runner, `gpt-6-luna`, four lenses a run over packs of about 17,000 tokens whose size was stepped a few tokens at a time:
+
+| | Runs where no lens read the warm-up | Lenses that read it |
+|---|---|---|
+| The warm-up ends in a task of its own | 4 of 4 runs in a window about nine tokens wide (the warm-up's size 82 to 90 past a boundary); none outside it | 0 of 16 inside the window |
+| The lens extends the warm-up | 0 of 16 runs, over a whole 128-token cycle | 59 of 64 |
+
+So a warm-up's prompt is one fixed message that closes the pack, and every lens request repeats that message right after the pack, ahead of its own instructions. The lens then extends the warm-up word for word, and the point lies inside what the two share at every size. For a lens the message is inert: it asks for the word OK only when nothing follows it, and the lens's instructions and task do.
+
+The Messages API needs none of this: there the pack's end is marked by a breakpoint.
+
+### What stays the provider's
+
+With everything above in place a lens still misses now and then, alone, with a request that repeats its warm-up byte for byte: about one first turn in ten on the afternoon these were measured, and none of some 150 that morning. A lens's own later turns miss the same way, more often while its conversation is short. Neither the transport (SSE or the WebSocket), nor a wait after the warm-up, nor a second warm-up changed that. It is the backend's routing, and the `turn1_hot` line and the `turn1` ledger field are where it shows.
+
 ### One key for a round
 
 Measured on the SDK runner, lenses of five turns each over a 36k-token pack, all at one level:
@@ -90,13 +109,13 @@ A key that carries a whole round's lenses loses nothing, and each group after th
 
   Files are read only as regular files inside the worktree (never a symlink a PR planted) and under 256 KB. What did not fit is named.
 - **The warm-up.** For a packed group (a round with a pack, and a model on the pack's API family, below), the lens runner starts the group's first session together with a **warm-up**:
-  - the same request without the lens text, and "reply OK" as its task;
+  - the same request without the lens text, and as its whole prompt the message that closes the pack, which asks for the single word OK when nothing follows it;
   - every session of the group waits for the warm-up to finish, at most 30 s, before it starts.
 - **The lens extension.** `packages/pi-plugin/src/engine/lens/leaf-cache.ts`, loaded into a packed group's sessions as an in-process extension, rewrites each request:
   - the lens body comes out of pi's `<addendum>` block in `instructions`;
-  - the input becomes pi's tool declarations where pi put them (its head), then the pack (user role, fenced data), then the lens body as a **developer** message, then the task.
+  - the input becomes pi's tool declarations where pi put them (its head), then the pack (user role, fenced data), then the message that closes the pack, then the lens body as a **developer** message, then the task.
 
-The warm-up's request is exactly that shared prefix, and every lens request of the group extends it.
+The warm-up's request is exactly that shared prefix, and every lens request of the group extends it: the lens repeats the warm-up's whole conversation, the closing message included, and adds its own after it (see "A lens extends its warm-up" above).
 
 Measured on the SDK runner at pi 1.4.0 (the real host and runner, a 36k-token pack): four lenses and one that started 20 s after them each read 35,584 tokens of their first request from cache and paid for about 2,500, on `gpt-6-luna` and on `gpt-6.1-sol`. The late lens joined the group's key and needed no warm-up of its own.
 

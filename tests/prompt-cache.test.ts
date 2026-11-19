@@ -21,6 +21,7 @@ import {
   resolveMaxConcurrency,
 } from "@quickchatai/pi-quickreview/src/engine/lens/env.js";
 import {
+  PACK_CLOSING,
   packFirstPayload,
   prefixDifference,
   prefixDigest,
@@ -127,11 +128,12 @@ describe("the pack-first payload (child side)", () => {
   const piInstructions = (body: string) =>
     `${base}\n\n<addendum>\n${body}\n\n</addendum>\n\n<cwd>\n/opt/quickreview/sandbox\n</cwd>`;
 
-  it("moves the lens body behind the pack: base instructions, pack (user), lens (developer), the task", () => {
+  it("moves the lens body behind the pack: base instructions, pack (user), the closing message, lens (developer), the task", () => {
     const out = packFirstPayload(payload(piInstructions(lens)), lens, "PACK")!;
     expect(out.instructions).toBe(`${base}\n\n<cwd>\n/opt/quickreview/sandbox\n</cwd>`);
     expect(out.input).toEqual([
       { role: "user", content: [{ type: "input_text", text: "PACK" }] },
+      { role: "user", content: [{ type: "input_text", text: PACK_CLOSING }] },
       { role: "developer", content: [{ type: "input_text", text: lens }] },
       { role: "user", content: [{ type: "input_text", text: "Task: Task file: /x.md." }] },
     ]);
@@ -176,27 +178,57 @@ describe("the pack-first payload (child side)", () => {
       role: "user",
       content: [{ type: "input_text", text: "Task: Task file: /x.md." }],
     };
-    const withTools = (instructions: string) => ({
+    // A warm-up's whole prompt is the message that closes the pack.
+    const closing = { role: "user", content: [{ type: "input_text", text: PACK_CLOSING }] };
+    const withTools = (instructions: string, prompt: unknown = task) => ({
       ...payload(instructions),
-      input: [tools, task],
+      input: [tools, prompt],
     });
     const pack = { role: "user", content: [{ type: "input_text", text: "PACK" }] };
     const warm = packFirstPayload(
-      withTools(`${base}\n\n<cwd>\n/opt/quickreview/sandbox\n</cwd>`),
+      withTools(`${base}\n\n<cwd>\n/opt/quickreview/sandbox\n</cwd>`, closing),
       "",
       "PACK",
     )!;
     const lensed = packFirstPayload(withTools(piInstructions(lens)), lens, "PACK")!;
-    expect(warm.input).toEqual([tools, pack, task]);
+    expect(warm.input).toEqual([tools, pack, closing]);
     expect(lensed.input).toEqual([
       tools,
       pack,
+      closing,
       { role: "developer", content: [{ type: "input_text", text: lens }] },
       task,
     ]);
     expect(
       prefixDifference(prefixDigest(warm, "PACK")!, prefixDigest(lensed, "PACK")!),
     ).toBeUndefined();
+  });
+
+  // The backend keeps one reusable point per request, near its end. A lens
+  // that parted from its warm-up right after the pack read the cache only
+  // when that point happened to fall inside the pack: at some pack sizes
+  // never. So a lens repeats the WHOLE of its warm-up's conversation.
+  // MUTATION: leave PACK_CLOSING out of a lens's input in packFirstResponses —
+  // the lens parts from the warm-up at the closing message; this fails.
+  it("a lens extends its warm-up: every item of the warm-up's conversation opens the lens's", () => {
+    const closing = { role: "user", content: [{ type: "input_text", text: PACK_CLOSING }] };
+    const warm = packFirstPayload(
+      { ...payload(`${base}\n\n<cwd>\n/opt/quickreview/sandbox\n</cwd>`), input: [closing] },
+      "",
+      "PACK",
+    )!;
+    const lensed = packFirstPayload(payload(piInstructions(lens)), lens, "PACK")!;
+    const items = warm.input as unknown[];
+    expect((lensed.input as unknown[]).slice(0, items.length)).toEqual(items);
+    // And the digest says so: a lens without the closing message differs there.
+    const digest = (sent: unknown) => prefixDigest(sent, "PACK")!;
+    expect(digest(warm).input).toHaveLength(2);
+    expect(prefixDifference(digest(warm), digest(lensed))).toBeUndefined();
+    const parted = {
+      ...lensed,
+      input: (lensed.input as unknown[]).filter((_, i) => i !== 1),
+    };
+    expect(prefixDifference(digest(warm), digest(parted))).toBe("input1");
   });
 
   it("a body appended bare at the end is lifted out too", () => {

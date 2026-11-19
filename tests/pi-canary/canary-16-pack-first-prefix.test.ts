@@ -17,6 +17,8 @@
 //
 // MUTATION: in packFirstResponses put the pack ahead of the whole input
 // (`[pack, ...input]`, both forms) - the last two tests fail for that API.
+// MUTATION: in packFirstResponses leave the closing message out of a lens's
+// input - the last two tests fail for that API.
 // MUTATION: in packFirstMessages leave the lens body in `system` - the
 // "repeats the warm-up" test fails for that API.
 import { describe, expect, it } from "vitest";
@@ -30,6 +32,7 @@ import {
   prefixDifference,
   prefixDigest,
 } from "@quickchatai/pi-quickreview/src/engine/lens/leaf-cache.js";
+import { WARMUP_REPLY_TASK } from "@quickchatai/pi-quickreview/src/engine/lens/cache-run.js";
 import { useOfflineGuard } from "./harness.js";
 
 useOfflineGuard();
@@ -73,13 +76,17 @@ function familyModels(): Model<Api>[] {
 }
 
 /** The request pi builds for one turn, as the provider hook sees it. */
-async function piRequest(model: Model<Api>, systemPrompt: string, task: string): Promise<unknown> {
+async function piRequest(
+  model: Model<Api>,
+  systemPrompt: string,
+  prompt: string,
+): Promise<unknown> {
   let captured: unknown;
   await completeSimple(
     model,
     {
       systemPrompt,
-      messages: [{ role: "user", content: `Task: ${task}`, timestamp: 0 }],
+      messages: [{ role: "user", content: prompt, timestamp: 0 }],
       tools: TOOLS,
     },
     {
@@ -120,18 +127,16 @@ describe("canary 16: pi's real request, pack-first", () => {
       const bodyA = "You are pass-a. Report findings.";
       const bodyB = "You are pass-b. A different charter, of another length altogether.";
       return {
-        warm: packFirstPayload(
-          await piRequest(model, BASE, "Reply with the single word OK."),
-          "",
-          PACK,
-        ) as Sent,
+        // A warm-up's whole prompt is the message that closes the pack, as the
+        // runner sends it (WARMUP_REPLY_TASK).
+        warm: packFirstPayload(await piRequest(model, BASE, WARMUP_REPLY_TASK), "", PACK) as Sent,
         a: packFirstPayload(
-          await piRequest(model, withBody(bodyA), "Task file: /a.md."),
+          await piRequest(model, withBody(bodyA), "Task: Task file: /a.md."),
           bodyA,
           PACK,
         ) as Sent,
         b: packFirstPayload(
-          await piRequest(model, withBody(bodyB), "Task file: /b.md."),
+          await piRequest(model, withBody(bodyB), "Task: Task file: /b.md."),
           bodyB,
           PACK,
         ) as Sent,
@@ -160,20 +165,34 @@ describe("canary 16: pi's real request, pack-first", () => {
       }
     });
 
-    it(`${model.api}: after the pack a lens holds its body and then what the warm-up holds`, async () => {
+    it(`${model.api}: after what it shares with the warm-up a lens holds its body first`, async () => {
       const { warm, a } = await requests();
-      const packAt = prefixDigest(warm, PACK)!.packAt;
-      const kinds = (sent: Sent) =>
+      // The items a warm-up shares: through the pack, and the message that
+      // closes it where the request carries one.
+      const shared = prefixDigest(warm, PACK)!.input.length;
+      const kinds = (sent: Sent, from: number) =>
         conversation(sent)
-          .slice(packAt + 1)
+          .slice(from)
           .map((item) => (item as { type?: string }).type ?? (item as { role?: string }).role);
-      const [body, ...rest] = conversation(a).slice(packAt + 1);
+      const body = conversation(a)[shared];
       expect(JSON.stringify(body)).toContain("You are pass-a. Report findings.");
       expect(["developer", "system"]).toContain((body as { role: string }).role);
-      expect(kinds(a).slice(1)).toEqual(kinds(warm));
-      expect(rest).toHaveLength(conversation(warm).length - packAt - 1);
       // The body is nowhere ahead of the pack's end: not in the system prompt.
       expect(around(a)).not.toContain("You are pass-a.");
+      if (Array.isArray(a["input"])) {
+        // The Responses request has no breakpoint to mark the pack's end, so
+        // a lens EXTENDS its warm-up: the warm-up's conversation, whole, then
+        // the lens's body and task.
+        expect(conversation(warm)).toHaveLength(shared);
+        expect(JSON.stringify(conversation(a).slice(0, shared))).toBe(
+          JSON.stringify(conversation(warm)),
+        );
+        expect(kinds(a, shared)).toEqual(["developer", "user"]);
+      } else {
+        // The Messages request marks the pack's end with a breakpoint; after
+        // the body a lens holds what the warm-up holds after the pack.
+        expect(kinds(a, shared + 1)).toEqual(kinds(warm, shared));
+      }
     });
   }
 });

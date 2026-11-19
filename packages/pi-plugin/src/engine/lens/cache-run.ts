@@ -22,12 +22,15 @@
 // Seen in production at pi 1.3.0: cleanupSessionResources closes by session id
 // alone (groups disposed their sessions together, and no sibling lens failed after).
 import { CacheGrouper, type CacheSlot } from "./cache-group.js";
-import { prefixDifference, type PrefixDigest } from "./leaf-cache.js";
+import { PACK_CLOSING, prefixDifference, type PrefixDigest } from "./leaf-cache.js";
 
 /** The longest a packed group's lens waits for its warm-up. */
 export const WARMUP_WAIT_MS = 30_000;
-/** The warm-up's whole task: it exists to put the pack in the cache. */
-export const WARMUP_REPLY_TASK = "Reply with the single word OK.";
+/** The warm-up's whole prompt: the message that closes the pack, which asks
+ * for one word when nothing follows it. The warm-up exists to put the pack in
+ * the cache, and its request must end where the shared prefix ends
+ * (leaf-cache.ts `PACK_CLOSING`), so it says nothing of its own. */
+export const WARMUP_REPLY_TASK = PACK_CLOSING;
 
 /** What the group disposes: a pi session, as far as the group knows it. */
 export interface Retired {

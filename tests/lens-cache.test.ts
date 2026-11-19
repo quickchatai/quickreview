@@ -234,7 +234,9 @@ describe("leafCache (the extension)", () => {
     }) as Record<string, unknown>;
     expect(out["prompt_cache_key"]).toBe("group-key");
     expect(out["instructions"]).toBe("base prompt");
+    // The pack, the message that closes it, the lens body, the task.
     expect((out["input"] as Array<{ role: string }>).map((m) => m.role)).toEqual([
+      "user",
       "user",
       "developer",
       "user",
