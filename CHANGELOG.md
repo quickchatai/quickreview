@@ -1,9 +1,15 @@
 # Release notes
 
-## Unreleased
+## 1.6.0
 
-A pull request review is now quiet by default: it raises and posts what
-someone must act on, and nothing below that.
+Three changes: a review is quiet by default, the lenses of a round read
+their shared context from the provider's cache again, and QuickReview runs
+on pi 1.5.2 (both below).
+
+A review is now quiet by default, wherever it runs: the bot on a pull
+request, `qcr review` in a terminal and `/qcr-review` in pi. It raises and
+posts (in a terminal or in pi: lists) what someone must act on, and nothing
+below that.
 
 - **No nits, nothing below P2.** The lenses no longer raise nits or `P3`
   findings (naming, style, structure, duplication, leftovers, doc wording,
@@ -11,7 +17,10 @@ someone must act on, and nothing below that.
   is then raised at its honest severity. The validator kills what it would have
   demoted to a nit, and the posting step withholds any that slip through.
   Blockers, `P2` questions (a likely defect in a rare state), `[check this]`
-  items and security questions post as before, and the verdict is unchanged.
+  items and security questions post as before, and the verdict still depends
+  on blockers only. A wrong behaviour that the style lens, or a lens outside
+  its own lane, used to report as a nit or a `P3` question is now raised at
+  its honest severity, so it can be a blocker.
 - The style lens reports only breaks of rules your repository enforces — a
   lint, format or type check its CI runs, or a written house rule whose break
   does something — as defects, never a cosmetic nit. The intent lens is not
@@ -19,10 +28,83 @@ someone must act on, and nothing below that.
 - **To get the previous review back**, set `quiet = false` under `[review]`
   in `config.toml`: nits, `P3` questions, the intent lens and the
   `[review] nits` policy return exactly as they were.
+- A profile's own rules are quiet too. A house pack's rule that asks for a
+  nit or a `P3` is outranked: the pack posts its blocker-class rules as
+  before, and its nits only with `quiet = false`. Quiet is a `config.toml`
+  key; a `profile.toml` cannot set it.
 - Whole-repository scans are unchanged.
 - The benchmark reviews with quiet off unless an arm sets
   `--config review.quiet=true`, so it reproduces the published numbers, which
   were all measured with the previous review.
+
+### The lenses read their shared context from cache again
+
+The lenses of a round share one context pack. It is sent once, in a warm-up
+request, and every lens is meant to read it from the provider's prompt cache
+on its first request. On the ChatGPT login (pi's `openai-codex-responses`
+API) almost no lens did: the warm-up ran, and each lens then paid for the
+whole pack again. In five whole reviews on builds of this fix 96 of 97 lenses read
+it, and 86 to 88% of the lenses' input tokens came from cache in the four
+where that was counted. What was wrong, what was measured and what stays the
+provider's is in [docs/prompt-caching.md](docs/prompt-caching.md).
+
+Nothing to do on an existing install. What behaves differently:
+
+- **A round has one cache key for each model, tool list and thinking level.**
+  `[engine] lens_cache_group` now defaults to 32, from 5: a smaller group
+  only bought a warm-up for every group after the first. A config that sets
+  the key keeps its value; remove a `lens_cache_group = 5` you copied from the
+  old example to get the new default.
+- **A warm-up is one request.** Its whole prompt is one closing message, and
+  every lens request repeats that message after the pack, so a lens extends
+  its warm-up word for word. A warm-up whose model answers with a tool call is
+  ended at that answer; before, it ran to its time limit while its lenses
+  waited 30 s. A warm-up that warmed nothing is started once more by the next
+  lens that joins.
+- **A planned lens is sent its task.** The lens wave puts the task file's
+  text in the lens's prompt; a lens no longer spends two requests fetching it.
+- **`lens-ledger.jsonl` says whether the cache hit.** Each line of a cache
+  group carries `turn1` (what the first request paid for, read from cache and
+  wrote) and `group`; a group that is sent the pack also carries `prefix`
+  (hashes of the first request, never its text). A lens whose request does
+  not extend its warm-up is named once per group in the run's log, with the
+  part that differs.
+- **No other provider gets the pack.** The pack stays on the one API it pays
+  on. It was built and measured on the Messages API, where every lens read it
+  and the review cost about twice as much, and taken out again. On the chat
+  completions API of two open models it was costed from a real review's
+  requests and would have saved nothing, so nothing is built there. The cache
+  key, the task a planned lens is sent and the ledger's `turn1` and `group`
+  are the same on every provider; the warm-up and `prefix` come with the
+  pack.
+- The benchmark's lenses are now sent the case's pack as `qcr review`'s are.
+  Before, they read the pack file through a tool, which a review on the
+  ChatGPT login does not.
+
+### pi 1.5.2
+
+`qcr` and the release image carry pi 1.5.2, from 1.4.0. The pi plugin still
+runs on pi 1.4.0 and any later 1.x.
+
+**One thing to do on an install that runs the image:** if your config.toml
+sets `[pi] version`, change it to `"1.5.2"`, or delete the line to take the
+shipped value. The container refuses to start when the config names another
+pi than the image carries (`pi version mismatch ... refusing to start`), and
+`scripts/deploy.sh` refuses to deploy over the same difference.
+
+- **New models.** pi's catalogue adds `gpt-6.1-terra` on the ChatGPT login
+  and on OpenAI, and `claude-fable-5-2` on Anthropic, among others. Name one
+  with `--model` or under `[models]`.
+- **pi's own default model moved** for several providers: Anthropic to
+  `claude-opus-5-5`, OpenAI to `gpt-6.1-sol`. The ChatGPT login's default is
+  unchanged. An install that pins no model on one of the others may start on
+  a different model; `qcr model` shows which.
+- pi 1.5 keeps a prompt cache warm for up to 30 minutes after a turn ends,
+  on models with a cache lifetime. QuickReview's own sessions keep the
+  earlier behaviour, warming only while a session streams: the refreshes are
+  requests no round asked for, and a round's cost does not count them.
+- Every other package is at its latest, which clears the open `minimatch`
+  advisory.
 
 ## 1.5.1
 
