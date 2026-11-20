@@ -1,6 +1,10 @@
 # Release notes
 
-## Unreleased
+## 1.7.0
+
+Two changes for a host that runs the reviewer for someone else, such as
+Quickchat Boxes: an App's installation token works as the reviewer's own
+token, and a repository can be reviewed without the trigger label.
 
 - `[github] trigger = "all"` reviews every open pull request that is not a
   draft and not a bot's, once per head commit, without the trigger label.
