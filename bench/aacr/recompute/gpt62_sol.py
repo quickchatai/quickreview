@@ -351,7 +351,8 @@ POST: Dict[str, object] = {
             "semantic.total.s62_only": 11, "semantic.total.final1_only": 83, "semantic.total.neither": 269},
         "drop": {
             "old_rule_hits_nit_tag": 70, "old_rule_hits_quiet": 71, "old_functional_hits_quiet": 10,
-            "old_rule_hits_p0_p2": 31, "s62_nits": 0, "final1_nits": 281}},
+            "old_rule_hits_p0_p2": 31, "old_rule_hits_no_footer": 0, "new_rule_hits_p0_p2": 39,
+            "new_rule_hits_no_footer": 1, "s62_nits": 0, "final1_nits": 281}},
     "mq_cost": {
         "martian.s62.reviews": 50, "martian.s62.usd_total": 269.8, "martian.s62.usd_per_pr": 5.4,
         "martian.s62.usd_median": 4.35, "martian.s62.minutes_median": 20.9, "martian.s62.minutes_mean": 21.3,
@@ -890,7 +891,11 @@ def qodo_numbers(t: Dict[str, List[dict]], data: Dict[str, List[dict]]) -> Dict[
     out["qodo.drop.old_rule_hits_nit_tag"] = g(f"qodo.{OLD}.n5_hits.rule.tag.nit", 0)
     out["qodo.drop.old_rule_hits_quiet"] = sum(g(f"qodo.{OLD}.n5_hits.rule.severity.{s}", 0) for s in quiet)
     out["qodo.drop.old_functional_hits_quiet"] = sum(g(f"qodo.{OLD}.n5_hits.functional.severity.{s}", 0) for s in quiet)
-    out["qodo.drop.old_rule_hits_p0_p2"] = out[f"qodo.{OLD}.n5.hits_rule"] - out["qodo.drop.old_rule_hits_quiet"]
+    # each setup's rule hits at P0 to P2 by the comment's footer, as the README defines severity: a finding posted
+    # in the review body has no footer and is counted apart (rule_hits_no_footer), never folded into P0 to P2
+    for a, x in ((OLD, "old"), (NEW, "new")):
+        out[f"qodo.drop.{x}_rule_hits_p0_p2"] = sum(g(f"qodo.{a}.n5_hits.rule.severity.{s}", 0) for s in ("P0", "P1", "P2"))
+        out[f"qodo.drop.{x}_rule_hits_no_footer"] = g(f"qodo.{a}.n5_hits.rule.severity.none", 0)
     for a in ARMS:
         out[f"qodo.drop.{a}_nits"] = g(f"qodo.{a}.comments.tag.nit", 0)
     _rate_limited(out, t, "qodo-pr100")
@@ -1679,7 +1684,7 @@ def write_tables(tables: Dict[str, List[dict]], out: str) -> None:
 
 def mq_readme(n: Dict[str, object]) -> str:
     """The README's "Martian and Qodo" section (readme())."""
-    i = lambda k: f"{int(n.get(k) or 0):,}"  # noqa: E731
+    i = lambda k: f"{int(n[k]):,}"  # noqa: E731
     d1 = lambda k: f"{n[k]:.1f}"  # noqa: E731
     d2 = lambda k: f"{n[k]:.2f}"  # noqa: E731
     prf = lambda p: "{} / {} / {} / {}".format(*(d1(f"{p}.{f}") for f in ("precision", "recall", "f1", "f2")))  # noqa: E731
@@ -1692,6 +1697,11 @@ def mq_readme(n: Dict[str, object]) -> str:
     qodo = "\n".join(f"| {names[r]} precision / recall / F1 | {qprf(f'qodo.{NEW}.{r}')} | {qprf(f'qodo.{OLD}.{r}')} |"
                      for r, _, _ in QODO_RULES)
     pc, pq = "martian.paired.category.total", "qodo.paired.n5"
+
+    def body(x: str) -> str:  # the rule hits from review-body findings, which have no footer and so no severity
+        nf = int(n[f"qodo.drop.{x}_rule_hits_no_footer"])
+        return "" if not nf else (f" (and {nf:,} from {'a review-body finding, which has' if nf == 1 else 'review-body findings, which have'}"
+                                  " no footer)")
     tags = lambda a: ", ".join(f"{i(k)} `[{k.rsplit('.', 1)[1]}]`" for k in sorted(  # noqa: E731
         (k for k in n if k.startswith(f"martian.{a}.comments.tag.")), key=lambda k: -n[k]))
     cost = "\n".join(
@@ -1710,7 +1720,8 @@ reasoning effort {MQ_EFFORT} (`arms.mq_judge`), with Martian's own pipeline on M
 `bench/aacr/ext/qodo_judge.py` on Qodo: `{OLD}` on 2026-10-04, `{NEW}` on 2026-11-20. `{NEW}`'s rows are this
 folder's `martian_*` and `qodo_*` tables (tool `{NEW}`, work dirs `{MARTIAN_WORK[NEW]}` and
 `{QODO_WORK[NEW]}`); `{OLD}`'s are the dataset's (tool `{OLD_ARM}`, work dirs `{MARTIAN_WORK[OLD]}` and
-`{QODO_WORK[OLD]}`). `gpt62_sol.py` recomputes every number below from those rows.
+`{QODO_WORK[OLD]}`). `gpt62_sol.py` recomputes every count, rate and dollar figure below from those rows; the
+scoring dates are those of each scoring's judge log (`judge.jsonl`), which this folder does not carry.
 
 **Martian** (`martian_verdicts`, `martian_reviews.fp`, and the dataset's `martian_goldens`). Martian's scorer
 counts, per profile, the goldens a review matched (found), the candidates it extracted from the review that
@@ -1755,10 +1766,10 @@ The difference is in the rule violations. Of `{OLD}`'s {i(f'qodo.{OLD}.n5.hits_r
 N=5, {i('qodo.drop.old_rule_hits_quiet')} came from comments whose footer gives P3 or nit
 ({i('qodo.drop.old_rule_hits_nit_tag')} of them tagged `[nit]`), a class the quiet default neither raises nor
 posts: `{NEW}`'s judged comments hold {i(f'qodo.drop.{NEW}_nits')} nits, `{OLD}`'s {i(f'qodo.drop.{OLD}_nits')}.
-`{OLD}`'s rule-violation matches at P0 to P2 number {i('qodo.drop.old_rule_hits_p0_p2')}, against `{NEW}`'s
-{i(f'qodo.{NEW}.n5.hits_rule')}. On functional issues both setups found {i(pq + '.functional.both')}, only `{NEW}`
-{i(pq + f'.functional.{NEW}_only')} and only `{OLD}` {i(pq + f'.functional.{OLD}_only')}; on rule violations
-{i(pq + '.rule.both')}, {i(pq + f'.rule.{NEW}_only')} and {i(pq + f'.rule.{OLD}_only')}. The comments judged include the
+By footer, `{OLD}`'s rule-violation matches at P0 to P2 number {i('qodo.drop.old_rule_hits_p0_p2')}{body('old')},
+against `{NEW}`'s {i('qodo.drop.new_rule_hits_p0_p2')}{body('new')}.
+On functional issues both setups found {i(pq + '.functional.both')}, only `{NEW}` {i(pq + f'.functional.{NEW}_only')}
+and only `{OLD}` {i(pq + f'.functional.{OLD}_only')}; on rule violations {i(pq + '.rule.both')}, {i(pq + f'.rule.{NEW}_only')} and {i(pq + f'.rule.{OLD}_only')}. The comments judged include the
 findings each setup posted in the review body, which carry no footer (`{NEW}` {i(f'qodo.{NEW}.comments.severity.none')},
 `{OLD}` {i(f'qodo.{OLD}.comments.severity.none')}); {i(f'qodo.{NEW}.comments.prs_without')} of `{NEW}`'s reviews
 posted no comment and counts as no match.
@@ -1778,15 +1789,15 @@ Qodo pull requests (`cases`), and its case summaries record {i(f'mq_cost.martian
 
 def mq_limits(n: Dict[str, object]) -> str:
     """The README's Limits on Martian and Qodo (readme())."""
-    i = lambda k: f"{int(n.get(k) or 0):,}"  # noqa: E731
+    i = lambda k: f"{int(n[k]):,}"  # noqa: E731
     return f"""- On Martian and Qodo, too, `{NEW}` changes the model, the build and the quiet default at once, and no run
   has GPT-6.2 Sol on 1.6.0 with the quiet default off. The rule-violation reading above is consistent with
   the quiet default causing the drop; it does not measure it.
 - Martian and Qodo: one review per pull request and setup, one judge pass each. The re-judged comparators
   give Martian's judge spread; Qodo had no second pass. The judge's model and effort are the same for
-  both setups, but the scorings ran 47 days apart; `qodo_judge.py`'s prompt and location rule did not
-  change between them. `{OLD}`'s Qodo verdicts carry the judge the export names (its judge log records the
-  model; its judgement file names none).
+  both setups, but the scorings ran 47 days apart by their judge logs; by the repository's history,
+  `qodo_judge.py`'s prompt and location rule did not change between them. `{OLD}`'s Qodo verdicts carry
+  the judge the export names (its judge log records the model; its judgement file names none).
 - Martian reads only the first {MARTIAN_PAGE} inline comments of a pull request: it left out
   {i(f'martian.{NEW}.comments.dropped')} of `{NEW}`'s on {i(f'martian.{NEW}.comments.prs_over_page')} pull requests and
   {i(f'martian.{OLD}.comments.dropped')} of `{OLD}`'s on {i(f'martian.{OLD}.comments.prs_over_page')}

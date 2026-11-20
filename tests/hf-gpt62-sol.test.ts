@@ -1092,6 +1092,9 @@ const POST_BASE = {
       old_rule_hits_quiet: 2,
       old_functional_hits_quiet: 0,
       old_rule_hits_p0_p2: 0,
+      old_rule_hits_no_footer: 0,
+      new_rule_hits_p0_p2: 0,
+      new_rule_hits_no_footer: 0,
       [`${N}_nits`]: 0,
       [`${O}_nits`]: 3,
     },
@@ -1456,6 +1459,9 @@ describe("gpt62_sol: validation.json's checks", () => {
       old_rule_hits_nit_tag: 70,
       old_rule_hits_quiet: 71,
       old_rule_hits_p0_p2: 31,
+      // by footer, as the README defines severity: s62's one rule hit from a review-body finding has none
+      new_rule_hits_p0_p2: 39,
+      new_rule_hits_no_footer: 1,
     });
     expect(post.mq_cost).toMatchObject({
       [`martian.${N}.usd_per_pr`]: 5.4,
@@ -1957,6 +1963,9 @@ except SystemExit as e:
     );
     expect(md).toContain("| N=5 recall on rule violations (found, of 2) | 0.0 (0) | 100.0 (2) |");
     expect(md).toContain("N=5, 2 came from comments whose footer gives P3 or nit");
+    expect(md).toContain(
+      "By footer, `final1`'s rule-violation matches at P0 to P2 number 0,\nagainst `s62`'s 0.",
+    );
   });
 });
 
