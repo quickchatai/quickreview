@@ -5,6 +5,7 @@ import type { CheckSummary } from "@quickchatai/pi-quickreview/src/cigate.js";
 import { parseConfig, type Config } from "../src/config.js";
 import type { PrRef, StalePr } from "../src/github.js";
 import { roundTypeFor } from "../src/dispatch.js";
+import { recheckFingerprint } from "../src/recheck.js";
 import { recheckPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   reconcileOnce,
@@ -1586,6 +1587,26 @@ describe('[github] trigger = "all"', () => {
     gh.open = [ref(5)];
     expect((await run()).triggered).toEqual([]);
     expect(store.getPr(5)!.state).toBe("tracked");
+  });
+
+  it("leaves a pushed head to the recheck that claimed it: no second, full round", async () => {
+    // MUTATION: drop the hasRecheck skip in the trigger = "all" loop — this fails.
+    seed(9, "tracked", { head: "approved9" });
+    gh.open = [ref(9, { head_sha: "pushed9" })];
+    const report = await reconcileOnce({
+      cfg: all,
+      store,
+      adapter: gh,
+      hooks: recordingHooks().hooks,
+      onHeadPush: async (pr, head_sha) => {
+        store.claimRecheck(pr, recheckFingerprint({ trigger: "push" }, head_sha), {
+          head_sha,
+          trigger: "push",
+        });
+      },
+    });
+    expect(report.triggered).toEqual([]);
+    expect(store.getPr(9)!.state).toBe("tracked");
   });
 
   it("leaves a PR the label path or a running round already owns", async () => {

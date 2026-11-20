@@ -68,7 +68,8 @@ review_team = ""                            # ← FILL (4): "org/team" whose rev
 trigger_label = "AI review requested"
 # What brings a PR in for review: "label" (the default; a missing key means
 # "label") — the trigger_label above or a review_team request; "all" — also
-# every open PR that is not a draft and not a bot's, once per head commit.
+# every open PR that is not a draft and not a bot's, once per head commit,
+# whoever opened it (on a public repository, each outside head is a paid round).
 #trigger = "label"
 in_progress_label = "AI review in progress"
 reviewed_label = "Automatic Review"

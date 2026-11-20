@@ -578,6 +578,9 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       const local = store.getPr(ref.number);
       if (ref.draft || grouped.has(ref.number) || isBotAuthor(ref.author, botLogin)) continue;
       if (local?.paused || local?.state === "queued" || local?.state === "reviewing") continue;
+      // A pushed head after an approval belongs to the targeted recheck, as in label mode.
+      if (store.hasRecheck(ref.number, recheckFingerprint({ trigger: "push" }, ref.head_sha)))
+        continue;
       if (store.headHandled(ref.number, ref.head_sha)) continue;
       const meta = {
         title: ref.title,
