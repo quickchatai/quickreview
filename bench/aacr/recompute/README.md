@@ -191,3 +191,24 @@ name (`pool.sm4-p`, `key.sm1-c`, `comments.sm4-p.per_pr`, `key.sm5-a`, ...).
 `state_machines.py build` wrote the folder from the runs and the label files
 (`collect()` gives its tables without writing them), and with `--manifest` the
 folder's manifest.
+
+## The GPT-6.2 Sol comparison
+
+    gpt62_sol.py --data <hf-dataset>   # the release's checks of its gpt62_sol/ folder
+
+The dataset's `gpt62_sol/` folder holds QuickReview 1.6.0 on GPT-6.2 Sol (`s62`)
+beside the October build (`final1`, the tables' arm `quickreview-frozen`) on all
+185 AACR-Bench pull requests: `s62`'s posted comments and defect-judge verdicts,
+and four pairwise Elo plans' every judgment attempt with the ratings refit from
+them (its README describes each table). `gpt62_sol.py` runs validation.json's
+checks of it: every file against the committed `bench/aacr/hf/gpt62-sol.sha256`,
+the tables' columns, the rows against each other and against the tables'
+`final1` rows and answer key, the folder README against the one its tables give
+(`readme()`), the Elo refit (`refit()`: each judge over every plan it judged and
+both pooled with each judge's games repeated to the least common multiple of
+the plans each judged, over `elo/elo_rating.py`'s fit) against
+`elo_ratings`, `elo_gaps` and `used_in_ratings`, and every number of the write-up
+(`POST`) recomputed (`numbers()`). `claim_metrics.py`'s `gpt62_sol` keys are those
+numbers by name (`key.s62.all`, `elo.combined.overall`, `elo.gpt.position.b_pct`,
+...). `gpt62_sol.py build` wrote the folder from the runs and the Elo plan
+directories (`collect()` gives its tables without writing them).

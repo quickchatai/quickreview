@@ -46,6 +46,15 @@ What it writes (no model call, nothing uploaded; the run dirs are only read):
                          against its tables, no label repeating the answer key's
                          words, every number of the study recomputed from it) and
                          fails without it.
+  gpt62_sol/             with --gpt62-sol: the GPT-6.2 Sol comparison (s62's posted
+                         comments and defect-judge verdicts, the four pairwise Elo
+                         plans' every judgment attempt and their refit ratings;
+                         written by recompute/gpt62_sol.py build), copied as is after
+                         every file is checked against bench/aacr/hf/gpt62-sol.sha256
+                         (refused otherwise); no config reads it. validation.json
+                         checks it (the manifest, its columns, its rows against the
+                         dataset's final1 rows and answer key, its README, the Elo
+                         refit, every number of the write-up) and fails without it.
 
 With --archive (the run archive folder, after `export_runs.py readme` wrote it) it
 also writes the runs table's derived fields (each Martian scoring dir's judge
@@ -94,6 +103,7 @@ import scrub_extra as SX  # noqa: E402
 sys.path.insert(0, os.path.join(HERE, "recompute"))
 import second_judges as SJ  # noqa: E402
 import state_machines as SM  # noqa: E402
+import gpt62_sol as GS  # noqa: E402
 
 SETS = ("smoke10", "dev10", "holdout10", "fresh10", "rest145")
 AACR_V1_SHA256 = "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
@@ -649,10 +659,10 @@ def cited(check: str, key: str, arm_ids: set, units: set, martian_dirs: set) -> 
     elif check == "qodo":
         if head != "issues":
             runs |= _dirs_of(head.partition("|")[0], ".qodo", units)
-    elif check in ("second_judge", "state_machines"):
-        # a second judge's numbers are read from second_judges/ and the state-machine study's from
-        # state_machines/, which neither `arms` nor the run index describes: they link no arm and no unit,
-        # so the tables keep their rows
+    elif check in ("second_judge", "state_machines", "gpt62_sol"):
+        # a second judge's numbers are read from second_judges/, the state-machine study's from
+        # state_machines/ and the GPT-6.2 Sol comparison's from gpt62_sol/, which neither `arms` nor the run
+        # index describes: they link no arm and no unit, so the tables keep their rows
         pass
     elif check == "key":  # claim_metrics.Key: only its `arm=` selector reads an arm's reviews
         for part in key.partition("~")[2].split("&"):
@@ -2281,7 +2291,7 @@ def leak_scan(out: str) -> dict:
         blob = json.dumps(t.to_pylist(), ensure_ascii=False, default=str)
         for p in pats:
             bad[(n, p.pattern)] += len(p.findall(blob))
-    for rel, _ in SJ.file_rows(out) + SM.file_rows(out):  # the folders' tables, read as the configs are
+    for rel, _ in SJ.file_rows(out) + SM.file_rows(out) + GS.file_rows(out):  # the folders' tables, as the configs
         from tables import load_table
         blob = json.dumps(load_table(os.path.dirname(os.path.join(out, rel)), os.path.basename(rel).split(".")[0]),
                           ensure_ascii=False, default=str)
@@ -2565,9 +2575,27 @@ def state_machines_link(rows: list[tuple] | None, url: str) -> str:
     return f"[`{SM.FOLDER}/`]({url}/tree/main/{SM.FOLDER})"
 
 
+GPT62_SOL_PENDING = "`<gpt62_sol/ not in this build>`"
+
+
+def render_gpt62_sol_files(rows: list[tuple] | None) -> str:
+    """The card's table of the GPT-6.2 Sol comparison's tables (gpt62_sol.file_rows): path and rows."""
+    if not rows:
+        return GPT62_SOL_PENDING
+    return "\n".join(["| File | Rows |", "|---|---:|"] + [f"| `{p}` | {n:,} |" for p, n in rows])
+
+
+def gpt62_sol_link(rows: list[tuple] | None, url: str) -> str:
+    """The card's link to the GPT-6.2 Sol comparison's folder in this dataset; the pending marker when the
+    build has none."""
+    if not rows:
+        return GPT62_SOL_PENDING
+    return f"[`{GS.FOLDER}/`]({url}/tree/main/{GS.FOLDER})"
+
+
 def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter, runs: list[dict] | None = None,
                 inventory: dict | None = None, second_judges: list[tuple] | None = None,
-                state_machines: list[tuple] | None = None) -> dict:
+                state_machines: list[tuple] | None = None, gpt62_sol: list[tuple] | None = None) -> dict:
     """Every {{NAME}} the card template holds, from the export's own facts. What
     is not known at export time (the DOI, the papers' arXiv ids) renders as an
     explicit pending marker, never as an empty string or a guess."""
@@ -2607,6 +2635,8 @@ def card_values(a, sizes: dict, checks: list[dict], counts: collections.Counter,
             "SECOND_JUDGE_MD": second_judge_links(second_judges, url),
             "STATE_MACHINES_FILES": render_state_machine_files(state_machines),
             "STATE_MACHINES_MD": state_machines_link(state_machines, url),
+            "GPT62_SOL_FILES": render_gpt62_sol_files(gpt62_sol),
+            "GPT62_SOL_MD": gpt62_sol_link(gpt62_sol, url),
             "SIZE_CATEGORY": size_category(sum(sizes.values()))}
 
 
@@ -2646,9 +2676,10 @@ def verify_result(path: str | None) -> str:
         # validation.json's checks of the dataset's folders: they need that folder beside the tables
         sj = sum(1 for x in cons if x["needs"] == ["second_judges"])
         sm = sum(1 for x in cons if x["needs"] == ["state_machines"])
-        folder = sj + sm
+        gs = sum(1 for x in cons if x["needs"] == ["gpt62_sol"])
+        folder = sj + sm + gs
         third = sum(1 for x in cons if {"--martian", "--qodo-gt"} & set(x["needs"]))
-        parts = [f"{n} on its `{f}/` folder" for n, f in ((sj, SJ.FOLDER), (sm, SM.FOLDER)) if n]
+        parts = [f"{n} on its `{f}/` folder" for n, f in ((sj, SJ.FOLDER), (sm, SM.FOLDER), (gs, GS.FOLDER)) if n]
         rerun = (f"re-run on the dataset ({tables} on the tables and {' and '.join(parts)})"
                  if len(parts) == 1 else
                  f"re-run on the dataset ({tables} on the tables, {', '.join(parts[:-1])} and {parts[-1]})"
@@ -2698,7 +2729,8 @@ def render_card(a, out: str, sizes: dict, checks: list[dict], counts: collection
     # the inventory from the tables as written, so the card counts exactly what ships
     inv = comment_inventory({n: pq.read_table(os.path.join(out, "data", f"{n}.parquet")).to_pylist()
                              for n in ("reviews", "martian_reviews", "qodo_reviews")})
-    card = fill_card(tmpl, card_values(a, sizes, checks, counts, runs, inv, SJ.file_rows(out), SM.file_rows(out)))
+    card = fill_card(tmpl, card_values(a, sizes, checks, counts, runs, inv, SJ.file_rows(out), SM.file_rows(out),
+                                          GS.file_rows(out)))
     open(os.path.join(out, "README.md"), "w").write(card)
 
 
@@ -2772,6 +2804,25 @@ def copy_state_machines(src: str, out: str, manifest: str = SM.MANIFEST) -> None
     shutil.copytree(os.path.abspath(os.path.expanduser(src)), os.path.join(out, SM.FOLDER))
 
 
+def refuse_gpt62_sol(src: str, manifest: str = GS.MANIFEST) -> None:
+    """--gpt62-sol: every file of the folder must be the committed manifest's, none missing, extra or
+    differing, before anything is written (SystemExit naming them otherwise)."""
+    src = os.path.abspath(os.path.expanduser(src))
+    if os.path.basename(src.rstrip("/")) != GS.FOLDER:
+        raise SystemExit(f"--gpt62-sol: give the `{GS.FOLDER}` folder itself, not {src}")
+    bad = GS.manifest_problems(src, GS.read_manifest(manifest))
+    if any(bad.values()):
+        raise SystemExit("--gpt62-sol: the folder is not the committed manifest's "
+                         f"({os.path.relpath(manifest, os.path.dirname(os.path.dirname(HERE)))}): "
+                         + "; ".join(f"{k} {v}" for k, v in bad.items() if v))
+
+
+def copy_gpt62_sol(src: str, out: str, manifest: str = GS.MANIFEST) -> None:
+    """The folder into the dataset at gpt62_sol/, as is, only when it is the manifest's."""
+    refuse_gpt62_sol(src, manifest)
+    shutil.copytree(os.path.abspath(os.path.expanduser(src)), os.path.join(out, GS.FOLDER))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs-dir", required=True)
@@ -2812,6 +2863,9 @@ def main():
     ap.add_argument("--state-machines", help="the state-machine study's folder (a `state_machines` dir): copied to "
                     "the dataset's state_machines/ when every file matches bench/aacr/hf/state-machines.sha256 "
                     "(refused otherwise); validation.json's state-machine checks fail without it")
+    ap.add_argument("--gpt62-sol", help="the GPT-6.2 Sol comparison's folder (a `gpt62_sol` dir): copied to the "
+                    "dataset's gpt62_sol/ when every file matches bench/aacr/hf/gpt62-sol.sha256 (refused "
+                    "otherwise); validation.json's checks of it fail without it")
     a = ap.parse_args()
     if not (SCRUB_BOTS and SCRUB_OWNERS):
         sys.exit("set QCR_SCRUB_BOT and QCR_SCRUB_OWNER: the identities this export scrubs come from the exporter")
@@ -2828,6 +2882,8 @@ def main():
         refuse_second_judges(a.second_judges)
     if a.state_machines:
         refuse_state_machines(a.state_machines)
+    if a.gpt62_sol:
+        refuse_gpt62_sol(a.gpt62_sol)
     if os.path.exists(out):
         shutil.rmtree(out)
     os.makedirs(out)
@@ -2845,6 +2901,8 @@ def main():
         copy_second_judges(a.second_judges, out)
     if a.state_machines:
         copy_state_machines(a.state_machines, out)
+    if a.gpt62_sol:
+        copy_gpt62_sol(a.gpt62_sol, out)
     if not a.no_figures:
         print("figures, keys, reports …", flush=True)
         figures(a, out, ex.counts, ex.notes)
@@ -2853,6 +2911,7 @@ def main():
               + ex.raw_text_checks(tables))
     checks += SJ.checks(out)  # fails closed: without --second-judges the folder's checks fail
     checks += SM.checks(out)  # fails closed: without --state-machines the folder's checks fail
+    checks += GS.checks(out)  # fails closed: without --gpt62-sol the folder's checks fail
     if not a.no_figures:
         checks += figure_checks(out)
     manifest = json.load(open(CLAIMS_MANIFEST))

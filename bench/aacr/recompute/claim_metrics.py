@@ -2,7 +2,7 @@
 
 bench/aacr/verify_claims.py asks this module for the value behind a claim of
 bench/aacr/claims.json whose check is `aacr`, `key`, `martian`, `qodo`, `elo`,
-`judges`, `second_judge` or `state_machines`. No model call; the tables are read with
+`judges`, `second_judge`, `state_machines` or `gpt62_sol`. No model call; the tables are read with
 recompute/tables.py (parquet, or .jsonl fixtures). Every value is a plain number in the unit the papers print:
 percentages are already x100, money in dollars, time in minutes.
 
@@ -60,6 +60,8 @@ second_judge  LABEL/aacr/ARM:METRIC | LABEL/martian/WORK|TOOL:METRIC | LABEL/qod
          a second judge's numbers from the dataset's second_judges/LABEL/ through the scorers (see SecondJudge)
 state_machines  NAME
          a number of the state-machine study, from the dataset's state_machines/ (state_machines.numbers)
+gpt62_sol  NAME
+         a number of the GPT-6.2 Sol comparison, from the dataset's gpt62_sol/ and its final1 rows (gpt62_sol.numbers)
 martian  WORK[+WORK...]|TOOL[@JUDGE][~HALF]:METRIC  (JUDGE default gpt-6.1-sol; a published judge is
          "published: <model>", and WORK "-" names Martian's own published scores over all 50 PRs). METRIC: {core,strict,all}_{tp,fp,fn,precision,recall,f1,f2},
          the stored scores of one dir; with HALF (a set file, martian-tune20 or martian-test30) recounted on that
@@ -1002,6 +1004,29 @@ class StateMachines(Provider):
         return self._numbers[key]
 
 
+class Gpt62Sol(Provider):
+    """The GPT-6.2 Sol comparison's numbers, by name (gpt62_sol.numbers: the folder's tables, with final1's rows
+    and the answer key from the dataset's tables). A folder the release does not hold is a missing source (the
+    check needs `gpt62_sol`), and a name numbers() does not give is a fault, never a number."""
+
+    def __init__(self, tables: Tables):
+        super().__init__(tables)
+        self._numbers: Optional[Dict[str, Optional[float]]] = None
+
+    def compute(self, key: str) -> Optional[float]:
+        import gpt62_sol as GS
+        if self._numbers is None:
+            if not os.path.isdir(GS.folder_of(self.t.data)):
+                raise KeyError_(f"no {GS.FOLDER}/ beside the tables")
+            try:
+                self._numbers = GS.numbers(self.t.data)
+            except SystemExit as e:  # a table missing: a fault, never a number
+                raise KeyError_(f"{GS.FOLDER}: {e}") from None
+        if key not in self._numbers:
+            raise KeyError_(f"unknown gpt62_sol number {key!r}")
+        return self._numbers[key]
+
+
 SJ_DIR = "second_judges"
 PROVIDERS = {"aacr": Aacr, "key": Key, "martian": Martian, "qodo": Qodo, "elo": Elo, "judges": Judges,
-             "second_judge": SecondJudge, "state_machines": StateMachines}
+             "second_judge": SecondJudge, "state_machines": StateMachines, "gpt62_sol": Gpt62Sol}

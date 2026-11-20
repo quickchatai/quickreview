@@ -1230,12 +1230,12 @@ print(json.dumps([v(SM.file_rows(sys.argv[1])), v([])]))`,
     ) as [string, string];
     const link =
       "[`state_machines/`](https://huggingface.co/datasets/acme/bench/tree/main/state_machines)";
-    expect(card[0]).toContain(`("Second judge"), and ${link}\nholds a study`);
+    expect(card[0]).toContain(`("Second judge"), ${link}\nholds a study`);
     expect(card[0]).toContain(`## State-machine study\n\n${link} holds a study`);
     expect(card[0]).toContain("| File | Rows |\n|---|---:|\n| `state_machines/arms.jsonl` | 3 |");
     expect(card[0]).toContain("| `state_machines/pooled_bugs.jsonl` | 5 |");
     expect(card[0]).toContain("\n### Preliminary: GPT-6.2 Astra\n");
-    expect(card[1]).toContain("and `<state_machines/ not in this build>`\nholds a study");
+    expect(card[1]).toContain("), `<state_machines/ not in this build>`\nholds a study");
     expect(card[1]).not.toContain("tree/main/state_machines");
   });
 
