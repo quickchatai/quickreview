@@ -44,9 +44,11 @@ and why". It comes in three parts, all in this repository:
 
 Beside them, {{SECOND_JUDGE_MD}} holds a second judge's verdicts on the
 reviewers of the repository README's full tables, on all three benchmarks,
-next to the published judge's ("Second judge"), and {{STATE_MACHINES_MD}}
+next to the published judge's ("Second judge"), {{STATE_MACHINES_MD}}
 holds a study of QuickReview's state-machine review with every label it made
-("State-machine study").
+("State-machine study"), and {{GPT62_SOL_MD}} holds QuickReview on GPT-6.2 Sol
+beside its October build, on the answer key, judged side by side, and on Martian
+and Qodo ("GPT-6.2 Sol comparison").
 
 DOI: {{DOI_MD}}. The code, the benchmark definition and both papers are in the
 QuickReview repository, https://github.com/quickchatai/quickreview, under
@@ -147,6 +149,7 @@ The scripts are in the QuickReview repository under `bench/aacr/`.
 | QuickReview paper: the max preset example | `qr:basemodel` | `arms` (`quickreview-max-g61`) | `aacr-g61-smokes` | `compare.py` |
 | The second judge beside the published judges (this card's "Second judge"; benchmark paper `tab:dsjudge` and its judge-reliability section; QuickReview paper's limits) | `second-judge` | none: the folder `second_judges/deepseek-v4.1-flash-1017/`, beside the published judge's rows in `defect_verdicts`, `comment_verdicts`, `martian_verdicts`, `martian_reviews`, `qodo_verdicts` | none | `recompute/score_verdicts.py`, `recompute/martian_scores.py`, `recompute/qodo_scores.py` (the folder README's commands); `recompute/second_judges.py`; `validation.json` |
 | The state-machine study (this card's "State-machine study"; the QuickReview write-up on implicit state machines) | `state-machines` | none: the folder `state_machines/`, beside the answer key's `defects` | none | `recompute/state_machines.py`; `validation.json` |
+| The GPT-6.2 Sol comparison (this card's "GPT-6.2 Sol comparison"; the QuickReview write-up on GPT-6.2 Sol) | `gpt62-sol` | none: the folder `gpt62_sol/`, beside `quickreview-frozen`'s rows in `reviews`, `defect_verdicts` and `comment_verdicts` and the answer key's `defects`, and its Martian and Qodo rows (`final1-martian50`, `final1-qodo-pr100`) with `martian_goldens` and `qodo_issues` | none | `recompute/gpt62_sol.py`; `validation.json` |
 
 `tab:copilot2025`'s rows are these arms, on the 19 PRs that have a
 `copilot-2025-upstream` review (`final/copilot19.txt`):
@@ -650,6 +653,77 @@ comments carry no state labels and the bugs it found outside the answer key
 were not pooled, so its pool share is not measured, and its comments are not
 known to be about state bugs alone (a fifth of `sm4-p`'s are not).
 
+## GPT-6.2 Sol comparison
+
+{{GPT62_SOL_MD}} holds a comparison of two setups on all 185 AACR-Bench pull
+requests: QuickReview 1.6.0 on GPT-6.2 Sol with its quiet default on (`s62`:
+no nits, nothing below P2), and the build frozen on 2026-10-04 on GPT-6.1 Sol
+(`final1`, this dataset's arm `quickreview-frozen`). The folder holds `s62`'s
+posted comments and its defect judge's verdicts; `final1`'s are the tables'
+rows of `quickreview-frozen`, which it does not repeat. It also holds four
+pairwise Elo plans in which two judges, GPT-6.1 Sol and DeepSeek V4.1 Flash,
+both at xhigh, read both reviews of a pull request and picked the better one
+in four categories and overall, every pair in both orders: every judgment
+attempt with its status, the A/B order, each category's winner and reasoning
+and the token usage, and the ratings refit from them. And it holds `s62`'s
+reviews of Martian's benchmark and Qodo's PR-Review-Bench with their scorings,
+in the columns of this dataset's `martian_*` and `qodo_*` tables, whose rows of
+`quickreview-frozen` are `final1`'s. Its README describes every table and how
+each number is recomputed. No config reads it.
+
+**What it found.** On the answer key `s62` found 435.5 of the 520 defects and
+`final1` 461 (a defect found in part counts half). On the 90 high-severity
+defects that is 87 against 87.5 and on the 145 medium ones 135 against 134.5,
+so the difference is in the low-severity ones, 213.5 against 239. The defect
+judge read 1,501 comments of `s62` (8.1 a pull request) against 1,278 (6.9):
+499 against 507 on an answer-key defect, and 176 (12%) against 97 (8%) graded
+incorrect, partly correct or unverifiable. `s62` cost $3.25 a pull request at
+list prices against $2.06, and took a median 11.0 minutes against 17.5. In the
+pairwise judging (the Elo gap of `s62` over `final1`, with its 95% interval)
+both judges favour `s62` on finding the defects that matter, +115 pooled, and
+`final1` on wasting less attention (-101), stating findings (-78) and writing
+(-105). Overall they split: the GPT-6.1 Sol judge gives +37 (-9 to +82), the
+DeepSeek judge -77 (-122 to -34), and the fit that weighs both judges the same
+-17 (-53 to +18), an interval that spans zero.
+
+**Martian and Qodo.** One judge scored both setups on both benchmarks, GPT-6.1
+Sol at reasoning effort low. On Martian's 50 pull requests `s62` found 98 of the
+158 Core goldens against 104, with 664 false positives against 536: Core
+precision 12.9% against 16.2%, recall 62.0% against 65.8%, F1 21.3% against
+26.1%. On Qodo's 100 pull requests, under its primary location rule, `s62` made
+7.29 judged comments a pull request against 7.06, with precision 28.0% against
+37.3%, recall 35.2% against 45.3% and F1 31.2% against 40.9%. Its recall on
+functional issues held, 53.1% against 52.1%; on rule violations it fell, 14.8%
+against 37.6%. Of `final1`'s 102 rule-violation matches, 71 came from comments
+it rated P3 or nit, a class the quiet default does not post. `s62` cost $5.40 a
+pull request on Martian against $2.84, and $3.55 on Qodo against $2.48. The
+re-judged comparator reviews, the same inputs in both Martian scorings, moved
+by up to 4 Core goldens or false positives between them, so the Martian gap in
+goldens found is not far beyond the judge's own spread; each setup ran once, and
+no run separates the model from the quiet default.
+
+**Limits.** The two runs had different defect judges: GPT-6.1 Sol at high for
+`s62`, GPT-6 Sol at high for `final1`'s published verdicts. Four things differ
+between the setups, the model, the QuickReview releases, the runtime and the
+quiet default, so no number here is of the model alone, and each setup
+ran once. DeepSeek never returned a verdict on 5 pull requests (every attempt
+timed out or was cut off), so its ratings and the pooled ones cover the other
+180. The GPT-6.1 Sol judge picked Review B in 57% of its decided verdicts, a
+position bias that judging every pair in both orders cancels out; it is also of
+the reviewers' model family. No person has read the pairs. On the runtime:
+`final1` ran on pi 1.0.0, from before the SDK engine; `s62` ran on the SDK
+engine, with pi rebuilt from its unreleased main for GPT-6.2 Sol, which reports
+itself as pi 1.5.2 (the folder's `arms` names the commit), so it is not a
+release a reader can install.
+
+{{GPT62_SOL_FILES}}
+
+`bench/aacr/recompute/gpt62_sol.py --data <this dataset>` recomputes every
+number of the folder's README from its tables and the dataset's, refits the
+Elo ratings from the judgments and checks that the README is the one they
+give, and `validation.json` holds the same checks of the folder (see "How to
+verify").
+
 ## What is not here, and why
 
 - **QuickReview reviewing the authors' own repositories.** A self-review run
@@ -867,7 +941,7 @@ without an input above, it fails on the claims that need it.
 On this release: {{VERIFY_RESULT}}
 
 Its release checks are the checks of `validation.json` (below) that need only
-the tables and the `second_judges/` and `state_machines/` folders, re-run on your download, and the
+the tables and the `second_judges/`, `state_machines/` and `gpt62_sol/` folders, re-run on your download, and the
 slim bundle's own (every file's hash, no transcript text, every Martian and
 Qodo scoring dir re-scored, the Elo refit). `validation.json` also holds the checks the export ran against its
 own inputs (the source run directories, the commit remap, the archive's index,
@@ -888,7 +962,7 @@ a missing input fails.
 defects, 3,093 exclusions, 185 PRs per full arm, 1,418 references, 173
 Martian goldens, 580 Qodo issues), the papers' headline numbers (every arm's
 defects found by severity, comments correct, cost and time; the second judge;
-the state-machine study; judge agreement; the AACR metric; Martian and Qodo scores), the open-model
+the state-machine study; the GPT-6.2 Sol comparison; judge agreement; the AACR metric; Martian and Qodo scores), the open-model
 rows, the Elo ratings (refit from `elo_judgments` and compared with the
 run's own `ratings.json`), the judge coverage above, and that every shipped
 run family has rows in the tables it should. This release passes {{CHECKS}}

@@ -1325,6 +1325,33 @@
     "state_machines:earlier_arms"
    ],
    "doc": "the state-machine study's numbers, by name, from the dataset's state_machines/ folder alone (claim_metrics.StateMachines over state_machines.numbers)"
+  },
+  "gpt62_sol": {
+   "kind": "tables",
+   "provider": "gpt62_sol",
+   "needs": "hf+gpt62_sol",
+   "scripts": [
+    "bench/aacr/recompute/claim_metrics.py",
+    "bench/aacr/recompute/gpt62_sol.py"
+   ],
+   "data": [
+    "gpt62_sol:arms",
+    "gpt62_sol:cases",
+    "gpt62_sol:reviews",
+    "gpt62_sol:defect_verdicts",
+    "gpt62_sol:comment_verdicts",
+    "gpt62_sol:elo_plans",
+    "gpt62_sol:elo_units",
+    "gpt62_sol:elo_judgments",
+    "gpt62_sol:elo_ratings",
+    "gpt62_sol:elo_gaps",
+    "defects",
+    "reviews",
+    "defect_verdicts",
+    "comment_verdicts",
+    "arms"
+   ],
+   "doc": "the GPT-6.2 Sol comparison's numbers, by name, from the dataset's gpt62_sol/ folder and final1's rows (arm quickreview-frozen) and the answer key in its tables (claim_metrics.Gpt62Sol over gpt62_sol.numbers)"
   }
  },
  "groups": {
@@ -1739,6 +1766,11 @@
   },
   "state-machines": {
    "what": "the state-machine study in the dataset's state_machines/ folder: two runs on 34 AACR-Bench pull requests, its state labels and pooled state bugs, and a preliminary third run (GPT-6.2 Astra as the reviewer), as the card states them",
+   "families": [],
+   "archive": []
+  },
+  "gpt62-sol": {
+   "what": "the GPT-6.2 Sol comparison in the dataset's gpt62_sol/ folder: QuickReview 1.6.0 on GPT-6.2 Sol (s62) beside the October build (final1) on all 185 AACR-Bench pull requests, on the answer key and in pairwise Elo by two judges, as the card states it",
    "families": [],
    "archive": []
   }
@@ -58041,6 +58073,598 @@
    "value": "85.4%",
    "group": "second-judge",
    "q": "second_judge:deepseek-v4.1-flash-1017/aacr/quickreview-frozen:correct"
+  },
+  {
+   "id": "card.gpt62-sol.1",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "holds a comparison of two setups on all 185 AACR-Bench pull",
+   "value": "185",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:prs"
+  },
+  {
+   "id": "card.gpt62-sol.2",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "**What it found.** On the answer key `s62` found 435.5 of the 520 defects and",
+   "value": "435.5",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:key.s62.all"
+  },
+  {
+   "id": "card.gpt62-sol.3",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "**What it found.** On the answer key `s62` found 435.5 of the 520 defects and",
+   "value": "520",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:key.defects"
+  },
+  {
+   "id": "card.gpt62-sol.4",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "`final1` 461 (a defect found in part counts half). On the 90 high-severity",
+   "value": "461",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:key.final1.all"
+  },
+  {
+   "id": "card.gpt62-sol.5",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "`final1` 461 (a defect found in part counts half). On the 90 high-severity",
+   "value": "90",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:key.high"
+  },
+  {
+   "id": "card.gpt62-sol.6",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects that is 87 against 87.5 and on the 145 medium ones 135 against 134.5,",
+   "value": "87",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:key.s62.high"
+  },
+  {
+   "id": "card.gpt62-sol.7",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects that is 87 against 87.5 and on the 145 medium ones 135 against 134.5,",
+   "value": "87.5",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:key.final1.high"
+  },
+  {
+   "id": "card.gpt62-sol.8",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects that is 87 against 87.5 and on the 145 medium ones 135 against 134.5,",
+   "value": "145",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:key.medium"
+  },
+  {
+   "id": "card.gpt62-sol.9",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects that is 87 against 87.5 and on the 145 medium ones 135 against 134.5,",
+   "value": "135",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:key.s62.medium"
+  },
+  {
+   "id": "card.gpt62-sol.10",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "defects that is 87 against 87.5 and on the 145 medium ones 135 against 134.5,",
+   "value": "134.5",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:key.final1.medium"
+  },
+  {
+   "id": "card.gpt62-sol.11",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "so the difference is in the low-severity ones, 213.5 against 239. The defect",
+   "value": "213.5",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:key.s62.low"
+  },
+  {
+   "id": "card.gpt62-sol.12",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "so the difference is in the low-severity ones, 213.5 against 239. The defect",
+   "value": "239",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:key.final1.low"
+  },
+  {
+   "id": "card.gpt62-sol.13",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "judge read 1,501 comments of `s62` (8.1 a pull request) against 1,278 (6.9):",
+   "value": "1,501",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:comments.s62.judged"
+  },
+  {
+   "id": "card.gpt62-sol.14",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "judge read 1,501 comments of `s62` (8.1 a pull request) against 1,278 (6.9):",
+   "value": "8.1",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:comments.s62.per_pr"
+  },
+  {
+   "id": "card.gpt62-sol.15",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "judge read 1,501 comments of `s62` (8.1 a pull request) against 1,278 (6.9):",
+   "value": "1,278",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:comments.final1.judged"
+  },
+  {
+   "id": "card.gpt62-sol.16",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "judge read 1,501 comments of `s62` (8.1 a pull request) against 1,278 (6.9):",
+   "value": "6.9",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:comments.final1.per_pr"
+  },
+  {
+   "id": "card.gpt62-sol.17",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "499 against 507 on an answer-key defect, and 176 (12%) against 97 (8%) graded",
+   "value": "499",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:comments.s62.on_key"
+  },
+  {
+   "id": "card.gpt62-sol.18",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "499 against 507 on an answer-key defect, and 176 (12%) against 97 (8%) graded",
+   "value": "507",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:comments.final1.on_key"
+  },
+  {
+   "id": "card.gpt62-sol.19",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "499 against 507 on an answer-key defect, and 176 (12%) against 97 (8%) graded",
+   "value": "176",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:comments.s62.not_correct"
+  },
+  {
+   "id": "card.gpt62-sol.20",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "499 against 507 on an answer-key defect, and 176 (12%) against 97 (8%) graded",
+   "value": "12%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:comments.s62.not_correct.pct"
+  },
+  {
+   "id": "card.gpt62-sol.21",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "499 against 507 on an answer-key defect, and 176 (12%) against 97 (8%) graded",
+   "value": "97",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:comments.final1.not_correct"
+  },
+  {
+   "id": "card.gpt62-sol.22",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "499 against 507 on an answer-key defect, and 176 (12%) against 97 (8%) graded",
+   "value": "8%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:comments.final1.not_correct.pct"
+  },
+  {
+   "id": "card.gpt62-sol.23",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "incorrect, partly correct or unverifiable. `s62` cost $3.25 a pull request at",
+   "value": "3.25",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:cost.s62.usd_per_pr"
+  },
+  {
+   "id": "card.gpt62-sol.24",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "list prices against $2.06, and took a median 11.0 minutes against 17.5. In the",
+   "value": "2.06",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:cost.final1.usd_per_pr"
+  },
+  {
+   "id": "card.gpt62-sol.25",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "list prices against $2.06, and took a median 11.0 minutes against 17.5. In the",
+   "value": "11.0",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:cost.s62.minutes_median"
+  },
+  {
+   "id": "card.gpt62-sol.26",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "list prices against $2.06, and took a median 11.0 minutes against 17.5. In the",
+   "value": "17.5",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:cost.final1.minutes_median"
+  },
+  {
+   "id": "card.gpt62-sol.27",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "both judges favour `s62` on finding the defects that matter, +115 pooled, and",
+   "value": "+115",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.combined.recall"
+  },
+  {
+   "id": "card.gpt62-sol.28",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "`final1` on wasting less attention (-101), stating findings (-78) and writing",
+   "value": "-101",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.combined.precision"
+  },
+  {
+   "id": "card.gpt62-sol.29",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "`final1` on wasting less attention (-101), stating findings (-78) and writing",
+   "value": "-78",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.combined.finding_quality"
+  },
+  {
+   "id": "card.gpt62-sol.30",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(-105). Overall they split: the GPT-6.1 Sol judge gives +37 (-9 to +82), the",
+   "value": "-105",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.combined.writing"
+  },
+  {
+   "id": "card.gpt62-sol.31",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(-105). Overall they split: the GPT-6.1 Sol judge gives +37 (-9 to +82), the",
+   "value": "+37",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.gpt.overall"
+  },
+  {
+   "id": "card.gpt62-sol.32",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(-105). Overall they split: the GPT-6.1 Sol judge gives +37 (-9 to +82), the",
+   "value": "-9",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.gpt.overall.lo"
+  },
+  {
+   "id": "card.gpt62-sol.33",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "(-105). Overall they split: the GPT-6.1 Sol judge gives +37 (-9 to +82), the",
+   "value": "+82",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.gpt.overall.hi"
+  },
+  {
+   "id": "card.gpt62-sol.34",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "DeepSeek judge -77 (-122 to -34), and the fit that weighs both judges the same",
+   "value": "-77",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.deepseek.overall"
+  },
+  {
+   "id": "card.gpt62-sol.35",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "DeepSeek judge -77 (-122 to -34), and the fit that weighs both judges the same",
+   "value": "-122",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.deepseek.overall.lo"
+  },
+  {
+   "id": "card.gpt62-sol.36",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "DeepSeek judge -77 (-122 to -34), and the fit that weighs both judges the same",
+   "value": "-34",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.deepseek.overall.hi"
+  },
+  {
+   "id": "card.gpt62-sol.37",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "-17 (-53 to +18), an interval that spans zero.",
+   "value": "-17",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.combined.overall"
+  },
+  {
+   "id": "card.gpt62-sol.38",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "-17 (-53 to +18), an interval that spans zero.",
+   "value": "-53",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.combined.overall.lo"
+  },
+  {
+   "id": "card.gpt62-sol.39",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "-17 (-53 to +18), an interval that spans zero.",
+   "value": "+18",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.combined.overall.hi"
+  },
+  {
+   "id": "card.gpt62-sol.40",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "ran once. DeepSeek never returned a verdict on 5 pull requests (every attempt",
+   "value": "5",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.deepseek.prs_never"
+  },
+  {
+   "id": "card.gpt62-sol.41",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "180. The GPT-6.1 Sol judge picked Review B in 57% of its decided verdicts, a",
+   "value": "180",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.deepseek.prs"
+  },
+  {
+   "id": "card.gpt62-sol.42",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "180. The GPT-6.1 Sol judge picked Review B in 57% of its decided verdicts, a",
+   "value": "57%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:elo.gpt.position.b_pct"
+  },
+  {
+   "id": "card.gpt62-sol.43",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "Sol at reasoning effort low. On Martian's 50 pull requests `s62` found 98 of the",
+   "value": "50",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.s62.prs"
+  },
+  {
+   "id": "card.gpt62-sol.44",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "Sol at reasoning effort low. On Martian's 50 pull requests `s62` found 98 of the",
+   "value": "98",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.s62.core.tp"
+  },
+  {
+   "id": "card.gpt62-sol.45",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "158 Core goldens against 104, with 664 false positives against 536: Core",
+   "value": "158",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.s62.core.golden"
+  },
+  {
+   "id": "card.gpt62-sol.46",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "158 Core goldens against 104, with 664 false positives against 536: Core",
+   "value": "104",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.final1.core.tp"
+  },
+  {
+   "id": "card.gpt62-sol.47",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "158 Core goldens against 104, with 664 false positives against 536: Core",
+   "value": "664",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.s62.core.fp"
+  },
+  {
+   "id": "card.gpt62-sol.48",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "158 Core goldens against 104, with 664 false positives against 536: Core",
+   "value": "536",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.final1.core.fp"
+  },
+  {
+   "id": "card.gpt62-sol.49",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "precision 12.9% against 16.2%, recall 62.0% against 65.8%, F1 21.3% against",
+   "value": "12.9%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.s62.core.precision"
+  },
+  {
+   "id": "card.gpt62-sol.50",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "precision 12.9% against 16.2%, recall 62.0% against 65.8%, F1 21.3% against",
+   "value": "16.2%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.final1.core.precision"
+  },
+  {
+   "id": "card.gpt62-sol.51",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "precision 12.9% against 16.2%, recall 62.0% against 65.8%, F1 21.3% against",
+   "value": "62.0%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.s62.core.recall"
+  },
+  {
+   "id": "card.gpt62-sol.52",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "precision 12.9% against 16.2%, recall 62.0% against 65.8%, F1 21.3% against",
+   "value": "65.8%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.final1.core.recall"
+  },
+  {
+   "id": "card.gpt62-sol.53",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "precision 12.9% against 16.2%, recall 62.0% against 65.8%, F1 21.3% against",
+   "value": "21.3%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.s62.core.f1"
+  },
+  {
+   "id": "card.gpt62-sol.54",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "26.1%. On Qodo's 100 pull requests, under its primary location rule, `s62` made",
+   "value": "26.1%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.final1.core.f1"
+  },
+  {
+   "id": "card.gpt62-sol.55",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "26.1%. On Qodo's 100 pull requests, under its primary location rule, `s62` made",
+   "value": "100",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.issues.prs"
+  },
+  {
+   "id": "card.gpt62-sol.56",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "7.29 judged comments a pull request against 7.06, with precision 28.0% against",
+   "value": "7.29",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.s62.n5.per_pr"
+  },
+  {
+   "id": "card.gpt62-sol.57",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "7.29 judged comments a pull request against 7.06, with precision 28.0% against",
+   "value": "7.06",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.final1.n5.per_pr"
+  },
+  {
+   "id": "card.gpt62-sol.58",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "7.29 judged comments a pull request against 7.06, with precision 28.0% against",
+   "value": "28.0%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.s62.n5.precision"
+  },
+  {
+   "id": "card.gpt62-sol.59",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "37.3%, recall 35.2% against 45.3% and F1 31.2% against 40.9%. Its recall on",
+   "value": "37.3%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.final1.n5.precision"
+  },
+  {
+   "id": "card.gpt62-sol.60",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "37.3%, recall 35.2% against 45.3% and F1 31.2% against 40.9%. Its recall on",
+   "value": "35.2%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.s62.n5.recall"
+  },
+  {
+   "id": "card.gpt62-sol.61",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "37.3%, recall 35.2% against 45.3% and F1 31.2% against 40.9%. Its recall on",
+   "value": "45.3%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.final1.n5.recall"
+  },
+  {
+   "id": "card.gpt62-sol.62",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "37.3%, recall 35.2% against 45.3% and F1 31.2% against 40.9%. Its recall on",
+   "value": "31.2%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.s62.n5.f1"
+  },
+  {
+   "id": "card.gpt62-sol.63",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "37.3%, recall 35.2% against 45.3% and F1 31.2% against 40.9%. Its recall on",
+   "value": "40.9%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.final1.n5.f1"
+  },
+  {
+   "id": "card.gpt62-sol.64",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "functional issues held, 53.1% against 52.1%; on rule violations it fell, 14.8%",
+   "value": "53.1%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.s62.n5.recall_functional"
+  },
+  {
+   "id": "card.gpt62-sol.65",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "functional issues held, 53.1% against 52.1%; on rule violations it fell, 14.8%",
+   "value": "52.1%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.final1.n5.recall_functional"
+  },
+  {
+   "id": "card.gpt62-sol.66",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "functional issues held, 53.1% against 52.1%; on rule violations it fell, 14.8%",
+   "value": "14.8%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.s62.n5.recall_rule"
+  },
+  {
+   "id": "card.gpt62-sol.67",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "against 37.6%. Of `final1`'s 102 rule-violation matches, 71 came from comments",
+   "value": "37.6%",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.final1.n5.recall_rule"
+  },
+  {
+   "id": "card.gpt62-sol.68",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "against 37.6%. Of `final1`'s 102 rule-violation matches, 71 came from comments",
+   "value": "102",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.final1.n5.hits_rule"
+  },
+  {
+   "id": "card.gpt62-sol.69",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "against 37.6%. Of `final1`'s 102 rule-violation matches, 71 came from comments",
+   "value": "71",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:qodo.drop.old_rule_hits_quiet"
+  },
+  {
+   "id": "card.gpt62-sol.70",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "it rated P3 or nit, a class the quiet default does not post. `s62` cost $5.40 a",
+   "value": "5.40",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:mq_cost.martian.s62.usd_per_pr"
+  },
+  {
+   "id": "card.gpt62-sol.71",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "pull request on Martian against $2.84, and $3.55 on Qodo against $2.48. The",
+   "value": "2.84",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:mq_cost.martian.final1.usd_per_pr"
+  },
+  {
+   "id": "card.gpt62-sol.72",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "pull request on Martian against $2.84, and $3.55 on Qodo against $2.48. The",
+   "value": "3.55",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:mq_cost.qodo.s62.usd_per_pr"
+  },
+  {
+   "id": "card.gpt62-sol.73",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "pull request on Martian against $2.84, and $3.55 on Qodo against $2.48. The",
+   "value": "2.48",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:mq_cost.qodo.final1.usd_per_pr"
+  },
+  {
+   "id": "card.gpt62-sol.74",
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "by up to 4 Core goldens or false positives between them, so the Martian gap in",
+   "value": "4",
+   "group": "gpt62-sol",
+   "q": "gpt62_sol:martian.rejudged.max_core_move"
   }
  ],
  "not_claims": [
@@ -71051,6 +71675,22 @@
    "anchor": "default is 8. Its judge, `gpt-6.1-sol`, is not its reviewer's model. Its",
    "tokens": [
     "8"
+   ],
+   "why": "configuration or a method parameter"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "requests: QuickReview 1.6.0 on GPT-6.2 Sol with its quiet default on (`s62`:",
+   "tokens": [
+    "1.6"
+   ],
+   "why": "a version number"
+  },
+  {
+   "file": "bench/aacr/hf/card.md",
+   "anchor": "pairwise judging (the Elo gap of `s62` over `final1`, with its 95% interval)",
+   "tokens": [
+    "95%"
    ],
    "why": "configuration or a method parameter"
   }

@@ -17,6 +17,8 @@ source or missing script.
         downloaded): its claims (`second_judge`) and its release checks need it.
   state_machines  the state-machine study's folder beside the tables (<dataset root>/state_machines/):
         its claims (`state_machines`) and its release checks need it.
+  gpt62_sol  the GPT-6.2 Sol comparison's folder beside the tables (<dataset root>/gpt62_sol/): its claims
+        (`gpt62_sol`) and its release checks need it.
 Each claim names its check and key (`q`), and may name other sources for the same number
 (`alt`). Every source the given data holds is computed and compared with the printed
 value; a claim passes when every computed source prints as the published value and at
@@ -72,7 +74,8 @@ MANIFEST = HERE / "claims.json"
 
 def discover(dirs: List[str]) -> Dict[str, Optional[str]]:
     found: Dict[str, Optional[str]] = {"hf": None, "slim": None, "archive": None, "repo": str(REPO),
-                                       "second_judges": None, "state_machines": None}
+                                       "second_judges": None, "state_machines": None,
+                                       "gpt62_sol": None}
     for d in dirs:
         p = Path(d).resolve()
         for cand in (p, p / "archive"):
@@ -97,6 +100,9 @@ def discover(dirs: List[str]) -> Dict[str, Optional[str]]:
         import state_machines as SM
         sm = SM.folder_of(found["hf"])
         found["state_machines"] = sm if os.path.isdir(sm) else None
+        import gpt62_sol as GS
+        gs = GS.folder_of(found["hf"])
+        found["gpt62_sol"] = gs if os.path.isdir(gs) else None
     return found
 
 
@@ -218,7 +224,7 @@ class Sources:
 
     def needs(self, check: str) -> str:
         """What the check reads: one part of the release (`hf`, `slim`, `archive`, `repo`, `second_judges`,
-        `state_machines`), or
+        `state_machines`, `gpt62_sol`), or
         several joined with `+` (`hf+archive`), every one of which must be under --data; `martian` is the
         third-party Martian checkout --martian names (never in the release)."""
         spec = self.m["checks"].get(check)
@@ -489,6 +495,12 @@ def consistency(a, found, src: "Sources") -> List[dict]:
             for c in SM.checks(found["hf"]):
                 out.append({"source": "hf_export.validate", "check": c["check"], "ok": bool(c["ok"]),
                             "got": c["got"], "want": c["want"], "needs": ["state_machines"]})
+        if found.get("gpt62_sol"):
+            # validation.json's checks of the GPT-6.2 Sol comparison's folder, on the download
+            import gpt62_sol as GS
+            for c in GS.checks(found["hf"]):
+                out.append({"source": "hf_export.validate", "check": c["check"], "ok": bool(c["ok"]),
+                            "got": c["got"], "want": c["want"], "needs": ["gpt62_sol"]})
     if found.get("slim") and "slim" in src._json:
         summ = json.loads((src.work / "slim-verify" / "out" / "summary.json").read_text())
         out.append({"source": "verify_slim", "check": "every bundle file matches FILES.sha256", "ok": summ["hash_mismatches"] == 0,
@@ -616,10 +628,10 @@ def main() -> int:
             if not (repo / s).exists():
                 lint["errors"].append(f"check {ch}: script {s} is missing")
         bad = [p for p in spec["needs"].split("+")
-               if p not in ("hf", "slim", "archive", "repo", "second_judges", "state_machines", "martian")]
+               if p not in ("hf", "slim", "archive", "repo", "second_judges", "state_machines", "gpt62_sol", "martian")]
         if bad:
             lint["errors"].append(f"check {ch}: needs {bad} is not a part of the release (hf, slim, archive, repo, "
-                                  f"second_judges, state_machines) or the third-party Martian checkout (martian)")
+                                  f"second_judges, state_machines, gpt62_sol) or the third-party Martian checkout (martian)")
     for e in lint["errors"]:
         print("MANIFEST:", e, file=sys.stderr)
     for f, s in sorted(lint["files"].items()):
@@ -632,7 +644,8 @@ def main() -> int:
     found = discover(a.data)
     found["martian"] = str(Path(a.martian).resolve()) if a.martian else None  # third-party, never in the release
     print(f"data: hf={found['hf']} slim={found['slim']} archive={found['archive']} "
-          f"second_judges={found['second_judges']} state_machines={found['state_machines']} martian={found['martian']}")
+          f"second_judges={found['second_judges']} state_machines={found['state_machines']} "
+          f"gpt62_sol={found['gpt62_sol']} martian={found['martian']}")
     if not any(found[k] for k in ("hf", "slim", "archive")):
         print("no release data found under --data", file=sys.stderr)
         return 2
