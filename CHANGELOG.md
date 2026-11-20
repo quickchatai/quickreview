@@ -1,5 +1,14 @@
 # Release notes
 
+## Unreleased
+
+- `[github] trigger = "all"` reviews every open pull request that is not a
+  draft and not a bot's, once per head commit, without the trigger label.
+  The default, `"label"`, is unchanged.
+- Under `[github] auth = "user"`, a GitHub App installation token works in the
+  `github_token` file: with `bot_login = "<slug>[bot]"`, the reviewer
+  recognises its own review threads under the App's bare slug too.
+
 ## 1.6.0
 
 Three changes: a review is quiet by default, the lenses of a round read

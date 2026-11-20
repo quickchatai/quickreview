@@ -18,6 +18,8 @@ import { findingMarker } from "@quickchatai/pi-quickreview/src/findingkey.js";
 const APP: GithubIdentity = { auth: "app", bot_login: "qcr[bot]", app_slug: "qcr" };
 const LEGACY: GithubIdentity = { bot_login: "qcr[bot]", app_slug: "qcr" }; // no key ⇒ app
 const PERSON: GithubIdentity = { auth: "user", bot_login: "alice", app_slug: "" };
+// Person mode on an App installation token (Boxes writes one into github_token).
+const APP_TOKEN: GithubIdentity = { auth: "user", bot_login: "qcr[bot]", app_slug: "" };
 
 const MARKED = `Looks fine.\n\n${postingMarker("v1:7:1:abc")}`;
 const FOOTED = `Looks fine.\n\n${renderedFooter("alice")}`;
@@ -40,6 +42,11 @@ describe("isOwnContent", () => {
     ["person: someone else quoting a marker", PERSON, "bob", MARKED, false],
     ["person: an empty login never matches", PERSON, "", MARKED, false],
     ["person: no App actor exists", PERSON, "qcr", MARKED, false],
+    // person mode on an App token: REST's `<slug>[bot]` and GraphQL's bare slug, both marked
+    ["app token: the [bot] login, marked", APP_TOKEN, "qcr[bot]", MARKED, true],
+    ["app token: the bare slug (GraphQL), marked", APP_TOKEN, "qcr", MARKED, true],
+    ["app token: the bare slug still needs the marker", APP_TOKEN, "qcr", PLAIN, false],
+    ["app token: another login quoting a marker", APP_TOKEN, "alice", MARKED, false],
   ];
   for (const [name, g, author, body, want] of rows)
     it(name, () => expect(isOwnContent(g, author, body)).toBe(want));
@@ -59,13 +66,16 @@ describe("the rest of the identity table", () => {
     expect(botAccountLogin(PERSON)).toBe("");
   });
 
-  it("ownLogins and the GraphQL alias: no [bot] spelling and no alias without an App", () => {
+  it("ownLogins and the GraphQL alias: an alias only for an App login", () => {
     expect(ownLogins(APP)).toEqual(["qcr[bot]"]);
     expect(ownLogins({ ...APP, bot_login: "custom" })).toEqual(["custom", "qcr[bot]"]);
     expect(ownLogins(PERSON)).toEqual(["alice"]);
     expect(ownActorAlias(APP)).toBe("qcr");
     expect(ownActorAlias(PERSON)).toBeUndefined();
-    expect(ownActorAlias({ ...PERSON, app_slug: "qcr", bot_login: "qcr[bot]" })).toBeUndefined();
+    // MUTATION: return undefined for every person-mode config — this fails.
+    expect(ownActorAlias(APP_TOKEN)).toBe("qcr");
+    expect(ownActorAlias({ ...APP_TOKEN, app_slug: "qcr" })).toBe("qcr");
+    expect(ownActorAlias({ ...PERSON, bot_login: "[bot]" })).toBeUndefined();
   });
 
   it("the -author:app/<slug> qualifier is omitted when there is no App slug", () => {

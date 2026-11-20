@@ -845,6 +845,23 @@ describe("[github] auth (the App, or the person's own credential)", () => {
   });
 });
 
+describe("[github] trigger (the label, or every PR)", () => {
+  const shipped = readFileSync(configPath, "utf8");
+  const withTrigger = (v: string) => shipped.replace("[github]\n", `[github]\ntrigger = ${v}\n`);
+
+  it('defaults to "label" and parses "all", in both parsers', () => {
+    expect(parseConfig(shipped).github.trigger).toBe("label");
+    expect(parseConfig(withTrigger('"all"')).github.trigger).toBe("all");
+    expect(parseCoreConfig(withTrigger('"all"')).github.trigger).toBe("all");
+  });
+
+  it("refuses an unknown trigger value", () => {
+    expect(() => parseConfig(withTrigger('"every"'))).toThrowError(
+      /\[github\] trigger must be one of label \| all/,
+    );
+  });
+});
+
 describe("loadConfig", () => {
   it("loads from an explicit path without poisoning the module cache", () => {
     const a = loadConfig(configPath);

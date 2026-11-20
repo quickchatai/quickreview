@@ -1551,3 +1551,57 @@ describe("undelivered recheck-claim sweep — bounded (boot stall)", () => {
     expect(turns).toBeGreaterThanOrEqual(n);
   });
 });
+
+describe('[github] trigger = "all"', () => {
+  const all: Config = { ...cfg, github: { ...cfg.github, trigger: "all" } };
+  const run = (c: Config = all) =>
+    reconcileOnce({ cfg: c, store, adapter: gh, hooks: recordingHooks().hooks });
+
+  it("queues every open human non-draft PR as system work; drafts and bots are left alone", async () => {
+    // MUTATION: drop the ref.draft / isBotAuthor skip in triggered-set — this fails.
+    gh.open = [ref(1), ref(2, { draft: true }), ref(3, { author: "dependabot[bot]" })];
+    const report = await run();
+    expect(store.getPr(1)).toMatchObject({ state: "queued", trigger_provenance: "system" });
+    expect(store.getPr(2)).toBeUndefined();
+    expect(store.getPr(3)).toBeUndefined();
+    expect(report.triggered).toEqual([1]);
+  });
+
+  it("queues a head once: a round that ended without a verdict is not requeued each poll", async () => {
+    // MUTATION: drop the auto_triggered event from headHandled — this fails.
+    gh.open = [ref(4)];
+    await run();
+    store.upsertPr({ ...store.getPr(4)!, state: "tracked" }); // the round failed: no verdict
+    expect((await run()).triggered).toEqual([]);
+    expect(store.getPr(4)!.state).toBe("tracked");
+    gh.open = [ref(4, { head_sha: "new4" })];
+    expect((await run()).triggered).toEqual([4]);
+    expect(store.getPr(4)!.state).toBe("queued");
+  });
+
+  it("skips a head a round already ran at, whatever triggered it", async () => {
+    // MUTATION: drop the rounds half of headHandled — this fails.
+    seed(5, "tracked");
+    store.startRound(5, "first", ["pass-baseline"], 75, { head_sha: "sha5" });
+    gh.open = [ref(5)];
+    expect((await run()).triggered).toEqual([]);
+    expect(store.getPr(5)!.state).toBe("tracked");
+  });
+
+  it("leaves a PR the label path or a running round already owns", async () => {
+    gh.open = [ref(6), ref(7)];
+    gh.labelTriggered = [item(6)];
+    seed(7, "reviewing");
+    await run();
+    expect(store.getPr(6)).toMatchObject({ state: "queued", trigger_provenance: "human" });
+    expect(store.getPr(7)!.state).toBe("reviewing");
+  });
+
+  it("label mode (the default) is unchanged: an unlabelled PR is not adopted", async () => {
+    // MUTATION: make the branch run for trigger "label" — this fails.
+    expect(cfg.github.trigger).toBe("label");
+    gh.open = [ref(8)];
+    expect((await run(cfg)).triggered).toEqual([]);
+    expect(store.getPr(8)).toBeUndefined();
+  });
+});

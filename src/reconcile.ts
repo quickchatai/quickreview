@@ -571,6 +571,30 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         reason: `reconcile:${source}`,
       });
     }
+
+    // `[github] trigger = "all"`: every open, non-draft, human PR, once per head.
+    if (cfg.github.trigger !== "all") return;
+    for (const ref of open.values()) {
+      const local = store.getPr(ref.number);
+      if (ref.draft || grouped.has(ref.number) || isBotAuthor(ref.author, botLogin)) continue;
+      if (local?.paused || local?.state === "queued" || local?.state === "reviewing") continue;
+      if (store.headHandled(ref.number, ref.head_sha)) continue;
+      const meta = {
+        title: ref.title,
+        head_sha: ref.head_sha,
+        author: ref.author,
+        trigger_ts: local?.trigger_ts ?? now().toISOString(),
+      };
+      store.db.transaction(() => {
+        store.logEvent("auto_triggered", ref.number, { head_sha: ref.head_sha });
+        applyEvent(store, ref.number, { type: "trigger", source: "reconcile" }, meta, {
+          botLogin,
+          now,
+          reason: "reconcile:all",
+        });
+      })();
+      report.triggered.push(ref.number);
+    }
   });
 
   // Commits outside a round never dispatch a review. A head advance WHILE an

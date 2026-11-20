@@ -2733,6 +2733,21 @@ export class StateStore {
     );
   }
 
+  /** `[github] trigger = "all"`: was this head handled — a round ran at it,
+   * or reconcile already queued it there? Once per head, so a failed or
+   * short-circuited round is not requeued on every poll. */
+  headHandled(pr: number, head: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM rounds WHERE pr = ? AND head_sha = ?
+           UNION ALL SELECT 1 FROM events WHERE kind = 'auto_triggered' AND pr = ?
+             AND json_extract(payload, '$.head_sha') = ? LIMIT 1`,
+        )
+        .get(pr, head, pr, head) !== undefined
+    );
+  }
+
   roundsFor(pr: number): RoundRow[] {
     return this.db
       .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
