@@ -37,7 +37,7 @@ What it writes (no model call, nothing uploaded; the run dirs are only read):
                          validation.json checks it (the manifest, its judge column,
                          its coverage of the published judge's rows, the scorers
                          reproducing its scores/, its columns) and fails without it.
-  state_machines/        with --state-machines: the state-machine study (two runs'
+  state_machines/        with --state-machines: the state-machine study (three runs'
                          posted comments and verdicts, its labels; written by
                          recompute/state_machines.py build), copied as is after every
                          file is checked against bench/aacr/hf/state-machines.sha256

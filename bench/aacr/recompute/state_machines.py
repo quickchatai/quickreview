@@ -4,15 +4,18 @@
     uv run --no-project --with pyarrow python bench/aacr/recompute/state_machines.py --data <hf-dataset> [--json OUT]
     uv run --no-project --with pyarrow python bench/aacr/recompute/state_machines.py build --runs-dir <runs> \\
         --labels <label dir> --positives <positives.json> --earlier <earlier arms' score.json> \\
-        --figures <figure dir> --repo <checkout> [--key <answer key dir>] --out <dir>/state_machines
+        --figures <figure dir> --repo <checkout> [--key <answer key dir>] --out <dir>/state_machines \\
+        [--manifest bench/aacr/hf/state-machines.sha256]
 
 The study compares two AACR-Bench runs on 34 pull requests that hold labelled state defects, reviewer and
 judge gpt-6.1-sol (judge effort high): the state-machine review (`sm4-p`, `review.profile=state-machines`
 on public main) and the default review with its automatic state lens off (`sm1-c`, an earlier build from a
-branch that was never published). AI readers relabelled the 186 answer-key defects of those PRs as state
-bugs or not, labelled every comment of the state review and every comment of the default review the judge
-matched to no answer-key defect, and pooled the real state bugs either review posted that the answer key
-does not list. The folder holds those runs' posted comments and judge verdicts, every label, and the
+branch that was never published). A third run, `sm5-a`, is a preliminary addition: the state-machine review
+with openai-codex/gpt-6.2-astra as the reviewer, the same judge, and a 20-minute lens deadline (the shipped
+default is 8); the study labelled none of its comments and pooled none of its bugs. AI readers relabelled
+the 186 answer-key defects of those PRs as state bugs or not, labelled every comment of the state review
+and every comment of the default review the judge matched to no answer-key defect, and pooled the real state bugs either review posted that the answer key
+does not list. The folder holds the three runs' posted comments and judge verdicts, every label, and the
 earlier builds' found flags on the strict state defects; README.md (written by `build`) says what each
 table holds.
 
@@ -22,11 +25,11 @@ checks() is what the export's validation.json and the claims verifier's release 
     none missing, none extra, none differing;
   - every table has exactly its listed columns (ids, verdicts, our labels and reasons, QuickReview's own
     posted comments; never an answer-key defect's text);
-  - the rows are whole: both arms reviewed and were judged on the same PRs, one verdict per arm on every
+  - the rows are whole: every run reviewed and was judged on the same PRs, one verdict per run on every
     labelled answer-key defect, every judged comment is a posted one (inline, or a finding in the review
-    body), every labelled comment is an inline one, the default review's labelled comments are exactly its
-    inline comments the judge matched to no answer-key defect, and every unlisted bug's found flags are its
-    listed inline comments;
+    body), every labelled comment is an inline one of the two labelled runs, the default review's labelled
+    comments are exactly its inline comments the judge matched to no answer-key defect, and every unlisted
+    bug's found flags are its listed inline comments;
   - README.md is readme() of numbers(): every number the README prints, recomputed from the tables;
   - no label text of ours repeats QUOTE_WORDS words in a row of an answer-key defect's own text (the
     dataset's `defects`, beside the folder);
@@ -57,7 +60,11 @@ FOLDER = "state_machines"
 MANIFEST = os.path.join(os.path.dirname(HERE), "hf", "state-machines.sha256")
 SETS = ("smoke10", "dev10", "holdout10", "fresh10", "rest145")
 STATE, DEFAULT = "sm4-p", "sm1-c"
-ARMS = (STATE, DEFAULT)
+ARMS = (STATE, DEFAULT)  # the study's two runs: the ones its labels and its pool cover
+# a preliminary third run: the state-machine review with another reviewer model; its comments, verdicts and
+# costs are in the folder, but the study labelled none of its comments and pooled none of its bugs
+ASTRA = "sm5-a"
+RUNS = (*ARMS, ASTRA)
 # the earlier builds whose found flags on the strict state defects the folder carries (derived numbers only;
 # their reviews are not in it)
 EARLIER = {
@@ -112,6 +119,12 @@ LABEL_TEXT: Dict[str, tuple] = {
 QUOTE_WORDS = 10
 QUOTED = "[words of the answer key's defect]"
 
+# The preliminary GPT-6.2 Astra run's numbers, as the card prints them: answer-key recall on the reachable
+# strict state defects (verdict found) and its share, the answer-key defects of every kind it found, its inline
+# comments and comments per PR, and its list-price dollars per PR (compare.usd_and_minutes, as for the others).
+ASTRA_POST: Dict[str, object] = {"key_found": 52, "of": 55, "share": 95, "defects_found": 152, "defects_of": 186,
+                                 "comments": 448, "per_pr": 13.2, "usd_per_pr": 21.06}
+
 # The numbers the study's write-up prints, each recomputed by numbers() from the tables (checks() compares).
 # Percentages are rounded to whole numbers, comments per PR to one decimal, dollars to cents; the cost of both
 # runs is their exact combined cost per PR, rounded to cents (not the sum of the two rounded costs).
@@ -135,6 +148,7 @@ POST: Dict[str, object] = {
     "misses": {"total": 12, "real": 11, "site_read_nothing_reported": 5, "reported_a_different_problem": 6,
                "defect_not_real_or_unreachable": 1},
     "cost": {"usd_per_pr_state": 2.78, "usd_per_pr_default": 2.77, "usd_per_pr_both": 5.56},
+    "astra": ASTRA_POST,
 }
 
 
@@ -227,7 +241,7 @@ def tables_of(path: str) -> Dict[str, List[dict]]:
 
 
 def numbers_of(t: Dict[str, List[dict]]) -> Dict[str, object]:
-    """numbers() from the tables in hand. Every value is a number, except `key.default_not_state.ids` (a list)."""
+    """numbers() from the tables in hand. Every value is a number, except the `.ids` keys (lists)."""
     out: Dict[str, object] = {}
 
     # the strict relabel of the answer-key defects
@@ -248,8 +262,8 @@ def numbers_of(t: Dict[str, List[dict]]) -> Dict[str, object]:
 
     # the answer key: the judge's verdict `found` (a partial is not a find here)
     found = {a: {(r["instance_id"], r["defect_id"]) for r in t["defect_verdicts"]
-                 if r["arm_id"] == a and r["verdict"] == "found"} for a in ARMS}
-    for a in ARMS:
+                 if r["arm_id"] == a and r["verdict"] == "found"} for a in RUNS}
+    for a in RUNS:
         out[f"key.{a}"] = len(found[a] & reach)
         out[f"key.{a}.pct"] = 100.0 * out[f"key.{a}"] / len(reach) if reach else None
         out[f"key_old45.{a}"] = len(found[a] & {(r["instance_id"], r["defect_id"]) for r in old})
@@ -259,6 +273,9 @@ def numbers_of(t: Dict[str, List[dict]]) -> Dict[str, object]:
     out["key.state_not_default"] = len((found[STATE] - found[DEFAULT]) & reach)
     out["key.default_not_state"] = len((found[DEFAULT] - found[STATE]) & reach)
     out["key.default_not_state.ids"] = sorted(f"{p}#{d}" for p, d in (found[DEFAULT] - found[STATE]) & reach)
+    out[f"key.{ASTRA}.missed.ids"] = sorted(f"{p}#{d}" for p, d in reach - found[ASTRA])
+    out[f"key.{ASTRA}.not_{STATE}"] = len((found[ASTRA] - found[STATE]) & reach)
+    out[f"key.{STATE}.not_{ASTRA}"] = len((found[STATE] - found[ASTRA]) & reach)
     for a in EARLIER:
         f = {(r["instance_id"], r["defect_id"]) for r in t["earlier_arms"] if r["arm_id"] == a and r["found"]}
         out[f"key.{a}"] = len(f & reach)
@@ -298,9 +315,9 @@ def numbers_of(t: Dict[str, List[dict]]) -> Dict[str, object]:
     out["class.other"] = sum(1 for b in pool if b["klass"] not in CLASSES)
 
     # the comments
-    prs = {a: {r["instance_id"] for r in t["cases"] if r["arm_id"] == a} for a in ARMS}
-    out["prs"] = len(prs[STATE]) if prs[STATE] == prs[DEFAULT] else None
-    for a in ARMS:  # the inline comments; a finding posted in the review body is a row with `inline` false
+    prs = {a: {r["instance_id"] for r in t["cases"] if r["arm_id"] == a} for a in RUNS}
+    out["prs"] = len(prs[STATE]) if all(prs[a] == prs[STATE] for a in RUNS) else None
+    for a in RUNS:  # the inline comments; a finding posted in the review body is a row with `inline` false
         out[f"comments.{a}"] = sum(1 for r in t["reviews"] if r["arm_id"] == a and r["inline"])
         out[f"comments.{a}.body"] = sum(1 for r in t["reviews"] if r["arm_id"] == a and not r["inline"])
         out[f"comments.{a}.per_pr"] = out[f"comments.{a}"] / len(prs[a]) if prs[a] else None
@@ -333,7 +350,7 @@ def numbers_of(t: Dict[str, List[dict]]) -> Dict[str, object]:
     out["misses.are_strict_not_found"] = float({(m["instance_id"], m["defect_id"]) for m in miss} == strict - found[STATE])
 
     # cost and time: compare.usd_and_minutes per case, as the export prices every review
-    for a in ARMS:
+    for a in RUNS:
         rows = [r for r in t["cases"] if r["arm_id"] == a]
         usd = [r["usd"] for r in rows]
         mins = [r["minutes"] for r in rows]
@@ -383,6 +400,10 @@ def post_values(n: Dict[str, object]) -> Dict[str, object]:
         "cost": {"usd_per_pr_state": _r(g(f"cost.{STATE}.usd_per_pr"), 2),
                  "usd_per_pr_default": _r(g(f"cost.{DEFAULT}.usd_per_pr"), 2),
                  "usd_per_pr_both": _r(g("cost.union.usd_per_pr"), 2)},
+        "astra": {"key_found": g(f"key.{ASTRA}"), "of": g("relabel.reachable"), "share": _pct(g(f"key.{ASTRA}.pct")),
+                  "defects_found": g(f"defects.{ASTRA}.found"), "defects_of": g("defects.total"),
+                  "comments": g(f"comments.{ASTRA}"), "per_pr": _r(g(f"comments.{ASTRA}.per_pr"), 1),
+                  "usd_per_pr": _r(g(f"cost.{ASTRA}.usd_per_pr"), 2)},
     }
 
 
@@ -390,7 +411,7 @@ def post_values(n: Dict[str, object]) -> Dict[str, object]:
 
 # What each POST group's check states (validation.json's `check` text), in order.
 NUMBER_CHECKS = (
-    ("prs", "both arms reviewed the same pull requests"),
+    ("prs", "every run reviewed the same pull requests"),
     ("relabel", "the strict relabel of the answer-key defects: state, borderline and not, the state ones "
                 "reachable at head, and the state ones not on the earlier list of 45"),
     ("old45", "the earlier list of 45 state defects under the strict relabel, and how many of them the default "
@@ -410,6 +431,9 @@ NUMBER_CHECKS = (
     ("misses", "the state review's misses on the strict state defects, by cause"),
     ("cost", "list-price dollars per pull request (compare.usd_and_minutes), and both runs' exact combined cost "
              "rounded"),
+    ("astra", f"the preliminary GPT-6.2 Astra run ({ASTRA}): answer-key recall on the reachable strict state "
+              "defects and its share, the answer-key defects of every kind it found, its inline comments and "
+              "comments per pull request, and list-price dollars per pull request (compare.usd_and_minutes)"),
 )
 README_CHECK = "README.md is the README its tables give (state_machines.readme of numbers())"
 QUOTE_CHECK = (f"no label text of ours repeats {QUOTE_WORDS} words in a row of an answer-key defect's text "
@@ -475,25 +499,25 @@ def checks(root: str, manifest_path: str = MANIFEST, post: Optional[Dict[str, ob
     return out
 
 
-WHOLE_CHECK = ("the rows are whole: both arms judged on the same pull requests, one verdict per arm on every "
+WHOLE_CHECK = ("the rows are whole: every run judged on the same pull requests, one verdict per run on every "
                "labelled answer-key defect, every judged comment a posted one (inline or in the review body), every "
-               "labelled comment an inline one, the default review's labelled comments exactly its inline comments "
-               "matched to no answer-key defect, and every unlisted bug found exactly by the reviews whose inline "
-               "comments it lists")
+               "labelled comment an inline one of the two labelled runs, the default review's labelled comments "
+               "exactly its inline comments matched to no answer-key defect, and every unlisted bug found exactly by "
+               "the reviews whose inline comments it lists")
 
 
 def whole_problems(folder: str) -> Dict[str, object]:
     """The folder's rows against each other: {problem: examples}, empty when whole."""
     t = {n: load_table(folder, n) for n in TABLES}
     bad: Dict[str, object] = {}
-    prs = {a: sorted({r["instance_id"] for r in t["cases"] if r["arm_id"] == a}) for a in ARMS}
-    if prs[STATE] != prs[DEFAULT] or not prs[STATE]:
-        bad["cases: the two arms' pull requests differ"] = {a: len(prs[a]) for a in ARMS}
+    prs = {a: sorted({r["instance_id"] for r in t["cases"] if r["arm_id"] == a}) for a in RUNS}
+    if any(prs[a] != prs[STATE] for a in RUNS) or not prs[STATE]:
+        bad["cases: the runs' pull requests differ"] = {a: len(prs[a]) for a in RUNS}
     unjudged = sorted(f"{r['arm_id']}/{r['instance_id']}" for r in t["cases"] if not r["judged"])
     if unjudged:
         bad["cases: not judged"] = unjudged[:10]
     labelled = sorted((r["instance_id"], r["defect_id"]) for r in t["state_labels"])
-    for a in ARMS:
+    for a in RUNS:
         got = sorted((r["instance_id"], r["defect_id"]) for r in t["defect_verdicts"] if r["arm_id"] == a)
         if got != labelled:
             bad[f"defect_verdicts: {a} is not one verdict on each labelled defect"] = {
@@ -520,6 +544,9 @@ def whole_problems(folder: str) -> Dict[str, object]:
     if stray or len(lab) != len(set(lab)):
         bad["comment_state_labels: a label of no inline comment, or two labels of one"] = {
             "stray": stray[:10], "repeated": len(lab) - len(set(lab))}
+    other = sorted(f"{a}/{p}#{i}" for a, p, i in set(lab) & keys if a not in ARMS)
+    if other:
+        bad["comment_state_labels: a label of a run the study did not label"] = other[:10]
     state_posted = {k for k in keys if k[0] == STATE}
     if {k for k in lab if k[0] == STATE} != state_posted:
         bad["comment_state_labels: the state review's labels are not every one of its inline comments"] = {
@@ -701,7 +728,13 @@ def collect(a) -> tuple:
                                             "deep on every change, the merged build"),
             (DEFAULT, "Default review, automatic state lens off", "the default lenses with state_machines.triggers=off, "
                                                                   "an earlier build from a branch that was never "
-                                                                  "published; the merge did not change its other lenses")):
+                                                                  "published; the merge did not change its other lenses"),
+            (ASTRA, "State-machine review, GPT-6.2 Astra (preliminary)",
+             "preliminary: review.profile=state-machines as sm4-p, reviewer openai-codex/gpt-6.2-astra, lens pass "
+             "deadline 20 minutes (engine.lens_pass_deadline_min; the shipped default is 8); its build is public main "
+             "plus one bench-only commit that gives the pinned pi a models.json entry for the model, which pi's own "
+             "catalog added after its 1.5.2 release, the review code unchanged; the study labelled none of its comments and pooled none "
+             "of its bugs")):
         runs = [f"{arm}-{s}" for s in SETS if s in bysub]
         rj = [json.load(open(os.path.join(a.runs_dir, r, "run.json"))) for r in runs]
         aj = [json.load(open(os.path.join(a.runs_dir, f"{r}.arm.json"))) for r in runs]
@@ -723,7 +756,7 @@ def collect(a) -> tuple:
             "judge_model": "gpt-6.1-sol (effort high)", "runs": runs, "prs": len(pr_set), "note": note})
 
     # cases, reviews and the judge's verdicts
-    for arm in ARMS:
+    for arm in RUNS:
         for s in SETS:
             for pr in bysub.get(s, []):
                 run = f"{arm}-{s}"
@@ -906,6 +939,8 @@ def build(a) -> None:
     with open(os.path.join(tmp, "README.md"), "w", encoding="utf-8") as fh:
         fh.write(text)
     os.rename(tmp, out)
+    if getattr(a, "manifest", None):  # the committed manifest of the folder just written (`--manifest`)
+        write_manifest(os.path.dirname(out), a.manifest)
     print(json.dumps({"rows": {k: len(v) for k, v in tables.items()}, "scrub_counts": dict(counts)}, indent=1))
 
 
@@ -929,13 +964,15 @@ def readme(n: Dict[str, object]) -> str:
                     for k in CLASSES)
     earlier = "\n".join(f"| `{a}` | {d} | {i(f'key.{a}')} ({pct(f'key.{a}.pct')}) |" for a, d in EARLIER.items())
     only = ", ".join(f"`{x}`" for x in n["key.default_not_state.ids"]) or "none"
+    astra_missed = ", ".join(f"`{x}`" for x in n[f"key.{ASTRA}.missed.ids"]) or "none"
     return f"""# State-machine study
 
 A study of QuickReview's state-machine review on the {i('prs')} AACR-Bench pull requests that hold the
 earlier list of {i('old45.total')} labelled state defects ({i('prs.with_strict_state')} of them hold a state
 defect under the strict relabel below), with the default review beside it. It holds the two runs'
 posted comments and judge verdicts, every label the study made, and the earlier builds' found flags on
-the answer key's state defects. No config of the card reads this folder, so `load_dataset` returns the
+the answer key's state defects, and a preliminary third run, `{ASTRA}`, the state-machine review with
+GPT-6.2 Astra as the reviewer (its comments and verdicts; none of its comments is labelled). No config of the card reads this folder, so `load_dataset` returns the
 same rows with or without it. `bench/aacr/recompute/state_machines.py --data <this dataset>` recomputes
 every number below from these tables alone, checks that this README is the one the tables give, and
 runs the release's other checks of the folder (`validation.json` holds them).
@@ -945,30 +982,33 @@ The folder backs the write-up's sections on the merged build: the strict relabel
 the write-up's earlier tests on the list of {i('old45.total')} (their recall, costs and miss traces), the
 lookup tool's and the validator's audits, or the self-review of the change that adds the state lenses.
 
-## The two runs
+## The runs
 
 | Arm | What ran | Inline comments | $ per PR | Minutes per PR |
 |---|---|---|---|---|
 | `{STATE}` | the state-machine review: `review.profile=state-machines`, the eight `pass-sm-*` lenses alone, at deep on every change, on public main | {i(f'comments.{STATE}')} | {n[f'cost.{STATE}.usd_per_pr']:.2f} | {n[f'cost.{STATE}.minutes_per_pr']:.1f} |
 | `{DEFAULT}` | the default review with its automatic state lens off (`state_machines.triggers=off`), on an earlier build from a branch that was never published (`arms.qcr_commit_on_public_main` false) | {i(f'comments.{DEFAULT}')} | {n[f'cost.{DEFAULT}.usd_per_pr']:.2f} | {n[f'cost.{DEFAULT}.minutes_per_pr']:.1f} |
+| `{ASTRA}` | preliminary: the state-machine review as `{STATE}`, reviewer `openai-codex/gpt-6.2-astra`, lens pass deadline 20 minutes where the shipped default is 8, on public main plus one bench-only commit that registers the model with pi (`arms.qcr_commit_on_public_main` false) | {i(f'comments.{ASTRA}')} | {n[f'cost.{ASTRA}.usd_per_pr']:.2f} | {n[f'cost.{ASTRA}.minutes_per_pr']:.1f} |
 
-Reviewer and judge gpt-6.1-sol, the judge at high effort; one run each. Cost is the list-price
-equivalent, priced per review as the dataset's `reviews.cost_usd` is (compare.usd_and_minutes).
-Every count of comments here is of inline comments; the default review also posted
-{i(f'comments.{DEFAULT}.body')} findings in its review body, and the state review
-{i(f'comments.{STATE}.body')}.
+Reviewer and judge gpt-6.1-sol, the judge at high effort; one run each. `{ASTRA}`'s reviewer is
+gpt-6.2-astra and its judge the same gpt-6.1-sol at high effort. Cost is the list-price equivalent,
+priced per review as the dataset's `reviews.cost_usd` is (compare.usd_and_minutes: pi's cost of each
+call at the model's list prices; for gpt-6.2-astra, OpenAI's list prices at its release); the judge's
+cost is not in it. Every count of comments here is of inline comments; the default review also posted
+{i(f'comments.{DEFAULT}.body')} findings in its review body, the state review
+{i(f'comments.{STATE}.body')}, and `{ASTRA}` {i(f'comments.{ASTRA}.body')}.
 
 ## Tables
 
 Every table is a `.parquet` file in this folder.
 
-- `arms`: the two runs: image, config, `profile` (null when the run set none), the build commit as the
+- `arms`: the three runs: image, config, `profile` (null when the run set none), the build commit as the
   release states one (`qcr_commit`, `qcr_commit_on_public_main`, `qcr_commit_match`, `qcr_commit_dirty`,
   see the card's `runs`), pi, models, run directories.
 - `cases`: one row per arm and pull request: set, run, `status` (the case's run status), the
   review's `verdict` (`APPROVE`, `COMMENT` or `REQUEST_CHANGES`), cost, minutes, `n_posted` (the inline
   comments), whether the judge read it, and the judge's token usage.
-- `reviews`: every finding of both runs as QuickReview posted it, with the judge's id for it
+- `reviews`: every finding of the three runs as QuickReview posted it, with the judge's id for it
   (`comment_id`, C1..Cn). An inline comment has `inline` true, `index` from 0 in posting order, and the
   `path`, `line`, `side` and `body` it was posted with. A finding posted in the review body instead has
   `inline` false, `index` null, its `path` and last `line`, and its text as the judge read it.
@@ -994,6 +1034,7 @@ Every table is a `.parquet` file in this folder.
   the answer-key defect the judge matched a state-review comment to (null when none, and for the
   default review's rows). `real_if_unlisted` is, for a state comment that matches no answer-key defect,
   whether a reader found the bug real at head (`real` or `unsure`), and `n/a` for every other comment.
+  `{ASTRA}`'s comments are not labelled.
 - `pooled_bugs`: the {i('pool.total')} known real state bugs: the {i('pool.key')} reachable strict state
   defects of the answer key (`source` `answer-key`, `local_id` the defect id) and {i('pool.unlisted')}
   real state bugs either review posted that the key does not list (`source` `unlisted`, `local_id`
@@ -1010,8 +1051,9 @@ Every table is a `.parquet` file in this folder.
   cause where one was made, and `relabel_note` says why a cause was changed on review (null where it
   was not).
 - `earlier_arms`: whether each of four earlier builds found each strict state defect (judge verdict
-  `found`); derived flags only, their reviews are not in this folder.
-- `figures/`: the write-up's four charts.
+  `found`); derived flags only, their reviews are not in this folder. `{ASTRA}`'s found flags are its
+  rows of `defect_verdicts`.
+- `figures/`: the write-up's four charts (the two runs; `{ASTRA}` is not drawn).
 
 ## The numbers, and how each is recomputed
 
@@ -1065,6 +1107,22 @@ per PR, rounded to cents as the write-up prints them; both runs together cost
 {n['cost.union.usd_per_pr']:.2f} per PR, the exact sum ({n['cost.union.usd_per_pr']:.4f}) rounded, not the sum of
 the two rounded costs.
 
+## Preliminary: GPT-6.2 Astra (`{ASTRA}`)
+
+The state-machine review of `{STATE}` with `openai-codex/gpt-6.2-astra` as the reviewer, on the same
+{i('prs')} pull requests, judged by gpt-6.1-sol at high effort (`defect_verdicts`, `comment_verdicts`
+with `arm_id` `{ASTRA}`). On the {i('relabel.reachable')} reachable strict state defects it found
+{i(f'key.{ASTRA}')} ({pct(f'key.{ASTRA}.pct')}); it missed {astra_missed}. It found
+{i(f'key.{ASTRA}.not_{STATE}')} that `{STATE}` did not, and `{STATE}` found {i(f'key.{STATE}.not_{ASTRA}')} that it
+did not. Of all {i('defects.total')} answer-key defects, of every kind, it found {i(f'defects.{ASTRA}.found')}
+(`found`; {i(f'defects.{ASTRA}.partial')} more partly). It posted {i(f'comments.{ASTRA}')} inline comments
+({n[f'comments.{ASTRA}.per_pr']:.1f} per PR), for {n[f'cost.{ASTRA}.usd_per_pr']:.2f} dollars per PR at list price.
+
+It is preliminary: one run; its lens pass deadline was 20 minutes where the shipped default is 8; its
+judge is not its reviewer's model; none of its comments is labelled, so how many are about state bugs
+is not known (the state review's comments are not all about state: see the comment labels above); and
+none of its bugs outside the answer key were pooled, so it has no share of the pool.
+
 ## Limits
 
 - AI agents made the answer key, the state labels, the comment labels and the checks of the unlisted
@@ -1076,7 +1134,7 @@ the two rounded costs.
 - One run per arm. A repeat of one earlier build differed by one defect.
 - The default arm ran with its automatic state lens off, on an earlier build from a branch that was never
   published; the merge did not change its other lenses.
-- The judge is the reviewer's model, gpt-6.1-sol.
+- The judge is the reviewer's model, gpt-6.1-sol, for the two runs; `{ASTRA}`'s reviewer is another model.
 - Part of the answer key entered it through the default review's own earlier comments, which favours
   the default review on the key.
 - The pull requests were chosen because they hold labelled state defects, so state bugs are more common
@@ -1090,7 +1148,7 @@ the two rounded costs.
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "build":
         ap = argparse.ArgumentParser(prog="state_machines.py build", description=build.__doc__)
-        ap.add_argument("--runs-dir", required=True, help="the bench runs dir (it holds sm4-p-*, sm1-c-*)")
+        ap.add_argument("--runs-dir", required=True, help="the bench runs dir (it holds sm4-p-*, sm1-c-*, sm5-a-*)")
         ap.add_argument("--labels", required=True, help="the dir of the study's label files (strict-relabel.json, "
                         "comments-and-misses.json, pooled-unlisted.json, results.json, blind-result.json)")
         ap.add_argument("--positives", required=True, help="the study's PR list (positives.json: bysub)")
@@ -1100,6 +1158,8 @@ def main() -> None:
         ap.add_argument("--key", default=os.path.join(os.path.dirname(HERE), "defects"),
                         help="the answer key's dir (<set>.json); label texts that repeat its words are cut")
         ap.add_argument("--out", required=True, help="the new `state_machines` folder")
+        ap.add_argument("--manifest", help="also write the folder's sha256 manifest here (the committed one is "
+                        "bench/aacr/hf/state-machines.sha256)")
         build(ap.parse_args(sys.argv[2:]))
         return
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
