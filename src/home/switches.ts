@@ -24,7 +24,9 @@ import type {
   Slot,
 } from "./ports.js";
 import { known } from "./ports.js";
-import { runningWarning } from "./autoreview.js";
+import { EVERY_OPEN_PR, runningWarning } from "./autoreview.js";
+
+export { EVERY_OPEN_PR };
 
 /** How a switch asks the person: pi's own select. */
 export interface Ask {
@@ -68,6 +70,7 @@ const NEEDS_PERSON =
 /** What auto-review picks up: the trigger label (unknown when it can't be
  * read) or a review request. */
 export function pickUpPhrase(trigger: string | null): string {
+  if (trigger === EVERY_OPEN_PR) return trigger;
   return trigger === null
     ? "pull requests with the trigger label (which one is unknown) or a review request"
     : `pull requests labelled "${trigger}" or with a review request`;

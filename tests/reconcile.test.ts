@@ -5,6 +5,7 @@ import type { CheckSummary } from "@quickchatai/pi-quickreview/src/cigate.js";
 import { parseConfig, type Config } from "../src/config.js";
 import type { PrRef, StalePr } from "../src/github.js";
 import { roundTypeFor } from "../src/dispatch.js";
+import { recheckFingerprint } from "../src/recheck.js";
 import { recheckPromptMarker } from "@quickchatai/pi-quickreview/src/types.js";
 import {
   reconcileOnce,
@@ -1549,5 +1550,86 @@ describe("undelivered recheck-claim sweep — bounded (boot stall)", () => {
     ticking = false;
     expect(report.receipt_sweep).toMatchObject({ asked: n, delivered: n, released: 0 });
     expect(turns).toBeGreaterThanOrEqual(n);
+  });
+});
+
+describe('[github] trigger = "all"', () => {
+  const all: Config = { ...cfg, github: { ...cfg.github, trigger: "all" } };
+  const run = (c: Config = all) =>
+    reconcileOnce({ cfg: c, store, adapter: gh, hooks: recordingHooks().hooks });
+
+  it("queues every open human non-draft PR as system work; drafts and bots are left alone", async () => {
+    // MUTATION: drop the ref.draft / isBotAuthor skip in triggered-set — this fails.
+    gh.open = [ref(1), ref(2, { draft: true }), ref(3, { author: "dependabot[bot]" })];
+    const report = await run();
+    expect(store.getPr(1)).toMatchObject({ state: "queued", trigger_provenance: "system" });
+    expect(store.getPr(2)).toBeUndefined();
+    expect(store.getPr(3)).toBeUndefined();
+    expect(report.triggered).toEqual([1]);
+  });
+
+  it("queues a head once: a round that ended without a verdict is not requeued each poll", async () => {
+    // MUTATION: drop the auto_triggered event from headHandled — this fails.
+    gh.open = [ref(4)];
+    await run();
+    store.upsertPr({ ...store.getPr(4)!, state: "tracked" }); // the round failed: no verdict
+    expect((await run()).triggered).toEqual([]);
+    expect(store.getPr(4)!.state).toBe("tracked");
+    gh.open = [ref(4, { head_sha: "new4" })];
+    expect((await run()).triggered).toEqual([4]);
+    expect(store.getPr(4)!.state).toBe("queued");
+  });
+
+  it("skips a head a round already ran at, whatever triggered it", async () => {
+    // MUTATION: drop the rounds half of headHandled — this fails.
+    seed(5, "tracked");
+    store.startRound(5, "first", ["pass-baseline"], 75, { head_sha: "sha5" });
+    gh.open = [ref(5)];
+    expect((await run()).triggered).toEqual([]);
+    expect(store.getPr(5)!.state).toBe("tracked");
+  });
+
+  it("leaves a pushed head to the recheck that claimed it: no second, full round", async () => {
+    // MUTATION: drop the hasRecheck skip in the trigger = "all" loop — this fails.
+    seed(9, "tracked", { head: "approved9" });
+    gh.open = [ref(9, { head_sha: "pushed9" })];
+    const report = await reconcileOnce({
+      cfg: all,
+      store,
+      adapter: gh,
+      hooks: recordingHooks().hooks,
+      onHeadPush: async (pr, head_sha) => {
+        store.claimRecheck(pr, recheckFingerprint({ trigger: "push" }, head_sha), {
+          head_sha,
+          trigger: "push",
+        });
+      },
+    });
+    expect(report.triggered).toEqual([]);
+    expect(store.getPr(9)!.state).toBe("tracked");
+  });
+
+  it("leaves a PR the label path or a running round already owns", async () => {
+    gh.open = [ref(6), ref(7)];
+    gh.labelTriggered = [item(6)];
+    seed(7, "reviewing");
+    await run();
+    expect(store.getPr(6)).toMatchObject({ state: "queued", trigger_provenance: "human" });
+    expect(store.getPr(7)!.state).toBe("reviewing");
+  });
+
+  it("records an adopted PR's missing label, so a label added later is a fresh request", async () => {
+    // MUTATION: drop the observeTriggerLevel loop in the trigger = "all" branch — this fails.
+    gh.open = [ref(10)];
+    await run();
+    expect(store.triggerLevel(10, "label")).toBe(false);
+  });
+
+  it("label mode (the default) is unchanged: an unlabelled PR is not adopted", async () => {
+    // MUTATION: make the branch run for trigger "label" — this fails.
+    expect(cfg.github.trigger).toBe("label");
+    gh.open = [ref(8)];
+    expect((await run(cfg)).triggered).toEqual([]);
+    expect(store.getPr(8)).toBeUndefined();
   });
 });

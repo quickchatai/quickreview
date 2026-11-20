@@ -571,6 +571,37 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         reason: `reconcile:${source}`,
       });
     }
+
+    // `[github] trigger = "all"`: every open, non-draft, human PR, once per head.
+    if (cfg.github.trigger !== "all") return;
+    for (const ref of open.values()) {
+      const local = store.getPr(ref.number);
+      if (ref.draft || grouped.has(ref.number) || isBotAuthor(ref.author, botLogin)) continue;
+      if (local?.paused || local?.state === "queued" || local?.state === "reviewing") continue;
+      // A pushed head after an approval belongs to the targeted recheck, as in label mode.
+      if (store.hasRecheck(ref.number, recheckFingerprint({ trigger: "push" }, ref.head_sha)))
+        continue;
+      if (store.headHandled(ref.number, ref.head_sha)) continue;
+      const meta = {
+        title: ref.title,
+        head_sha: ref.head_sha,
+        author: ref.author,
+        trigger_ts: local?.trigger_ts ?? now().toISOString(),
+      };
+      store.db
+        .transaction(() => {
+          store.logEvent("auto_triggered", ref.number, { head_sha: ref.head_sha });
+          applyEvent(store, ref.number, { type: "trigger", source: "reconcile" }, meta, {
+            botLogin,
+            now,
+            reason: "reconcile:all",
+          });
+          // It has no label or team request now, so adding one later is a fresh human request.
+          for (const kind of kinds) store.observeTriggerLevel(ref.number, kind, false);
+        })
+        .immediate();
+      report.triggered.push(ref.number);
+    }
   });
 
   // Commits outside a round never dispatch a review. A head advance WHILE an

@@ -49,7 +49,13 @@ import {
   runReview,
   type Run,
 } from "./review.js";
-import { switchAutoReview, switchMemory, type Ask, type SwitchHost } from "./switches.js";
+import {
+  EVERY_OPEN_PR,
+  switchAutoReview,
+  switchMemory,
+  type Ask,
+  type SwitchHost,
+} from "./switches.js";
 import { money, plural } from "./words.js";
 
 export type NoticeKind = "info" | "ok" | "warn";
@@ -1043,7 +1049,12 @@ export class HomeModel {
       auto_review: auto.kind === "known" ? auto.value : null,
       ...(auto.kind === "unknown" ? { auto_review_unknown_because: auto.why } : {}),
       ...(this.state.trigger
-        ? { auto_review_picks_up: { trigger_label: this.trigger(), review_requests: true } }
+        ? {
+            auto_review_picks_up:
+              this.trigger() === EVERY_OPEN_PR
+                ? { every_open_pr: true }
+                : { trigger_label: this.trigger(), review_requests: true },
+          }
         : {}),
       memory: nullable(this.state.memory),
       spend: nullable(this.state.spend),

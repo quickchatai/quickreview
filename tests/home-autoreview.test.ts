@@ -394,4 +394,12 @@ describe("the status line renders every label from a snapshot", () => {
       /picks up pull requests with the trigger label \(which one is unknown\) or a review request/,
     );
   });
+
+  it('with [github] trigger = "all", says it picks up every open pull request', async () => {
+    // MUTATION: drop the trigger = "all" read in autoreview.ts trigger() — this fails.
+    const all = await composeOver({ ps: ok("") }, '[github]\ntrigger = "all"\n').port.trigger!();
+    expect(await panelFor(running(snapshot()), all)).toMatch(
+      /picks up every open pull request that is not a draft or a bot's/,
+    );
+  });
 });

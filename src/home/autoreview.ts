@@ -51,6 +51,9 @@ import {
   type SwitchOnStepOptions,
 } from "./switchon.js";
 
+/** `[github] trigger = "all"`: what auto-review picks up instead of one label. */
+export const EVERY_OPEN_PR = "every open pull request that is not a draft or a bot's";
+
 /** "On" needs a heartbeat within this many poll intervals. */
 export const HEARTBEAT_INTERVALS = 2;
 /** A poll older than this many intervals is not working: the daemon abandons
@@ -378,6 +381,7 @@ export function composeAutoReview(o: ComposeAutoReviewOptions): AutoReviewPort {
       const c = config();
       if (typeof c === "string") return unknown(c);
       const github = c["github"];
+      if (isObj(github) && github["trigger"] === "all") return known(EVERY_OPEN_PR);
       const label = isObj(github) ? github["trigger_label"] : undefined;
       return typeof label === "string" && label.trim() !== ""
         ? known(label.trim())

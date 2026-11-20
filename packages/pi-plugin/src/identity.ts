@@ -53,10 +53,12 @@ export function ownLogins(g: GithubIdentity): string[] {
   return [...out];
 }
 
-/** GraphQL's bare App actor, only for a matching configured bot login, and
- * never in person mode (there is no App). */
+/** GraphQL's bare App actor, only for a matching configured bot login. In
+ * person mode only when the token is an App installation's (`bot_login` is
+ * `<slug>[bot]`). */
 export function ownActorAlias(g: GithubIdentity): string | undefined {
-  if (isPersonMode(g) || !g.app_slug) return undefined;
+  if (isPersonMode(g)) return /^(.+)\[bot\]$/.exec(g.bot_login)?.[1];
+  if (!g.app_slug) return undefined;
   return g.bot_login === `${g.app_slug}[bot]` ? g.app_slug : undefined;
 }
 
@@ -73,7 +75,8 @@ export function isOwnContent(
 ): boolean {
   const login = author ?? "";
   if (login === "") return false;
-  if (isPersonMode(g)) return login === g.bot_login && carriesOwnMarker(body);
+  if (isPersonMode(g))
+    return (login === g.bot_login || login === ownActorAlias(g)) && carriesOwnMarker(body);
   return ownLogins(g).includes(login) || login === ownActorAlias(g);
 }
 

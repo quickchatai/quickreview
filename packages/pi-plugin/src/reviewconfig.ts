@@ -45,6 +45,9 @@ import {
 export type GithubAuthMode = "app" | "user";
 export const GITHUB_AUTH_MODES: readonly GithubAuthMode[] = ["app", "user"];
 
+/** `[github] trigger`: `all` also reviews every open, non-draft, human PR once per head. */
+export type GithubTrigger = "label" | "all";
+
 export interface GithubConfig {
   repo: string;
   /** Always set after parse; absent (a hand-built config) means "app". */
@@ -56,6 +59,8 @@ export interface GithubConfig {
    * `GET /user`). */
   bot_login: string;
   review_team: string;
+  /** Always set after parse; absent (a hand-built config) means "label". */
+  trigger?: GithubTrigger;
   trigger_label: string;
   in_progress_label: string;
   reviewed_label: string;
@@ -1902,6 +1907,7 @@ export function parseGithubSection(raw: Record<string, any>): GithubConfig {
     ...(auth === "user" ? { app_slug: "" } : {}),
     ...given,
     auth,
+    trigger: oneOf("[github] trigger", given.trigger ?? "label", ["label", "all"]),
   } as GithubConfig;
 }
 
