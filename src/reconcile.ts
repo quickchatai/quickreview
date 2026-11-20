@@ -596,6 +596,8 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
             now,
             reason: "reconcile:all",
           });
+          // It has no label or team request now, so adding one later is a fresh human request.
+          for (const kind of kinds) store.observeTriggerLevel(ref.number, kind, false);
         })
         .immediate();
       report.triggered.push(ref.number);

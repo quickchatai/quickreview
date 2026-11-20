@@ -1618,6 +1618,13 @@ describe('[github] trigger = "all"', () => {
     expect(store.getPr(7)!.state).toBe("reviewing");
   });
 
+  it("records an adopted PR's missing label, so a label added later is a fresh request", async () => {
+    // MUTATION: drop the observeTriggerLevel loop in the trigger = "all" branch — this fails.
+    gh.open = [ref(10)];
+    await run();
+    expect(store.triggerLevel(10, "label")).toBe(false);
+  });
+
   it("label mode (the default) is unchanged: an unlabelled PR is not adopted", async () => {
     // MUTATION: make the branch run for trigger "label" — this fails.
     expect(cfg.github.trigger).toBe("label");
