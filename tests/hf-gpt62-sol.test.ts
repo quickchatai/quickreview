@@ -283,6 +283,8 @@ function dataset(root: string): void {
       qcr_commit_match: "same",
       qcr_commit_dirty: false,
       pi: "1",
+      pi_source: "pi rebuilt from its unreleased main at c0ffee; it reports itself as 1",
+      engine: "runtime=sdk, lens_runtime=engine, wave=true",
       reviewer_model: "m2",
       judge: "gpt-6.1-sol-high",
       runs: [`${N}-x`],
@@ -301,7 +303,9 @@ function dataset(root: string): void {
       qcr_commit_on_public_main: null,
       qcr_commit_match: null,
       qcr_commit_dirty: null,
-      pi: null,
+      pi: "0",
+      pi_source: null,
+      engine: null,
       reviewer_model: "m1",
       judge: "gpt-6-sol-high",
       runs: [`${O}-x`],
@@ -928,6 +932,38 @@ describe("gpt62_sol: the export and the card", () => {
     expect(n).toBeGreaterThan(0);
   });
 
+  // MUTATION: in hf_export.build_elo, drop the `plan_name in GS.PLANS` skip — this fails
+  // MUTATION: in hf_export.elo_plan_checks, count no row (got = 0) — this fails
+  // MUTATION: in hf_export.validate_release, drop `checks += elo_plan_checks(t)` — this fails
+  it("keeps the comparison's Elo plans out of the dataset's own Elo tables, and its checks fail them there", () => {
+    const elo = join(tmp, "elo-default");
+    for (const plan of ["martian-plan", PLANS[0]!]) {
+      mkdirSync(join(elo, plan, "judgments"), { recursive: true });
+      writeFileSync(
+        join(elo, plan, "plan.json"),
+        JSON.stringify({ runs: ["x", "y"], judges: ["gpt"], labels: {} }),
+      );
+      // a judgment file of no rated judge: its rows are tabled, and no ratings are fit
+      jsonl(join(elo, plan, "judgments"), "spot", [{ id: "u1", status: "error", at: "1" }]);
+    }
+    const got = py(
+      `import hf_export as h
+x = h.Exporter(types.SimpleNamespace(runs_dir=sys.argv[1], elo_dir=sys.argv[2]))
+x.build_elo()
+t = x.tables
+bad = {"elo_judgments": t["elo_judgments"] + [{"plan": sys.argv[3]}], "elo_ratings": [{"plan": sys.argv[3]}] * 2}
+src = open(h.__file__).read()
+body = src[src.index("def validate_release("):src.index("\\ndef ", src.index("def validate_release(") + 1)]
+print(json.dumps([sorted({r["plan"] for r in t["elo_judgments"]}),
+                  [c["ok"] for c in h.elo_plan_checks(t)], [c["got"] for c in h.elo_plan_checks(bad)],
+                  "elo_plan_checks(t)" in body]))`,
+      tmp,
+      elo,
+      PLANS[0]!,
+    );
+    expect(got).toEqual([["martian-plan"], [true, true], [1, 2], true]);
+  });
+
   // MUTATION: in hf_export.cited, drop "gpt62_sol" from the folders whose keys link nothing — this fails
   it("a gpt62_sol key links no arm and no run, whatever its name", () => {
     const got = py(
@@ -1032,6 +1068,54 @@ except SystemExit as e:
     ]);
     write("deepseek.jsonl", [first[3]!, ...later]);
     expect(attempts("deepseek")).toMatch(/an ok judgment was moved out/);
+  });
+
+  // MUTATION: in gpt62_sol.PI_MAIN, drop s62's image — this fails
+  // MUTATION: in gpt62_sol._pi_source, return the commit without comparing the image's label — this fails
+  // MUTATION: in gpt62_sol._engine, return None for every run — this fails
+  it("records where s62's pi came from and each run's engine, and refuses an image whose label disagrees", () => {
+    const got = py(
+      `import gpt62_sol as G, subprocess
+img = next(iter(G.PI_MAIN))
+real = subprocess.run
+def fake(label):
+    def run(argv, **kw):
+        if argv[:2] != ["docker", "image"]:
+            return real(argv, **kw)
+        mine = label and argv[3] == img  # only s62's image carries the label
+        out = json.dumps({"qcr.pi.main": label}) if mine else ""
+        return subprocess.CompletedProcess(argv, 0 if mine else 1, out, "")
+    return run
+out = []
+for label in (None, G.PI_MAIN[img]):
+    subprocess.run = fake(label)
+    out.append([G._pi_source(img, "1.5.2"), G._pi_source("sha256:other", "1.5.2")])
+subprocess.run = fake("0" * 40)
+try:
+    G._pi_source(img, "1.5.2"); out.append("accepted")
+except SystemExit as e:
+    out.append(str(e))
+out.append([G._engine({"runtime": "sdk", "lens_runtime": "engine", "wave": True}), G._engine(None)])
+print(json.dumps([img, out]))`,
+    ) as [string, [[string | null, null], [string | null, null], string, [string, null]]];
+    const [img, [noDocker, labelled, refused, engines]] = got;
+    expect(img).toBe("sha256:0224d9578ad8afa4d027d603b1e3257c033f5a4d95be1bcca9c520d120eb3f42");
+    const src =
+      "pi rebuilt from its unreleased main at 1e34c3b4c7df78e716a8f53ad0bcf3a00feceedc; it reports itself as 1.5.2";
+    expect(noDocker).toEqual([src, null]);
+    expect(labelled).toEqual([src, null]);
+    expect(refused).toMatch(/qcr\.pi\.main label is 0{40}, PI_MAIN says 1e34c3b4/);
+    expect(engines).toEqual(["runtime=sdk, lens_runtime=engine, wave=true", null]);
+  });
+
+  // MUTATION: in gpt62_sol.readme, name three differences between the setups (drop the runtime) — this fails
+  it("names the runtime among the differences between the setups", () => {
+    const md = readFileSync(join(BASE, "gpt62_sol", "README.md"), "utf8");
+    expect(md).toContain(
+      "Four things differ between the setups: the model, the QuickReview releases",
+    );
+    expect(md).toContain("runtime under them");
+    expect(md).toContain("| Runtime | the SDK engine");
   });
 
   // MUTATION: in gpt62_sol.PLAN_KEYS, add "git_root" — this fails

@@ -79,11 +79,17 @@ SCOPES = ("gpt", "deepseek", "combined")
 REPS = 2000  # the pooled report's bootstrap replicates (seed 1, elo_rating.table's)
 NOT_CORRECT = ("incorrect", "partly-correct", "unverifiable")
 SEVERITIES = ("high", "medium", "low")
+# Where an image's pi came from when it is not the release its version names: the image's `qcr.pi.main` label
+# (the pi main commit its pi packages were rebuilt from). s62's image runs pi rebuilt from main, which lists
+# GPT-6.2 Sol, and reports itself as the release it was cut after, so the run's recorded `pi` alone does not
+# say what ran. build() checks the label against this where the image is still on the machine.
+PI_MAIN = {"sha256:0224d9578ad8afa4d027d603b1e3257c033f5a4d95be1bcca9c520d120eb3f42":
+           "1e34c3b4c7df78e716a8f53ad0bcf3a00feceedc"}
 
 TABLES: Dict[str, tuple] = {
     "arms": ("arm_id", "display_name", "dataset_arm", "image", "image_id", "config", "profile", "qcr_commit",
-             "qcr_commit_on_public_main", "qcr_commit_match", "qcr_commit_dirty", "pi", "reviewer_model", "judge",
-             "runs", "prs", "note"),
+             "qcr_commit_on_public_main", "qcr_commit_match", "qcr_commit_dirty", "pi", "pi_source", "engine",
+             "reviewer_model", "judge", "runs", "prs", "note"),
     "cases": ("arm_id", "instance_id", "set", "run", "status", "verdict", "usd", "minutes", "n_posted", "judged",
               "judge_input_tokens", "judge_output_tokens", "judge_cache_read_tokens"),
     "reviews": ("arm_id", "instance_id", "index", "inline", "path", "line", "side", "body", "comment_id"),
@@ -725,6 +731,29 @@ def _on_main(repo: str, commit: str) -> bool:
     return p.returncode == 0
 
 
+def _pi_source(image_id: str, pi: Optional[str]) -> Optional[str]:
+    """Where the image's pi came from when it is not the release `pi` names (PI_MAIN), checked against the
+    image's own `qcr.pi.main` label when docker still has the image; None when nothing records it."""
+    commit = PI_MAIN.get(image_id)
+    try:
+        p = subprocess.run(["docker", "image", "inspect", image_id, "--format", "{{json .Config.Labels}}"],
+                           capture_output=True, text=True, timeout=60)
+        label = (json.loads(p.stdout) or {}).get("qcr.pi.main") if p.returncode == 0 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        label = None
+    if label is not None and label != commit:
+        raise SystemExit(f"{image_id}: its qcr.pi.main label is {label}, PI_MAIN says {commit}")
+    if commit is None:
+        return None
+    return f"pi rebuilt from its unreleased main at {commit}; it reports itself as {pi}"
+
+
+def _engine(engine: Optional[dict]) -> Optional[str]:
+    """run.json's `engine` as `key=value` pairs; None where the run recorded none (a run from before the SDK
+    engine)."""
+    return ", ".join(f"{k}={v if isinstance(v, str) else json.dumps(v)}" for k, v in engine.items()) if engine else None
+
+
 def _judge_file(run_dir: str, iid: str) -> Optional[str]:
     g = sorted(glob.glob(os.path.join(run_dir, "judge", f"v*-{NEW_JUDGE_DIR}", f"{iid}.r1.json")))
     return g[0] if g else None
@@ -779,25 +808,28 @@ def collect(a) -> tuple:
     labels = {}
     for p in PLANS:
         labels.update(json.load(open(os.path.join(a.elo_dir, p, "plan.json"))).get("labels") or {})
+    image_id, pi = one([x["image_id"] for x in aj], "image_id"), one([r.get("pi") for r in rj], "pi")
     tables["arms"].append({
         "arm_id": NEW, "display_name": labels.get(NEW), "dataset_arm": None,
-        "image": one([x["image"] for x in aj], "image"), "image_id": one([x["image_id"] for x in aj], "image_id"),
+        "image": one([x["image"] for x in aj], "image"), "image_id": image_id,
         "config": one([x["config"] for x in aj], "config"), "profile": one([r.get("profile") or None for r in rj], "profile"),
-        **f, "pi": one([r.get("pi") for r in rj], "pi"),
+        **f, "pi": pi, "pi_source": _pi_source(image_id, pi), "engine": _engine(one([r.get("engine") for r in rj], "engine")),
         "reviewer_model": one([r["models"]["conversation"] for r in rj], "model"), "judge": NEW_JUDGE_DIR,
         "runs": runs, "prs": sum(len(r["cases"]) for r in rj),
-        "note": "QuickReview 1.6.0 with review.quiet=true (no nits, nothing below P2); its reviews and verdicts "
-                "are this folder's"})
+        "note": "QuickReview 1.6.0 with review.quiet=true (no nits, nothing below P2), on the SDK engine; its "
+                "reviews and verdicts are this folder's"})
     old_runs = [f"{OLD}-{s}" for s in SETS]
+    oj = [json.load(open(os.path.join(a.runs_dir, r, "run.json"))) for r in old_runs]
     tables["arms"].append({
         "arm_id": OLD, "display_name": labels.get(OLD), "dataset_arm": OLD_ARM, **{k: None for k in (
             "image", "image_id", "config", "profile", "qcr_commit", "qcr_commit_on_public_main", "qcr_commit_match",
-            "qcr_commit_dirty", "pi")},
-        "reviewer_model": one([json.load(open(os.path.join(a.runs_dir, r, "run.json")))["models"]["conversation"]
-                               for r in old_runs], "final1 model"),
+            "qcr_commit_dirty", "pi_source")},
+        "pi": one([r.get("pi") for r in oj], "final1 pi"), "engine": _engine(one([r.get("engine") for r in oj], "final1 engine")),
+        "reviewer_model": one([r["models"]["conversation"] for r in oj], "final1 model"),
         "judge": "gpt-6-sol-high", "runs": old_runs,
         "prs": sum(len(os.listdir(os.path.join(a.runs_dir, r, "results", "all"))) for r in old_runs),
-        "note": f"the build frozen on 2026-10-04, no quiet default; its reviews, verdicts and build ids are the "
+        "note": f"the build frozen on 2026-10-04, no quiet default; its runs record pi {one([r.get('pi') for r in oj], 'final1 pi')} "
+                f"and no engine (they predate the SDK engine); its reviews, verdicts and build ids are the "
                 f"dataset's (arm {OLD_ARM} in arms, reviews, defect_verdicts, comment_verdicts; runs {OLD}-* in runs)"})
 
     for s, run_json in zip(SETS, rj):
@@ -979,13 +1011,16 @@ folder holds `{NEW}`'s, and the pairwise judgments of the two.
 |---|---|---|
 | Reviewer | QuickReview 1.6.0, `review.quiet=true` (no nits, nothing below P2) | the build frozen on 2026-10-04, no quiet default |
 | Model | GPT-6.2 Sol | GPT-6.1 Sol |
+| pi | rebuilt from its unreleased main at `1e34c3b4` (for GPT-6.2 Sol; it reports itself as 1.5.2) | 1.0.0 |
+| Runtime | the SDK engine (`runtime=sdk`, `lens_runtime=engine`, `wave=true`) | from before the SDK engine (its runs record no `engine`) |
 | Defect judge | `gpt-6.1-sol` at high | `gpt-6-sol` at high (the dataset's published verdicts) |
 | Comments the defect judge read | {i(f'comments.{NEW}.judged')} ({n[f'comments.{NEW}.per_pr']:.1f} per PR) | {i(f'comments.{OLD}.judged')} ({n[f'comments.{OLD}.per_pr']:.1f} per PR) |
 | $ per PR (list price) | {n[f'cost.{NEW}.usd_per_pr']:.2f} | {n[f'cost.{OLD}.usd_per_pr']:.2f} |
 | Median minutes per review | {n[f'cost.{NEW}.minutes_median']:.1f} | {n[f'cost.{OLD}.minutes_median']:.1f} |
 
-Three things differ between the setups: the model, the QuickReview releases between the two builds, and
-the quiet default. The comparison cannot say how much of a difference comes from the model alone.
+Four things differ between the setups: the model, the QuickReview releases between the two builds, the
+runtime under them (pi and the SDK engine, the table's two rows above), and the quiet default. The
+comparison cannot say how much of a difference comes from the model alone.
 
 ## Tables
 
@@ -993,7 +1028,9 @@ Every table is a `.parquet` file in this folder.
 
 - `arms`: the two setups. `{NEW}`'s image, config, build commit (`qcr_commit` and its flags, as the card's
   `runs` states them), pi, model, defect judge and run directories; `{OLD}`'s `dataset_arm`
-  (`{OLD_ARM}`), whose rows hold the rest.
+  (`{OLD_ARM}`), whose rows hold the rest. `pi` is the version each run recorded, `pi_source` where
+  that pi came from when it is not that release (`{NEW}`'s image label `qcr.pi.main`), and `engine` the
+  run's engine settings (null for `{OLD}`, whose runs record none).
 - `cases`: one row per pull request of `{NEW}`: set, run, `status`, the review's `verdict`, cost and
   minutes (compare.usd_and_minutes, as the dataset's `reviews.cost_usd`), `n_posted` (the inline
   comments), whether the defect judge read it, and the judge's token usage.
@@ -1075,8 +1112,9 @@ times, and one tie {i('elo.agreement.gpt~deepseek.one_tie')} times. Attempts: th
 
 - The two runs had different defect judges: `gpt-6.1-sol` for `{NEW}`, `gpt-6-sol` for `{OLD}`'s
   published verdicts.
-- Three things differ between the setups (the model, the QuickReview releases between the builds, the
-  quiet default), so no number here is of the model alone. One run each.
+- Four things differ between the setups (the model, the QuickReview releases between the builds, the
+  runtime under them, the quiet default), so no number here is of the model alone. `{NEW}`'s pi is
+  rebuilt from an unreleased commit (`pi_source`), not a release a reader can install. One run each.
 - The GPT-6.1 Sol judge is of the same family as both reviewers. It prefers Review B
   ({n['elo.gpt.position.b_pct']:.0f}% of its decided verdicts), which is why every pair was judged in both
   orders.

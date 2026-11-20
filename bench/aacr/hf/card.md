@@ -684,14 +684,18 @@ DeepSeek judge -77 (-122 to -34), and the fit that weighs both judges the same
 -17 (-53 to +18), an interval that spans zero.
 
 **Limits.** The two runs had different defect judges: GPT-6.1 Sol at high for
-`s62`, GPT-6 Sol at high for `final1`'s published verdicts. Three things differ
-between the setups, the model, the QuickReview releases between the two builds
-and the quiet default, so no number here is of the model alone, and each setup
+`s62`, GPT-6 Sol at high for `final1`'s published verdicts. Four things differ
+between the setups, the model, the QuickReview releases, the runtime and the
+quiet default, so no number here is of the model alone, and each setup
 ran once. DeepSeek never returned a verdict on 5 pull requests (every attempt
 timed out or was cut off), so its ratings and the pooled ones cover the other
 180. The GPT-6.1 Sol judge picked Review B in 57% of its decided verdicts, a
 position bias that judging every pair in both orders cancels out; it is also of
-the reviewers' model family. No person has read the pairs.
+the reviewers' model family. No person has read the pairs. On the runtime:
+`final1` ran on pi 1.0.0, from before the SDK engine; `s62` ran on the SDK
+engine, with pi rebuilt from its unreleased main for GPT-6.2 Sol, which reports
+itself as pi 1.5.2 (the folder's `arms` names the commit), so it is not a
+release a reader can install.
 
 {{GPT62_SOL_FILES}}
 

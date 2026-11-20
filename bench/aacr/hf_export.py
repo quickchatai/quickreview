@@ -1450,13 +1450,16 @@ class Exporter:
     def build_elo(self):
         """elo_judgments: every judgment line of every plan; elo_ratings: the
         ratings refit from the judgments (recompute/elo_ratings.py), per plan,
-        table (each judge, and both pooled) and category."""
+        table (each judge, and both pooled) and category. The GPT-6.2 Sol comparison's plans (gpt62_sol.PLANS)
+        share the Elo dir and are skipped: they ship in gpt62_sol/ alone (elo_plan_checks holds it)."""
         sys.path.insert(0, os.path.join(HERE, "recompute"))
         import elo_ratings as ER
         rows, rats = [], []
         base = self.a.elo_dir
         self.elo_refits = {}
         for plan_name in sorted(os.listdir(base)) if base and os.path.isdir(base) else []:
+            if plan_name in GS.PLANS:
+                continue
             d = os.path.join(base, plan_name)
             pj = os.path.join(d, "plan.json")
             jd = os.path.join(d, "judgments")
@@ -2189,6 +2192,15 @@ def key_data_checks(t: dict[str, list[dict]]) -> list[dict]:
     return checks
 
 
+def elo_plan_checks(t: dict[str, list[dict]]) -> list[dict]:
+    """The GPT-6.2 Sol comparison's Elo plans (gpt62_sol.PLANS) ship in gpt62_sol/ alone: no row of the
+    dataset's own Elo tables is of one (build_elo skips them; the default Elo dir holds them too)."""
+    return [{"check": f"{n}: rows of a GPT-6.2 Sol comparison plan (gpt62_sol/'s alone)", "got": got, "want": 0,
+             "ok": got == 0}
+            for n in ("elo_judgments", "elo_ratings")
+            for got in [sum(1 for r in t.get(n) or [] if r.get("plan") in GS.PLANS)]]
+
+
 def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_refits: dict, elo_dir: str | None,
                      commits: "tuple[dict, dict, dict] | None" = None) -> list[dict]:
     """The checks of what this release adds: the open-model rows, the Elo
@@ -2216,6 +2228,7 @@ def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_r
     checks += judge_coverage_checks(t)
     checks += key_data_checks(t)
     checks += rejudge_column_checks(t)
+    checks += elo_plan_checks(t)
     # the card's statements about these columns: every Martian and Qodo PR names its repository's
     # licence, and every Martian golden its half (the set files fill the audit's gaps)
     for n in ("martian_prs", "qodo_prs"):
@@ -2845,7 +2858,8 @@ def main():
     ap.add_argument("--archive", help="the run archive folder (export_runs.py's --out): its RUNS-INDEX.json units "
                     "get the runs table's derived judges and claims, and the validation checks the two agree")
     ap.add_argument("--commit-remap", help="JSON {recorded qcr_commit: public main commit or null}, for the runs table")
-    ap.add_argument("--elo-dir", help="the Elo runs (one dir per plan: plan.json, judgments/); default <runs>/../elo")
+    ap.add_argument("--elo-dir", help="the Elo runs (one dir per plan: plan.json, judgments/); default <runs>/../elo. "
+                    "The GPT-6.2 Sol comparison's plans there are skipped (they ship in gpt62_sol/)")
     ap.add_argument("--repo-ref", default="main",
                     help="the QuickReview repository's tag or commit the card's verify steps clone (the one the release "
                          "was verified against)")
