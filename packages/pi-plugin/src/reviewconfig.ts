@@ -45,9 +45,7 @@ import {
 export type GithubAuthMode = "app" | "user";
 export const GITHUB_AUTH_MODES: readonly GithubAuthMode[] = ["app", "user"];
 
-/** `[github] trigger`: `label` (the default) reviews PRs carrying the trigger
- * label or a team review request; `all` also reviews every open, non-draft,
- * human PR once per head. */
+/** `[github] trigger`: `all` also reviews every open, non-draft, human PR once per head. */
 export type GithubTrigger = "label" | "all";
 
 export interface GithubConfig {

@@ -585,14 +585,16 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         author: ref.author,
         trigger_ts: local?.trigger_ts ?? now().toISOString(),
       };
-      store.db.transaction(() => {
-        store.logEvent("auto_triggered", ref.number, { head_sha: ref.head_sha });
-        applyEvent(store, ref.number, { type: "trigger", source: "reconcile" }, meta, {
-          botLogin,
-          now,
-          reason: "reconcile:all",
-        });
-      })();
+      store.db
+        .transaction(() => {
+          store.logEvent("auto_triggered", ref.number, { head_sha: ref.head_sha });
+          applyEvent(store, ref.number, { type: "trigger", source: "reconcile" }, meta, {
+            botLogin,
+            now,
+            reason: "reconcile:all",
+          });
+        })
+        .immediate();
       report.triggered.push(ref.number);
     }
   });
