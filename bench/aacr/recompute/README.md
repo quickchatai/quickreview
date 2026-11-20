@@ -200,7 +200,9 @@ The dataset's `gpt62_sol/` folder holds QuickReview 1.6.0 on GPT-6.2 Sol (`s62`)
 beside the October build (`final1`, the tables' arm `quickreview-frozen`) on all
 185 AACR-Bench pull requests: `s62`'s posted comments and defect-judge verdicts,
 and four pairwise Elo plans' every judgment attempt with the ratings refit from
-them (its README describes each table). `gpt62_sol.py` runs validation.json's
+them; and `s62`'s Martian and Qodo reviews and scorings, in the columns of the
+tables' `martian_*` and `qodo_*`, whose `quickreview-frozen` rows are `final1`'s
+(its README describes each table). `gpt62_sol.py` runs validation.json's
 checks of it: every file against the committed `bench/aacr/hf/gpt62-sol.sha256`,
 the tables' columns, the rows against each other and against the tables'
 `final1` rows and answer key, the folder README against the one its tables give
@@ -208,7 +210,8 @@ the tables' columns, the rows against each other and against the tables'
 both pooled with each judge's games repeated to the least common multiple of
 the plans each judged, over `elo/elo_rating.py`'s fit) against
 `elo_ratings`, `elo_gaps` and `used_in_ratings`, and every number of the write-up
-(`POST`) recomputed (`numbers()`). `claim_metrics.py`'s `gpt62_sol` keys are those
+(`POST`) recomputed (`numbers()`: Martian's with `martian_scores.py`'s `counts`
+and `metrics`, Qodo's with `claim_metrics.Qodo`, for both setups). `claim_metrics.py`'s `gpt62_sol` keys are those
 numbers by name (`key.s62.all`, `elo.combined.overall`, `elo.gpt.position.b_pct`,
-...). `gpt62_sol.py build` wrote the folder from the runs and the Elo plan
+`martian.s62.core.recall`, `qodo.final1.n5.recall_rule`, ...). `gpt62_sol.py build` wrote the folder from the runs and the Elo plan
 directories (`collect()` gives its tables without writing them).

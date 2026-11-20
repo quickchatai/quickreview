@@ -169,6 +169,382 @@ function judgment(plan: number, judge: string, i: number, w: W, line: number, as
   return row;
 }
 
+/*
+ * Martian and Qodo, on two pull requests each. Martian's goldens: m1 g0 bug High real, m1 g1 style Low notreal,
+ * m2 g0 doc_defect Medium real, m2 g1 perf Low disputed. s62 matches m1/g0 and m2/g1 with 3 + 2 false positives;
+ * final1 m1/g0, m1/g1 and m2/g0 with 1 + 1. A re-judged comparator, `rejudged-x`, is in both scorings: m1/g0 with
+ * 1 + 0 false positives in s62's, m1/g0 and m2/g0 with 2 + 1 in final1's. Qodo's issues: q1 i0 functional
+ * (a.py 10-12), q1 i1 rule (b.py 5), q2 i0 functional (c.py 1-3), q2 i1 rule (d.py 20). s62 matches q1/i0 within
+ * 5 lines, q1/i1 in the same file only, q2/i0 in another file; final1 matches all four within 5 lines, its two
+ * rule violations from a P3 `[nit]` and a nit-footed `[nit]`.
+ */
+const M1 = "https://example.test/m/1";
+const M2 = "https://example.test/m/2";
+const Q1 = "https://example.test/q/1";
+const Q2 = "https://example.test/q/2";
+const MW = (arm: string): string => `${arm}-martian50`;
+const QW = (arm: string): string => `${arm}-qodo-pr100`;
+const TOOL = (arm: string): string => (arm === N ? N : "quickreview-frozen");
+const JUDGE = "gpt-6.1-sol";
+const foot = (sev: string, lens: string) => `\n\n_${sev} · confidence 0.9 · lens ${lens}_`;
+
+const MQ_CASES: Row[] = [
+  [M1, "martian50", 2, 10, 3, { rate_limited: 3, overloaded: 0, usage_limit: 0, other: 3 }, "ok"],
+  [M2, "martian50", 4, 30, 1, null, "ok"],
+  [Q1, "qodo-pr100", 2, 6, 2, { rate_limited: 0, overloaded: 0, usage_limit: 0, other: 0 }, "ok"],
+  [
+    Q2,
+    "qodo-pr100",
+    4,
+    8,
+    1,
+    { rate_limited: 2, overloaded: 0, usage_limit: 0, other: 1 },
+    "error",
+  ],
+].map(([url, set, usd, minutes, posted, errors, status], i) => ({
+  arm_id: N,
+  instance_id: `mq${i}`,
+  set,
+  run: `${N}-${set as string}`,
+  pr_url: url,
+  status,
+  verdict: "COMMENT",
+  usd,
+  minutes,
+  n_posted: posted,
+  model_errors: errors,
+  judged: true,
+  judge_input_tokens: null,
+  judge_output_tokens: null,
+  judge_cache_read_tokens: null,
+}));
+
+type Inline = { path: string | null; line: number | null; body: string };
+/** One martian_reviews row: QuickReview's (comments, the rest beyond the page) or a re-judged one (link only). */
+function martianReview(
+  arm: string,
+  tool: string,
+  url: string,
+  fp: number,
+  extracted: number,
+  own?: { comments: Inline[]; beyond: Inline[]; posted: number; usd: number; minutes: number },
+): Row {
+  return {
+    tool,
+    pr_url: url,
+    work_dir: MW(arm),
+    vendor_link_only: !own,
+    source_url: own ? null : `${url}#vendor`,
+    comments: own ? own.comments : [],
+    n_comments: own ? own.comments.length : 0,
+    n_posted_inline: own ? own.posted : null,
+    comments_beyond_first_page: own ? own.beyond : [],
+    extracted_candidates: extracted,
+    unmatched_candidates: own ? Array.from({ length: fp }, (_, k) => `u${k}`) : null,
+    tp: 0,
+    fp,
+    fn: 0,
+    skipped: false,
+    cost_usd: own ? own.usd : null,
+    minutes: own ? own.minutes : null,
+    judge: JUDGE,
+    run_family: arm === O ? "martian-final" : null,
+  };
+}
+
+const GOLDENS: [string, number, string, string, string][] = [
+  [M1, 0, "High", "bug", "real"],
+  [M1, 1, "Low", "style", "notreal"],
+  [M2, 0, "Medium", "doc_defect", "real"],
+  [M2, 1, "Low", "perf", "disputed"],
+];
+
+function martianVerdicts(arm: string, tool: string, hits: string[]): Row[] {
+  return GOLDENS.map(([url, i]) => ({
+    tool,
+    pr_url: url,
+    judge: JUDGE,
+    golden_index: i,
+    matched: hits.includes(`${url}#${i}`),
+    confidence: hits.includes(`${url}#${i}`) ? 0.9 : null,
+    matched_candidate: null,
+    reasoning: null,
+    work_dir: MW(arm),
+    run_family: arm === O ? "martian-final" : null,
+  }));
+}
+
+/** A martian_scores row with Martian's rates (fractions) of its counts. */
+function martianScore(arm: string, tool: string, c: Record<string, [number, number, number]>): Row {
+  const row: Row = {
+    tool,
+    judge: JUDGE,
+    work_dir: MW(arm),
+    run_family: arm === O ? "martian-final" : null,
+  };
+  for (const p of ["strict", "core", "all"]) {
+    const [tp, fp, fn] = c[p]!;
+    const pr = tp + fp ? tp / (tp + fp) : 0;
+    const rc = tp + fn ? tp / (tp + fn) : 0;
+    Object.assign(row, {
+      [`${p}_precision`]: pr,
+      [`${p}_recall`]: rc,
+      [`${p}_f1`]: pr + rc ? (2 * pr * rc) / (pr + rc) : 0,
+      [`${p}_f2`]: pr + rc ? (5 * pr * rc) / (4 * pr + rc) : 0,
+      [`${p}_tp`]: tp,
+      [`${p}_fp`]: fp,
+      [`${p}_fn`]: fn,
+    });
+  }
+  return row;
+}
+
+type QComment = {
+  index: number;
+  path: string | null;
+  start: number | null;
+  end: number | null;
+  body: string;
+};
+function qodoReview(
+  arm: string,
+  url: string,
+  comments: QComment[],
+  usd: number,
+  minutes: number,
+): Row {
+  return {
+    tool: TOOL(arm),
+    pr_url: url,
+    work_dir: QW(arm),
+    vendor_link_only: false,
+    source_url: null,
+    comments,
+    n_comments: comments.length,
+    cost_usd: usd,
+    minutes,
+    judge: JUDGE,
+    run_family: arm === O ? "qodo-final" : null,
+  };
+}
+
+/** One qodo_verdicts row per issue: [url, issue, comment matched or null, located_n5, located_same_file]. */
+function qodoVerdicts(arm: string, vs: [string, number, number | null, boolean, boolean][]): Row[] {
+  return vs.map(([url, i, c, n5, same]) => ({
+    tool: TOOL(arm),
+    pr_url: url,
+    work_dir: QW(arm),
+    judge: JUDGE,
+    issue_index: i,
+    matched: c !== null,
+    comment_index: c,
+    located_n5: n5,
+    located_same_file: same,
+    why: c !== null ? "same defect" : null,
+    run_family: arm === O ? "qodo-final" : null,
+  }));
+}
+
+function mqTables(data: string, g: string): void {
+  jsonl(
+    data,
+    "martian_goldens",
+    GOLDENS.map(([url, i, severity, category, audit_bucket]) => ({
+      pr_url: url,
+      golden_index: i,
+      comment: `golden ${url} ${i}`,
+      severity,
+      category,
+      audit_bucket,
+    })),
+  );
+  jsonl(
+    data,
+    "qodo_issues",
+    [
+      [Q1, 0, "a.py", 10, 12, null],
+      [Q1, 1, "b.py", 5, 5, "R1"],
+      [Q2, 0, "c.py", 1, 3, null],
+      [Q2, 1, "d.py", 20, 20, "R2"],
+    ].map(([url, i, file_path, start_line, end_line, rule_name]) => ({
+      pr_url: url,
+      issue_index: i,
+      file_path,
+      start_line,
+      end_line,
+      rule_name,
+      functional: rule_name === null,
+    })),
+  );
+  // s62's Martian scoring: m1 has three inline comments (two on Martian's page, one beyond it in this small
+  // fixture's terms) and its review body; m2 one inline comment and its body
+  const s62Reviews = [
+    martianReview(N, N, M1, 3, 4, {
+      comments: [
+        { path: "a.c", line: 1, body: "[blocker] x" + foot("P1", "pass-baseline") },
+        { path: "a.c", line: 2, body: "[question] y" },
+        { path: null, line: null, body: "review body" },
+      ],
+      beyond: [{ path: "a.c", line: 3, body: "[question] z" }],
+      posted: 3,
+      usd: 2,
+      minutes: 10,
+    }),
+    martianReview(N, N, M2, 2, 3, {
+      comments: [
+        { path: "a.c", line: 1, body: "[blocker] w" },
+        { path: null, line: null, body: "review body" },
+      ],
+      beyond: [],
+      posted: 1,
+      usd: 4,
+      minutes: 30,
+    }),
+    martianReview(N, "rejudged-x", M1, 1, 2),
+    martianReview(N, "rejudged-x", M2, 0, 1),
+  ];
+  jsonl(g, "martian_reviews", s62Reviews);
+  jsonl(g, "martian_verdicts", [
+    ...martianVerdicts(N, N, [`${M1}#0`, `${M2}#1`]),
+    ...martianVerdicts(N, "rejudged-x", [`${M1}#0`]),
+  ]);
+  jsonl(g, "martian_scores", [
+    martianScore(N, N, { core: [2, 5, 1], strict: [1, 5, 0], all: [2, 5, 2] }),
+    martianScore(N, "rejudged-x", { core: [1, 1, 2], strict: [1, 1, 0], all: [1, 1, 3] }),
+  ]);
+  jsonl(data, "martian_reviews", [
+    martianReview(O, TOOL(O), M1, 1, 2, {
+      comments: [
+        { path: "a.c", line: 1, body: "[nit] n1" },
+        { path: null, line: null, body: "review body" },
+      ],
+      beyond: [],
+      posted: 1,
+      usd: 1,
+      minutes: 20,
+    }),
+    martianReview(O, TOOL(O), M2, 1, 2, {
+      comments: [
+        { path: "a.c", line: 1, body: "[blocker] b1" },
+        { path: "a.c", line: 2, body: "[nit] n2" },
+        { path: null, line: null, body: "review body" },
+      ],
+      beyond: [],
+      posted: 2,
+      usd: 3,
+      minutes: 40,
+    }),
+    martianReview(O, "rejudged-x", M1, 2, 2),
+    martianReview(O, "rejudged-x", M2, 1, 2),
+    // another scoring's row: not final1's, never read
+    { ...martianReview(O, "quickreview", M1, 9, 9), work_dir: "other-martian50" },
+  ]);
+  jsonl(data, "martian_verdicts", [
+    ...martianVerdicts(O, TOOL(O), [`${M1}#0`, `${M1}#1`, `${M2}#0`]),
+    ...martianVerdicts(O, "rejudged-x", [`${M1}#0`, `${M2}#0`]),
+  ]);
+  jsonl(data, "martian_scores", [
+    martianScore(O, TOOL(O), { core: [2, 2, 1], strict: [1, 2, 0], all: [3, 2, 1] }),
+    martianScore(O, "rejudged-x", { core: [2, 3, 1], strict: [1, 3, 0], all: [2, 3, 2] }),
+  ]);
+  jsonl(g, "qodo_reviews", [
+    qodoReview(
+      N,
+      Q1,
+      [
+        {
+          index: 0,
+          path: "a.py",
+          start: 11,
+          end: 11,
+          body: "[blocker] f1" + foot("P1", "pass-baseline"),
+        },
+        {
+          index: 1,
+          path: "b.py",
+          start: 50,
+          end: 50,
+          body: "[question] r1" + foot("P2", "pass-style"),
+        },
+      ],
+      2,
+      6,
+    ),
+    qodoReview(
+      N,
+      Q2,
+      [
+        {
+          index: 0,
+          path: "x.py",
+          start: 1,
+          end: 1,
+          body: "[blocker] f2" + foot("P2", "pass-sweep"),
+        },
+        // a finding posted in the review body: no footer
+        { index: 1, path: null, start: null, end: null, body: "[question] in the body" },
+      ],
+      4,
+      8,
+    ),
+  ]);
+  jsonl(
+    g,
+    "qodo_verdicts",
+    qodoVerdicts(N, [
+      [Q1, 0, 0, true, true],
+      [Q1, 1, 1, false, true],
+      [Q2, 0, 0, false, false],
+      [Q2, 1, null, false, false],
+    ]),
+  );
+  jsonl(data, "qodo_reviews", [
+    qodoReview(
+      O,
+      Q1,
+      [
+        {
+          index: 0,
+          path: "a.py",
+          start: 10,
+          end: 10,
+          body: "[blocker] g1" + foot("P1", "pass-baseline"),
+        },
+        { index: 1, path: "b.py", start: 5, end: 5, body: "[nit] g2" + foot("P3", "pass-style") },
+      ],
+      1,
+      10,
+    ),
+    qodoReview(
+      O,
+      Q2,
+      [
+        { index: 0, path: "d.py", start: 20, end: 21, body: "[nit] g3" + foot("nit", "pass-lint") },
+        {
+          index: 1,
+          path: "c.py",
+          start: 2,
+          end: 2,
+          body: "[question] g4" + foot("P2", "pass-baseline"),
+        },
+        { index: 2, path: null, start: null, end: null, body: "[nit] in the body" },
+      ],
+      3,
+      20,
+    ),
+  ]);
+  jsonl(
+    data,
+    "qodo_verdicts",
+    qodoVerdicts(O, [
+      [Q1, 0, 0, true, true],
+      [Q1, 1, 1, true, true],
+      [Q2, 0, 1, true, true],
+      [Q2, 1, 0, true, true],
+    ]),
+  );
+}
+
 /**
  * A comparison on five PRs. Answer key: p1 D1 high and D2 low, p2 D1 medium, p3 D1 low, p5 D1 high (key
  * version 1; the others 2). s62 finds p1/D1, p3/D1, p5/D1 and p1/D2 in part (a finding in the review body);
@@ -289,6 +665,9 @@ function dataset(root: string): void {
       judge: "gpt-6.1-sol-high",
       runs: [`${N}-x`],
       prs: 5,
+      martian_run: `${N}-martian50`,
+      qodo_run: `${N}-qodo-pr100`,
+      mq_judge: "gpt-6.1-sol at reasoning effort low",
       note: "n",
     },
     {
@@ -310,28 +689,32 @@ function dataset(root: string): void {
       judge: "gpt-6-sol-high",
       runs: [`${O}-x`],
       prs: 5,
+      martian_run: `${O}-martian50`,
+      qodo_run: `${O}-qodo-pr100`,
+      mq_judge: "gpt-6.1-sol at reasoning effort low",
       note: "o",
     },
   ]);
-  jsonl(
-    g,
-    "cases",
-    PRS.map((p, i) => ({
+  jsonl(g, "cases", [
+    ...PRS.map((p, i) => ({
       arm_id: N,
       instance_id: p,
       set: "rest145",
       run: `${N}-rest145`,
+      pr_url: null,
       status: "ok",
       verdict: "COMMENT",
       usd: i + 1,
       minutes: 10 * (i + 1),
       n_posted: p === "p1" ? 2 : 1,
+      model_errors: null,
       judged: true,
       judge_input_tokens: 1,
       judge_output_tokens: 1,
       judge_cache_read_tokens: 0,
     })),
-  );
+    ...MQ_CASES,
+  ]);
   const review = (p: string, index: number | null, cid: string): Row => ({
     arm_id: N,
     instance_id: p,
@@ -446,6 +829,7 @@ function dataset(root: string): void {
     if (k === 0) js.push(judgment(0, "deepseek", 4, "error", line++));
   });
   jsonl(g, "elo_judgments", js);
+  mqTables(data, g);
   writeRefit(g);
   writeReadme(g);
 }
@@ -505,7 +889,312 @@ const POST_BASE = {
     gpt: { total: 10, ok: 10, not_ok: 0 },
     deepseek: { total: 20, ok: 15, not_ok: 5, set_aside: 1 },
   },
+  // Martian, by hand from the fixture (mqTables): Core leaves out the style golden, Strict also the doc_defect
+  // and perf ones; s62 2 found + 5 false positives, final1 2 + 2 on Core
+  martian: {
+    [N]: {
+      prs: 2,
+      core: { precision: 28.6, recall: 66.7, f1: 40.0, f2: 52.6, tp: 2, golden: 3, fp: 5, fn: 1 },
+      strict: {
+        precision: 16.7,
+        recall: 100.0,
+        f1: 28.6,
+        f2: 50.0,
+        tp: 1,
+        golden: 1,
+        fp: 5,
+        fn: 0,
+      },
+      all: { precision: 28.6, recall: 50.0, f1: 36.4, f2: 43.5, tp: 2, golden: 4, fp: 5, fn: 2 },
+    },
+    [O]: {
+      prs: 2,
+      core: { precision: 50.0, recall: 66.7, f1: 57.1, f2: 62.5, tp: 2, golden: 3, fp: 2, fn: 1 },
+      strict: {
+        precision: 33.3,
+        recall: 100.0,
+        f1: 50.0,
+        f2: 71.4,
+        tp: 1,
+        golden: 1,
+        fp: 2,
+        fn: 0,
+      },
+      all: { precision: 60.0, recall: 75.0, f1: 66.7, f2: 71.4, tp: 3, golden: 4, fp: 2, fn: 1 },
+    },
+    delta: {
+      core: { precision: -21.4, recall: 0, f1: -17.1, f2: -9.9, tp: 0, fp: 3 },
+      strict: { precision: -16.6, recall: 0, f1: -21.4, f2: -21.4, tp: 0, fp: 3 },
+      all: { precision: -31.4, recall: -25.0, f1: -30.3, f2: -27.9, tp: -1, fp: 3 },
+    },
+  },
+  martian_goldens: {
+    goldens: {
+      "category.bug": 1,
+      "category.doc_defect": 1,
+      "category.perf": 1,
+      "category.style": 1,
+      "severity.High": 1,
+      "severity.Low": 2,
+      "severity.Medium": 1,
+      "audit.disputed": 1,
+      "audit.notreal": 1,
+      "audit.real": 2,
+      total: 4,
+    },
+    [N]: {
+      "category.bug": 1,
+      "category.doc_defect": 0,
+      "category.perf": 1,
+      "category.style": 0,
+      "severity.High": 1,
+      "severity.Low": 1,
+      "severity.Medium": 0,
+      "audit.disputed": 1,
+      "audit.notreal": 0,
+      "audit.real": 1,
+    },
+    [O]: {
+      "category.bug": 1,
+      "category.doc_defect": 1,
+      "category.perf": 0,
+      "category.style": 1,
+      "severity.High": 1,
+      "severity.Low": 1,
+      "severity.Medium": 1,
+      "audit.disputed": 0,
+      "audit.notreal": 1,
+      "audit.real": 2,
+    },
+    paired: {
+      ...paired("category.bug", 1, 1, 0, 0, 0),
+      ...paired("category.doc_defect", 1, 0, 0, 1, 0),
+      ...paired("category.perf", 1, 0, 1, 0, 0),
+      ...paired("category.style", 1, 0, 0, 1, 0),
+      ...paired("category.total", 4, 1, 1, 2, 0),
+      ...paired("audit.disputed", 1, 0, 1, 0, 0),
+      ...paired("audit.notreal", 1, 0, 0, 1, 0),
+      ...paired("audit.real", 2, 1, 0, 1, 0),
+      ...paired("audit.total", 4, 1, 1, 2, 0),
+    },
+  },
+  martian_comments: {
+    [N]: {
+      "posted.total": 4,
+      "posted.mean": 2,
+      "posted.median": 2,
+      "ingested.total": 3,
+      "ingested.mean": 1.5,
+      "ingested.median": 1.5,
+      "extracted.total": 7,
+      "extracted.mean": 3.5,
+      "extracted.median": 3.5,
+      dropped: 1,
+      prs_over_page: 1,
+      prs_with_body: 2,
+      listed_match_posted: 1,
+      "tag.blocker": 2,
+      "tag.question": 2,
+    },
+    [O]: {
+      "posted.total": 3,
+      "posted.mean": 1.5,
+      "posted.median": 1.5,
+      "ingested.total": 3,
+      "ingested.mean": 1.5,
+      "ingested.median": 1.5,
+      "extracted.total": 4,
+      "extracted.mean": 2,
+      "extracted.median": 2,
+      dropped: 0,
+      prs_over_page: 0,
+      prs_with_body: 2,
+      listed_match_posted: 1,
+      "tag.nit": 2,
+      "tag.blocker": 1,
+    },
+  },
+  martian_rejudged: {
+    [N]: { "rejudged-x.tp": 1, "rejudged-x.fp": 1, "rejudged-x.fn": 2 },
+    [O]: { "rejudged-x.tp": 2, "rejudged-x.fp": 3, "rejudged-x.fn": 1 },
+    max_core_move: 2,
+  },
+  // Qodo: s62 1 / 2 / 3 matches under N=5 / same file / semantic only on 4 comments, final1 4 on 5 throughout
+  qodo: {
+    issues: { total: 4, functional: 2, rule: 2, prs: 2 },
+    [N]: {
+      prs: 2,
+      n5: qodo(4, 2, 25.0, 25.0, 25.0, 50.0, 0.0, 1, 1, 0),
+      same_file: qodo(4, 2, 50.0, 50.0, 50.0, 50.0, 50.0, 2, 1, 1),
+      semantic: qodo(4, 2, 75.0, 75.0, 75.0, 100.0, 50.0, 3, 2, 1),
+    },
+    [O]: {
+      prs: 2,
+      n5: qodo(5, 2.5, 80.0, 100.0, 88.9, 100.0, 100.0, 4, 2, 2),
+      same_file: qodo(5, 2.5, 80.0, 100.0, 88.9, 100.0, 100.0, 4, 2, 2),
+      semantic: qodo(5, 2.5, 80.0, 100.0, 88.9, 100.0, 100.0, 4, 2, 2),
+    },
+    delta: {
+      n5: qodoDelta(-55.0, -75.0, -63.9, -50.0, -100.0, -3, -1, -2),
+      same_file: qodoDelta(-30.0, -50.0, -38.9, -50.0, -50.0, -2, -1, -1),
+      semantic: qodoDelta(-5.0, -25.0, -13.9, 0.0, -50.0, -1, 0, -1),
+    },
+  },
+  qodo_comments: {
+    [N]: {
+      listed: 4,
+      prs_without: 0,
+      "tag.blocker": 2,
+      "tag.question": 2,
+      "severity.P1": 1,
+      "severity.P2": 2,
+      "severity.none": 1,
+    },
+    [O]: {
+      listed: 5,
+      prs_without: 0,
+      "tag.blocker": 1,
+      "tag.nit": 3,
+      "tag.question": 1,
+      "severity.P1": 1,
+      "severity.P3": 1,
+      "severity.nit": 1,
+      "severity.P2": 1,
+      "severity.none": 1,
+    },
+    [`${N}_n5_hits`]: {
+      "functional.tag.blocker": 1,
+      "functional.severity.P1": 1,
+      "functional.lens.pass-baseline": 1,
+    },
+    [`${O}_n5_hits`]: {
+      "functional.tag.blocker": 1,
+      "functional.tag.question": 1,
+      "functional.severity.P1": 1,
+      "functional.severity.P2": 1,
+      "functional.lens.pass-baseline": 2,
+      "rule.tag.nit": 2,
+      "rule.severity.P3": 1,
+      "rule.severity.nit": 1,
+      "rule.lens.pass-style": 1,
+      "rule.lens.pass-lint": 1,
+    },
+    paired: {
+      ...paired("n5.functional", 2, 1, 0, 1, 0),
+      ...paired("n5.rule", 2, 0, 0, 2, 0),
+      ...paired("n5.total", 4, 1, 0, 3, 0),
+      ...paired("semantic.functional", 2, 2, 0, 0, 0),
+      ...paired("semantic.rule", 2, 1, 0, 1, 0),
+      ...paired("semantic.total", 4, 3, 0, 1, 0),
+    },
+    drop: {
+      old_rule_hits_nit_tag: 2,
+      old_rule_hits_quiet: 2,
+      old_functional_hits_quiet: 0,
+      old_rule_hits_p0_p2: 0,
+      [`${N}_nits`]: 0,
+      [`${O}_nits`]: 3,
+    },
+  },
+  mq_cost: {
+    ...cost("martian", N, 2, 6, 3, 3, 20, 20),
+    ...cost("martian", O, 2, 4, 2, 2, 30, 30),
+    ...cost("qodo", N, 2, 6, 3, 3, 7, 7),
+    ...cost("qodo", O, 2, 4, 2, 2, 15, 15),
+    [`martian50.${N}.ok`]: 2,
+    [`martian50.${N}.rate_limited`]: 3,
+    [`qodo-pr100.${N}.ok`]: 1,
+    [`qodo-pr100.${N}.rate_limited`]: 2,
+  },
 };
+
+function paired(
+  k: string,
+  items: number,
+  both: number,
+  n: number,
+  o: number,
+  neither: number,
+): Row {
+  return {
+    [`${k}.items`]: items,
+    [`${k}.both`]: both,
+    [`${k}.${N}_only`]: n,
+    [`${k}.${O}_only`]: o,
+    [`${k}.neither`]: neither,
+  };
+}
+
+function qodo(
+  comments: number,
+  per_pr: number,
+  precision: number,
+  recall: number,
+  f1: number,
+  recall_functional: number,
+  recall_rule: number,
+  hits: number,
+  hits_functional: number,
+  hits_rule: number,
+): Row {
+  return {
+    comments,
+    per_pr,
+    precision,
+    recall,
+    f1,
+    recall_functional,
+    recall_rule,
+    hits,
+    hits_functional,
+    hits_rule,
+  };
+}
+
+/** s62 minus final1, of the rounded numbers; comments per PR 2 against 2.5 throughout. */
+function qodoDelta(
+  precision: number,
+  recall: number,
+  f1: number,
+  recall_functional: number,
+  recall_rule: number,
+  hits: number,
+  hits_functional: number,
+  hits_rule: number,
+): Row {
+  return {
+    per_pr: -0.5,
+    precision,
+    recall,
+    f1,
+    recall_functional,
+    recall_rule,
+    hits,
+    hits_functional,
+    hits_rule,
+  };
+}
+
+function cost(
+  b: string,
+  arm: string,
+  reviews: number,
+  total: number,
+  perPr: number,
+  median: number,
+  minMedian: number,
+  minMean: number,
+): Row {
+  const k = `${b}.${arm}`;
+  return {
+    [`${k}.reviews`]: reviews,
+    [`${k}.usd_total`]: total,
+    [`${k}.usd_per_pr`]: perPr,
+    [`${k}.usd_median`]: median,
+    [`${k}.minutes_median`]: minMedian,
+    [`${k}.minutes_mean`]: minMean,
+  };
+}
 
 /**
  * The Elo group from the games written out by hand and elo_rating.table directly: the GPT judge's ten
@@ -583,9 +1272,10 @@ function failing(root: string): string[] {
 const C = {
   manifest:
     "every file is the committed manifest's (bench/aacr/hf/gpt62-sol.sha256), none missing, extra or differing",
-  columns: "every table has exactly its listed columns",
+  columns:
+    "every table has exactly its listed columns, and the Martian and Qodo tables those of the dataset's tables of the same names",
   whole:
-    "the rows are whole: s62 reviewed and was judged on final1's pull requests in the dataset (arm quickreview-frozen), one verdict on every answer-key defect at its key version, every judged comment a posted one (inline or in the review body), and every Elo judgment of a unit of its plan between s62 and final1, in its file's order",
+    "the rows are whole: s62 reviewed and was judged on final1's pull requests in the dataset (arm quickreview-frozen), one verdict on every answer-key defect at its key version, every judged comment a posted one (inline or in the review body), and every Elo judgment of a unit of its plan between s62 and final1, in its file's order; s62's Martian and Qodo scorings are of final1's pull requests there, one verdict on every golden or issue, Martian scores that recount, Qodo matches one to one and located as qodo_judge.located gives, and one case per review with its cost",
   readme: "README.md is the README its tables give (gpt62_sol.readme of numbers())",
   refit:
     "elo_ratings, elo_gaps and elo_judgments.used_in_ratings are the refit of elo_judgments (each judge over every plan it judged, and both pooled with each judge weighted the same)",
@@ -603,7 +1293,21 @@ const C = {
     "the pairs each judge judged in both orders: the same winner both times, flipped, or a tie in one",
   agreement: "the units both judges answered: the same winner, opposite winners, one tie",
   attempts: "every judgment attempt by judge and status, the set-aside first attempts included",
+  martian:
+    "Martian's scores of each setup per profile (Core, Strict, All), recounted from the verdicts and the reviews' false positives (martian_scores.counts), and their difference",
+  martian_goldens:
+    "the goldens each setup found by Martian's category and severity and by the audit bucket, and the goldens found by both setups, one or neither",
+  martian_comments:
+    "each setup's inline comments posted, the first page Martian read of them, its extracted candidates and the comments' tags",
+  martian_rejudged:
+    "the re-judged comparators' Core counts in each Martian scoring, and the most one moved",
+  qodo: "Qodo's issues, and each setup's comments, precision, recall, F1 and recall by issue kind under each location rule (claim_metrics.Qodo), and their difference",
+  qodo_comments:
+    "the judged comments' tags and footer severities and those of the N=5 hits, the issues found by both setups, one or neither, and the rule-violation drop",
+  mq_cost:
+    "Martian and Qodo: list-price dollars and minutes per review, and s62's reviews that finished ok and its rate-limit errors",
 };
+const CHECKS = 22;
 
 describe("gpt62_sol: the manifest", () => {
   // MUTATION: in gpt62_sol.manifest_problems, return no "extra" list — this fails
@@ -643,11 +1347,11 @@ except SystemExit as e:
   it("fails every check when the folder is not in the dataset (fails closed)", () => {
     const gone = variant("gone", (g) => rmSync(g, { recursive: true }));
     const cs = checks(gone);
-    expect(cs).toHaveLength(15);
+    expect(cs).toHaveLength(CHECKS);
     expect(cs.filter((c) => c.ok)).toEqual([]);
   });
 
-  it("the committed manifest is the release folder's: its README and the ten tables", () => {
+  it("the committed manifest is the release folder's: its README and the fifteen tables", () => {
     const got = py(
       "import gpt62_sol as G\nprint(json.dumps(sorted(G.read_manifest())))",
     ) as string[];
@@ -659,9 +1363,9 @@ except SystemExit as e:
 });
 
 describe("gpt62_sol: validation.json's checks", () => {
-  it("passes all fifteen on a whole folder that is the manifest's, recomputing every number", () => {
+  it("passes all twenty-two on a whole folder that is the manifest's, recomputing every number", () => {
     const cs = checks(BASE);
-    expect(cs).toHaveLength(15);
+    expect(cs).toHaveLength(CHECKS);
     expect(cs.filter((c) => !c.ok)).toEqual([]);
     expect(cs.find((c) => c.check.endsWith(C.attempts))!.got).toEqual(POST.attempts);
   });
@@ -706,6 +1410,61 @@ describe("gpt62_sol: validation.json's checks", () => {
     expect(post.elo_games.deepseek.prs_never).toBe(5);
     expect(post.position.gpt.b_pct).toBe(57);
     expect(post.agreement).toEqual({ units: 354, same: 219, opposite: 120, one_tie: 15 });
+    // Martian and Qodo: the analysis's numbers file
+    expect(post.martian[N].core).toEqual({
+      precision: 12.9,
+      recall: 62,
+      f1: 21.3,
+      f2: 35.2,
+      tp: 98,
+      golden: 158,
+      fp: 664,
+      fn: 60,
+    });
+    expect(post.martian[O].core).toEqual({
+      precision: 16.2,
+      recall: 65.8,
+      f1: 26.1,
+      f2: 40.9,
+      tp: 104,
+      golden: 158,
+      fp: 536,
+      fn: 54,
+    });
+    expect(post.martian_rejudged.max_core_move).toBe(4);
+    expect(post.qodo.issues).toEqual({ total: 580, functional: 309, rule: 271, prs: 100 });
+    expect(post.qodo[N].n5).toMatchObject({
+      comments: 729,
+      per_pr: 7.29,
+      precision: 28,
+      recall: 35.2,
+      f1: 31.2,
+      recall_functional: 53.1,
+      recall_rule: 14.8,
+    });
+    expect(post.qodo[O].n5).toMatchObject({
+      comments: 706,
+      per_pr: 7.06,
+      precision: 37.3,
+      recall: 45.3,
+      f1: 40.9,
+      recall_functional: 52.1,
+      recall_rule: 37.6,
+      hits_rule: 102,
+    });
+    expect(post.qodo_comments.drop).toMatchObject({
+      old_rule_hits_nit_tag: 70,
+      old_rule_hits_quiet: 71,
+      old_rule_hits_p0_p2: 31,
+    });
+    expect(post.mq_cost).toMatchObject({
+      [`martian.${N}.usd_per_pr`]: 5.4,
+      [`martian.${O}.usd_per_pr`]: 2.84,
+      [`qodo.${N}.usd_per_pr`]: 3.55,
+      [`qodo.${O}.usd_per_pr`]: 2.48,
+      [`martian50.${N}.rate_limited`]: 34,
+      [`qodo-pr100.${N}.rate_limited`]: 49,
+    });
     expect(Object.keys(post).sort()).toEqual(Object.keys(POST).sort());
   });
 
@@ -843,6 +1602,94 @@ print(json.dumps(G._i(G._signed(R.table(["s62", "final1"], g, reps=G.REPS))[0]))
     );
     expect(failing(cost)).toEqual([C.cost]);
   });
+
+  // MUTATION: in gpt62_sol.mq_rows, read final1's rows from the folder (src = t[name]) — this fails
+  // MUTATION: in gpt62_sol.mq_whole_problems, skip the stored martian_scores' recount — this fails
+  it("recounts Martian from s62's verdicts here and final1's in the dataset, and fails a stored score that does not recount", () => {
+    const mine = variant("martian-s62", (g) =>
+      edit(g, "martian_verdicts", (r) =>
+        r.tool === N && r.pr_url === M2 && r.golden_index === 1 ? { ...r, matched: false } : r,
+      ),
+    );
+    expect(failing(mine)).toEqual([C.whole, C.martian, C.martian_goldens]);
+    const theirs = variant("martian-final1", (g) =>
+      edit(join(dirname(g), "data"), "martian_verdicts", (r) =>
+        r.tool === "quickreview-frozen" && r.pr_url === M2 && r.golden_index === 0
+          ? { ...r, matched: false }
+          : r,
+      ),
+    );
+    expect(failing(theirs)).toEqual([C.martian, C.martian_goldens]);
+    // the dataset's rows of another scoring are never final1's
+    const other = variant("martian-other", (g) =>
+      edit(join(dirname(g), "data"), "martian_reviews", (r) =>
+        r.work_dir === "other-martian50" ? { ...r, tool: "quickreview-frozen" } : r,
+      ),
+    );
+    expect(failing(other)).toEqual([]);
+  });
+
+  // MUTATION: in gpt62_sol.mq_whole_problems, skip the location flags' comparison with qodo_judge.located — this fails
+  // MUTATION: in gpt62_sol.qodo_numbers, count only P3 as a class the quiet default does not post (drop "nit") — this fails
+  it("recounts Qodo under each location rule, checks the flags against the comment, and reads the drop from footers", () => {
+    // final1's two rule-violation matches came from a P3 and a nit footer: both are the quiet class
+    expect(checks(BASE).find((c) => c.check.endsWith(C.qodo_comments))!.got).toEqual(
+      POST.qodo_comments,
+    );
+    const flag = variant("qodo-flag", (g) =>
+      edit(g, "qodo_verdicts", (r) =>
+        r.pr_url === Q1 && r.issue_index === 1 ? { ...r, located_n5: true } : r,
+      ),
+    );
+    expect(failing(flag)).toEqual([C.whole, C.qodo, C.qodo_comments]);
+    // final1's nit-footed rule-violation match rated P2 instead: one fewer from the quiet class
+    const footer = variant("qodo-footer", (g) =>
+      edit(join(dirname(g), "data"), "qodo_reviews", (r) =>
+        r.pr_url === Q2
+          ? {
+              ...r,
+              comments: (r.comments as QComment[]).map((c) =>
+                c.index === 0 ? { ...c, body: c.body.replace("_nit · ", "_P2 · ") } : c,
+              ),
+            }
+          : r,
+      ),
+    );
+    expect(failing(footer)).toEqual([C.qodo_comments]);
+  });
+
+  // MUTATION: in gpt62_sol.checks, skip the dataset's columns of the Martian and Qodo tables — this fails
+  it("fails a Martian or Qodo table whose columns are not the dataset's table's", () => {
+    const theirs = variant("columns-dataset", (g) =>
+      edit(join(dirname(g), "data"), "qodo_verdicts", (r) => ({ ...r, judge_effort: "low" })),
+    );
+    expect(failing(theirs)).toEqual([C.columns]);
+    const mine = variant("columns-mine", (g) =>
+      edit(g, "martian_scores", (r) => ({ ...r, note: "x" })),
+    );
+    expect(failing(mine)).toEqual([C.columns]);
+  });
+
+  // MUTATION: in gpt62_sol.mq_whole_problems, skip the cases' cost and minutes against their review's — this fails
+  // MUTATION: in gpt62_sol.mq_whole_problems, accept a row of another work dir — this fails
+  it("fails s62's Martian and Qodo cases that are not its reviews, and rows of another scoring", () => {
+    const cost = variant("mq-case-cost", (g) =>
+      edit(g, "cases", (r) => (r.pr_url === Q1 ? { ...r, usd: 9 } : r)),
+    );
+    expect(failing(cost)).toEqual([C.whole]);
+    const stray = variant("mq-stray", (g) =>
+      edit(g, "qodo_reviews", (r) => (r.pr_url === Q2 ? { ...r, work_dir: QW(O) } : r)),
+    );
+    expect(failing(stray)).toContain(C.whole);
+    const limits = variant("mq-limits", (g) =>
+      edit(g, "cases", (r) =>
+        r.pr_url === M2
+          ? { ...r, model_errors: { rate_limited: 1, overloaded: 0, usage_limit: 0, other: 0 } }
+          : r,
+      ),
+    );
+    expect(failing(limits)).toEqual([C.mq_cost]);
+  });
 });
 
 describe("gpt62_sol: the claims verifier", () => {
@@ -896,14 +1743,14 @@ print(json.dumps([found["gpt62_sol"], [[c["needs"], c["ok"]] for c in V.consiste
     ) as [string, [string[], boolean][]];
     expect(got[0]).toBe(join(root, "gpt62_sol"));
     // the fixture is not the committed manifest's, and its numbers are not the release's (POST): the
-    // manifest check and the ten number checks fail, the columns, the rows, the README and the refit pass
+    // manifest check and the seventeen number checks fail, the columns, the rows, the README and the refit pass
     expect(got[1].map(([, ok]) => ok)).toEqual([
       false,
       true,
       true,
       true,
       true,
-      ...Array(10).fill(false),
+      ...Array(17).fill(false),
     ]);
   });
 
@@ -1021,6 +1868,95 @@ print(json.dumps([v(G.file_rows(sys.argv[1])), v([])]))`,
         "tables, 2 on its `second_judges/` folder, 4 on its `state_machines/` folder and 5 on its " +
         "`gpt62_sol/` folder), and 1 the slim bundle's.",
     );
+  });
+});
+
+describe("gpt62_sol: Martian and Qodo in the export and the build", () => {
+  // MUTATION: in hf_export.build_martian, drop the GS.MQ_WORK_DIRS skip — this fails
+  // MUTATION: in hf_export.build_qodo, drop the GS.MQ_WORK_DIRS skip — this fails
+  // MUTATION: in hf_export.mq_run_checks, count no row (got = 0) — this fails
+  // MUTATION: in hf_export.validate_release, drop `checks += mq_run_checks(t)` — this fails
+  it("keeps s62's Martian and Qodo scorings out of the dataset's own tables, and its checks fail them there", () => {
+    const runs = join(tmp, "mq-runs");
+    const got = py(
+      `import hf_export as h, hashlib, os, martian_real
+martian_real.buckets = lambda published: {}  # no goldens: the scoring dirs are what is under test
+runs = sys.argv[1]
+os.makedirs(runs + "/final1-martian50.martian", exist_ok=True)
+open(runs + "/final1-martian50.martian/published-benchmark_data.json", "w").write("{}")
+qset = json.load(open(h.HERE + "/sets/qodo-pr100.json"))["cases"]
+gt = runs + "/gt.jsonl"
+open(gt, "w").write("".join(json.dumps({"pr_url_to_review": c["pr_url"], "issues": []}) + "\\n" for c in qset))
+h.QODO_GT_SHA256 = hashlib.sha256(open(gt, "rb").read()).hexdigest()
+open(runs + "/tools.json", "w").write("[]")
+x = h.Exporter(types.SimpleNamespace(runs_dir=runs, qodo_gt=gt, qodo_tools=runs + "/tools.json"))
+x.all_runs = lambda: ["s62-martian50.martian", "s62-qodo-pr100.qodo", "other-martian50.martian", "other-qodo-pr100.qodo"]
+seen = []
+x._martian_dir = lambda wd, *a, **k: seen.append(wd)
+x._qodo_dir = lambda qdir, wd, *a, **k: seen.append(wd)
+x.build_martian()
+x.build_qodo()
+bad = {"martian_reviews": [{"work_dir": "s62-martian50"}], "qodo_verdicts": [{"work_dir": "s62-qodo-pr100"}] * 2,
+       "martian_scores": [{"work_dir": "final1-martian50"}]}
+src = open(h.__file__).read()
+body = src[src.index("def validate_release("):src.index("\\ndef ", src.index("def validate_release(") + 1)]
+print(json.dumps([[w for w in seen if "s62" in w or "other" in w], [c["ok"] for c in h.mq_run_checks({})],
+                  [c["got"] for c in h.mq_run_checks(bad)], "mq_run_checks(t)" in body]))`,
+      runs,
+    );
+    expect(got).toEqual([
+      ["other-martian50.martian", "other-qodo-pr100"],
+      [true, true, true, true, true],
+      [1, 0, 0, 0, 2],
+      true,
+    ]);
+  });
+
+  // MUTATION: in gpt62_sol._mq_judge, skip the served model's comparison — this fails
+  // MUTATION: in gpt62_sol._mq_judge, skip JUDGE.txt's comparison — this fails
+  it("names the Martian and Qodo judge only when every answered call was it, at its effort", () => {
+    const judge = (name: string, txt: string, calls: Row[]) => {
+      const d = join(tmp, "mq-judge", name, "judge");
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "JUDGE.txt"), txt);
+      jsonl(d, "judge", calls);
+      return py(
+        `import gpt62_sol as G
+try:
+    print(json.dumps(G._mq_judge(sys.argv[1])))
+except SystemExit as e:
+    print(json.dumps(str(e)))`,
+        dirname(d),
+      ) as string;
+    };
+    const txt = "gpt-6.1-sol, reasoning effort low, via bench/aacr/ext/ext_judge.py\n";
+    const call = (served: string | null, status = 200, effort = "low"): Row => ({
+      asked_model: "gpt-6.1-sol",
+      served_model: served,
+      effort,
+      status,
+    });
+    expect(judge("ok", txt, [call("gpt-6.1-sol"), call(null, 502), { probe: true }])).toBe(
+      "gpt-6.1-sol at reasoning effort low",
+    );
+    expect(judge("served", txt, [call("gpt-6.1-sol"), call("gpt-6-sol")])).toMatch(
+      /was served gpt-6-sol/,
+    );
+    expect(judge("effort", txt, [call("gpt-6.1-sol", 200, "high")])).toMatch(/at high/);
+    expect(judge("named", "gpt-6.1-sol, reasoning effort high\n", [call("gpt-6.1-sol")])).toMatch(
+      /JUDGE.txt names/,
+    );
+    expect(judge("none", txt, [call(null, 502)])).toMatch(/no answered call/);
+  });
+
+  it("states the Martian and Qodo numbers in the README, with final1's from the dataset", () => {
+    const md = readFileSync(join(BASE, "gpt62_sol", "README.md"), "utf8");
+    expect(md).toContain("## Martian and Qodo");
+    expect(md).toContain(
+      "| Core precision / recall / F1 / F2 | 28.6 / 66.7 / 40.0 / 52.6 | 50.0 / 66.7 / 57.1 / 62.5 |",
+    );
+    expect(md).toContain("| N=5 recall on rule violations (found, of 2) | 0.0 (0) | 100.0 (2) |");
+    expect(md).toContain("N=5, 2 came from comments whose footer gives P3 or nit");
   });
 });
 

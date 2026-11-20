@@ -48,7 +48,8 @@ What it writes (no model call, nothing uploaded; the run dirs are only read):
                          fails without it.
   gpt62_sol/             with --gpt62-sol: the GPT-6.2 Sol comparison (s62's posted
                          comments and defect-judge verdicts, the four pairwise Elo
-                         plans' every judgment attempt and their refit ratings;
+                         plans' every judgment attempt and their refit ratings,
+                         s62's Martian and Qodo scorings in the configs' columns;
                          written by recompute/gpt62_sol.py build), copied as is after
                          every file is checked against bench/aacr/hf/gpt62-sol.sha256
                          (refused otherwise); no config reads it. validation.json
@@ -1258,7 +1259,8 @@ class Exporter:
             self._martian_dir(work + ".martian", rename, goldens, set_by_url, reviews, verdicts, scores, paper=True)
         done = {w + ".martian" for w, _ in MARTIAN_PAPER}
         for wd in self.all_runs():
-            if ".martian" in wd and wd not in done:
+            # the GPT-6.2 Sol comparison's scoring ships in gpt62_sol/ alone (mq_run_checks holds it)
+            if ".martian" in wd and wd not in done and work_dir_name(wd, ".martian") not in GS.MQ_WORK_DIRS:
                 self._martian_dir(wd, {}, goldens, set_by_url, reviews, verdicts, scores, paper=False)
         self.tables["martian_prs"], self.tables["martian_goldens"] = prs, gold
         self.tables["martian_reviews"], self.tables["martian_verdicts"] = reviews, verdicts
@@ -1394,7 +1396,7 @@ class Exporter:
             self._qodo_dir(self.rd(wdname + ".qodo"), wdname, rename, run, gt, by_url, forks, reviews, verdicts, True)
         done = {w + ".qodo" for w, _, _ in QODO_PAPER}
         for wd in self.all_runs():
-            if ".qodo" in wd and wd not in done:
+            if ".qodo" in wd and wd not in done and work_dir_name(wd, ".qodo") not in GS.MQ_WORK_DIRS:
                 self._qodo_dir(self.rd(wd), work_dir_name(wd, ".qodo"), {}, wd.split(".qodo")[0], gt, by_url, forks,
                                reviews, verdicts, False)
         self.tables["qodo_prs"], self.tables["qodo_issues"] = prs, issues
@@ -2201,6 +2203,15 @@ def elo_plan_checks(t: dict[str, list[dict]]) -> list[dict]:
             for got in [sum(1 for r in t.get(n) or [] if r.get("plan") in GS.PLANS)]]
 
 
+def mq_run_checks(t: dict[str, list[dict]]) -> list[dict]:
+    """The GPT-6.2 Sol comparison's Martian and Qodo scorings (gpt62_sol.MQ_WORK_DIRS) ship in gpt62_sol/ alone:
+    no row of the dataset's own Martian and Qodo tables is of one (build_martian and build_qodo skip them)."""
+    return [{"check": f"{n}: rows of the GPT-6.2 Sol comparison's Martian or Qodo scoring (gpt62_sol/'s alone)",
+             "got": got, "want": 0, "ok": got == 0}
+            for n in GS.MQ_TABLES
+            for got in [sum(1 for r in t.get(n) or [] if r.get("work_dir") in GS.MQ_WORK_DIRS)]]
+
+
 def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_refits: dict, elo_dir: str | None,
                      commits: "tuple[dict, dict, dict] | None" = None) -> list[dict]:
     """The checks of what this release adds: the open-model rows, the Elo
@@ -2229,6 +2240,7 @@ def validate_release(t: dict[str, list[dict]], cat: "RC.Catalogue | None", elo_r
     checks += key_data_checks(t)
     checks += rejudge_column_checks(t)
     checks += elo_plan_checks(t)
+    checks += mq_run_checks(t)
     # the card's statements about these columns: every Martian and Qodo PR names its repository's
     # licence, and every Martian golden its half (the set files fill the audit's gaps)
     for n in ("martian_prs", "qodo_prs"):
