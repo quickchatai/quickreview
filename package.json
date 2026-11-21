@@ -1,6 +1,6 @@
 {
   "name": "@quickchatai/quickreview",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "private": false,
   "//private": "The root is the published `qcr` CLI: the whole app (TUI, daemon, companion, every verb), installed with npm, pnpm or bun. It depends on the pi plugin (packages/pi-plugin) at its exact version and on pi at the exact pins below. Publishing is a release step of its own, never part of a build.",
   "description": "An open-source AI code reviewer for your coding agent, your terminal and your GitHub pull requests.",
@@ -123,7 +123,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "1.5.2",
     "@earendil-works/pi-coding-agent": "1.5.2",
-    "@quickchatai/pi-quickreview": "1.7.0",
+    "@quickchatai/pi-quickreview": "1.7.1",
     "smol-toml": "1.9.1"
   },
   "//optionalDependencies": "better-sqlite3 is the state store's driver (src/state.ts), a native module: optional, so an install where it cannot build still installs, and the verbs that never open the store (src/sqlitehint.ts SQLITE_FREE_VERBS) still run. Every other verb prints the SQLite hint.",
