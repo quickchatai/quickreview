@@ -2748,6 +2748,18 @@ export class StateStore {
     );
   }
 
+  /** Did reconcile queue this head under `[github] trigger = "all"`? */
+  autoTriggeredAt(pr: number, head: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM events WHERE kind = 'auto_triggered' AND pr = ?
+             AND json_extract(payload, '$.head_sha') = ? LIMIT 1`,
+        )
+        .get(pr, head) !== undefined
+    );
+  }
+
   roundsFor(pr: number): RoundRow[] {
     return this.db
       .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")

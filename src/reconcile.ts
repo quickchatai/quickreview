@@ -572,8 +572,39 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       });
     }
 
+    // Not "all" (or no longer): a PR still queued only because "all" queued
+    // it at this head, with no label or team request now, owes no round.
+    // A human ask, any other system reason and a running round stay; so does
+    // a requeue after a round settled at this head (a CI-green retry, a
+    // staleness recheck), since "all"'s own round is then already spent.
+    if (cfg.github.trigger !== "all") {
+      for (const row of store.allPrs()) {
+        if (row.state !== "queued" || row.trigger_provenance !== "system") continue;
+        if (grouped.has(row.number) || !store.autoTriggeredAt(row.number, row.head_sha)) continue;
+        if (store.lastVerdictHead(row.number) === row.head_sha) continue;
+        store.db
+          .transaction(() =>
+            applyEvent(
+              store,
+              row.number,
+              { type: "trigger_withdrawn" },
+              {},
+              {
+                botLogin,
+                now,
+                reason: "reconcile:trigger-not-all",
+              },
+            ),
+          )
+          .immediate();
+        deps.log?.(
+          `reconcile: withdrew #${row.number} — queued only by trigger = "all", which is off`,
+        );
+      }
+      return;
+    }
+
     // `[github] trigger = "all"`: every open, non-draft, human PR, once per head.
-    if (cfg.github.trigger !== "all") return;
     for (const ref of open.values()) {
       const local = store.getPr(ref.number);
       if (ref.draft || grouped.has(ref.number) || isBotAuthor(ref.author, botLogin)) continue;

@@ -43,6 +43,11 @@ const TABLE: Array<[SmEvent, PrLifecycleState[]]> = [
   ],
   [{ type: "closed" }, ["closed", "closed", "closed", "closed", "closed"]],
   [{ type: "reopened" }, ["tracked", "queued", "reviewing", "awaiting_author", "tracked"]],
+  [
+    { type: "trigger_withdrawn" },
+    // Only a queued round is dropped; a running one finishes.
+    ["tracked", "tracked", "reviewing", "awaiting_author", "closed"],
+  ],
 ];
 
 describe("transition table", () => {
@@ -355,6 +360,19 @@ describe("trigger provenance", () => {
     applyEvent(store, 24, { type: "trigger", source: "label" }, { author: "alice" }, {});
     applyEvent(store, 24, { type: "dispatched" }, {}, {});
     expect(store.getPr(24)!.trigger_provenance).toBeNull();
+    store.close();
+  });
+
+  it("a withdrawn trigger leaves no trigger residue", () => {
+    // MUTATION: drop the trigger_withdrawn clause from consumesTrigger — this fails.
+    const store = open();
+    applyEvent(store, 26, { type: "trigger", source: "reconcile" }, { author: "alice" }, {});
+    applyEvent(store, 26, { type: "trigger_withdrawn" }, {}, {});
+    expect(store.getPr(26)).toMatchObject({
+      state: "tracked",
+      trigger_ts: null,
+      trigger_provenance: null,
+    });
     store.close();
   });
 
