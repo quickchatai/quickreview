@@ -1662,6 +1662,42 @@ describe('[github] trigger = "all"', () => {
     expect(store.getPr(13)!.state).toBe("queued");
   });
 
+  it('label mode keeps system work "all" never queued at this head', async () => {
+    // MUTATION: drop the !store.autoTriggeredAt skip in the withdrawal loop — this fails.
+    seed(16, "tracked");
+    applyEvent(
+      store,
+      16,
+      { type: "trigger", source: "reconcile" },
+      {},
+      { reason: "ci-green:withheld-approval-retry" },
+    );
+    expect(store.getPr(16)).toMatchObject({ state: "queued", trigger_provenance: "system" });
+    gh.open = [ref(16)];
+    await run(cfg);
+    expect(store.getPr(16)!.state).toBe("queued");
+  });
+
+  it('switching back to "label" keeps a system requeue after a round settled at the adopted head', async () => {
+    // MUTATION: drop the lastVerdictHead skip in the withdrawal loop — this fails.
+    gh.open = [ref(15)];
+    await run();
+    store.logEvent("verdict_applied", 15, {
+      head_sha: store.getPr(15)!.head_sha,
+      verdict: "COMMENT",
+    });
+    store.upsertPr({ ...store.getPr(15)!, state: "tracked" });
+    applyEvent(
+      store,
+      15,
+      { type: "trigger", source: "reconcile" },
+      {},
+      { reason: "ci-green:withheld-approval-retry" },
+    );
+    await run(cfg);
+    expect(store.getPr(15)).toMatchObject({ state: "queued", trigger_provenance: "system" });
+  });
+
   it("label mode (the default) is unchanged: an unlabelled PR is not adopted", async () => {
     // MUTATION: make the branch run for trigger "label" — this fails.
     expect(cfg.github.trigger).toBe("label");
