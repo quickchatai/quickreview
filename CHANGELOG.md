@@ -1,5 +1,12 @@
 # Release notes
 
+## Unreleased
+
+- Switching `[github] trigger` from `"all"` back to `"label"` drops the
+  rounds `"all"` queued that have not started, so the reviewer no longer
+  reviews pull requests nobody asked for. A labelled or team-requested pull
+  request keeps its round, and a round already running finishes.
+
 ## 1.7.0
 
 Two changes for a host that runs the reviewer for someone else, such as

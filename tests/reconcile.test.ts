@@ -1625,6 +1625,43 @@ describe('[github] trigger = "all"', () => {
     expect(store.triggerLevel(10, "label")).toBe(false);
   });
 
+  it('switching back to "label" withdraws a PR that "all" queued and nobody asked for', async () => {
+    // MUTATION: delete the withdrawal loop in the trigger !== "all" branch — this fails.
+    gh.open = [ref(11)];
+    await run();
+    expect(store.getPr(11)).toMatchObject({ state: "queued", trigger_provenance: "system" });
+    await run(cfg);
+    expect(store.getPr(11)).toMatchObject({
+      state: "tracked",
+      trigger_ts: null,
+      trigger_provenance: null,
+    });
+    expect(store.allPrs().filter((p) => p.state === "queued")).toEqual([]);
+  });
+
+  it('switching back to "label" keeps a PR that "all" queued and now carries the label', async () => {
+    // A paused PR's fresh label is not turned into a human trigger yet, so
+    // only the presence check keeps it queued.
+    // MUTATION: drop the grouped.has skip in the withdrawal loop — this fails.
+    gh.open = [ref(12), ref(14)];
+    await run();
+    store.pausePr(14, { issuer: "operator", expires_at: null }, "test");
+    gh.labelTriggered = [item(12), item(14)];
+    await run(cfg);
+    expect(store.getPr(12)!.state).toBe("queued");
+    expect(store.getPr(14)).toMatchObject({ state: "queued", trigger_provenance: "system" });
+  });
+
+  it('switching back to "label" keeps a queued human ask', async () => {
+    // MUTATION: drop the trigger_provenance !== "system" skip in the withdrawal loop — this fails.
+    gh.open = [ref(13)];
+    await run();
+    applyEvent(store, 13, { type: "trigger", source: "manual" }, {});
+    expect(store.getPr(13)!.trigger_provenance).toBe("human");
+    await run(cfg);
+    expect(store.getPr(13)!.state).toBe("queued");
+  });
+
   it("label mode (the default) is unchanged: an unlabelled PR is not adopted", async () => {
     // MUTATION: make the branch run for trigger "label" — this fails.
     expect(cfg.github.trigger).toBe("label");

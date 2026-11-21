@@ -155,6 +155,7 @@ describe("[T3] union members have producers", () => {
       { type: "human_requested" },
       { type: "closed" },
       { type: "reopened" },
+      { type: "trigger_withdrawn" },
     ];
     // The event list must cover the declared event union, or the BFS explores
     // a smaller graph than the one that ships and the reachability answer is

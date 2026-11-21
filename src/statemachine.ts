@@ -41,6 +41,7 @@
 // │ human_requested │ tracked   queued   reviewing  aw_author  closed │  (noted, never a handover — AI keeps working)
 // │ closed          │ closed    closed   closed     closed     closed │
 // │ reopened        │ tracked   queued   reviewing  aw_author  tracked│
+// │ trig_withdrawn⁵ │ tracked   tracked  reviewing  aw_author  closed │
 // └─────────────────┴────────────────────────────────────────────────┘
 // ¹ a trigger arriving mid-round is not lost: the round in flight covers the
 //   head it started on, a newer head is recorded as durable successor work
@@ -53,6 +54,10 @@
 //   implies (REQUEST_CHANGES ⇒ awaiting_author, anything else ⇒ tracked),
 //   carried on the event by the caller. No park: the AI keeps driving; the
 //   anomaly + self-requeue cap are the safety net.
+// ⁵ `trigger_withdrawn` drops a queued round nobody asked for: reconcile sends
+//   it when `[github] trigger` is no longer "all" and a PR is still queued
+//   only because "all" queued it. It clears the trigger like a settle does; a
+//   round in flight is not touched.
 //
 // The never-retract-an-approval invariant is structural: no event and no
 // transition in this module touches an existing review (spec §8).
@@ -78,7 +83,8 @@ export type SmEventType =
   | "synchronize"
   | "human_requested"
   | "closed"
-  | "reopened";
+  | "reopened"
+  | "trigger_withdrawn";
 
 export type SmEvent =
   | { type: "track" }
@@ -96,7 +102,10 @@ export type SmEvent =
    * never a handover, never a park, no GitHub reviewer requested. */
   | { type: "human_requested" }
   | { type: "closed" }
-  | { type: "reopened" };
+  | { type: "reopened" }
+  /** The queued round's only reason is gone (reconcile, `trigger` no longer
+   * "all"): queued ⇒ tracked, every other state unchanged. */
+  | { type: "trigger_withdrawn" };
 
 /** Who asked for the round a trigger queues: a fresh label / team re-review
  * request / manual trigger is a HUMAN ask; a reconcile re-derivation, CI-green
@@ -150,6 +159,9 @@ export function transition(current: PrLifecycleState, event: SmEvent): PrLifecyc
 
     case "human_requested":
       return current;
+
+    case "trigger_withdrawn":
+      return current === "queued" ? "tracked" : current;
   }
 }
 
@@ -230,7 +242,8 @@ function applyEventTransaction(
 
   // The events that consume the trigger: `dispatched` starts its round, and a
   // `verdict` or `round_overdue` settles one — or settles a trigger that never
-  // dispatched (the no-new-evidence skip). Each clears `stale_recheck`,
+  // dispatched (the no-new-evidence skip); `trigger_withdrawn` drops a queued
+  // one that never dispatches. Each clears `stale_recheck`,
   // `trigger_ts` and the provenance together. A settled PR carries no trigger
   // residue: a stale_recheck flag or trigger_ts surviving in
   // tracked/awaiting_author would misclassify the NEXT explicit re-review as a
@@ -240,7 +253,8 @@ function applyEventTransaction(
     event.type === "dispatched" ||
     event.type === "verdict" ||
     event.type === "round_overdue" ||
-    event.type === "closed";
+    event.type === "closed" ||
+    (event.type === "trigger_withdrawn" && base === "queued");
 
   let staleRecheck = existing?.stale_recheck ?? 0;
   if (event.type === "stale_detected") staleRecheck = 1;

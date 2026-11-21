@@ -56,6 +56,7 @@ const ALL_EVENTS: SmEvent[] = [
   { type: "human_requested" },
   { type: "closed" },
   { type: "reopened" },
+  { type: "trigger_withdrawn" },
 ];
 
 /**
