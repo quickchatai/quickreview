@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 1.7.1
 
 - Switching `[github] trigger` from `"all"` back to `"label"` drops the
   rounds `"all"` queued that have not started, so the reviewer no longer
