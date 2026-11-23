@@ -181,7 +181,7 @@ jobs:
       # On a Blacksmith runner: Blacksmith's builder, whose layer cache lives on
       # the runner fleet's own disks (one cache per image and arch). Anywhere
       # else (QCR_RUNNERS=github, the QEMU leg): buildx with the gha cache.
-      - uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267 # v2.3.0
+      - uses: useblacksmith/setup-docker-builder@9657a6e02ca6445e6d6ce5ffaf370f4828dea50d # v2.4.0
         if: startsWith(matrix.runner, 'blacksmith-')
         with:
           cache-key: ${{ matrix.image }}-${{ matrix.arch }}
